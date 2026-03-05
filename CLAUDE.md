@@ -59,6 +59,26 @@ backend/            # FastAPI
   services/         # Business logic (pydantic_compiler, llm_runner)
 ```
 
+## Supabase CLI
+
+Projeto remoto: `nryebmwlmxuwvynfuzsv` (extraido de `NEXT_PUBLIC_SUPABASE_URL` em `frontend/.env.local`).
+
+Antes de rodar qualquer comando `supabase` (db push, migration list, etc.):
+
+```bash
+cd frontend
+# Exportar token (obrigatorio para CLI)
+export SUPABASE_ACCESS_TOKEN=$(grep SUPABASE_ACCESS_TOKEN .env.local | cut -d= -f2)
+# Linkar se necessario (idempotente, nao falha se ja linkado)
+npx supabase link --project-ref nryebmwlmxuwvynfuzsv
+```
+
+Para aplicar migrations pendentes: `npx supabase db push`
+
+## Deploy
+
+Vercel faz deploy automatico a partir de push no branch `main`. Sempre que terminar uma tarefa, commitar e pushar para `main` para que o deploy aconteca.
+
 ## Como rodar
 
 ```bash

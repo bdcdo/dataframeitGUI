@@ -23,11 +23,15 @@ export async function createProject(formData: FormData) {
   if (error) throw new Error(error.message);
 
   // Add creator as coordinator
-  await supabase.from("project_members").insert({
-    project_id: project.id,
-    user_id: user.id,
-    role: "coordenador",
-  });
+  const { error: memberError } = await supabase
+    .from("project_members")
+    .insert({
+      project_id: project.id,
+      user_id: user.id,
+      role: "coordenador",
+    });
+
+  if (memberError) throw new Error(memberError.message);
 
   revalidatePath("/dashboard");
   redirect(`/projects/${project.id}/documents`);

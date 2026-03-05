@@ -43,13 +43,6 @@ CREATE TABLE projects (
   allow_researcher_review      BOOLEAN DEFAULT false
 );
 
-ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Members view projects" ON projects FOR SELECT USING (
-  id IN (SELECT project_id FROM project_members WHERE user_id = auth.uid())
-  OR created_by = auth.uid()
-);
-CREATE POLICY "Creator manages projects" ON projects FOR ALL USING (created_by = auth.uid());
-
 -- project_members
 CREATE TABLE project_members (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -68,6 +61,17 @@ CREATE POLICY "Coordinators manage members" ON project_members FOR ALL USING (
     SELECT project_id FROM project_members WHERE user_id = auth.uid() AND role = 'coordenador'
   )
 );
+CREATE POLICY "Creator inserts members" ON project_members FOR INSERT WITH CHECK (
+  project_id IN (SELECT id FROM projects WHERE created_by = auth.uid())
+);
+
+-- projects RLS (após project_members existir)
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Members view projects" ON projects FOR SELECT USING (
+  id IN (SELECT project_id FROM project_members WHERE user_id = auth.uid())
+  OR created_by = auth.uid()
+);
+CREATE POLICY "Creator manages projects" ON projects FOR ALL USING (created_by = auth.uid());
 
 -- documents
 CREATE TABLE documents (
