@@ -8,7 +8,7 @@ import type { ProjectMember, Profile } from "@/lib/types";
 
 interface MemberListProps {
   projectId: string;
-  members: (ProjectMember & { profiles: Profile })[];
+  members: (ProjectMember & { profiles: Profile | null })[];
   currentUserId: string;
 }
 
@@ -37,9 +37,9 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
         <div key={m.id} className="flex items-center justify-between rounded-lg border p-3">
           <div>
             <p className="text-sm font-medium">
-              {m.profiles.first_name || m.profiles.email}
+              {m.profiles?.first_name || m.profiles?.email || "Sem perfil"}
             </p>
-            <p className="text-xs text-muted-foreground">{m.profiles.email}</p>
+            <p className="text-xs text-muted-foreground">{m.profiles?.email}</p>
           </div>
           <div className="flex items-center gap-2">
             <select
