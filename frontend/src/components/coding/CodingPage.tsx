@@ -1,83 +1,309 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DocumentNav } from "./DocumentNav";
 import { DocumentReader } from "./DocumentReader";
 import { QuestionBanner } from "./QuestionBanner";
+import { DocumentPicker } from "./DocumentPicker";
+import { BrowseDocumentNav } from "./BrowseDocumentNav";
 import { saveResponse } from "@/actions/responses";
+import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
+import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment } from "@/lib/types";
 
 interface CodingPageProps {
   projectId: string;
   documents: (Document & { assignment?: Pick<Assignment, "id" | "status"> })[];
   fields: PydanticField[];
-  existingAnswers: Record<string, Record<string, any>>; // documentId -> answers
+  existingAnswers: Record<string, Record<string, any>>;
+  hasAssignments?: boolean;
 }
 
-export function CodingPage({ projectId, documents, fields, existingAnswers }: CodingPageProps) {
+export function CodingPage({
+  projectId,
+  documents,
+  fields,
+  existingAnswers,
+  hasAssignments = false,
+}: CodingPageProps) {
+  // Assigned mode state
   const [docIndex, setDocIndex] = useState(0);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [allAnswers, setAllAnswers] = useState<Record<string, Record<string, any>>>(existingAnswers);
 
+  // Mode state
+  const [mode, setMode] = useState<"assigned" | "browse">(hasAssignments ? "assigned" : "browse");
+
+  // Browse mode state
+  const [browseDocuments, setBrowseDocuments] = useState<BrowseDocument[] | null>(null);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [selectedBrowseDoc, setSelectedBrowseDoc] = useState<{
+    id: string;
+    external_id: string | null;
+    title: string | null;
+    text: string;
+  } | null>(null);
+  const [browseQuestionIndex, setBrowseQuestionIndex] = useState(0);
+  const [browseAnswers, setBrowseAnswers] = useState<Record<string, any>>({});
+  const browseFetchedRef = useRef(false);
+
+  // Lazy-load browse documents
+  useEffect(() => {
+    if (mode === "browse" && !browseFetchedRef.current) {
+      browseFetchedRef.current = true;
+      setBrowseLoading(true);
+      getDocumentsForBrowse(projectId)
+        .then(setBrowseDocuments)
+        .finally(() => setBrowseLoading(false));
+    }
+  }, [mode, projectId]);
+
+  // --- Assigned mode handlers ---
   const currentDoc = documents[docIndex];
   const docAnswers = allAnswers[currentDoc?.id] || {};
 
-  const handleAnswer = useCallback((fieldName: string, value: any) => {
-    setAllAnswers((prev) => ({
-      ...prev,
-      [currentDoc.id]: { ...prev[currentDoc.id], [fieldName]: value },
-    }));
-  }, [currentDoc?.id]);
+  const handleAnswer = useCallback(
+    (fieldName: string, value: any) => {
+      setAllAnswers((prev) => ({
+        ...prev,
+        [currentDoc.id]: { ...prev[currentDoc.id], [fieldName]: value },
+      }));
+    },
+    [currentDoc?.id]
+  );
 
-  const handleQuestionNavigate = useCallback(async (newIndex: number) => {
-    // Auto-save current answers
-    if (currentDoc && Object.keys(docAnswers).length > 0) {
+  const handleQuestionNavigate = useCallback(
+    async (newIndex: number) => {
+      if (currentDoc && Object.keys(docAnswers).length > 0) {
+        try {
+          await saveResponse(projectId, currentDoc.id, docAnswers);
+        } catch (e) {
+          console.error("Failed to save:", e);
+        }
+      }
+      setQuestionIndex(Math.max(0, Math.min(newIndex, fields.length - 1)));
+    },
+    [currentDoc, docAnswers, projectId, fields.length]
+  );
+
+  const handleDocNavigate = useCallback(
+    async (newIndex: number) => {
+      if (currentDoc && Object.keys(docAnswers).length > 0) {
+        try {
+          await saveResponse(projectId, currentDoc.id, docAnswers);
+        } catch (e) {
+          console.error("Failed to save:", e);
+        }
+      }
+      setDocIndex(Math.max(0, Math.min(newIndex, documents.length - 1)));
+      setQuestionIndex(0);
+    },
+    [currentDoc, docAnswers, projectId, documents.length]
+  );
+
+  // --- Browse mode handlers ---
+  const handleBrowseSelect = useCallback(
+    async (docId: string) => {
       try {
-        await saveResponse(projectId, currentDoc.id, docAnswers);
+        const result = await getDocumentForCoding(projectId, docId);
+        setSelectedBrowseDoc(result.document);
+        setBrowseAnswers(
+          (result.existingAnswers as Record<string, any>) ?? {}
+        );
+        setBrowseQuestionIndex(0);
+      } catch (e) {
+        console.error("Failed to load document:", e);
+      }
+    },
+    [projectId]
+  );
+
+  const handleBrowseAnswer = useCallback(
+    (fieldName: string, value: any) => {
+      setBrowseAnswers((prev) => ({ ...prev, [fieldName]: value }));
+    },
+    []
+  );
+
+  const handleBrowseQuestionNavigate = useCallback(
+    async (newIndex: number) => {
+      if (selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
+        try {
+          await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
+        } catch (e) {
+          console.error("Failed to save:", e);
+        }
+      }
+
+      // Check if all fields answered and navigating past the last question
+      if (newIndex >= fields.length && selectedBrowseDoc) {
+        const allAnswered = fields.every(
+          (f) =>
+            browseAnswers[f.name] !== undefined &&
+            browseAnswers[f.name] !== null &&
+            browseAnswers[f.name] !== ""
+        );
+        if (allAnswered) {
+          // Update local browse doc list
+          setBrowseDocuments((prev) =>
+            prev?.map((d) =>
+              d.id === selectedBrowseDoc.id
+                ? {
+                    ...d,
+                    responseCount: d.userAlreadyResponded
+                      ? d.responseCount
+                      : d.responseCount + 1,
+                    userAlreadyResponded: true,
+                  }
+                : d
+            ) ?? null
+          );
+          // Go back to picker
+          setSelectedBrowseDoc(null);
+          setBrowseAnswers({});
+          setBrowseQuestionIndex(0);
+          return;
+        }
+      }
+
+      setBrowseQuestionIndex(Math.max(0, Math.min(newIndex, fields.length - 1)));
+    },
+    [selectedBrowseDoc, browseAnswers, projectId, fields]
+  );
+
+  const handleBrowseBack = useCallback(async () => {
+    if (selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
+      try {
+        await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
+        // Update local state
+        setBrowseDocuments((prev) =>
+          prev?.map((d) =>
+            d.id === selectedBrowseDoc.id
+              ? { ...d, userAlreadyResponded: true }
+              : d
+          ) ?? null
+        );
       } catch (e) {
         console.error("Failed to save:", e);
       }
     }
-    setQuestionIndex(Math.max(0, Math.min(newIndex, fields.length - 1)));
-  }, [currentDoc, docAnswers, projectId, fields.length]);
+    setSelectedBrowseDoc(null);
+    setBrowseAnswers({});
+    setBrowseQuestionIndex(0);
+  }, [selectedBrowseDoc, browseAnswers, projectId]);
 
-  const handleDocNavigate = useCallback(async (newIndex: number) => {
-    // Save before switching documents
-    if (currentDoc && Object.keys(docAnswers).length > 0) {
-      try {
-        await saveResponse(projectId, currentDoc.id, docAnswers);
-      } catch (e) {
-        console.error("Failed to save:", e);
-      }
-    }
-    setDocIndex(Math.max(0, Math.min(newIndex, documents.length - 1)));
-    setQuestionIndex(0);
-  }, [currentDoc, docAnswers, projectId, documents.length]);
+  const handleBrowseRandom = useCallback(() => {
+    if (!browseDocuments || browseDocuments.length === 0) return;
+    const notResponded = browseDocuments.filter(
+      (d) => !d.userAlreadyResponded && d.id !== selectedBrowseDoc?.id
+    );
+    const pool =
+      notResponded.length > 0
+        ? notResponded
+        : browseDocuments.filter((d) => d.id !== selectedBrowseDoc?.id);
+    if (pool.length === 0) return;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    handleBrowseSelect(pick.id);
+  }, [browseDocuments, selectedBrowseDoc?.id, handleBrowseSelect]);
 
-  if (!currentDoc || fields.length === 0) {
+  // --- Empty states ---
+  if (fields.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
-        Nenhum documento atribuído ou schema não definido.
+        Schema não definido.
       </div>
     );
   }
 
+  // Get browse doc info for nav
+  const browseDocInfo = selectedBrowseDoc
+    ? browseDocuments?.find((d) => d.id === selectedBrowseDoc.id)
+    : null;
+
   return (
     <div className="flex h-[calc(100vh-88px)] flex-col">
-      <DocumentNav
-        title={currentDoc.title || currentDoc.external_id || "Documento"}
-        currentIndex={docIndex}
-        total={documents.length}
-        onNavigate={handleDocNavigate}
-      />
-      <DocumentReader text={currentDoc.text} />
-      <QuestionBanner
-        fields={fields}
-        currentIndex={questionIndex}
-        answers={docAnswers}
-        onAnswer={handleAnswer}
-        onNavigate={handleQuestionNavigate}
-      />
+      <Tabs
+        value={mode}
+        onValueChange={(v) => setMode(v as "assigned" | "browse")}
+        className="shrink-0"
+      >
+        <div className="border-b px-4">
+          <TabsList className="h-9">
+            <TabsTrigger value="assigned" className="text-xs">
+              Atribuídos ({documents.length})
+            </TabsTrigger>
+            <TabsTrigger value="browse" className="text-xs">
+              Explorar
+            </TabsTrigger>
+          </TabsList>
+        </div>
+      </Tabs>
+
+      {mode === "assigned" && (
+        <>
+          {!currentDoc ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+              Nenhum documento atribuído. Use a aba Explorar.
+            </div>
+          ) : (
+            <>
+              <DocumentNav
+                title={
+                  currentDoc.title || currentDoc.external_id || "Documento"
+                }
+                currentIndex={docIndex}
+                total={documents.length}
+                onNavigate={handleDocNavigate}
+              />
+              <DocumentReader text={currentDoc.text} />
+              <QuestionBanner
+                fields={fields}
+                currentIndex={questionIndex}
+                answers={docAnswers}
+                onAnswer={handleAnswer}
+                onNavigate={handleQuestionNavigate}
+              />
+            </>
+          )}
+        </>
+      )}
+
+      {mode === "browse" && (
+        <>
+          {browseLoading ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+              Carregando documentos...
+            </div>
+          ) : !selectedBrowseDoc ? (
+            <DocumentPicker
+              documents={browseDocuments ?? []}
+              onSelect={handleBrowseSelect}
+            />
+          ) : (
+            <>
+              <BrowseDocumentNav
+                title={
+                  selectedBrowseDoc.title ||
+                  selectedBrowseDoc.external_id ||
+                  "Documento"
+                }
+                responseCount={browseDocInfo?.responseCount ?? 0}
+                onBack={handleBrowseBack}
+                onRandom={handleBrowseRandom}
+              />
+              <DocumentReader text={selectedBrowseDoc.text} />
+              <QuestionBanner
+                fields={fields}
+                currentIndex={browseQuestionIndex}
+                answers={browseAnswers}
+                onAnswer={handleBrowseAnswer}
+                onNavigate={handleBrowseQuestionNavigate}
+              />
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }

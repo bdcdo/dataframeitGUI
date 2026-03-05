@@ -54,6 +54,7 @@ export default async function CodePage({
       documents={documents}
       fields={project?.pydantic_fields || []}
       existingAnswers={existingAnswers}
+      hasAssignments={documents.length > 0}
     />
   );
 }
