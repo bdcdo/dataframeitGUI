@@ -29,11 +29,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
         setPreview(data.slice(0, 5));
         const cols = results.meta.fields || [];
         setColumns(cols);
-        // Auto-detect columns
-        const textCol = cols.find((c) => c.toLowerCase().includes("text") || c.toLowerCase().includes("parecer") || c.toLowerCase().includes("conteudo")) || cols[0];
-        const titleCol = cols.find((c) => c.toLowerCase().includes("title") || c.toLowerCase().includes("titulo")) || "";
-        const idCol = cols.find((c) => c.toLowerCase().includes("id") || c.toLowerCase().includes("numero")) || "";
-        setMapping({ text: textCol, title: titleCol, external_id: idCol });
+        setMapping({ text: "", title: "", external_id: "" });
       },
     });
   }, []);
@@ -101,16 +97,19 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="text-sm font-medium">Coluna de texto *</label>
+              <p className="text-xs text-muted-foreground">Conteúdo principal do documento que será analisado pelos pesquisadores</p>
               <select
                 value={mapping.text}
                 onChange={(e) => setMapping((m) => ({ ...m, text: e.target.value }))}
                 className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
               >
+                <option value="">Selecione...</option>
                 {columns.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
               <label className="text-sm font-medium">Coluna de título</label>
+              <p className="text-xs text-muted-foreground">Nome curto para identificar o documento na interface (opcional)</p>
               <select
                 value={mapping.title}
                 onChange={(e) => setMapping((m) => ({ ...m, title: e.target.value }))}
@@ -122,6 +121,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
             </div>
             <div>
               <label className="text-sm font-medium">Coluna de ID externo</label>
+              <p className="text-xs text-muted-foreground">Identificador do dataset original, ex: número do processo, DOI (opcional)</p>
               <select
                 value={mapping.external_id}
                 onChange={(e) => setMapping((m) => ({ ...m, external_id: e.target.value }))}
@@ -136,13 +136,13 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-muted/50">
-                  {columns.slice(0, 5).map((c) => <th key={c} className="px-2 py-1 text-left">{c}</th>)}
+                  {columns.map((c) => <th key={c} className="px-2 py-1 text-left">{c}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {preview.map((row, i) => (
                   <tr key={i} className="border-t">
-                    {columns.slice(0, 5).map((c) => <td key={c} className="max-w-xs truncate px-2 py-1">{row[c]}</td>)}
+                    {columns.map((c) => <td key={c} className="max-w-xs truncate px-2 py-1">{row[c]}</td>)}
                   </tr>
                 ))}
               </tbody>
