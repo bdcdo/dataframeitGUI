@@ -3,6 +3,7 @@
 import { useState, useDeferredValue } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import type { Document } from "@/lib/types";
 
 type DocumentSummary = Pick<Document, "id" | "external_id" | "title"> & {
@@ -12,9 +13,10 @@ type DocumentSummary = Pick<Document, "id" | "external_id" | "title"> & {
 interface DocumentListProps {
   documents: DocumentSummary[];
   onSelect: (doc: DocumentSummary) => void;
+  projectId?: string;
 }
 
-export function DocumentList({ documents, onSelect }: DocumentListProps) {
+export function DocumentList({ documents, onSelect, projectId }: DocumentListProps) {
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
 
@@ -42,6 +44,7 @@ export function DocumentList({ documents, onSelect }: DocumentListProps) {
               <th className="px-4 py-2 text-left font-medium">ID</th>
               <th className="px-4 py-2 text-left font-medium">Título</th>
               <th className="px-4 py-2 text-left font-medium">Respostas</th>
+              {projectId && <th className="px-4 py-2 text-left font-medium w-10"></th>}
             </tr>
           </thead>
           <tbody>
@@ -56,6 +59,11 @@ export function DocumentList({ documents, onSelect }: DocumentListProps) {
                 <td className="px-4 py-2">
                   <Badge variant="secondary">{doc.responseCount || 0}</Badge>
                 </td>
+                {projectId && (
+                  <td className="px-4 py-2">
+                    <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/projects/${projectId}/code?doc=${doc.id}`} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

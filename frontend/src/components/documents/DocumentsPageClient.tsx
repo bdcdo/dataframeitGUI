@@ -11,15 +11,16 @@ type DocumentSummary = Pick<Document, "id" | "external_id" | "title" | "created_
 
 interface DocumentsPageClientProps {
   documents: DocumentSummary[];
+  projectId?: string;
 }
 
-export function DocumentsPageClient({ documents }: DocumentsPageClientProps) {
+export function DocumentsPageClient({ documents, projectId }: DocumentsPageClientProps) {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
   return (
     <>
-      <DocumentList documents={documents} onSelect={(doc) => setSelectedDocId(doc.id)} />
+      <DocumentList documents={documents} onSelect={(doc) => setSelectedDocId(doc.id)} projectId={projectId} />
       <DocumentPreview
         documentId={selectedDoc?.id ?? null}
         title={selectedDoc?.title ?? selectedDoc?.external_id ?? "Documento"}

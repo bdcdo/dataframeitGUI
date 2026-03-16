@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 
 interface DocumentNavProps {
@@ -9,12 +10,16 @@ interface DocumentNavProps {
   total: number;
   onNavigate: (index: number) => void;
   onToggleFullscreen?: () => void;
+  parecerUrl?: string;
 }
 
-export function DocumentNav({ title, currentIndex, total, onNavigate, onToggleFullscreen }: DocumentNavProps) {
+export function DocumentNav({ title, currentIndex, total, onNavigate, onToggleFullscreen, parecerUrl }: DocumentNavProps) {
   return (
     <div className="flex h-8 items-center justify-between border-b px-4 text-sm">
-      <span className="truncate font-medium">{title}</span>
+      <div className="flex items-center gap-1 min-w-0">
+        <span className="truncate font-medium">{title}</span>
+        {parecerUrl && <CopyLinkButton url={parecerUrl} />}
+      </div>
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onNavigate(currentIndex - 1)} disabled={currentIndex === 0}>
           <ChevronLeft className="h-4 w-4" />

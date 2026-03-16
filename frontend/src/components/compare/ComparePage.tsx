@@ -7,6 +7,7 @@ import { ProgressDots } from "../coding/ProgressDots";
 import { ResponseCard } from "./ResponseCard";
 import { VerdictPanel } from "./VerdictPanel";
 import { CompareFilter } from "./CompareFilter";
+import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { submitVerdict } from "@/actions/reviews";
 import type { PydanticField } from "@/lib/types";
 
@@ -90,12 +91,15 @@ export function ComparePage({ projectId, documents, responses, divergentFields, 
   return (
     <div className="flex h-[calc(100vh-88px)] flex-col">
       <div className="flex items-center justify-between border-b px-4 py-1">
-        <DocumentNav
-          title={currentDoc.title || currentDoc.external_id || "Documento"}
-          currentIndex={docIndex}
-          total={documents.length}
-          onNavigate={(i) => { setDocIndex(i); setFieldIndex(0); }}
-        />
+        <div className="flex items-center gap-1">
+          <DocumentNav
+            title={currentDoc.title || currentDoc.external_id || "Documento"}
+            currentIndex={docIndex}
+            total={documents.length}
+            onNavigate={(i) => { setDocIndex(i); setFieldIndex(0); }}
+          />
+          <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/projects/${projectId}/code?doc=${currentDoc.id}`} />
+        </div>
         <CompareFilter value={filter} onChange={(v) => { setFilter(v); setFieldIndex(0); }} fields={fields} />
       </div>
       <DocumentReader text={currentDoc.text} />

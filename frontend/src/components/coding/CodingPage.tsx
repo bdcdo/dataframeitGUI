@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DocumentNav } from "./DocumentNav";
 import { DocumentReader } from "./DocumentReader";
@@ -33,12 +34,31 @@ export function CodingPage({
   existingAnswers,
   hasAssignments = false,
 }: CodingPageProps) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const docParam = searchParams.get("doc");
+
+  // Compute initial state from URL param
+  const getInitialState = useCallback(() => {
+    if (docParam) {
+      const assignedIdx = documents.findIndex((d) => d.id === docParam);
+      if (assignedIdx >= 0) {
+        return { mode: "assigned" as const, docIndex: assignedIdx };
+      }
+      return { mode: "browse" as const, docIndex: 0 };
+    }
+    return { mode: (hasAssignments ? "assigned" : "browse") as "assigned" | "browse", docIndex: 0 };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const initial = getInitialState();
+
   // Assigned mode state
-  const [docIndex, setDocIndex] = useState(0);
+  const [docIndex, setDocIndex] = useState(initial.docIndex);
   const [allAnswers, setAllAnswers] = useState<Record<string, Record<string, any>>>(existingAnswers);
 
   // Mode state
-  const [mode, setMode] = useState<"assigned" | "browse">(hasAssignments ? "assigned" : "browse");
+  const [mode, setMode] = useState<"assigned" | "browse">(initial.mode);
 
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -56,6 +76,20 @@ export function CodingPage({
   const [browseAnswers, setBrowseAnswers] = useState<Record<string, any>>({});
   const browseFetchedRef = useRef(false);
 
+  // Update URL query param without full navigation
+  const updateDocParam = useCallback(
+    (docId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (docId) {
+        params.set("doc", docId);
+      } else {
+        params.delete("doc");
+      }
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, router, pathname]
+  );
+
   // Lazy-load browse documents
   useEffect(() => {
     if (mode === "browse" && !browseFetchedRef.current) {
@@ -66,6 +100,7 @@ export function CodingPage({
         .finally(() => setBrowseLoading(false));
     }
   }, [mode, projectId]);
+
 
   // Fullscreen keyboard shortcuts
   useEffect(() => {
@@ -114,9 +149,11 @@ export function CodingPage({
           console.error("Failed to save:", e)
         );
       }
-      setDocIndex(Math.max(0, Math.min(newIndex, documents.length - 1)));
+      const clampedIndex = Math.max(0, Math.min(newIndex, documents.length - 1));
+      setDocIndex(clampedIndex);
+      updateDocParam(documents[clampedIndex]?.id ?? null);
     },
-    [currentDoc, docAnswers, projectId, documents.length]
+    [currentDoc, docAnswers, projectId, documents, updateDocParam]
   );
 
   // --- Browse mode handlers ---
@@ -128,12 +165,30 @@ export function CodingPage({
         setBrowseAnswers(
           (result.existingAnswers as Record<string, any>) ?? {}
         );
+        updateDocParam(docId);
       } catch (e) {
         console.error("Failed to load document:", e);
       }
     },
-    [projectId]
+    [projectId, updateDocParam]
   );
+
+  // Auto-load browse doc from URL param
+  const initialBrowseLoadRef = useRef(false);
+  useEffect(() => {
+    if (
+      docParam &&
+      mode === "browse" &&
+      !initialBrowseLoadRef.current &&
+      !selectedBrowseDoc
+    ) {
+      const assignedIdx = documents.findIndex((d) => d.id === docParam);
+      if (assignedIdx < 0) {
+        initialBrowseLoadRef.current = true;
+        handleBrowseSelect(docParam);
+      }
+    }
+  }, [docParam, mode, documents, selectedBrowseDoc, handleBrowseSelect]);
 
   const handleBrowseAnswer = useCallback(
     (fieldName: string, value: any) => {
@@ -181,7 +236,8 @@ export function CodingPage({
     }
     setSelectedBrowseDoc(null);
     setBrowseAnswers({});
-  }, [selectedBrowseDoc, browseAnswers, projectId]);
+    updateDocParam(null);
+  }, [selectedBrowseDoc, browseAnswers, projectId, updateDocParam]);
 
   const handleBrowseRandom = useCallback(() => {
     if (!browseDocuments || browseDocuments.length === 0) return;
@@ -213,6 +269,14 @@ export function CodingPage({
 
   const assignedTitle = currentDoc?.title || currentDoc?.external_id || "Documento";
   const browseTitle = selectedBrowseDoc?.title || selectedBrowseDoc?.external_id || "Documento";
+
+  const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+  const assignedParecerUrl = currentDoc
+    ? `${baseUrl}/projects/${projectId}/code?doc=${currentDoc.id}`
+    : undefined;
+  const browseParecerUrl = selectedBrowseDoc
+    ? `${baseUrl}/projects/${projectId}/code?doc=${selectedBrowseDoc.id}`
+    : undefined;
 
   return (
     <div
@@ -264,6 +328,7 @@ export function CodingPage({
                   total={documents.length}
                   onNavigate={handleDocNavigate}
                   onToggleFullscreen={toggleFullscreen}
+                  parecerUrl={assignedParecerUrl}
                 />
               )}
               <ResizablePanelGroup
@@ -313,6 +378,7 @@ export function CodingPage({
                   onBack={handleBrowseBack}
                   onRandom={handleBrowseRandom}
                   onToggleFullscreen={toggleFullscreen}
+                  parecerUrl={browseParecerUrl}
                 />
               )}
               <ResizablePanelGroup

@@ -37,7 +37,7 @@ export default async function DocumentsPage({
       <div className="mb-6">
         <DocumentUpload projectId={id} />
       </div>
-      <DocumentsPageClient documents={docsWithCounts} />
+      <DocumentsPageClient documents={docsWithCounts} projectId={id} />
     </div>
   );
 }
