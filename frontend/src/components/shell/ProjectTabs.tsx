@@ -13,6 +13,7 @@ const tabs = [
   { label: "Documentos", href: "documents" },
   { label: "Atribuições", href: "assignments" },
   { label: "Codificar", href: "code" },
+  { label: "Meu Progresso", href: "my-progress" },
   { label: "Comparar", href: "compare" },
   { label: "Estatísticas", href: "stats" },
   { label: "Exportar", href: "export" },

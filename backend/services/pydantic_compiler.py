@@ -5,6 +5,7 @@ Security note: This module uses Python's exec() to compile user-provided Pydanti
 This is intentional and necessary — only project coordinators (authenticated, authorized)
 can submit Pydantic code. The FastAPI backend runs in an isolated container on Fly.io.
 """
+import hashlib
 import typing
 from typing import get_args, get_origin
 
@@ -54,12 +55,20 @@ def compile_pydantic(code: str) -> dict:
         annotation = field_info.annotation
         field_type, options = _parse_annotation(annotation)
 
+        extra = field_info.json_schema_extra or {}
+        if callable(extra):
+            extra = {}
+        target = extra.get("target", "all") if isinstance(extra, dict) else "all"
+        description = field_info.description or field_name
+
         fields.append(
             {
                 "name": field_name,
                 "type": field_type,
                 "options": options,
-                "description": field_info.description or field_name,
+                "description": description,
+                "target": target,
+                "hash": _field_hash(field_name, field_type, options, description),
             }
         )
 
@@ -69,6 +78,12 @@ def compile_pydantic(code: str) -> dict:
         "model_name": model_class.__name__,
         "errors": errors,
     }
+
+
+def _field_hash(name: str, field_type: str, options: list[str] | None, description: str) -> str:
+    """Stable hash for a field, excluding target."""
+    content = f"{name}|{field_type}|{sorted(options) if options else ''}|{description}"
+    return hashlib.sha256(content.encode()).hexdigest()[:12]
 
 
 def _exec_compiled(compiled_code: object, namespace: dict) -> None:

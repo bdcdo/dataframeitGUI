@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { CodingPage } from "@/components/coding/CodingPage";
-import type { Document, Assignment } from "@/lib/types";
+import { getResearcherProgress } from "@/actions/progress";
+import type { Document, Assignment, PydanticField } from "@/lib/types";
 
 export default async function CodePage({
   params,
@@ -48,13 +49,34 @@ export default async function CodePage({
     existingAnswers[r.document_id] = r.answers as Record<string, unknown>;
   });
 
+  // Get progress data
+  let progress = null;
+  if (documents.length > 0) {
+    try {
+      const full = await getResearcherProgress(id);
+      progress = {
+        completed: full.completed,
+        total: full.total,
+        nextDeadline: full.nextDeadline,
+        daysUntilDeadline: full.daysUntilDeadline,
+        requiredPace: full.requiredPace,
+        streak: full.streak,
+      };
+    } catch {
+      // Progress is optional, don't break the page
+    }
+  }
+
   return (
     <CodingPage
       projectId={id}
       documents={documents}
-      fields={project?.pydantic_fields || []}
+      fields={((project?.pydantic_fields || []) as PydanticField[]).filter(
+        (f) => f.target !== "llm_only"
+      )}
       existingAnswers={existingAnswers}
       hasAssignments={documents.length > 0}
+      progress={progress}
     />
   );
 }

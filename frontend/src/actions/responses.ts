@@ -2,6 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import type { PydanticField } from "@/lib/types";
 
 export async function saveResponse(
   projectId: string,
@@ -59,22 +60,23 @@ export async function saveResponse(
     .single();
 
   if (project?.pydantic_fields) {
-    const fields = project.pydantic_fields as { name: string }[];
-    const allAnswered = fields.every(
+    const fields = project.pydantic_fields as PydanticField[];
+    const humanFields = fields.filter((f) => (f.target || "all") !== "llm_only");
+    const allAnswered = humanFields.every(
       (f) => answers[f.name] !== undefined && answers[f.name] !== null && answers[f.name] !== ""
     );
 
     if (allAnswered) {
       await supabase
         .from("assignments")
-        .update({ status: "concluido" })
+        .update({ status: "concluido", completed_at: new Date().toISOString() })
         .eq("project_id", projectId)
         .eq("document_id", documentId)
         .eq("user_id", user.id);
     } else {
       await supabase
         .from("assignments")
-        .update({ status: "em_andamento" })
+        .update({ status: "em_andamento", completed_at: null })
         .eq("project_id", projectId)
         .eq("document_id", documentId)
         .eq("user_id", user.id);

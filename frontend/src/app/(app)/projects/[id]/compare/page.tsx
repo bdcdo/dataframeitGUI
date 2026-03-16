@@ -67,6 +67,7 @@ export default async function ComparePageRoute({
 
     const divergent: string[] = [];
     for (const field of fields) {
+      if (field.target === "llm_only" || field.target === "human_only") continue;
       const answers = activeResponses.map((r) => r.answers?.[field.name]);
       const uniqueAnswers = new Set(answers.map((a) => JSON.stringify(a)));
       if (uniqueAnswers.size > 1) {

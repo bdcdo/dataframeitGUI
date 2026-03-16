@@ -28,10 +28,10 @@ export async function saveSchema(
   const supabase = await createSupabaseServer();
   const hash = crypto.createHash("sha256").update(code).digest("hex").slice(0, 16);
 
-  // Check if hash changed -> invalidate LLM responses
+  // Fetch previous schema (hash + fields with per-field hashes)
   const { data: project } = await supabase
     .from("projects")
-    .select("pydantic_hash")
+    .select("pydantic_hash, pydantic_fields")
     .eq("id", projectId)
     .single();
 
@@ -56,6 +56,34 @@ export async function saveSchema(
       .neq("pydantic_hash", hash);
   }
 
+  // Surgical invalidation: clear human answers for changed/removed fields
+  if (project?.pydantic_fields) {
+    const oldFields = project.pydantic_fields as PydanticField[];
+    const oldHashMap = new Map(oldFields.map((f) => [f.name, f.hash]));
+
+    const changedFields: string[] = [];
+    for (const field of fields) {
+      const oldHash = oldHashMap.get(field.name);
+      if (oldHash && oldHash !== field.hash) {
+        changedFields.push(field.name);
+      }
+    }
+    // Removed fields
+    const newNames = new Set(fields.map((f) => f.name));
+    for (const oldField of oldFields) {
+      if (!newNames.has(oldField.name)) {
+        changedFields.push(oldField.name);
+      }
+    }
+
+    for (const fieldName of changedFields) {
+      await supabase.rpc("remove_answer_key", {
+        p_project_id: projectId,
+        p_field_name: fieldName,
+      });
+    }
+  }
+
   revalidatePath(`/projects/${projectId}`);
 }
 
@@ -68,6 +96,38 @@ export async function savePrompt(projectId: string, promptTemplate: string) {
 
   if (error) throw new Error(error.message);
   revalidatePath(`/projects/${projectId}`);
+}
+
+// ---------- Hash por campo (reproduz backend _field_hash) ----------
+
+function pythonListRepr(arr: string[]): string {
+  return "[" + arr.map((s) => `'${s}'`).join(", ") + "]";
+}
+
+function computeFieldHash(
+  name: string,
+  type: string,
+  options: string[] | null,
+  description: string
+): string {
+  const optionsPart = options ? pythonListRepr([...options].sort()) : "";
+  const content = `${name}|${type}|${optionsPart}|${description}`;
+  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 12);
+}
+
+// ---------- Save from GUI ----------
+
+export async function saveSchemaFromGUI(
+  projectId: string,
+  fields: PydanticField[]
+) {
+  const { generatePydanticCode } = await import("@/lib/schema-utils");
+  const code = generatePydanticCode(fields);
+  const fieldsWithHash = fields.map((f) => ({
+    ...f,
+    hash: computeFieldHash(f.name, f.type, f.options, f.description),
+  }));
+  return saveSchema(projectId, code, fieldsWithHash);
 }
 
 export async function saveLlmConfig(

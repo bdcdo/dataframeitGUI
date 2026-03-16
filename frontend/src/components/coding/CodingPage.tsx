@@ -18,6 +18,7 @@ import { saveResponse } from "@/actions/responses";
 import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment } from "@/lib/types";
+import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
 
 interface CodingPageProps {
   projectId: string;
@@ -25,6 +26,7 @@ interface CodingPageProps {
   fields: PydanticField[];
   existingAnswers: Record<string, Record<string, any>>;
   hasAssignments?: boolean;
+  progress?: ProgressBannerData | null;
 }
 
 export function CodingPage({
@@ -33,6 +35,7 @@ export function CodingPage({
   fields,
   existingAnswers,
   hasAssignments = false,
+  progress = null,
 }: CodingPageProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -287,22 +290,25 @@ export function CodingPage({
       }
     >
       {!isFullscreen && (
-        <Tabs
-          value={mode}
-          onValueChange={(v) => setMode(v as "assigned" | "browse")}
-          className="shrink-0"
-        >
-          <div className="border-b px-4">
-            <TabsList className="h-9">
-              <TabsTrigger value="assigned" className="text-xs">
-                Atribuídos ({documents.length})
-              </TabsTrigger>
-              <TabsTrigger value="browse" className="text-xs">
-                Explorar
-              </TabsTrigger>
-            </TabsList>
-          </div>
-        </Tabs>
+        <>
+          <Tabs
+            value={mode}
+            onValueChange={(v) => setMode(v as "assigned" | "browse")}
+            className="shrink-0"
+          >
+            <div className="border-b px-4">
+              <TabsList className="h-9">
+                <TabsTrigger value="assigned" className="text-xs">
+                  Atribuídos ({documents.length})
+                </TabsTrigger>
+                <TabsTrigger value="browse" className="text-xs">
+                  Explorar
+                </TabsTrigger>
+              </TabsList>
+            </div>
+          </Tabs>
+          {progress && mode === "assigned" && <ProgressBanner data={progress} />}
+        </>
       )}
 
       {mode === "assigned" && (

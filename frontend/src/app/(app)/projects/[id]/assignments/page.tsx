@@ -1,6 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { AssignmentTable } from "@/components/assignments/AssignmentTable";
-import { RandomizeDialog } from "@/components/assignments/RandomizeDialog";
+import { LotteryDialog } from "@/components/assignments/LotteryDialog";
 import type { ProjectMember } from "@/lib/types";
 
 export default async function AssignmentsPage({
@@ -37,7 +37,11 @@ export default async function AssignmentsPage({
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Atribuições</h2>
-        <RandomizeDialog projectId={id} />
+        <LotteryDialog
+          projectId={id}
+          totalDocs={(documents || []).length}
+          totalResearchers={typedResearchers.length}
+        />
       </div>
       <AssignmentTable
         projectId={id}

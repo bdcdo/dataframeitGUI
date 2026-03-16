@@ -29,6 +29,8 @@ export interface PydanticField {
   type: "single" | "multi" | "text";
   options: string[] | null;
   description: string;
+  target?: "all" | "llm_only" | "human_only";
+  hash?: string;
 }
 
 export interface ProjectMember {
@@ -55,6 +57,24 @@ export interface Assignment {
   document_id: string;
   user_id: string;
   status: "pendente" | "em_andamento" | "concluido";
+  batch_id: string | null;
+  deadline: string | null;
+  completed_at: string | null;
+}
+
+export interface AssignmentBatch {
+  id: string;
+  project_id: string;
+  created_by: string;
+  created_at: string;
+  researchers_per_doc: number;
+  docs_per_researcher: number | null;
+  doc_subset_size: number | null;
+  deadline_mode: "none" | "batch" | "recurring";
+  deadline_date: string | null;
+  recurring_count: number | null;
+  recurring_start: string | null;
+  label: string | null;
 }
 
 export interface Response {
