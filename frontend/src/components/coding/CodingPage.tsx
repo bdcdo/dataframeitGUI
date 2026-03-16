@@ -4,7 +4,12 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DocumentNav } from "./DocumentNav";
 import { DocumentReader } from "./DocumentReader";
-import { QuestionBanner } from "./QuestionBanner";
+import { QuestionsPanel } from "./QuestionsPanel";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
 import { DocumentPicker } from "./DocumentPicker";
 import { BrowseDocumentNav } from "./BrowseDocumentNav";
 import { FullscreenNav } from "./FullscreenNav";
@@ -30,7 +35,6 @@ export function CodingPage({
 }: CodingPageProps) {
   // Assigned mode state
   const [docIndex, setDocIndex] = useState(0);
-  const [questionIndex, setQuestionIndex] = useState(0);
   const [allAnswers, setAllAnswers] = useState<Record<string, Record<string, any>>>(existingAnswers);
 
   // Mode state
@@ -49,7 +53,6 @@ export function CodingPage({
     title: string | null;
     text: string;
   } | null>(null);
-  const [browseQuestionIndex, setBrowseQuestionIndex] = useState(0);
   const [browseAnswers, setBrowseAnswers] = useState<Record<string, any>>({});
   const browseFetchedRef = useRef(false);
 
@@ -93,25 +96,16 @@ export function CodingPage({
     [currentDoc?.id]
   );
 
-  const handleQuestionNavigate = useCallback(
-    (newIndex: number) => {
-      // Past last question → save and advance to next document
-      if (newIndex >= fields.length) {
-        if (currentDoc && Object.keys(docAnswers).length > 0) {
-          saveResponse(projectId, currentDoc.id, docAnswers).catch((e) =>
-            console.error("Failed to save:", e)
-          );
-        }
-        if (docIndex < documents.length - 1) {
-          setDocIndex(docIndex + 1);
-          setQuestionIndex(0);
-        }
-        return;
-      }
-      setQuestionIndex(Math.max(0, newIndex));
-    },
-    [currentDoc, docAnswers, projectId, fields.length, docIndex, documents.length]
-  );
+  const handleSubmit = useCallback(() => {
+    if (currentDoc && Object.keys(docAnswers).length > 0) {
+      saveResponse(projectId, currentDoc.id, docAnswers).catch((e) =>
+        console.error("Failed to save:", e)
+      );
+    }
+    if (docIndex < documents.length - 1) {
+      setDocIndex(docIndex + 1);
+    }
+  }, [currentDoc, docAnswers, projectId, docIndex, documents.length]);
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
@@ -121,7 +115,6 @@ export function CodingPage({
         );
       }
       setDocIndex(Math.max(0, Math.min(newIndex, documents.length - 1)));
-      setQuestionIndex(0);
     },
     [currentDoc, docAnswers, projectId, documents.length]
   );
@@ -135,7 +128,6 @@ export function CodingPage({
         setBrowseAnswers(
           (result.existingAnswers as Record<string, any>) ?? {}
         );
-        setBrowseQuestionIndex(0);
       } catch (e) {
         console.error("Failed to load document:", e);
       }
@@ -150,40 +142,28 @@ export function CodingPage({
     []
   );
 
-  const handleBrowseQuestionNavigate = useCallback(
-    (newIndex: number) => {
-      // Past last question → save and go back to picker
-      if (newIndex >= fields.length && selectedBrowseDoc) {
-        if (Object.keys(browseAnswers).length > 0) {
-          saveResponse(projectId, selectedBrowseDoc.id, browseAnswers).catch((e) =>
-            console.error("Failed to save:", e)
-          );
-        }
-        // Update local browse doc list
-        setBrowseDocuments((prev) =>
-          prev?.map((d) =>
-            d.id === selectedBrowseDoc.id
-              ? {
-                  ...d,
-                  responseCount: d.userAlreadyResponded
-                    ? d.responseCount
-                    : d.responseCount + 1,
-                  userAlreadyResponded: true,
-                }
-              : d
-          ) ?? null
-        );
-        // Go back to picker
-        setSelectedBrowseDoc(null);
-        setBrowseAnswers({});
-        setBrowseQuestionIndex(0);
-        return;
-      }
-
-      setBrowseQuestionIndex(Math.max(0, newIndex));
-    },
-    [selectedBrowseDoc, browseAnswers, projectId, fields.length]
-  );
+  const handleBrowseSubmit = useCallback(() => {
+    if (selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
+      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers).catch((e) =>
+        console.error("Failed to save:", e)
+      );
+    }
+    setBrowseDocuments((prev) =>
+      prev?.map((d) =>
+        d.id === selectedBrowseDoc?.id
+          ? {
+              ...d,
+              responseCount: d.userAlreadyResponded
+                ? d.responseCount
+                : d.responseCount + 1,
+              userAlreadyResponded: true,
+            }
+          : d
+      ) ?? null
+    );
+    setSelectedBrowseDoc(null);
+    setBrowseAnswers({});
+  }, [selectedBrowseDoc, browseAnswers, projectId]);
 
   const handleBrowseBack = useCallback(() => {
     if (selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
@@ -201,7 +181,6 @@ export function CodingPage({
     }
     setSelectedBrowseDoc(null);
     setBrowseAnswers({});
-    setBrowseQuestionIndex(0);
   }, [selectedBrowseDoc, browseAnswers, projectId]);
 
   const handleBrowseRandom = useCallback(() => {
@@ -287,15 +266,22 @@ export function CodingPage({
                   onToggleFullscreen={toggleFullscreen}
                 />
               )}
-              <DocumentReader text={currentDoc.text} />
-              <QuestionBanner
-                fields={fields}
-                currentIndex={questionIndex}
-                answers={docAnswers}
-                onAnswer={handleAnswer}
-                onNavigate={handleQuestionNavigate}
-                isFullscreen={isFullscreen}
-              />
+              <ResizablePanelGroup
+                className="flex-1"
+              >
+                <ResizablePanel defaultSize={55} minSize={25}>
+                  <DocumentReader text={currentDoc.text} />
+                </ResizablePanel>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={45} minSize={25}>
+                  <QuestionsPanel
+                    fields={fields}
+                    answers={docAnswers}
+                    onAnswer={handleAnswer}
+                    onSubmit={handleSubmit}
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
             </>
           )}
         </>
@@ -329,15 +315,22 @@ export function CodingPage({
                   onToggleFullscreen={toggleFullscreen}
                 />
               )}
-              <DocumentReader text={selectedBrowseDoc.text} />
-              <QuestionBanner
-                fields={fields}
-                currentIndex={browseQuestionIndex}
-                answers={browseAnswers}
-                onAnswer={handleBrowseAnswer}
-                onNavigate={handleBrowseQuestionNavigate}
-                isFullscreen={isFullscreen}
-              />
+              <ResizablePanelGroup
+                className="flex-1"
+              >
+                <ResizablePanel defaultSize={55} minSize={25}>
+                  <DocumentReader text={selectedBrowseDoc.text} />
+                </ResizablePanel>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={45} minSize={25}>
+                  <QuestionsPanel
+                    fields={fields}
+                    answers={browseAnswers}
+                    onAnswer={handleBrowseAnswer}
+                    onSubmit={handleBrowseSubmit}
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
             </>
           )}
         </>
