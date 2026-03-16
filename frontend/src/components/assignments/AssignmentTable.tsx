@@ -1,5 +1,6 @@
 "use client";
 
+import { useOptimistic, useTransition } from "react";
 import { toggleAssignment } from "@/actions/assignments";
 import { cn } from "@/lib/utils";
 import {
@@ -17,14 +18,49 @@ interface AssignmentTableProps {
   assignments: Assignment[];
 }
 
+type OptimisticUpdate = { docId: string; userId: string; action: "add" | "remove" };
+
 export function AssignmentTable({ projectId, documents, researchers, assignments }: AssignmentTableProps) {
+  const [isPending, startTransition] = useTransition();
+
+  const [optimisticAssignments, setOptimistic] = useOptimistic(
+    assignments,
+    (current: Assignment[], update: OptimisticUpdate) => {
+      if (update.action === "add") {
+        return [...current, {
+          id: "optimistic",
+          project_id: projectId,
+          document_id: update.docId,
+          user_id: update.userId,
+          status: "pendente" as const,
+          batch_id: null,
+          deadline: null,
+          completed_at: null,
+        }];
+      }
+      return current.filter(
+        (a) => !(a.document_id === update.docId && a.user_id === update.userId && a.status === "pendente")
+      );
+    }
+  );
+
   const assignmentMap = new Map<string, Assignment>();
-  for (const a of assignments) {
+  for (const a of optimisticAssignments) {
     assignmentMap.set(`${a.document_id}:${a.user_id}`, a);
   }
 
-  const handleToggle = async (documentId: string, userId: string) => {
-    await toggleAssignment(projectId, documentId, userId);
+  const handleToggle = (documentId: string, userId: string) => {
+    const existing = assignmentMap.get(`${documentId}:${userId}`);
+
+    // Don't allow removing em_andamento/concluido
+    if (existing && existing.status !== "pendente") return;
+
+    const action = existing ? "remove" : "add";
+
+    startTransition(async () => {
+      setOptimistic({ docId: documentId, userId, action });
+      await toggleAssignment(projectId, documentId, userId);
+    });
   };
 
   const today = new Date();
@@ -58,6 +94,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                     status !== "concluido" &&
                     new Date(deadline + "T00:00:00") < today;
 
+                  const isNonRemovable = status === "concluido" || status === "em_andamento";
+
                   const cellColor = status === "concluido"
                     ? "bg-green-500 border-green-600"
                     : status === "em_andamento"
@@ -69,10 +107,12 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const cell = (
                     <button
                       onClick={() => handleToggle(doc.id, r.user_id)}
+                      disabled={isNonRemovable}
                       className={cn(
                         "h-5 w-5 rounded border transition-colors",
                         cellColor,
-                        isOverdue && "ring-2 ring-destructive ring-offset-1"
+                        isOverdue && "ring-2 ring-destructive ring-offset-1",
+                        isNonRemovable && "cursor-default"
                       )}
                     >
                       {isAssigned && (
@@ -115,8 +155,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
             <tr className="bg-muted/30">
               <td className="px-3 py-1.5 font-medium">Total</td>
               {researchers.map((r) => {
-                const count = assignments.filter((a) => a.user_id === r.user_id).length;
-                const done = assignments.filter((a) => a.user_id === r.user_id && a.status === "concluido").length;
+                const count = optimisticAssignments.filter((a) => a.user_id === r.user_id).length;
+                const done = optimisticAssignments.filter((a) => a.user_id === r.user_id && a.status === "concluido").length;
                 return (
                   <td key={r.user_id} className="px-3 py-1.5 text-center font-medium">
                     <span>{done}/{count}</span>

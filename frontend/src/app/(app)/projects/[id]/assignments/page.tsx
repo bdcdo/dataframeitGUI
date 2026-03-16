@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { AssignmentTable } from "@/components/assignments/AssignmentTable";
 import { LotteryDialog } from "@/components/assignments/LotteryDialog";
+import { ClearPendingButton } from "@/components/assignments/ClearPendingButton";
 import type { ProjectMember } from "@/lib/types";
 
 export default async function AssignmentsPage({
@@ -11,7 +12,7 @@ export default async function AssignmentsPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const [{ data: documents }, { data: researchers }, { data: assignments }] =
+  const [{ data: documents }, { data: researchers }, { data: assignments }, { data: coordinators }] =
     await Promise.all([
       supabase
         .from("documents")
@@ -27,26 +28,59 @@ export default async function AssignmentsPage({
         .from("assignments")
         .select("*")
         .eq("project_id", id),
+      supabase
+        .from("project_members")
+        .select("*, profiles(*)")
+        .eq("project_id", id)
+        .eq("role", "coordenador"),
     ]);
 
-  const typedResearchers = (researchers || []) as unknown as (ProjectMember & {
+  type TypedMember = ProjectMember & {
     profiles: { first_name: string | null; email: string };
-  })[];
+  };
+
+  const typedResearchers = (researchers || []) as unknown as TypedMember[];
+  const typedCoordinators = (coordinators || []) as unknown as TypedMember[];
+
+  // Coordinators who have assignments should appear in the table
+  const coordinatorUserIds = new Set(typedCoordinators.map((c) => c.user_id));
+  const assignedCoordinatorIds = new Set(
+    (assignments || [])
+      .filter((a) => coordinatorUserIds.has(a.user_id))
+      .map((a) => a.user_id)
+  );
+  const coordinatorsWithAssignments = typedCoordinators.filter((c) =>
+    assignedCoordinatorIds.has(c.user_id)
+  );
+  const allResearchersForTable = [...typedResearchers, ...coordinatorsWithAssignments];
+
+  const coordinatorOptions = typedCoordinators.map((c) => ({
+    userId: c.user_id,
+    name: c.profiles?.first_name || c.profiles?.email || c.user_id.slice(0, 8),
+  }));
+
+  const pendingCount = (assignments || []).filter((a) => a.status === "pendente").length;
 
   return (
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Atribuições</h2>
-        <LotteryDialog
-          projectId={id}
-          totalDocs={(documents || []).length}
-          totalResearchers={typedResearchers.length}
-        />
+        <div className="flex items-center gap-2">
+          {pendingCount > 0 && (
+            <ClearPendingButton projectId={id} pendingCount={pendingCount} />
+          )}
+          <LotteryDialog
+            projectId={id}
+            totalDocs={(documents || []).length}
+            totalResearchers={typedResearchers.length}
+            coordinators={coordinatorOptions}
+          />
+        </div>
       </div>
       <AssignmentTable
         projectId={id}
         documents={documents || []}
-        researchers={typedResearchers}
+        researchers={allResearchersForTable}
         assignments={assignments || []}
       />
     </div>

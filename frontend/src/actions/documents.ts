@@ -295,12 +295,19 @@ export async function getDocumentForCoding(
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  const { data: doc } = await supabase
-    .from("documents")
-    .select("id, external_id, title, text")
-    .eq("id", documentId)
-    .eq("project_id", projectId)
-    .single();
+  const [{ data: doc }, { data: project }] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("id, external_id, title, text")
+      .eq("id", documentId)
+      .eq("project_id", projectId)
+      .single(),
+    supabase
+      .from("projects")
+      .select("pydantic_fields")
+      .eq("id", projectId)
+      .single(),
+  ]);
 
   if (!doc) throw new Error("Document not found");
 
@@ -313,10 +320,29 @@ export async function getDocumentForCoding(
     .eq("respondent_type", "humano")
     .single();
 
-  return {
-    document: doc,
-    existingAnswers: (response?.answers as Record<string, unknown>) ?? null,
-  };
+  const rawAnswers = (response?.answers as Record<string, unknown>) ?? null;
+
+  // Sanitize answers against current schema options
+  if (rawAnswers && project?.pydantic_fields) {
+    const fields = (project.pydantic_fields as { name: string; type: string; options: string[] | null; target?: string }[])
+      .filter((f) => f.target !== "llm_only");
+    const clean: Record<string, unknown> = {};
+    for (const field of fields) {
+      const val = rawAnswers[field.name];
+      if (val === undefined || val === null) continue;
+      if (field.type === "single" && field.options) {
+        if (field.options.includes(val as string)) clean[field.name] = val;
+      } else if (field.type === "multi" && field.options) {
+        const arr = Array.isArray(val) ? val.filter((v: string) => field.options!.includes(v)) : [];
+        if (arr.length > 0) clean[field.name] = arr;
+      } else {
+        clean[field.name] = val;
+      }
+    }
+    return { document: doc, existingAnswers: clean };
+  }
+
+  return { document: doc, existingAnswers: rawAnswers };
 }
 
 export async function deleteDocument(projectId: string, documentId: string) {

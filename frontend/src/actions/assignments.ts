@@ -10,15 +10,16 @@ export async function toggleAssignment(
 ) {
   const supabase = await createSupabaseServer();
 
-  // Check if assignment exists
+  // Check if a pending assignment exists (only pending can be toggled off)
   const { data: existing } = await supabase
     .from("assignments")
-    .select("id")
+    .select("id, status")
     .eq("document_id", documentId)
     .eq("user_id", userId)
     .single();
 
   if (existing) {
+    if (existing.status !== "pendente") return; // don't remove em_andamento/concluido
     await supabase.from("assignments").delete().eq("id", existing.id);
   } else {
     await supabase.from("assignments").insert({
@@ -29,6 +30,19 @@ export async function toggleAssignment(
   }
 
   revalidatePath(`/projects/${projectId}/assignments`);
+}
+
+export async function clearPendingAssignments(projectId: string) {
+  const supabase = await createSupabaseServer();
+
+  const { count } = await supabase
+    .from("assignments")
+    .delete({ count: "exact" })
+    .eq("project_id", projectId)
+    .eq("status", "pendente");
+
+  revalidatePath(`/projects/${projectId}/assignments`);
+  return { deleted: count ?? 0 };
 }
 
 // --- Smart Lottery ---
@@ -43,6 +57,7 @@ export interface LotteryParams {
   recurringCount?: number;
   recurringStart?: string;
   label?: string;
+  includedCoordinatorIds?: string[];
 }
 
 interface LotteryAssignment {
@@ -89,11 +104,24 @@ async function computeLottery(
     .select("id")
     .eq("project_id", params.projectId);
 
-  if (!members?.length || !docs?.length) {
-    throw new Error("Necessário ter pesquisadores e documentos.");
+  if (!docs?.length) {
+    throw new Error("Necessário ter documentos.");
   }
 
-  const researcherIds = members.map((m) => m.user_id);
+  const researcherIds = (members || []).map((m) => m.user_id);
+
+  // Include selected coordinators in the pool
+  if (params.includedCoordinatorIds?.length) {
+    for (const cId of params.includedCoordinatorIds) {
+      if (!researcherIds.includes(cId)) {
+        researcherIds.push(cId);
+      }
+    }
+  }
+
+  if (!researcherIds.length) {
+    throw new Error("Necessário ter pesquisadores ou coordenadores selecionados.");
+  }
   const documentIds = docs.map((d) => d.id);
 
   // 3. Fetch existing non-pending assignments (preserve these)
@@ -278,18 +306,27 @@ export async function previewLottery(params: LotteryParams): Promise<LotteryPrev
     if (a.deadline) lastDeadline[a.user_id] = a.deadline;
   }
 
-  // Get all researcher IDs
+  // Get all researcher IDs (+ included coordinators)
   const { data: members } = await supabase
     .from("project_members")
     .select("user_id")
     .eq("project_id", params.projectId)
     .eq("role", "pesquisador");
 
-  const researchers = (members || []).map((m) => ({
-    userId: m.user_id,
-    existing: existingCounts[m.user_id] || 0,
-    newDocs: newCounts[m.user_id] || 0,
-    deadline: lastDeadline[m.user_id] || null,
+  const allUserIds = (members || []).map((m) => m.user_id);
+  if (params.includedCoordinatorIds?.length) {
+    for (const cId of params.includedCoordinatorIds) {
+      if (!allUserIds.includes(cId)) {
+        allUserIds.push(cId);
+      }
+    }
+  }
+
+  const researchers = allUserIds.map((userId) => ({
+    userId,
+    existing: existingCounts[userId] || 0,
+    newDocs: newCounts[userId] || 0,
+    deadline: lastDeadline[userId] || null,
   }));
 
   return {

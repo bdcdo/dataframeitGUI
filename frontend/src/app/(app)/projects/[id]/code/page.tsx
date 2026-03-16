@@ -44,10 +44,32 @@ export default async function CodePage({
     .eq("respondent_id", user!.id)
     .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
 
-  const existingAnswers: Record<string, Record<string, unknown>> = {};
+  const rawAnswers: Record<string, Record<string, unknown>> = {};
   responses?.forEach((r) => {
-    existingAnswers[r.document_id] = r.answers as Record<string, unknown>;
+    rawAnswers[r.document_id] = r.answers as Record<string, unknown>;
   });
+
+  // Sanitize: remove answers whose values don't match current schema options
+  const fields = ((project?.pydantic_fields || []) as PydanticField[]).filter(
+    (f) => f.target !== "llm_only"
+  );
+  const existingAnswers: Record<string, Record<string, unknown>> = {};
+  for (const [docId, answers] of Object.entries(rawAnswers)) {
+    const clean: Record<string, unknown> = {};
+    for (const field of fields) {
+      const val = answers[field.name];
+      if (val === undefined || val === null) continue;
+      if (field.type === "single" && field.options) {
+        if (field.options.includes(val as string)) clean[field.name] = val;
+      } else if (field.type === "multi" && field.options) {
+        const arr = Array.isArray(val) ? val.filter((v: string) => field.options!.includes(v)) : [];
+        if (arr.length > 0) clean[field.name] = arr;
+      } else {
+        clean[field.name] = val; // text fields: always keep
+      }
+    }
+    existingAnswers[docId] = clean;
+  }
 
   // Get progress data
   let progress = null;
@@ -71,9 +93,7 @@ export default async function CodePage({
     <CodingPage
       projectId={id}
       documents={documents}
-      fields={((project?.pydantic_fields || []) as PydanticField[]).filter(
-        (f) => f.target !== "llm_only"
-      )}
+      fields={fields}
       existingAnswers={existingAnswers}
       hasAssignments={documents.length > 0}
       progress={progress}

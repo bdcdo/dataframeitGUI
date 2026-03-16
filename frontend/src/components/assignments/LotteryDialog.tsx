@@ -33,16 +33,23 @@ import { cn } from "@/lib/utils";
 import { ptBR } from "date-fns/locale";
 import { format } from "date-fns";
 
+interface CoordinatorOption {
+  userId: string;
+  name: string;
+}
+
 interface LotteryDialogProps {
   projectId: string;
   totalDocs: number;
   totalResearchers: number;
+  coordinators?: CoordinatorOption[];
 }
 
 export function LotteryDialog({
   projectId,
   totalDocs,
   totalResearchers,
+  coordinators = [],
 }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -67,6 +74,15 @@ export function LotteryDialog({
   const [recurringCount, setRecurringCount] = useState(10);
   const [recurringStart, setRecurringStart] = useState<Date | undefined>();
 
+  // Coordinators
+  const [includedCoordinators, setIncludedCoordinators] = useState<Record<string, boolean>>({});
+
+  const includedCoordinatorIds = Object.entries(includedCoordinators)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+
+  const effectiveResearchers = totalResearchers + includedCoordinatorIds.length;
+
   // Label
   const [label, setLabel] = useState("");
 
@@ -89,6 +105,7 @@ export function LotteryDialog({
         ? recurringStart.toISOString().split("T")[0]
         : undefined,
     label: label || undefined,
+    includedCoordinatorIds: includedCoordinatorIds.length ? includedCoordinatorIds : undefined,
   });
 
   const handlePreview = async () => {
@@ -123,11 +140,11 @@ export function LotteryDialog({
   };
 
   const estimatedPerResearcher =
-    totalResearchers > 0
+    effectiveResearchers > 0
       ? Math.ceil(
           ((docSubsetEnabled ? docSubsetSize : totalDocs) *
             researchersPerDoc) /
-            totalResearchers
+            effectiveResearchers
         )
       : 0;
 
@@ -229,11 +246,40 @@ export function LotteryDialog({
             )}
 
             <p className="text-xs text-muted-foreground">
-              {totalDocs} documentos disponíveis, {totalResearchers}{" "}
-              pesquisadores. Estimativa: ~{estimatedPerResearcher} docs por
-              pesquisador.
+              {totalDocs} documentos disponíveis, {effectiveResearchers}{" "}
+              participantes. Estimativa: ~{estimatedPerResearcher} docs por
+              participante.
             </p>
           </div>
+
+          {coordinators.length > 0 && (
+            <>
+              <Separator />
+
+              {/* Section: Coordinators */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold">Coordenadores</h4>
+                <p className="text-xs text-muted-foreground">
+                  Ative para incluir coordenadores no sorteio.
+                </p>
+                {coordinators.map((c) => (
+                  <div key={c.userId} className="flex items-center justify-between">
+                    <Label htmlFor={`coord-${c.userId}`}>{c.name}</Label>
+                    <Switch
+                      id={`coord-${c.userId}`}
+                      checked={!!includedCoordinators[c.userId]}
+                      onCheckedChange={(checked) =>
+                        setIncludedCoordinators((prev) => ({
+                          ...prev,
+                          [c.userId]: checked,
+                        }))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
 
           <Separator />
 
