@@ -5,7 +5,7 @@ from config import settings
 from routes.pydantic_routes import router as pydantic_router
 from routes.llm_routes import router as llm_router
 
-app = FastAPI(title="GUI Analise Sistematica API")
+app = FastAPI(title="GUI Analise de Conteudo API")
 
 app.add_middleware(
     CORSMiddleware,

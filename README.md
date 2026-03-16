@@ -1,6 +1,6 @@
-# GUI Analise Sistematica
+# GUI Analise de Conteudo
 
-Plataforma web para analise sistematica de documentos, substituindo Google Forms + CLI.
+Plataforma web para analise de conteudo de documentos, substituindo Google Forms + CLI.
 
 ## Funcionalidades
 
@@ -57,14 +57,14 @@ npx supabase db push
 
 ```bash
 cd backend
-fly apps create gui-analise-sistematica-api
+fly apps create gui-analise-conteudo-api
 fly secrets set SUPABASE_URL=https://xxx.supabase.co \
   SUPABASE_SERVICE_KEY=your-key \
   CORS_ORIGINS='["https://seu-dominio.vercel.app"]'
 fly deploy
 ```
 
-Verificar: `curl https://gui-analise-sistematica-api.fly.dev/health`
+Verificar: `curl https://gui-analise-conteudo-api.fly.dev/health`
 
 ### 3. Frontend (Vercel)
 
@@ -73,7 +73,7 @@ cd frontend
 vercel link
 vercel env add NEXT_PUBLIC_SUPABASE_URL     # https://xxx.supabase.co
 vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY
-vercel env add NEXT_PUBLIC_API_URL           # https://gui-analise-sistematica-api.fly.dev
+vercel env add NEXT_PUBLIC_API_URL           # https://gui-analise-conteudo-api.fly.dev
 vercel --prod
 ```
 

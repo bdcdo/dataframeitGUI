@@ -1,4 +1,4 @@
-app = "gui-analise-sistematica-api"
+app = "gui-analise-conteudo-api"
 primary_region = "gru"
 
 [build]

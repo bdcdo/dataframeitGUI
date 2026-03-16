@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Análise Sistemática",
-  description: "Plataforma para análise sistemática de documentos",
+  title: "Análise de Conteúdo",
+  description: "Plataforma para análise de conteúdo de documentos",
 };
 
 export default function RootLayout({

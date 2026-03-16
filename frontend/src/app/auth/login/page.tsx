@@ -36,9 +36,9 @@ export default function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-lg bg-brand">
-            <span className="text-lg font-bold text-brand-foreground">AS</span>
+            <span className="text-lg font-bold text-brand-foreground">AC</span>
           </div>
-          <CardTitle>Análise Sistemática</CardTitle>
+          <CardTitle>Análise de Conteúdo</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
