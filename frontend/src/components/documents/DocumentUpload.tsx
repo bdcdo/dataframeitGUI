@@ -3,7 +3,13 @@
 import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { uploadDocuments } from "@/actions/documents";
+import {
+  uploadDocuments,
+  checkDuplicates,
+  type DuplicateMatch,
+  type UploadOptions,
+} from "@/actions/documents";
+import { DuplicateAnalysis } from "./DuplicateAnalysis";
 import { toast } from "sonner";
 import Papa from "papaparse";
 
@@ -11,7 +17,17 @@ interface DocumentUploadProps {
   projectId: string;
 }
 
+type UploadStep = "idle" | "mapping" | "checking" | "analysis" | "uploading";
+
+interface AnalysisResult {
+  docs: { text: string; title?: string; external_id?: string }[];
+  duplicates: DuplicateMatch[];
+  duplicatesWithResponses: number;
+  matchType: string;
+}
+
 export function DocumentUpload({ projectId }: DocumentUploadProps) {
+  const [step, setStep] = useState<UploadStep>("idle");
   const [loading, setLoading] = useState(false);
   const [parsedData, setParsedData] = useState<Record<string, string>[] | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
@@ -21,6 +37,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
     external_id: "",
   });
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
 
   const preview = parsedData?.slice(0, 5) ?? null;
 
@@ -33,6 +50,8 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
         const cols = results.meta.fields || [];
         setColumns(cols);
         setMapping({ text: "", title: "", external_id: "" });
+        setStep("mapping");
+        setAnalysis(null);
       },
     });
   }, []);
@@ -43,22 +62,19 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
     if (file) handleFile(file);
   }, [handleFile]);
 
-  const handleUpload = async () => {
-    if (!parsedData || !mapping.text) return;
-
-    const docs = parsedData
+  const buildDocs = () => {
+    if (!parsedData || !mapping.text) return [];
+    return parsedData
       .filter((row) => row[mapping.text]?.trim())
       .map((row) => ({
         text: row[mapping.text],
         title: mapping.title ? row[mapping.title] : undefined,
         external_id: mapping.external_id ? row[mapping.external_id] : undefined,
       }));
+  };
 
-    if (docs.length === 0) {
-      toast.error("Nenhum documento válido encontrado");
-      return;
-    }
-
+  const doUpload = async (docs: { text: string; title?: string; external_id?: string }[], options?: UploadOptions) => {
+    setStep("uploading");
     setLoading(true);
     setProgress({ current: 0, total: docs.length });
 
@@ -67,39 +83,112 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       for (let i = 0; i < docs.length; i += chunkSize) {
         const chunk = docs.slice(i, i + chunkSize);
         const isLast = i + chunkSize >= docs.length;
-        const result = await uploadDocuments(projectId, chunk, isLast);
+        // Pass options only on first chunk (duplicateMap indices refer to full array)
+        const result = await uploadDocuments(
+          projectId,
+          chunk,
+          isLast,
+          i === 0 ? options : { mode: options?.mode ?? "add_all" }
+        );
         if (result.error) throw new Error(result.error);
         setProgress({ current: Math.min(i + chunkSize, docs.length), total: docs.length });
       }
       toast.success(`${docs.length} documentos importados!`);
       setParsedData(null);
+      setStep("idle");
+      setAnalysis(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao importar documentos");
+      setStep("analysis");
     } finally {
       setLoading(false);
       setProgress(null);
     }
   };
 
+  const handleCheckAndUpload = async () => {
+    const docs = buildDocs();
+    if (docs.length === 0) {
+      toast.error("Nenhum documento válido encontrado");
+      return;
+    }
+
+    setStep("checking");
+    setLoading(true);
+
+    try {
+      const result = await checkDuplicates(
+        projectId,
+        docs.map((d) => ({ external_id: d.external_id, text: d.text }))
+      );
+
+      if (result.duplicates.length === 0) {
+        // No duplicates — upload directly
+        await doUpload(docs);
+      } else {
+        // Has duplicates — show analysis panel
+        const hasExternalIdMatch = result.duplicates.some(
+          (d) => d.matchType === "external_id"
+        );
+        setAnalysis({
+          docs,
+          duplicates: result.duplicates,
+          duplicatesWithResponses: result.duplicatesWithResponses,
+          matchType: hasExternalIdMatch ? "ID externo" : "conteúdo (hash)",
+        });
+        setStep("analysis");
+        setLoading(false);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao verificar duplicatas");
+      setStep("mapping");
+      setLoading(false);
+    }
+  };
+
+  const handleImportNewOnly = () => {
+    if (!analysis) return;
+    doUpload(analysis.docs, {
+      mode: "add_new_only",
+      duplicateMap: analysis.duplicates,
+    });
+  };
+
+  const handleReplaceAndImport = (deleteResponses: boolean) => {
+    if (!analysis) return;
+    doUpload(analysis.docs, {
+      mode: "replace_and_add",
+      duplicateMap: analysis.duplicates,
+      deleteResponses,
+    });
+  };
+
+  const handleImportAll = () => {
+    if (!analysis) return;
+    doUpload(analysis.docs, { mode: "add_all" });
+  };
+
   return (
     <div className="space-y-4">
-      <Card
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
-        className="border-dashed"
-      >
-        <CardContent className="flex flex-col items-center gap-2 py-8">
-          <p className="text-sm text-muted-foreground">Arraste um CSV ou clique para selecionar</p>
-          <input
-            type="file"
-            accept=".csv"
-            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-            className="text-sm"
-          />
-        </CardContent>
-      </Card>
+      {step !== "analysis" && (
+        <Card
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDrop}
+          className="border-dashed"
+        >
+          <CardContent className="flex flex-col items-center gap-2 py-8">
+            <p className="text-sm text-muted-foreground">Arraste um CSV ou clique para selecionar</p>
+            <input
+              type="file"
+              accept=".csv"
+              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+              className="text-sm"
+            />
+          </CardContent>
+        </Card>
+      )}
 
-      {preview && columns.length > 0 && (
+      {step === "mapping" && preview && columns.length > 0 && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
             <div>
@@ -155,11 +244,44 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
               </tbody>
             </table>
           </div>
-          <Button onClick={handleUpload} disabled={loading || !mapping.text} className="bg-brand hover:bg-brand/90 text-brand-foreground">
+          <Button
+            onClick={handleCheckAndUpload}
+            disabled={loading || !mapping.text}
+            className="bg-brand hover:bg-brand/90 text-brand-foreground"
+          >
             {loading
-              ? progress ? `Importando ${progress.current}/${progress.total}...` : "Importando..."
+              ? "Verificando duplicatas..."
               : "Importar"}
           </Button>
+        </div>
+      )}
+
+      {step === "checking" && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+          Verificando duplicatas...
+        </div>
+      )}
+
+      {step === "analysis" && analysis && (
+        <DuplicateAnalysis
+          totalCount={analysis.docs.length}
+          newCount={analysis.docs.length - analysis.duplicates.length}
+          duplicateCount={analysis.duplicates.length}
+          duplicatesWithResponses={analysis.duplicatesWithResponses}
+          matchType={analysis.matchType}
+          onImportNewOnly={handleImportNewOnly}
+          onReplaceAndImport={handleReplaceAndImport}
+          onImportAll={handleImportAll}
+          onCancel={() => setStep("mapping")}
+          loading={loading}
+        />
+      )}
+
+      {step === "uploading" && progress && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+          Importando {progress.current}/{progress.total}...
         </div>
       )}
     </div>
