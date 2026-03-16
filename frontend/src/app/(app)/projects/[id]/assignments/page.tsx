@@ -42,17 +42,7 @@ export default async function AssignmentsPage({
   const typedResearchers = (researchers || []) as unknown as TypedMember[];
   const typedCoordinators = (coordinators || []) as unknown as TypedMember[];
 
-  // Coordinators who have assignments should appear in the table
-  const coordinatorUserIds = new Set(typedCoordinators.map((c) => c.user_id));
-  const assignedCoordinatorIds = new Set(
-    (assignments || [])
-      .filter((a) => coordinatorUserIds.has(a.user_id))
-      .map((a) => a.user_id)
-  );
-  const coordinatorsWithAssignments = typedCoordinators.filter((c) =>
-    assignedCoordinatorIds.has(c.user_id)
-  );
-  const allResearchersForTable = [...typedResearchers, ...coordinatorsWithAssignments];
+  const allResearchersForTable = [...typedResearchers, ...typedCoordinators];
 
   const coordinatorOptions = typedCoordinators.map((c) => ({
     userId: c.user_id,
