@@ -30,6 +30,7 @@ export interface PydanticField {
   options: string[] | null;
   description: string;
   target?: "all" | "llm_only" | "human_only";
+  required?: boolean;
   hash?: string;
 }
 

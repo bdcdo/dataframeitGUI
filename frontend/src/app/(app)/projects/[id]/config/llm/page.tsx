@@ -1,5 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { LlmControl } from "@/components/schema/LlmControl";
+import type { PydanticField } from "@/lib/types";
 
 export default async function LlmPage({
   params,
@@ -11,7 +12,7 @@ export default async function LlmPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("llm_provider, llm_model, llm_kwargs")
+    .select("llm_provider, llm_model, llm_kwargs, pydantic_fields")
     .eq("id", id)
     .single();
 
@@ -23,6 +24,7 @@ export default async function LlmPage({
         llm_model: project?.llm_model || "gemini-3-flash-preview",
         llm_kwargs: (project?.llm_kwargs as Record<string, unknown>) || { temperature: 1.0, thinking_level: "medium" },
       }}
+      pydanticFields={(project?.pydantic_fields as PydanticField[]) || null}
     />
   );
 }

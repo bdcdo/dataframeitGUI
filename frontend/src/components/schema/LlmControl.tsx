@@ -1,12 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
-import { saveLlmConfig } from "@/actions/schema";
+import { saveLlmConfig, toggleLlmField } from "@/actions/schema";
 import { fetchFastAPI } from "@/lib/api";
+import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
 import { toast } from "sonner";
+import type { PydanticField } from "@/lib/types";
 
 interface LlmControlProps {
   projectId: string;
@@ -15,15 +20,20 @@ interface LlmControlProps {
     llm_model: string;
     llm_kwargs: Record<string, any>;
   };
+  pydanticFields: PydanticField[] | null;
 }
 
-export function LlmControl({ projectId, config: initialConfig }: LlmControlProps) {
+export function LlmControl({ projectId, config: initialConfig, pydanticFields }: LlmControlProps) {
   const [config, setConfig] = useState(initialConfig);
   const [jobId, setJobId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState<string>("idle");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const includeJustifications = !!(config.llm_kwargs.include_justifications);
+  const hasAmbiguities = pydanticFields?.some((f) => f.name === "llm_ambiguidades") ?? false;
 
   useEffect(() => {
     return () => {
@@ -75,6 +85,24 @@ export function LlmControl({ projectId, config: initialConfig }: LlmControlProps
     }, 2000);
   };
 
+  const handleToggleJustifications = (checked: boolean) => {
+    setConfig((c) => ({
+      ...c,
+      llm_kwargs: { ...c.llm_kwargs, include_justifications: checked },
+    }));
+  };
+
+  const handleToggleAmbiguities = (checked: boolean) => {
+    startTransition(async () => {
+      try {
+        await toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked);
+        toast.success(checked ? "Campo de ambiguidades adicionado" : "Campo de ambiguidades removido");
+      } catch (e: any) {
+        toast.error(e.message);
+      }
+    });
+  };
+
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6">
       <div className="grid grid-cols-2 gap-4">
@@ -121,6 +149,41 @@ export function LlmControl({ projectId, config: initialConfig }: LlmControlProps
           </select>
         </div>
       </div>
+
+      {/* Comportamento do LLM */}
+      <div className="space-y-4">
+        <Separator />
+        <Label className="text-sm font-medium">Comportamento do LLM</Label>
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <Label className="text-sm">Pedir justificativas para cada resposta</Label>
+            <p className="text-xs text-muted-foreground">
+              O LLM explicará o raciocínio por trás de cada classificação.
+            </p>
+          </div>
+          <Switch
+            checked={includeJustifications}
+            onCheckedChange={handleToggleJustifications}
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <Label className="text-sm">Registrar ambiguidades e dificuldades</Label>
+            <p className="text-xs text-muted-foreground">
+              O LLM reportará incertezas nas instruções e dificuldades na classificação. (campo llm_only)
+            </p>
+          </div>
+          <Switch
+            checked={hasAmbiguities}
+            onCheckedChange={handleToggleAmbiguities}
+            disabled={isPending}
+          />
+        </div>
+      </div>
+
+      <Separator />
 
       <div className="flex gap-2">
         <Button variant="outline" onClick={handleSave}>Salvar Config</Button>

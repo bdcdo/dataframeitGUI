@@ -130,6 +130,31 @@ export async function saveSchemaFromGUI(
   return saveSchema(projectId, code, fieldsWithHash);
 }
 
+export async function toggleLlmField(
+  projectId: string,
+  fieldDef: PydanticField,
+  enabled: boolean
+) {
+  const supabase = await createSupabaseServer();
+  const { data: project } = await supabase
+    .from("projects")
+    .select("pydantic_fields")
+    .eq("id", projectId)
+    .single();
+
+  let fields = (project?.pydantic_fields as PydanticField[]) || [];
+
+  if (enabled) {
+    if (!fields.some((f) => f.name === fieldDef.name)) {
+      fields = [...fields, fieldDef];
+    }
+  } else {
+    fields = fields.filter((f) => f.name !== fieldDef.name);
+  }
+
+  await saveSchemaFromGUI(projectId, fields);
+}
+
 export async function saveLlmConfig(
   projectId: string,
   config: {

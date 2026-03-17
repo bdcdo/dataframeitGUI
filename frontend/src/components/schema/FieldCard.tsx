@@ -9,6 +9,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Switch } from "@/components/ui/switch";
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
@@ -114,6 +115,11 @@ export function FieldCard({
                   {TARGET_LABELS[field.target]}
                 </Badge>
               )}
+              {field.required === false && (
+                <Badge className="text-xs shrink-0 bg-muted text-muted-foreground">
+                  Opcional
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground truncate ml-auto">
                 {field.description}
               </span>
@@ -215,6 +221,24 @@ export function FieldCard({
                 ))}
               </div>
             </div>
+
+            {/* Obrigatório (não faz sentido para llm_only) */}
+            {(field.target || "all") !== "llm_only" && (
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-xs">Obrigatório</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Campos opcionais não bloqueiam a conclusão da tarefa
+                  </p>
+                </div>
+                <Switch
+                  checked={field.required !== false}
+                  onCheckedChange={(checked) =>
+                    updateField({ required: checked ? undefined : false })
+                  }
+                />
+              </div>
+            )}
 
             {/* Opções (só para single/multi) */}
             {(field.type === "single" || field.type === "multi") && (

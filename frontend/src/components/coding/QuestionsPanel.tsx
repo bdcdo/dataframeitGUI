@@ -3,7 +3,7 @@
 import { useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldRenderer } from "./FieldRenderer";
-import { Check } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
 
@@ -12,12 +12,14 @@ interface QuestionsPanelProps {
   answers: Record<string, any>;
   onAnswer: (fieldName: string, value: any) => void;
   onSubmit: () => void;
+  submitting?: boolean;
 }
 
-export function QuestionsPanel({ fields, answers, onAnswer, onSubmit }: QuestionsPanelProps) {
+export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  const answeredCount = fields.filter(
+  const requiredFields = fields.filter((f) => f.required !== false);
+  const answeredRequiredCount = requiredFields.filter(
     (f) => answers[f.name] !== undefined && answers[f.name] !== null && answers[f.name] !== ""
   ).length;
 
@@ -34,7 +36,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit }: Question
       {/* Header */}
       <div className="border-b px-4 py-2.5 shrink-0">
         <p className="text-xs font-medium text-muted-foreground">
-          Perguntas ({answeredCount}/{fields.length} respondidas)
+          Perguntas ({answeredRequiredCount}/{requiredFields.length} obrigatórias respondidas)
         </p>
       </div>
 
@@ -52,6 +54,9 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit }: Question
             <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
               <span className="text-muted-foreground">{i + 1}.</span>{" "}
               {field.description}
+              {field.required === false && (
+                <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
+              )}
               {isAnswered(field) && <Check className="h-3.5 w-3.5 text-brand shrink-0" />}
             </p>
             <FieldRenderer
@@ -67,9 +72,17 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit }: Question
       <div className="border-t px-4 py-3 shrink-0">
         <Button
           onClick={onSubmit}
+          disabled={submitting}
           className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
         >
-          Enviar respostas
+          {submitting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Salvando...
+            </>
+          ) : (
+            "Enviar respostas"
+          )}
         </Button>
       </div>
     </div>

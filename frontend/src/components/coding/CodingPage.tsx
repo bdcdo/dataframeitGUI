@@ -19,6 +19,9 @@ import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
+import { toast } from "sonner";
+import { CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface CodingPageProps {
   projectId: string;
@@ -62,6 +65,12 @@ export function CodingPage({
 
   // Mode state
   const [mode, setMode] = useState<"assigned" | "browse">(initial.mode);
+
+  // Submit loading state
+  const [submitting, setSubmitting] = useState(false);
+
+  // All assigned docs completed
+  const [allDone, setAllDone] = useState(false);
 
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -134,23 +143,29 @@ export function CodingPage({
     [currentDoc?.id]
   );
 
-  const handleSubmit = useCallback(() => {
-    if (currentDoc && Object.keys(docAnswers).length > 0) {
-      saveResponse(projectId, currentDoc.id, docAnswers).catch((e) =>
-        console.error("Failed to save:", e)
-      );
-    }
-    if (docIndex < documents.length - 1) {
-      setDocIndex(docIndex + 1);
+  const handleSubmit = useCallback(async () => {
+    if (!currentDoc || Object.keys(docAnswers).length === 0) return;
+    setSubmitting(true);
+    const result = await saveResponse(projectId, currentDoc.id, docAnswers);
+    setSubmitting(false);
+    if (result.success) {
+      toast.success("Respostas salvas!");
+      if (docIndex < documents.length - 1) {
+        setDocIndex(docIndex + 1);
+      } else {
+        setAllDone(true);
+      }
+    } else {
+      toast.error(result.error || "Erro ao salvar respostas");
     }
   }, [currentDoc, docAnswers, projectId, docIndex, documents.length]);
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
       if (currentDoc && Object.keys(docAnswers).length > 0) {
-        saveResponse(projectId, currentDoc.id, docAnswers).catch((e) =>
-          console.error("Failed to save:", e)
-        );
+        saveResponse(projectId, currentDoc.id, docAnswers).then((result) => {
+          if (!result.success) toast.error(result.error || "Erro ao salvar respostas");
+        });
       }
       const clampedIndex = Math.max(0, Math.min(newIndex, documents.length - 1));
       setDocIndex(clampedIndex);
@@ -200,33 +215,37 @@ export function CodingPage({
     []
   );
 
-  const handleBrowseSubmit = useCallback(() => {
-    if (selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
-      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers).catch((e) =>
-        console.error("Failed to save:", e)
+  const handleBrowseSubmit = useCallback(async () => {
+    if (!selectedBrowseDoc || Object.keys(browseAnswers).length === 0) return;
+    setSubmitting(true);
+    const result = await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
+    setSubmitting(false);
+    if (result.success) {
+      toast.success("Respostas salvas!");
+      setBrowseDocuments((prev) =>
+        prev?.map((d) =>
+          d.id === selectedBrowseDoc.id
+            ? {
+                ...d,
+                responseCount: d.userAlreadyResponded
+                  ? d.responseCount
+                  : d.responseCount + 1,
+                userAlreadyResponded: true,
+              }
+            : d
+        ) ?? null
       );
+      setSelectedBrowseDoc(null);
+      setBrowseAnswers({});
+    } else {
+      toast.error(result.error || "Erro ao salvar respostas");
     }
-    setBrowseDocuments((prev) =>
-      prev?.map((d) =>
-        d.id === selectedBrowseDoc?.id
-          ? {
-              ...d,
-              responseCount: d.userAlreadyResponded
-                ? d.responseCount
-                : d.responseCount + 1,
-              userAlreadyResponded: true,
-            }
-          : d
-      ) ?? null
-    );
-    setSelectedBrowseDoc(null);
-    setBrowseAnswers({});
   }, [selectedBrowseDoc, browseAnswers, projectId]);
 
   const handleBrowseBack = useCallback(() => {
     if (selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
-      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers)
-        .then(() => {
+      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers).then((result) => {
+        if (result.success) {
           setBrowseDocuments((prev) =>
             prev?.map((d) =>
               d.id === selectedBrowseDoc.id
@@ -234,8 +253,8 @@ export function CodingPage({
                 : d
             ) ?? null
           );
-        })
-        .catch((e) => console.error("Failed to save:", e));
+        }
+      });
     }
     setSelectedBrowseDoc(null);
     setBrowseAnswers({});
@@ -313,7 +332,26 @@ export function CodingPage({
 
       {mode === "assigned" && (
         <>
-          {!currentDoc ? (
+          {allDone ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+              <CheckCircle2 className="h-16 w-16 text-brand" />
+              <h2 className="text-xl font-semibold">Parabéns!</h2>
+              <p className="text-muted-foreground">
+                Você completou todos os {documents.length} documento{documents.length !== 1 ? "s" : ""} atribuído{documents.length !== 1 ? "s" : ""}.
+              </p>
+              <div className="flex gap-3 mt-2">
+                <Button variant="outline" asChild>
+                  <a href={`/projects/${projectId}`}>Meu Progresso</a>
+                </Button>
+                <Button
+                  className="bg-brand hover:bg-brand/90 text-brand-foreground"
+                  onClick={() => { setMode("browse"); setAllDone(false); }}
+                >
+                  Explorar mais documentos
+                </Button>
+              </div>
+            </div>
+          ) : !currentDoc ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               Nenhum documento atribuído. Use a aba Explorar.
             </div>
@@ -350,6 +388,7 @@ export function CodingPage({
                     answers={docAnswers}
                     onAnswer={handleAnswer}
                     onSubmit={handleSubmit}
+                    submitting={submitting}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -400,6 +439,7 @@ export function CodingPage({
                     answers={browseAnswers}
                     onAnswer={handleBrowseAnswer}
                     onSubmit={handleBrowseSubmit}
+                    submitting={submitting}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>

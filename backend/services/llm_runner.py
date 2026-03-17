@@ -20,6 +20,24 @@ def get_job_status(job_id: str) -> dict:
     return _jobs[job_id]
 
 
+def _extend_model_with_justifications(model_class):
+    """Add a justification field for each existing field in the model."""
+    from pydantic import BaseModel, Field, create_model
+
+    extra_fields = {}
+    for name in model_class.model_fields:
+        just_name = f"{name}_justification"
+        extra_fields[just_name] = (
+            str,
+            Field(description=f"Justificativa detalhada para a resposta de '{name}'"),
+        )
+    return create_model(
+        f"{model_class.__name__}WithJustifications",
+        __base__=model_class,
+        **extra_fields,
+    )
+
+
 def _compile_model(pydantic_code: str):
     """Compile Pydantic code and return the model class."""
     namespace: dict = {}
@@ -68,6 +86,11 @@ async def run_llm(
         if not model_class:
             _jobs[job_id] = {"status": "error", "progress": 0, "total": 0, "errors": ["No BaseModel found"]}
             return
+
+        # Optionally extend model with justification fields
+        include_justifications = llm_kwargs.pop("include_justifications", False)
+        if include_justifications:
+            model_class = _extend_model_with_justifications(model_class)
 
         # Build DataFrame
         df = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
