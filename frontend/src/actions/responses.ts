@@ -37,12 +37,13 @@ export async function saveResponse(
       .single();
 
     if (existing) {
-      await supabase
+      const { error: updateErr } = await supabase
         .from("responses")
         .update({ answers })
         .eq("id", existing.id);
+      if (updateErr) return { success: false, error: updateErr.message };
     } else {
-      await supabase.from("responses").insert({
+      const { error: insertErr } = await supabase.from("responses").insert({
         project_id: projectId,
         document_id: documentId,
         respondent_id: user.id,
@@ -51,14 +52,16 @@ export async function saveResponse(
         answers,
         is_current: true,
       });
+      if (insertErr) return { success: false, error: insertErr.message };
     }
 
     // Check if all fields answered -> update assignment status
-    const { data: project } = await supabase
+    const { data: project, error: projErr } = await supabase
       .from("projects")
       .select("pydantic_fields")
       .eq("id", projectId)
       .single();
+    if (projErr) return { success: false, error: projErr.message };
 
     if (project?.pydantic_fields) {
       const fields = project.pydantic_fields as PydanticField[];
@@ -70,19 +73,32 @@ export async function saveResponse(
       );
 
       if (allAnswered) {
-        await supabase
+        const { error: assignErr } = await supabase
           .from("assignments")
           .update({ status: "concluido", completed_at: new Date().toISOString() })
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("user_id", user.id);
+        if (assignErr) return { success: false, error: assignErr.message };
       } else {
-        await supabase
+        // So regredir se NAO esta concluido (evita desfazer progresso por auto-save)
+        const { data: currentAssignment } = await supabase
           .from("assignments")
-          .update({ status: "em_andamento", completed_at: null })
+          .select("status")
           .eq("project_id", projectId)
           .eq("document_id", documentId)
-          .eq("user_id", user.id);
+          .eq("user_id", user.id)
+          .single();
+
+        if (currentAssignment && currentAssignment.status !== "concluido") {
+          const { error: assignErr } = await supabase
+            .from("assignments")
+            .update({ status: "em_andamento", completed_at: null })
+            .eq("project_id", projectId)
+            .eq("document_id", documentId)
+            .eq("user_id", user.id);
+          if (assignErr) return { success: false, error: assignErr.message };
+        }
       }
     }
 

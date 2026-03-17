@@ -19,6 +19,7 @@ import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
+import { CreateDiscussionDialog } from "@/components/discussions/CreateDiscussionDialog";
 import { toast } from "sonner";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,10 @@ export function CodingPage({
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
+
+  // Discussion dialog state
+  const [discussDocId, setDiscussDocId] = useState<string | undefined>(undefined);
+  const [discussDialogOpen, setDiscussDialogOpen] = useState(false);
 
   // Browse mode state
   const [browseDocuments, setBrowseDocuments] = useState<BrowseDocument[] | null>(null);
@@ -373,6 +378,10 @@ export function CodingPage({
                   onNavigate={handleDocNavigate}
                   onToggleFullscreen={toggleFullscreen}
                   parecerUrl={assignedParecerUrl}
+                  onDiscuss={() => {
+                    setDiscussDocId(currentDoc?.id);
+                    setDiscussDialogOpen(true);
+                  }}
                 />
               )}
               <ResizablePanelGroup
@@ -424,6 +433,10 @@ export function CodingPage({
                   onRandom={handleBrowseRandom}
                   onToggleFullscreen={toggleFullscreen}
                   parecerUrl={browseParecerUrl}
+                  onDiscuss={() => {
+                    setDiscussDocId(selectedBrowseDoc?.id);
+                    setDiscussDialogOpen(true);
+                  }}
                 />
               )}
               <ResizablePanelGroup
@@ -447,6 +460,37 @@ export function CodingPage({
           )}
         </>
       )}
+
+      {/* Discussion dialog triggered from coding nav */}
+      <CreateDiscussionDialog
+        projectId={projectId}
+        documents={(() => {
+          const base = documents.map((d) => ({
+            id: d.id,
+            title: d.title,
+            external_id: d.external_id,
+          }));
+          if (
+            discussDocId &&
+            !base.find((d) => d.id === discussDocId) &&
+            selectedBrowseDoc
+          ) {
+            return [
+              ...base,
+              {
+                id: selectedBrowseDoc.id,
+                title: selectedBrowseDoc.title,
+                external_id: selectedBrowseDoc.external_id ?? null,
+              },
+            ];
+          }
+          return base;
+        })()}
+        defaultDocumentId={discussDocId}
+        externalOpen={discussDialogOpen}
+        onExternalOpenChange={setDiscussDialogOpen}
+        onCreated={() => setDiscussDialogOpen(false)}
+      />
     </div>
   );
 }

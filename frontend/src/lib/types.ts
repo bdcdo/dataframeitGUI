@@ -110,3 +110,24 @@ export interface QuestionMeta {
   field_name: string;
   priority: "ALTA" | "MEDIA" | "BAIXA";
 }
+
+export interface Discussion {
+  id: string;
+  project_id: string;
+  document_id: string | null;
+  created_by: string;
+  title: string;
+  body: string | null;
+  status: "open" | "resolved";
+  resolved_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export interface DiscussionComment {
+  id: string;
+  discussion_id: string;
+  created_by: string;
+  body: string;
+  created_at: string;
+}

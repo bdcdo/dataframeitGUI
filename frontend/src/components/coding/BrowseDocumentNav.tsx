@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
-import { ArrowLeft, Shuffle, Maximize2 } from "lucide-react";
+import { ArrowLeft, Shuffle, Maximize2, MessageSquarePlus } from "lucide-react";
 
 interface BrowseDocumentNavProps {
   title: string;
@@ -12,6 +12,7 @@ interface BrowseDocumentNavProps {
   onRandom: () => void;
   onToggleFullscreen?: () => void;
   parecerUrl?: string;
+  onDiscuss?: () => void;
 }
 
 export function BrowseDocumentNav({
@@ -21,6 +22,7 @@ export function BrowseDocumentNav({
   onRandom,
   onToggleFullscreen,
   parecerUrl,
+  onDiscuss,
 }: BrowseDocumentNavProps) {
   return (
     <div className="flex h-8 items-center justify-between border-b px-4 text-sm">
@@ -35,6 +37,11 @@ export function BrowseDocumentNav({
         </Button>
         <span className="truncate font-medium">{title}</span>
         {parecerUrl && <CopyLinkButton url={parecerUrl} />}
+        {onDiscuss && (
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onDiscuss} title="Abrir discussão">
+            <MessageSquarePlus className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <Badge variant="secondary">
