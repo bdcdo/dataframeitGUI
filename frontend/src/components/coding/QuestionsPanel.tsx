@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldRenderer } from "./FieldRenderer";
 import { Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import type { PydanticField } from "@/lib/types";
 
 interface QuestionsPanelProps {
@@ -17,6 +18,7 @@ interface QuestionsPanelProps {
 
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
   const requiredFields = fields.filter((f) => f.required !== false);
   const answeredRequiredCount = requiredFields.filter(
@@ -30,6 +32,35 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     },
     [answers]
   );
+
+  const handleAnswerWithClear = useCallback(
+    (fieldName: string, value: any) => {
+      onAnswer(fieldName, value);
+      setHighlightedFields((prev) => {
+        if (!prev.has(fieldName)) return prev;
+        const next = new Set(prev);
+        next.delete(fieldName);
+        return next;
+      });
+    },
+    [onAnswer]
+  );
+
+  const handleSubmitWithValidation = useCallback(() => {
+    const unanswered = fields
+      .filter((f) => f.required !== false && !isAnswered(f))
+      .map((f) => f.name);
+
+    if (unanswered.length > 0) {
+      setHighlightedFields(new Set(unanswered));
+      const firstIdx = fields.findIndex((f) => unanswered.includes(f.name));
+      questionRefs.current[firstIdx]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      toast.warning("Preencha todas as perguntas obrigatórias");
+      return;
+    }
+
+    onSubmit();
+  }, [fields, isAnswered, onSubmit]);
 
   return (
     <div className="flex h-full flex-col bg-card">
@@ -47,8 +78,10 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
             key={field.name}
             ref={(el) => { questionRefs.current[i] = el; }}
             className={cn(
-              "border-l-2 pl-4 py-2 transition-colors",
-              isAnswered(field) ? "border-brand" : "border-muted"
+              "border-l-2 pl-4 py-2 rounded-r-md transition-colors",
+              highlightedFields.has(field.name)
+                ? "border-l-destructive bg-destructive/10"
+                : isAnswered(field) ? "border-brand" : "border-muted"
             )}
           >
             <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
@@ -62,7 +95,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
             <FieldRenderer
               field={field}
               value={answers[field.name] ?? null}
-              onChange={(val) => onAnswer(field.name, val)}
+              onChange={(val) => handleAnswerWithClear(field.name, val)}
             />
           </div>
         ))}
@@ -71,7 +104,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
       {/* Footer fixo com botão de enviar */}
       <div className="border-t px-4 py-3 shrink-0">
         <Button
-          onClick={onSubmit}
+          onClick={handleSubmitWithValidation}
           disabled={submitting}
           className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
         >
