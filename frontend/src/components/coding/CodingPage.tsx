@@ -138,6 +138,36 @@ export function CodingPage({
   const currentDoc = documents[docIndex];
   const docAnswers = allAnswers[currentDoc?.id] || {};
 
+  // --- Auto-save on exit (#14) ---
+  // Warn on page exit (close tab, navigate away)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const dirty = mode === "assigned"
+        ? currentDoc != null && Object.keys(docAnswers).length > 0
+        : selectedBrowseDoc != null && Object.keys(browseAnswers).length > 0;
+      if (dirty) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [mode, currentDoc, docAnswers, selectedBrowseDoc, browseAnswers]);
+
+  // Auto-save when tab loses visibility (fallback for close without confirm)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        if (mode === "assigned" && currentDoc && Object.keys(docAnswers).length > 0) {
+          saveResponse(projectId, currentDoc.id, docAnswers);
+        } else if (mode === "browse" && selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
+          saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [mode, currentDoc, docAnswers, selectedBrowseDoc, browseAnswers, projectId]);
+
   const handleAnswer = useCallback(
     (fieldName: string, value: any) => {
       setAllAnswers((prev) => ({
