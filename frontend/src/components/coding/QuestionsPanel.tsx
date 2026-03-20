@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldRenderer } from "./FieldRenderer";
 import { Check, Loader2 } from "lucide-react";
@@ -19,6 +19,10 @@ interface QuestionsPanelProps {
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setHighlightedFields(new Set());
+  }, [fields]);
 
   const requiredFields = fields.filter((f) => f.required !== false);
   const answeredRequiredCount = requiredFields.filter(
@@ -47,8 +51,10 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   );
 
   const handleSubmitWithValidation = useCallback(() => {
+    if (submitting) return;
+
     const unanswered = fields
-      .filter((f) => f.required !== false && !isAnswered(f))
+      .filter((f) => (f.target || "all") !== "llm_only" && f.required !== false && !isAnswered(f))
       .map((f) => f.name);
 
     if (unanswered.length > 0) {
@@ -60,7 +66,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     }
 
     onSubmit();
-  }, [fields, isAnswered, onSubmit]);
+  }, [fields, isAnswered, onSubmit, submitting]);
 
   return (
     <div className="flex h-full flex-col bg-card">
