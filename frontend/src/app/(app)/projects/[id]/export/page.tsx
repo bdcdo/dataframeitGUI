@@ -20,18 +20,18 @@ export default async function ExportPageRoute({
     description: string;
   }[];
 
-  // Get all responses with document info
-  const { data: responses } = await supabase
-    .from("responses")
-    .select("*, documents(external_id, title)")
-    .eq("project_id", id)
-    .eq("is_current", true);
-
-  // Get reviews
-  const { data: reviews } = await supabase
-    .from("reviews")
-    .select("*")
-    .eq("project_id", id);
+  // Get responses + review count in parallel
+  const [{ data: responses }, { count: reviewCount }] = await Promise.all([
+    supabase
+      .from("responses")
+      .select("document_id, respondent_name, respondent_type, answers, documents(external_id, title)")
+      .eq("project_id", id)
+      .eq("is_current", true),
+    supabase
+      .from("reviews")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", id),
+  ]);
 
   // Build CSV
   const headers = [
@@ -42,7 +42,7 @@ export default async function ExportPageRoute({
     ...fields.map((f) => f.name),
   ];
   const rows = (responses || []).map((r) => {
-    const doc = r.documents as { external_id: string | null; title: string | null } | null;
+    const doc = (r.documents as unknown as { external_id: string | null; title: string | null } | null);
     return [
       doc?.external_id || r.document_id,
       doc?.title || "",
@@ -61,7 +61,7 @@ export default async function ExportPageRoute({
 
 ## Resumo
 - **Total de respostas:** ${responses?.length || 0}
-- **Total de revisões:** ${reviews?.length || 0}
+- **Total de revisões:** ${reviewCount || 0}
 
 ## Campos
 ${fields.map((f) => `- **${f.name}**: ${f.description}`).join("\n")}

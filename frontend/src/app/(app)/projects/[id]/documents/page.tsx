@@ -14,7 +14,6 @@ export default async function DocumentsPage({
     .from("documents")
     .select("id, external_id, title, created_at, responses(count)")
     .eq("project_id", id)
-    .eq("responses.project_id", id)
     .order("created_at", { ascending: true });
 
   const docsWithCounts = (documents || []).map((d) => ({
