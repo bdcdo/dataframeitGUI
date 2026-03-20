@@ -55,7 +55,7 @@ export default async function DashboardPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {projects.map((project) => (
-              <Link key={project.id} href={`/projects/${project.id}/documents`}>
+              <Link key={project.id} href={`/projects/${project.id}`}>
                 <Card className="transition-colors hover:border-brand/50">
                   <CardHeader>
                     <CardTitle className="text-lg">{project.name}</CardTitle>
