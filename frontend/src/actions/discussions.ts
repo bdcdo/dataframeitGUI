@@ -94,18 +94,19 @@ export async function resolveDiscussion(
 
     if (!discussion) return { success: false, error: "Discussão não encontrada" };
 
-    const { data: membership } = await supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", discussion.project_id)
-      .eq("user_id", user.id)
-      .single();
-
-    const { data: project } = await supabase
-      .from("projects")
-      .select("created_by")
-      .eq("id", discussion.project_id)
-      .single();
+    const [{ data: membership }, { data: project }] = await Promise.all([
+      supabase
+        .from("project_members")
+        .select("role")
+        .eq("project_id", discussion.project_id)
+        .eq("user_id", user.id)
+        .single(),
+      supabase
+        .from("projects")
+        .select("created_by")
+        .eq("id", discussion.project_id)
+        .single(),
+    ]);
 
     if (membership?.role !== "coordenador" && project?.created_by !== user.id) {
       return { success: false, error: "Sem permissão para esta ação" };
@@ -148,18 +149,19 @@ export async function reopenDiscussion(
 
     if (!discussion) return { success: false, error: "Discussão não encontrada" };
 
-    const { data: membership } = await supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", discussion.project_id)
-      .eq("user_id", user.id)
-      .single();
-
-    const { data: project } = await supabase
-      .from("projects")
-      .select("created_by")
-      .eq("id", discussion.project_id)
-      .single();
+    const [{ data: membership }, { data: project }] = await Promise.all([
+      supabase
+        .from("project_members")
+        .select("role")
+        .eq("project_id", discussion.project_id)
+        .eq("user_id", user.id)
+        .single(),
+      supabase
+        .from("projects")
+        .select("created_by")
+        .eq("id", discussion.project_id)
+        .single(),
+    ]);
 
     if (membership?.role !== "coordenador" && project?.created_by !== user.id) {
       return { success: false, error: "Sem permissão para esta ação" };

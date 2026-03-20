@@ -10,26 +10,19 @@ export default async function DocumentsPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const [{ data: documents }, { data: responseCounts }] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("id, external_id, title, created_at")
-      .eq("project_id", id)
-      .order("created_at", { ascending: true }),
-    supabase
-      .from("responses")
-      .select("document_id")
-      .eq("project_id", id),
-  ]);
-
-  const countMap = new Map<string, number>();
-  responseCounts?.forEach((r: { document_id: string }) => {
-    countMap.set(r.document_id, (countMap.get(r.document_id) || 0) + 1);
-  });
+  const { data: documents } = await supabase
+    .from("documents")
+    .select("id, external_id, title, created_at, responses(count)")
+    .eq("project_id", id)
+    .eq("responses.project_id", id)
+    .order("created_at", { ascending: true });
 
   const docsWithCounts = (documents || []).map((d) => ({
-    ...d,
-    responseCount: countMap.get(d.id) || 0,
+    id: d.id,
+    external_id: d.external_id,
+    title: d.title,
+    created_at: d.created_at,
+    responseCount: (d.responses as unknown as { count: number }[])?.[0]?.count || 0,
   }));
 
   return (

@@ -16,25 +16,26 @@ export async function saveResponse(
     } = await supabase.auth.getUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("first_name, last_name")
-      .eq("id", user.id)
-      .single();
+    // Fetch profile and existing response in parallel
+    const [{ data: profile }, { data: existing }] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("first_name, last_name")
+        .eq("id", user.id)
+        .single(),
+      supabase
+        .from("responses")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("respondent_id", user.id)
+        .eq("respondent_type", "humano")
+        .single(),
+    ]);
 
     const respondentName = [profile?.first_name, profile?.last_name]
       .filter(Boolean)
       .join(" ") || user.email;
-
-    // Upsert: find existing response for this user/document
-    const { data: existing } = await supabase
-      .from("responses")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("respondent_id", user.id)
-      .eq("respondent_type", "humano")
-      .single();
 
     if (existing) {
       const { error: updateErr } = await supabase

@@ -21,7 +21,7 @@ export default async function AssignmentsPage({
         .order("created_at", { ascending: true }),
       supabase
         .from("project_members")
-        .select("*, profiles(*)")
+        .select("user_id, role, project_id, profiles(first_name, email)")
         .eq("project_id", id)
         .eq("role", "pesquisador"),
       supabase
@@ -30,7 +30,7 @@ export default async function AssignmentsPage({
         .eq("project_id", id),
       supabase
         .from("project_members")
-        .select("*, profiles(*)")
+        .select("user_id, role, project_id, profiles(first_name, email)")
         .eq("project_id", id)
         .eq("role", "coordenador"),
     ]);

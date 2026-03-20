@@ -36,27 +36,27 @@ export default async function ComparePageRoute({
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const minResponses = project?.min_responses_for_comparison || 2;
 
-  // Get all documents with responses
+  // Phase 1: Get responses WITHOUT document text (lightweight)
   const { data: allResponses } = await supabase
     .from("responses")
-    .select("*, documents(id, title, external_id, text)")
+    .select("id, document_id, respondent_type, respondent_name, answers, justifications, is_current, documents(id, title, external_id)")
     .eq("project_id", id);
 
   // Group responses by document
   const responsesByDoc = new Map<string, CompareResponse[]>();
-  const docsMap = new Map<string, CompareDoc>();
+  const docsMetaMap = new Map<string, Omit<CompareDoc, "text">>();
 
   allResponses?.forEach((r) => {
     const docId = r.document_id;
     if (!responsesByDoc.has(docId)) responsesByDoc.set(docId, []);
     responsesByDoc.get(docId)!.push(r as unknown as CompareResponse);
-    if (r.documents) docsMap.set(docId, r.documents as unknown as CompareDoc);
+    if (r.documents) docsMetaMap.set(docId, r.documents as unknown as Omit<CompareDoc, "text">);
   });
 
   // Find divergent fields per document
   const divergentFields: Record<string, string[]> = {};
   const responsesMap: Record<string, CompareResponse[]> = {};
-  const documentsForCompare: CompareDoc[] = [];
+  const divergentDocIds: string[] = [];
 
   for (const [docId, docResponses] of responsesByDoc) {
     if (docResponses.length < minResponses) continue;
@@ -75,21 +75,34 @@ export default async function ComparePageRoute({
       }
     }
 
-    if (divergent.length > 0) {
-      const doc = docsMap.get(docId);
-      if (doc) {
-        documentsForCompare.push(doc);
-        divergentFields[docId] = divergent;
-        responsesMap[docId] = activeResponses;
-      }
+    if (divergent.length > 0 && docsMetaMap.has(docId)) {
+      divergentDocIds.push(docId);
+      divergentFields[docId] = divergent;
+      responsesMap[docId] = activeResponses;
     }
   }
 
-  // Get existing reviews
-  const { data: reviews } = await supabase
-    .from("reviews")
-    .select("*")
-    .eq("project_id", id);
+  // Phase 2: Fetch text ONLY for divergent documents + reviews in parallel
+  const [{ data: docTexts }, { data: reviews }] = await Promise.all([
+    divergentDocIds.length > 0
+      ? supabase
+          .from("documents")
+          .select("id, text")
+          .in("id", divergentDocIds)
+      : Promise.resolve({ data: [] as { id: string; text: string }[] }),
+    supabase
+      .from("reviews")
+      .select("document_id, field_name, verdict")
+      .eq("project_id", id),
+  ]);
+
+  const textMap = new Map((docTexts || []).map((d) => [d.id, d.text]));
+
+  const documentsForCompare: CompareDoc[] = divergentDocIds
+    .map((docId) => {
+      const meta = docsMetaMap.get(docId)!;
+      return { ...meta, text: textMap.get(docId) || "" };
+    });
 
   const existingReviews: Record<string, Record<string, string>> = {};
   reviews?.forEach((r) => {

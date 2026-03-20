@@ -183,19 +183,23 @@ export async function uploadDocuments(
         .in("document_id", existingDocIds);
     }
 
-    // Update each duplicate document
-    for (const dup of duplicateMap) {
-      const doc = documents[dup.csvIndex];
-      await supabase
-        .from("documents")
-        .update({
-          text: doc.text,
-          title: doc.title || null,
-          external_id: doc.external_id || null,
-          text_hash: md5(doc.text),
-          metadata: doc.metadata || null,
+    // Batch update duplicate documents (avoid N+1)
+    if (duplicateMap.length > 0) {
+      await Promise.all(
+        duplicateMap.map((dup) => {
+          const doc = documents[dup.csvIndex];
+          return supabase
+            .from("documents")
+            .update({
+              text: doc.text,
+              title: doc.title || null,
+              external_id: doc.external_id || null,
+              text_hash: md5(doc.text),
+              metadata: doc.metadata || null,
+            })
+            .eq("id", dup.existingDocId);
         })
-        .eq("id", dup.existingDocId);
+      );
     }
 
     // Insert new (non-duplicate) documents

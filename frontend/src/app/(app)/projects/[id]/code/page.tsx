@@ -22,10 +22,10 @@ export default async function CodePage({
     .eq("id", id)
     .single();
 
-  // Get assigned documents for current user
+  // Get assigned documents for current user (only needed columns)
   const { data: assignments } = await supabase
     .from("assignments")
-    .select("*, documents(*)")
+    .select("id, status, document_id, documents(id, external_id, title, text)")
     .eq("project_id", id)
     .eq("user_id", user!.id)
     .order("status", { ascending: true });

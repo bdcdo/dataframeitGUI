@@ -29,7 +29,6 @@ Browser  →  Next.js 15 (Vercel)  ←→  Supabase (Postgres + Auth)
 | URL state | `nuqs` 2 | latest |
 | Graficos | `recharts` | latest |
 | Toast | `sonner` | latest |
-| Animacoes | Framer Motion 12 | latest |
 | CSV | `papaparse` | latest |
 | Brand color | teal #2F6868 = `oklch(0.44 0.08 185)` | - |
 
@@ -91,6 +90,29 @@ cd backend && uvicorn main:app --reload
 # Supabase local
 cd frontend && npx supabase start
 ```
+
+## Performance — Regras de Arquitetura
+
+Seguir estas regras para evitar regressoes de performance:
+
+### Queries Supabase
+- **Nunca usar `.select("*")`** — sempre listar colunas explicitas (ex: `.select("id, title, created_at")`)
+- **Nunca buscar todos os registros sem `.limit()`** em paginas que podem ter muitos dados
+- **Usar `count()` do Supabase** ao inves de buscar registros so para contar: `.select("*", { count: "exact", head: true })`
+- **Usar agregacao via join** quando possivel: `.select("id, responses(count)")` ao inves de query separada
+- **Paralelizar queries independentes** com `Promise.all()` — nunca fazer queries sequenciais que nao dependem uma da outra
+- **Evitar N+1** — nunca fazer UPDATE/INSERT em loop. Usar `Promise.all()` para batch ou queries `.in()`
+- **Fetch em 2 fases para dados pesados** — primeiro buscar metadados leves para filtrar, depois buscar campos pesados (ex: `text`) so do que precisa
+
+### Componentes pesados
+- **Lazy-load recharts** via `dynamic(() => import("recharts").then(...), { ssr: false })` — nunca importar recharts diretamente. Ver `VerdictChart.tsx` e `DailyPaceChart.tsx` como referencia
+- **Lazy-load Monaco** via `dynamic()` — ja feito corretamente
+- **Nao adicionar dependencias pesadas** sem lazy-load (recharts, monaco, markdown renderers)
+- **Manter `'use client'` o mais baixo possivel** na arvore de componentes
+
+### Supabase indexes
+- Toda nova tabela que participa de RLS precisa de index nas colunas usadas por `auth_user_project_ids()` (tipicamente `user_id` e `project_id`)
+- Queries frequentes com `.eq()` em colunas sem index devem ter index criado via migration
 
 ## Fase atual: 10 - Todas as fases implementadas (scaffold completo)
 

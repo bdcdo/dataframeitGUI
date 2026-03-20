@@ -11,16 +11,17 @@ export default async function DashboardPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user!.id)
-    .single();
-
-  const { data: memberships } = await supabase
-    .from("project_members")
-    .select("project_id, role, projects(*)")
-    .eq("user_id", user!.id);
+  const [{ data: profile }, { data: memberships }] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("first_name")
+      .eq("id", user!.id)
+      .single(),
+    supabase
+      .from("project_members")
+      .select("project_id, role, projects(id, name, description)")
+      .eq("user_id", user!.id),
+  ]);
 
   const projects = (memberships || []).map((m) => ({
     ...(m.projects as unknown as Project),
