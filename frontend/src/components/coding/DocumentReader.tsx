@@ -30,7 +30,7 @@ function normalizeExtractedText(text: string): string {
   // Restore table blocks
   let result = normalized;
   for (const block of tableBlocks) {
-    result = result.replace(TABLE_PLACEHOLDER, block);
+    result = result.replace(TABLE_PLACEHOLDER, () => block);
   }
   return result;
 }
