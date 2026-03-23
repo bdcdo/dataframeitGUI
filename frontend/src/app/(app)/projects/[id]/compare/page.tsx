@@ -46,6 +46,11 @@ export default async function ComparePageRoute({
 
   if (responsesError) {
     console.error("Failed to fetch responses for compare:", responsesError.message);
+    return (
+      <div className="flex h-full items-center justify-center text-destructive">
+        Erro ao carregar respostas. Tente novamente.
+      </div>
+    );
   }
 
   // Group responses by document

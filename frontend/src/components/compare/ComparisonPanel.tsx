@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup } from "./AgreementGroup";
 import { KeyboardHints } from "./KeyboardHints";
@@ -36,8 +36,9 @@ interface ComparisonPanelProps {
   onVerdict: (
     verdict: string,
     chosenResponseId?: string,
-    comment?: string,
   ) => void;
+  comment: string;
+  onCommentChange: (value: string) => void;
 }
 
 export function ComparisonPanel({
@@ -50,14 +51,9 @@ export function ComparisonPanel({
   reviewed,
   onFieldNavigate,
   onVerdict,
+  comment,
+  onCommentChange,
 }: ComparisonPanelProps) {
-  const [comment, setComment] = useState(existingVerdict?.comment || "");
-
-  // Reset comment when navigating to a different field
-  useEffect(() => {
-    setComment(existingVerdict?.comment || "");
-  }, [existingVerdict, fieldName]);
-
   const groupCount = useMemo(() => {
     const keys = new Set(
       responses
@@ -66,11 +62,6 @@ export function ComparisonPanel({
     );
     return keys.size;
   }, [responses]);
-
-  const handleVote = (displayAnswer: string, chosenResponseId: string) => {
-    onVerdict(displayAnswer, chosenResponseId, comment || undefined);
-    setComment("");
-  };
 
   return (
     <div className="flex h-full flex-col">
@@ -101,7 +92,9 @@ export function ComparisonPanel({
             isFieldStale: r.isFieldStale,
           }))}
           existingVerdict={existingVerdict}
-          onVote={handleVote}
+          onVote={(displayAnswer, chosenResponseId) =>
+            onVerdict(displayAnswer, chosenResponseId)
+          }
         />
 
         <div className="mt-2 flex flex-wrap gap-1">
@@ -112,10 +105,7 @@ export function ComparisonPanel({
               existingVerdict?.verdict === "ambiguo" &&
                 "border-brand bg-brand/10 text-brand",
             )}
-            onClick={() => {
-              onVerdict("ambiguo", undefined, comment || undefined);
-              setComment("");
-            }}
+            onClick={() => onVerdict("ambiguo")}
           >
             [A] Ambíguo
           </Button>
@@ -126,10 +116,7 @@ export function ComparisonPanel({
               existingVerdict?.verdict === "pular" &&
                 "border-brand bg-brand/10 text-brand",
             )}
-            onClick={() => {
-              onVerdict("pular", undefined, comment || undefined);
-              setComment("");
-            }}
+            onClick={() => onVerdict("pular")}
           >
             [S] Pular
           </Button>
@@ -152,7 +139,7 @@ export function ComparisonPanel({
         <Input
           placeholder="Comentário (opcional)"
           value={comment}
-          onChange={(e) => setComment(e.target.value)}
+          onChange={(e) => onCommentChange(e.target.value)}
           className="mt-2 text-sm"
         />
       </div>
