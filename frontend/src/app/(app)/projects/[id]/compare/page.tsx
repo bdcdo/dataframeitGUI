@@ -39,10 +39,19 @@ export default async function ComparePageRoute({
   const minResponses = project?.min_responses_for_comparison || 2;
 
   // Phase 1: Get responses WITHOUT document text (lightweight)
-  const { data: allResponses } = await supabase
+  const { data: allResponses, error: responsesError } = await supabase
     .from("responses")
     .select("id, document_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes, documents(id, title, external_id)")
     .eq("project_id", id);
+
+  if (responsesError) {
+    console.error("Failed to fetch responses for compare:", responsesError.message);
+    return (
+      <div className="flex h-full items-center justify-center text-destructive">
+        Erro ao carregar respostas. Tente novamente.
+      </div>
+    );
+  }
 
   // Group responses by document
   const responsesByDoc = new Map<string, CompareResponse[]>();

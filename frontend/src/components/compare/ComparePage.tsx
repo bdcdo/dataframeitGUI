@@ -60,8 +60,8 @@ export function ComparePage({
 }: ComparePageProps) {
   const [docIndex, setDocIndex] = useState(0);
   const [fieldIndex, setFieldIndex] = useState(0);
-  const [selectedResponseId, setSelectedResponseId] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
+  const [comment, setComment] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [discussDialogOpen, setDiscussDialogOpen] = useState(false);
 
@@ -96,6 +96,11 @@ export function ComparePage({
   const currentVerdict = currentDoc && currentFieldName
     ? localReviews[currentDoc.id]?.[currentFieldName] ?? null
     : null;
+
+  // Reset comment when navigating to a different field or document
+  useEffect(() => {
+    setComment(currentVerdict?.comment || "");
+  }, [currentFieldName, currentDoc?.id, currentVerdict?.comment]);
 
   // Build current field hash lookup
   const currentFieldHashes = useMemo(() => {
@@ -142,8 +147,10 @@ export function ComparePage({
   }, [fieldResponses]);
 
   const handleVerdict = useCallback(
-    async (verdict: string, chosenResponseId?: string, comment?: string) => {
+    async (verdict: string, chosenResponseId?: string) => {
       if (!currentDoc || !currentFieldName) return;
+
+      const verdictComment = comment || undefined;
 
       // Optimistic update
       setLocalReviews((prev) => ({
@@ -153,15 +160,16 @@ export function ComparePage({
           [currentFieldName]: {
             verdict,
             chosenResponseId: chosenResponseId ?? null,
-            comment: comment ?? null,
+            comment: verdictComment ?? null,
           },
         },
       }));
 
       // Server call
-      await submitVerdict(projectId, currentDoc.id, currentFieldName, verdict, chosenResponseId, comment);
+      await submitVerdict(projectId, currentDoc.id, currentFieldName, verdict, chosenResponseId, verdictComment);
 
-      setSelectedResponseId(null);
+      setComment("");
+      toast.success("Veredito salvo!");
 
       // Check if all fields for this doc are now reviewed
       const allFieldsReviewed = docDivergent.every((fn) => {
@@ -179,7 +187,7 @@ export function ComparePage({
         setFieldIndex(fieldIndex + 1);
       }
     },
-    [projectId, currentDoc, currentFieldName, fieldIndex, docDivergent, docIndex, documents.length, localReviews]
+    [projectId, currentDoc, currentFieldName, fieldIndex, docDivergent, docIndex, documents.length, localReviews, comment]
   );
 
   const handleDocNavigate = useCallback(
@@ -284,12 +292,12 @@ export function ComparePage({
             fieldIndex={fieldIndex}
             totalFields={docDivergent.length}
             responses={fieldResponses}
-            selectedResponseId={selectedResponseId}
-            onSelectResponse={setSelectedResponseId}
             existingVerdict={currentVerdict}
             reviewed={reviewed}
             onFieldNavigate={setFieldIndex}
             onVerdict={handleVerdict}
+            comment={comment}
+            onCommentChange={setComment}
           />
         </ResizablePanel>
       </ResizablePanelGroup>
