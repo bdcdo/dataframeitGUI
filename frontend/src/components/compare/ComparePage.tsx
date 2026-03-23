@@ -60,7 +60,6 @@ export function ComparePage({
 }: ComparePageProps) {
   const [docIndex, setDocIndex] = useState(0);
   const [fieldIndex, setFieldIndex] = useState(0);
-  const [selectedResponseId, setSelectedResponseId] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [discussDialogOpen, setDiscussDialogOpen] = useState(false);
@@ -161,7 +160,7 @@ export function ComparePage({
       // Server call
       await submitVerdict(projectId, currentDoc.id, currentFieldName, verdict, chosenResponseId, comment);
 
-      setSelectedResponseId(null);
+      toast.success("Veredito salvo!");
 
       // Check if all fields for this doc are now reviewed
       const allFieldsReviewed = docDivergent.every((fn) => {
@@ -284,8 +283,6 @@ export function ComparePage({
             fieldIndex={fieldIndex}
             totalFields={docDivergent.length}
             responses={fieldResponses}
-            selectedResponseId={selectedResponseId}
-            onSelectResponse={setSelectedResponseId}
             existingVerdict={currentVerdict}
             reviewed={reviewed}
             onFieldNavigate={setFieldIndex}

@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup } from "./AgreementGroup";
-import { VerdictPanel } from "./VerdictPanel";
 import { KeyboardHints } from "./KeyboardHints";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface ComparisonResponse {
   id: string;
@@ -28,8 +30,6 @@ interface ComparisonPanelProps {
   fieldIndex: number;
   totalFields: number;
   responses: ComparisonResponse[];
-  selectedResponseId: string | null;
-  onSelectResponse: (id: string) => void;
   existingVerdict: ExistingVerdict | null;
   reviewed: boolean[];
   onFieldNavigate: (index: number) => void;
@@ -46,28 +46,42 @@ export function ComparisonPanel({
   fieldIndex,
   totalFields,
   responses,
-  selectedResponseId,
-  onSelectResponse,
   existingVerdict,
   reviewed,
   onFieldNavigate,
   onVerdict,
 }: ComparisonPanelProps) {
+  const [comment, setComment] = useState(existingVerdict?.comment || "");
+
+  // Reset comment when navigating to a different field
+  useEffect(() => {
+    setComment(existingVerdict?.comment || "");
+  }, [existingVerdict, fieldName]);
+
   const groupCount = useMemo(() => {
-    const keys = new Set(responses.map((r) => JSON.stringify(r.answer)));
+    const keys = new Set(
+      responses
+        .filter((r) => r.answer !== undefined)
+        .map((r) => JSON.stringify(r.answer)),
+    );
     return keys.size;
   }, [responses]);
 
+  const handleVote = (displayAnswer: string, chosenResponseId: string) => {
+    onVerdict(displayAnswer, chosenResponseId, comment || undefined);
+    setComment("");
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b px-4 py-2">
+      <div className="shrink-0 border-b px-4 py-1.5">
         <ProgressDots
           total={totalFields}
           currentIndex={fieldIndex}
           answered={reviewed}
           onNavigate={onFieldNavigate}
         />
-        <p className="mt-2 text-sm font-medium">
+        <p className="mt-1.5 text-sm font-medium">
           <span className="text-muted-foreground">
             Campo {fieldIndex + 1}/{totalFields}:
           </span>{" "}
@@ -75,7 +89,7 @@ export function ComparisonPanel({
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex-1 overflow-y-auto px-4 py-2">
         <AgreementGroup
           responses={responses.map((r) => ({
             id: r.id,
@@ -86,21 +100,60 @@ export function ComparisonPanel({
             is_current: r.is_current,
             isFieldStale: r.isFieldStale,
           }))}
-          selectedResponseId={selectedResponseId}
-          onSelect={onSelectResponse}
-          chosenResponseId={existingVerdict?.chosenResponseId ?? null}
-        />
-      </div>
-
-      <div className="shrink-0 border-t px-4 py-3">
-        <VerdictPanel
-          responses={responses.map((r) => ({
-            id: r.id,
-            respondent_name: r.respondent_name,
-            answer: r.answer,
-          }))}
           existingVerdict={existingVerdict}
-          onSubmit={onVerdict}
+          onVote={handleVote}
+        />
+
+        <div className="mt-2 flex flex-wrap gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              existingVerdict?.verdict === "ambiguo" &&
+                "border-brand bg-brand/10 text-brand",
+            )}
+            onClick={() => {
+              onVerdict("ambiguo", undefined, comment || undefined);
+              setComment("");
+            }}
+          >
+            [A] Ambíguo
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              existingVerdict?.verdict === "pular" &&
+                "border-brand bg-brand/10 text-brand",
+            )}
+            onClick={() => {
+              onVerdict("pular", undefined, comment || undefined);
+              setComment("");
+            }}
+          >
+            [S] Pular
+          </Button>
+        </div>
+
+        {existingVerdict && (
+          <div className="mt-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+            Veredito anterior:{" "}
+            <span className="font-medium text-foreground">
+              {existingVerdict.verdict}
+            </span>
+            {existingVerdict.comment && (
+              <span className="ml-1">
+                &mdash; &ldquo;{existingVerdict.comment}&rdquo;
+              </span>
+            )}
+          </div>
+        )}
+
+        <Input
+          placeholder="Comentário (opcional)"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          className="mt-2 text-sm"
         />
       </div>
 
