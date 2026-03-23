@@ -1,4 +1,5 @@
 import uuid
+from typing import Literal
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
@@ -10,6 +11,9 @@ router = APIRouter()
 class RunRequest(BaseModel):
     project_id: str
     document_ids: list[str] | None = None
+    filter_mode: Literal["all", "pending", "max_responses", "random_sample"] = "all"
+    max_response_count: int | None = None
+    sample_size: int | None = None
 
 
 class RunFieldRequest(BaseModel):
@@ -32,7 +36,15 @@ class StatusResponse(BaseModel):
 @router.post("/run", response_model=RunResponse)
 async def run(req: RunRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
-    background_tasks.add_task(run_llm, job_id, req.project_id, req.document_ids)
+    background_tasks.add_task(
+        run_llm,
+        job_id,
+        req.project_id,
+        req.document_ids,
+        req.filter_mode,
+        req.max_response_count,
+        req.sample_size,
+    )
     return {"job_id": job_id}
 
 
