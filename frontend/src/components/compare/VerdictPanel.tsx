@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -12,14 +12,57 @@ interface ExistingVerdict {
   comment: string | null;
 }
 
-interface VerdictPanelProps {
-  responses: { id: string; respondent_name: string }[];
-  existingVerdict: ExistingVerdict | null;
-  onSubmit: (verdict: string, chosenResponseId?: string, comment?: string) => void;
+interface VerdictResponse {
+  id: string;
+  respondent_name: string;
+  answer: unknown;
 }
 
-export function VerdictPanel({ responses, existingVerdict, onSubmit }: VerdictPanelProps) {
+interface VerdictPanelProps {
+  responses: VerdictResponse[];
+  existingVerdict: ExistingVerdict | null;
+  onSubmit: (
+    verdict: string,
+    chosenResponseId?: string,
+    comment?: string,
+  ) => void;
+}
+
+function formatAnswer(answer: unknown): string {
+  if (answer == null) return "";
+  if (Array.isArray(answer)) return answer.join(", ");
+  return String(answer);
+}
+
+export function VerdictPanel({
+  responses,
+  existingVerdict,
+  onSubmit,
+}: VerdictPanelProps) {
   const [comment, setComment] = useState(existingVerdict?.comment || "");
+
+  const groups = useMemo(() => {
+    const map = new Map<string, VerdictResponse[]>();
+    for (const r of responses) {
+      const key = JSON.stringify(r.answer);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    }
+    const result: {
+      key: string;
+      displayAnswer: string;
+      responses: VerdictResponse[];
+    }[] = [];
+    for (const [key, members] of map) {
+      result.push({
+        key,
+        displayAnswer: formatAnswer(members[0].answer),
+        responses: members,
+      });
+    }
+    result.sort((a, b) => b.responses.length - a.responses.length);
+    return result;
+  }, [responses]);
 
   const handleSubmit = (verdict: string, chosenResponseId?: string) => {
     onSubmit(verdict, chosenResponseId, comment);
@@ -31,26 +74,44 @@ export function VerdictPanel({ responses, existingVerdict, onSubmit }: VerdictPa
     <div className="space-y-2">
       {existingVerdict && (
         <div className="rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
-          Veredito anterior: <span className="font-medium text-foreground">{existingVerdict.verdict}</span>
+          Veredito anterior:{" "}
+          <span className="font-medium text-foreground">
+            {existingVerdict.verdict}
+          </span>
           {existingVerdict.comment && (
-            <span className="ml-1">&mdash; &ldquo;{existingVerdict.comment}&rdquo;</span>
+            <span className="ml-1">
+              &mdash; &ldquo;{existingVerdict.comment}&rdquo;
+            </span>
           )}
         </div>
       )}
       <div className="flex flex-wrap gap-1">
-        {responses.map((r, i) => {
-          const isExisting = existingVerdict?.chosenResponseId === r.id;
+        {groups.map((group, i) => {
+          const isExisting = group.responses.some(
+            (r) => existingVerdict?.chosenResponseId === r.id,
+          );
+          const names = group.responses
+            .map((r) => r.respondent_name)
+            .join(", ");
+          const truncated =
+            group.displayAnswer.length > 40
+              ? group.displayAnswer.slice(0, 40) + "\u2026"
+              : group.displayAnswer;
+
           return (
             <Button
-              key={r.id}
+              key={group.key}
               variant="outline"
               size="sm"
               className={cn(
+                "text-left",
                 isExisting && "border-brand bg-brand/10 text-brand",
               )}
-              onClick={() => handleSubmit(r.respondent_name, r.id)}
+              onClick={() =>
+                handleSubmit(group.displayAnswer, group.responses[0].id)
+              }
             >
-              [{i + 1}] {r.respondent_name}
+              [{i + 1}] &ldquo;{truncated}&rdquo; ({names})
             </Button>
           );
         })}
@@ -58,7 +119,8 @@ export function VerdictPanel({ responses, existingVerdict, onSubmit }: VerdictPa
           variant="outline"
           size="sm"
           className={cn(
-            existingVerdict?.verdict === "ambiguo" && "border-brand bg-brand/10 text-brand",
+            existingVerdict?.verdict === "ambiguo" &&
+              "border-brand bg-brand/10 text-brand",
           )}
           onClick={() => handleSubmit("ambiguo")}
         >
@@ -68,7 +130,8 @@ export function VerdictPanel({ responses, existingVerdict, onSubmit }: VerdictPa
           variant="outline"
           size="sm"
           className={cn(
-            existingVerdict?.verdict === "pular" && "border-brand bg-brand/10 text-brand",
+            existingVerdict?.verdict === "pular" &&
+              "border-brand bg-brand/10 text-brand",
           )}
           onClick={() => handleSubmit("pular")}
         >
