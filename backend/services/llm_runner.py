@@ -6,6 +6,9 @@ This is intentional — only authenticated coordinators can define schemas.
 The backend runs in an isolated container.
 """
 import hashlib
+import random
+from collections import Counter
+
 import pandas as pd
 from services.supabase_client import get_supabase
 from services.pydantic_compiler import compile_pydantic
@@ -53,19 +56,69 @@ def _compile_model(pydantic_code: str):
 
 def _run_compiled(compiled_code: object, namespace: dict) -> None:
     """Execute pre-compiled code. Separated for clarity."""
-    exec(compiled_code, namespace)  # noqa: S102
+    # noqa: S102 — intentional exec of coordinator-provided Pydantic code in isolated container
+    exec(compiled_code, namespace)
+
+
+def _filter_docs(
+    sb,
+    docs: list[dict],
+    project_id: str,
+    filter_mode: str,
+    max_response_count: int | None,
+    sample_size: int | None,
+) -> list[dict]:
+    """Apply filtering to the document list based on filter_mode."""
+    if filter_mode == "all":
+        return docs
+
+    if filter_mode in ("pending", "max_responses"):
+        # Fetch current LLM responses to count per document
+        existing = (
+            sb.table("responses")
+            .select("document_id")
+            .eq("project_id", project_id)
+            .eq("respondent_type", "llm")
+            .eq("is_current", True)
+            .execute()
+            .data
+        )
+        counts = Counter(r["document_id"] for r in existing)
+
+        if filter_mode == "pending":
+            docs = [d for d in docs if counts.get(d["id"], 0) == 0]
+        elif filter_mode == "max_responses" and max_response_count is not None:
+            docs = [d for d in docs if counts.get(d["id"], 0) <= max_response_count]
+
+    if filter_mode == "random_sample" and sample_size is not None:
+        if len(docs) > sample_size:
+            docs = random.sample(docs, sample_size)
+
+    return docs
 
 
 async def run_llm(
-    job_id: str, project_id: str, document_ids: list[str] | None = None
+    job_id: str,
+    project_id: str,
+    document_ids: list[str] | None = None,
+    filter_mode: str = "all",
+    max_response_count: int | None = None,
+    sample_size: int | None = None,
 ):
-    """Run dataframeit on all (or specified) documents."""
+    """Run dataframeit on all (or filtered) documents."""
     sb = get_supabase()
     _jobs[job_id] = {"status": "running", "progress": 0, "total": 0, "errors": []}
 
     try:
-        # Load project
-        project = sb.table("projects").select("*").eq("id", project_id).single().execute().data
+        # Load project (only needed columns)
+        project = (
+            sb.table("projects")
+            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, pydantic_fields")
+            .eq("id", project_id)
+            .single()
+            .execute()
+            .data
+        )
         pydantic_code = project["pydantic_code"]
         prompt_template = project["prompt_template"]
         llm_provider = project["llm_provider"]
@@ -73,13 +126,27 @@ async def run_llm(
         llm_kwargs = project["llm_kwargs"] or {}
         pydantic_hash = hashlib.sha256(pydantic_code.encode()).hexdigest()[:16]
 
+        # Build per-field hash snapshot for staleness detection
+        answer_field_hashes = {
+            f["name"]: f["hash"]
+            for f in (project.get("pydantic_fields") or [])
+            if f.get("hash")
+        }
+
         # Load documents
         query = sb.table("documents").select("id, text, title, external_id").eq("project_id", project_id)
         if document_ids:
             query = query.in_("id", document_ids)
         docs = query.execute().data
 
+        # Apply filtering
+        docs = _filter_docs(sb, docs, project_id, filter_mode, max_response_count, sample_size)
+
         _jobs[job_id]["total"] = len(docs)
+
+        if not docs:
+            _jobs[job_id]["status"] = "completed"
+            return
 
         # Compile Pydantic model
         model_class = _compile_model(pydantic_code)
@@ -142,6 +209,7 @@ async def run_llm(
                 "justifications": justifications if justifications else None,
                 "is_current": True,
                 "pydantic_hash": pydantic_hash,
+                "answer_field_hashes": answer_field_hashes,
             }).execute()
 
             _jobs[job_id]["progress"] = i + 1

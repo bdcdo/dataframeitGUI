@@ -5,9 +5,8 @@ import { usePathname, useParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const configTabs = [
+  { label: "Documentos", href: "documents" },
   { label: "Schema", href: "schema" },
-  { label: "Prompt", href: "prompt" },
-  { label: "LLM", href: "llm" },
   { label: "Membros", href: "members" },
   { label: "Regras", href: "rules" },
 ];

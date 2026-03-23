@@ -12,11 +12,11 @@ interface ProjectTabsProps {
 
 const tabs = [
   { label: "Meu Progresso", href: "my-progress" },
-  { label: "Documentos", href: "documents", coordinatorOnly: true },
   { label: "Atribuições", href: "assignments" },
   { label: "Codificar", href: "code" },
   { label: "Comparar", href: "compare" },
   { label: "Estatísticas", href: "stats" },
+  { label: "LLM", href: "llm", coordinatorOnly: true },
   { label: "Discussões", href: "discussions" },
   { label: "Configurações", href: "config", coordinatorOnly: true },
 ];
