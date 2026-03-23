@@ -181,6 +181,7 @@ export function FieldCard({
               <Textarea
                 value={field.help_text || ""}
                 onChange={(e) => updateField({ help_text: e.target.value || undefined })}
+                onBlur={(e) => updateField({ help_text: e.target.value.trim() || undefined })}
                 placeholder="Explicações adicionais sobre como responder esta pergunta"
                 className="text-sm min-h-[60px] resize-y"
               />

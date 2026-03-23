@@ -99,7 +99,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
               {isAnswered(field) && <Check className="h-3.5 w-3.5 text-brand shrink-0" />}
             </p>
             {field.help_text && (
-              <p className="text-xs text-muted-foreground mb-2">{field.help_text}</p>
+              <p className="text-xs text-muted-foreground mb-2 whitespace-pre-line">{field.help_text}</p>
             )}
             <FieldRenderer
               field={field}
