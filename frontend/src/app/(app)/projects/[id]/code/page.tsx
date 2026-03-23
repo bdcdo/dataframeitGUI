@@ -39,7 +39,7 @@ export default async function CodePage({
   const docIds = documents.map((d) => d.id);
   const { data: responses } = await supabase
     .from("responses")
-    .select("*")
+    .select("document_id, answers, justifications")
     .eq("project_id", id)
     .eq("respondent_id", user!.id)
     .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
@@ -47,6 +47,13 @@ export default async function CodePage({
   const rawAnswers: Record<string, Record<string, unknown>> = {};
   responses?.forEach((r) => {
     rawAnswers[r.document_id] = r.answers as Record<string, unknown>;
+  });
+
+  const existingJustifications: Record<string, Record<string, unknown>> = {};
+  responses?.forEach((r) => {
+    if (r.justifications) {
+      existingJustifications[r.document_id] = r.justifications as Record<string, unknown>;
+    }
   });
 
   // Sanitize: remove answers whose values don't match current schema options
@@ -95,6 +102,7 @@ export default async function CodePage({
       documents={documents}
       fields={fields}
       existingAnswers={existingAnswers}
+      existingJustifications={existingJustifications}
       hasAssignments={documents.length > 0}
       progress={progress}
     />

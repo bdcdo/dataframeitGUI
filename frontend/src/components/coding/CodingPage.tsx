@@ -29,6 +29,7 @@ interface CodingPageProps {
   documents: (Document & { assignment?: Pick<Assignment, "id" | "status"> })[];
   fields: PydanticField[];
   existingAnswers: Record<string, Record<string, any>>;
+  existingJustifications?: Record<string, Record<string, unknown>>;
   hasAssignments?: boolean;
   progress?: ProgressBannerData | null;
 }
@@ -38,6 +39,7 @@ export function CodingPage({
   documents,
   fields,
   existingAnswers,
+  existingJustifications = {},
   hasAssignments = false,
   progress = null,
 }: CodingPageProps) {
@@ -63,6 +65,15 @@ export function CodingPage({
   // Assigned mode state
   const [docIndex, setDocIndex] = useState(initial.docIndex);
   const [allAnswers, setAllAnswers] = useState<Record<string, Record<string, any>>>(existingAnswers);
+  const [allNotes, setAllNotes] = useState<Record<string, string>>(() => {
+    const notes: Record<string, string> = {};
+    for (const [docId, justifications] of Object.entries(existingJustifications)) {
+      if (typeof justifications?._notes === "string") {
+        notes[docId] = justifications._notes;
+      }
+    }
+    return notes;
+  });
 
   // Mode state
   const [mode, setMode] = useState<"assigned" | "browse">(initial.mode);
@@ -110,6 +121,7 @@ export function CodingPage({
     text: string;
   } | null>(null);
   const [browseAnswers, setBrowseAnswers] = useState<Record<string, any>>({});
+  const [browseNotes, setBrowseNotes] = useState("");
   const browseFetchedRef = useRef(false);
 
   // Update URL query param without full navigation
@@ -156,6 +168,7 @@ export function CodingPage({
   // --- Assigned mode handlers ---
   const currentDoc = documents[docIndex];
   const docAnswers = allAnswers[currentDoc?.id] || {};
+  const docNotes = allNotes[currentDoc?.id] ?? "";
 
   // --- Auto-save on exit (#14) ---
   // Warn on page exit (close tab, navigate away)
@@ -175,15 +188,15 @@ export function CodingPage({
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         if (mode === "assigned" && currentDoc && dirtyDocs.has(currentDoc.id)) {
-          saveResponse(projectId, currentDoc.id, docAnswers);
+          saveResponse(projectId, currentDoc.id, docAnswers, docNotes);
         } else if (mode === "browse" && selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-          saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
+          saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes);
         }
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [mode, currentDoc, docAnswers, selectedBrowseDoc, browseAnswers, projectId, dirtyDocs]);
+  }, [mode, currentDoc, docAnswers, docNotes, selectedBrowseDoc, browseAnswers, browseNotes, projectId, dirtyDocs]);
 
   const handleAnswer = useCallback(
     (fieldName: string, value: any) => {
@@ -196,10 +209,18 @@ export function CodingPage({
     [currentDoc?.id, markDirty]
   );
 
+  const handleNotesChange = useCallback(
+    (notes: string) => {
+      setAllNotes((prev) => ({ ...prev, [currentDoc.id]: notes }));
+      markDirty(currentDoc.id);
+    },
+    [currentDoc?.id, markDirty]
+  );
+
   const handleSubmit = useCallback(async () => {
     if (!currentDoc || Object.keys(docAnswers).length === 0) return;
     setSubmitting(true);
-    const result = await saveResponse(projectId, currentDoc.id, docAnswers);
+    const result = await saveResponse(projectId, currentDoc.id, docAnswers, docNotes);
     setSubmitting(false);
     if (result.success) {
       markClean(currentDoc.id);
@@ -212,12 +233,12 @@ export function CodingPage({
     } else {
       toast.error(result.error || "Erro ao salvar respostas");
     }
-  }, [currentDoc, docAnswers, projectId, docIndex, documents.length, markClean]);
+  }, [currentDoc, docAnswers, docNotes, projectId, docIndex, documents.length, markClean]);
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
       if (currentDoc && dirtyDocs.has(currentDoc.id)) {
-        saveResponse(projectId, currentDoc.id, docAnswers).then((result) => {
+        saveResponse(projectId, currentDoc.id, docAnswers, docNotes).then((result) => {
           if (result.success) markClean(currentDoc.id);
           else toast.error(result.error || "Erro ao salvar respostas");
         });
@@ -226,7 +247,7 @@ export function CodingPage({
       setDocIndex(clampedIndex);
       updateDocParam(documents[clampedIndex]?.id ?? null);
     },
-    [currentDoc, docAnswers, projectId, documents, updateDocParam, dirtyDocs, markClean]
+    [currentDoc, docAnswers, docNotes, projectId, documents, updateDocParam, dirtyDocs, markClean]
   );
 
   // --- Browse mode handlers ---
@@ -237,6 +258,11 @@ export function CodingPage({
         setSelectedBrowseDoc(result.document);
         setBrowseAnswers(
           (result.existingAnswers as Record<string, any>) ?? {}
+        );
+        setBrowseNotes(
+          typeof result.existingJustifications?._notes === "string"
+            ? result.existingJustifications._notes
+            : ""
         );
         updateDocParam(docId);
       } catch (e) {
@@ -274,7 +300,7 @@ export function CodingPage({
   const handleBrowseSubmit = useCallback(async () => {
     if (!selectedBrowseDoc || Object.keys(browseAnswers).length === 0) return;
     setSubmitting(true);
-    const result = await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
+    const result = await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes);
     setSubmitting(false);
     if (result.success) {
       markClean(selectedBrowseDoc.id);
@@ -294,14 +320,15 @@ export function CodingPage({
       );
       setSelectedBrowseDoc(null);
       setBrowseAnswers({});
+      setBrowseNotes("");
     } else {
       toast.error(result.error || "Erro ao salvar respostas");
     }
-  }, [selectedBrowseDoc, browseAnswers, projectId, markClean]);
+  }, [selectedBrowseDoc, browseAnswers, browseNotes, projectId, markClean]);
 
   const handleBrowseBack = useCallback(() => {
     if (selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers).then((result) => {
+      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes).then((result) => {
         if (result.success) {
           markClean(selectedBrowseDoc.id);
           setBrowseDocuments((prev) =>
@@ -316,8 +343,9 @@ export function CodingPage({
     }
     setSelectedBrowseDoc(null);
     setBrowseAnswers({});
+    setBrowseNotes("");
     updateDocParam(null);
-  }, [selectedBrowseDoc, browseAnswers, projectId, updateDocParam, dirtyDocs, markClean]);
+  }, [selectedBrowseDoc, browseAnswers, browseNotes, projectId, updateDocParam, dirtyDocs, markClean]);
 
   const handleBrowseRandom = useCallback(() => {
     if (!browseDocuments || browseDocuments.length === 0) return;
@@ -446,11 +474,14 @@ export function CodingPage({
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={45} minSize={25}>
                   <QuestionsPanel
+                    key={currentDoc?.id}
                     fields={fields}
                     answers={docAnswers}
                     onAnswer={handleAnswer}
                     onSubmit={handleSubmit}
                     submitting={submitting}
+                    notes={docNotes}
+                    onNotesChange={handleNotesChange}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -501,11 +532,14 @@ export function CodingPage({
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={45} minSize={25}>
                   <QuestionsPanel
+                    key={selectedBrowseDoc?.id}
                     fields={fields}
                     answers={browseAnswers}
                     onAnswer={handleBrowseAnswer}
                     onSubmit={handleBrowseSubmit}
                     submitting={submitting}
+                    notes={browseNotes}
+                    onNotesChange={setBrowseNotes}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>

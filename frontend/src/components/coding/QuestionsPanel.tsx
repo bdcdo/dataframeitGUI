@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { FieldRenderer } from "./FieldRenderer";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { PydanticField } from "@/lib/types";
@@ -14,9 +16,11 @@ interface QuestionsPanelProps {
   onAnswer: (fieldName: string, value: any) => void;
   onSubmit: () => void;
   submitting?: boolean;
+  notes?: string;
+  onNotesChange?: (notes: string) => void;
 }
 
-export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false }: QuestionsPanelProps) {
+export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
@@ -108,6 +112,25 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
             />
           </div>
         ))}
+
+        {/* Notas e sugestões */}
+        {onNotesChange && (
+          <Collapsible defaultOpen={!!notes}>
+            <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+              <MessageSquare className="h-3.5 w-3.5" />
+              Notas e sugestões (opcional)
+              {notes && <span className="h-1.5 w-1.5 rounded-full bg-brand" />}
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <Textarea
+                value={notes}
+                onChange={(e) => onNotesChange(e.target.value)}
+                placeholder="Anotações, dúvidas ou sugestões sobre este documento..."
+                className="mt-2 text-sm min-h-[80px] resize-y"
+              />
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </div>
 
       {/* Footer fixo com botão de enviar */}
