@@ -176,9 +176,15 @@ async def run_llm(
             **llm_kwargs,
         )
 
-        # Save responses
+        # Mark all old LLM responses as not current in one batch
+        doc_ids = [d["id"] for d in docs]
+        sb.table("responses").update({"is_current": False}).eq(
+            "project_id", project_id
+        ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
+
+        # Save responses — use row["id"] (not index correlation) for safety
         for i, (_, row) in enumerate(result_df.iterrows()):
-            doc_id = docs[i]["id"]
+            doc_id = row["id"]
             answers = {}
             justifications = {}
 
@@ -193,11 +199,6 @@ async def run_llm(
                 just_col = f"{field_name}_justification"
                 if just_col in row and row[just_col]:
                     justifications[field_name] = str(row[just_col])
-
-            # Mark old LLM responses as not current
-            sb.table("responses").update({"is_current": False}).eq(
-                "project_id", project_id
-            ).eq("document_id", doc_id).eq("respondent_type", "llm").execute()
 
             # Insert new response
             sb.table("responses").insert({

@@ -71,8 +71,16 @@ export function LlmTab({
   const [isPending, startTransition] = useTransition();
 
   const includeJustifications = !!(config.llm_kwargs.include_justifications);
-  const hasAmbiguities =
-    pydanticFields?.some((f) => f.name === "llm_ambiguidades") ?? false;
+  const [hasAmbiguities, setHasAmbiguities] = useState(
+    pydanticFields?.some((f) => f.name === "llm_ambiguidades") ?? false
+  );
+  const [isStartingRun, setIsStartingRun] = useState(false);
+
+  useEffect(() => {
+    setHasAmbiguities(
+      pydanticFields?.some((f) => f.name === "llm_ambiguidades") ?? false
+    );
+  }, [pydanticFields]);
 
   useEffect(() => {
     return () => {
@@ -93,7 +101,7 @@ export function LlmTab({
     }
     fetch();
     return () => { cancelled = true; };
-  }, [projectId, filterMode, maxResponseCount]);
+  }, [projectId, filterMode, maxResponseCount, status]);
 
   // Computed eligible display
   const displayEligible = (() => {
@@ -126,10 +134,14 @@ export function LlmTab({
   };
 
   const handleRun = async () => {
+    if (isStartingRun || status === "running") return;
+    setIsStartingRun(true);
     try {
       // Save config before running
-      await saveLlmConfig(projectId, config);
-      await savePrompt(projectId, prompt);
+      await Promise.all([
+        saveLlmConfig(projectId, config),
+        savePrompt(projectId, prompt),
+      ]);
 
       const body: Record<string, unknown> = {
         project_id: projectId,
@@ -148,6 +160,8 @@ export function LlmTab({
       pollProgress(res.job_id);
     } catch (e: any) {
       toast.error(e.message);
+    } finally {
+      setIsStartingRun(false);
     }
   };
 
@@ -171,9 +185,11 @@ export function LlmTab({
           if (res.status === "error")
             toast.error(res.errors[0] || "Erro na execução");
         }
-      } catch {
+      } catch (e: any) {
         if (intervalRef.current) clearInterval(intervalRef.current);
         intervalRef.current = null;
+        setStatus("error");
+        toast.error(e?.message ?? "Não foi possível atualizar o progresso");
       }
     }, 2000);
   };
@@ -186,6 +202,7 @@ export function LlmTab({
   };
 
   const handleToggleAmbiguities = (checked: boolean) => {
+    setHasAmbiguities(checked);
     startTransition(async () => {
       try {
         await toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked);
@@ -238,7 +255,7 @@ export function LlmTab({
         <h2 className="text-lg font-semibold">Configuração do Modelo</h2>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label className="text-sm">Provider</Label>
+            <Label className="text-sm">Provedor</Label>
             <Select
               value={config.llm_provider}
               onValueChange={(v) =>
@@ -271,7 +288,7 @@ export function LlmTab({
               step={0.1}
               min={0}
               max={2}
-              value={config.llm_kwargs.temperature || 1.0}
+              value={config.llm_kwargs.temperature ?? 1.0}
               onChange={(e) =>
                 setConfig((c) => ({
                   ...c,
@@ -284,9 +301,9 @@ export function LlmTab({
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-sm">Thinking Level</Label>
+            <Label className="text-sm">Nível de raciocínio</Label>
             <Select
-              value={config.llm_kwargs.thinking_level || "medium"}
+              value={config.llm_kwargs.thinking_level ?? "medium"}
               onValueChange={(v) =>
                 setConfig((c) => ({
                   ...c,
@@ -298,9 +315,9 @@ export function LlmTab({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
+                <SelectItem value="low">Baixo</SelectItem>
+                <SelectItem value="medium">Médio</SelectItem>
+                <SelectItem value="high">Alto</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -436,12 +453,12 @@ export function LlmTab({
             onClick={handleSaveConfig}
             disabled={status === "running"}
           >
-            Salvar Config
+            Salvar configuração
           </Button>
           <Button
             onClick={handleRun}
             className="bg-brand hover:bg-brand/90 text-brand-foreground"
-            disabled={status === "running" || displayEligible === 0}
+            disabled={isStartingRun || status === "running" || displayEligible === 0}
           >
             Rodar LLM
           </Button>
