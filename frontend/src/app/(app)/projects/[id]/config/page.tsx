@@ -6,5 +6,5 @@ export default async function ConfigPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  redirect(`/projects/${id}/config/schema`);
+  redirect(`/projects/${id}/config/documents`);
 }

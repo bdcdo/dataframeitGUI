@@ -129,19 +129,17 @@ export function ComparePage({
     };
   });
 
-  // Flat display order matching AgreementGroup rendering (groups sorted by size, excludes undefined answers)
-  const displayOrderResponses = (() => {
-    const valid = fieldResponses.filter((r) => r.answer !== undefined);
-    const map = new Map<string, typeof valid>();
-    for (const r of valid) {
+  // Group field responses by answer for keyboard shortcuts (excludes undefined answers)
+  const answerGroups = useMemo(() => {
+    const map = new Map<string, typeof fieldResponses>();
+    for (const r of fieldResponses) {
+      if (r.answer === undefined) continue;
       const key = JSON.stringify(r.answer);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
-    return [...map.values()]
-      .sort((a, b) => b.length - a.length)
-      .flat();
-  })();
+    return [...map.values()].sort((a, b) => b.length - a.length);
+  }, [fieldResponses]);
 
   const handleVerdict = useCallback(
     async (verdict: string, chosenResponseId?: string, comment?: string) => {
@@ -211,11 +209,13 @@ export function ComparePage({
         return;
       }
 
-      // Number keys: select response (matches AgreementGroup display order)
+      // Number keys: select answer group
       const num = parseInt(e.key);
-      if (num >= 1 && num <= displayOrderResponses.length) {
-        const r = displayOrderResponses[num - 1];
-        handleVerdict(r.respondent_name, r.id);
+      if (num >= 1 && num <= answerGroups.length) {
+        const group = answerGroups[num - 1];
+        const answer = group[0].answer;
+        const displayAnswer = answer == null ? "" : Array.isArray(answer) ? answer.join(", ") : String(answer);
+        handleVerdict(displayAnswer, group[0].id);
         return;
       }
 
@@ -226,7 +226,7 @@ export function ComparePage({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [displayOrderResponses, handleVerdict, fieldIndex, docDivergent.length, isFullscreen]);
+  }, [answerGroups, handleVerdict, fieldIndex, docDivergent.length, isFullscreen]);
 
   if (!currentDoc || docDivergent.length === 0) {
     return (

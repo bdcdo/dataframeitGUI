@@ -1,7 +1,9 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+
+const TAG_PROFILE = { expire: 300 };
 import { createHash } from "crypto";
 
 interface DocumentRow {
@@ -152,7 +154,10 @@ export async function uploadDocuments(
     const { error } = await supabase.from("documents").insert(rows);
     if (error) return { error: error.message };
 
-    if (revalidate) revalidatePath(`/projects/${projectId}/documents`);
+    if (revalidate) {
+      revalidatePath(`/projects/${projectId}/config/documents`);
+      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+    }
     return { count: rows.length };
   }
 
@@ -218,7 +223,10 @@ export async function uploadDocuments(
       if (error) return { error: error.message };
     }
 
-    if (revalidate) revalidatePath(`/projects/${projectId}/documents`);
+    if (revalidate) {
+      revalidatePath(`/projects/${projectId}/config/documents`);
+      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+    }
     return { count: documents.length };
   }
 
@@ -235,7 +243,10 @@ export async function uploadDocuments(
   const { error } = await supabase.from("documents").insert(rows);
   if (error) return { error: error.message };
 
-  if (revalidate) revalidatePath(`/projects/${projectId}/documents`);
+  if (revalidate) {
+      revalidatePath(`/projects/${projectId}/config/documents`);
+      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+    }
   return { count: rows.length };
 }
 
@@ -357,5 +368,6 @@ export async function deleteDocument(projectId: string, documentId: string) {
     .eq("id", documentId);
 
   if (error) return { error: error.message };
-  revalidatePath(`/projects/${projectId}/documents`);
+  revalidatePath(`/projects/${projectId}/config/documents`);
+  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
 }

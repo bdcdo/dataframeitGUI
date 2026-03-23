@@ -1,8 +1,42 @@
+import { unstable_cache } from "next/cache";
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { AssignmentTable } from "@/components/assignments/AssignmentTable";
 import { LotteryDialog } from "@/components/assignments/LotteryDialog";
 import { ClearPendingButton } from "@/components/assignments/ClearPendingButton";
 import type { ProjectMember } from "@/lib/types";
+
+function getCachedDocuments(projectId: string) {
+  return unstable_cache(
+    async () => {
+      const supabase = createSupabaseAdmin();
+      const { data } = await supabase
+        .from("documents")
+        .select("id, external_id, title")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: true });
+      return data || [];
+    },
+    [`assignments-docs-${projectId}`],
+    { tags: [`project-${projectId}-documents`], revalidate: 300 },
+  )();
+}
+
+function getCachedMembers(projectId: string, role: string) {
+  return unstable_cache(
+    async () => {
+      const supabase = createSupabaseAdmin();
+      const { data } = await supabase
+        .from("project_members")
+        .select("user_id, role, project_id, profiles(first_name, email)")
+        .eq("project_id", projectId)
+        .eq("role", role);
+      return data || [];
+    },
+    [`assignments-members-${projectId}-${role}`],
+    { tags: [`project-${projectId}-members`], revalidate: 300 },
+  )();
+}
 
 export default async function AssignmentsPage({
   params,
@@ -12,27 +46,12 @@ export default async function AssignmentsPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const [{ data: documents }, { data: researchers }, { data: assignments }, { data: coordinators }] =
+  const [documents, researchers, { data: assignments }, coordinators] =
     await Promise.all([
-      supabase
-        .from("documents")
-        .select("id, external_id, title")
-        .eq("project_id", id)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("project_members")
-        .select("user_id, role, project_id, profiles(first_name, email)")
-        .eq("project_id", id)
-        .eq("role", "pesquisador"),
-      supabase
-        .from("assignments")
-        .select("*")
-        .eq("project_id", id),
-      supabase
-        .from("project_members")
-        .select("user_id, role, project_id, profiles(first_name, email)")
-        .eq("project_id", id)
-        .eq("role", "coordenador"),
+      getCachedDocuments(id),
+      getCachedMembers(id, "pesquisador"),
+      supabase.from("assignments").select("id, project_id, document_id, user_id, status, batch_id, deadline, completed_at").eq("project_id", id),
+      getCachedMembers(id, "coordenador"),
     ]);
 
   type TypedMember = ProjectMember & {
@@ -46,10 +65,22 @@ export default async function AssignmentsPage({
 
   const coordinatorOptions = typedCoordinators.map((c) => ({
     userId: c.user_id,
-    name: c.profiles?.first_name || c.profiles?.email || c.user_id.slice(0, 8),
+    name:
+      c.profiles?.first_name || c.profiles?.email || c.user_id.slice(0, 8),
   }));
 
-  const pendingCount = (assignments || []).filter((a) => a.status === "pendente").length;
+  const assignedDocIds = new Set(
+    (assignments || []).map((a) => a.document_id),
+  );
+  const sortedDocuments = [...(documents || [])].sort((a, b) => {
+    const aHas = assignedDocIds.has(a.id) ? 0 : 1;
+    const bHas = assignedDocIds.has(b.id) ? 0 : 1;
+    return aHas - bHas;
+  });
+
+  const pendingCount = (assignments || []).filter(
+    (a) => a.status === "pendente",
+  ).length;
 
   return (
     <div className="p-6">
@@ -69,7 +100,7 @@ export default async function AssignmentsPage({
       </div>
       <AssignmentTable
         projectId={id}
-        documents={documents || []}
+        documents={sortedDocuments}
         researchers={allResearchersForTable}
         assignments={assignments || []}
       />

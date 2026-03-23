@@ -2,7 +2,9 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+
+const TAG_PROFILE = { expire: 300 };
 
 export async function addMember(
   projectId: string,
@@ -62,6 +64,7 @@ export async function addMember(
   }
 
   revalidatePath(`/projects/${projectId}`);
+  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return { invited };
 }
 
@@ -74,6 +77,7 @@ export async function removeMember(projectId: string, memberId: string) {
 
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}`);
+  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
 
 export async function changeRole(
@@ -89,4 +93,5 @@ export async function changeRole(
 
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}`);
+  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
