@@ -120,12 +120,28 @@ export function ComparePage({
       id: r.id,
       respondent_type: r.respondent_type,
       respondent_name: r.respondent_name,
-      answer: r.answers[currentFieldName] ?? "",
+      answer: Object.prototype.hasOwnProperty.call(r.answers, currentFieldName)
+        ? r.answers[currentFieldName]
+        : undefined,
       justification: r.justifications?.[currentFieldName],
       is_current: r.is_current,
       isFieldStale,
     };
   });
+
+  // Flat display order matching AgreementGroup rendering (groups sorted by size, excludes undefined answers)
+  const displayOrderResponses = (() => {
+    const valid = fieldResponses.filter((r) => r.answer !== undefined);
+    const map = new Map<string, typeof valid>();
+    for (const r of valid) {
+      const key = JSON.stringify(r.answer);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    }
+    return [...map.values()]
+      .sort((a, b) => b.length - a.length)
+      .flat();
+  })();
 
   const handleVerdict = useCallback(
     async (verdict: string, chosenResponseId?: string, comment?: string) => {
@@ -195,10 +211,10 @@ export function ComparePage({
         return;
       }
 
-      // Number keys: select response
+      // Number keys: select response (matches AgreementGroup display order)
       const num = parseInt(e.key);
-      if (num >= 1 && num <= docResponses.length) {
-        const r = docResponses[num - 1];
+      if (num >= 1 && num <= displayOrderResponses.length) {
+        const r = displayOrderResponses[num - 1];
         handleVerdict(r.respondent_name, r.id);
         return;
       }
@@ -210,7 +226,7 @@ export function ComparePage({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [docResponses, handleVerdict, fieldIndex, docDivergent.length, isFullscreen]);
+  }, [displayOrderResponses, handleVerdict, fieldIndex, docDivergent.length, isFullscreen]);
 
   if (!currentDoc || docDivergent.length === 0) {
     return (

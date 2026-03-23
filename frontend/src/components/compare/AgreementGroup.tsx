@@ -44,6 +44,7 @@ export function AgreementGroup({
   const groups = useMemo(() => {
     const map = new Map<string, AgreementResponse[]>();
     for (const r of responses) {
+      if (r.answer === undefined) continue; // Skip stale responses without this field
       const key = JSON.stringify(r.answer);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
