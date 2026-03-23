@@ -81,6 +81,25 @@ export function CodingPage({
   const [discussDocId, setDiscussDocId] = useState<string | undefined>(undefined);
   const [discussDialogOpen, setDiscussDialogOpen] = useState(false);
 
+  // Dirty tracking — marks docs that the user has actually edited
+  const [dirtyDocs, setDirtyDocs] = useState<Set<string>>(new Set());
+  const markDirty = useCallback((docId: string) => {
+    setDirtyDocs((prev) => {
+      if (prev.has(docId)) return prev;
+      const next = new Set(prev);
+      next.add(docId);
+      return next;
+    });
+  }, []);
+  const markClean = useCallback((docId: string) => {
+    setDirtyDocs((prev) => {
+      if (!prev.has(docId)) return prev;
+      const next = new Set(prev);
+      next.delete(docId);
+      return next;
+    });
+  }, []);
+
   // Browse mode state
   const [browseDocuments, setBrowseDocuments] = useState<BrowseDocument[] | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
@@ -142,31 +161,29 @@ export function CodingPage({
   // Warn on page exit (close tab, navigate away)
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const dirty = mode === "assigned"
-        ? currentDoc != null && Object.keys(docAnswers).length > 0
-        : selectedBrowseDoc != null && Object.keys(browseAnswers).length > 0;
-      if (dirty) {
+      const activeDocId = mode === "assigned" ? currentDoc?.id : selectedBrowseDoc?.id;
+      if (activeDocId && dirtyDocs.has(activeDocId)) {
         e.preventDefault();
       }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [mode, currentDoc, docAnswers, selectedBrowseDoc, browseAnswers]);
+  }, [mode, currentDoc?.id, selectedBrowseDoc?.id, dirtyDocs]);
 
   // Auto-save when tab loses visibility (fallback for close without confirm)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        if (mode === "assigned" && currentDoc && Object.keys(docAnswers).length > 0) {
+        if (mode === "assigned" && currentDoc && dirtyDocs.has(currentDoc.id)) {
           saveResponse(projectId, currentDoc.id, docAnswers);
-        } else if (mode === "browse" && selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
+        } else if (mode === "browse" && selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
           saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
         }
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [mode, currentDoc, docAnswers, selectedBrowseDoc, browseAnswers, projectId]);
+  }, [mode, currentDoc, docAnswers, selectedBrowseDoc, browseAnswers, projectId, dirtyDocs]);
 
   const handleAnswer = useCallback(
     (fieldName: string, value: any) => {
@@ -174,8 +191,9 @@ export function CodingPage({
         ...prev,
         [currentDoc.id]: { ...prev[currentDoc.id], [fieldName]: value },
       }));
+      markDirty(currentDoc.id);
     },
-    [currentDoc?.id]
+    [currentDoc?.id, markDirty]
   );
 
   const handleSubmit = useCallback(async () => {
@@ -184,6 +202,7 @@ export function CodingPage({
     const result = await saveResponse(projectId, currentDoc.id, docAnswers);
     setSubmitting(false);
     if (result.success) {
+      markClean(currentDoc.id);
       toast.success("Respostas salvas!");
       if (docIndex < documents.length - 1) {
         setDocIndex(docIndex + 1);
@@ -193,20 +212,21 @@ export function CodingPage({
     } else {
       toast.error(result.error || "Erro ao salvar respostas");
     }
-  }, [currentDoc, docAnswers, projectId, docIndex, documents.length]);
+  }, [currentDoc, docAnswers, projectId, docIndex, documents.length, markClean]);
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
-      if (currentDoc && Object.keys(docAnswers).length > 0) {
+      if (currentDoc && dirtyDocs.has(currentDoc.id)) {
         saveResponse(projectId, currentDoc.id, docAnswers).then((result) => {
-          if (!result.success) toast.error(result.error || "Erro ao salvar respostas");
+          if (result.success) markClean(currentDoc.id);
+          else toast.error(result.error || "Erro ao salvar respostas");
         });
       }
       const clampedIndex = Math.max(0, Math.min(newIndex, documents.length - 1));
       setDocIndex(clampedIndex);
       updateDocParam(documents[clampedIndex]?.id ?? null);
     },
-    [currentDoc, docAnswers, projectId, documents, updateDocParam]
+    [currentDoc, docAnswers, projectId, documents, updateDocParam, dirtyDocs, markClean]
   );
 
   // --- Browse mode handlers ---
@@ -246,8 +266,9 @@ export function CodingPage({
   const handleBrowseAnswer = useCallback(
     (fieldName: string, value: any) => {
       setBrowseAnswers((prev) => ({ ...prev, [fieldName]: value }));
+      if (selectedBrowseDoc) markDirty(selectedBrowseDoc.id);
     },
-    []
+    [selectedBrowseDoc, markDirty]
   );
 
   const handleBrowseSubmit = useCallback(async () => {
@@ -256,6 +277,7 @@ export function CodingPage({
     const result = await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers);
     setSubmitting(false);
     if (result.success) {
+      markClean(selectedBrowseDoc.id);
       toast.success("Respostas salvas!");
       setBrowseDocuments((prev) =>
         prev?.map((d) =>
@@ -275,12 +297,13 @@ export function CodingPage({
     } else {
       toast.error(result.error || "Erro ao salvar respostas");
     }
-  }, [selectedBrowseDoc, browseAnswers, projectId]);
+  }, [selectedBrowseDoc, browseAnswers, projectId, markClean]);
 
   const handleBrowseBack = useCallback(() => {
-    if (selectedBrowseDoc && Object.keys(browseAnswers).length > 0) {
+    if (selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
       saveResponse(projectId, selectedBrowseDoc.id, browseAnswers).then((result) => {
         if (result.success) {
+          markClean(selectedBrowseDoc.id);
           setBrowseDocuments((prev) =>
             prev?.map((d) =>
               d.id === selectedBrowseDoc.id
@@ -294,7 +317,7 @@ export function CodingPage({
     setSelectedBrowseDoc(null);
     setBrowseAnswers({});
     updateDocParam(null);
-  }, [selectedBrowseDoc, browseAnswers, projectId, updateDocParam]);
+  }, [selectedBrowseDoc, browseAnswers, projectId, updateDocParam, dirtyDocs, markClean]);
 
   const handleBrowseRandom = useCallback(() => {
     if (!browseDocuments || browseDocuments.length === 0) return;
