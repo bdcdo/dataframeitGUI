@@ -12,6 +12,7 @@ interface ComparisonResponse {
   answer: unknown;
   justification?: string;
   is_current: boolean;
+  isFieldStale: boolean;
 }
 
 interface ExistingVerdict {
@@ -31,7 +32,11 @@ interface ComparisonPanelProps {
   existingVerdict: ExistingVerdict | null;
   reviewed: boolean[];
   onFieldNavigate: (index: number) => void;
-  onVerdict: (verdict: string, chosenResponseId?: string, comment?: string) => void;
+  onVerdict: (
+    verdict: string,
+    chosenResponseId?: string,
+    comment?: string,
+  ) => void;
 }
 
 export function ComparisonPanel({
@@ -73,6 +78,7 @@ export function ComparisonPanel({
             answer: r.answer,
             justification: r.justification,
             is_current: r.is_current,
+            isFieldStale: r.isFieldStale,
           }))}
           selectedResponseId={selectedResponseId}
           onSelect={onSelectResponse}

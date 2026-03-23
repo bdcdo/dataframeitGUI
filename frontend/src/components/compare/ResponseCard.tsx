@@ -13,6 +13,7 @@ interface ResponseCardProps {
     answer: string | string[];
     justification?: string;
     is_current: boolean;
+    isFieldStale: boolean;
   };
   index: number;
   isSelected: boolean;
@@ -32,6 +33,7 @@ export function ResponseCard({ response, index, isSelected, isChosen, onSelect }
         isLlm ? "border-brand/50" : "border-muted",
         isSelected && "ring-2 ring-brand bg-brand/5",
         isChosen && "border-green-500/50 bg-green-500/5",
+        response.isFieldStale && "opacity-60",
       )}
     >
       <div className="flex items-center justify-between">
@@ -52,8 +54,10 @@ export function ResponseCard({ response, index, isSelected, isChosen, onSelect }
               Escolhido
             </Badge>
           )}
-          {!response.is_current && isLlm && (
-            <Badge variant="destructive" className="text-xs">Desatualizada</Badge>
+          {response.isFieldStale && (
+            <Badge variant="outline" className="text-xs border-amber-400 text-amber-600">
+              Potencialmente desatualizada
+            </Badge>
           )}
         </div>
       </div>

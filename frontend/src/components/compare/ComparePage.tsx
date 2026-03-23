@@ -22,6 +22,8 @@ interface CompareResponse {
   answers: Record<string, any>;
   justifications: Record<string, string> | null;
   is_current: boolean;
+  pydantic_hash: string | null;
+  answer_field_hashes: Record<string, string> | null;
 }
 
 interface CompareDocument {
@@ -44,6 +46,7 @@ interface ComparePageProps {
   divergentFields: Record<string, string[]>;
   fields: PydanticField[];
   existingReviews: Record<string, Record<string, ExistingVerdictInfo>>;
+  projectPydanticHash: string | null;
 }
 
 export function ComparePage({
@@ -53,6 +56,7 @@ export function ComparePage({
   divergentFields,
   fields,
   existingReviews,
+  projectPydanticHash,
 }: ComparePageProps) {
   const [docIndex, setDocIndex] = useState(0);
   const [fieldIndex, setFieldIndex] = useState(0);
@@ -93,15 +97,51 @@ export function ComparePage({
     ? localReviews[currentDoc.id]?.[currentFieldName] ?? null
     : null;
 
-  // Prepare responses for current field
-  const fieldResponses = docResponses.map((r) => ({
-    id: r.id,
-    respondent_type: r.respondent_type,
-    respondent_name: r.respondent_name,
-    answer: r.answers[currentFieldName] ?? "",
-    justification: r.justifications?.[currentFieldName],
-    is_current: r.is_current,
-  }));
+  // Build current field hash lookup
+  const currentFieldHashes = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const f of fields) {
+      if (f.hash) map[f.name] = f.hash;
+    }
+    return map;
+  }, [fields]);
+
+  // Prepare responses for current field, computing per-field staleness
+  const fieldResponses = docResponses.map((r) => {
+    let isFieldStale = false;
+    if (r.answer_field_hashes) {
+      const savedHash = r.answer_field_hashes[currentFieldName];
+      const currentHash = currentFieldHashes[currentFieldName];
+      isFieldStale = !savedHash || !currentHash || savedHash !== currentHash;
+    } else {
+      isFieldStale = !!projectPydanticHash && r.pydantic_hash !== projectPydanticHash;
+    }
+    return {
+      id: r.id,
+      respondent_type: r.respondent_type,
+      respondent_name: r.respondent_name,
+      answer: Object.prototype.hasOwnProperty.call(r.answers, currentFieldName)
+        ? r.answers[currentFieldName]
+        : undefined,
+      justification: r.justifications?.[currentFieldName],
+      is_current: r.is_current,
+      isFieldStale,
+    };
+  });
+
+  // Flat display order matching AgreementGroup rendering (groups sorted by size, excludes undefined answers)
+  const displayOrderResponses = (() => {
+    const valid = fieldResponses.filter((r) => r.answer !== undefined);
+    const map = new Map<string, typeof valid>();
+    for (const r of valid) {
+      const key = JSON.stringify(r.answer);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    }
+    return [...map.values()]
+      .sort((a, b) => b.length - a.length)
+      .flat();
+  })();
 
   const handleVerdict = useCallback(
     async (verdict: string, chosenResponseId?: string, comment?: string) => {
@@ -171,10 +211,10 @@ export function ComparePage({
         return;
       }
 
-      // Number keys: select response
+      // Number keys: select response (matches AgreementGroup display order)
       const num = parseInt(e.key);
-      if (num >= 1 && num <= docResponses.length) {
-        const r = docResponses[num - 1];
+      if (num >= 1 && num <= displayOrderResponses.length) {
+        const r = displayOrderResponses[num - 1];
         handleVerdict(r.respondent_name, r.id);
         return;
       }
@@ -186,7 +226,7 @@ export function ComparePage({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [docResponses, handleVerdict, fieldIndex, docDivergent.length, isFullscreen]);
+  }, [displayOrderResponses, handleVerdict, fieldIndex, docDivergent.length, isFullscreen]);
 
   if (!currentDoc || docDivergent.length === 0) {
     return (

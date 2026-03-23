@@ -40,10 +40,32 @@ export async function saveResponse(
 
     const justifications = notes ? { _notes: notes } : null;
 
+    // Fetch project for field hashes and assignment check
+    const { data: project, error: projErr } = await supabase
+      .from("projects")
+      .select("pydantic_hash, pydantic_fields")
+      .eq("id", projectId)
+      .single();
+    if (projErr) return { success: false, error: projErr.message };
+
+    // Build per-field hash snapshot for staleness detection
+    const fields = (project?.pydantic_fields as PydanticField[]) || [];
+    const answerFieldHashes: Record<string, string> = {};
+    for (const f of fields) {
+      if (f.hash) answerFieldHashes[f.name] = f.hash;
+    }
+
+    const responsePayload = {
+      answers,
+      justifications,
+      pydantic_hash: project?.pydantic_hash ?? null,
+      answer_field_hashes: answerFieldHashes,
+    };
+
     if (existing) {
       const { error: updateErr } = await supabase
         .from("responses")
-        .update({ answers, justifications })
+        .update(responsePayload)
         .eq("id", existing.id);
       if (updateErr) return { success: false, error: updateErr.message };
     } else {
@@ -53,23 +75,13 @@ export async function saveResponse(
         respondent_id: user.id,
         respondent_type: "humano",
         respondent_name: respondentName,
-        answers,
-        justifications,
         is_current: true,
+        ...responsePayload,
       });
       if (insertErr) return { success: false, error: insertErr.message };
     }
 
-    // Check if all fields answered -> update assignment status
-    const { data: project, error: projErr } = await supabase
-      .from("projects")
-      .select("pydantic_fields")
-      .eq("id", projectId)
-      .single();
-    if (projErr) return { success: false, error: projErr.message };
-
-    if (project?.pydantic_fields) {
-      const fields = project.pydantic_fields as PydanticField[];
+    if (fields.length > 0) {
       const humanFields = fields.filter(
         (f) => (f.target || "all") !== "llm_only" && f.required !== false
       );

@@ -10,6 +10,7 @@ interface AgreementResponse {
   answer: unknown;
   justification?: string;
   is_current: boolean;
+  isFieldStale: boolean;
 }
 
 interface AgreementGroupProps {
@@ -43,6 +44,7 @@ export function AgreementGroup({
   const groups = useMemo(() => {
     const map = new Map<string, AgreementResponse[]>();
     for (const r of responses) {
+      if (r.answer === undefined) continue; // Skip stale responses without this field
       const key = JSON.stringify(r.answer);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
@@ -78,6 +80,7 @@ export function AgreementGroup({
                 answer: formatAnswer(r.answer),
                 justification: r.justification,
                 is_current: r.is_current,
+                isFieldStale: r.isFieldStale,
               }}
               index={idx}
               isSelected={selectedResponseId === r.id}
