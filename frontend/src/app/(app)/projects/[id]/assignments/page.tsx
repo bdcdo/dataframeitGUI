@@ -50,7 +50,7 @@ export default async function AssignmentsPage({
     await Promise.all([
       getCachedDocuments(id),
       getCachedMembers(id, "pesquisador"),
-      supabase.from("assignments").select("*").eq("project_id", id),
+      supabase.from("assignments").select("id, project_id, document_id, user_id, status, batch_id, deadline, completed_at").eq("project_id", id),
       getCachedMembers(id, "coordenador"),
     ]);
 
