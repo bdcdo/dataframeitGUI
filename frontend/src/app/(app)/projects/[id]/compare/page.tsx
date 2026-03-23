@@ -17,6 +17,8 @@ interface CompareResponse {
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
   is_current: boolean;
+  pydantic_hash: string | null;
+  answer_field_hashes: Record<string, string> | null;
 }
 
 export default async function ComparePageRoute({
@@ -29,7 +31,7 @@ export default async function ComparePageRoute({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("pydantic_fields, min_responses_for_comparison")
+    .select("pydantic_hash, pydantic_fields, min_responses_for_comparison")
     .eq("id", id)
     .single();
 
@@ -39,7 +41,7 @@ export default async function ComparePageRoute({
   // Phase 1: Get responses WITHOUT document text (lightweight)
   const { data: allResponses } = await supabase
     .from("responses")
-    .select("id, document_id, respondent_type, respondent_name, answers, justifications, is_current, documents(id, title, external_id)")
+    .select("id, document_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes, documents(id, title, external_id)")
     .eq("project_id", id);
 
   // Group responses by document
@@ -78,7 +80,8 @@ export default async function ComparePageRoute({
     if (divergent.length > 0 && docsMetaMap.has(docId)) {
       divergentDocIds.push(docId);
       divergentFields[docId] = divergent;
-      responsesMap[docId] = activeResponses;
+      // Pass ALL responses (including outdated) for full transparency
+      responsesMap[docId] = docResponses;
     }
   }
 
@@ -122,6 +125,7 @@ export default async function ComparePageRoute({
       divergentFields={divergentFields}
       fields={fields}
       existingReviews={existingReviews}
+      projectPydanticHash={project?.pydantic_hash ?? null}
     />
   );
 }

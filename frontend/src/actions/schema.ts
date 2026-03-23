@@ -56,33 +56,8 @@ export async function saveSchema(
       .neq("pydantic_hash", hash);
   }
 
-  // Surgical invalidation: clear human answers for changed/removed fields
-  if (project?.pydantic_fields) {
-    const oldFields = project.pydantic_fields as PydanticField[];
-    const oldHashMap = new Map(oldFields.map((f) => [f.name, f.hash]));
-
-    const changedFields: string[] = [];
-    for (const field of fields) {
-      const oldHash = oldHashMap.get(field.name);
-      if (oldHash && oldHash !== field.hash) {
-        changedFields.push(field.name);
-      }
-    }
-    // Removed fields
-    const newNames = new Set(fields.map((f) => f.name));
-    for (const oldField of oldFields) {
-      if (!newNames.has(oldField.name)) {
-        changedFields.push(oldField.name);
-      }
-    }
-
-    for (const fieldName of changedFields) {
-      await supabase.rpc("remove_answer_key", {
-        p_project_id: projectId,
-        p_field_name: fieldName,
-      });
-    }
-  }
+  // Human answers are no longer deleted when fields change.
+  // Staleness is detected at display time via answer_field_hashes.
 
   revalidatePath(`/projects/${projectId}`);
 }

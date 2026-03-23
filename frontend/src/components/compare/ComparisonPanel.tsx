@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup } from "./AgreementGroup";
 import { VerdictPanel } from "./VerdictPanel";
@@ -12,6 +13,7 @@ interface ComparisonResponse {
   answer: unknown;
   justification?: string;
   is_current: boolean;
+  isFieldStale: boolean;
 }
 
 interface ExistingVerdict {
@@ -31,7 +33,11 @@ interface ComparisonPanelProps {
   existingVerdict: ExistingVerdict | null;
   reviewed: boolean[];
   onFieldNavigate: (index: number) => void;
-  onVerdict: (verdict: string, chosenResponseId?: string, comment?: string) => void;
+  onVerdict: (
+    verdict: string,
+    chosenResponseId?: string,
+    comment?: string,
+  ) => void;
 }
 
 export function ComparisonPanel({
@@ -47,6 +53,11 @@ export function ComparisonPanel({
   onFieldNavigate,
   onVerdict,
 }: ComparisonPanelProps) {
+  const groupCount = useMemo(() => {
+    const keys = new Set(responses.map((r) => JSON.stringify(r.answer)));
+    return keys.size;
+  }, [responses]);
+
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 border-b px-4 py-2">
@@ -73,6 +84,7 @@ export function ComparisonPanel({
             answer: r.answer,
             justification: r.justification,
             is_current: r.is_current,
+            isFieldStale: r.isFieldStale,
           }))}
           selectedResponseId={selectedResponseId}
           onSelect={onSelectResponse}
@@ -82,13 +94,17 @@ export function ComparisonPanel({
 
       <div className="shrink-0 border-t px-4 py-3">
         <VerdictPanel
-          responses={responses.map((r) => ({ id: r.id, respondent_name: r.respondent_name }))}
+          responses={responses.map((r) => ({
+            id: r.id,
+            respondent_name: r.respondent_name,
+            answer: r.answer,
+          }))}
           existingVerdict={existingVerdict}
           onSubmit={onVerdict}
         />
       </div>
 
-      <KeyboardHints responseCount={responses.length} />
+      <KeyboardHints groupCount={groupCount} />
     </div>
   );
 }

@@ -10,6 +10,7 @@ interface AgreementResponse {
   answer: unknown;
   justification?: string;
   is_current: boolean;
+  isFieldStale: boolean;
 }
 
 interface AgreementGroupProps {
@@ -78,6 +79,7 @@ export function AgreementGroup({
                 answer: formatAnswer(r.answer),
                 justification: r.justification,
                 is_current: r.is_current,
+                isFieldStale: r.isFieldStale,
               }}
               index={idx}
               isSelected={selectedResponseId === r.id}

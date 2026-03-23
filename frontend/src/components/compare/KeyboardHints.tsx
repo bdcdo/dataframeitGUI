@@ -5,10 +5,10 @@ import { Keyboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface KeyboardHintsProps {
-  responseCount: number;
+  groupCount: number;
 }
 
-export function KeyboardHints({ responseCount }: KeyboardHintsProps) {
+export function KeyboardHints({ groupCount }: KeyboardHintsProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -27,10 +27,10 @@ export function KeyboardHints({ responseCount }: KeyboardHintsProps) {
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span>
             <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">1</kbd>
-            {responseCount > 1 && (
-              <>–<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{responseCount}</kbd></>
+            {groupCount > 1 && (
+              <>–<kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">{groupCount}</kbd></>
             )}
-            {" "}Escolher
+            {" "}Escolher resposta
           </span>
           <span>
             <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">A</kbd> Ambíguo
