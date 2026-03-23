@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup } from "./AgreementGroup";
 import { VerdictPanel } from "./VerdictPanel";
@@ -53,11 +52,6 @@ export function ComparisonPanel({
   onFieldNavigate,
   onVerdict,
 }: ComparisonPanelProps) {
-  const groupCount = useMemo(() => {
-    const keys = new Set(responses.map((r) => JSON.stringify(r.answer)));
-    return keys.size;
-  }, [responses]);
-
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 border-b px-4 py-2">
@@ -94,17 +88,13 @@ export function ComparisonPanel({
 
       <div className="shrink-0 border-t px-4 py-3">
         <VerdictPanel
-          responses={responses.map((r) => ({
-            id: r.id,
-            respondent_name: r.respondent_name,
-            answer: r.answer,
-          }))}
+          responses={responses.map((r) => ({ id: r.id, respondent_name: r.respondent_name }))}
           existingVerdict={existingVerdict}
           onSubmit={onVerdict}
         />
       </div>
 
-      <KeyboardHints groupCount={groupCount} />
+      <KeyboardHints responseCount={responses.length} />
     </div>
   );
 }
