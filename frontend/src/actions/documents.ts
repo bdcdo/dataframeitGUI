@@ -292,7 +292,7 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
 export async function getDocumentForCoding(
   projectId: string,
   documentId: string
-): Promise<{ document: { id: string; external_id: string | null; title: string | null; text: string }; existingAnswers: Record<string, unknown> | null }> {
+): Promise<{ document: { id: string; external_id: string | null; title: string | null; text: string }; existingAnswers: Record<string, unknown> | null; existingJustifications: Record<string, unknown> | null }> {
   const supabase = await createSupabaseServer();
   const {
     data: { user },
@@ -317,7 +317,7 @@ export async function getDocumentForCoding(
 
   const { data: response } = await supabase
     .from("responses")
-    .select("answers")
+    .select("answers, justifications")
     .eq("project_id", projectId)
     .eq("document_id", documentId)
     .eq("respondent_id", user.id)
@@ -343,10 +343,10 @@ export async function getDocumentForCoding(
         clean[field.name] = val;
       }
     }
-    return { document: doc, existingAnswers: clean };
+    return { document: doc, existingAnswers: clean, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
   }
 
-  return { document: doc, existingAnswers: rawAnswers };
+  return { document: doc, existingAnswers: rawAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
 }
 
 export async function deleteDocument(projectId: string, documentId: string) {

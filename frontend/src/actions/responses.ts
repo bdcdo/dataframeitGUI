@@ -7,7 +7,8 @@ import type { PydanticField } from "@/lib/types";
 export async function saveResponse(
   projectId: string,
   documentId: string,
-  answers: Record<string, unknown>
+  answers: Record<string, unknown>,
+  notes?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const supabase = await createSupabaseServer();
@@ -37,10 +38,12 @@ export async function saveResponse(
       .filter(Boolean)
       .join(" ") || user.email;
 
+    const justifications = notes ? { _notes: notes } : null;
+
     if (existing) {
       const { error: updateErr } = await supabase
         .from("responses")
-        .update({ answers })
+        .update({ answers, justifications })
         .eq("id", existing.id);
       if (updateErr) return { success: false, error: updateErr.message };
     } else {
@@ -51,6 +54,7 @@ export async function saveResponse(
         respondent_type: "humano",
         respondent_name: respondentName,
         answers,
+        justifications,
         is_current: true,
       });
       if (insertErr) return { success: false, error: insertErr.message };
