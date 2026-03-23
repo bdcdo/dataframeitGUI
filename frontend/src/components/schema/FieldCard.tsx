@@ -1,6 +1,7 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
@@ -169,6 +170,20 @@ export function FieldCard({
                 onChange={(e) => updateField({ description: e.target.value })}
                 placeholder="O que este campo representa?"
                 className="text-sm h-8"
+              />
+            </div>
+
+            {/* Texto de ajuda */}
+            <div className="space-y-1.5">
+              <Label className="text-xs">
+                Instruções complementares (opcional)
+              </Label>
+              <Textarea
+                value={field.help_text || ""}
+                onChange={(e) => updateField({ help_text: e.target.value || undefined })}
+                onBlur={(e) => updateField({ help_text: e.target.value.trim() || undefined })}
+                placeholder="Explicações adicionais sobre como responder esta pergunta"
+                className="text-sm min-h-[60px] resize-y"
               />
             </div>
 
