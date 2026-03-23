@@ -14,7 +14,7 @@ export function Header({ projectName, user }: HeaderProps) {
       <div className="flex items-center gap-3">
         <Link href="/dashboard" className="flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-brand">
-            <span className="text-sm font-bold text-brand-foreground">AS</span>
+            <span className="text-sm font-bold text-brand-foreground">AC</span>
           </div>
         </Link>
         {projectName && (

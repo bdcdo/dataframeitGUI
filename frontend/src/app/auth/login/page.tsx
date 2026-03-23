@@ -38,7 +38,7 @@ export default function LoginPage() {
           <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-lg bg-brand">
             <span className="text-lg font-bold text-brand-foreground">AC</span>
           </div>
-          <CardTitle>Análise de Conteúdo</CardTitle>
+          <CardTitle>dataframeit</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">

@@ -1,6 +1,6 @@
-# GUI Analise de Conteudo
+# dataframeitGUI
 
-Plataforma web para analise de conteudo de documentos, substituindo Google Forms + CLI.
+Plataforma web para análise de conteúdo com IA, baseada na lib dataframeit.
 
 ## Funcionalidades
 

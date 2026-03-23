@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Análise de Conteúdo",
-  description: "Plataforma para análise de conteúdo de documentos",
+  title: "dataframeit",
+  description: "Plataforma para análise de conteúdo com IA",
 };
 
 export default function RootLayout({

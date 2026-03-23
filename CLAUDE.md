@@ -1,4 +1,4 @@
-# GUI Analise de Conteudo
+# dataframeitGUI
 
 Plataforma web para analise de conteudo de documentos. Coordenadores definem perguntas (Pydantic), atribuem documentos a pesquisadores, rodam LLM. Pesquisadores codificam e revisam. Comparacoes automaticas quando ha N+ respostas para o mesmo documento.
 

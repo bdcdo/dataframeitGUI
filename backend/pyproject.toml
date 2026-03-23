@@ -1,7 +1,7 @@
 [project]
-name = "gui-analise-conteudo-backend"
+name = "dataframeit-gui-backend"
 version = "0.1.0"
-description = "Backend FastAPI para análise de conteúdo"
+description = "Backend FastAPI para dataframeit"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
