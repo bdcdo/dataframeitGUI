@@ -92,7 +92,7 @@ export default async function ComparePageRoute({
       : Promise.resolve({ data: [] as { id: string; text: string }[] }),
     supabase
       .from("reviews")
-      .select("document_id, field_name, verdict")
+      .select("document_id, field_name, verdict, chosen_response_id, comment")
       .eq("project_id", id),
   ]);
 
@@ -104,10 +104,14 @@ export default async function ComparePageRoute({
       return { ...meta, text: textMap.get(docId) || "" };
     });
 
-  const existingReviews: Record<string, Record<string, string>> = {};
+  const existingReviews: Record<string, Record<string, { verdict: string; chosenResponseId: string | null; comment: string | null }>> = {};
   reviews?.forEach((r) => {
     if (!existingReviews[r.document_id]) existingReviews[r.document_id] = {};
-    existingReviews[r.document_id][r.field_name] = r.verdict;
+    existingReviews[r.document_id][r.field_name] = {
+      verdict: r.verdict,
+      chosenResponseId: r.chosen_response_id ?? null,
+      comment: r.comment ?? null,
+    };
   });
 
   return (
