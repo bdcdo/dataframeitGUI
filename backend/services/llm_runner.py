@@ -113,7 +113,7 @@ async def run_llm(
         # Load project (only needed columns)
         project = (
             sb.table("projects")
-            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, pydantic_fields")
+            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs")
             .eq("id", project_id)
             .single()
             .execute()
@@ -125,13 +125,6 @@ async def run_llm(
         llm_model = project["llm_model"]
         llm_kwargs = project["llm_kwargs"] or {}
         pydantic_hash = hashlib.sha256(pydantic_code.encode()).hexdigest()[:16]
-
-        # Build per-field hash snapshot for staleness detection
-        answer_field_hashes = {
-            f["name"]: f["hash"]
-            for f in (project.get("pydantic_fields") or [])
-            if f.get("hash")
-        }
 
         # Load documents
         query = sb.table("documents").select("id, text, title, external_id").eq("project_id", project_id)
@@ -210,7 +203,6 @@ async def run_llm(
                 "justifications": justifications if justifications else None,
                 "is_current": True,
                 "pydantic_hash": pydantic_hash,
-                "answer_field_hashes": answer_field_hashes,
             }).execute()
 
             _jobs[job_id]["progress"] = i + 1
