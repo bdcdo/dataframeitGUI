@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { AnswerCard } from "./AnswerCard";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { normalizeForComparison } from "@/lib/utils";
 
 interface AgreementResponse {
   id: string;
@@ -28,7 +29,9 @@ interface AgreementGroupProps {
 
 function formatAnswer(answer: unknown): string {
   if (answer == null) return "";
-  if (Array.isArray(answer)) return answer.join(", ");
+  if (typeof answer === "string") return answer.trim();
+  if (Array.isArray(answer))
+    return answer.map((v) => (typeof v === "string" ? v.trim() : v)).join(", ");
   return String(answer);
 }
 
@@ -44,7 +47,7 @@ export function AgreementGroup({
     >();
     for (const r of responses) {
       if (r.answer === undefined) continue;
-      const key = JSON.stringify(r.answer);
+      const key = normalizeForComparison(r.answer);
       if (!map.has(key)) {
         map.set(key, { displayAnswer: formatAnswer(r.answer), responses: [] });
       }

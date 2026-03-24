@@ -2,6 +2,8 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { ChevronLeft, ChevronRight, Maximize2, MessageSquarePlus } from "lucide-react";
 import { CompareFieldFilter } from "./CompareFieldFilter";
@@ -19,6 +21,8 @@ interface CompareNavProps {
   onToggleFullscreen: () => void;
   onDiscuss: () => void;
   parecerUrl?: string;
+  showConcordant: boolean;
+  onToggleConcordant: (value: boolean) => void;
 }
 
 export function CompareNav({
@@ -33,6 +37,8 @@ export function CompareNav({
   onToggleFullscreen,
   onDiscuss,
   parecerUrl,
+  showConcordant,
+  onToggleConcordant,
 }: CompareNavProps) {
   return (
     <div className="flex h-10 items-center justify-between border-b px-4 text-sm shrink-0">
@@ -47,6 +53,17 @@ export function CompareNav({
         <Badge variant="secondary" className="text-xs">
           {reviewedDocsCount}/{totalDocs} docs
         </Badge>
+        <div className="flex items-center gap-1.5">
+          <Switch
+            id="show-concordant"
+            checked={showConcordant}
+            onCheckedChange={onToggleConcordant}
+            className="h-4 w-7 [&>span]:h-3 [&>span]:w-3"
+          />
+          <Label htmlFor="show-concordant" className="cursor-pointer text-xs text-muted-foreground">
+            Todos
+          </Label>
+        </div>
         <CompareFieldFilter value={filter} onChange={onFilterChange} fields={fields} />
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onDocNavigate(docIndex - 1)} disabled={docIndex === 0}>

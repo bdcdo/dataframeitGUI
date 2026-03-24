@@ -3,10 +3,27 @@
 import { useMemo } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup } from "./AgreementGroup";
+import { MultiOptionReview } from "./MultiOptionReview";
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { cn, normalizeForComparison } from "@/lib/utils";
+import { CheckCircle2 } from "lucide-react";
+
+function formatVerdictDisplay(verdict: string): string {
+  if (verdict.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(verdict) as Record<string, boolean>;
+      const selected = Object.entries(parsed)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      return selected.length > 0 ? selected.join(", ") : "(nenhuma)";
+    } catch {
+      // fallback
+    }
+  }
+  return verdict;
+}
 
 interface ComparisonResponse {
   id: string;
@@ -27,11 +44,15 @@ interface ExistingVerdict {
 interface ComparisonPanelProps {
   fieldName: string;
   fieldDescription: string;
+  fieldType?: "single" | "multi" | "text";
+  fieldOptions?: string[] | null;
   fieldIndex: number;
   totalFields: number;
   responses: ComparisonResponse[];
   existingVerdict: ExistingVerdict | null;
   reviewed: boolean[];
+  concordant?: boolean[];
+  isDivergent: boolean;
   onFieldNavigate: (index: number) => void;
   onVerdict: (
     verdict: string,
@@ -44,21 +65,26 @@ interface ComparisonPanelProps {
 export function ComparisonPanel({
   fieldName,
   fieldDescription,
+  fieldType,
+  fieldOptions,
   fieldIndex,
   totalFields,
   responses,
   existingVerdict,
   reviewed,
+  concordant,
+  isDivergent,
   onFieldNavigate,
   onVerdict,
   comment,
   onCommentChange,
 }: ComparisonPanelProps) {
+  const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
   const groupCount = useMemo(() => {
     const keys = new Set(
       responses
         .filter((r) => r.answer !== undefined)
-        .map((r) => JSON.stringify(r.answer)),
+        .map((r) => normalizeForComparison(r.answer)),
     );
     return keys.size;
   }, [responses]);
@@ -70,6 +96,7 @@ export function ComparisonPanel({
           total={totalFields}
           currentIndex={fieldIndex}
           answered={reviewed}
+          concordant={concordant}
           onNavigate={onFieldNavigate}
         />
         <p className="mt-1.5 text-sm font-medium">
@@ -81,70 +108,97 @@ export function ComparisonPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-2">
-        <AgreementGroup
-          responses={responses.map((r) => ({
-            id: r.id,
-            respondent_type: r.respondent_type,
-            respondent_name: r.respondent_name,
-            answer: r.answer,
-            justification: r.justification,
-            is_current: r.is_current,
-            isFieldStale: r.isFieldStale,
-          }))}
-          existingVerdict={existingVerdict}
-          onVote={(displayAnswer, chosenResponseId) =>
-            onVerdict(displayAnswer, chosenResponseId)
-          }
-        />
-
-        <div className="mt-2 flex flex-wrap gap-1">
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn(
-              existingVerdict?.verdict === "ambiguo" &&
-                "border-brand bg-brand/10 text-brand",
-            )}
-            onClick={() => onVerdict("ambiguo")}
-          >
-            [A] Ambíguo
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn(
-              existingVerdict?.verdict === "pular" &&
-                "border-brand bg-brand/10 text-brand",
-            )}
-            onClick={() => onVerdict("pular")}
-          >
-            [S] Pular
-          </Button>
-        </div>
-
-        {existingVerdict && (
-          <div className="mt-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
-            Veredito anterior:{" "}
-            <span className="font-medium text-foreground">
-              {existingVerdict.verdict}
-            </span>
-            {existingVerdict.comment && (
-              <span className="ml-1">
-                &mdash; &ldquo;{existingVerdict.comment}&rdquo;
-              </span>
-            )}
-          </div>
+        {isMulti ? (
+          <MultiOptionReview
+            options={fieldOptions}
+            responses={responses}
+            fieldName={fieldName}
+            existingVerdict={existingVerdict}
+            onSubmit={(verdictJson) => onVerdict(verdictJson)}
+          />
+        ) : (
+          <AgreementGroup
+            responses={responses.map((r) => ({
+              id: r.id,
+              respondent_type: r.respondent_type,
+              respondent_name: r.respondent_name,
+              answer: r.answer,
+              justification: r.justification,
+              is_current: r.is_current,
+              isFieldStale: r.isFieldStale,
+            }))}
+            existingVerdict={existingVerdict}
+            onVote={(displayAnswer, chosenResponseId) =>
+              onVerdict(displayAnswer, chosenResponseId)
+            }
+          />
         )}
 
-        <Input
-          placeholder="Comentário (opcional)"
-          value={comment}
-          onChange={(e) => onCommentChange(e.target.value)}
-          className="mt-2 text-sm"
-        />
+        {isDivergent ? (
+          <>
+            {!isMulti && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    existingVerdict?.verdict === "ambiguo" &&
+                      "border-brand bg-brand/10 text-brand",
+                  )}
+                  onClick={() => onVerdict("ambiguo")}
+                >
+                  [A] Ambiguo
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    existingVerdict?.verdict === "pular" &&
+                      "border-brand bg-brand/10 text-brand",
+                  )}
+                  onClick={() => onVerdict("pular")}
+                >
+                  [S] Pular
+                </Button>
+              </div>
+            )}
+
+            {existingVerdict && (
+              <div className="mt-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+                Veredito anterior:{" "}
+                <span className="font-medium text-foreground">
+                  {formatVerdictDisplay(existingVerdict.verdict)}
+                </span>
+                {existingVerdict.comment && (
+                  <span className="ml-1">
+                    &mdash; &ldquo;{existingVerdict.comment}&rdquo;
+                  </span>
+                )}
+              </div>
+            )}
+
+            <Input
+              placeholder="Comentario (opcional)"
+              value={comment}
+              onChange={(e) => onCommentChange(e.target.value)}
+              className="mt-2 text-sm"
+            />
+          </>
+        ) : (
+          <div className="mt-2 flex items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+            Concordante — todos os respondentes concordam.
+          </div>
+        )}
       </div>
 
-      <KeyboardHints groupCount={groupCount} />
+      {isDivergent && (
+        <KeyboardHints
+          groupCount={groupCount}
+          isMulti={!!isMulti}
+          optionCount={isMulti ? fieldOptions.length : undefined}
+        />
+      )}
     </div>
   );
 }
