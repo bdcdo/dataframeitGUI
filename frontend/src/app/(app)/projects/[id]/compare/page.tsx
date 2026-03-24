@@ -1,5 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { ComparePage } from "@/components/compare/ComparePage";
+import { normalizeForComparison } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
 
 interface CompareDoc {
@@ -79,10 +80,37 @@ export default async function ComparePageRoute({
     const divergent: string[] = [];
     for (const field of fields) {
       if (field.target === "llm_only" || field.target === "human_only") continue;
-      const answers = activeResponses.map((r) => r.answers?.[field.name]);
-      const uniqueAnswers = new Set(answers.map((a) => JSON.stringify(a)));
-      if (uniqueAnswers.size > 1) {
-        divergent.push(field.name);
+
+      if (field.type === "multi" && field.options?.length) {
+        // Per-option divergence: check if any option has disagreement
+        // Also collect unexpected values from responses
+        const comparableOptions = new Set(field.options);
+        for (const r of activeResponses) {
+          const arr = r.answers?.[field.name];
+          if (Array.isArray(arr)) {
+            for (const v of arr) {
+              if (typeof v === "string") comparableOptions.add(v);
+            }
+          }
+        }
+        let hasDivergence = false;
+        for (const opt of comparableOptions) {
+          const selections = activeResponses.map((r) => {
+            const arr = r.answers?.[field.name];
+            return Array.isArray(arr) && arr.includes(opt);
+          });
+          if (!selections.every((s) => s === selections[0])) {
+            hasDivergence = true;
+            break;
+          }
+        }
+        if (hasDivergence) divergent.push(field.name);
+      } else {
+        const answers = activeResponses.map((r) => r.answers?.[field.name]);
+        const uniqueAnswers = new Set(answers.map((a) => normalizeForComparison(a)));
+        if (uniqueAnswers.size > 1) {
+          divergent.push(field.name);
+        }
       }
     }
 

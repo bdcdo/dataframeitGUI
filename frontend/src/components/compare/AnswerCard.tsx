@@ -41,7 +41,6 @@ export function AnswerCard({
       className={cn(
         "w-full rounded-lg border p-2.5 text-left transition-colors hover:bg-accent/50",
         isChosen ? "border-green-500/50 bg-green-500/5" : "border-muted",
-        allStale && "opacity-60",
       )}
     >
       <div className="flex items-start gap-2">
