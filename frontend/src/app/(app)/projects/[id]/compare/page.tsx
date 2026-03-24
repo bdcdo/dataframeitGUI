@@ -154,6 +154,13 @@ export default async function ComparePageRoute({
     };
   });
 
+  // Extract unique respondent names for filter
+  const respondentNames = [
+    ...new Set(
+      allResponses?.map((r) => r.respondent_name).filter(Boolean) ?? []
+    ),
+  ] as string[];
+
   return (
     <ComparePage
       projectId={id}
@@ -163,6 +170,7 @@ export default async function ComparePageRoute({
       fields={fields}
       existingReviews={existingReviews}
       projectPydanticHash={project?.pydantic_hash ?? null}
+      respondentNames={respondentNames}
     />
   );
 }

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { ArrowLeft, Shuffle, Maximize2, MessageSquarePlus } from "lucide-react";
+import { RunLlmButton } from "@/components/shared/RunLlmButton";
 
 interface BrowseDocumentNavProps {
   title: string;
@@ -13,6 +14,9 @@ interface BrowseDocumentNavProps {
   onToggleFullscreen?: () => void;
   parecerUrl?: string;
   onDiscuss?: () => void;
+  projectId?: string;
+  documentId?: string;
+  onLlmComplete?: () => void;
 }
 
 export function BrowseDocumentNav({
@@ -23,6 +27,9 @@ export function BrowseDocumentNav({
   onToggleFullscreen,
   parecerUrl,
   onDiscuss,
+  projectId,
+  documentId,
+  onLlmComplete,
 }: BrowseDocumentNavProps) {
   return (
     <div className="flex h-8 items-center justify-between border-b px-4 text-sm">
@@ -47,6 +54,13 @@ export function BrowseDocumentNav({
         <Badge variant="secondary">
           {responseCount} {responseCount === 1 ? "resposta" : "respostas"}
         </Badge>
+        {projectId && documentId && (
+          <RunLlmButton
+            projectId={projectId}
+            documentId={documentId}
+            onComplete={onLlmComplete}
+          />
+        )}
         <Button
           variant="ghost"
           size="icon"
