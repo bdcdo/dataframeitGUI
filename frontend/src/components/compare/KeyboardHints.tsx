@@ -50,7 +50,7 @@ export function KeyboardHints({ groupCount, isMulti, optionCount }: KeyboardHint
             </span>
           )}
           <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">A</kbd> Ambiguo
+            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">A</kbd> Ambíguo
           </span>
           <span>
             <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">S</kbd> Pular
@@ -59,7 +59,7 @@ export function KeyboardHints({ groupCount, isMulti, optionCount }: KeyboardHint
             <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">P</kbd> Anterior
           </span>
           <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">N</kbd> Proximo
+            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">N</kbd> Próximo
           </span>
           <span>
             <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Ctrl+Shift+F</kbd> Tela cheia

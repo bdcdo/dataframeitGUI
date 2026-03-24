@@ -267,7 +267,9 @@ export function ComparePage({
   if (!currentDoc || docFields.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
-        Nenhuma divergência encontrada.
+        {showConcordant
+          ? "Nenhum campo comparável encontrado."
+          : "Nenhuma divergência encontrada."}
       </div>
     );
   }

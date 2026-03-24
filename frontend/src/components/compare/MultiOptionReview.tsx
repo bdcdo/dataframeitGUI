@@ -97,7 +97,13 @@ export function MultiOptionReview({
     return result;
   });
 
-  // Reset choices when field changes (existingVerdict changes)
+  // Stable key derived from optionStats to detect when responses change
+  const statsKey = useMemo(
+    () => optionStats.map((s) => `${s.option}:${s.selectedCount}/${s.totalRespondents}`).join("|"),
+    [optionStats]
+  );
+
+  // Reset choices when field, verdict, or response stats change
   useEffect(() => {
     const existing = parseExistingMultiVerdict(existingVerdict?.verdict);
     if (existing) {
@@ -109,7 +115,7 @@ export function MultiOptionReview({
       }
       setChoices(result);
     }
-  }, [fieldName, existingVerdict?.verdict]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fieldName, existingVerdict?.verdict, statsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleOption = (opt: string) => {
     setChoices((prev) => ({ ...prev, [opt]: !prev[opt] }));
@@ -131,7 +137,7 @@ export function MultiOptionReview({
       }
 
       const num = parseInt(e.key);
-      if (num >= 1 && num <= options.length) {
+      if (num >= 1 && num <= Math.min(9, options.length)) {
         toggleOption(options[num - 1]);
       }
     };
@@ -187,9 +193,11 @@ export function MultiOptionReview({
                 )}
               </TooltipContent>
             </Tooltip>
-            <span className="w-5 shrink-0 text-center text-xs text-muted-foreground">
-              {i + 1}
-            </span>
+            {i < 9 && (
+              <span className="w-5 shrink-0 text-center text-xs text-muted-foreground">
+                {i + 1}
+              </span>
+            )}
           </label>
         ))}
 

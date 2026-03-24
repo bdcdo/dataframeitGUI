@@ -178,7 +178,7 @@ export function ComparisonPanel({
             )}
 
             <Input
-              placeholder="Comentario (opcional)"
+              placeholder="Comentário (opcional)"
               value={comment}
               onChange={(e) => onCommentChange(e.target.value)}
               className="mt-2 text-sm"

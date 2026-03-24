@@ -81,10 +81,20 @@ export default async function ComparePageRoute({
     for (const field of fields) {
       if (field.target === "llm_only" || field.target === "human_only") continue;
 
-      if (field.type === "multi" && field.options) {
+      if (field.type === "multi" && field.options?.length) {
         // Per-option divergence: check if any option has disagreement
+        // Also collect unexpected values from responses
+        const comparableOptions = new Set(field.options);
+        for (const r of activeResponses) {
+          const arr = r.answers?.[field.name];
+          if (Array.isArray(arr)) {
+            for (const v of arr) {
+              if (typeof v === "string") comparableOptions.add(v);
+            }
+          }
+        }
         let hasDivergence = false;
-        for (const opt of field.options) {
+        for (const opt of comparableOptions) {
           const selections = activeResponses.map((r) => {
             const arr = r.answers?.[field.name];
             return Array.isArray(arr) && arr.includes(opt);
