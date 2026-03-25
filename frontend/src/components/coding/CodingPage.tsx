@@ -521,6 +521,8 @@ export function CodingPage({
                     setDiscussDocId(selectedBrowseDoc?.id);
                     setDiscussDialogOpen(true);
                   }}
+                  projectId={projectId}
+                  documentId={selectedBrowseDoc?.id}
                 />
               )}
               <ResizablePanelGroup

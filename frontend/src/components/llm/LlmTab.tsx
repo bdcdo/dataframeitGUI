@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from "react";
-import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,23 +15,63 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { saveLlmConfig, savePrompt, toggleLlmField } from "@/actions/schema";
 import { getEligibleDocCount } from "@/actions/llm";
 import { fetchFastAPI } from "@/lib/api";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
+import {
+  getModelsForProvider,
+  getModelCapabilities,
+  type Provider,
+} from "@/lib/model-registry";
 import { toast } from "sonner";
+import { Check, ChevronsUpDown, Info } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { ModelCapabilities } from "@/lib/model-registry";
 import type { PydanticField } from "@/lib/types";
 
-const MonacoEditor = dynamic(
-  () => import("@monaco-editor/react").then((m) => m.default),
-  { ssr: false }
-);
+import { Textarea } from "@/components/ui/textarea";
 
-type FilterMode = "all" | "pending" | "max_responses" | "random_sample";
+function buildKwargsForCapabilities(
+  currentKwargs: Record<string, any>,
+  caps: ModelCapabilities
+): Record<string, any> {
+  const newKwargs = { ...currentKwargs };
+  if (!caps.supportsTemperature) delete newKwargs.temperature;
+  else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
+  if (!caps.supportsThinkingLevel) delete newKwargs.thinking_level;
+  else if (!newKwargs.thinking_level) newKwargs.thinking_level = "medium";
+  return newKwargs;
+}
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ChevronRight } from "lucide-react";
+import { DocumentSelector } from "./DocumentSelector";
+import { LlmRunHistory } from "./LlmRunHistory";
+import type { LlmRunHistoryItem } from "@/actions/llm";
+
+type FilterMode = "all" | "pending" | "max_responses" | "random_sample" | "specific";
 
 interface LlmTabProps {
   projectId: string;
   promptTemplate: string;
+  projectDescription: string;
   config: {
     llm_provider: string;
     llm_model: string;
@@ -41,15 +80,18 @@ interface LlmTabProps {
   pydanticFields: PydanticField[] | null;
   totalDocs: number;
   docsWithLlm: number;
+  runHistory: LlmRunHistoryItem[];
 }
 
 export function LlmTab({
   projectId,
   promptTemplate: initialPrompt,
+  projectDescription,
   config: initialConfig,
   pydanticFields,
   totalDocs,
   docsWithLlm,
+  runHistory,
 }: LlmTabProps) {
   // Prompt state
   const [prompt, setPrompt] = useState(initialPrompt);
@@ -62,6 +104,7 @@ export function LlmTab({
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [sampleSize, setSampleSize] = useState(10);
   const [maxResponseCount, setMaxResponseCount] = useState(0);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [eligibleCount, setEligibleCount] = useState<number | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -69,6 +112,18 @@ export function LlmTab({
   const [status, setStatus] = useState<string>("idle");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const [modelOpen, setModelOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+
+  // Model capabilities
+  const capabilities = getModelCapabilities(
+    config.llm_provider as Provider,
+    config.llm_model
+  );
+  const providerModels = getModelsForProvider(config.llm_provider as Provider);
+  const standardModels = providerModels.filter((m) => m.category === "standard");
+  const reasoningModels = providerModels.filter((m) => m.category === "reasoning");
 
   const includeJustifications = !!(config.llm_kwargs.include_justifications);
   const [hasAmbiguities, setHasAmbiguities] = useState(
@@ -90,11 +145,12 @@ export function LlmTab({
 
   // Fetch eligible count when filter mode changes
   useEffect(() => {
+    if (filterMode === "specific") return;
     let cancelled = false;
     async function fetch() {
       const result = await getEligibleDocCount(
         projectId,
-        filterMode,
+        filterMode as "all" | "pending" | "max_responses" | "random_sample",
         filterMode === "max_responses" ? maxResponseCount : undefined
       );
       if (!cancelled) setEligibleCount(result.eligible);
@@ -105,6 +161,7 @@ export function LlmTab({
 
   // Computed eligible display
   const displayEligible = (() => {
+    if (filterMode === "specific") return selectedDocumentIds.length;
     if (filterMode === "random_sample") {
       return Math.min(sampleSize, eligibleCount ?? totalDocs);
     }
@@ -145,8 +202,9 @@ export function LlmTab({
 
       const body: Record<string, unknown> = {
         project_id: projectId,
-        filter_mode: filterMode,
+        filter_mode: filterMode === "specific" ? "all" : filterMode,
       };
+      if (filterMode === "specific") body.document_ids = selectedDocumentIds;
       if (filterMode === "random_sample") body.sample_size = sampleSize;
       if (filterMode === "max_responses")
         body.max_response_count = maxResponseCount;
@@ -229,21 +287,57 @@ export function LlmTab({
             disabled={savingPrompt}
             className="bg-brand hover:bg-brand/90 text-brand-foreground"
           >
-            Salvar Prompt
+            Salvar
           </Button>
         </div>
-        <div className="h-80 rounded-md border overflow-hidden">
-          <MonacoEditor
-            height="100%"
-            language="plaintext"
-            theme="vs-light"
+        <p className="text-xs text-muted-foreground">
+          O prompt é montado automaticamente a partir da descrição do projeto e
+          das instruções de cada campo (help text no schema). Use o campo abaixo
+          para adicionar instruções complementares.
+        </p>
+
+        <Collapsible>
+          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors group">
+            <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+            Ver preview do prompt final
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-2 rounded-md border bg-muted/50 p-4 text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
+              <p>Voce e um assistente de pesquisa especializado em analise de conteudo.</p>
+              <p>Analise o documento fornecido e responda as perguntas de classificacao.</p>
+              <p className="mt-2 font-medium">## Instrucoes gerais</p>
+              <p>- Leia o documento completo antes de classificar.</p>
+              <p>- Baseie suas respostas exclusivamente no conteudo do documento.</p>
+              <p>- Se houver ambiguidade, escolha a opcao mais conservadora.</p>
+              <p>- Para campos de texto, seja conciso e objetivo.</p>
+              {projectDescription.trim() && (
+                <>
+                  <p className="mt-2 font-medium">## Contexto do estudo</p>
+                  <p>{projectDescription}</p>
+                </>
+              )}
+              {!projectDescription.trim() && (
+                <p className="mt-2 text-muted-foreground italic">
+                  (Sem descrição do projeto — configure em Config → Geral)
+                </p>
+              )}
+              {prompt.trim() && (
+                <>
+                  <p className="mt-2 font-medium">## Instrucoes adicionais</p>
+                  <p>{prompt}</p>
+                </>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        <div className="space-y-1.5">
+          <Label className="text-sm">Instruções adicionais (opcional)</Label>
+          <Textarea
             value={prompt}
-            onChange={(val) => setPrompt(val || "")}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              wordWrap: "on",
-            }}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Adicione aqui instruções específicas que complementam o prompt automático..."
+            className="min-h-[100px] resize-y text-sm"
           />
         </div>
       </section>
@@ -258,9 +352,12 @@ export function LlmTab({
             <Label className="text-sm">Provedor</Label>
             <Select
               value={config.llm_provider}
-              onValueChange={(v) =>
-                setConfig((c) => ({ ...c, llm_provider: v }))
-              }
+              onValueChange={(v) => {
+                const models = getModelsForProvider(v as Provider);
+                const firstModel = models[0]?.model ?? "";
+                const caps = getModelCapabilities(v as Provider, firstModel);
+                setConfig({ llm_provider: v, llm_model: firstModel, llm_kwargs: buildKwargsForCapabilities(config.llm_kwargs, caps) });
+              }}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
@@ -274,53 +371,128 @@ export function LlmTab({
           </div>
           <div className="space-y-1.5">
             <Label className="text-sm">Modelo</Label>
-            <Input
-              value={config.llm_model}
-              onChange={(e) =>
-                setConfig((c) => ({ ...c, llm_model: e.target.value }))
-              }
-            />
+            <Popover open={modelOpen} onOpenChange={setModelOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={modelOpen}
+                  className="w-full justify-between font-normal"
+                >
+                  {capabilities.label || config.llm_model || "Selecionar modelo..."}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Buscar modelo..." value={modelSearch} onValueChange={setModelSearch} />
+                  <CommandList>
+                    <CommandEmpty>
+                      <button
+                        className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          if (modelSearch) {
+                            const caps = getModelCapabilities(config.llm_provider as Provider, modelSearch);
+                            setConfig((c) => ({ ...c, llm_model: modelSearch, llm_kwargs: buildKwargsForCapabilities(c.llm_kwargs, caps) }));
+                            setModelOpen(false);
+                            setModelSearch("");
+                          }
+                        }}
+                      >
+                        Usar modelo personalizado
+                      </button>
+                    </CommandEmpty>
+                    {reasoningModels.length > 0 && (
+                      <CommandGroup heading="Raciocínio">
+                        {reasoningModels.map((m) => (
+                          <CommandItem
+                            key={m.model}
+                            value={m.model}
+                            onSelect={(value) => {
+                              const caps = getModelCapabilities(config.llm_provider as Provider, value);
+                              setConfig((c) => ({ ...c, llm_model: value, llm_kwargs: buildKwargsForCapabilities(c.llm_kwargs, caps) }));
+                              setModelOpen(false);
+                            }}
+                          >
+                            <Check className={cn("mr-2 h-4 w-4", config.llm_model === m.model ? "opacity-100" : "opacity-0")} />
+                            {m.label}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    )}
+                    {standardModels.length > 0 && (
+                      <CommandGroup heading="Padrão">
+                        {standardModels.map((m) => (
+                          <CommandItem
+                            key={m.model}
+                            value={m.model}
+                            onSelect={(value) => {
+                              const caps = getModelCapabilities(config.llm_provider as Provider, value);
+                              setConfig((c) => ({ ...c, llm_model: value, llm_kwargs: buildKwargsForCapabilities(c.llm_kwargs, caps) }));
+                              setModelOpen(false);
+                            }}
+                          >
+                            <Check className={cn("mr-2 h-4 w-4", config.llm_model === m.model ? "opacity-100" : "opacity-0")} />
+                            {m.label}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    )}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Temperatura</Label>
-            <Input
-              type="number"
-              step={0.1}
-              min={0}
-              max={2}
-              value={config.llm_kwargs.temperature ?? 1.0}
-              onChange={(e) =>
-                setConfig((c) => ({
-                  ...c,
-                  llm_kwargs: {
-                    ...c.llm_kwargs,
-                    temperature: parseFloat(e.target.value),
-                  },
-                }))
-              }
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Nível de raciocínio</Label>
-            <Select
-              value={config.llm_kwargs.thinking_level ?? "medium"}
-              onValueChange={(v) =>
-                setConfig((c) => ({
-                  ...c,
-                  llm_kwargs: { ...c.llm_kwargs, thinking_level: v },
-                }))
-              }
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">Baixo</SelectItem>
-                <SelectItem value="medium">Médio</SelectItem>
-                <SelectItem value="high">Alto</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {capabilities.supportsTemperature && (
+            <div className="space-y-1.5">
+              <Label className="text-sm">Temperatura</Label>
+              <Input
+                type="number"
+                step={0.1}
+                min={0}
+                max={2}
+                value={config.llm_kwargs.temperature ?? 1.0}
+                onChange={(e) => {
+                  const parsed = parseFloat(e.target.value);
+                  if (!isNaN(parsed))
+                    setConfig((c) => ({
+                      ...c,
+                      llm_kwargs: { ...c.llm_kwargs, temperature: parsed },
+                    }));
+                }}
+              />
+            </div>
+          )}
+          {capabilities.supportsThinkingLevel && (
+            <div className="space-y-1.5">
+              <Label className="text-sm">Nível de raciocínio</Label>
+              <Select
+                value={config.llm_kwargs.thinking_level ?? "medium"}
+                onValueChange={(v) =>
+                  setConfig((c) => ({
+                    ...c,
+                    llm_kwargs: { ...c.llm_kwargs, thinking_level: v },
+                  }))
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Baixo</SelectItem>
+                  <SelectItem value="medium">Médio</SelectItem>
+                  <SelectItem value="high">Alto</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {!capabilities.supportsTemperature && !capabilities.supportsThinkingLevel && (
+            <div className="col-span-2 flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+              <Info className="h-4 w-4 shrink-0" />
+              Este modelo não possui parâmetros configuráveis adicionais.
+            </div>
+          )}
         </div>
 
         {/* Behavior toggles */}
@@ -436,6 +608,24 @@ export function LlmTab({
               </div>
             )}
           </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="specific" id="filter-specific" />
+              <Label htmlFor="filter-specific" className="text-sm font-normal">
+                Documentos específicos
+              </Label>
+            </div>
+            {filterMode === "specific" && (
+              <div className="ml-6">
+                <DocumentSelector
+                  projectId={projectId}
+                  selectedIds={selectedDocumentIds}
+                  onSelectionChange={setSelectedDocumentIds}
+                />
+              </div>
+            )}
+          </div>
         </RadioGroup>
 
         <p className="text-sm text-muted-foreground">
@@ -472,6 +662,8 @@ export function LlmTab({
             </p>
           </div>
         )}
+
+        <LlmRunHistory history={runHistory} />
       </section>
     </div>
   );

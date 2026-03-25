@@ -34,7 +34,10 @@ export function generatePydanticCode(
 
   for (const field of fields) {
     const ann = fieldAnnotation(field);
-    const desc = escapeString(field.description);
+    let desc = escapeString(field.description);
+    if (field.help_text?.trim()) {
+      desc += `. Instrucoes: ${escapeString(field.help_text.trim())}`;
+    }
     const target =
       field.target && field.target !== "all"
         ? `, json_schema_extra={"target": "${field.target}"}`

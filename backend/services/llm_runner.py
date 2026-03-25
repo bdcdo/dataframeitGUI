@@ -60,6 +60,35 @@ def _run_compiled(compiled_code: object, namespace: dict) -> None:
     exec(compiled_code, namespace)
 
 
+def _build_prompt(
+    project_description: str | None,
+    prompt_template: str | None,
+) -> str:
+    """Assemble the final prompt from project metadata + additional instructions."""
+    parts = [
+        "Voce e um assistente de pesquisa especializado em analise de conteudo.",
+        "Analise o documento fornecido e responda as perguntas de classificacao.",
+        "",
+        "## Instrucoes gerais",
+        "- Leia o documento completo antes de classificar.",
+        "- Baseie suas respostas exclusivamente no conteudo do documento.",
+        "- Se houver ambiguidade, escolha a opcao mais conservadora.",
+        "- Para campos de texto, seja conciso e objetivo.",
+    ]
+
+    if project_description and project_description.strip():
+        parts.append("")
+        parts.append("## Contexto do estudo")
+        parts.append(project_description.strip())
+
+    if prompt_template and prompt_template.strip():
+        parts.append("")
+        parts.append("## Instrucoes adicionais")
+        parts.append(prompt_template.strip())
+
+    return "\n".join(parts)
+
+
 def _filter_docs(
     sb,
     docs: list[dict],
@@ -113,14 +142,17 @@ async def run_llm(
         # Load project (only needed columns)
         project = (
             sb.table("projects")
-            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs")
+            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields")
             .eq("id", project_id)
             .single()
             .execute()
             .data
         )
         pydantic_code = project["pydantic_code"]
-        prompt_template = project["prompt_template"]
+        prompt_template = _build_prompt(
+            project.get("description"),
+            project["prompt_template"],
+        )
         llm_provider = project["llm_provider"]
         llm_model = project["llm_model"]
         llm_kwargs = project["llm_kwargs"] or {}

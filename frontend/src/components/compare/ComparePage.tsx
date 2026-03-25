@@ -48,6 +48,7 @@ interface ComparePageProps {
   fields: PydanticField[];
   existingReviews: Record<string, Record<string, ExistingVerdictInfo>>;
   projectPydanticHash: string | null;
+  respondentNames: string[];
 }
 
 export function ComparePage({
@@ -58,10 +59,12 @@ export function ComparePage({
   fields,
   existingReviews,
   projectPydanticHash,
+  respondentNames,
 }: ComparePageProps) {
   const [docIndex, setDocIndex] = useState(0);
   const [fieldIndex, setFieldIndex] = useState(0);
   const [filter, setFilter] = useState("all");
+  const [respondentFilter, setRespondentFilter] = useState("all");
   const [comment, setComment] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [discussDialogOpen, setDiscussDialogOpen] = useState(false);
@@ -90,7 +93,10 @@ export function ComparePage({
   const currentFieldName = docFields[fieldIndex];
   const currentField = fields.find((f) => f.name === currentFieldName);
   const isCurrentFieldDivergent = divergentSet.has(currentFieldName);
-  const docResponses = currentDoc ? (responses[currentDoc.id] || []) : [];
+  const allDocResponses = currentDoc ? (responses[currentDoc.id] || []) : [];
+  const docResponses = respondentFilter === "all"
+    ? allDocResponses
+    : allDocResponses.filter((r) => r.respondent_name === respondentFilter);
 
   // For concordant fields: mark as "reviewed" automatically (no action needed)
   const reviewed = docFields.map((fn) =>
@@ -309,6 +315,11 @@ export function ComparePage({
           parecerUrl={parecerUrl}
           showConcordant={showConcordant}
           onToggleConcordant={(v) => { setShowConcordant(v); setFieldIndex(0); }}
+          respondentFilter={respondentFilter}
+          onRespondentFilterChange={setRespondentFilter}
+          respondentNames={respondentNames}
+          projectId={projectId}
+          documentId={currentDoc?.id}
         />
       )}
 

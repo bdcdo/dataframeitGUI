@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { ChevronLeft, ChevronRight, Maximize2, MessageSquarePlus } from "lucide-react";
 import { CompareFieldFilter } from "./CompareFieldFilter";
+import { RespondentFilter } from "./RespondentFilter";
+import { RunLlmButton } from "@/components/shared/RunLlmButton";
 import type { PydanticField } from "@/lib/types";
 
 interface CompareNavProps {
@@ -23,6 +25,11 @@ interface CompareNavProps {
   parecerUrl?: string;
   showConcordant: boolean;
   onToggleConcordant: (value: boolean) => void;
+  respondentFilter?: string;
+  onRespondentFilterChange?: (value: string) => void;
+  respondentNames?: string[];
+  projectId?: string;
+  documentId?: string;
 }
 
 export function CompareNav({
@@ -39,6 +46,11 @@ export function CompareNav({
   parecerUrl,
   showConcordant,
   onToggleConcordant,
+  respondentFilter,
+  onRespondentFilterChange,
+  respondentNames,
+  projectId,
+  documentId,
 }: CompareNavProps) {
   return (
     <div className="flex h-10 items-center justify-between border-b px-4 text-sm shrink-0">
@@ -64,6 +76,13 @@ export function CompareNav({
             Todos
           </Label>
         </div>
+        {respondentNames && onRespondentFilterChange && (
+          <RespondentFilter
+            value={respondentFilter ?? "all"}
+            onChange={onRespondentFilterChange}
+            respondentNames={respondentNames}
+          />
+        )}
         <CompareFieldFilter value={filter} onChange={onFilterChange} fields={fields} />
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onDocNavigate(docIndex - 1)} disabled={docIndex === 0}>
@@ -74,6 +93,9 @@ export function CompareNav({
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
+        {projectId && documentId && (
+          <RunLlmButton projectId={projectId} documentId={documentId} />
+        )}
         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onToggleFullscreen} title="Tela cheia">
           <Maximize2 className="h-3.5 w-3.5" />
         </Button>
