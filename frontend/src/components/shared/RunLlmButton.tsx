@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { fetchFastAPI } from "@/lib/api";
 import { toast } from "sonner";
@@ -22,14 +22,55 @@ export function RunLlmButton({
   variant = "ghost",
 }: RunLlmButtonProps) {
   const [running, setRunning] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelledRef = useRef(false);
 
   const cleanup = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    cancelledRef.current = true;
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
   }, []);
+
+  useEffect(() => cleanup, [cleanup]);
+
+  const pollStatus = useCallback(
+    (jobId: string) => {
+      cancelledRef.current = false;
+
+      const poll = async () => {
+        if (cancelledRef.current) return;
+        try {
+          const status = await fetchFastAPI<{
+            status: string;
+            errors: string[];
+          }>(`/api/llm/status/${jobId}`);
+
+          if (cancelledRef.current) return;
+
+          if (status.status !== "running") {
+            setRunning(false);
+            if (status.status === "completed") {
+              toast.success("LLM concluído para este documento!");
+              onComplete?.();
+            } else {
+              toast.error(status.errors[0] || "Erro na execução");
+            }
+          } else {
+            timeoutRef.current = setTimeout(poll, 2000);
+          }
+        } catch {
+          if (cancelledRef.current) return;
+          setRunning(false);
+          toast.error("Erro ao verificar progresso");
+        }
+      };
+
+      timeoutRef.current = setTimeout(poll, 2000);
+    },
+    [onComplete]
+  );
 
   const handleRun = async () => {
     if (running) return;
@@ -45,30 +86,7 @@ export function RunLlmButton({
         }),
       });
 
-      // Poll until done
-      intervalRef.current = setInterval(async () => {
-        try {
-          const status = await fetchFastAPI<{
-            status: string;
-            errors: string[];
-          }>(`/api/llm/status/${res.job_id}`);
-
-          if (status.status !== "running") {
-            cleanup();
-            setRunning(false);
-            if (status.status === "completed") {
-              toast.success("LLM concluído para este documento!");
-              onComplete?.();
-            } else {
-              toast.error(status.errors[0] || "Erro na execução");
-            }
-          }
-        } catch {
-          cleanup();
-          setRunning(false);
-          toast.error("Erro ao verificar progresso");
-        }
-      }, 2000);
+      pollStatus(res.job_id);
     } catch (e: any) {
       setRunning(false);
       toast.error(e.message);

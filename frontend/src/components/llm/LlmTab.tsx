@@ -40,9 +40,22 @@ import {
 import { toast } from "sonner";
 import { Check, ChevronsUpDown, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { ModelCapabilities } from "@/lib/model-registry";
 import type { PydanticField } from "@/lib/types";
 
 import { Textarea } from "@/components/ui/textarea";
+
+function buildKwargsForCapabilities(
+  currentKwargs: Record<string, any>,
+  caps: ModelCapabilities
+): Record<string, any> {
+  const newKwargs = { ...currentKwargs };
+  if (!caps.supportsTemperature) delete newKwargs.temperature;
+  else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
+  if (!caps.supportsThinkingLevel) delete newKwargs.thinking_level;
+  else if (!newKwargs.thinking_level) newKwargs.thinking_level = "medium";
+  return newKwargs;
+}
 import {
   Collapsible,
   CollapsibleContent,
@@ -101,6 +114,7 @@ export function LlmTab({
   const [isPending, startTransition] = useTransition();
 
   const [modelOpen, setModelOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
 
   // Model capabilities
   const capabilities = getModelCapabilities(
@@ -342,12 +356,7 @@ export function LlmTab({
                 const models = getModelsForProvider(v as Provider);
                 const firstModel = models[0]?.model ?? "";
                 const caps = getModelCapabilities(v as Provider, firstModel);
-                const newKwargs = { ...config.llm_kwargs };
-                if (!caps.supportsTemperature) delete newKwargs.temperature;
-                else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
-                if (!caps.supportsThinkingLevel) delete newKwargs.thinking_level;
-                else if (!newKwargs.thinking_level) newKwargs.thinking_level = "medium";
-                setConfig({ llm_provider: v, llm_model: firstModel, llm_kwargs: newKwargs });
+                setConfig({ llm_provider: v, llm_model: firstModel, llm_kwargs: buildKwargsForCapabilities(config.llm_kwargs, caps) });
               }}
             >
               <SelectTrigger className="w-full">
@@ -376,23 +385,18 @@ export function LlmTab({
               </PopoverTrigger>
               <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
-                  <CommandInput placeholder="Buscar modelo..." />
+                  <CommandInput placeholder="Buscar modelo..." value={modelSearch} onValueChange={setModelSearch} />
                   <CommandList>
                     <CommandEmpty>
                       <button
                         className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm"
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          const input = e.currentTarget.closest("[data-slot=command]")?.querySelector<HTMLInputElement>("[data-slot=command-input]");
-                          if (input?.value) {
-                            const caps = getModelCapabilities(config.llm_provider as Provider, input.value);
-                            const newKwargs = { ...config.llm_kwargs };
-                            if (!caps.supportsTemperature) delete newKwargs.temperature;
-                            else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
-                            if (!caps.supportsThinkingLevel) delete newKwargs.thinking_level;
-                            else if (!newKwargs.thinking_level) newKwargs.thinking_level = "medium";
-                            setConfig((c) => ({ ...c, llm_model: input.value, llm_kwargs: newKwargs }));
+                          if (modelSearch) {
+                            const caps = getModelCapabilities(config.llm_provider as Provider, modelSearch);
+                            setConfig((c) => ({ ...c, llm_model: modelSearch, llm_kwargs: buildKwargsForCapabilities(c.llm_kwargs, caps) }));
                             setModelOpen(false);
+                            setModelSearch("");
                           }
                         }}
                       >
@@ -407,12 +411,7 @@ export function LlmTab({
                             value={m.model}
                             onSelect={(value) => {
                               const caps = getModelCapabilities(config.llm_provider as Provider, value);
-                              const newKwargs = { ...config.llm_kwargs };
-                              if (!caps.supportsTemperature) delete newKwargs.temperature;
-                              else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
-                              if (!caps.supportsThinkingLevel) delete newKwargs.thinking_level;
-                              else if (!newKwargs.thinking_level) newKwargs.thinking_level = "medium";
-                              setConfig((c) => ({ ...c, llm_model: value, llm_kwargs: newKwargs }));
+                              setConfig((c) => ({ ...c, llm_model: value, llm_kwargs: buildKwargsForCapabilities(c.llm_kwargs, caps) }));
                               setModelOpen(false);
                             }}
                           >
@@ -430,12 +429,7 @@ export function LlmTab({
                             value={m.model}
                             onSelect={(value) => {
                               const caps = getModelCapabilities(config.llm_provider as Provider, value);
-                              const newKwargs = { ...config.llm_kwargs };
-                              if (!caps.supportsTemperature) delete newKwargs.temperature;
-                              else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
-                              if (!caps.supportsThinkingLevel) delete newKwargs.thinking_level;
-                              else if (!newKwargs.thinking_level) newKwargs.thinking_level = "medium";
-                              setConfig((c) => ({ ...c, llm_model: value, llm_kwargs: newKwargs }));
+                              setConfig((c) => ({ ...c, llm_model: value, llm_kwargs: buildKwargsForCapabilities(c.llm_kwargs, caps) }));
                               setModelOpen(false);
                             }}
                           >
@@ -459,15 +453,14 @@ export function LlmTab({
                 min={0}
                 max={2}
                 value={config.llm_kwargs.temperature ?? 1.0}
-                onChange={(e) =>
-                  setConfig((c) => ({
-                    ...c,
-                    llm_kwargs: {
-                      ...c.llm_kwargs,
-                      temperature: parseFloat(e.target.value),
-                    },
-                  }))
-                }
+                onChange={(e) => {
+                  const parsed = parseFloat(e.target.value);
+                  if (!isNaN(parsed))
+                    setConfig((c) => ({
+                      ...c,
+                      llm_kwargs: { ...c.llm_kwargs, temperature: parsed },
+                    }));
+                }}
               />
             </div>
           )}

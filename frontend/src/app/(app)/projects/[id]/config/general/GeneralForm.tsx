@@ -24,9 +24,14 @@ export function GeneralForm({
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      toast.error("Informe um nome para o projeto.");
+      return;
+    }
     setSaving(true);
     try {
-      await updateProject(projectId, { name, description });
+      await updateProject(projectId, { name: trimmedName, description });
       toast.success("Projeto atualizado!");
     } catch (e: any) {
       toast.error(e.message);
@@ -59,7 +64,7 @@ export function GeneralForm({
 
       <Button
         onClick={handleSave}
-        disabled={saving}
+        disabled={saving || !name.trim()}
         className="bg-brand hover:bg-brand/90 text-brand-foreground"
       >
         Salvar

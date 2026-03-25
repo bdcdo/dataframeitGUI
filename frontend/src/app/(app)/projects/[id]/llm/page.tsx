@@ -11,7 +11,7 @@ export default async function LlmPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, { count: totalDocs }, { data: llmResponses }] =
+  const [{ data: project }, { count: totalDocs }, { data: llmResponses }, runHistory] =
     await Promise.all([
       supabase
         .from("projects")
@@ -30,11 +30,10 @@ export default async function LlmPage({
         .eq("project_id", id)
         .eq("respondent_type", "llm")
         .eq("is_current", true),
+      getLlmRunHistory(id),
     ]);
 
-  // Count unique documents with LLM responses + fetch history in parallel
   const docsWithLlm = new Set(llmResponses?.map((r) => r.document_id)).size;
-  const runHistory = await getLlmRunHistory(id);
 
   return (
     <LlmTab

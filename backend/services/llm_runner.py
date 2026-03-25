@@ -142,7 +142,7 @@ async def run_llm(
         # Load project (only needed columns)
         project = (
             sb.table("projects")
-            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description")
+            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields")
             .eq("id", project_id)
             .single()
             .execute()

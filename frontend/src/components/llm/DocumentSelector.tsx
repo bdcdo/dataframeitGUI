@@ -37,18 +37,15 @@ export function DocumentSelector({
   );
 
   useEffect(() => {
-    if (open && docs.length === 0) {
+    if (open) {
       setLoading(true);
-      getDocumentsForSelection(projectId).then((data) => {
-        setDocs(data);
-        setLoading(false);
-      });
+      setLocalSelected(new Set(selectedIds));
+      getDocumentsForSelection(projectId)
+        .then((data) => setDocs(data))
+        .catch(() => setDocs([]))
+        .finally(() => setLoading(false));
     }
-  }, [open, projectId, docs.length]);
-
-  useEffect(() => {
-    setLocalSelected(new Set(selectedIds));
-  }, [selectedIds]);
+  }, [open, projectId, selectedIds]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return docs;
