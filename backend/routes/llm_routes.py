@@ -28,9 +28,13 @@ class RunResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str
+    phase: str = "loading"
     progress: int
     total: int
     errors: list[str]
+    eta_seconds: float | None = None
+    current_batch: int = 0
+    total_batches: int = 0
 
 
 @router.post("/run", response_model=RunResponse)
