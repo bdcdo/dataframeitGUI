@@ -7,6 +7,7 @@ The backend runs in an isolated container.
 """
 import hashlib
 import random
+import time
 from collections import Counter
 
 import pandas as pd
@@ -19,7 +20,9 @@ _jobs: dict[str, dict] = {}
 
 def get_job_status(job_id: str) -> dict:
     if job_id not in _jobs:
-        return {"status": "error", "progress": 0, "total": 0, "errors": ["Job not found"]}
+        return {"status": "error", "phase": "error", "progress": 0, "total": 0,
+                "errors": ["Job not found"], "eta_seconds": None,
+                "current_batch": 0, "total_batches": 0}
     return _jobs[job_id]
 
 
@@ -136,7 +139,11 @@ async def run_llm(
 ):
     """Run dataframeit on all (or filtered) documents."""
     sb = get_supabase()
-    _jobs[job_id] = {"status": "running", "progress": 0, "total": 0, "errors": []}
+    _jobs[job_id] = {
+        "status": "running", "phase": "loading", "progress": 0, "total": 0,
+        "errors": [], "started_at": time.time(), "eta_seconds": None,
+        "current_batch": 0, "total_batches": 0,
+    }
 
     try:
         # Load project (only needed columns)
@@ -191,22 +198,60 @@ async def run_llm(
         if include_justifications:
             model_class = _extend_model_with_justifications(model_class)
 
+        # Separate dataframeit params from model-specific params (temperature, thinking_level, etc.)
+        parallel_requests = llm_kwargs.pop("parallel_requests", 5)
+        rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
+
+        DATAFRAMEIT_PARAMS = {
+            "api_key", "max_retries", "base_delay", "max_delay", "track_tokens",
+            "use_search", "search_provider", "search_per_field", "max_results",
+            "search_depth", "search_groups", "save_trace", "resume",
+            "reprocess_columns", "status_column",
+        }
+        model_kwargs = {k: v for k, v in llm_kwargs.items() if k not in DATAFRAMEIT_PARAMS}
+        dfi_kwargs = {k: v for k, v in llm_kwargs.items() if k in DATAFRAMEIT_PARAMS}
+
         # Build DataFrame
         df = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
 
-        # Run dataframeit
+        # Run dataframeit in batches for granular progress
         from dataframeit import dataframeit
-        result_df = dataframeit(
-            df,
-            model_class,
-            prompt_template,
-            text_column="texto",
-            provider=llm_provider,
-            model=llm_model,
-            parallel_requests=llm_kwargs.pop("parallel_requests", 5),
-            rate_limit_delay=llm_kwargs.pop("rate_limit_delay", 0.5),
-            **llm_kwargs,
-        )
+        dfi_kwargs.pop("resume", None)
+
+        batch_size = max(1, parallel_requests)
+        batches = [df.iloc[i:i + batch_size] for i in range(0, len(df), batch_size)]
+        _jobs[job_id].update(phase="processing", total_batches=len(batches))
+
+        result_frames = []
+        proc_start = time.time()
+        for idx, batch_df in enumerate(batches):
+            _jobs[job_id]["current_batch"] = idx + 1
+            batch_result = dataframeit(
+                batch_df,
+                model_class,
+                prompt_template,
+                text_column="texto",
+                provider=llm_provider,
+                model=llm_model,
+                parallel_requests=parallel_requests,
+                rate_limit_delay=rate_limit_delay,
+                model_kwargs=model_kwargs if model_kwargs else None,
+                resume=False,
+                **dfi_kwargs,
+            )
+            result_frames.append(batch_result)
+            processed = sum(len(f) for f in result_frames)
+            _jobs[job_id]["progress"] = processed
+            elapsed = time.time() - proc_start
+            if processed > 0:
+                _jobs[job_id]["eta_seconds"] = round(
+                    (elapsed / processed) * (len(df) - processed), 1
+                )
+
+        result_df = pd.concat(result_frames, ignore_index=True)
+
+        # --- Saving phase ---
+        _jobs[job_id].update(phase="saving", eta_seconds=None)
 
         # Mark all old LLM responses as not current in one batch
         doc_ids = [d["id"] for d in docs]
@@ -215,7 +260,7 @@ async def run_llm(
         ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
 
         # Save responses — use row["id"] (not index correlation) for safety
-        for i, (_, row) in enumerate(result_df.iterrows()):
+        for _, row in result_df.iterrows():
             doc_id = row["id"]
             answers = {}
             justifications = {}
@@ -232,7 +277,6 @@ async def run_llm(
                 if just_col in row and row[just_col]:
                     justifications[field_name] = str(row[just_col])
 
-            # Insert new response
             sb.table("responses").insert({
                 "project_id": project_id,
                 "document_id": doc_id,
@@ -245,15 +289,14 @@ async def run_llm(
                 "answer_field_hashes": answer_field_hashes,
             }).execute()
 
-            _jobs[job_id]["progress"] = i + 1
-
         # Update project hash
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq("id", project_id).execute()
 
-        _jobs[job_id]["status"] = "completed"
+        _jobs[job_id].update(status="completed", phase="completed", eta_seconds=0)
 
     except Exception as e:
         _jobs[job_id]["status"] = "error"
+        _jobs[job_id]["phase"] = "error"
         _jobs[job_id]["errors"].append(str(e))
 
 

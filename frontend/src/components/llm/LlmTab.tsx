@@ -37,6 +37,7 @@ import {
   getModelCapabilities,
   type Provider,
 } from "@/lib/model-registry";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Check, ChevronsUpDown, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -65,6 +66,16 @@ import { ChevronRight } from "lucide-react";
 import { DocumentSelector } from "./DocumentSelector";
 import { LlmRunHistory } from "./LlmRunHistory";
 import type { LlmRunHistoryItem } from "@/actions/llm";
+
+function formatEta(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  if (mins < 60) return secs > 0 ? `${mins}min ${secs}s` : `${mins}min`;
+  const hours = Math.floor(mins / 60);
+  const remainMins = mins % 60;
+  return `${hours}h ${remainMins}min`;
+}
 
 type FilterMode = "all" | "pending" | "max_responses" | "random_sample" | "specific";
 
@@ -110,6 +121,10 @@ export function LlmTab({
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState<string>("idle");
+  const [phase, setPhase] = useState<string>("idle");
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const [currentBatch, setCurrentBatch] = useState(0);
+  const [totalBatches, setTotalBatches] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -215,6 +230,12 @@ export function LlmTab({
       });
       setJobId(res.job_id);
       setStatus("running");
+      setPhase("loading");
+      setEtaSeconds(null);
+      setCurrentBatch(0);
+      setTotalBatches(0);
+      setProgress(0);
+      setTotal(0);
       pollProgress(res.job_id);
     } catch (e: any) {
       toast.error(e.message);
@@ -229,13 +250,21 @@ export function LlmTab({
       try {
         const res = await fetchFastAPI<{
           status: string;
+          phase: string;
           progress: number;
           total: number;
           errors: string[];
+          eta_seconds: number | null;
+          current_batch: number;
+          total_batches: number;
         }>(`/api/llm/status/${id}`);
         setProgress(res.progress);
         setTotal(res.total);
         setStatus(res.status);
+        setPhase(res.phase);
+        setEtaSeconds(res.eta_seconds);
+        setCurrentBatch(res.current_batch);
+        setTotalBatches(res.total_batches);
         if (res.status !== "running") {
           if (intervalRef.current) clearInterval(intervalRef.current);
           intervalRef.current = null;
@@ -247,6 +276,7 @@ export function LlmTab({
         if (intervalRef.current) clearInterval(intervalRef.current);
         intervalRef.current = null;
         setStatus("error");
+        setPhase("error");
         toast.error(e?.message ?? "Não foi possível atualizar o progresso");
       }
     }, 2000);
@@ -529,6 +559,59 @@ export function LlmTab({
             />
           </div>
         </div>
+
+        {/* Advanced parameters */}
+        <Collapsible>
+          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors group">
+            <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+            Parâmetros avançados
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="grid grid-cols-2 gap-4 pt-3">
+              <div className="space-y-1.5">
+                <Label className="text-sm">Requisições paralelas</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={config.llm_kwargs.parallel_requests ?? 5}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    if (!isNaN(v) && v >= 1)
+                      setConfig((c) => ({
+                        ...c,
+                        llm_kwargs: { ...c.llm_kwargs, parallel_requests: v },
+                      }));
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Documentos processados simultaneamente.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm">Delay entre requisições (s)</Label>
+                <Input
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  max={10}
+                  value={config.llm_kwargs.rate_limit_delay ?? 0.5}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    if (!isNaN(v) && v >= 0)
+                      setConfig((c) => ({
+                        ...c,
+                        llm_kwargs: { ...c.llm_kwargs, rate_limit_delay: v },
+                      }));
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Pausa entre requisições para evitar rate limits.
+                </p>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
       </section>
 
       <Separator />
@@ -655,10 +738,40 @@ export function LlmTab({
         </div>
 
         {status === "running" && (
-          <div className="space-y-2">
-            <Progress value={total > 0 ? (progress / total) * 100 : 0} />
+          <div className="space-y-3 rounded-lg border p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant={
+                    phase === "processing" ? "default" :
+                    phase === "saving" ? "outline" : "secondary"
+                  }
+                  className={phase === "processing" ? "bg-brand text-brand-foreground" : ""}
+                >
+                  {phase === "loading" && "Carregando"}
+                  {phase === "processing" && "Processando"}
+                  {phase === "saving" && "Salvando"}
+                </Badge>
+                {phase === "processing" && totalBatches > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    Lote {currentBatch}/{totalBatches}
+                  </span>
+                )}
+              </div>
+              {etaSeconds != null && etaSeconds > 0 && phase === "processing" && (
+                <span className="text-xs text-muted-foreground">
+                  ~{formatEta(etaSeconds)} restantes
+                </span>
+              )}
+            </div>
+            <Progress
+              value={total > 0 ? (progress / total) * 100 : 0}
+              className={phase === "loading" ? "animate-pulse" : ""}
+            />
             <p className="text-sm text-muted-foreground">
-              {progress}/{total}
+              {phase === "loading" && "Carregando documentos..."}
+              {phase === "processing" && `${progress}/${total} documentos processados`}
+              {phase === "saving" && "Salvando resultados..."}
             </p>
           </div>
         )}
