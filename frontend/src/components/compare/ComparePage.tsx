@@ -289,7 +289,7 @@ export function ComparePage({
       className={
         isFullscreen
           ? "fixed inset-0 z-50 flex flex-col bg-background"
-          : "flex h-[calc(100vh-88px)] flex-col"
+          : "flex h-[calc(100vh-96px)] flex-col"
       }
     >
       {isFullscreen ? (

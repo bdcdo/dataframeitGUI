@@ -44,7 +44,7 @@ export function DocumentReader({ text }: DocumentReaderProps) {
 
   return (
     <div className="h-full overflow-y-auto px-6 py-6">
-      <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+      <div className="prose prose-sm dark:prose-invert max-w-3xl break-words">
         <ReactMarkdown>{normalized}</ReactMarkdown>
       </div>
     </div>

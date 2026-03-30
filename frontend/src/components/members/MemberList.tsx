@@ -3,6 +3,13 @@
 import { removeMember, changeRole } from "@/actions/members";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import type { ProjectMember, Profile } from "@/lib/types";
 
@@ -42,15 +49,19 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
             <p className="text-xs text-muted-foreground">{m.profiles?.email}</p>
           </div>
           <div className="flex items-center gap-2">
-            <select
+            <Select
               value={m.role}
-              onChange={(e) => handleChangeRole(m.id, e.target.value as "coordenador" | "pesquisador")}
-              className="rounded-md border bg-background px-2 py-1 text-xs"
+              onValueChange={(v) => handleChangeRole(m.id, v as "coordenador" | "pesquisador")}
               disabled={m.user_id === currentUserId}
             >
-              <option value="coordenador">Coordenador</option>
-              <option value="pesquisador">Pesquisador</option>
-            </select>
+              <SelectTrigger className="h-8 w-[140px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="coordenador">Coordenador</SelectItem>
+                <SelectItem value="pesquisador">Pesquisador</SelectItem>
+              </SelectContent>
+            </Select>
             {m.user_id !== currentUserId && (
               <Button variant="ghost" size="sm" onClick={() => handleRemove(m.id)} className="text-destructive">
                 Remover

@@ -26,10 +26,8 @@ export default async function ConfigDocumentsPage({
   }));
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <DocumentUpload projectId={id} />
-      </div>
+    <div className="mx-auto max-w-4xl space-y-6 p-6">
+      <DocumentUpload projectId={id} />
       <DocumentsPageClient documents={docsWithCounts} projectId={id} />
     </div>
   );

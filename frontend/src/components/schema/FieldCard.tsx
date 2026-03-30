@@ -87,20 +87,20 @@ export function FieldCard({
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5"
+              className="h-6 w-6 disabled:opacity-50"
               disabled={index === 0}
               onClick={onMoveUp}
             >
-              <ChevronUp className="h-3 w-3" />
+              <ChevronUp className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5"
+              className="h-6 w-6 disabled:opacity-50"
               disabled={index === total - 1}
               onClick={onMoveDown}
             >
-              <ChevronDown className="h-3 w-3" />
+              <ChevronDown className="h-3.5 w-3.5" />
             </Button>
           </div>
 

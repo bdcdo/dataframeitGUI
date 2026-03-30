@@ -2,6 +2,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { Header } from "@/components/shell/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FolderOpen } from "lucide-react";
 import Link from "next/link";
 import type { Project } from "@/lib/types";
 
@@ -47,11 +48,17 @@ export default async function DashboardPage() {
         </div>
 
         {projects.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              Nenhum projeto ainda. Crie um novo projeto para começar.
-            </CardContent>
-          </Card>
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <FolderOpen className="h-10 w-10 text-muted-foreground/50" />
+            <p className="mt-3 text-sm text-muted-foreground">
+              Nenhum projeto ainda.
+            </p>
+            <Link href="/projects/new" className="mt-4">
+              <Button className="bg-brand hover:bg-brand/90 text-brand-foreground">
+                Criar primeiro projeto
+              </Button>
+            </Link>
+          </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {projects.map((project) => (

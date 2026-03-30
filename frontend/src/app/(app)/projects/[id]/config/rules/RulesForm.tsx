@@ -5,7 +5,16 @@ import { useRouter } from "next/navigation";
 import { updateProject } from "@/actions/projects";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface RulesFormProps {
   projectId: string;
@@ -53,24 +62,25 @@ export function RulesForm({
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="space-y-2">
-          <label className="text-sm font-medium">Regra de resolução</label>
-          <select
-            value={rule}
-            onChange={(e) => setRule(e.target.value)}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            {RESOLUTION_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <Label className="text-sm">Regra de resolução</Label>
+          <Select value={rule} onValueChange={setRule}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {RESOLUTION_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">
+          <Label className="text-sm">
             Mínimo de respostas para comparação
-          </label>
+          </Label>
           <Input
             type="number"
             min={2}
@@ -81,16 +91,14 @@ export function RulesForm({
         </div>
 
         <div className="flex items-center gap-3">
-          <input
-            type="checkbox"
+          <Checkbox
             id="allowReview"
             checked={allowReview}
-            onChange={(e) => setAllowReview(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300"
+            onCheckedChange={(checked) => setAllowReview(checked === true)}
           />
-          <label htmlFor="allowReview" className="text-sm font-medium">
+          <Label htmlFor="allowReview" className="text-sm">
             Permitir revisão por pesquisadores
-          </label>
+          </Label>
         </div>
 
         <Button onClick={handleSave} disabled={isPending} className="w-full">

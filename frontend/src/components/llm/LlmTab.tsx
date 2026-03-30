@@ -2,10 +2,10 @@
 
 import { useState, useRef, useEffect, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -308,9 +308,9 @@ export function LlmTab({
   return (
     <div className="mx-auto max-w-3xl space-y-8 p-6">
       {/* --- Prompt --- */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Prompt</h2>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Prompt</CardTitle>
           <Button
             size="sm"
             onClick={handleSavePrompt}
@@ -319,64 +319,67 @@ export function LlmTab({
           >
             Salvar
           </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          O prompt é montado automaticamente a partir da descrição do projeto e
-          das instruções de cada campo (help text no schema). Use o campo abaixo
-          para adicionar instruções complementares.
-        </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            O prompt é montado automaticamente a partir da descrição do projeto e
+            das instruções de cada campo (help text no schema). Use o campo abaixo
+            para adicionar instruções complementares.
+          </p>
 
-        <Collapsible>
-          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors group">
-            <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
-            Ver preview do prompt final
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-2 rounded-md border bg-muted/50 p-4 text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
-              <p>Voce e um assistente de pesquisa especializado em analise de conteudo.</p>
-              <p>Analise o documento fornecido e responda as perguntas de classificacao.</p>
-              <p className="mt-2 font-medium">## Instrucoes gerais</p>
-              <p>- Leia o documento completo antes de classificar.</p>
-              <p>- Baseie suas respostas exclusivamente no conteudo do documento.</p>
-              <p>- Se houver ambiguidade, escolha a opcao mais conservadora.</p>
-              <p>- Para campos de texto, seja conciso e objetivo.</p>
-              {projectDescription.trim() && (
-                <>
-                  <p className="mt-2 font-medium">## Contexto do estudo</p>
-                  <p>{projectDescription}</p>
-                </>
-              )}
-              {!projectDescription.trim() && (
-                <p className="mt-2 text-muted-foreground italic">
-                  (Sem descrição do projeto — configure em Config → Geral)
-                </p>
-              )}
-              {prompt.trim() && (
-                <>
-                  <p className="mt-2 font-medium">## Instrucoes adicionais</p>
-                  <p>{prompt}</p>
-                </>
-              )}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+          <Collapsible>
+            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors group">
+              <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+              Ver preview do prompt final
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-2 rounded-md border bg-muted/50 p-4 text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
+                <p>Voce e um assistente de pesquisa especializado em analise de conteudo.</p>
+                <p>Analise o documento fornecido e responda as perguntas de classificacao.</p>
+                <p className="mt-2 font-medium">## Instrucoes gerais</p>
+                <p>- Leia o documento completo antes de classificar.</p>
+                <p>- Baseie suas respostas exclusivamente no conteudo do documento.</p>
+                <p>- Se houver ambiguidade, escolha a opcao mais conservadora.</p>
+                <p>- Para campos de texto, seja conciso e objetivo.</p>
+                {projectDescription.trim() && (
+                  <>
+                    <p className="mt-2 font-medium">## Contexto do estudo</p>
+                    <p>{projectDescription}</p>
+                  </>
+                )}
+                {!projectDescription.trim() && (
+                  <p className="mt-2 text-muted-foreground italic">
+                    (Sem descrição do projeto — configure em Config → Geral)
+                  </p>
+                )}
+                {prompt.trim() && (
+                  <>
+                    <p className="mt-2 font-medium">## Instrucoes adicionais</p>
+                    <p>{prompt}</p>
+                  </>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
 
-        <div className="space-y-1.5">
-          <Label className="text-sm">Instruções adicionais (opcional)</Label>
-          <Textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Adicione aqui instruções específicas que complementam o prompt automático..."
-            className="min-h-[100px] resize-y text-sm"
-          />
-        </div>
-      </section>
-
-      <Separator />
+          <div className="space-y-1.5">
+            <Label className="text-sm">Instruções adicionais (opcional)</Label>
+            <Textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Adicione aqui instruções específicas que complementam o prompt automático..."
+              className="min-h-[100px] resize-y text-sm"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* --- Configuração do Modelo --- */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Configuração do Modelo</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Configuração do Modelo</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <Label className="text-sm">Provedor</Label>
@@ -612,13 +615,15 @@ export function LlmTab({
             </div>
           </CollapsibleContent>
         </Collapsible>
-      </section>
-
-      <Separator />
+        </CardContent>
+      </Card>
 
       {/* --- Execução --- */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Execução</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Execução</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
 
         <RadioGroup
           value={filterMode}
@@ -777,7 +782,8 @@ export function LlmTab({
         )}
 
         <LlmRunHistory history={runHistory} />
-      </section>
+        </CardContent>
+      </Card>
     </div>
   );
 }

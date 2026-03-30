@@ -19,7 +19,7 @@ export function FieldProgress({ fields }: FieldProgressProps) {
         <div key={f.name} className="flex items-center gap-3">
           <div className="w-48 truncate text-sm">{f.description}</div>
           <Progress value={f.progress} className="flex-1" />
-          <span className="w-12 text-right text-sm text-muted-foreground">{f.progress}%</span>
+          <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">{f.progress}%</span>
           <Badge
             variant={f.priority === "ALTA" ? "destructive" : "secondary"}
             className="w-16 justify-center text-xs"

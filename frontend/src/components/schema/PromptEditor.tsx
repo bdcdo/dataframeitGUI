@@ -29,7 +29,7 @@ export function PromptEditor({ projectId, initialPrompt }: PromptEditorProps) {
   };
 
   return (
-    <div className="flex h-[calc(100vh-140px)] flex-col">
+    <div className="flex h-[calc(100vh-148px)] flex-col">
       <div className="flex-1">
         <MonacoEditor
           height="100%"

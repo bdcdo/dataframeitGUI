@@ -26,28 +26,28 @@ export function ProgressCards({
       value: `${completed}/${total}`,
       sub: `${pct}%`,
       icon: CheckCircle,
-      color: "text-green-600 dark:text-green-400",
+      color: "text-brand",
     },
     {
       title: "Sequência",
       value: `${streak}`,
       sub: streak === 1 ? "dia" : "dias",
       icon: Flame,
-      color: "text-orange-500",
+      color: "text-muted-foreground",
     },
     {
       title: "Média Diária",
       value: `${dailyAverage}`,
       sub: "docs/dia",
       icon: BarChart3,
-      color: "text-blue-600 dark:text-blue-400",
+      color: "text-muted-foreground",
     },
     {
       title: "Ritmo Necessário",
       value: requiredPace !== null ? `${requiredPace}` : "—",
       sub: requiredPace !== null ? "docs/dia" : "sem prazo",
       icon: TrendingUp,
-      color: "text-brand",
+      color: "text-muted-foreground",
     },
   ];
 

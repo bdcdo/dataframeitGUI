@@ -69,13 +69,16 @@ export function ProjectTabs({ projectId, isCoordinator }: ProjectTabsProps) {
               key={tab.href}
               href={href}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors",
+                "relative px-3 py-1.5 text-sm transition-colors",
                 isActive
-                  ? "bg-brand/10 font-medium text-brand"
+                  ? "font-medium text-foreground"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
               {tab.label}
+              {isActive && (
+                <span className="absolute inset-x-1 -bottom-[5px] h-0.5 rounded-full bg-brand" />
+              )}
             </Link>
           );
         })}

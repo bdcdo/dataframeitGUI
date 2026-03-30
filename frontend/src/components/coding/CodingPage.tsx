@@ -21,7 +21,7 @@ import type { PydanticField, Document, Assignment } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
 import { CreateDiscussionDialog } from "@/components/discussions/CreateDiscussionDialog";
 import { toast } from "sonner";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, FileQuestion, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface CodingPageProps {
@@ -364,8 +364,11 @@ export function CodingPage({
   // --- Empty states ---
   if (fields.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        Schema não definido.
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+        <FileQuestion className="h-10 w-10 text-muted-foreground/50" />
+        <p className="text-sm text-muted-foreground">
+          Schema não definido. Configure os campos em Configurações → Schema.
+        </p>
       </div>
     );
   }
@@ -391,7 +394,7 @@ export function CodingPage({
       className={
         isFullscreen
           ? "fixed inset-0 z-50 flex flex-col bg-background"
-          : "flex h-[calc(100vh-88px)] flex-col"
+          : "flex h-[calc(100vh-96px)] flex-col"
       }
     >
       {!isFullscreen && (
@@ -438,8 +441,11 @@ export function CodingPage({
               </div>
             </div>
           ) : !currentDoc ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              Nenhum documento atribuído. Use a aba Explorar.
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+              <ClipboardList className="h-10 w-10 text-muted-foreground/50" />
+              <p className="text-sm text-muted-foreground">
+                Nenhum documento atribuído. Use a aba Explorar.
+              </p>
             </div>
           ) : (
             <>

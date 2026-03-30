@@ -27,11 +27,11 @@ export function DocumentNav({ title, currentIndex, total, onNavigate, onToggleFu
         )}
       </div>
       <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onNavigate(currentIndex - 1)} disabled={currentIndex === 0}>
+        <Button variant="ghost" size="icon" className="h-6 w-6 disabled:opacity-50" onClick={() => onNavigate(currentIndex - 1)} disabled={currentIndex === 0}>
           <ChevronLeft className="h-4 w-4" />
         </Button>
-        <span className="text-muted-foreground">{currentIndex + 1}/{total}</span>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onNavigate(currentIndex + 1)} disabled={currentIndex === total - 1}>
+        <span className="tabular-nums text-muted-foreground">{currentIndex + 1}/{total}</span>
+        <Button variant="ghost" size="icon" className="h-6 w-6 disabled:opacity-50" onClick={() => onNavigate(currentIndex + 1)} disabled={currentIndex === total - 1}>
           <ChevronRight className="h-4 w-4" />
         </Button>
         {onToggleFullscreen && (

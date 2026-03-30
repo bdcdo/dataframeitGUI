@@ -138,7 +138,7 @@ export function SchemaEditor({
   ).length;
 
   return (
-    <div className="flex h-[calc(100vh-140px)] flex-col">
+    <div className="flex h-[calc(100vh-148px)] flex-col">
       {/* Header: toggle de modo */}
       <div className="flex items-center justify-between border-b px-4 py-2">
         <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5">

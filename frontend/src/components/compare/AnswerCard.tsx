@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Bot, AlertTriangle } from "lucide-react";
+import { Bot, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Tooltip,
   TooltipTrigger,
@@ -91,7 +91,7 @@ export function AnswerCard({
                 }}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
-                {showJustification ? "▼" : "▶"} Justificativa
+                {showJustification ? <ChevronDown className="inline h-3 w-3" /> : <ChevronRight className="inline h-3 w-3" />}{" "}Justificativa
               </button>
               {showJustification && (
                 <p className="mt-1 text-xs text-muted-foreground">
