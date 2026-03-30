@@ -64,7 +64,7 @@ export default async function DashboardPage() {
                     <p className="text-sm text-muted-foreground">
                       {project.description || "Sem descrição"}
                     </p>
-                    <span className="mt-2 inline-block rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand">
+                    <span className="mt-2 inline-block rounded-md bg-brand/10 px-2 py-0.5 text-xs text-brand">
                       {project.role}
                     </span>
                   </CardContent>
