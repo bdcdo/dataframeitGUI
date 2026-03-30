@@ -1,0 +1,100 @@
+import { createSupabaseServer } from "@/lib/supabase/server";
+import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
+
+interface ReviewComment {
+  id: string;
+  documentId: string;
+  documentTitle: string;
+  fieldName: string;
+  fieldDescription: string;
+  verdict: string;
+  comment: string;
+  reviewerName: string;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+export default async function CommentsPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const supabase = await createSupabaseServer();
+
+  const [{ data: project }, { data: reviews }, { data: documents }] =
+    await Promise.all([
+      supabase
+        .from("projects")
+        .select("pydantic_fields")
+        .eq("id", id)
+        .single(),
+      supabase
+        .from("reviews")
+        .select(
+          "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at",
+        )
+        .eq("project_id", id)
+        .not("comment", "is", null)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("documents")
+        .select("id, title, external_id")
+        .eq("project_id", id),
+    ]);
+
+  const fields = (project?.pydantic_fields || []) as {
+    name: string;
+    description: string;
+  }[];
+
+  const fieldDescMap = new Map(fields.map((f) => [f.name, f.description]));
+  const docMap = new Map(
+    documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
+  );
+
+  // Fetch reviewer names for reviews that have reviewer_id
+  const reviewerIds = [
+    ...new Set(
+      (reviews || [])
+        .map((r) => r.reviewer_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+
+  let reviewerMap = new Map<string, string>();
+  if (reviewerIds.length > 0) {
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", reviewerIds);
+    reviewerMap = new Map(
+      profiles?.map((p) => [p.id, p.full_name || "Anônimo"]) || [],
+    );
+  }
+
+  const comments: ReviewComment[] = (reviews || []).map((r) => ({
+    id: r.id,
+    documentId: r.document_id,
+    documentTitle: docMap.get(r.document_id) || r.document_id,
+    fieldName: r.field_name,
+    fieldDescription: fieldDescMap.get(r.field_name) || r.field_name,
+    verdict: r.verdict,
+    comment: r.comment!,
+    reviewerName: r.reviewer_id
+      ? reviewerMap.get(r.reviewer_id) || "Anônimo"
+      : "Anônimo",
+    resolvedAt: r.resolved_at,
+    createdAt: r.created_at,
+  }));
+
+  return (
+    <div className="mx-auto max-w-4xl p-6">
+      <ReviewCommentsView
+        projectId={id}
+        comments={comments}
+        fields={fields}
+      />
+    </div>
+  );
+}
