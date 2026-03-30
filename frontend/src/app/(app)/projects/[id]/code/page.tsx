@@ -11,24 +11,26 @@ export default async function CodePage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Round 1: user + project in parallel (independent)
+  const [{ data: { user } }, { data: project }] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase
+      .from("projects")
+      .select("pydantic_fields")
+      .eq("id", id)
+      .single(),
+  ]);
 
-  // Get project fields
-  const { data: project } = await supabase
-    .from("projects")
-    .select("pydantic_fields")
-    .eq("id", id)
-    .single();
-
-  // Get assigned documents for current user (only needed columns)
-  const { data: assignments } = await supabase
-    .from("assignments")
-    .select("id, status, document_id, documents(id, external_id, title, text)")
-    .eq("project_id", id)
-    .eq("user_id", user!.id)
-    .order("status", { ascending: true });
+  // Round 2: assignments (needs user.id) + progress in parallel
+  const [{ data: assignments }, progressResult] = await Promise.all([
+    supabase
+      .from("assignments")
+      .select("id, status, document_id, documents(id, external_id, title, text)")
+      .eq("project_id", id)
+      .eq("user_id", user!.id)
+      .order("status", { ascending: true }),
+    getResearcherProgress(id, user!.id).catch(() => null),
+  ]);
 
   const documents = (assignments || []).map((a) => ({
     ...(a.documents as unknown as Document),
@@ -78,22 +80,17 @@ export default async function CodePage({
     existingAnswers[docId] = clean;
   }
 
-  // Get progress data
+  // Progress was fetched in parallel above
   let progress = null;
-  if (documents.length > 0) {
-    try {
-      const full = await getResearcherProgress(id);
-      progress = {
-        completed: full.completed,
-        total: full.total,
-        nextDeadline: full.nextDeadline,
-        daysUntilDeadline: full.daysUntilDeadline,
-        requiredPace: full.requiredPace,
-        streak: full.streak,
-      };
-    } catch {
-      // Progress is optional, don't break the page
-    }
+  if (documents.length > 0 && progressResult) {
+    progress = {
+      completed: progressResult.completed,
+      total: progressResult.total,
+      nextDeadline: progressResult.nextDeadline,
+      daysUntilDeadline: progressResult.daysUntilDeadline,
+      requiredPace: progressResult.requiredPace,
+      streak: progressResult.streak,
+    };
   }
 
   return (

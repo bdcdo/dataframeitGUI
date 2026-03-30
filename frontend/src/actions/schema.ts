@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { fetchFastAPI } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
 import crypto from "crypto";
@@ -59,7 +59,11 @@ export async function saveSchema(
   // Human answers are no longer deleted when fields change.
   // Staleness is detected at display time via answer_field_hashes.
 
-  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/code`);
+  revalidatePath(`/projects/${projectId}/compare`);
+  revalidatePath(`/projects/${projectId}/stats`);
+  revalidatePath(`/projects/${projectId}/llm`);
+  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
 }
 
 export async function savePrompt(projectId: string, promptTemplate: string) {
@@ -70,7 +74,8 @@ export async function savePrompt(projectId: string, promptTemplate: string) {
     .eq("id", projectId);
 
   if (error) throw new Error(error.message);
-  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/code`);
+  revalidatePath(`/projects/${projectId}/llm`);
 }
 
 // ---------- Hash por campo (reproduz backend _field_hash) ----------
@@ -145,5 +150,6 @@ export async function saveLlmConfig(
     .eq("id", projectId);
 
   if (error) throw new Error(error.message);
-  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/llm`);
+  revalidatePath(`/projects/${projectId}/config`);
 }

@@ -30,20 +30,22 @@ export default async function ComparePageRoute({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const { data: project } = await supabase
-    .from("projects")
-    .select("pydantic_hash, pydantic_fields, min_responses_for_comparison")
-    .eq("id", id)
-    .single();
+  // Phase 1: Fetch project config and responses in parallel (without document text)
+  const [{ data: project }, { data: allResponses, error: responsesError }] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("pydantic_hash, pydantic_fields, min_responses_for_comparison")
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("responses")
+      .select("id, document_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes, documents(id, title, external_id)")
+      .eq("project_id", id)
+      .limit(5000),
+  ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const minResponses = project?.min_responses_for_comparison || 2;
-
-  // Phase 1: Get responses WITHOUT document text (lightweight)
-  const { data: allResponses, error: responsesError } = await supabase
-    .from("responses")
-    .select("id, document_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes, documents(id, title, external_id)")
-    .eq("project_id", id);
 
   if (responsesError) {
     console.error("Failed to fetch responses for compare:", responsesError.message);

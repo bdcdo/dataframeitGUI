@@ -11,8 +11,11 @@ export default async function DiscussionDetailPage({
   const { id: projectId, discussionId } = await params;
   const supabase = await createSupabaseServer();
 
-  // Fetch discussion, comments, and user role in parallel
-  const [{ data: discussion }, { data: comments }, { data: { user } }] = await Promise.all([
+  // Get user first (needed for membership query)
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // Fetch discussion, comments, and membership in parallel
+  const [{ data: discussion }, { data: comments }, membershipResult] = await Promise.all([
     supabase
       .from("discussions")
       .select(
@@ -26,22 +29,19 @@ export default async function DiscussionDetailPage({
       .select("id, body, created_at, profiles(first_name, last_name, email)")
       .eq("discussion_id", discussionId)
       .order("created_at", { ascending: true }),
-    supabase.auth.getUser(),
+    user
+      ? supabase
+          .from("project_members")
+          .select("role")
+          .eq("project_id", projectId)
+          .eq("user_id", user.id)
+          .single()
+      : Promise.resolve({ data: null }),
   ]);
 
   if (!discussion) notFound();
 
-  let isCoordinator = false;
-  if (user) {
-    const { data: membership } = await supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", projectId)
-      .eq("user_id", user.id)
-      .single();
-
-    isCoordinator = membership?.role === "coordenador";
-  }
+  const isCoordinator = membershipResult?.data?.role === "coordenador";
 
   return (
     <DiscussionDetail

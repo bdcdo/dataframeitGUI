@@ -22,7 +22,7 @@ export default async function LlmPage({
         .single(),
       supabase
         .from("documents")
-        .select("*", { count: "exact", head: true })
+        .select("id", { count: "exact", head: true })
         .eq("project_id", id),
       supabase
         .from("responses")

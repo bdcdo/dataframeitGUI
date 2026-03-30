@@ -31,11 +31,11 @@ export default async function StatsPage({
   ] = await Promise.all([
     supabase
       .from("assignments")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("project_id", id),
     supabase
       .from("assignments")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("project_id", id)
       .eq("status", "concluido"),
     supabase

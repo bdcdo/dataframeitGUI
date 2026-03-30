@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import type { PydanticField } from "@/lib/types";
 
 export async function saveResponse(
@@ -17,8 +17,8 @@ export async function saveResponse(
     } = await supabase.auth.getUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
-    // Fetch profile and existing response in parallel
-    const [{ data: profile }, { data: existing }] = await Promise.all([
+    // Fetch profile, existing response, and project config in parallel
+    const [{ data: profile }, { data: existing }, { data: project, error: projErr }] = await Promise.all([
       supabase
         .from("profiles")
         .select("first_name, last_name")
@@ -32,21 +32,20 @@ export async function saveResponse(
         .eq("respondent_id", user.id)
         .eq("respondent_type", "humano")
         .single(),
+      supabase
+        .from("projects")
+        .select("pydantic_hash, pydantic_fields")
+        .eq("id", projectId)
+        .single(),
     ]);
+
+    if (projErr) return { success: false, error: projErr.message };
 
     const respondentName = [profile?.first_name, profile?.last_name]
       .filter(Boolean)
       .join(" ") || user.email;
 
     const justifications = notes ? { _notes: notes } : null;
-
-    // Fetch project for field hashes and assignment check
-    const { data: project, error: projErr } = await supabase
-      .from("projects")
-      .select("pydantic_hash, pydantic_fields")
-      .eq("id", projectId)
-      .single();
-    if (projErr) return { success: false, error: projErr.message };
 
     // Build per-field hash snapshot for staleness detection
     const fields = (project?.pydantic_fields as PydanticField[]) || [];
@@ -119,7 +118,10 @@ export async function saveResponse(
       }
     }
 
-    revalidatePath(`/projects/${projectId}`, "layout");
+    revalidatePath(`/projects/${projectId}/code`);
+    revalidatePath(`/projects/${projectId}/compare`);
+    revalidatePath(`/projects/${projectId}/stats`);
+    revalidateTag(`project-${projectId}-progress`, { expire: 60 });
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };

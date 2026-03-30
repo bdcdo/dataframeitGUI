@@ -12,7 +12,7 @@ export async function getEligibleDocCount(
   const [{ count: total }, { data: llmResponses }] = await Promise.all([
     supabase
       .from("documents")
-      .select("*", { count: "exact", head: true })
+      .select("id", { count: "exact", head: true })
       .eq("project_id", projectId),
     supabase
       .from("responses")
