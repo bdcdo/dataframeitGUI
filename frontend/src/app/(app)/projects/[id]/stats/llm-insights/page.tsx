@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { normalizeForComparison } from "@/lib/utils";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 
 export interface LlmError {
@@ -104,6 +105,8 @@ export default async function LlmInsightsPage({
     llmFieldsReviewed++;
     if (review.chosen_response_id !== llmResp.id) {
       const llmAnswer = llmResp.answers?.[review.field_name];
+      // Skip if the LLM answer matches the chosen verdict (same content, different responder)
+      if (normalizeForComparison(llmAnswer) === normalizeForComparison(review.verdict)) return;
       errors.push({
         documentId: review.document_id,
         documentTitle: docMap.get(review.document_id) || review.document_id,
