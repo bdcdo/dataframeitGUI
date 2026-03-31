@@ -1,18 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
-
-interface ReviewComment {
-  id: string;
-  documentId: string;
-  documentTitle: string;
-  fieldName: string;
-  fieldDescription: string;
-  verdict: string;
-  comment: string;
-  reviewerName: string;
-  resolvedAt: string | null;
-  createdAt: string;
-}
+import type { ReviewComment } from "@/components/stats/CommentCard";
+import type { PydanticField } from "@/lib/types";
 
 export default async function CommentsPage({
   params,
@@ -22,45 +11,61 @@ export default async function CommentsPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, { data: reviews }, { data: documents }] =
-    await Promise.all([
-      supabase
-        .from("projects")
-        .select("pydantic_fields")
-        .eq("id", id)
-        .single(),
-      supabase
-        .from("reviews")
-        .select(
-          "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at",
-        )
-        .eq("project_id", id)
-        .not("comment", "is", null)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("documents")
-        .select("id, title, external_id")
-        .eq("project_id", id),
-    ]);
+  const [
+    { data: project },
+    { data: reviews },
+    { data: documents },
+    {
+      data: { user },
+    },
+  ] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("pydantic_fields, created_by")
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("reviews")
+      .select(
+        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at",
+      )
+      .eq("project_id", id)
+      .not("comment", "is", null)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("documents")
+      .select("id, title, external_id")
+      .eq("project_id", id),
+    supabase.auth.getUser(),
+  ]);
 
-  const fields = (project?.pydantic_fields || []) as {
-    name: string;
-    description: string;
-  }[];
+  const fields = (project?.pydantic_fields || []) as PydanticField[];
 
   const fieldDescMap = new Map(fields.map((f) => [f.name, f.description]));
   const docMap = new Map(
     documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
   );
 
-  // Fetch reviewer names for reviews that have reviewer_id
+  // Fetch reviewer names
   const reviewerIds = [
     ...new Set(
       (reviews || [])
         .map((r) => r.reviewer_id)
-        .filter((id): id is string => !!id),
+        .filter((rid): rid is string => !!rid),
     ),
   ];
+
+  // Check coordinator status
+  let isCoordinator = project?.created_by === user?.id;
+  if (!isCoordinator && user) {
+    const { data: membership } = await supabase
+      .from("project_members")
+      .select("role")
+      .eq("project_id", id)
+      .eq("user_id", user.id)
+      .single();
+    isCoordinator = membership?.role === "coordenador";
+  }
 
   let reviewerMap = new Map<string, string>();
   if (reviewerIds.length > 0) {
@@ -86,6 +91,7 @@ export default async function CommentsPage({
       : "Anônimo",
     resolvedAt: r.resolved_at,
     createdAt: r.created_at,
+    chosenResponseId: r.chosen_response_id,
   }));
 
   return (
@@ -94,6 +100,7 @@ export default async function CommentsPage({
         projectId={id}
         comments={comments}
         fields={fields}
+        isCoordinator={isCoordinator}
       />
     </div>
   );

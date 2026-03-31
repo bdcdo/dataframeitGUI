@@ -2,6 +2,10 @@
 
 import type { PydanticField } from "@/lib/types";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+const TEXT_PRESETS = ["Não aplicável", "Não identificável"] as const;
 
 interface FieldRendererProps {
   field: PydanticField;
@@ -57,13 +61,36 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
   }
 
   // text
+  const textValue = (value as string) || "";
   return (
-    <Textarea
-      rows={2}
-      value={(value as string) || ""}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder="Digite sua resposta..."
-      className="resize-y"
-    />
+    <div className="space-y-2">
+      <div className="flex gap-1.5">
+        {TEXT_PRESETS.map((preset) => {
+          const active = textValue === preset;
+          return (
+            <Button
+              key={preset}
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(
+                "h-7 text-xs",
+                active && "bg-brand/10 text-brand border-brand/40",
+              )}
+              onClick={() => onChange(active ? "" : preset)}
+            >
+              {preset}
+            </Button>
+          );
+        })}
+      </div>
+      <Textarea
+        rows={2}
+        value={textValue}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Digite sua resposta..."
+        className="resize-y"
+      />
+    </div>
   );
 }

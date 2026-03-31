@@ -10,31 +10,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CommentCard } from "./CommentCard";
+import { CommentCard, type ReviewComment } from "./CommentCard";
+import { EditFieldDialog } from "./EditFieldDialog";
 import {
   resolveReviewComment,
   reopenReviewComment,
   createDiscussionFromComment,
 } from "@/actions/stats";
 import { toast } from "sonner";
-
-interface ReviewComment {
-  id: string;
-  documentId: string;
-  documentTitle: string;
-  fieldName: string;
-  fieldDescription: string;
-  verdict: string;
-  comment: string;
-  reviewerName: string;
-  resolvedAt: string | null;
-  createdAt: string;
-}
+import type { PydanticField } from "@/lib/types";
 
 interface ReviewCommentsViewProps {
   projectId: string;
   comments: ReviewComment[];
-  fields: { name: string; description: string }[];
+  fields: PydanticField[];
+  isCoordinator: boolean;
 }
 
 function verdictType(verdict: string): "answer" | "ambiguo" | "pular" {
@@ -47,6 +37,7 @@ export function ReviewCommentsView({
   projectId,
   comments,
   fields,
+  isCoordinator,
 }: ReviewCommentsViewProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -54,6 +45,15 @@ export function ReviewCommentsView({
   const [statusFilter, setStatusFilter] = useState("open");
   const [verdictFilter, setVerdictFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [editingField, setEditingField] = useState<string | null>(null);
+
+  const commentCountByField = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of comments) {
+      map.set(c.fieldName, (map.get(c.fieldName) || 0) + 1);
+    }
+    return map;
+  }, [comments]);
 
   const filtered = useMemo(() => {
     return comments.filter((c) => {
@@ -166,13 +166,29 @@ export function ReviewCommentsView({
             <CommentCard
               key={c.id}
               comment={c}
+              projectId={projectId}
               isPending={isPending}
+              isCoordinator={isCoordinator}
               onResolve={() => handleResolve(c.id)}
               onReopen={() => handleReopen(c.id)}
               onCreateDiscussion={() => handleCreateDiscussion(c.id)}
+              onEditField={() => setEditingField(c.fieldName)}
             />
           ))}
         </div>
+      )}
+
+      {isCoordinator && editingField && (
+        <EditFieldDialog
+          projectId={projectId}
+          fieldName={editingField}
+          allFields={fields}
+          commentCount={commentCountByField.get(editingField) || 0}
+          open={!!editingField}
+          onOpenChange={(open) => {
+            if (!open) setEditingField(null);
+          }}
+        />
       )}
     </div>
   );

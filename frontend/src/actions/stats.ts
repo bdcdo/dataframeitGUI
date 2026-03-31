@@ -220,6 +220,48 @@ export async function createDiscussionFromDifficulty(
   }
 }
 
+export interface GabaritoRespondentAnswer {
+  respondentName: string;
+  respondentType: "humano" | "llm";
+  answer: unknown;
+  isChosen: boolean;
+}
+
+export async function fetchGabaritoForComment(
+  projectId: string,
+  documentId: string,
+  fieldName: string,
+  chosenResponseId: string | null,
+): Promise<{ answers: GabaritoRespondentAnswer[]; error?: string }> {
+  try {
+    const supabase = await createSupabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { answers: [], error: "Não autenticado" };
+
+    const { data: responses } = await supabase
+      .from("responses")
+      .select("id, respondent_name, respondent_type, answers")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .or("is_current.eq.true,respondent_type.eq.humano");
+
+    if (!responses) return { answers: [] };
+
+    const result: GabaritoRespondentAnswer[] = responses.map((r) => ({
+      respondentName: r.respondent_name || "Anônimo",
+      respondentType: r.respondent_type as "humano" | "llm",
+      answer: (r.answers as Record<string, unknown>)?.[fieldName] ?? null,
+      isChosen: r.id === chosenResponseId,
+    }));
+
+    return { answers: result };
+  } catch (e) {
+    return { answers: [], error: e instanceof Error ? e.message : "Erro desconhecido" };
+  }
+}
+
 export async function resolveError(
   projectId: string,
   documentId: string,
