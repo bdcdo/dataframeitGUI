@@ -27,3 +27,12 @@ Thumbs.db
 # Build
 dist/
 build/
+
+# Screenshots
+*.png
+
+# Test data
+base_teste/
+
+# Supabase CLI temp
+frontend/supabase/.temp/
