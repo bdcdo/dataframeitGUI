@@ -16,7 +16,6 @@ const tabs = [
   { label: "Codificar", href: "code" },
   { label: "Comparar", href: "compare" },
   { label: "Revisões", href: "reviews" },
-  { label: "Estatísticas", href: "stats" },
   { label: "LLM", href: "llm", coordinatorOnly: true },
   { label: "Discussões", href: "discussions" },
   { label: "Configurações", href: "config", coordinatorOnly: true },

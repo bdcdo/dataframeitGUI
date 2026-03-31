@@ -61,7 +61,7 @@ export async function saveSchema(
 
   revalidatePath(`/projects/${projectId}/code`);
   revalidatePath(`/projects/${projectId}/compare`);
-  revalidatePath(`/projects/${projectId}/stats`);
+  revalidatePath(`/projects/${projectId}/reviews`);
   revalidatePath(`/projects/${projectId}/llm`);
   revalidateTag(`project-${projectId}-progress`, { expire: 60 });
 }

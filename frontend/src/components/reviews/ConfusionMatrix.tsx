@@ -7,7 +7,7 @@ import type {
   ConfusionData,
   ConfusionDataSingle,
   ConfusionDataMulti,
-} from "@/app/(app)/projects/[id]/reviews/page";
+} from "@/lib/reviews/types";
 
 interface ConfusionMatrixProps {
   confusionDataList: ConfusionData[];

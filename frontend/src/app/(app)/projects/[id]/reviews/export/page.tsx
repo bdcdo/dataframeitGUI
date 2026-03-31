@@ -81,7 +81,7 @@ export default async function ExportPage({
     const entry = verdictsByDoc.get(r.document_id)!;
 
     let displayVerdict = r.verdict;
-    if (r.verdict === "ambiguo") displayVerdict = "[AMBÍGUO]";
+    if (r.verdict === "ambiguo") displayVerdict = "[AMBIGUO]";
     else if (r.verdict === "pular") displayVerdict = "[PULAR]";
     else if (r.verdict.startsWith("{")) {
       try {
@@ -103,7 +103,8 @@ export default async function ExportPage({
   const agreementByDoc = new Map<string, Map<string, string>>();
   const responsesByDoc = new Map<string, NonNullable<typeof responses>>();
   responses?.forEach((r) => {
-    if (!responsesByDoc.has(r.document_id)) responsesByDoc.set(r.document_id, []);
+    if (!responsesByDoc.has(r.document_id))
+      responsesByDoc.set(r.document_id, []);
     responsesByDoc.get(r.document_id)!.push(r);
   });
 
@@ -139,17 +140,27 @@ export default async function ExportPage({
           }
         }
         if (!hasDivergence) {
-          const val = (docResponses[0].answers as Record<string, unknown>)?.[field.name];
-          fieldAgreements.set(field.name, Array.isArray(val) ? val.join("; ") : String(val ?? ""));
+          const val = (docResponses[0].answers as Record<string, unknown>)?.[
+            field.name
+          ];
+          fieldAgreements.set(
+            field.name,
+            Array.isArray(val) ? val.join("; ") : String(val ?? ""),
+          );
         }
       } else {
         const answers = docResponses.map(
           (r) => (r.answers as Record<string, unknown>)?.[field.name],
         );
-        const uniqueAnswers = new Set(answers.map((a) => normalizeForComparison(a)));
+        const uniqueAnswers = new Set(
+          answers.map((a) => normalizeForComparison(a)),
+        );
         if (uniqueAnswers.size === 1) {
           const val = answers[0];
-          fieldAgreements.set(field.name, Array.isArray(val) ? val.join("; ") : String(val ?? ""));
+          fieldAgreements.set(
+            field.name,
+            Array.isArray(val) ? val.join("; ") : String(val ?? ""),
+          );
         }
       }
     }
@@ -167,7 +178,10 @@ export default async function ExportPage({
       title: string | null;
     } | null;
     if (!docTitleMap.has(r.document_id)) {
-      docTitleMap.set(r.document_id, doc?.title || doc?.external_id || r.document_id);
+      docTitleMap.set(
+        r.document_id,
+        doc?.title || doc?.external_id || r.document_id,
+      );
     }
   });
 

@@ -26,24 +26,23 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import type { PydanticField } from "@/lib/types";
-import type { ReviewedDocument } from "@/app/(app)/projects/[id]/reviews/page";
+import type { ReviewedDocument } from "@/lib/reviews/types";
 
 const PAGE_SIZE = 10;
 
 interface GabaritoByDocumentProps {
   reviewedDocuments: ReviewedDocument[];
   fields: PydanticField[];
-  includeStale: boolean;
   projectId: string;
 }
 
 export function GabaritoByDocument({
   reviewedDocuments,
   fields,
-  includeStale,
   projectId,
 }: GabaritoByDocumentProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [includeStale, setIncludeStale] = useState(true);
   const [fieldFilter, setFieldFilter] = useState("all");
   const [respondentFilter, setRespondentFilter] = useState("all");
   const [onlyErrors, setOnlyErrors] = useState(false);
@@ -167,6 +166,16 @@ export function GabaritoByDocument({
             ))}
           </SelectContent>
         </Select>
+        <div className="flex items-center gap-1.5">
+          <Switch
+            id="include-stale"
+            checked={includeStale}
+            onCheckedChange={setIncludeStale}
+          />
+          <Label htmlFor="include-stale" className="text-sm">
+            Incluir desatualizadas
+          </Label>
+        </div>
         <div className="flex items-center gap-1.5">
           <Switch
             id="only-errors"

@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { normalizeForComparison } from "@/lib/utils";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
+import { formatAnswer } from "@/lib/reviews/queries";
 
 export interface LlmError {
   documentId: string;
@@ -103,7 +104,10 @@ export default async function LlmInsightsPage({
 
   // Build error resolution map: "docId:fieldName" -> resolved_at
   const errorResolvedMap = new Map(
-    errorResolutions?.map((r) => [`${r.document_id}:${r.field_name}`, r.resolved_at]) || [],
+    errorResolutions?.map((r) => [
+      `${r.document_id}:${r.field_name}`,
+      r.resolved_at,
+    ]) || [],
   );
 
   // Compute LLM errors
@@ -117,7 +121,11 @@ export default async function LlmInsightsPage({
     if (review.chosen_response_id !== llmResp.id) {
       const llmAnswer = llmResp.answers?.[review.field_name];
       // Skip if the LLM answer matches the chosen verdict (same content, different responder)
-      if (normalizeForComparison(llmAnswer) === normalizeForComparison(review.verdict)) return;
+      if (
+        normalizeForComparison(llmAnswer) ===
+        normalizeForComparison(review.verdict)
+      )
+        return;
       errors.push({
         documentId: review.document_id,
         documentTitle: docMap.get(review.document_id) || review.document_id,
@@ -129,7 +137,10 @@ export default async function LlmInsightsPage({
           llmResp.justifications?.[review.field_name] || null,
         chosenVerdict: review.verdict,
         reviewerComment: review.comment,
-        resolvedAt: errorResolvedMap.get(`${review.document_id}:${review.field_name}`) || null,
+        resolvedAt:
+          errorResolvedMap.get(
+            `${review.document_id}:${review.field_name}`,
+          ) || null,
       });
     }
   });
@@ -150,7 +161,10 @@ export default async function LlmInsightsPage({
   llmResponses?.forEach((r) => {
     const ambiguidades = (r.answers as Record<string, unknown>)
       ?.llm_ambiguidades;
-    if (!ambiguidades || (typeof ambiguidades === "string" && !ambiguidades.trim()))
+    if (
+      !ambiguidades ||
+      (typeof ambiguidades === "string" && !ambiguidades.trim())
+    )
       return;
     difficulties.push({
       responseId: r.id,
@@ -173,11 +187,4 @@ export default async function LlmInsightsPage({
       />
     </div>
   );
-}
-
-function formatAnswer(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  if (Array.isArray(val)) return val.join(", ");
-  return String(val);
 }

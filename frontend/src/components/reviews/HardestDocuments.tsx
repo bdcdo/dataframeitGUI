@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { HardestDocumentData } from "@/app/(app)/projects/[id]/reviews/page";
+import type { HardestDocumentData } from "@/lib/reviews/types";
 
 interface HardestDocumentsProps {
   hardestDocuments: HardestDocumentData[];

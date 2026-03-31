@@ -120,7 +120,7 @@ export async function saveResponse(
 
     revalidatePath(`/projects/${projectId}/code`);
     revalidatePath(`/projects/${projectId}/compare`);
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     revalidateTag(`project-${projectId}-progress`, { expire: 60 });
     return { success: true };
   } catch (e) {

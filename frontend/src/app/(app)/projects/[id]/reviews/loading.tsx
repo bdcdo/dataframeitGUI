@@ -1,4 +1,4 @@
-export default function StatsLoading() {
+export default function ReviewsLoading() {
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -12,11 +12,12 @@ export default function StatsLoading() {
       <div className="h-6 w-48 animate-pulse rounded bg-muted" />
       <div className="space-y-2">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-8 w-full animate-pulse rounded bg-muted" />
+          <div
+            key={i}
+            className="h-8 w-full animate-pulse rounded bg-muted"
+          />
         ))}
       </div>
-      <div className="h-6 w-48 animate-pulse rounded bg-muted" />
-      <div className="h-80 w-full animate-pulse rounded bg-muted" />
     </div>
   );
 }

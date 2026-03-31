@@ -6,7 +6,7 @@ import { Bot, User, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
-import type { RespondentProfileData } from "@/app/(app)/projects/[id]/reviews/page";
+import type { RespondentProfileData } from "@/lib/reviews/types";
 
 interface RespondentProfileProps {
   respondentProfiles: RespondentProfileData[];

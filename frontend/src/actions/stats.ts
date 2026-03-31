@@ -24,7 +24,7 @@ export async function resolveReviewComment(
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -52,7 +52,7 @@ export async function reopenReviewComment(
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -103,7 +103,7 @@ export async function createDiscussionFromComment(
     if (error) return { error: error.message };
 
     revalidatePath(`/projects/${projectId}/discussions`);
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { id: data.id };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -133,7 +133,7 @@ export async function resolveDifficulty(
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -159,7 +159,7 @@ export async function reopenDifficulty(
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -213,7 +213,7 @@ export async function createDiscussionFromDifficulty(
     if (error) return { error: error.message };
 
     revalidatePath(`/projects/${projectId}/discussions`);
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { id: data.id };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -243,7 +243,7 @@ export async function resolveError(
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -271,7 +271,7 @@ export async function reopenError(
 
     if (error) return { success: false, error: error.message };
 
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
@@ -317,7 +317,7 @@ export async function createDiscussionFromError(
     if (error) return { error: error.message };
 
     revalidatePath(`/projects/${projectId}/discussions`);
-    revalidatePath(`/projects/${projectId}/stats`);
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { id: data.id };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Erro desconhecido" };
