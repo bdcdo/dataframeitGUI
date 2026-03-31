@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const statsTabs = [
   { label: "Visão Geral", href: "overview" },
   { label: "Comentários", href: "comments" },
+  { label: "Revisões", href: "reviews" },
   { label: "Insights LLM", href: "llm-insights" },
   { label: "Exportar", href: "export" },
 ];

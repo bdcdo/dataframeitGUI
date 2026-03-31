@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,19 +15,24 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bot, AlertTriangle } from "lucide-react";
+import {
+  Bot,
+  AlertTriangle,
+  CheckCircle2,
+  RotateCcw,
+  MessageSquarePlus,
+  FileText,
+} from "lucide-react";
 import { LlmErrorCard } from "./LlmErrorCard";
 import {
   resolveDifficulty,
   reopenDifficulty,
   createDiscussionFromDifficulty,
+  resolveError,
+  reopenError,
+  createDiscussionFromError,
 } from "@/actions/stats";
 import { toast } from "sonner";
-import {
-  CheckCircle2,
-  RotateCcw,
-  MessageSquarePlus,
-} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface LlmError {
@@ -38,6 +44,7 @@ interface LlmError {
   llmJustification: string | null;
   chosenVerdict: string;
   reviewerComment: string | null;
+  resolvedAt: string | null;
 }
 
 interface LlmDifficulty {
@@ -74,6 +81,7 @@ export function LlmInsightsView({
   // Error filters
   const [errorFieldFilter, setErrorFieldFilter] = useState("all");
   const [errorSearchQuery, setErrorSearchQuery] = useState("");
+  const [errorStatusFilter, setErrorStatusFilter] = useState("open");
 
   // Difficulty filters
   const [diffStatusFilter, setDiffStatusFilter] = useState("open");
@@ -81,6 +89,8 @@ export function LlmInsightsView({
 
   const filteredErrors = useMemo(() => {
     return errors.filter((e) => {
+      if (errorStatusFilter === "open" && e.resolvedAt) return false;
+      if (errorStatusFilter === "resolved" && !e.resolvedAt) return false;
       if (errorFieldFilter !== "all" && e.fieldName !== errorFieldFilter)
         return false;
       if (
@@ -92,7 +102,7 @@ export function LlmInsightsView({
         return false;
       return true;
     });
-  }, [errors, errorFieldFilter, errorSearchQuery]);
+  }, [errors, errorFieldFilter, errorSearchQuery, errorStatusFilter]);
 
   const filteredDifficulties = useMemo(() => {
     return difficulties.filter((d) => {
@@ -110,8 +120,53 @@ export function LlmInsightsView({
     });
   }, [difficulties, diffStatusFilter, diffSearchQuery]);
 
+  const openErrorCount = errors.filter((e) => !e.resolvedAt).length;
   const openDiffCount = difficulties.filter((d) => !d.resolvedAt).length;
 
+  // Error handlers
+  const handleResolveError = (documentId: string, fieldName: string) => {
+    startTransition(async () => {
+      const result = await resolveError(projectId, documentId, fieldName);
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success("Erro resolvido");
+        router.refresh();
+      }
+    });
+  };
+
+  const handleReopenError = (documentId: string, fieldName: string) => {
+    startTransition(async () => {
+      const result = await reopenError(projectId, documentId, fieldName);
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success("Erro reaberto");
+        router.refresh();
+      }
+    });
+  };
+
+  const handleCreateDiscussionFromError = (error: LlmError) => {
+    startTransition(async () => {
+      const result = await createDiscussionFromError(
+        projectId,
+        error.documentId,
+        error.fieldName,
+        error.llmAnswer,
+        error.chosenVerdict,
+      );
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success("Discussão criada");
+        router.push(`/projects/${projectId}/discussions/${result.id}`);
+      }
+    });
+  };
+
+  // Difficulty handlers
   const handleResolveDifficulty = (
     responseId: string,
     documentId: string,
@@ -163,9 +218,9 @@ export function LlmInsightsView({
       <TabsList>
         <TabsTrigger value="errors">
           Erros do LLM
-          {summary.totalErrors > 0 && (
+          {openErrorCount > 0 && (
             <Badge variant="destructive" className="ml-1.5">
-              {summary.totalErrors}
+              {openErrorCount}
             </Badge>
           )}
         </TabsTrigger>
@@ -237,6 +292,16 @@ export function LlmInsightsView({
               ))}
             </SelectContent>
           </Select>
+          <Select value={errorStatusFilter} onValueChange={setErrorStatusFilter}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="open">Abertos</SelectItem>
+              <SelectItem value="resolved">Resolvidos</SelectItem>
+              <SelectItem value="all">Todos</SelectItem>
+            </SelectContent>
+          </Select>
           <span className="ml-auto text-sm text-muted-foreground">
             {filteredErrors.length} erro{filteredErrors.length !== 1 ? "s" : ""}
           </span>
@@ -251,7 +316,15 @@ export function LlmInsightsView({
         ) : (
           <div className="space-y-3">
             {filteredErrors.map((e, i) => (
-              <LlmErrorCard key={`${e.documentId}-${e.fieldName}-${i}`} error={e} />
+              <LlmErrorCard
+                key={`${e.documentId}-${e.fieldName}-${i}`}
+                error={e}
+                projectId={projectId}
+                isPending={isPending}
+                onResolve={() => handleResolveError(e.documentId, e.fieldName)}
+                onReopen={() => handleReopenError(e.documentId, e.fieldName)}
+                onCreateDiscussion={() => handleCreateDiscussionFromError(e)}
+              />
             ))}
           </div>
         )}
@@ -312,6 +385,11 @@ export function LlmInsightsView({
                     {d.text}
                   </blockquote>
                   <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="sm" asChild title="Ver documento">
+                      <Link href={`/projects/${projectId}/code?doc=${d.documentId}`}>
+                        <FileText className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

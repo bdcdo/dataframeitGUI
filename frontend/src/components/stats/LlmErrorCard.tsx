@@ -1,8 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  RotateCcw,
+  MessageSquarePlus,
+  FileText,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface LlmError {
   documentId: string;
@@ -13,10 +24,16 @@ interface LlmError {
   llmJustification: string | null;
   chosenVerdict: string;
   reviewerComment: string | null;
+  resolvedAt: string | null;
 }
 
 interface LlmErrorCardProps {
   error: LlmError;
+  projectId: string;
+  isPending: boolean;
+  onResolve: () => void;
+  onReopen: () => void;
+  onCreateDiscussion: () => void;
 }
 
 function formatVerdictDisplay(verdict: string): string {
@@ -34,17 +51,29 @@ function formatVerdictDisplay(verdict: string): string {
   return verdict;
 }
 
-export function LlmErrorCard({ error }: LlmErrorCardProps) {
+export function LlmErrorCard({
+  error,
+  projectId,
+  isPending,
+  onResolve,
+  onReopen,
+  onCreateDiscussion,
+}: LlmErrorCardProps) {
   const [showJustification, setShowJustification] = useState(false);
 
   return (
-    <Card>
+    <Card className={cn(error.resolvedAt && "opacity-60")}>
       <CardContent className="space-y-2 pt-4">
-        <div>
-          <p className="text-sm font-medium">{error.documentTitle}</p>
-          <p className="text-xs text-muted-foreground">
-            {error.fieldDescription || error.fieldName}
-          </p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{error.documentTitle}</p>
+            <p className="text-xs text-muted-foreground">
+              {error.fieldDescription || error.fieldName}
+            </p>
+          </div>
+          {error.resolvedAt && (
+            <Badge variant="secondary">Resolvido</Badge>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -87,6 +116,44 @@ export function LlmErrorCard({ error }: LlmErrorCardProps) {
             {error.reviewerComment}
           </blockquote>
         )}
+
+        <div className="flex justify-end gap-1">
+          <Button variant="ghost" size="sm" asChild title="Ver documento">
+            <Link href={`/projects/${projectId}/code?doc=${error.documentId}`}>
+              <FileText className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={isPending}
+            onClick={onCreateDiscussion}
+            title="Criar discussão"
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5" />
+          </Button>
+          {error.resolvedAt ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isPending}
+              onClick={onReopen}
+              title="Reabrir"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isPending}
+              onClick={onResolve}
+              title="Resolver"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

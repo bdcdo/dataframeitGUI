@@ -90,6 +90,7 @@ export interface Response {
   justifications: Record<string, string> | null;
   is_current: boolean;
   pydantic_hash: string | null;
+  answer_field_hashes: Record<string, string> | null;
   created_at: string;
 }
 

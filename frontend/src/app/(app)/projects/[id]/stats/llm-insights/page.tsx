@@ -11,6 +11,7 @@ export interface LlmError {
   llmJustification: string | null;
   chosenVerdict: string;
   reviewerComment: string | null;
+  resolvedAt: string | null;
 }
 
 export interface LlmDifficulty {
@@ -36,6 +37,7 @@ export default async function LlmInsightsPage({
     { data: reviews },
     { data: documents },
     { data: difficultyResolutions },
+    { data: errorResolutions },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -62,6 +64,10 @@ export default async function LlmInsightsPage({
     supabase
       .from("difficulty_resolutions")
       .select("response_id, resolved_at")
+      .eq("project_id", id),
+    supabase
+      .from("error_resolutions")
+      .select("document_id, field_name, resolved_at")
       .eq("project_id", id),
   ]);
 
@@ -95,6 +101,11 @@ export default async function LlmInsightsPage({
     });
   });
 
+  // Build error resolution map: "docId:fieldName" -> resolved_at
+  const errorResolvedMap = new Map(
+    errorResolutions?.map((r) => [`${r.document_id}:${r.field_name}`, r.resolved_at]) || [],
+  );
+
   // Compute LLM errors
   const errors: LlmError[] = [];
   let llmFieldsReviewed = 0;
@@ -118,6 +129,7 @@ export default async function LlmInsightsPage({
           llmResp.justifications?.[review.field_name] || null,
         chosenVerdict: review.verdict,
         reviewerComment: review.comment,
+        resolvedAt: errorResolvedMap.get(`${review.document_id}:${review.field_name}`) || null,
       });
     }
   });

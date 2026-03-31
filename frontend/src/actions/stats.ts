@@ -219,3 +219,107 @@ export async function createDiscussionFromDifficulty(
     return { error: e instanceof Error ? e.message : "Erro desconhecido" };
   }
 }
+
+export async function resolveError(
+  projectId: string,
+  documentId: string,
+  fieldName: string,
+  note?: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = await createSupabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Não autenticado" };
+
+    const { error } = await supabase.from("error_resolutions").insert({
+      project_id: projectId,
+      document_id: documentId,
+      field_name: fieldName,
+      resolved_by: user.id,
+      note: note || null,
+    });
+
+    if (error) return { success: false, error: error.message };
+
+    revalidatePath(`/projects/${projectId}/stats`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
+  }
+}
+
+export async function reopenError(
+  projectId: string,
+  documentId: string,
+  fieldName: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = await createSupabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Não autenticado" };
+
+    const { error } = await supabase
+      .from("error_resolutions")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("field_name", fieldName);
+
+    if (error) return { success: false, error: error.message };
+
+    revalidatePath(`/projects/${projectId}/stats`);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
+  }
+}
+
+export async function createDiscussionFromError(
+  projectId: string,
+  documentId: string,
+  fieldName: string,
+  llmAnswer: string,
+  chosenVerdict: string,
+): Promise<{ id?: string; error?: string }> {
+  try {
+    const supabase = await createSupabaseServer();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: "Não autenticado" };
+
+    const { data: doc } = await supabase
+      .from("documents")
+      .select("title, external_id")
+      .eq("id", documentId)
+      .single();
+
+    const docLabel = doc?.title || doc?.external_id || documentId;
+    const title = `[Erro LLM] ${docLabel} — ${fieldName}`;
+    const body = `**Documento:** ${docLabel}\n**Campo:** ${fieldName}\n**LLM respondeu:** ${llmAnswer}\n**Escolhido:** ${chosenVerdict}`;
+
+    const { data, error } = await supabase
+      .from("discussions")
+      .insert({
+        project_id: projectId,
+        title,
+        body,
+        document_id: documentId,
+        created_by: user.id,
+      })
+      .select("id")
+      .single();
+
+    if (error) return { error: error.message };
+
+    revalidatePath(`/projects/${projectId}/discussions`);
+    revalidatePath(`/projects/${projectId}/stats`);
+    return { id: data.id };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Erro desconhecido" };
+  }
+}
