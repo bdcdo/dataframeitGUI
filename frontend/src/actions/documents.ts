@@ -371,3 +371,15 @@ export async function deleteDocument(projectId: string, documentId: string) {
   revalidatePath(`/projects/${projectId}/config/documents`);
   revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
 }
+
+export async function deleteDocuments(projectId: string, documentIds: string[]) {
+  const supabase = await createSupabaseServer();
+  const { error } = await supabase
+    .from("documents")
+    .delete()
+    .in("id", documentIds);
+
+  if (error) return { error: error.message };
+  revalidatePath(`/projects/${projectId}/config/documents`);
+  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+}
