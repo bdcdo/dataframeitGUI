@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { normalizeForComparison } from "@/lib/utils";
-import { ReviewsView } from "@/components/stats/ReviewsView";
+import { ReviewsView } from "@/components/reviews/ReviewsView";
+import { redirect } from "next/navigation";
 import type { PydanticField } from "@/lib/types";
 
 /* ── Tipos internos para dados pré-computados ── */
@@ -45,16 +46,7 @@ export interface ConfusionDataMulti {
   options: { option: string; correct: number; total: number; accuracy: number }[];
 }
 
-export interface ConfusionDataText {
-  type: "text";
-  fieldName: string;
-  fieldDescription: string;
-  concordanceRate: number;
-  concordant: number;
-  total: number;
-}
-
-export type ConfusionData = ConfusionDataSingle | ConfusionDataMulti | ConfusionDataText;
+export type ConfusionData = ConfusionDataSingle | ConfusionDataMulti;
 
 export interface RespondentProfileData {
   respondentKey: string;
@@ -97,7 +89,7 @@ function isAnswerCorrect(
   verdict: string,
   fieldType: "single" | "multi" | "text",
 ): boolean {
-  if (verdict === "ambiguo" || verdict === "pular") return true; // não é erro
+  if (verdict === "ambiguo" || verdict === "pular") return true;
   if (fieldType === "multi") {
     try {
       const verdictMap = JSON.parse(verdict) as Record<string, boolean>;
@@ -135,16 +127,22 @@ export default async function ReviewsPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  // Fase 1: queries paralelas
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/auth/login");
+
+  // Fase 1: queries paralelas (inclui role check)
   const [
     { data: project },
     { data: responses },
     { data: reviews },
     { data: documents },
+    { data: membership },
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, pydantic_hash")
+      .select("pydantic_fields, pydantic_hash, created_by")
       .eq("id", id)
       .single(),
     supabase
@@ -164,7 +162,16 @@ export default async function ReviewsPage({
       .from("documents")
       .select("id, title, external_id")
       .eq("project_id", id),
+    supabase
+      .from("project_members")
+      .select("role")
+      .eq("project_id", id)
+      .eq("user_id", user.id)
+      .single(),
   ]);
+
+  const isCoordinator =
+    membership?.role === "coordenador" || project?.created_by === user.id;
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const projectPydanticHash = project?.pydantic_hash || null;
@@ -312,14 +319,15 @@ export default async function ReviewsPage({
     }
   }
 
-  // Ordenar por título
   reviewedDocuments.sort((a, b) => a.documentTitle.localeCompare(b.documentTitle));
 
-  /* ─── 2. Confusion Data ─── */
+  /* ─── 2. Confusion Data (only single + multi, skip text) ─── */
 
   const confusionDataList: ConfusionData[] = [];
 
   for (const field of comparableFields) {
+    if (field.type === "text") continue;
+
     const fieldReviews = uniqueReviews.filter(
       (r) => r.field_name === field.name && r.verdict !== "ambiguo" && r.verdict !== "pular",
     );
@@ -402,38 +410,16 @@ export default async function ReviewsPage({
         fieldDescription: field.description,
         options: optionStats,
       });
-    } else if (field.type === "text") {
-      let concordant = 0;
-      let total = 0;
-      for (const review of fieldReviews) {
-        const docResps = responsesByDoc.get(review.document_id) || [];
-        for (const resp of docResps) {
-          const answer = resp.answers[field.name];
-          total++;
-          if (normalizeForComparison(answer) === normalizeForComparison(review.verdict)) {
-            concordant++;
-          }
-        }
-      }
-      confusionDataList.push({
-        type: "text",
-        fieldName: field.name,
-        fieldDescription: field.description,
-        concordanceRate: total > 0 ? Math.round((concordant / total) * 100) : 0,
-        concordant,
-        total,
-      });
     }
   }
 
   /* ─── 3. Respondent Profiles ─── */
 
-  // Collect unique respondents from responses
-  const respondentMap = new Map<string, { name: string; type: "humano" | "llm" }>();
+  const respondentInfoMap = new Map<string, { name: string; type: "humano" | "llm" }>();
   responses?.forEach((r) => {
     const key = getRespondentKey(r as { respondent_id: string | null; respondent_name: string | null; respondent_type: string });
-    if (!respondentMap.has(key)) {
-      respondentMap.set(key, {
+    if (!respondentInfoMap.has(key)) {
+      respondentInfoMap.set(key, {
         name: getRespondentDisplayName(r as { respondent_id: string | null; respondent_name: string | null; respondent_type: string }),
         type: r.respondent_type as "humano" | "llm",
       });
@@ -441,7 +427,7 @@ export default async function ReviewsPage({
   });
 
   const respondentProfiles: RespondentProfileData[] = [];
-  for (const [respondentKey, info] of respondentMap) {
+  for (const [respondentKey, info] of respondentInfoMap) {
     let overallCorrect = 0;
     let overallTotal = 0;
     const perField: Record<string, { correct: number; total: number; accuracy: number }> = {};
@@ -450,7 +436,6 @@ export default async function ReviewsPage({
       if (review.verdict === "ambiguo" || review.verdict === "pular") continue;
       const field = fieldMap.get(review.field_name);
       if (!field) continue;
-      // Respeitar target
       if (field.target === "llm_only" && info.type === "humano") continue;
       if (field.target === "human_only" && info.type === "llm") continue;
 
@@ -473,13 +458,11 @@ export default async function ReviewsPage({
       if (correct) perField[review.field_name].correct++;
     }
 
-    // Calcular acurácia por campo
     for (const fn of Object.keys(perField)) {
       const pf = perField[fn];
       pf.accuracy = pf.total > 0 ? Math.round((pf.correct / pf.total) * 100) : 0;
     }
 
-    // Top campos com mais erros
     const mostErroredFields = Object.entries(perField)
       .filter(([, v]) => v.total > 0 && v.accuracy < 100)
       .map(([fn, v]) => ({
@@ -504,7 +487,6 @@ export default async function ReviewsPage({
     }
   }
 
-  // Ordenar por acurácia
   respondentProfiles.sort((a, b) => a.overallAccuracy - b.overallAccuracy);
 
   /* ─── 4. Hardest Documents ─── */
@@ -523,7 +505,6 @@ export default async function ReviewsPage({
       if (!field) continue;
 
       for (const resp of docResps) {
-        // Respeitar target
         if (field.target === "llm_only" && resp.respondent_type === "humano") continue;
         if (field.target === "human_only" && resp.respondent_type === "llm") continue;
 
@@ -553,6 +534,7 @@ export default async function ReviewsPage({
     <div className="mx-auto max-w-5xl p-6">
       <ReviewsView
         projectId={id}
+        isCoordinator={isCoordinator}
         reviewedDocuments={reviewedDocuments}
         confusionDataList={confusionDataList}
         respondentProfiles={respondentProfiles}

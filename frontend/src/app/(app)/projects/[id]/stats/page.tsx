@@ -6,5 +6,5 @@ export default async function StatsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  redirect(`/projects/${id}/stats/overview`);
+  redirect(`/projects/${id}/stats/comments`);
 }

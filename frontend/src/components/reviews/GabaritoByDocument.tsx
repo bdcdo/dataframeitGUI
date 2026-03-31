@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Check,
@@ -27,7 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import type { PydanticField } from "@/lib/types";
-import type { ReviewedDocument } from "@/app/(app)/projects/[id]/stats/reviews/page";
+import type { ReviewedDocument } from "@/app/(app)/projects/[id]/reviews/page";
 
 const PAGE_SIZE = 10;
 
@@ -50,7 +49,6 @@ export function GabaritoByDocument({
   const [onlyErrors, setOnlyErrors] = useState(false);
   const [page, setPage] = useState(0);
 
-  // Extrair respondentes únicos
   const allRespondents = useMemo(() => {
     const map = new Map<string, { name: string; type: "humano" | "llm" }>();
     reviewedDocuments.forEach((doc) =>
@@ -73,12 +71,10 @@ export function GabaritoByDocument({
       .map((doc) => {
         let docFields = doc.fields;
 
-        // Filtrar campos
         if (fieldFilter !== "all") {
           docFields = docFields.filter((f) => f.fieldName === fieldFilter);
         }
 
-        // Filtrar respostas por respondente e staleness
         docFields = docFields.map((f) => {
           let answers = f.respondentAnswers;
           if (!includeStale) {
@@ -92,7 +88,6 @@ export function GabaritoByDocument({
           return { ...f, respondentAnswers: answers };
         });
 
-        // Filtrar apenas erros
         if (onlyErrors) {
           docFields = docFields.filter((f) =>
             f.respondentAnswers.some(
@@ -126,7 +121,6 @@ export function GabaritoByDocument({
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  // Reset page on filter change
   const handleFilterChange = (setter: (v: string) => void) => (v: string) => {
     setter(v);
     setPage(0);
@@ -279,7 +273,6 @@ function FieldRow({ field }: { field: ReviewedDocument["fields"][number] }) {
         {field.fieldDescription}
       </p>
 
-      {/* Gabarito */}
       <div
         className={cn(
           "flex items-center gap-2 rounded px-2 py-1 text-sm",
@@ -292,7 +285,6 @@ function FieldRow({ field }: { field: ReviewedDocument["fields"][number] }) {
         <span className="font-medium">{verdictDisplay}</span>
       </div>
 
-      {/* Respostas dos respondentes */}
       {field.respondentAnswers.map((ra) => (
         <RespondentRow key={ra.respondentKey} ra={ra} isSpecialVerdict={isSpecialVerdict} />
       ))}

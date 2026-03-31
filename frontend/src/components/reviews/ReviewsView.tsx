@@ -4,20 +4,21 @@ import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { GabaritoByDocument } from "./reviews/GabaritoByDocument";
-import { ConfusionMatrix } from "./reviews/ConfusionMatrix";
-import { RespondentProfile } from "./reviews/RespondentProfile";
-import { HardestDocuments } from "./reviews/HardestDocuments";
+import { GabaritoByDocument } from "./GabaritoByDocument";
+import { ConfusionMatrix } from "./ConfusionMatrix";
+import { RespondentProfile } from "./RespondentProfile";
+import { HardestDocuments } from "./HardestDocuments";
 import type { PydanticField } from "@/lib/types";
 import type {
   ReviewedDocument,
   ConfusionData,
   RespondentProfileData,
   HardestDocumentData,
-} from "@/app/(app)/projects/[id]/stats/reviews/page";
+} from "@/app/(app)/projects/[id]/reviews/page";
 
 interface ReviewsViewProps {
   projectId: string;
+  isCoordinator: boolean;
   reviewedDocuments: ReviewedDocument[];
   confusionDataList: ConfusionData[];
   respondentProfiles: RespondentProfileData[];
@@ -27,6 +28,7 @@ interface ReviewsViewProps {
 
 export function ReviewsView({
   projectId,
+  isCoordinator,
   reviewedDocuments,
   confusionDataList,
   respondentProfiles,
@@ -62,7 +64,9 @@ export function ReviewsView({
         <TabsList>
           <TabsTrigger value="gabarito">Gabarito</TabsTrigger>
           <TabsTrigger value="confusion">Matriz de Confusão</TabsTrigger>
-          <TabsTrigger value="respondents">Respondentes</TabsTrigger>
+          {isCoordinator && (
+            <TabsTrigger value="respondents">Respondentes</TabsTrigger>
+          )}
           <TabsTrigger value="difficulty">Docs Difíceis</TabsTrigger>
         </TabsList>
 
@@ -76,17 +80,17 @@ export function ReviewsView({
         </TabsContent>
 
         <TabsContent value="confusion" className="space-y-4">
-          <ConfusionMatrix
-            confusionDataList={confusionDataList}
-          />
+          <ConfusionMatrix confusionDataList={confusionDataList} />
         </TabsContent>
 
-        <TabsContent value="respondents" className="space-y-4">
-          <RespondentProfile
-            respondentProfiles={respondentProfiles}
-            fields={fields}
-          />
-        </TabsContent>
+        {isCoordinator && (
+          <TabsContent value="respondents" className="space-y-4">
+            <RespondentProfile
+              respondentProfiles={respondentProfiles}
+              fields={fields}
+            />
+          </TabsContent>
+        )}
 
         <TabsContent value="difficulty" className="space-y-4">
           <HardestDocuments

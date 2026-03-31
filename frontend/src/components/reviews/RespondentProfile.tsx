@@ -6,7 +6,7 @@ import { Bot, User, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
-import type { RespondentProfileData } from "@/app/(app)/projects/[id]/stats/reviews/page";
+import type { RespondentProfileData } from "@/app/(app)/projects/[id]/reviews/page";
 
 interface RespondentProfileProps {
   respondentProfiles: RespondentProfileData[];
@@ -36,7 +36,6 @@ export function RespondentProfile({
     return list;
   }, [respondentProfiles, sortKey, sortAsc]);
 
-  // Campos com dados para mostrar barras
   const displayFields = useMemo(() => {
     return fields.filter((f) =>
       respondentProfiles.some((rp) => rp.perField[f.name]?.total > 0),
