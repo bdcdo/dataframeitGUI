@@ -98,7 +98,12 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       setStep("idle");
       setAnalysis(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao importar documentos");
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("Body exceeded") || msg.includes("413")) {
+        toast.error("Os documentos ultrapassam o limite de 10 MB por envio. Tente importar um arquivo com menos documentos ou documentos menores.");
+      } else {
+        toast.error(msg || "Erro ao importar documentos");
+      }
       setStep("analysis");
     } finally {
       setLoading(false);
@@ -140,7 +145,12 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
         setLoading(false);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao verificar duplicatas");
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("Body exceeded") || msg.includes("413")) {
+        toast.error("Os documentos ultrapassam o limite de 10 MB por envio. Tente importar um arquivo com menos documentos ou documentos menores.");
+      } else {
+        toast.error(msg || "Erro ao verificar duplicatas");
+      }
       setStep("mapping");
       setLoading(false);
     }
