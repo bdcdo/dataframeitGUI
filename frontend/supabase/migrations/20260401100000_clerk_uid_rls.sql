@@ -10,7 +10,7 @@ SECURITY DEFINER
 STABLE
 SET search_path = ''
 AS $$
-  SELECT (nullif(current_setting('request.jwt.claim.supabase_uid', true), ''))::uuid
+  SELECT (auth.jwt()->>'supabase_uid')::uuid
 $$;
 
 -- ========== 2. Update helper functions ==========
