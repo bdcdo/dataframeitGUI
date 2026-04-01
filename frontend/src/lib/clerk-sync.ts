@@ -13,6 +13,7 @@ export async function syncClerkUserToSupabase(
   lastName?: string | null
 ): Promise<string> {
   const admin = createSupabaseAdmin();
+  const clerk = await clerkClient();
 
   // Check if mapping already exists
   const { data: existing } = await admin
@@ -68,14 +69,48 @@ export async function syncClerkUserToSupabase(
     }
   }
 
-  // Insert mapping (upsert handles concurrent inserts)
-  await admin.from("clerk_user_mapping").upsert({
+  // Insert mapping for this Clerk user. If the Supabase UUID is already linked
+  // to a stale Clerk user, reassign that row to avoid legacy migration lock.
+  const { error: upsertError } = await admin.from("clerk_user_mapping").upsert({
     clerk_user_id: clerkUserId,
     supabase_user_id: supabaseUid,
   });
 
+  if (upsertError) {
+    const { data: ownerMapping } = await admin
+      .from("clerk_user_mapping")
+      .select("clerk_user_id")
+      .eq("supabase_user_id", supabaseUid)
+      .single();
+
+    if (ownerMapping?.clerk_user_id) {
+      const { error: deleteError } = await admin
+        .from("clerk_user_mapping")
+        .delete()
+        .eq("clerk_user_id", ownerMapping.clerk_user_id);
+      if (deleteError) {
+        throw new Error(
+          `Erro ao remover mapping legado: ${deleteError.message}`
+        );
+      }
+
+      const { error: insertError } = await admin
+        .from("clerk_user_mapping")
+        .insert({
+          clerk_user_id: clerkUserId,
+          supabase_user_id: supabaseUid,
+        });
+      if (insertError) {
+        throw new Error(
+          `Erro ao reassociar mapping para usuario atual: ${insertError.message}`
+        );
+      }
+    } else {
+      throw new Error(`Erro ao gravar mapping: ${upsertError.message}`);
+    }
+  }
+
   // Store supabase_uid in Clerk metadata so the JWT template can use it
-  const clerk = await clerkClient();
   await clerk.users.updateUserMetadata(clerkUserId, {
     publicMetadata: { supabase_uid: supabaseUid },
   });
