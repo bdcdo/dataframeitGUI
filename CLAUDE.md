@@ -42,6 +42,7 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
 - Auth: Clerk (`lib/auth.ts` para `getAuthUser()`, `lib/clerk-sync.ts` para sync Clerk↔Supabase)
 - Supabase client: `lib/supabase/server.ts` (server, autenticado via Clerk JWT) e `lib/supabase/admin.ts` (service key)
 - **FastAPI** so para LLM e Pydantic (nao para CRUD)
+- **EditFieldDialog**: toda config de schema acessivel na aba Schema deve ser igualmente acessivel via `EditFieldDialog` inline (Comentarios e LLM Insights). Ao adicionar um campo novo a `PydanticField`, garantir que ambos os editores (FieldCard e EditFieldDialog) o exponham.
 - Testes: **Vitest** (frontend), **pytest** (backend)
 
 ## Estrutura

@@ -35,6 +35,7 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
+  source: "review" | "nota";
 }
 
 interface CommentCardProps {
@@ -48,6 +49,7 @@ interface CommentCardProps {
 }
 
 function formatVerdictLabel(verdict: string): string {
+  if (verdict === "nota") return "Nota do pesquisador";
   if (verdict === "ambiguo") return "Ambíguo";
   if (verdict === "pular") return "Pular";
   if (verdict.startsWith("{")) {
@@ -67,6 +69,7 @@ function formatVerdictLabel(verdict: string): string {
 function verdictVariant(
   verdict: string,
 ): "default" | "secondary" | "destructive" | "outline" {
+  if (verdict === "nota") return "secondary";
   if (verdict === "ambiguo") return "secondary";
   if (verdict === "pular") return "outline";
   return "default";
@@ -119,7 +122,7 @@ export function CommentCard({
               <code className="text-xs font-mono text-muted-foreground/70">
                 {comment.fieldName}
               </code>
-              {isCoordinator && onEditField && (
+              {isCoordinator && onEditField && comment.source !== "nota" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -150,8 +153,8 @@ export function CommentCard({
           {comment.comment}
         </blockquote>
 
-        {/* Gabarito expansível */}
-        <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
+        {/* Gabarito expansível (só para reviews, não para notas) */}
+        {comment.source !== "nota" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
           <CollapsibleTrigger asChild>
             <Button
               variant="ghost"
@@ -222,7 +225,7 @@ export function CommentCard({
               ) : null}
             </div>
           </CollapsibleContent>
-        </Collapsible>
+        </Collapsible>}
 
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground">

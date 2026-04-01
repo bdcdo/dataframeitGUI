@@ -3,9 +3,8 @@
 import type { PydanticField } from "@/lib/types";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const TEXT_PRESETS = ["Não aplicável", "Não identificável"] as const;
 
 interface FieldRendererProps {
   field: PydanticField;
@@ -62,34 +61,41 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
 
   // text
   const textValue = (value as string) || "";
+  const presets = field.options ?? [];
+  const isPresetActive = presets.includes(textValue);
+
   return (
     <div className="space-y-2">
-      <div className="flex gap-1.5">
-        {TEXT_PRESETS.map((preset) => {
-          const active = textValue === preset;
-          return (
-            <Button
-              key={preset}
-              type="button"
-              variant="outline"
-              size="sm"
-              className={cn(
-                "h-7 text-xs",
-                active && "bg-brand-muted text-brand border-brand",
-              )}
-              onClick={() => onChange(active ? "" : preset)}
-            >
-              {preset}
-            </Button>
-          );
-        })}
-      </div>
+      {presets.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {presets.map((preset) => {
+            const active = textValue === preset;
+            return (
+              <Button
+                key={preset}
+                type="button"
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-7 text-xs",
+                  active && "bg-brand-muted text-brand border-brand",
+                )}
+                onClick={() => onChange(active ? "" : preset)}
+              >
+                {active && <Check className="mr-1 h-3 w-3" />}
+                {preset}
+              </Button>
+            );
+          })}
+        </div>
+      )}
       <Textarea
         rows={2}
         value={textValue}
         onChange={(e) => onChange(e.target.value)}
+        readOnly={isPresetActive}
         placeholder="Digite sua resposta..."
-        className="resize-y"
+        className={cn("resize-y", isPresetActive && "opacity-60")}
       />
     </div>
   );

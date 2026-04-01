@@ -23,6 +23,7 @@ import {
   FileText,
 } from "lucide-react";
 import { LlmErrorCard } from "./LlmErrorCard";
+import { EditFieldDialog } from "./EditFieldDialog";
 import {
   resolveDifficulty,
   reopenDifficulty,
@@ -31,6 +32,7 @@ import {
 } from "@/actions/stats";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import type { PydanticField } from "@/lib/types";
 
 interface LlmError {
   documentId: string;
@@ -58,6 +60,8 @@ interface LlmInsightsViewProps {
   errors: LlmError[];
   difficulties: LlmDifficulty[];
   fields: { name: string; description: string }[];
+  allFields?: PydanticField[];
+  isCoordinator?: boolean;
   summary: {
     totalLlmDocs: number;
     totalErrors: number;
@@ -70,10 +74,21 @@ export function LlmInsightsView({
   errors,
   difficulties,
   fields,
+  allFields,
+  isCoordinator,
   summary,
 }: LlmInsightsViewProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [editingField, setEditingField] = useState<string | null>(null);
+
+  const errorCountByField = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of errors) {
+      map.set(e.fieldName, (map.get(e.fieldName) || 0) + 1);
+    }
+    return map;
+  }, [errors]);
 
   // Error filters
   const [errorFieldFilter, setErrorFieldFilter] = useState("all");
@@ -174,6 +189,7 @@ export function LlmInsightsView({
   };
 
   return (
+    <>
     <Tabs defaultValue="errors">
       <TabsList>
         <TabsTrigger value="errors">
@@ -281,8 +297,10 @@ export function LlmInsightsView({
                 error={e}
                 projectId={projectId}
                 isPending={isPending}
+                isCoordinator={isCoordinator}
                 onResolve={() => handleResolveError(e.documentId, e.fieldName)}
                 onReopen={() => handleReopenError(e.documentId, e.fieldName)}
+                onEditField={() => setEditingField(e.fieldName)}
               />
             ))}
           </div>
@@ -380,5 +398,19 @@ export function LlmInsightsView({
         )}
       </TabsContent>
     </Tabs>
+
+    {isCoordinator && editingField && allFields && (
+      <EditFieldDialog
+        projectId={projectId}
+        fieldName={editingField}
+        allFields={allFields}
+        commentCount={errorCountByField.get(editingField) || 0}
+        open={!!editingField}
+        onOpenChange={(open) => {
+          if (!open) setEditingField(null);
+        }}
+      />
+    )}
+    </>
   );
 }

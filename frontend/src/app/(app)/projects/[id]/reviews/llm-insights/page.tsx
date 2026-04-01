@@ -1,7 +1,9 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { normalizeForComparison } from "@/lib/utils";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import { formatAnswer } from "@/lib/reviews/queries";
+import type { PydanticField } from "@/lib/types";
 
 export interface LlmError {
   documentId: string;
@@ -30,6 +32,7 @@ export default async function LlmInsightsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await getAuthUser();
   const supabase = await createSupabaseServer();
 
   const [
@@ -39,10 +42,11 @@ export default async function LlmInsightsPage({
     { data: documents },
     { data: difficultyResolutions },
     { data: errorResolutions },
+    { data: membership },
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select("pydantic_fields, created_by")
       .eq("id", id)
       .single(),
     supabase
@@ -70,7 +74,20 @@ export default async function LlmInsightsPage({
       .from("error_resolutions")
       .select("document_id, field_name, resolved_at")
       .eq("project_id", id),
+    user
+      ? supabase
+          .from("project_members")
+          .select("role")
+          .eq("project_id", id)
+          .eq("user_id", user.id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
   ]);
+
+  const isCoordinator =
+    project?.created_by === user?.id || membership?.role === "coordenador";
+
+  const allFields = (project?.pydantic_fields || []) as PydanticField[];
 
   const fields = (project?.pydantic_fields || []) as {
     name: string;
@@ -183,6 +200,8 @@ export default async function LlmInsightsPage({
         errors={errors}
         difficulties={difficulties}
         fields={fields.filter((f) => f.target !== "llm_only")}
+        allFields={allFields}
+        isCoordinator={isCoordinator}
         summary={{ totalLlmDocs, totalErrors, errorRate }}
       />
     </div>

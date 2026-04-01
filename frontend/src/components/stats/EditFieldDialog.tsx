@@ -72,8 +72,7 @@ export function EditFieldDialog({
               ...f,
               description,
               help_text: helpText.trim() || undefined,
-              options:
-                f.type === "single" || f.type === "multi" ? options : null,
+              options: options.length > 0 ? options : null,
             }
           : f,
       );
@@ -150,6 +149,15 @@ export function EditFieldDialog({
           {(field.type === "single" || field.type === "multi") && (
             <div className="space-y-1.5">
               <Label className="text-xs">Opções</Label>
+              <OptionsEditor options={options} onChange={setOptions} />
+            </div>
+          )}
+          {field.type === "text" && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Respostas padronizadas</Label>
+              <p className="text-xs text-muted-foreground">
+                Botões de atalho para consistência na comparação
+              </p>
               <OptionsEditor options={options} onChange={setOptions} />
             </div>
           )}

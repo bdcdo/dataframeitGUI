@@ -10,6 +10,7 @@ import {
   ChevronRight,
   CheckCircle2,
   RotateCcw,
+  Pencil,
   FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,8 +31,10 @@ interface LlmErrorCardProps {
   error: LlmError;
   projectId: string;
   isPending: boolean;
+  isCoordinator?: boolean;
   onResolve: () => void;
   onReopen: () => void;
+  onEditField?: () => void;
 }
 
 function formatVerdictDisplay(verdict: string): string {
@@ -53,8 +56,10 @@ export function LlmErrorCard({
   error,
   projectId,
   isPending,
+  isCoordinator,
   onResolve,
   onReopen,
+  onEditField,
 }: LlmErrorCardProps) {
   const [showJustification, setShowJustification] = useState(false);
 
@@ -64,9 +69,27 @@ export function LlmErrorCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-sm font-medium">{error.documentTitle}</p>
-            <p className="text-xs text-muted-foreground">
-              {error.fieldDescription || error.fieldName}
-            </p>
+            <div className="flex items-center gap-1.5">
+              <code className="text-xs font-mono text-muted-foreground/70">
+                {error.fieldName}
+              </code>
+              {isCoordinator && onEditField && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-5 p-0"
+                  onClick={onEditField}
+                  title="Editar campo"
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+            {error.fieldDescription && error.fieldDescription !== error.fieldName && (
+              <p className="text-xs text-muted-foreground">
+                {error.fieldDescription}
+              </p>
+            )}
           </div>
           {error.resolvedAt && (
             <Badge variant="secondary">Resolvido</Badge>

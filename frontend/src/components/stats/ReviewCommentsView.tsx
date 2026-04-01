@@ -26,7 +26,8 @@ interface ReviewCommentsViewProps {
   isCoordinator: boolean;
 }
 
-function verdictType(verdict: string): "answer" | "ambiguo" | "pular" {
+function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" {
+  if (verdict === "nota") return "nota";
   if (verdict === "ambiguo") return "ambiguo";
   if (verdict === "pular") return "pular";
   return "answer";
@@ -136,6 +137,7 @@ export function ReviewCommentsView({
             <SelectItem value="answer">Resposta escolhida</SelectItem>
             <SelectItem value="ambiguo">Ambíguo</SelectItem>
             <SelectItem value="pular">Pular</SelectItem>
+            <SelectItem value="nota">Notas</SelectItem>
           </SelectContent>
         </Select>
         <span className="ml-auto text-sm text-muted-foreground">

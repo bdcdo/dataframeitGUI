@@ -62,7 +62,7 @@ export function FieldCard({
 
   const handleTypeChange = (type: PydanticField["type"]) => {
     if (type === "text") {
-      updateField({ type, options: null });
+      updateField({ type });
     } else if (!field.options || field.options.length === 0) {
       updateField({ type, options: ["Opção 1"] });
     } else {
@@ -255,13 +255,25 @@ export function FieldCard({
               </div>
             )}
 
-            {/* Opções (só para single/multi) */}
+            {/* Opções (single/multi) ou Respostas padronizadas (text) */}
             {(field.type === "single" || field.type === "multi") && (
               <div className="space-y-1.5">
                 <Label className="text-xs">Opções</Label>
                 <OptionsEditor
                   options={field.options || []}
                   onChange={(opts) => updateField({ options: opts })}
+                />
+              </div>
+            )}
+            {field.type === "text" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Respostas padronizadas (opcional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Botões de atalho para respostas comuns — garante consistência na comparação
+                </p>
+                <OptionsEditor
+                  options={field.options || []}
+                  onChange={(opts) => updateField({ options: opts.length > 0 ? opts : null })}
                 />
               </div>
             )}

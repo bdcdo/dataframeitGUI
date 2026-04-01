@@ -18,6 +18,7 @@ export default async function CommentsPage({
     { data: reviews },
     { data: documents },
     { data: membership },
+    { data: responsesWithNotes },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -44,6 +45,12 @@ export default async function CommentsPage({
           .eq("user_id", user.id)
           .maybeSingle()
       : Promise.resolve({ data: null }),
+    supabase
+      .from("responses")
+      .select("id, document_id, respondent_name, justifications, created_at")
+      .eq("project_id", id)
+      .eq("respondent_type", "humano")
+      .not("justifications", "is", null),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -76,7 +83,7 @@ export default async function CommentsPage({
     );
   }
 
-  const comments: ReviewComment[] = (reviews || []).map((r) => ({
+  const reviewComments: ReviewComment[] = (reviews || []).map((r) => ({
     id: r.id,
     documentId: r.document_id,
     documentTitle: docMap.get(r.document_id) || r.document_id,
@@ -90,7 +97,32 @@ export default async function CommentsPage({
     resolvedAt: r.resolved_at,
     createdAt: r.created_at,
     chosenResponseId: r.chosen_response_id,
+    source: "review",
   }));
+
+  const noteComments: ReviewComment[] = (responsesWithNotes || [])
+    .filter((r) => {
+      const j = r.justifications as Record<string, string> | null;
+      return j && typeof j._notes === "string" && j._notes.trim().length > 0;
+    })
+    .map((r) => ({
+      id: `nota-${r.id}`,
+      documentId: r.document_id,
+      documentTitle: docMap.get(r.document_id) || r.document_id,
+      fieldName: "(geral)",
+      fieldDescription: "Nota do pesquisador",
+      verdict: "nota",
+      comment: (r.justifications as Record<string, string>)._notes,
+      reviewerName: r.respondent_name || "Anônimo",
+      resolvedAt: null,
+      createdAt: r.created_at,
+      chosenResponseId: null,
+      source: "nota" as const,
+    }));
+
+  const comments = [...reviewComments, ...noteComments].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
 
   return (
     <div className="mx-auto max-w-4xl p-6">
