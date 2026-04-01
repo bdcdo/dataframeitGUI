@@ -118,18 +118,21 @@ export function ReviewCommentsView({
 
   return (
     <div className="space-y-4">
-      {schemaLog.length > 0 && (
-        <Collapsible open={logOpen} onOpenChange={setLogOpen}>
-          <CollapsibleTrigger asChild>
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
-              <History className="h-3.5 w-3.5" />
-              Histórico de mudanças no schema ({schemaLog.length})
-              <ChevronDown className={cn("h-3 w-3 transition-transform", logOpen && "rotate-180")} />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-2 space-y-2">
-              {schemaLog.map((entry) => (
+      <Collapsible open={logOpen} onOpenChange={setLogOpen}>
+        <CollapsibleTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+            <History className="h-3.5 w-3.5" />
+            Histórico de mudanças no schema{schemaLog.length > 0 && ` (${schemaLog.length})`}
+            <ChevronDown className={cn("h-3 w-3 transition-transform", logOpen && "rotate-180")} />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="mt-2 space-y-2">
+            {schemaLog.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                Nenhuma mudança registrada ainda.
+              </p>
+            ) : schemaLog.map((entry) => (
                 <Card key={entry.id} className="border-dashed">
                   <CardContent className="py-2.5 px-3 space-y-1">
                     <div className="flex items-center justify-between">
@@ -166,10 +169,9 @@ export function ReviewCommentsView({
                   </CardContent>
                 </Card>
               ))}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           placeholder="Buscar documento ou comentário..."
