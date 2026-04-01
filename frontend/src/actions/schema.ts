@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { fetchFastAPI } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
@@ -102,16 +103,14 @@ export async function saveSchemaFromGUI(
   fields: PydanticField[]
 ) {
   const supabase = await createSupabaseServer();
+  const user = await getAuthUser();
 
-  // Fetch old fields + user for audit log
-  const [{ data: project }, { data: { user } }] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("pydantic_fields")
-      .eq("id", projectId)
-      .single(),
-    supabase.auth.getUser(),
-  ]);
+  // Fetch old fields for audit log
+  const { data: project } = await supabase
+    .from("projects")
+    .select("pydantic_fields")
+    .eq("id", projectId)
+    .single();
 
   const oldFields = (project?.pydantic_fields as PydanticField[]) || [];
   const oldMap = new Map(oldFields.map((f) => [f.name, f]));
