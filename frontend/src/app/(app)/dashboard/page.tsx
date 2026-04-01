@@ -14,7 +14,7 @@ export default async function DashboardPage() {
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: profile }, { data: memberships }] = await Promise.all([
+  const [{ data: profile, error: profileError }, { data: memberships, error: membershipsError }] = await Promise.all([
     supabase
       .from("profiles")
       .select("first_name")
@@ -25,6 +25,19 @@ export default async function DashboardPage() {
       .select("project_id, role, projects(id, name, description)")
       .eq("user_id", user.id),
   ]);
+
+  if (profileError) {
+    console.error("Dashboard profile query failed", {
+      userId: user.id,
+      error: profileError.message,
+    });
+  }
+  if (membershipsError) {
+    console.error("Dashboard memberships query failed", {
+      userId: user.id,
+      error: membershipsError.message,
+    });
+  }
 
   const projects = (memberships || []).map((m) => ({
     ...(m.projects as unknown as Project),
@@ -49,7 +62,17 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        {projects.length === 0 ? (
+        {membershipsError ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
+            <p className="font-medium text-destructive">
+              Erro ao carregar seus projetos.
+            </p>
+            <p className="mt-1 text-muted-foreground">
+              Abra <code>/api/debug-token</code> e compartilhe o retorno para
+              diagnosticar permissões no Supabase.
+            </p>
+          </div>
+        ) : projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <FolderOpen className="h-10 w-10 text-muted-foreground/50" />
             <p className="mt-3 text-sm text-muted-foreground">

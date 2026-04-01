@@ -1,4 +1,5 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
 export async function GET() {
@@ -26,6 +27,45 @@ export async function GET() {
         ? ((claims as Record<string, unknown>).supabase_uid as string | null)
         : null;
 
+    let supabaseProbe: {
+      membershipsCount: number | null;
+      projectIds: string[];
+      membershipsError: string | null;
+      profileError: string | null;
+    } | null = null;
+
+    if (token && tokenSupabaseUid) {
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        {
+          global: {
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        }
+      );
+
+      const [{ data: memberships, error: membershipsError }, { error: profileError }] =
+        await Promise.all([
+          supabase
+            .from("project_members")
+            .select("project_id")
+            .eq("user_id", tokenSupabaseUid),
+          supabase
+            .from("profiles")
+            .select("id")
+            .eq("id", tokenSupabaseUid)
+            .single(),
+        ]);
+
+      supabaseProbe = {
+        membershipsCount: memberships?.length ?? null,
+        projectIds: (memberships ?? []).map((m) => m.project_id),
+        membershipsError: membershipsError?.message ?? null,
+        profileError: profileError?.message ?? null,
+      };
+    }
+
     return NextResponse.json({
       clerkUserId: userId,
       clerkPrimaryEmail: user?.emailAddresses[0]?.emailAddress ?? null,
@@ -38,6 +78,7 @@ export async function GET() {
       tokenExists: !!token,
       tokenPrefix: token?.substring(0, 50) + "...",
       claims,
+      supabaseProbe,
       hints: {
         tokenTemplate: "supabase",
         missingMetadata:
