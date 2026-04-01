@@ -233,7 +233,7 @@ export function CommentCard({
             {new Date(comment.createdAt).toLocaleDateString("pt-BR")}
             {isResolved && (
               <span className="ml-2 text-green-600">
-                (resolvido{" "}
+                (resolvido em{" "}
                 {new Date(comment.resolvedAt!).toLocaleDateString("pt-BR")})
               </span>
             )}

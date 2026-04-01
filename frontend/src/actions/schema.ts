@@ -101,13 +101,83 @@ export async function saveSchemaFromGUI(
   projectId: string,
   fields: PydanticField[]
 ) {
+  const supabase = await createSupabaseServer();
+
+  // Fetch old fields + user for audit log
+  const [{ data: project }, { data: { user } }] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("pydantic_fields")
+      .eq("id", projectId)
+      .single(),
+    supabase.auth.getUser(),
+  ]);
+
+  const oldFields = (project?.pydantic_fields as PydanticField[]) || [];
+  const oldMap = new Map(oldFields.map((f) => [f.name, f]));
+
+  // Detect per-field changes and build log entries
+  const logEntries: {
+    field_name: string;
+    change_summary: string;
+    before_value: Record<string, unknown>;
+    after_value: Record<string, unknown>;
+  }[] = [];
+
+  for (const f of fields) {
+    const old = oldMap.get(f.name);
+    if (!old) continue;
+    const diffs: string[] = [];
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+
+    if (old.description !== f.description) {
+      diffs.push("descrição");
+      before.description = old.description;
+      after.description = f.description;
+    }
+    if ((old.help_text || "") !== (f.help_text || "")) {
+      diffs.push("instruções");
+      before.help_text = old.help_text || null;
+      after.help_text = f.help_text || null;
+    }
+    const oldOpts = JSON.stringify(old.options ?? null);
+    const newOpts = JSON.stringify(f.options ?? null);
+    if (oldOpts !== newOpts) {
+      diffs.push(f.type === "text" ? "respostas padronizadas" : "opções");
+      before.options = old.options;
+      after.options = f.options;
+    }
+
+    if (diffs.length > 0) {
+      logEntries.push({
+        field_name: f.name,
+        change_summary: diffs.join(", "),
+        before_value: before,
+        after_value: after,
+      });
+    }
+  }
+
+  // Save schema
   const { generatePydanticCode } = await import("@/lib/schema-utils");
   const code = generatePydanticCode(fields);
   const fieldsWithHash = fields.map((f) => ({
     ...f,
     hash: computeFieldHash(f.name, f.type, f.options, f.description),
   }));
-  return saveSchema(projectId, code, fieldsWithHash);
+  await saveSchema(projectId, code, fieldsWithHash);
+
+  // Insert audit log entries
+  if (logEntries.length > 0 && user) {
+    await supabase.from("schema_change_log").insert(
+      logEntries.map((e) => ({
+        project_id: projectId,
+        changed_by: user.id,
+        ...e,
+      })),
+    );
+  }
 }
 
 export async function toggleLlmField(

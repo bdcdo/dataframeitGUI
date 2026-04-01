@@ -10,6 +10,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
+import { History, ChevronDown } from "lucide-react";
 import { CommentCard, type ReviewComment } from "./CommentCard";
 import { EditFieldDialog } from "./EditFieldDialog";
 import {
@@ -17,13 +22,25 @@ import {
   reopenReviewComment,
 } from "@/actions/stats";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
+
+export interface SchemaChangeEntry {
+  id: string;
+  fieldName: string;
+  changeSummary: string;
+  beforeValue: Record<string, unknown>;
+  afterValue: Record<string, unknown>;
+  changedBy: string;
+  createdAt: string;
+}
 
 interface ReviewCommentsViewProps {
   projectId: string;
   comments: ReviewComment[];
   fields: PydanticField[];
   isCoordinator: boolean;
+  schemaLog?: SchemaChangeEntry[];
 }
 
 function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" {
@@ -38,6 +55,7 @@ export function ReviewCommentsView({
   comments,
   fields,
   isCoordinator,
+  schemaLog = [],
 }: ReviewCommentsViewProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -96,8 +114,62 @@ export function ReviewCommentsView({
     });
   };
 
+  const [logOpen, setLogOpen] = useState(false);
+
   return (
     <div className="space-y-4">
+      {schemaLog.length > 0 && (
+        <Collapsible open={logOpen} onOpenChange={setLogOpen}>
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+              <History className="h-3.5 w-3.5" />
+              Histórico de mudanças no schema ({schemaLog.length})
+              <ChevronDown className={cn("h-3 w-3 transition-transform", logOpen && "rotate-180")} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-2 space-y-2">
+              {schemaLog.map((entry) => (
+                <Card key={entry.id} className="border-dashed">
+                  <CardContent className="py-2.5 px-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <code className="text-xs font-mono text-muted-foreground/70">{entry.fieldName}</code>
+                        <Badge variant="outline" className="text-[10px] px-1 py-0">
+                          {entry.changeSummary}
+                        </Badge>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {entry.changedBy} &middot; {new Date(entry.createdAt).toLocaleDateString("pt-BR")}
+                      </span>
+                    </div>
+                    {entry.beforeValue.description !== undefined && (
+                      <p className="text-xs text-muted-foreground">
+                        <span className="line-through">{String(entry.beforeValue.description)}</span>
+                        {" → "}
+                        <span className="font-medium text-foreground">{String(entry.afterValue.description)}</span>
+                      </p>
+                    )}
+                    {entry.beforeValue.options !== undefined && (
+                      <p className="text-xs text-muted-foreground">
+                        {Array.isArray(entry.beforeValue.options)
+                          ? (entry.beforeValue.options as string[]).join(", ") || "(vazio)"
+                          : "(vazio)"}
+                        {" → "}
+                        <span className="font-medium text-foreground">
+                          {Array.isArray(entry.afterValue.options)
+                            ? (entry.afterValue.options as string[]).join(", ") || "(vazio)"
+                            : "(vazio)"}
+                        </span>
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Input
           placeholder="Buscar documento ou comentário..."

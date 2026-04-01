@@ -19,6 +19,7 @@ export default async function CommentsPage({
     { data: documents },
     { data: membership },
     { data: responsesWithNotes },
+    { data: schemaChanges },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -51,6 +52,12 @@ export default async function CommentsPage({
       .eq("project_id", id)
       .eq("respondent_type", "humano")
       .not("justifications", "is", null),
+    supabase
+      .from("schema_change_log")
+      .select("id, field_name, change_summary, before_value, after_value, created_at, profiles(first_name, last_name)")
+      .eq("project_id", id)
+      .order("created_at", { ascending: false })
+      .limit(50),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -124,6 +131,19 @@ export default async function CommentsPage({
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
 
+  const schemaLog = (schemaChanges || []).map((c) => {
+    const p = c.profiles as unknown as { first_name: string | null; last_name: string | null } | null;
+    return {
+      id: c.id as string,
+      fieldName: c.field_name as string,
+      changeSummary: c.change_summary as string,
+      beforeValue: c.before_value as Record<string, unknown>,
+      afterValue: c.after_value as Record<string, unknown>,
+      changedBy: [p?.first_name, p?.last_name].filter(Boolean).join(" ") || "Anônimo",
+      createdAt: c.created_at as string,
+    };
+  });
+
   return (
     <div className="mx-auto max-w-4xl p-6">
       <ReviewCommentsView
@@ -131,6 +151,7 @@ export default async function CommentsPage({
         comments={comments}
         fields={fields}
         isCoordinator={isCoordinator}
+        schemaLog={schemaLog}
       />
     </div>
   );
