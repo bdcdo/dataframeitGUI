@@ -10,7 +10,6 @@ import {
   ChevronRight,
   CheckCircle2,
   RotateCcw,
-  MessageSquarePlus,
   FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -33,7 +32,6 @@ interface LlmErrorCardProps {
   isPending: boolean;
   onResolve: () => void;
   onReopen: () => void;
-  onCreateDiscussion: () => void;
 }
 
 function formatVerdictDisplay(verdict: string): string {
@@ -57,7 +55,6 @@ export function LlmErrorCard({
   isPending,
   onResolve,
   onReopen,
-  onCreateDiscussion,
 }: LlmErrorCardProps) {
   const [showJustification, setShowJustification] = useState(false);
 
@@ -122,15 +119,6 @@ export function LlmErrorCard({
             <Link href={`/projects/${projectId}/code?doc=${error.documentId}`}>
               <FileText className="h-3.5 w-3.5" />
             </Link>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={isPending}
-            onClick={onCreateDiscussion}
-            title="Criar discussão"
-          >
-            <MessageSquarePlus className="h-3.5 w-3.5" />
           </Button>
           {error.resolvedAt ? (
             <Button

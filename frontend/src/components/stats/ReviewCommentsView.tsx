@@ -15,7 +15,6 @@ import { EditFieldDialog } from "./EditFieldDialog";
 import {
   resolveReviewComment,
   reopenReviewComment,
-  createDiscussionFromComment,
 } from "@/actions/stats";
 import { toast } from "sonner";
 import type { PydanticField } from "@/lib/types";
@@ -96,18 +95,6 @@ export function ReviewCommentsView({
     });
   };
 
-  const handleCreateDiscussion = (reviewId: string) => {
-    startTransition(async () => {
-      const result = await createDiscussionFromComment(projectId, reviewId);
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Discussão criada");
-        router.push(`/projects/${projectId}/discussions/${result.id}`);
-      }
-    });
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -171,7 +158,6 @@ export function ReviewCommentsView({
               isCoordinator={isCoordinator}
               onResolve={() => handleResolve(c.id)}
               onReopen={() => handleReopen(c.id)}
-              onCreateDiscussion={() => handleCreateDiscussion(c.id)}
               onEditField={() => setEditingField(c.fieldName)}
             />
           ))}

@@ -58,56 +58,6 @@ export async function reopenReviewComment(
   }
 }
 
-export async function createDiscussionFromComment(
-  projectId: string,
-  reviewId: string,
-): Promise<{ id?: string; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
-    const { data: review } = await supabase
-      .from("reviews")
-      .select("document_id, field_name, verdict, comment")
-      .eq("id", reviewId)
-      .single();
-
-    if (!review) return { error: "Review não encontrada" };
-
-    const { data: doc } = await supabase
-      .from("documents")
-      .select("title, external_id")
-      .eq("id", review.document_id)
-      .single();
-
-    const docLabel = doc?.title || doc?.external_id || review.document_id;
-    const title = `[Comentário] ${docLabel} — ${review.field_name}`;
-    const body = `**Documento:** ${docLabel}\n**Campo:** ${review.field_name}\n**Veredito:** ${review.verdict}\n\n> ${review.comment}`;
-
-    const { data, error } = await supabase
-      .from("discussions")
-      .insert({
-        project_id: projectId,
-        title,
-        body,
-        document_id: review.document_id,
-        created_by: user.id,
-      })
-      .select("id")
-      .single();
-
-    if (error) return { error: error.message };
-
-    revalidatePath(`/projects/${projectId}/discussions`);
-    revalidatePath(`/projects/${projectId}/reviews`);
-    return { id: data.id };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
-}
-
 export async function resolveDifficulty(
   projectId: string,
   responseId: string,
@@ -159,59 +109,6 @@ export async function reopenDifficulty(
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
-}
-
-export async function createDiscussionFromDifficulty(
-  projectId: string,
-  responseId: string,
-  documentId: string,
-): Promise<{ id?: string; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
-    const [{ data: response }, { data: doc }] = await Promise.all([
-      supabase
-        .from("responses")
-        .select("answers, respondent_name")
-        .eq("id", responseId)
-        .single(),
-      supabase
-        .from("documents")
-        .select("title, external_id")
-        .eq("id", documentId)
-        .single(),
-    ]);
-
-    const ambiguidades =
-      (response?.answers as Record<string, unknown>)?.llm_ambiguidades || "";
-    const docLabel = doc?.title || doc?.external_id || documentId;
-    const model = response?.respondent_name || "LLM";
-    const title = `[Dificuldade LLM] ${docLabel}`;
-    const body = `**Documento:** ${docLabel}\n**Modelo:** ${model}\n\n> ${ambiguidades}`;
-
-    const { data, error } = await supabase
-      .from("discussions")
-      .insert({
-        project_id: projectId,
-        title,
-        body,
-        document_id: documentId,
-        created_by: user.id,
-      })
-      .select("id")
-      .single();
-
-    if (error) return { error: error.message };
-
-    revalidatePath(`/projects/${projectId}/discussions`);
-    revalidatePath(`/projects/${projectId}/reviews`);
-    return { id: data.id };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Erro desconhecido" };
   }
 }
 
@@ -309,50 +206,5 @@ export async function reopenError(
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
-}
-
-export async function createDiscussionFromError(
-  projectId: string,
-  documentId: string,
-  fieldName: string,
-  llmAnswer: string,
-  chosenVerdict: string,
-): Promise<{ id?: string; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
-    const { data: doc } = await supabase
-      .from("documents")
-      .select("title, external_id")
-      .eq("id", documentId)
-      .single();
-
-    const docLabel = doc?.title || doc?.external_id || documentId;
-    const title = `[Erro LLM] ${docLabel} — ${fieldName}`;
-    const body = `**Documento:** ${docLabel}\n**Campo:** ${fieldName}\n**LLM respondeu:** ${llmAnswer}\n**Escolhido:** ${chosenVerdict}`;
-
-    const { data, error } = await supabase
-      .from("discussions")
-      .insert({
-        project_id: projectId,
-        title,
-        body,
-        document_id: documentId,
-        created_by: user.id,
-      })
-      .select("id")
-      .single();
-
-    if (error) return { error: error.message };
-
-    revalidatePath(`/projects/${projectId}/discussions`);
-    revalidatePath(`/projects/${projectId}/reviews`);
-    return { id: data.id };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Erro desconhecido" };
   }
 }

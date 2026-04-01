@@ -75,7 +75,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
               size="sm"
               className={cn(
                 "h-7 text-xs",
-                active && "bg-brand/10 text-brand border-brand/40",
+                active && "bg-brand-muted text-brand border-brand",
               )}
               onClick={() => onChange(active ? "" : preset)}
             >

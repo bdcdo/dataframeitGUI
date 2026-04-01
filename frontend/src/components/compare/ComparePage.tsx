@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/resizable";
 import { CompareNav } from "./CompareNav";
 import { ComparisonPanel } from "./ComparisonPanel";
-import { CreateDiscussionDialog } from "@/components/discussions/CreateDiscussionDialog";
 import { submitVerdict } from "@/actions/reviews";
 import { toast } from "sonner";
 import { normalizeForComparison } from "@/lib/utils";
@@ -67,7 +66,6 @@ export function ComparePage({
   const [respondentFilter, setRespondentFilter] = useState("all");
   const [comment, setComment] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [discussDialogOpen, setDiscussDialogOpen] = useState(false);
   const [showConcordant, setShowConcordant] = useState(false);
 
   // Optimistic local reviews state (merges server data with client-side submissions)
@@ -311,7 +309,6 @@ export function ComparePage({
           fields={fields}
           reviewedDocsCount={reviewedDocsCount}
           onToggleFullscreen={toggleFullscreen}
-          onDiscuss={() => setDiscussDialogOpen(true)}
           parecerUrl={parecerUrl}
           showConcordant={showConcordant}
           onToggleConcordant={(v) => { setShowConcordant(v); setFieldIndex(0); }}
@@ -349,18 +346,6 @@ export function ComparePage({
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <CreateDiscussionDialog
-        projectId={projectId}
-        documents={documents.map((d) => ({
-          id: d.id,
-          title: d.title,
-          external_id: d.external_id,
-        }))}
-        defaultDocumentId={currentDoc.id}
-        externalOpen={discussDialogOpen}
-        onExternalOpenChange={setDiscussDialogOpen}
-        onCreated={() => setDiscussDialogOpen(false)}
-      />
     </div>
   );
 }

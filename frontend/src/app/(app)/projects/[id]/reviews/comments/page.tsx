@@ -42,7 +42,7 @@ export default async function CommentsPage({
           .select("role")
           .eq("project_id", id)
           .eq("user_id", user.id)
-          .single()
+          .maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
 

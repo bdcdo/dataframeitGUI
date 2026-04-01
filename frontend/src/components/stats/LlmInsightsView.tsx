@@ -20,17 +20,14 @@ import {
   AlertTriangle,
   CheckCircle2,
   RotateCcw,
-  MessageSquarePlus,
   FileText,
 } from "lucide-react";
 import { LlmErrorCard } from "./LlmErrorCard";
 import {
   resolveDifficulty,
   reopenDifficulty,
-  createDiscussionFromDifficulty,
   resolveError,
   reopenError,
-  createDiscussionFromError,
 } from "@/actions/stats";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -148,24 +145,6 @@ export function LlmInsightsView({
     });
   };
 
-  const handleCreateDiscussionFromError = (error: LlmError) => {
-    startTransition(async () => {
-      const result = await createDiscussionFromError(
-        projectId,
-        error.documentId,
-        error.fieldName,
-        error.llmAnswer,
-        error.chosenVerdict,
-      );
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Discussão criada");
-        router.push(`/projects/${projectId}/discussions/${result.id}`);
-      }
-    });
-  };
-
   // Difficulty handlers
   const handleResolveDifficulty = (
     responseId: string,
@@ -190,25 +169,6 @@ export function LlmInsightsView({
       } else {
         toast.success("Dificuldade reaberta");
         router.refresh();
-      }
-    });
-  };
-
-  const handleCreateDiscussionFromDiff = (
-    responseId: string,
-    documentId: string,
-  ) => {
-    startTransition(async () => {
-      const result = await createDiscussionFromDifficulty(
-        projectId,
-        responseId,
-        documentId,
-      );
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Discussão criada");
-        router.push(`/projects/${projectId}/discussions/${result.id}`);
       }
     });
   };
@@ -323,7 +283,6 @@ export function LlmInsightsView({
                 isPending={isPending}
                 onResolve={() => handleResolveError(e.documentId, e.fieldName)}
                 onReopen={() => handleReopenError(e.documentId, e.fieldName)}
-                onCreateDiscussion={() => handleCreateDiscussionFromError(e)}
               />
             ))}
           </div>
@@ -389,20 +348,6 @@ export function LlmInsightsView({
                       <Link href={`/projects/${projectId}/code?doc=${d.documentId}`}>
                         <FileText className="h-3.5 w-3.5" />
                       </Link>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={isPending}
-                      onClick={() =>
-                        handleCreateDiscussionFromDiff(
-                          d.responseId,
-                          d.documentId,
-                        )
-                      }
-                      title="Criar discussão"
-                    >
-                      <MessageSquarePlus className="h-3.5 w-3.5" />
                     </Button>
                     {d.resolvedAt ? (
                       <Button

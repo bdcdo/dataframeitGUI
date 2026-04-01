@@ -17,8 +17,7 @@ const tabs = [
   { label: "Comparar", href: "compare" },
   { label: "Revisões", href: "reviews" },
   { label: "LLM", href: "llm", coordinatorOnly: true },
-  { label: "Discussões", href: "discussions" },
-  { label: "Configurações", href: "config", coordinatorOnly: true },
+{ label: "Configurações", href: "config", coordinatorOnly: true },
 ];
 
 export function ProjectTabs({ projectId, isCoordinator }: ProjectTabsProps) {

@@ -12,7 +12,6 @@ import {
 import {
   CheckCircle2,
   RotateCcw,
-  MessageSquarePlus,
   ChevronDown,
   Pencil,
   Loader2,
@@ -45,7 +44,6 @@ interface CommentCardProps {
   isCoordinator?: boolean;
   onResolve: () => void;
   onReopen: () => void;
-  onCreateDiscussion: () => void;
   onEditField?: () => void;
 }
 
@@ -87,7 +85,6 @@ export function CommentCard({
   isCoordinator,
   onResolve,
   onReopen,
-  onCreateDiscussion,
   onEditField,
 }: CommentCardProps) {
   const isResolved = !!comment.resolvedAt;
@@ -239,15 +236,6 @@ export function CommentCard({
             )}
           </p>
           <div className="flex gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={isPending}
-              onClick={onCreateDiscussion}
-              title="Criar discussão"
-            >
-              <MessageSquarePlus className="h-3.5 w-3.5" />
-            </Button>
             {isResolved ? (
               <Button
                 variant="ghost"

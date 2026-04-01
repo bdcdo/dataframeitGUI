@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
-import { ChevronLeft, ChevronRight, Maximize2, MessageSquarePlus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 import { CompareFieldFilter } from "./CompareFieldFilter";
 import { RespondentFilter } from "./RespondentFilter";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
@@ -21,7 +21,6 @@ interface CompareNavProps {
   fields: PydanticField[];
   reviewedDocsCount: number;
   onToggleFullscreen: () => void;
-  onDiscuss: () => void;
   parecerUrl?: string;
   showConcordant: boolean;
   onToggleConcordant: (value: boolean) => void;
@@ -42,7 +41,6 @@ export function CompareNav({
   fields,
   reviewedDocsCount,
   onToggleFullscreen,
-  onDiscuss,
   parecerUrl,
   showConcordant,
   onToggleConcordant,
@@ -57,9 +55,6 @@ export function CompareNav({
       <div className="flex items-center gap-1 min-w-0">
         <span className="truncate font-medium">{title}</span>
         {parecerUrl && <CopyLinkButton url={parecerUrl} />}
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onDiscuss} title="Abrir discussão">
-          <MessageSquarePlus className="h-3.5 w-3.5" />
-        </Button>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <Badge variant="secondary" className="text-xs">
