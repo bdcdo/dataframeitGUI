@@ -8,6 +8,7 @@
  *
  * Usage:
  *   npx tsx scripts/sync-existing-users-to-clerk.ts
+ *   npx tsx scripts/sync-existing-users-to-clerk.ts --dry-run --limit=20
  *
  * Required env vars (reads from .env.local automatically):
  *   CLERK_SECRET_KEY
@@ -45,6 +46,16 @@ interface Profile {
   last_name: string | null;
 }
 
+const args = process.argv.slice(2);
+const isDryRun = args.includes("--dry-run");
+const limitArg = args.find((arg) => arg.startsWith("--limit="));
+const limit = limitArg ? Number(limitArg.split("=")[1]) : null;
+
+if (limitArg && (!Number.isInteger(limit) || (limit as number) <= 0)) {
+  console.error("Parametro --limit invalido. Use inteiro positivo, ex: --limit=20");
+  process.exit(1);
+}
+
 async function main() {
   console.log("Buscando profiles no Supabase...");
 
@@ -57,18 +68,28 @@ async function main() {
     process.exit(1);
   }
 
-  if (!profiles || profiles.length === 0) {
+  const allProfiles = (profiles as Profile[]) ?? [];
+  const targetProfiles =
+    limit && allProfiles.length > limit ? allProfiles.slice(0, limit) : allProfiles;
+
+  if (targetProfiles.length === 0) {
     console.log("Nenhum profile encontrado.");
     return;
   }
 
-  console.log(`Encontrados ${profiles.length} profiles. Iniciando sync...\n`);
+  if (isDryRun) {
+    console.log("MODO DRY-RUN: nenhuma escrita em Clerk/Supabase sera realizada.");
+  }
+
+  console.log(
+    `Encontrados ${allProfiles.length} profiles. Processando ${targetProfiles.length}.\n`
+  );
 
   let created = 0;
   let skipped = 0;
   let errors = 0;
 
-  for (const profile of profiles as Profile[]) {
+  for (const profile of targetProfiles) {
     const label = `${profile.email} (${profile.id})`;
 
     // Check if mapping already exists
@@ -107,23 +128,29 @@ async function main() {
         console.log(`  CREATE ${label} — Clerk user ${clerkUserId}`);
       }
 
-      // Set supabase_uid in Clerk metadata
-      await clerk.users.updateUserMetadata(clerkUserId, {
-        publicMetadata: { supabase_uid: profile.id },
-      });
-
-      // Insert mapping
-      const { error: mapError } = await supabase
-        .from("clerk_user_mapping")
-        .upsert({
-          clerk_user_id: clerkUserId,
-          supabase_user_id: profile.id,
+      if (isDryRun) {
+        console.log(
+          `  DRY   ${label} — validado (clerk_user_id=${clerkUserId})`
+        );
+      } else {
+        // Set supabase_uid in Clerk metadata
+        await clerk.users.updateUserMetadata(clerkUserId, {
+          publicMetadata: { supabase_uid: profile.id },
         });
 
-      if (mapError) {
-        console.error(`  ERROR ${label} — mapping: ${mapError.message}`);
-        errors++;
-        continue;
+        // Insert mapping
+        const { error: mapError } = await supabase
+          .from("clerk_user_mapping")
+          .upsert({
+            clerk_user_id: clerkUserId,
+            supabase_user_id: profile.id,
+          });
+
+        if (mapError) {
+          console.error(`  ERROR ${label} — mapping: ${mapError.message}`);
+          errors++;
+          continue;
+        }
       }
 
       created++;
@@ -138,7 +165,8 @@ async function main() {
   console.log(`  Criados/vinculados: ${created}`);
   console.log(`  Ja existiam:        ${skipped}`);
   console.log(`  Erros:              ${errors}`);
-  console.log(`  Total:              ${profiles.length}`);
+  console.log(`  Total processados:  ${targetProfiles.length}`);
+  console.log(`  Total encontrados:  ${allProfiles.length}`);
 }
 
 main().catch((e) => {

@@ -1,8 +1,9 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 export async function GET() {
   const { getToken, userId } = await auth();
+  const user = await currentUser();
 
   const token = await getToken({ template: "supabase" });
 
@@ -17,10 +18,35 @@ export async function GET() {
     }
   }
 
+  const metadataSupabaseUid =
+    (user?.publicMetadata?.supabase_uid as string | undefined) ?? null;
+  const tokenSupabaseUid =
+    claims && typeof claims === "object" && "supabase_uid" in claims
+      ? ((claims as Record<string, unknown>).supabase_uid as string | null)
+      : null;
+
   return NextResponse.json({
     clerkUserId: userId,
+    clerkPrimaryEmail: user?.emailAddresses[0]?.emailAddress ?? null,
+    metadataSupabaseUid,
+    tokenSupabaseUid,
+    uidMatch:
+      metadataSupabaseUid && tokenSupabaseUid
+        ? metadataSupabaseUid === tokenSupabaseUid
+        : null,
     tokenExists: !!token,
     tokenPrefix: token?.substring(0, 50) + "...",
     claims,
+    hints: {
+      tokenTemplate: "supabase",
+      missingMetadata:
+        !!userId && !metadataSupabaseUid
+          ? "publicMetadata.supabase_uid ausente"
+          : null,
+      missingTokenClaim:
+        !!token && !tokenSupabaseUid
+          ? "claim supabase_uid ausente no JWT"
+          : null,
+    },
   });
 }
