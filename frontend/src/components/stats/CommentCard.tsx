@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,8 @@ import {
   fetchGabaritoForComment,
   type GabaritoRespondentAnswer,
 } from "@/actions/stats";
+import { resolveSchemaSuggestion } from "@/actions/suggestions";
+import { toast } from "sonner";
 
 export interface ResponseSnapshotEntry {
   id: string;
@@ -44,8 +47,10 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
-  source: "review" | "nota";
+  source: "review" | "nota" | "sugestao";
   responseSnapshot: ResponseSnapshotEntry[] | null;
+  suggestionId?: string;
+  suggestionStatus?: "pending" | "approved" | "rejected";
 }
 
 interface CommentCardProps {
@@ -56,10 +61,12 @@ interface CommentCardProps {
   onResolve: () => void;
   onReopen: () => void;
   onEditField?: () => void;
+  onSuggestField?: () => void;
 }
 
 function formatVerdictLabel(verdict: string): string {
   if (verdict === "nota") return "Nota do pesquisador";
+  if (verdict === "sugestao") return "Sugestão";
   if (verdict === "ambiguo") return "Ambíguo";
   if (verdict === "pular") return "Pular";
   if (verdict.startsWith("{")) {
@@ -80,6 +87,7 @@ function verdictVariant(
   verdict: string,
 ): "default" | "secondary" | "destructive" | "outline" {
   if (verdict === "nota") return "secondary";
+  if (verdict === "sugestao") return "outline";
   if (verdict === "ambiguo") return "secondary";
   if (verdict === "pular") return "outline";
   return "default";
@@ -99,8 +107,11 @@ export function CommentCard({
   onResolve,
   onReopen,
   onEditField,
+  onSuggestField,
 }: CommentCardProps) {
+  const router = useRouter();
   const isResolved = !!comment.resolvedAt;
+  const [suggestionPending, startSuggestionAction] = useTransition();
   const [gabaritoOpen, setGabaritoOpen] = useState(false);
   const [gabaritoData, setGabaritoData] = useState<
     GabaritoRespondentAnswer[] | null
@@ -162,6 +173,17 @@ export function CommentCard({
                   <Pencil className="h-3 w-3" />
                 </Button>
               )}
+              {!isCoordinator && onSuggestField && comment.source !== "nota" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-5 p-0"
+                  onClick={onSuggestField}
+                  title="Sugerir alteração"
+                >
+                  <Pencil className="h-3 w-3 text-amber-500" />
+                </Button>
+              )}
             </div>
             {comment.fieldDescription &&
               comment.fieldDescription !== comment.fieldName && (
@@ -181,6 +203,52 @@ export function CommentCard({
         <blockquote className="border-l-2 pl-3 text-sm text-foreground">
           {comment.comment}
         </blockquote>
+
+        {/* Suggestion actions (coordinator: approve/reject) */}
+        {comment.source === "sugestao" && comment.suggestionId && (
+          <div className="flex items-center gap-2">
+            {comment.suggestionStatus === "pending" && isCoordinator && (
+              <>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-6 text-xs"
+                  disabled={suggestionPending}
+                  onClick={() => {
+                    startSuggestionAction(async () => {
+                      const result = await resolveSchemaSuggestion(comment.suggestionId!, projectId, "approved");
+                      if (result.error) toast.error(result.error);
+                      else { toast.success("Sugestão aprovada e aplicada"); router.refresh(); }
+                    });
+                  }}
+                >
+                  Aprovar
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-xs"
+                  disabled={suggestionPending}
+                  onClick={() => {
+                    startSuggestionAction(async () => {
+                      const result = await resolveSchemaSuggestion(comment.suggestionId!, projectId, "rejected");
+                      if (result.error) toast.error(result.error);
+                      else { toast.success("Sugestão rejeitada"); router.refresh(); }
+                    });
+                  }}
+                >
+                  Rejeitar
+                </Button>
+              </>
+            )}
+            {comment.suggestionStatus === "approved" && (
+              <Badge className="text-xs bg-green-500/10 text-green-700">Aprovada</Badge>
+            )}
+            {comment.suggestionStatus === "rejected" && (
+              <Badge className="text-xs bg-red-500/10 text-red-700">Rejeitada</Badge>
+            )}
+          </div>
+        )}
 
         {/* Gabarito expansível (só para reviews, não para notas) */}
         {comment.source !== "nota" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>

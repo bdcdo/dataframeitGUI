@@ -6,12 +6,19 @@ function escapeString(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+function subfieldClassName(fieldName: string): string {
+  return `_${fieldName}_fields`;
+}
+
 function fieldAnnotation(field: PydanticField): string {
   if (field.type === "single" && field.options) {
     return `Literal[${field.options.map((o) => `"${escapeString(o)}"`).join(", ")}]`;
   }
   if (field.type === "multi" && field.options) {
     return `list[Literal[${field.options.map((o) => `"${escapeString(o)}"`).join(", ")}]]`;
+  }
+  if (field.subfields && field.subfields.length > 0) {
+    return subfieldClassName(field.name);
   }
   return "str";
 }
@@ -34,11 +41,28 @@ export function generatePydanticCode(
 ): string {
   const lines = [
     "from pydantic import BaseModel, Field",
-    "from typing import Literal",
+    "from typing import Literal, Optional",
     "",
-    "",
-    `class ${modelName}(BaseModel):`,
   ];
+
+  // Generate nested BaseModel classes for composite text fields
+  for (const field of fields) {
+    if (field.subfields && field.subfields.length > 0) {
+      lines.push("");
+      lines.push(`class ${subfieldClassName(field.name)}(BaseModel):`);
+      for (const sf of field.subfields) {
+        const ann = sf.required && field.subfield_rule !== "at_least_one"
+          ? "str"
+          : "Optional[str]";
+        lines.push(
+          `    ${sf.key}: ${ann} = Field(${ann === "Optional[str]" ? "default=None, " : ""}description="${escapeString(sf.label)}")`
+        );
+      }
+    }
+  }
+
+  lines.push("");
+  lines.push(`class ${modelName}(BaseModel):`);
 
   if (fields.length === 0) {
     lines.push("    pass");
@@ -95,6 +119,25 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
 
     if (f.type === "date" && f.options && f.options.length > 0) {
       errors.push(`${label}: campo de data não deve ter opções`);
+    }
+
+    if (f.subfields && f.subfields.length > 0) {
+      const sfKeys = new Set<string>();
+      for (let j = 0; j < f.subfields.length; j++) {
+        const sf = f.subfields[j];
+        if (!sf.key || !PYTHON_IDENTIFIER.test(sf.key)) {
+          errors.push(
+            `${label}: subcampo ${j + 1} tem chave inválida "${sf.key}"`
+          );
+        }
+        if (sfKeys.has(sf.key)) {
+          errors.push(`${label}: subcampo "${sf.key}" duplicado`);
+        }
+        sfKeys.add(sf.key);
+        if (!sf.label.trim()) {
+          errors.push(`${label}: subcampo ${j + 1} tem label vazio`);
+        }
+      }
     }
 
     if (

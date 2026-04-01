@@ -16,8 +16,8 @@ import { cn } from "@/lib/utils";
 
 interface FieldRendererProps {
   field: PydanticField;
-  value: string | string[] | null;
-  onChange: (value: string | string[]) => void;
+  value: unknown;
+  onChange: (value: unknown) => void;
 }
 
 const NOT_INFORMED = "Não informada";
@@ -199,6 +199,72 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         value={(value as string) || ""}
         onChange={(v) => onChange(v)}
       />
+    );
+  }
+
+  // text with subfields
+  if (field.type === "text" && field.subfields && field.subfields.length > 0) {
+    const objValue =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, string>)
+        : {};
+    const isNotInformed = value === "Não informada";
+
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-7 text-xs",
+              isNotInformed && "bg-brand-muted text-brand border-brand",
+            )}
+            onClick={() => onChange(isNotInformed ? {} : "Não informada")}
+          >
+            {isNotInformed && <Check className="mr-1 h-3 w-3" />}
+            Não informada
+          </Button>
+          {field.subfield_rule === "at_least_one" && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Info className="h-3.5 w-3.5" />
+                    Preencha pelo menos um
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs text-xs">
+                  Basta preencher pelo menos um dos campos abaixo.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+        {!isNotInformed && (
+          <div className="space-y-2">
+            {field.subfields.map((sf) => (
+              <div key={sf.key} className="flex items-center gap-2">
+                <label className="w-32 shrink-0 text-right text-xs text-muted-foreground">
+                  {sf.label}
+                  {sf.required && field.subfield_rule !== "at_least_one" && (
+                    <span className="text-destructive ml-0.5">*</span>
+                  )}
+                </label>
+                <Input
+                  className="text-sm"
+                  value={objValue[sf.key] || ""}
+                  onChange={(e) =>
+                    onChange({ ...objValue, [sf.key]: e.target.value })
+                  }
+                  placeholder={sf.label}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 

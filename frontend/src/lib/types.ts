@@ -24,6 +24,12 @@ export interface Project {
   allow_researcher_review: boolean;
 }
 
+export interface SubfieldDef {
+  key: string;
+  label: string;
+  required?: boolean;
+}
+
 export interface PydanticField {
   name: string;
   type: "single" | "multi" | "text" | "date";
@@ -33,6 +39,8 @@ export interface PydanticField {
   target?: "all" | "llm_only" | "human_only";
   required?: boolean;
   hash?: string;
+  subfields?: SubfieldDef[];
+  subfield_rule?: "all" | "at_least_one";
 }
 
 export interface ProjectMember {

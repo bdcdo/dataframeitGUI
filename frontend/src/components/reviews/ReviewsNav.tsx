@@ -4,8 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-const reviewsTabs = [
+const reviewsTabs: Array<{
+  label: string;
+  href: string;
+  coordinatorOnly?: boolean;
+  researcherOnly?: boolean;
+}> = [
   { label: "Gabarito", href: "gabarito" },
+  { label: "Meu Gabarito", href: "my-verdicts", researcherOnly: true },
   { label: "Matriz de Confusão", href: "confusion" },
   { label: "Respondentes", href: "respondents", coordinatorOnly: true },
   { label: "Docs Difíceis", href: "difficulty" },
@@ -23,7 +29,9 @@ export function ReviewsNav({ projectId, isCoordinator }: ReviewsNavProps) {
   const pathname = usePathname();
 
   const visibleTabs = reviewsTabs.filter(
-    (tab) => !tab.coordinatorOnly || isCoordinator,
+    (tab) =>
+      (!tab.coordinatorOnly || isCoordinator) &&
+      (!tab.researcherOnly || !isCoordinator),
   );
 
   return (

@@ -32,6 +32,13 @@ function formatAnswer(answer: unknown): string {
   if (typeof answer === "string") return answer.trim();
   if (Array.isArray(answer))
     return answer.map((v) => (typeof v === "string" ? v.trim() : v)).join(", ");
+  if (typeof answer === "object") {
+    const obj = answer as Record<string, unknown>;
+    return Object.entries(obj)
+      .filter(([, v]) => v != null && String(v).trim() !== "")
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+  }
   return String(answer);
 }
 

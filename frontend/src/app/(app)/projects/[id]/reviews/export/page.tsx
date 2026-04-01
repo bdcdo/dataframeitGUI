@@ -3,6 +3,19 @@ import { ExportPanel } from "@/components/stats/ExportPanel";
 import { normalizeForComparison } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
 
+function formatExportValue(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (Array.isArray(val)) return val.join("; ");
+  if (typeof val === "object") {
+    return Object.entries(val as Record<string, unknown>)
+      .filter(([, v]) => v != null && String(v).trim() !== "")
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("; ");
+  }
+  return String(val);
+}
+
 export default async function ExportPage({
   params,
 }: {
@@ -60,7 +73,7 @@ export default async function ExportPage({
       source,
       ...exportableFields.map((f) => {
         const val = (r.answers as Record<string, unknown>)?.[f.name];
-        return Array.isArray(val) ? val.join("; ") : String(val ?? "");
+        return formatExportValue(val);
       }),
     ];
   });
@@ -145,7 +158,7 @@ export default async function ExportPage({
           ];
           fieldAgreements.set(
             field.name,
-            Array.isArray(val) ? val.join("; ") : String(val ?? ""),
+            formatExportValue(val),
           );
         }
       } else {
@@ -159,7 +172,7 @@ export default async function ExportPage({
           const val = answers[0];
           fieldAgreements.set(
             field.name,
-            Array.isArray(val) ? val.join("; ") : String(val ?? ""),
+            formatExportValue(val),
           );
         }
       }

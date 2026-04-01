@@ -268,15 +268,133 @@ export function FieldCard({
               </div>
             )}
             {field.type === "text" && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">Respostas padronizadas (opcional)</Label>
-                <p className="text-xs text-muted-foreground">
-                  Botões de atalho para respostas comuns — garante consistência na comparação
-                </p>
-                <OptionsEditor
-                  options={field.options || []}
-                  onChange={(opts) => updateField({ options: opts.length > 0 ? opts : null })}
-                />
+              <div className="space-y-3">
+                {/* Toggle subcampos */}
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={!!field.subfields && field.subfields.length > 0}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        updateField({
+                          subfields: [
+                            { key: "campo_1", label: "Campo 1", required: true },
+                            { key: "campo_2", label: "Campo 2", required: true },
+                          ],
+                          subfield_rule: "all",
+                          options: null,
+                        });
+                      } else {
+                        updateField({ subfields: undefined, subfield_rule: undefined });
+                      }
+                    }}
+                  />
+                  <Label className="text-xs">Dividir em subcampos</Label>
+                </div>
+
+                {field.subfields && field.subfields.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs">Regra</Label>
+                      <div className="flex gap-1">
+                        {(
+                          [
+                            ["all", "Todos os obrigatórios"],
+                            ["at_least_one", "Pelo menos um"],
+                          ] as const
+                        ).map(([value, label]) => (
+                          <Button
+                            key={value}
+                            variant="outline"
+                            size="sm"
+                            className={cn(
+                              "text-xs h-6",
+                              (field.subfield_rule || "all") === value &&
+                                "bg-brand/10 text-brand border-brand/40"
+                            )}
+                            onClick={() => updateField({ subfield_rule: value })}
+                          >
+                            {label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                    {field.subfields.map((sf, si) => (
+                      <div key={si} className="flex items-center gap-1.5">
+                        <Input
+                          value={sf.key}
+                          onChange={(e) => {
+                            const sfs = [...field.subfields!];
+                            sfs[si] = { ...sfs[si], key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") };
+                            updateField({ subfields: sfs });
+                          }}
+                          className="w-28 font-mono text-xs h-7"
+                          placeholder="chave"
+                        />
+                        <Input
+                          value={sf.label}
+                          onChange={(e) => {
+                            const sfs = [...field.subfields!];
+                            sfs[si] = { ...sfs[si], label: e.target.value };
+                            updateField({ subfields: sfs });
+                          }}
+                          className="flex-1 text-xs h-7"
+                          placeholder="Label visível"
+                        />
+                        {field.subfield_rule !== "at_least_one" && (
+                          <div className="flex items-center gap-1">
+                            <Switch
+                              checked={sf.required !== false}
+                              onCheckedChange={(checked) => {
+                                const sfs = [...field.subfields!];
+                                sfs[si] = { ...sfs[si], required: checked };
+                                updateField({ subfields: sfs });
+                              }}
+                            />
+                            <span className="text-[10px] text-muted-foreground">Obrig.</span>
+                          </div>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => {
+                            const sfs = field.subfields!.filter((_, j) => j !== si);
+                            updateField({ subfields: sfs.length > 0 ? sfs : undefined, subfield_rule: sfs.length > 0 ? field.subfield_rule : undefined });
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs h-6"
+                      onClick={() => {
+                        const idx = field.subfields!.length + 1;
+                        updateField({
+                          subfields: [
+                            ...field.subfields!,
+                            { key: `campo_${idx}`, label: `Campo ${idx}`, required: true },
+                          ],
+                        });
+                      }}
+                    >
+                      + Adicionar subcampo
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Respostas padronizadas (opcional)</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Botões de atalho para respostas comuns — garante consistência na comparação
+                    </p>
+                    <OptionsEditor
+                      options={field.options || []}
+                      onChange={(opts) => updateField({ options: opts.length > 0 ? opts : null })}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>

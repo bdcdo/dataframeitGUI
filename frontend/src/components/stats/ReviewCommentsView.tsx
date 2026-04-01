@@ -17,6 +17,7 @@ import { History, ChevronDown, PanelLeftClose } from "lucide-react";
 import { CommentCard, type ReviewComment } from "./CommentCard";
 import { CommentsSplitView } from "./CommentsSplitView";
 import { EditFieldDialog } from "./EditFieldDialog";
+import { SuggestFieldDialog } from "./SuggestFieldDialog";
 import {
   resolveReviewComment,
   reopenReviewComment,
@@ -43,8 +44,9 @@ interface ReviewCommentsViewProps {
   schemaLog?: SchemaChangeEntry[];
 }
 
-function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" {
+function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" | "sugestao" {
   if (verdict === "nota") return "nota";
+  if (verdict === "sugestao") return "sugestao";
   if (verdict === "ambiguo") return "ambiguo";
   if (verdict === "pular") return "pular";
   return "answer";
@@ -64,6 +66,7 @@ export function ReviewCommentsView({
   const [verdictFilter, setVerdictFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [editingField, setEditingField] = useState<string | null>(null);
+  const [suggestingField, setSuggestingField] = useState<string | null>(null);
   const [splitDocId, setSplitDocId] = useState<string | null>(null);
 
   const commentCountByField = useMemo(() => {
@@ -246,6 +249,7 @@ export function ReviewCommentsView({
             <SelectItem value="ambiguo">Ambíguo</SelectItem>
             <SelectItem value="pular">Pular</SelectItem>
             <SelectItem value="nota">Notas</SelectItem>
+            <SelectItem value="sugestao">Sugestões</SelectItem>
           </SelectContent>
         </Select>
         {reviewDocCount > 0 && (
@@ -283,6 +287,7 @@ export function ReviewCommentsView({
               onResolve={() => handleResolve(c.id)}
               onReopen={() => handleReopen(c.id)}
               onEditField={() => setEditingField(c.fieldName)}
+              onSuggestField={() => setSuggestingField(c.fieldName)}
             />
           ))}
         </div>
@@ -297,6 +302,18 @@ export function ReviewCommentsView({
           open={!!editingField}
           onOpenChange={(open) => {
             if (!open) setEditingField(null);
+          }}
+        />
+      )}
+
+      {!isCoordinator && suggestingField && (
+        <SuggestFieldDialog
+          projectId={projectId}
+          fieldName={suggestingField}
+          allFields={fields}
+          open={!!suggestingField}
+          onOpenChange={(open) => {
+            if (!open) setSuggestingField(null);
           }}
         />
       )}

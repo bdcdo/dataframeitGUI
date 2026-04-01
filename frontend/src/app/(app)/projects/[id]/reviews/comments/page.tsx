@@ -20,6 +20,7 @@ export default async function CommentsPage({
     { data: membership },
     { data: responsesWithNotes },
     { data: schemaChanges },
+    { data: suggestions },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -58,6 +59,11 @@ export default async function CommentsPage({
       .eq("project_id", id)
       .order("created_at", { ascending: false })
       .limit(50),
+    supabase
+      .from("schema_suggestions")
+      .select("id, field_name, suggested_changes, reason, status, created_at, profiles!suggested_by(full_name)")
+      .eq("project_id", id)
+      .order("created_at", { ascending: false }),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -129,9 +135,42 @@ export default async function CommentsPage({
       responseSnapshot: null,
     }));
 
-  const comments = [...reviewComments, ...noteComments].sort(
+  // Map suggestions as comments
+  const suggestionComments: ReviewComment[] = (suggestions || []).map((s) => {
+    const p = s.profiles as unknown as { full_name: string | null } | null;
+    const changes = s.suggested_changes as Record<string, unknown>;
+    const changedKeys = Object.keys(changes).join(", ");
+    return {
+      id: `sugestao-${s.id}`,
+      documentId: "",
+      documentTitle: "",
+      fieldName: s.field_name,
+      fieldDescription: fieldDescMap.get(s.field_name) || s.field_name,
+      verdict: "sugestao",
+      comment: `${s.reason || "Sem motivo"}${changedKeys ? ` (alterações: ${changedKeys})` : ""}`,
+      reviewerName: p?.full_name || "Anônimo",
+      resolvedAt: null,
+      createdAt: s.created_at,
+      chosenResponseId: null,
+      source: "sugestao" as const,
+      responseSnapshot: null,
+      suggestionId: s.id as string,
+      suggestionStatus: s.status as "pending" | "approved" | "rejected",
+    };
+  });
+
+  // Pending suggestions first, then all others by date
+  const pendingSuggestions = suggestionComments.filter(
+    (s) => s.suggestionStatus === "pending",
+  );
+  const restComments = [
+    ...reviewComments,
+    ...noteComments,
+    ...suggestionComments.filter((s) => s.suggestionStatus !== "pending"),
+  ].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
+  const comments = [...pendingSuggestions, ...restComments];
 
   const schemaLog = (schemaChanges || []).map((c) => {
     const p = c.profiles as unknown as { first_name: string | null; last_name: string | null } | null;

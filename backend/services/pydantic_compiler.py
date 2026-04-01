@@ -65,16 +65,21 @@ def compile_pydantic(code: str) -> dict:
             field_type = explicit_type
         description = field_info.description or field_name
 
-        fields.append(
-            {
-                "name": field_name,
-                "type": field_type,
-                "options": options,
-                "description": description,
-                "target": target,
-                "hash": _field_hash(field_name, field_type, options, description),
-            }
-        )
+        field_dict: dict = {
+            "name": field_name,
+            "type": field_type,
+            "options": options,
+            "description": description,
+            "target": target,
+            "hash": _field_hash(field_name, field_type, options, description),
+        }
+
+        # Extract subfields from nested BaseModel
+        subfields = _extract_subfields(annotation)
+        if subfields:
+            field_dict["subfields"] = subfields
+
+        fields.append(field_dict)
 
     return {
         "valid": True,
@@ -122,4 +127,31 @@ def _parse_annotation(annotation: type) -> tuple[str, list[str] | None]:
         if len(non_none) == 1:
             return _parse_annotation(non_none[0])
 
+    # Nested BaseModel -> composite text field
+    from pydantic import BaseModel
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel) and annotation is not BaseModel:
+        return "text", None  # type stays "text"; subfields extracted separately
+
     return "text", None
+
+
+def _extract_subfields(annotation: type) -> list[dict] | None:
+    """Extract subfield definitions from a nested BaseModel annotation."""
+    from pydantic import BaseModel
+    if not (isinstance(annotation, type) and issubclass(annotation, BaseModel) and annotation is not BaseModel):
+        return None
+    subfields = []
+    for sf_name, sf_info in annotation.model_fields.items():
+        sf_ann = sf_info.annotation
+        # Check if Optional (i.e., not required)
+        is_optional = False
+        sf_origin = get_origin(sf_ann)
+        if sf_origin is typing.Union:
+            sf_args = get_args(sf_ann)
+            is_optional = type(None) in sf_args
+        subfields.append({
+            "key": sf_name,
+            "label": sf_info.description or sf_name,
+            "required": not is_optional,
+        })
+    return subfields if subfields else None
