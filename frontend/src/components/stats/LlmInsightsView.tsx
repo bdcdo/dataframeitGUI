@@ -47,6 +47,7 @@ interface LlmInsightsViewProps {
     totalLlmDocs: number;
     totalErrors: number;
     errorRate: number;
+    unreviewedLlmDocs?: number;
   };
 }
 
@@ -150,6 +151,13 @@ export function LlmInsightsView({
           </CardContent>
         </Card>
       </div>
+
+      {!!summary.unreviewedLlmDocs && summary.unreviewedLlmDocs > 0 && (
+        <p className="text-xs text-muted-foreground text-center">
+          {summary.unreviewedLlmDocs} documento{summary.unreviewedLlmDocs !== 1 ? "s" : ""} com respostas do LLM ainda não {summary.unreviewedLlmDocs !== 1 ? "foram revisados" : "foi revisado"}.
+          Erros só aparecem após a revisão humana.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <Input

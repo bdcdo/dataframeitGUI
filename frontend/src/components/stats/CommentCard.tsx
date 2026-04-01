@@ -26,6 +26,20 @@ import {
 import { resolveSchemaSuggestion } from "@/actions/suggestions";
 import { toast } from "sonner";
 
+const TYPE_LABELS: Record<string, string> = {
+  single: "Escolha única",
+  multi: "Múltipla escolha",
+  text: "Texto livre",
+  date: "Data",
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  single: "bg-blue-500/10 text-blue-700",
+  multi: "bg-purple-500/10 text-purple-700",
+  text: "bg-green-500/10 text-green-700",
+  date: "bg-amber-500/10 text-amber-700",
+};
+
 export interface ResponseSnapshotEntry {
   id: string;
   respondent_name: string;
@@ -40,6 +54,9 @@ export interface ReviewComment {
   documentTitle: string;
   fieldName: string;
   fieldDescription: string;
+  fieldHelpText?: string;
+  fieldOptions?: string[] | null;
+  fieldType?: "single" | "multi" | "text" | "date";
   verdict: string;
   comment: string;
   reviewerName: string;
@@ -208,6 +225,31 @@ export function CommentCard({
             {formatVerdictLabel(comment.verdict)}
           </Badge>
         </div>
+
+        {/* Metadados do campo (contexto para avaliacao do schema) */}
+        {(comment.fieldType || comment.fieldHelpText || (comment.fieldOptions && comment.fieldOptions.length > 0)) && (
+          <div className="space-y-1 rounded-md bg-muted/30 px-3 py-2">
+            {comment.fieldType && (
+              <Badge className={cn("text-[10px] px-1 py-0", TYPE_COLORS[comment.fieldType])}>
+                {TYPE_LABELS[comment.fieldType]}
+              </Badge>
+            )}
+            {comment.fieldHelpText && (
+              <p className="text-xs italic text-muted-foreground">
+                {comment.fieldHelpText}
+              </p>
+            )}
+            {comment.fieldOptions && comment.fieldOptions.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {comment.fieldOptions.map((opt) => (
+                  <Badge key={opt} variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+                    {opt}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <blockquote className="border-l-2 pl-3 text-sm text-foreground">
           {comment.comment}

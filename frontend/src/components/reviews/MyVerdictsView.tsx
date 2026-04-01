@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -63,11 +63,19 @@ function formatVerdictDisplay(verdict: string): string {
   return verdict;
 }
 
+export interface RespondentOption {
+  id: string;
+  name: string;
+}
+
 interface MyVerdictsViewProps {
   projectId: string;
   items: VerdictItem[];
   fields: PydanticField[];
   userName: string;
+  isCoordinator?: boolean;
+  respondents?: RespondentOption[];
+  currentViewUserId?: string;
 }
 
 export function MyVerdictsView({
@@ -75,8 +83,13 @@ export function MyVerdictsView({
   items,
   fields,
   userName,
+  isCoordinator,
+  respondents = [],
+  currentViewUserId,
 }: MyVerdictsViewProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [filter, setFilter] = useState("all");
   const [commentingReviewId, setCommentingReviewId] = useState<string | null>(null);
@@ -142,6 +155,17 @@ export function MyVerdictsView({
     });
   };
 
+  const selectRespondent = (userId: string | null) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (userId) {
+      params.set("viewAsUser", userId);
+    } else {
+      params.delete("viewAsUser");
+    }
+    const qs = params.toString();
+    router.push(`${pathname}${qs ? `?${qs}` : ""}`);
+  };
+
   const totalIncorrect = items.filter((i) => !i.isCorrect).length;
   const totalItems = items.length;
 
@@ -158,6 +182,24 @@ export function MyVerdictsView({
       {/* Header */}
       <div className="flex items-center justify-between border-b px-4 py-2">
         <div className="flex items-center gap-3">
+          {isCoordinator && respondents.length > 0 && (
+            <Select
+              value={currentViewUserId || "_self"}
+              onValueChange={(v) => selectRespondent(v === "_self" ? null : v)}
+            >
+              <SelectTrigger className="w-48 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_self">Minhas respostas</SelectItem>
+                {respondents.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Select value={filter} onValueChange={setFilter}>
             <SelectTrigger className="w-36 h-8 text-xs">
               <SelectValue />

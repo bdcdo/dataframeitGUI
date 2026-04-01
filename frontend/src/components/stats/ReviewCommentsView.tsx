@@ -44,6 +44,8 @@ interface ReviewCommentsViewProps {
   fields: PydanticField[];
   isCoordinator: boolean;
   schemaLog?: SchemaChangeEntry[];
+  totalLlmDocs?: number;
+  llmDocsWithoutAmbiguities?: number;
 }
 
 function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" | "sugestao" | "dificuldade" {
@@ -61,6 +63,8 @@ export function ReviewCommentsView({
   fields,
   isCoordinator,
   schemaLog = [],
+  totalLlmDocs = 0,
+  llmDocsWithoutAmbiguities = 0,
 }: ReviewCommentsViewProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -285,9 +289,18 @@ export function ReviewCommentsView({
       </div>
 
       {filtered.length === 0 ? (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          Nenhum comentário encontrado.
-        </p>
+        <div className="py-12 text-center space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Nenhum comentário encontrado.
+          </p>
+          {verdictFilter === "dificuldade" && totalLlmDocs > 0 && llmDocsWithoutAmbiguities > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {llmDocsWithoutAmbiguities === totalLlmDocs
+                ? `${totalLlmDocs} documento${totalLlmDocs !== 1 ? "s" : ""} com respostas LLM, mas o campo de ambiguidades não estava habilitado durante o processamento.`
+                : `${llmDocsWithoutAmbiguities} de ${totalLlmDocs} documentos LLM não têm o campo de ambiguidades.`}
+            </p>
+          )}
+        </div>
       ) : (
         <div className="space-y-3">
           {filtered.map((c) => (

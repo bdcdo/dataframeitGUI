@@ -11,7 +11,7 @@ const reviewsTabs: Array<{
   researcherOnly?: boolean;
 }> = [
   { label: "Gabarito", href: "gabarito" },
-  { label: "Meu Gabarito", href: "my-verdicts", researcherOnly: true },
+  { label: "Meu Gabarito", href: "my-verdicts" },
   { label: "Matriz de Confusão", href: "confusion" },
   { label: "Respondentes", href: "respondents", coordinatorOnly: true },
   { label: "Erros LLM", href: "llm-insights" },

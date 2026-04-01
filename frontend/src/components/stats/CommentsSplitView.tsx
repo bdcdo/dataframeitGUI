@@ -31,6 +31,20 @@ import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import type { ReviewComment, ResponseSnapshotEntry } from "./CommentCard";
 
+const TYPE_LABELS: Record<string, string> = {
+  single: "Escolha única",
+  multi: "Múltipla escolha",
+  text: "Texto livre",
+  date: "Data",
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  single: "bg-blue-500/10 text-blue-700",
+  multi: "bg-purple-500/10 text-purple-700",
+  text: "bg-green-500/10 text-green-700",
+  date: "bg-amber-500/10 text-amber-700",
+};
+
 function formatAnswer(answer: unknown): string {
   if (answer === null || answer === undefined) return "(sem resposta)";
   if (Array.isArray(answer)) return answer.join(", ");
@@ -261,9 +275,16 @@ export function CommentsSplitView({
                 >
                   {/* Field name + verdict */}
                   <div className="flex items-center justify-between gap-2">
-                    <code className="text-xs font-mono text-muted-foreground/70">
-                      {comment.fieldName}
-                    </code>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <code className="text-xs font-mono text-muted-foreground/70">
+                        {comment.fieldName}
+                      </code>
+                      {comment.fieldType && (
+                        <Badge className={cn("text-[10px] px-1 py-0 shrink-0", TYPE_COLORS[comment.fieldType])}>
+                          {TYPE_LABELS[comment.fieldType]}
+                        </Badge>
+                      )}
+                    </div>
                     <Badge
                       variant={verdictVariant(comment.verdict)}
                       className="shrink-0 text-xs"
@@ -271,6 +292,27 @@ export function CommentsSplitView({
                       {formatVerdictLabel(comment.verdict)}
                     </Badge>
                   </div>
+
+                  {/* Descricao + metadados do campo */}
+                  {comment.fieldDescription && comment.fieldDescription !== comment.fieldName && (
+                    <p className="text-xs text-muted-foreground">{comment.fieldDescription}</p>
+                  )}
+                  {(comment.fieldHelpText || (comment.fieldOptions && comment.fieldOptions.length > 0)) && (
+                    <div className="space-y-1 rounded-md bg-muted/30 px-2 py-1.5">
+                      {comment.fieldHelpText && (
+                        <p className="text-[11px] italic text-muted-foreground">{comment.fieldHelpText}</p>
+                      )}
+                      {comment.fieldOptions && comment.fieldOptions.length > 0 && (
+                        <div className="flex flex-wrap gap-0.5">
+                          {comment.fieldOptions.map((opt) => (
+                            <Badge key={opt} variant="outline" className="text-[10px] px-1 py-0 font-normal">
+                              {opt}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Responses (inline, from snapshot) */}
                   {snapshot && snapshot.length > 0 && (

@@ -80,7 +80,7 @@ export default async function CommentsPage({
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 
-  const fieldDescMap = new Map(fields.map((f) => [f.name, f.description]));
+  const fieldMap = new Map(fields.map((f) => [f.name, f]));
   const docMap = new Map(
     documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
   );
@@ -113,7 +113,10 @@ export default async function CommentsPage({
     documentId: r.document_id,
     documentTitle: docMap.get(r.document_id) || r.document_id,
     fieldName: r.field_name,
-    fieldDescription: fieldDescMap.get(r.field_name) || r.field_name,
+    fieldDescription: fieldMap.get(r.field_name)?.description || r.field_name,
+    fieldHelpText: fieldMap.get(r.field_name)?.help_text,
+    fieldOptions: fieldMap.get(r.field_name)?.options,
+    fieldType: fieldMap.get(r.field_name)?.type,
     verdict: r.verdict,
     comment: r.comment!,
     reviewerName: r.reviewer_id
@@ -157,7 +160,10 @@ export default async function CommentsPage({
       documentId: "",
       documentTitle: "",
       fieldName: s.field_name,
-      fieldDescription: fieldDescMap.get(s.field_name) || s.field_name,
+      fieldDescription: fieldMap.get(s.field_name)?.description || s.field_name,
+      fieldHelpText: fieldMap.get(s.field_name)?.help_text,
+      fieldOptions: fieldMap.get(s.field_name)?.options,
+      fieldType: fieldMap.get(s.field_name)?.type,
       verdict: "sugestao",
       comment: `${s.reason || "Sem motivo"}${changedKeys ? ` (alterações: ${changedKeys})` : ""}`,
       reviewerName: p?.email?.split("@")[0] || "Anônimo",
@@ -230,6 +236,12 @@ export default async function CommentsPage({
     };
   });
 
+  const totalLlmDocs = llmResponses?.length ?? 0;
+  const llmDocsWithoutAmbiguities = (llmResponses ?? []).filter((r) => {
+    const amb = (r.answers as Record<string, unknown>)?.llm_ambiguidades;
+    return !amb || (typeof amb === "string" && !amb.trim());
+  }).length;
+
   return (
     <div className="mx-auto max-w-4xl p-6">
       <ReviewCommentsView
@@ -238,6 +250,8 @@ export default async function CommentsPage({
         fields={fields}
         isCoordinator={isCoordinator}
         schemaLog={schemaLog}
+        totalLlmDocs={totalLlmDocs}
+        llmDocsWithoutAmbiguities={llmDocsWithoutAmbiguities}
       />
     </div>
   );

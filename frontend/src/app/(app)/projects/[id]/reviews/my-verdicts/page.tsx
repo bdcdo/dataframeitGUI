@@ -42,29 +42,37 @@ export default async function MyVerdictsPage({
   const user = await getAuthUser();
   if (!user) return <p className="p-6 text-sm text-muted-foreground">Não autenticado</p>;
 
-  const effectiveUserId =
-    user.isMaster && sp.viewAsUser ? sp.viewAsUser : user.id;
-
   const supabase = await createSupabaseServer();
 
-  // Fetch my responses, reviews on those documents, and my acknowledgments
-  const [
-    { data: project },
-    { data: myResponses },
-  ] = await Promise.all([
+  // First fetch project + membership to determine role
+  const [{ data: project }, { data: membership }] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select("pydantic_fields, created_by")
       .eq("id", id)
       .single(),
     supabase
-      .from("responses")
-      .select("document_id, answers")
+      .from("project_members")
+      .select("role")
       .eq("project_id", id)
-      .eq("respondent_id", effectiveUserId)
-      .eq("respondent_type", "humano")
-      .eq("is_current", true),
+      .eq("user_id", user.id)
+      .maybeSingle(),
   ]);
+
+  const isCoordinator =
+    project?.created_by === user.id || membership?.role === "coordenador";
+
+  const effectiveUserId =
+    (user.isMaster || isCoordinator) && sp.viewAsUser ? sp.viewAsUser : user.id;
+
+  // Fetch responses for the effective user
+  const { data: myResponses } = await supabase
+    .from("responses")
+    .select("document_id, answers")
+    .eq("project_id", id)
+    .eq("respondent_id", effectiveUserId)
+    .eq("respondent_type", "humano")
+    .eq("is_current", true);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const fieldDescMap = new Map(fields.map((f) => [f.name, f.description]));
@@ -81,11 +89,12 @@ export default async function MyVerdictsPage({
     );
   }
 
-  // Fetch reviews for those documents + document titles + my acknowledgments
+  // Fetch reviews for those documents + document titles + my acknowledgments + respondents (for coordinator)
   const [
     { data: reviews },
     { data: documents },
     { data: acknowledgments },
+    { data: allRespondents },
   ] = await Promise.all([
     supabase
       .from("reviews")
@@ -100,7 +109,24 @@ export default async function MyVerdictsPage({
       .from("verdict_acknowledgments")
       .select("review_id, status, comment")
       .eq("respondent_id", effectiveUserId),
+    isCoordinator
+      ? supabase
+          .from("responses")
+          .select("respondent_id, respondent_name")
+          .eq("project_id", id)
+          .eq("respondent_type", "humano")
+          .eq("is_current", true)
+      : Promise.resolve({ data: null }),
   ]);
+
+  // Deduplicate respondents
+  const respondentsList = isCoordinator && allRespondents
+    ? [...new Map(
+        allRespondents
+          .filter((r) => r.respondent_id && r.respondent_id !== user.id)
+          .map((r) => [r.respondent_id, { id: r.respondent_id as string, name: r.respondent_name || "Anônimo" }]),
+      ).values()]
+    : [];
 
   const docMap = new Map(
     documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
@@ -151,6 +177,9 @@ export default async function MyVerdictsPage({
         items={verdictItems}
         fields={fields}
         userName={[user.firstName, user.lastName].filter(Boolean).join(" ") || "Você"}
+        isCoordinator={isCoordinator}
+        respondents={respondentsList}
+        currentViewUserId={effectiveUserId !== user.id ? effectiveUserId : undefined}
       />
     </div>
   );

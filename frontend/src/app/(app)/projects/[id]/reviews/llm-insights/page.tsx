@@ -155,6 +155,9 @@ export default async function LlmInsightsPage({
       ? Math.round((totalErrors / llmFieldsReviewed) * 100)
       : 0;
 
+  const reviewedDocIds = new Set(reviews?.map((r) => r.document_id) || []);
+  const unreviewedLlmDocs = [...llmByDoc.keys()].filter((id) => !reviewedDocIds.has(id)).length;
+
   return (
     <div className="mx-auto max-w-4xl p-6">
       <LlmInsightsView
@@ -163,7 +166,7 @@ export default async function LlmInsightsPage({
         fields={fields.filter((f) => f.target !== "llm_only")}
         allFields={allFields}
         isCoordinator={isCoordinator}
-        summary={{ totalLlmDocs, totalErrors, errorRate }}
+        summary={{ totalLlmDocs, totalErrors, errorRate, unreviewedLlmDocs }}
       />
     </div>
   );
