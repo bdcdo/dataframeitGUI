@@ -32,12 +32,18 @@ function normalizeForComparison(answer: unknown): string {
 
 export default async function MyVerdictsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ viewAsUser?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
   const user = await getAuthUser();
   if (!user) return <p className="p-6 text-sm text-muted-foreground">Não autenticado</p>;
+
+  const effectiveUserId =
+    user.isMaster && sp.viewAsUser ? sp.viewAsUser : user.id;
 
   const supabase = await createSupabaseServer();
 
@@ -55,7 +61,7 @@ export default async function MyVerdictsPage({
       .from("responses")
       .select("document_id, answers")
       .eq("project_id", id)
-      .eq("respondent_id", user.id)
+      .eq("respondent_id", effectiveUserId)
       .eq("respondent_type", "humano")
       .eq("is_current", true),
   ]);
@@ -93,7 +99,7 @@ export default async function MyVerdictsPage({
     supabase
       .from("verdict_acknowledgments")
       .select("review_id, status, comment")
-      .eq("respondent_id", user.id),
+      .eq("respondent_id", effectiveUserId),
   ]);
 
   const docMap = new Map(

@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { Header } from "@/components/shell/Header";
@@ -14,17 +15,11 @@ export default async function DashboardPage() {
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: profile, error: profileError }, { data: memberships, error: membershipsError }] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("first_name")
-      .eq("id", user.id)
-      .single(),
-    supabase
-      .from("project_members")
-      .select("project_id, role, projects(id, name, description)")
-      .eq("user_id", user.id),
-  ]);
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("first_name")
+    .eq("id", user.id)
+    .single();
 
   if (profileError) {
     console.error("Dashboard profile query failed", {
@@ -32,17 +27,39 @@ export default async function DashboardPage() {
       error: profileError.message,
     });
   }
+
+  let projects: (Project & { role: string })[];
+  let membershipsError: { message: string } | null = null;
+
+  if (user.isMaster) {
+    const admin = createSupabaseAdmin();
+    const { data: allProjects, error } = await admin
+      .from("projects")
+      .select("id, name, description")
+      .order("created_at", { ascending: false });
+    membershipsError = error;
+    projects = (allProjects || []).map((p) => ({
+      ...(p as unknown as Project),
+      role: "master",
+    }));
+  } else {
+    const { data: memberships, error } = await supabase
+      .from("project_members")
+      .select("project_id, role, projects(id, name, description)")
+      .eq("user_id", user.id);
+    membershipsError = error;
+    projects = (memberships || []).map((m) => ({
+      ...(m.projects as unknown as Project),
+      role: m.role,
+    }));
+  }
+
   if (membershipsError) {
     console.error("Dashboard memberships query failed", {
       userId: user.id,
       error: membershipsError.message,
     });
   }
-
-  const projects = (memberships || []).map((m) => ({
-    ...(m.projects as unknown as Project),
-    role: m.role,
-  }));
 
   return (
     <div className="min-h-screen">

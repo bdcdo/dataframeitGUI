@@ -41,7 +41,36 @@ export default async function ProjectLayout({
   if (!project) notFound();
 
   const isCoordinator =
-    membership?.role === "coordenador" || project.created_by === user.id;
+    membership?.role === "coordenador" ||
+    project.created_by === user.id ||
+    user.isMaster;
+
+  // Fetch project members for master impersonation dropdown
+  let projectMembers: {
+    userId: string;
+    name: string;
+    email: string;
+    role: string;
+  }[] = [];
+  if (user.isMaster) {
+    const { data: members } = await supabase
+      .from("project_members")
+      .select("user_id, role, profiles(first_name, last_name, email)")
+      .eq("project_id", id);
+    projectMembers = (members || []).map((m) => {
+      const p = m.profiles as unknown as {
+        first_name: string | null;
+        last_name: string | null;
+        email: string;
+      };
+      return {
+        userId: m.user_id,
+        name: [p?.first_name, p?.last_name].filter(Boolean).join(" ") || p?.email || "Sem nome",
+        email: p?.email || "",
+        role: m.role,
+      };
+    });
+  }
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -49,7 +78,12 @@ export default async function ProjectLayout({
         projectName={project.name}
         user={{ email: user.email, firstName: profile?.first_name }}
       />
-      <ProjectTabs projectId={id} isCoordinator={isCoordinator} />
+      <ProjectTabs
+        projectId={id}
+        isCoordinator={isCoordinator}
+        isMaster={user.isMaster}
+        projectMembers={projectMembers}
+      />
       <main className="flex-1">{children}</main>
     </div>
   );

@@ -18,9 +18,10 @@ interface QuestionsPanelProps {
   submitting?: boolean;
   notes?: string;
   onNotesChange?: (notes: string) => void;
+  readOnly?: boolean;
 }
 
-export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange }: QuestionsPanelProps) {
+export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
@@ -137,10 +138,12 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
       <div className="border-t px-4 py-3 shrink-0">
         <Button
           onClick={handleSubmitWithValidation}
-          disabled={submitting}
+          disabled={submitting || readOnly}
           className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
         >
-          {submitting ? (
+          {readOnly ? (
+            "Somente leitura"
+          ) : submitting ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
               Salvando...

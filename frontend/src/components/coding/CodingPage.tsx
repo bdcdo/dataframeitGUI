@@ -31,6 +31,7 @@ interface CodingPageProps {
   existingJustifications?: Record<string, Record<string, unknown>>;
   hasAssignments?: boolean;
   progress?: ProgressBannerData | null;
+  readOnly?: boolean;
 }
 
 export function CodingPage({
@@ -41,6 +42,7 @@ export function CodingPage({
   existingJustifications = {},
   hasAssignments = false,
   progress = null,
+  readOnly = false,
 }: CodingPageProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -479,6 +481,7 @@ export function CodingPage({
                     submitting={submitting}
                     notes={docNotes}
                     onNotesChange={handleNotesChange}
+                    readOnly={readOnly}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -535,6 +538,7 @@ export function CodingPage({
                     submitting={submitting}
                     notes={browseNotes}
                     onNotesChange={setBrowseNotes}
+                    readOnly={readOnly}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>

@@ -1,5 +1,6 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
 export interface AuthUser {
   id: string; // Supabase UUID
@@ -7,6 +8,7 @@ export interface AuthUser {
   firstName: string | null;
   lastName: string | null;
   clerkId: string;
+  isMaster: boolean;
 }
 
 async function resolveSupabaseUidFromClerk(): Promise<{
@@ -54,11 +56,19 @@ export async function getAuthUser(): Promise<AuthUser | null> {
   if (!user) return null;
   if (!supabaseUid) return null;
 
+  const admin = createSupabaseAdmin();
+  const { data: masterRow } = await admin
+    .from("master_users")
+    .select("user_id")
+    .eq("user_id", supabaseUid)
+    .maybeSingle();
+
   return {
     id: supabaseUid,
     email: user.emailAddresses[0]?.emailAddress ?? "",
     firstName: user.firstName,
     lastName: user.lastName,
     clerkId: user.id,
+    isMaster: !!masterRow,
   };
 }

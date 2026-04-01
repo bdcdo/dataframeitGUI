@@ -8,14 +8,20 @@ import { DailyPaceChart } from "@/components/progress/DailyPaceChart";
 
 export default async function MyProgressPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ viewAsUser?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
   const user = await getAuthUser();
   if (!user) redirect("/auth/login");
 
-  const progress = await getResearcherProgress(id, user.id);
+  const effectiveUserId =
+    user.isMaster && sp.viewAsUser ? sp.viewAsUser : user.id;
+
+  const progress = await getResearcherProgress(id, effectiveUserId);
 
   return (
     <div className="space-y-6 p-6">

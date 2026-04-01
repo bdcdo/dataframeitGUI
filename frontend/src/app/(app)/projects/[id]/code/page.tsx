@@ -7,12 +7,19 @@ import type { Document, Assignment, PydanticField } from "@/lib/types";
 
 export default async function CodePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ viewAsUser?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
   const user = await getAuthUser();
   if (!user) redirect("/auth/login");
+
+  const isImpersonating = !!(user.isMaster && sp.viewAsUser);
+  const effectiveUserId =
+    isImpersonating ? sp.viewAsUser! : user.id;
 
   const supabase = await createSupabaseServer();
 
@@ -27,9 +34,9 @@ export default async function CodePage({
       .from("assignments")
       .select("id, status, document_id, documents(id, external_id, title, text)")
       .eq("project_id", id)
-      .eq("user_id", user.id)
+      .eq("user_id", effectiveUserId)
       .order("status", { ascending: true }),
-    getResearcherProgress(id, user.id).catch(() => null),
+    getResearcherProgress(id, effectiveUserId).catch(() => null),
   ]);
 
   const documents = (assignments || []).map((a) => ({
@@ -43,7 +50,7 @@ export default async function CodePage({
     .from("responses")
     .select("document_id, answers, justifications")
     .eq("project_id", id)
-    .eq("respondent_id", user.id)
+    .eq("respondent_id", effectiveUserId)
     .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
 
   const rawAnswers: Record<string, Record<string, unknown>> = {};
@@ -102,6 +109,7 @@ export default async function CodePage({
       existingJustifications={existingJustifications}
       hasAssignments={documents.length > 0}
       progress={progress}
+      readOnly={isImpersonating}
     />
   );
 }
