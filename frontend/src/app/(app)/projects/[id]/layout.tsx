@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { Header } from "@/components/shell/Header";
 import { ProjectTabs } from "@/components/shell/ProjectTabs";
 import { notFound, redirect } from "next/navigation";
@@ -11,13 +12,11 @@ export default async function ProjectLayout({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createSupabaseServer();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
 
   if (!user) redirect("/auth/login");
+
+  const supabase = await createSupabaseServer();
 
   const [{ data: project }, { data: membership }, { data: profile }] =
     await Promise.all([
@@ -48,7 +47,7 @@ export default async function ProjectLayout({
     <div className="flex min-h-screen flex-col">
       <Header
         projectName={project.name}
-        user={{ email: user.email!, firstName: profile?.first_name }}
+        user={{ email: user.email, firstName: profile?.first_name }}
       />
       <ProjectTabs projectId={id} isCoordinator={isCoordinator} />
       <main className="flex-1">{children}</main>

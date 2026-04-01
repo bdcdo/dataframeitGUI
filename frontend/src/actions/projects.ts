@@ -1,15 +1,15 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 export async function createProject(_prev: unknown, formData: FormData) {
-  const supabase = await createSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
+
+  const supabase = await createSupabaseServer();
 
   const name = formData.get("name") as string;
   const description = formData.get("description") as string;

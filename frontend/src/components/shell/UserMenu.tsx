@@ -8,8 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { createBrowserClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
+import { useClerk } from "@clerk/nextjs";
 
 interface UserMenuProps {
   email: string;
@@ -17,12 +16,10 @@ interface UserMenuProps {
 }
 
 export function UserMenu({ email, firstName }: UserMenuProps) {
-  const router = useRouter();
+  const { signOut } = useClerk();
 
-  const handleLogout = async () => {
-    const supabase = createBrowserClient();
-    await supabase.auth.signOut();
-    router.push("/auth/login");
+  const handleLogout = () => {
+    signOut({ redirectUrl: "/auth/login" });
   };
 
   const initials = firstName

@@ -1,4 +1,5 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 import { getResearcherProgress } from "@/actions/progress";
 import { ProgressCards } from "@/components/progress/ProgressCards";
 import { ActivityCalendar } from "@/components/progress/ActivityCalendar";
@@ -11,12 +12,10 @@ export default async function MyProgressPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
+  if (!user) redirect("/auth/login");
 
-  const progress = await getResearcherProgress(id, user!.id);
+  const progress = await getResearcherProgress(id, user.id);
 
   return (
     <div className="space-y-6 p-6">

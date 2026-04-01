@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { DiscussionDetail } from "@/components/discussions/DiscussionDetail";
 import { notFound } from "next/navigation";
 import type { Profile } from "@/lib/types";
@@ -9,10 +10,8 @@ export default async function DiscussionDetailPage({
   params: Promise<{ id: string; discussionId: string }>;
 }) {
   const { id: projectId, discussionId } = await params;
+  const user = await getAuthUser();
   const supabase = await createSupabaseServer();
-
-  // Get user first (needed for membership query)
-  const { data: { user } } = await supabase.auth.getUser();
 
   // Fetch discussion, comments, and membership in parallel
   const [{ data: discussion }, { data: comments }, membershipResult] = await Promise.all([

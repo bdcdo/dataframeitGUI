@@ -1,4 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 import { Header } from "@/components/shell/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,21 +9,21 @@ import Link from "next/link";
 import type { Project } from "@/lib/types";
 
 export default async function DashboardPage() {
+  const user = await getAuthUser();
+  if (!user) redirect("/auth/login");
+
   const supabase = await createSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
 
   const [{ data: profile }, { data: memberships }] = await Promise.all([
     supabase
       .from("profiles")
       .select("first_name")
-      .eq("id", user!.id)
+      .eq("id", user.id)
       .single(),
     supabase
       .from("project_members")
       .select("project_id, role, projects(id, name, description)")
-      .eq("user_id", user!.id),
+      .eq("user_id", user.id),
   ]);
 
   const projects = (memberships || []).map((m) => ({
@@ -33,7 +35,7 @@ export default async function DashboardPage() {
     <div className="min-h-screen">
       <Header
         user={{
-          email: user!.email!,
+          email: user.email,
           firstName: profile?.first_name,
         }}
       />

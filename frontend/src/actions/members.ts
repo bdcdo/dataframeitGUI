@@ -2,6 +2,9 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { getAuthUser } from "@/lib/auth";
+import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
+import { clerkClient } from "@clerk/nextjs/server";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = { expire: 300 };
@@ -11,13 +14,10 @@ export async function addMember(
   email: string,
   role: "coordenador" | "pesquisador"
 ): Promise<{ error?: string; invited?: boolean }> {
-  const supabase = await createSupabaseServer();
-
-  // Verify authentication
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
   if (!user) return { error: "Não autenticado." };
+
+  const supabase = await createSupabaseServer();
 
   // Verify caller is coordinator (via normal client, RLS applies)
   const { data: callerMember } = await supabase
@@ -30,7 +30,7 @@ export async function addMember(
     return { error: "Apenas coordenadores podem adicionar membros." };
   }
 
-  // Admin client for lookup + invite + insert (bypasses RLS)
+  // Admin client for lookup + insert (bypasses RLS)
   const admin = createSupabaseAdmin();
   const { data: profile } = await admin
     .from("profiles")
@@ -44,10 +44,20 @@ export async function addMember(
   if (profile) {
     userId = profile.id;
   } else {
-    const { data, error } = await admin.auth.admin.inviteUserByEmail(email);
-    if (error) return { error: `Erro ao convidar: ${error.message}` };
-    userId = data.user.id;
-    invited = true;
+    // Create user in Clerk and sync to Supabase
+    try {
+      const clerk = await clerkClient();
+      const clerkUser = await clerk.users.createUser({
+        emailAddress: [email],
+      });
+      userId = await syncClerkUserToSupabase(
+        clerkUser.id,
+        email,
+      );
+      invited = true;
+    } catch (e) {
+      return { error: `Erro ao convidar: ${e instanceof Error ? e.message : "Erro desconhecido"}` };
+    }
   }
 
   const { error } = await admin.from("project_members").insert({

@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = { expire: 300 };
@@ -260,11 +261,10 @@ export interface BrowseDocument {
 }
 
 export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDocument[]> {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
   const supabase = await createSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
 
   const { data: docs } = await supabase
     .from("documents")
@@ -304,11 +304,10 @@ export async function getDocumentForCoding(
   projectId: string,
   documentId: string
 ): Promise<{ document: { id: string; external_id: string | null; title: string | null; text: string }; existingAnswers: Record<string, unknown> | null; existingJustifications: Record<string, unknown> | null }> {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
   const supabase = await createSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
 
   const [{ data: doc }, { data: project }] = await Promise.all([
     supabase
@@ -324,7 +323,7 @@ export async function getDocumentForCoding(
       .single(),
   ]);
 
-  if (!doc) throw new Error("Document not found");
+  if (!doc) throw new Error("Documento não encontrado");
 
   const { data: response } = await supabase
     .from("responses")

@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { ReviewsNav } from "@/components/reviews/ReviewsNav";
 import { redirect } from "next/navigation";
 
@@ -10,13 +11,10 @@ export default async function ReviewsLayout({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createSupabaseServer();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  const user = await getAuthUser();
   if (!user) redirect("/auth/login");
+
+  const supabase = await createSupabaseServer();
 
   const [{ data: project }, { data: membership }] = await Promise.all([
     supabase

@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { ReviewComment } from "@/components/stats/CommentCard";
 import type { PydanticField } from "@/lib/types";
@@ -9,15 +10,14 @@ export default async function CommentsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await getAuthUser();
   const supabase = await createSupabaseServer();
 
   const [
     { data: project },
     { data: reviews },
     { data: documents },
-    {
-      data: { user },
-    },
+    { data: membership },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -36,7 +36,14 @@ export default async function CommentsPage({
       .from("documents")
       .select("id, title, external_id")
       .eq("project_id", id),
-    supabase.auth.getUser(),
+    user
+      ? supabase
+          .from("project_members")
+          .select("role")
+          .eq("project_id", id)
+          .eq("user_id", user.id)
+          .single()
+      : Promise.resolve({ data: null }),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -55,17 +62,8 @@ export default async function CommentsPage({
     ),
   ];
 
-  // Check coordinator status
-  let isCoordinator = project?.created_by === user?.id;
-  if (!isCoordinator && user) {
-    const { data: membership } = await supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .single();
-    isCoordinator = membership?.role === "coordenador";
-  }
+  const isCoordinator =
+    project?.created_by === user?.id || membership?.role === "coordenador";
 
   let reviewerMap = new Map<string, string>();
   if (reviewerIds.length > 0) {

@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
 export async function submitVerdict(
@@ -11,11 +12,10 @@ export async function submitVerdict(
   chosenResponseId?: string,
   comment?: string
 ) {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
   const supabase = await createSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
 
   const { error } = await supabase.from("reviews").upsert(
     {

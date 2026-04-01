@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import {
   fetchReviewBaseData,
@@ -12,12 +13,10 @@ export default async function RespondentsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createSupabaseServer();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
   if (!user) redirect("/auth/login");
+
+  const supabase = await createSupabaseServer();
 
   // Check coordinator access
   const [{ data: project }, { data: membership }] = await Promise.all([

@@ -5,8 +5,9 @@ Plataforma web para analise de conteudo de documentos. Coordenadores definem per
 ## Arquitetura
 
 ```
-Browser  →  Next.js 15 (Vercel)  ←→  Supabase (Postgres + Auth)
+Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
                 |                            ^
+                | Clerk (Auth + JWT)         |
                 | HTTP (LLM + Pydantic)      |
                 v                            |
             FastAPI (Fly.io)  ───────────────┘
@@ -22,7 +23,8 @@ Browser  →  Next.js 15 (Vercel)  ←→  Supabase (Postgres + Auth)
 | UI | React 19 + shadcn/ui (new-york, neutral) | latest |
 | Linguagem | TypeScript | 5.7 |
 | Styling | Tailwind CSS v4 (oklch) | 4 |
-| Auth + DB | Supabase (`@supabase/ssr`) | free tier |
+| Auth | Clerk (`@clerk/nextjs`) + `@clerk/localizations` (pt-BR) | latest |
+| DB | Supabase (Postgres + RLS via Clerk JWT) | free tier |
 | Backend LLM | FastAPI (Python) | latest |
 | LLM | `dataframeit` | 0.5.3 |
 | Editor | Monaco Editor (`@monaco-editor/react`) | latest |
@@ -37,7 +39,8 @@ Browser  →  Next.js 15 (Vercel)  ←→  Supabase (Postgres + Auth)
 - **Portugues** para UI (labels, mensagens), **ingles** para codigo (vars, funcs, types)
 - **shadcn/ui** para todos os componentes de UI
 - **Server Actions** para mutations, **RSC** para reads
-- Supabase client: `lib/supabase/server.ts` (server) e `client.ts` (browser)
+- Auth: Clerk (`lib/auth.ts` para `getAuthUser()`, `lib/clerk-sync.ts` para sync Clerk↔Supabase)
+- Supabase client: `lib/supabase/server.ts` (server, autenticado via Clerk JWT) e `lib/supabase/admin.ts` (service key)
 - **FastAPI** so para LLM e Pydantic (nao para CRUD)
 - Testes: **Vitest** (frontend), **pytest** (backend)
 

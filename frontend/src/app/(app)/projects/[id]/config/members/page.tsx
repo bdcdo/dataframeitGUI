@@ -1,4 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { MemberList } from "@/components/members/MemberList";
 import { AddMemberDialog } from "@/components/members/AddMemberDialog";
 import type { ProjectMember, Profile } from "@/lib/types";
@@ -9,15 +10,12 @@ export default async function MembersPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await getAuthUser();
   const supabase = await createSupabaseServer();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
 
   const { data: members } = await supabase
     .from("project_members")
-    .select("*, profiles(*)")
+    .select("id, project_id, user_id, role, profiles(id, email, first_name, last_name)")
     .eq("project_id", id);
 
   const typedMembers = (members || []) as unknown as (ProjectMember & { profiles: Profile })[];

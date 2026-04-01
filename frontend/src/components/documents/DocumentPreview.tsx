@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useAuth } from "@clerk/nextjs";
 import { createBrowserClient } from "@/lib/supabase/client";
 
 interface DocumentPreviewProps {
@@ -14,6 +15,7 @@ interface DocumentPreviewProps {
 export function DocumentPreview({ documentId, title, open, onClose }: DocumentPreviewProps) {
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const { getToken } = useAuth();
 
   useEffect(() => {
     if (!documentId || !open) {
@@ -21,17 +23,25 @@ export function DocumentPreview({ documentId, title, open, onClose }: DocumentPr
       return;
     }
     setLoading(true);
-    const supabase = createBrowserClient();
-    supabase
-      .from("documents")
-      .select("text")
-      .eq("id", documentId)
-      .single()
+    getToken({ template: "supabase" })
+      .then((token) => {
+        const supabase = createBrowserClient(token);
+        return supabase
+          .from("documents")
+          .select("text")
+          .eq("id", documentId)
+          .single();
+      })
       .then(({ data }) => {
         setText(data?.text ?? null);
+      })
+      .catch(() => {
+        setText(null);
+      })
+      .finally(() => {
         setLoading(false);
       });
-  }, [documentId, open]);
+  }, [documentId, open, getToken]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

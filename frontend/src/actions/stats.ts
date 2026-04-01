@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
 export async function resolveReviewComment(
@@ -8,11 +9,10 @@ export async function resolveReviewComment(
   projectId: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { error } = await supabase
       .from("reviews")
@@ -36,11 +36,10 @@ export async function reopenReviewComment(
   projectId: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { error } = await supabase
       .from("reviews")
@@ -64,11 +63,10 @@ export async function createDiscussionFromComment(
   reviewId: string,
 ): Promise<{ id?: string; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { data: review } = await supabase
       .from("reviews")
@@ -117,11 +115,10 @@ export async function resolveDifficulty(
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { error } = await supabase.from("difficulty_resolutions").insert({
       project_id: projectId,
@@ -145,11 +142,10 @@ export async function reopenDifficulty(
   responseId: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { error } = await supabase
       .from("difficulty_resolutions")
@@ -172,11 +168,10 @@ export async function createDiscussionFromDifficulty(
   documentId: string,
 ): Promise<{ id?: string; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const [{ data: response }, { data: doc }] = await Promise.all([
       supabase
@@ -234,11 +229,10 @@ export async function fetchGabaritoForComment(
   chosenResponseId: string | null,
 ): Promise<{ answers: GabaritoRespondentAnswer[]; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { answers: [], error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { data: responses } = await supabase
       .from("responses")
@@ -269,11 +263,10 @@ export async function resolveError(
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { error } = await supabase.from("error_resolutions").insert({
       project_id: projectId,
@@ -298,11 +291,10 @@ export async function reopenError(
   fieldName: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { error } = await supabase
       .from("error_resolutions")
@@ -328,11 +320,10 @@ export async function createDiscussionFromError(
   chosenVerdict: string,
 ): Promise<{ id?: string; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     const { data: doc } = await supabase
       .from("documents")

@@ -1,4 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
 import { getResearcherProgress } from "@/actions/progress";
 import type { Document, Assignment, PydanticField } from "@/lib/types";
@@ -9,27 +11,25 @@ export default async function CodePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await getAuthUser();
+  if (!user) redirect("/auth/login");
+
   const supabase = await createSupabaseServer();
 
-  // Round 1: user + project in parallel (independent)
-  const [{ data: { user } }, { data: project }] = await Promise.all([
-    supabase.auth.getUser(),
+  // Round 1: project + assignments + progress in parallel
+  const [{ data: project }, { data: assignments }, progressResult] = await Promise.all([
     supabase
       .from("projects")
       .select("pydantic_fields")
       .eq("id", id)
       .single(),
-  ]);
-
-  // Round 2: assignments (needs user.id) + progress in parallel
-  const [{ data: assignments }, progressResult] = await Promise.all([
     supabase
       .from("assignments")
       .select("id, status, document_id, documents(id, external_id, title, text)")
       .eq("project_id", id)
-      .eq("user_id", user!.id)
+      .eq("user_id", user.id)
       .order("status", { ascending: true }),
-    getResearcherProgress(id, user!.id).catch(() => null),
+    getResearcherProgress(id, user.id).catch(() => null),
   ]);
 
   const documents = (assignments || []).map((a) => ({
@@ -43,7 +43,7 @@ export default async function CodePage({
     .from("responses")
     .select("document_id, answers, justifications")
     .eq("project_id", id)
-    .eq("respondent_id", user!.id)
+    .eq("respondent_id", user.id)
     .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
 
   const rawAnswers: Record<string, Record<string, unknown>> = {};

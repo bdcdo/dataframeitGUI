@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import type { PydanticField } from "@/lib/types";
 
@@ -11,11 +12,10 @@ export async function saveResponse(
   notes?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const supabase = await createSupabaseServer();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
 
     // Fetch profile, existing response, and project config in parallel
     const [{ data: profile }, { data: existing }, { data: project, error: projErr }] = await Promise.all([
