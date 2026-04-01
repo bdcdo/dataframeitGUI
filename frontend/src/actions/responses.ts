@@ -118,8 +118,8 @@ export async function saveResponse(
       }
     }
 
-    revalidatePath(`/projects/${projectId}/code`);
-    revalidatePath(`/projects/${projectId}/compare`);
+    revalidatePath(`/projects/${projectId}/analyze/code`);
+    revalidatePath(`/projects/${projectId}/analyze/compare`);
     revalidatePath(`/projects/${projectId}/reviews`);
     revalidateTag(`project-${projectId}-progress`, { expire: 60 });
     return { success: true };

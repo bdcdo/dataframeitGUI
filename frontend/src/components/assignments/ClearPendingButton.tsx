@@ -19,14 +19,15 @@ import { Trash2 } from "lucide-react";
 interface ClearPendingButtonProps {
   projectId: string;
   pendingCount: number;
+  type?: "codificacao" | "comparacao";
 }
 
-export function ClearPendingButton({ projectId, pendingCount }: ClearPendingButtonProps) {
+export function ClearPendingButton({ projectId, pendingCount, type = "codificacao" }: ClearPendingButtonProps) {
   const [isPending, startTransition] = useTransition();
 
   const handleClear = () => {
     startTransition(async () => {
-      await clearPendingAssignments(projectId);
+      await clearPendingAssignments(projectId, type);
     });
   };
 

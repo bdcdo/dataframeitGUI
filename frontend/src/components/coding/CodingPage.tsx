@@ -380,10 +380,10 @@ export function CodingPage({
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
   const assignedParecerUrl = currentDoc
-    ? `${baseUrl}/projects/${projectId}/code?doc=${currentDoc.id}`
+    ? `${baseUrl}/projects/${projectId}/analyze/code?doc=${currentDoc.id}`
     : undefined;
   const browseParecerUrl = selectedBrowseDoc
-    ? `${baseUrl}/projects/${projectId}/code?doc=${selectedBrowseDoc.id}`
+    ? `${baseUrl}/projects/${projectId}/analyze/code?doc=${selectedBrowseDoc.id}`
     : undefined;
 
   return (

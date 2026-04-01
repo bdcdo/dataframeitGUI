@@ -16,11 +16,12 @@ interface AssignmentTableProps {
   documents: Pick<Document, "id" | "external_id">[];
   researchers: (ProjectMember & { profiles: { first_name: string | null; email: string } })[];
   assignments: Assignment[];
+  type?: "codificacao" | "comparacao";
 }
 
 type OptimisticUpdate = { docId: string; userId: string; action: "add" | "remove" };
 
-export function AssignmentTable({ projectId, documents, researchers, assignments }: AssignmentTableProps) {
+export function AssignmentTable({ projectId, documents, researchers, assignments, type = "codificacao" }: AssignmentTableProps) {
   const [isPending, startTransition] = useTransition();
 
   const [optimisticAssignments, setOptimistic] = useOptimistic(
@@ -33,6 +34,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
           document_id: update.docId,
           user_id: update.userId,
           status: "pendente" as const,
+          type,
           batch_id: null,
           deadline: null,
           completed_at: null,
@@ -59,7 +61,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
 
     startTransition(async () => {
       setOptimistic({ docId: documentId, userId, action });
-      await toggleAssignment(projectId, documentId, userId);
+      await toggleAssignment(projectId, documentId, userId, type);
     });
   };
 

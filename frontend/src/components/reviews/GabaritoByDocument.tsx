@@ -248,7 +248,7 @@ function DocumentCard({
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">{doc.documentTitle}</h3>
           <Button variant="ghost" size="sm" asChild title="Ver documento">
-            <Link href={`/projects/${projectId}/compare?doc=${doc.documentId}`}>
+            <Link href={`/projects/${projectId}/analyze/compare?doc=${doc.documentId}`}>
               <FileText className="h-3.5 w-3.5" />
             </Link>
           </Button>

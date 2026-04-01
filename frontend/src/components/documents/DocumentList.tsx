@@ -99,7 +99,7 @@ export function DocumentList({
                 </td>
                 {projectId && (
                   <td className="px-4 py-2">
-                    <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/projects/${projectId}/code?doc=${doc.id}`} />
+                    <CopyLinkButton url={`${typeof window !== "undefined" ? window.location.origin : ""}/projects/${projectId}/analyze/code?doc=${doc.id}`} />
                   </td>
                 )}
                 {canDelete && (

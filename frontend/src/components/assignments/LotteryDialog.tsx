@@ -43,6 +43,7 @@ interface LotteryDialogProps {
   totalDocs: number;
   totalResearchers: number;
   coordinators?: CoordinatorOption[];
+  type?: "codificacao" | "comparacao";
 }
 
 export function LotteryDialog({
@@ -50,6 +51,7 @@ export function LotteryDialog({
   totalDocs,
   totalResearchers,
   coordinators = [],
+  type = "codificacao",
 }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -89,8 +91,11 @@ export function LotteryDialog({
   // Preview
   const [preview, setPreview] = useState<LotteryPreview | null>(null);
 
+  const isComparacao = type === "comparacao";
+
   const buildParams = (): LotteryParams => ({
     projectId,
+    type,
     researchersPerDoc,
     docsPerResearcher: docsPerResearcherEnabled
       ? docsPerResearcher
@@ -163,7 +168,9 @@ export function LotteryDialog({
       </DialogTrigger>
       <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Sortear Atribuições</DialogTitle>
+          <DialogTitle>
+            Sortear {isComparacao ? "Comparações" : "Atribuições"}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-5">
@@ -186,7 +193,9 @@ export function LotteryDialog({
             <h4 className="text-sm font-semibold">Distribuição</h4>
 
             <div>
-              <Label htmlFor="per-doc">Pesquisadores por documento</Label>
+              <Label htmlFor="per-doc">
+                {isComparacao ? "Revisores por documento" : "Pesquisadores por documento"}
+              </Label>
               <Input
                 id="per-doc"
                 type="number"

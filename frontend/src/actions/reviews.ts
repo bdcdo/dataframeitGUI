@@ -43,5 +43,5 @@ export async function submitVerdict(
   );
 
   if (error) throw new Error(error.message);
-  revalidatePath(`/projects/${projectId}/compare`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
 }

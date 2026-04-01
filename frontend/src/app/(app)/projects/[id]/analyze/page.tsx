@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-export default async function AssignmentsRedirect({
+export default async function AnalyzePage({
   params,
 }: {
   params: Promise<{ id: string }>;

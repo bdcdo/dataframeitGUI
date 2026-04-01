@@ -21,12 +21,9 @@ interface ProjectTabsProps {
 
 const tabs = [
   { label: "Meu Progresso", href: "my-progress" },
-  { label: "Atribuições", href: "assignments" },
-  { label: "Codificar", href: "code" },
-  { label: "Comparar", href: "compare" },
-  { label: "Revisões", href: "reviews" },
-  { label: "LLM", href: "llm", coordinatorOnly: true },
-{ label: "Configurações", href: "config", coordinatorOnly: true },
+  { label: "Analisar", href: "analyze" },
+  { label: "Revisar", href: "reviews" },
+  { label: "Configurações", href: "config", coordinatorOnly: true },
 ];
 
 export function ProjectTabs({

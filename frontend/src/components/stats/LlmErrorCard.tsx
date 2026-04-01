@@ -139,7 +139,7 @@ export function LlmErrorCard({
 
         <div className="flex justify-end gap-1">
           <Button variant="ghost" size="sm" asChild title="Ver documento">
-            <Link href={`/projects/${projectId}/code?doc=${error.documentId}`}>
+            <Link href={`/projects/${projectId}/analyze/code?doc=${error.documentId}`}>
               <FileText className="h-3.5 w-3.5" />
             </Link>
           </Button>

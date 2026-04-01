@@ -60,10 +60,10 @@ export async function saveSchema(
   // Human answers are no longer deleted when fields change.
   // Staleness is detected at display time via answer_field_hashes.
 
-  revalidatePath(`/projects/${projectId}/code`);
-  revalidatePath(`/projects/${projectId}/compare`);
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/reviews`);
-  revalidatePath(`/projects/${projectId}/llm`);
+  revalidatePath(`/projects/${projectId}/config/llm`);
   revalidateTag(`project-${projectId}-progress`, { expire: 60 });
 }
 
@@ -75,8 +75,8 @@ export async function savePrompt(projectId: string, promptTemplate: string) {
     .eq("id", projectId);
 
   if (error) throw new Error(error.message);
-  revalidatePath(`/projects/${projectId}/code`);
-  revalidatePath(`/projects/${projectId}/llm`);
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/config/llm`);
 }
 
 // ---------- Hash por campo (reproduz backend _field_hash) ----------
@@ -219,6 +219,6 @@ export async function saveLlmConfig(
     .eq("id", projectId);
 
   if (error) throw new Error(error.message);
-  revalidatePath(`/projects/${projectId}/llm`);
+  revalidatePath(`/projects/${projectId}/config/llm`);
   revalidatePath(`/projects/${projectId}/config`);
 }

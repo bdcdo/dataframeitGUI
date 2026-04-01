@@ -67,6 +67,7 @@ export interface Assignment {
   document_id: string;
   user_id: string;
   status: "pendente" | "em_andamento" | "concluido";
+  type: "codificacao" | "comparacao";
   batch_id: string | null;
   deadline: string | null;
   completed_at: string | null;

@@ -290,7 +290,7 @@ export function ComparePage({
   }
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-  const parecerUrl = `${baseUrl}/projects/${projectId}/code?doc=${currentDoc.id}`;
+  const parecerUrl = `${baseUrl}/projects/${projectId}/analyze/code?doc=${currentDoc.id}`;
   const docTitle = currentDoc.title || currentDoc.external_id || "Documento";
 
   return (

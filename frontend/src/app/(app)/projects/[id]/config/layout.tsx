@@ -10,6 +10,7 @@ const configTabs = [
   { label: "Schema", href: "schema" },
   { label: "Membros", href: "members" },
   { label: "Regras", href: "rules" },
+  { label: "LLM", href: "llm" },
 ];
 
 export default function ConfigLayout({

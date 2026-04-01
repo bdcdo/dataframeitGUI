@@ -7,7 +7,8 @@ import { revalidatePath } from "next/cache";
 export async function toggleAssignment(
   projectId: string,
   documentId: string,
-  userId: string
+  userId: string,
+  type: "codificacao" | "comparacao" = "codificacao"
 ) {
   const supabase = await createSupabaseServer();
 
@@ -17,6 +18,7 @@ export async function toggleAssignment(
     .select("id, status")
     .eq("document_id", documentId)
     .eq("user_id", userId)
+    .eq("type", type)
     .single();
 
   if (existing) {
@@ -27,22 +29,27 @@ export async function toggleAssignment(
       project_id: projectId,
       document_id: documentId,
       user_id: userId,
+      type,
     });
   }
 
-  revalidatePath(`/projects/${projectId}/assignments`);
+  revalidatePath(`/projects/${projectId}/analyze/assignments`);
 }
 
-export async function clearPendingAssignments(projectId: string) {
+export async function clearPendingAssignments(
+  projectId: string,
+  type: "codificacao" | "comparacao" = "codificacao"
+) {
   const supabase = await createSupabaseServer();
 
   const { count } = await supabase
     .from("assignments")
     .delete({ count: "exact" })
     .eq("project_id", projectId)
-    .eq("status", "pendente");
+    .eq("status", "pendente")
+    .eq("type", type);
 
-  revalidatePath(`/projects/${projectId}/assignments`);
+  revalidatePath(`/projects/${projectId}/analyze/assignments`);
   return { deleted: count ?? 0 };
 }
 
@@ -50,6 +57,7 @@ export async function clearPendingAssignments(projectId: string) {
 
 export interface LotteryParams {
   projectId: string;
+  type?: "codificacao" | "comparacao";
   researchersPerDoc: number;
   docsPerResearcher?: number;
   docSubsetSize?: number;
@@ -91,6 +99,7 @@ async function computeLottery(
   params: LotteryParams
 ): Promise<{ newAssignments: LotteryAssignment[]; preserved: number; batchData: Record<string, unknown> }> {
   const supabase = await createSupabaseServer();
+  const assignmentType = params.type || "codificacao";
 
   // 1. Fetch researchers
   const { data: members } = await supabase
@@ -123,13 +132,44 @@ async function computeLottery(
   if (!researcherIds.length) {
     throw new Error("Necessário ter pesquisadores ou coordenadores selecionados.");
   }
-  const documentIds = docs.map((d) => d.id);
+  let documentIds = docs.map((d) => d.id);
 
-  // 3. Fetch existing non-pending assignments (preserve these)
+  // For comparison assignments, only include docs with enough responses
+  if (assignmentType === "comparacao") {
+    const [{ data: project }, { data: responses }] = await Promise.all([
+      supabase
+        .from("projects")
+        .select("min_responses_for_comparison")
+        .eq("id", params.projectId)
+        .single(),
+      supabase
+        .from("responses")
+        .select("document_id")
+        .eq("project_id", params.projectId)
+        .eq("is_current", true),
+    ]);
+
+    const minResponses = project?.min_responses_for_comparison || 2;
+    const responseCounts: Record<string, number> = {};
+    for (const r of responses || []) {
+      responseCounts[r.document_id] = (responseCounts[r.document_id] || 0) + 1;
+    }
+
+    documentIds = documentIds.filter(
+      (docId) => (responseCounts[docId] || 0) >= minResponses
+    );
+
+    if (!documentIds.length) {
+      throw new Error("Nenhum documento tem respostas suficientes para comparação.");
+    }
+  }
+
+  // 3. Fetch existing non-pending assignments of this type (preserve these)
   const { data: existingAssignments } = await supabase
     .from("assignments")
     .select("id, document_id, user_id, status")
     .eq("project_id", params.projectId)
+    .eq("type", assignmentType)
     .in("status", ["em_andamento", "concluido"]);
 
   const preserved = existingAssignments || [];
@@ -284,14 +324,16 @@ async function computeLottery(
 
 export async function previewLottery(params: LotteryParams): Promise<LotteryPreview> {
   const { newAssignments, preserved } = await computeLottery(params);
+  const assignmentType = params.type || "codificacao";
 
   const supabase = await createSupabaseServer();
 
-  // Get existing non-pending counts per researcher
+  // Get existing non-pending counts per researcher for this type
   const { data: existingAssignments } = await supabase
     .from("assignments")
     .select("user_id, status")
     .eq("project_id", params.projectId)
+    .eq("type", assignmentType)
     .in("status", ["em_andamento", "concluido"]);
 
   const existingCounts: Record<string, number> = {};
@@ -342,15 +384,17 @@ export async function smartRandomize(params: LotteryParams) {
   if (!user) throw new Error("Não autenticado");
 
   const supabase = await createSupabaseServer();
+  const assignmentType = params.type || "codificacao";
 
   const { newAssignments, preserved, batchData } = await computeLottery(params);
 
-  // Delete only pending assignments
+  // Delete only pending assignments of this type
   await supabase
     .from("assignments")
     .delete()
     .eq("project_id", params.projectId)
-    .eq("status", "pendente");
+    .eq("status", "pendente")
+    .eq("type", assignmentType);
 
   // Create batch record
   const { data: batch } = await supabase
@@ -370,11 +414,12 @@ export async function smartRandomize(params: LotteryParams) {
       user_id: a.user_id,
       deadline: a.deadline,
       batch_id: batchId,
+      type: assignmentType,
     }));
     await supabase.from("assignments").insert(chunk);
   }
 
-  revalidatePath(`/projects/${params.projectId}/assignments`);
+  revalidatePath(`/projects/${params.projectId}/analyze/assignments`);
   return { count: newAssignments.length, preserved };
 }
 
