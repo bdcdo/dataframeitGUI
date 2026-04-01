@@ -21,6 +21,8 @@ export default async function CommentsPage({
     { data: responsesWithNotes },
     { data: schemaChanges },
     { data: suggestions },
+    { data: llmResponses },
+    { data: difficultyResolutions },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -61,9 +63,19 @@ export default async function CommentsPage({
       .limit(50),
     supabase
       .from("schema_suggestions")
-      .select("id, field_name, suggested_changes, reason, status, created_at, profiles!suggested_by(full_name)")
+      .select("id, field_name, suggested_changes, reason, status, created_at, profiles!suggested_by(email)")
       .eq("project_id", id)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("responses")
+      .select("id, document_id, answers, respondent_name, created_at")
+      .eq("project_id", id)
+      .eq("respondent_type", "llm")
+      .eq("is_current", true),
+    supabase
+      .from("difficulty_resolutions")
+      .select("response_id, resolved_at")
+      .eq("project_id", id),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -89,10 +101,10 @@ export default async function CommentsPage({
   if (reviewerIds.length > 0) {
     const { data: profiles } = await supabase
       .from("profiles")
-      .select("id, full_name")
+      .select("id, email")
       .in("id", reviewerIds);
     reviewerMap = new Map(
-      profiles?.map((p) => [p.id, p.full_name || "Anônimo"]) || [],
+      profiles?.map((p) => [p.id, p.email?.split("@")[0] || "Anônimo"]) || [],
     );
   }
 
@@ -137,7 +149,7 @@ export default async function CommentsPage({
 
   // Map suggestions as comments
   const suggestionComments: ReviewComment[] = (suggestions || []).map((s) => {
-    const p = s.profiles as unknown as { full_name: string | null } | null;
+    const p = s.profiles as unknown as { email: string | null } | null;
     const changes = s.suggested_changes as Record<string, unknown>;
     const changedKeys = Object.keys(changes).join(", ");
     return {
@@ -148,7 +160,7 @@ export default async function CommentsPage({
       fieldDescription: fieldDescMap.get(s.field_name) || s.field_name,
       verdict: "sugestao",
       comment: `${s.reason || "Sem motivo"}${changedKeys ? ` (alterações: ${changedKeys})` : ""}`,
-      reviewerName: p?.full_name || "Anônimo",
+      reviewerName: p?.email?.split("@")[0] || "Anônimo",
       resolvedAt: null,
       createdAt: s.created_at,
       chosenResponseId: null,
@@ -159,6 +171,38 @@ export default async function CommentsPage({
     };
   });
 
+  // Build difficulty comments from LLM responses
+  const resolvedDiffMap = new Map(
+    difficultyResolutions?.map((d) => [d.response_id, d.resolved_at]) || [],
+  );
+
+  const difficultyComments: ReviewComment[] = [];
+  llmResponses?.forEach((r) => {
+    const ambiguidades = (r.answers as Record<string, unknown>)?.llm_ambiguidades;
+    if (
+      !ambiguidades ||
+      (typeof ambiguidades === "string" && !ambiguidades.trim())
+    )
+      return;
+    difficultyComments.push({
+      id: `dificuldade-${r.id}`,
+      documentId: r.document_id,
+      documentTitle: docMap.get(r.document_id) || r.document_id,
+      fieldName: "(geral)",
+      fieldDescription: "Dificuldade do LLM",
+      verdict: "dificuldade",
+      comment: String(ambiguidades),
+      reviewerName: r.respondent_name || "LLM",
+      resolvedAt: resolvedDiffMap.get(r.id) || null,
+      createdAt: r.created_at,
+      chosenResponseId: null,
+      source: "dificuldade" as const,
+      responseSnapshot: null,
+      difficultyResponseId: r.id,
+      difficultyDocumentId: r.document_id,
+    });
+  });
+
   // Pending suggestions first, then all others by date
   const pendingSuggestions = suggestionComments.filter(
     (s) => s.suggestionStatus === "pending",
@@ -166,6 +210,7 @@ export default async function CommentsPage({
   const restComments = [
     ...reviewComments,
     ...noteComments,
+    ...difficultyComments,
     ...suggestionComments.filter((s) => s.suggestionStatus !== "pending"),
   ].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),

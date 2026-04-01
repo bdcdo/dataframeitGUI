@@ -13,12 +13,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { OptionsEditor } from "@/components/schema/OptionsEditor";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { PydanticField } from "@/lib/types";
+import type { PydanticField, SubfieldDef } from "@/lib/types";
 
 const TYPE_LABELS: Record<string, string> = {
   single: "Escolha única",
@@ -31,7 +32,6 @@ interface EditFieldDialogProps {
   projectId: string;
   fieldName: string;
   allFields: PydanticField[];
-  commentCount: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -40,7 +40,6 @@ export function EditFieldDialog({
   projectId,
   fieldName,
   allFields,
-  commentCount,
   open,
   onOpenChange,
 }: EditFieldDialogProps) {
@@ -49,6 +48,8 @@ export function EditFieldDialog({
   const [description, setDescription] = useState(field?.description ?? "");
   const [helpText, setHelpText] = useState(field?.help_text ?? "");
   const [options, setOptions] = useState<string[]>(field?.options ?? []);
+  const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
+  const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
   const [isSaving, startSave] = useTransition();
 
   // Reset state when dialog opens with a different field
@@ -59,11 +60,14 @@ export function EditFieldDialog({
     setDescription(f?.description ?? "");
     setHelpText(f?.help_text ?? "");
     setOptions(f?.options ?? []);
+    setSubfields(f?.subfields);
+    setSubfieldRule(f?.subfield_rule ?? "all");
   }
 
   if (!field) return null;
 
   const descriptionChanged = description !== field.description;
+  const hasSubfields = subfields && subfields.length > 0;
 
   const handleSave = () => {
     startSave(async () => {
@@ -73,7 +77,9 @@ export function EditFieldDialog({
               ...f,
               description,
               help_text: helpText.trim() || undefined,
-              options: options.length > 0 ? options : null,
+              options: hasSubfields ? null : (options.length > 0 ? options : null),
+              subfields: hasSubfields ? subfields : undefined,
+              subfield_rule: hasSubfields ? subfieldRule : undefined,
             }
           : f,
       );
@@ -103,12 +109,6 @@ export function EditFieldDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          {commentCount > 1 && (
-            <p className="text-xs text-muted-foreground">
-              {commentCount} comentários neste campo
-            </p>
-          )}
-
           <div className="flex items-center gap-2">
             <Label className="text-xs">Tipo</Label>
             <Badge variant="outline" className="text-xs">
@@ -153,13 +153,129 @@ export function EditFieldDialog({
               <OptionsEditor options={options} onChange={setOptions} />
             </div>
           )}
+
           {field.type === "text" && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">Respostas padronizadas</Label>
-              <p className="text-xs text-muted-foreground">
-                Botões de atalho para consistência na comparação
-              </p>
-              <OptionsEditor options={options} onChange={setOptions} />
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={!!hasSubfields}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      setSubfields([
+                        { key: "campo_1", label: "Campo 1", required: true },
+                        { key: "campo_2", label: "Campo 2", required: true },
+                      ]);
+                      setSubfieldRule("all");
+                      setOptions([]);
+                    } else {
+                      setSubfields(undefined);
+                      setSubfieldRule("all");
+                    }
+                  }}
+                />
+                <Label className="text-xs">Dividir em subcampos</Label>
+              </div>
+
+              {hasSubfields ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs">Regra</Label>
+                    <div className="flex gap-1">
+                      {(
+                        [
+                          ["all", "Todos os obrigatórios"],
+                          ["at_least_one", "Pelo menos um"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <Button
+                          key={value}
+                          variant="outline"
+                          size="sm"
+                          className={`text-xs h-6 ${
+                            subfieldRule === value
+                              ? "bg-brand/10 text-brand border-brand/40"
+                              : ""
+                          }`}
+                          onClick={() => setSubfieldRule(value)}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                  {subfields!.map((sf, si) => (
+                    <div key={si} className="flex items-center gap-1.5">
+                      <Input
+                        value={sf.key}
+                        onChange={(e) => {
+                          const sfs = [...subfields!];
+                          sfs[si] = { ...sfs[si], key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") };
+                          setSubfields(sfs);
+                        }}
+                        className="w-28 font-mono text-xs h-7"
+                        placeholder="chave"
+                      />
+                      <Input
+                        value={sf.label}
+                        onChange={(e) => {
+                          const sfs = [...subfields!];
+                          sfs[si] = { ...sfs[si], label: e.target.value };
+                          setSubfields(sfs);
+                        }}
+                        className="flex-1 text-xs h-7"
+                        placeholder="Label visível"
+                      />
+                      {subfieldRule !== "at_least_one" && (
+                        <div className="flex items-center gap-1">
+                          <Switch
+                            checked={sf.required !== false}
+                            onCheckedChange={(checked) => {
+                              const sfs = [...subfields!];
+                              sfs[si] = { ...sfs[si], required: checked };
+                              setSubfields(sfs);
+                            }}
+                          />
+                          <span className="text-[10px] text-muted-foreground">Obrig.</span>
+                        </div>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={() => {
+                          const sfs = subfields!.filter((_, j) => j !== si);
+                          setSubfields(sfs.length > 0 ? sfs : undefined);
+                          if (sfs.length === 0) setSubfieldRule("all");
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-6"
+                    onClick={() => {
+                      const idx = subfields!.length + 1;
+                      setSubfields([
+                        ...subfields!,
+                        { key: `campo_${idx}`, label: `Campo ${idx}`, required: true },
+                      ]);
+                    }}
+                  >
+                    + Adicionar subcampo
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Respostas padronizadas (opcional)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Botões de atalho para consistência na comparação
+                  </p>
+                  <OptionsEditor options={options} onChange={setOptions} />
+                </div>
+              )}
             </div>
           )}
         </div>

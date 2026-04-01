@@ -21,6 +21,8 @@ import { SuggestFieldDialog } from "./SuggestFieldDialog";
 import {
   resolveReviewComment,
   reopenReviewComment,
+  resolveDifficulty,
+  reopenDifficulty,
 } from "@/actions/stats";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -44,8 +46,9 @@ interface ReviewCommentsViewProps {
   schemaLog?: SchemaChangeEntry[];
 }
 
-function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" | "sugestao" {
+function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" | "sugestao" | "dificuldade" {
   if (verdict === "nota") return "nota";
+  if (verdict === "dificuldade") return "dificuldade";
   if (verdict === "sugestao") return "sugestao";
   if (verdict === "ambiguo") return "ambiguo";
   if (verdict === "pular") return "pular";
@@ -69,14 +72,6 @@ export function ReviewCommentsView({
   const [suggestingField, setSuggestingField] = useState<string | null>(null);
   const [splitDocId, setSplitDocId] = useState<string | null>(null);
 
-  const commentCountByField = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const c of comments) {
-      map.set(c.fieldName, (map.get(c.fieldName) || 0) + 1);
-    }
-    return map;
-  }, [comments]);
-
   const filtered = useMemo(() => {
     return comments.filter((c) => {
       if (fieldFilter !== "all" && c.fieldName !== fieldFilter) return false;
@@ -94,9 +89,18 @@ export function ReviewCommentsView({
     });
   }, [comments, fieldFilter, statusFilter, verdictFilter, searchQuery]);
 
-  const handleResolve = (reviewId: string) => {
+  const handleResolve = (comment: ReviewComment) => {
     startTransition(async () => {
-      const result = await resolveReviewComment(reviewId, projectId);
+      let result;
+      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
+        result = await resolveDifficulty(
+          projectId,
+          comment.difficultyResponseId,
+          comment.difficultyDocumentId!,
+        );
+      } else {
+        result = await resolveReviewComment(comment.id, projectId);
+      }
       if (result.error) {
         toast.error(result.error);
       } else {
@@ -106,9 +110,14 @@ export function ReviewCommentsView({
     });
   };
 
-  const handleReopen = (reviewId: string) => {
+  const handleReopen = (comment: ReviewComment) => {
     startTransition(async () => {
-      const result = await reopenReviewComment(reviewId, projectId);
+      let result;
+      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
+        result = await reopenDifficulty(projectId, comment.difficultyResponseId);
+      } else {
+        result = await reopenReviewComment(comment.id, projectId);
+      }
       if (result.error) {
         toast.error(result.error);
       } else {
@@ -120,17 +129,18 @@ export function ReviewCommentsView({
 
   const [logOpen, setLogOpen] = useState(false);
 
-  // Count unique documents with review comments (for split view button)
+  // Count unique documents with review/difficulty comments (for split view button)
+  const splitSources = new Set(["review", "dificuldade"]);
   const reviewDocCount = useMemo(() => {
     const docs = new Set<string>();
     for (const c of comments) {
-      if (c.source === "review") docs.add(c.documentId);
+      if (splitSources.has(c.source) && c.documentId) docs.add(c.documentId);
     }
     return docs.size;
   }, [comments]);
 
   if (splitDocId) {
-    const reviewComments = comments.filter((c) => c.source === "review");
+    const reviewComments = comments.filter((c) => splitSources.has(c.source) && c.documentId);
     return (
       <CommentsSplitView
         projectId={projectId}
@@ -143,15 +153,30 @@ export function ReviewCommentsView({
 
   return (
     <div className="space-y-4">
-      <Collapsible open={logOpen} onOpenChange={setLogOpen}>
-        <CollapsibleTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-1.5 text-xs">
-            <History className="h-3.5 w-3.5" />
-            Histórico de mudanças no schema{schemaLog.length > 0 && ` (${schemaLog.length})`}
-            <ChevronDown className={cn("h-3 w-3 transition-transform", logOpen && "rotate-180")} />
+      <div className="flex items-center gap-2">
+        {reviewDocCount > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => {
+              const first = comments.find((c) => splitSources.has(c.source) && c.documentId);
+              if (first) setSplitDocId(first.documentId);
+            }}
+          >
+            <PanelLeftClose className="h-3.5 w-3.5" />
+            Revisar por documento
           </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
+        )}
+        <Collapsible open={logOpen} onOpenChange={setLogOpen} className="ml-auto">
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+              <History className="h-3.5 w-3.5" />
+              Histórico de mudanças no schema{schemaLog.length > 0 && ` (${schemaLog.length})`}
+              <ChevronDown className={cn("h-3 w-3 transition-transform", logOpen && "rotate-180")} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
           <div className="mt-2 divide-y rounded-md border">
             {schemaLog.length === 0 ? (
               <p className="py-3 text-center text-xs text-muted-foreground">
@@ -207,8 +232,9 @@ export function ReviewCommentsView({
                 );
               })}
           </div>
-        </CollapsibleContent>
-      </Collapsible>
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           placeholder="Buscar documento ou comentário..."
@@ -250,22 +276,9 @@ export function ReviewCommentsView({
             <SelectItem value="pular">Pular</SelectItem>
             <SelectItem value="nota">Notas</SelectItem>
             <SelectItem value="sugestao">Sugestões</SelectItem>
+            <SelectItem value="dificuldade">Dificuldade LLM</SelectItem>
           </SelectContent>
         </Select>
-        {reviewDocCount > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 text-xs"
-            onClick={() => {
-              const firstReview = comments.find((c) => c.source === "review");
-              if (firstReview) setSplitDocId(firstReview.documentId);
-            }}
-          >
-            <PanelLeftClose className="h-3.5 w-3.5" />
-            Revisar por documento
-          </Button>
-        )}
         <span className="ml-auto text-sm text-muted-foreground">
           {filtered.length} comentário{filtered.length !== 1 ? "s" : ""}
         </span>
@@ -284,10 +297,11 @@ export function ReviewCommentsView({
               projectId={projectId}
               isPending={isPending}
               isCoordinator={isCoordinator}
-              onResolve={() => handleResolve(c.id)}
-              onReopen={() => handleReopen(c.id)}
+              onResolve={() => handleResolve(c)}
+              onReopen={() => handleReopen(c)}
               onEditField={() => setEditingField(c.fieldName)}
               onSuggestField={() => setSuggestingField(c.fieldName)}
+              onOpenDocument={c.documentId ? (docId) => setSplitDocId(docId) : undefined}
             />
           ))}
         </div>
@@ -298,7 +312,6 @@ export function ReviewCommentsView({
           projectId={projectId}
           fieldName={editingField}
           allFields={fields}
-          commentCount={commentCountByField.get(editingField) || 0}
           open={!!editingField}
           onOpenChange={(open) => {
             if (!open) setEditingField(null);

@@ -17,15 +17,6 @@ export interface LlmError {
   resolvedAt: string | null;
 }
 
-export interface LlmDifficulty {
-  responseId: string;
-  documentId: string;
-  documentTitle: string;
-  modelName: string;
-  text: string;
-  resolvedAt: string | null;
-}
-
 export default async function LlmInsightsPage({
   params,
 }: {
@@ -40,7 +31,6 @@ export default async function LlmInsightsPage({
     { data: llmResponses },
     { data: reviews },
     { data: documents },
-    { data: difficultyResolutions },
     { data: errorResolutions },
     { data: membership },
   ] = await Promise.all([
@@ -65,10 +55,6 @@ export default async function LlmInsightsPage({
     supabase
       .from("documents")
       .select("id, title, external_id")
-      .eq("project_id", id),
-    supabase
-      .from("difficulty_resolutions")
-      .select("response_id, resolved_at")
       .eq("project_id", id),
     supabase
       .from("error_resolutions")
@@ -169,36 +155,11 @@ export default async function LlmInsightsPage({
       ? Math.round((totalErrors / llmFieldsReviewed) * 100)
       : 0;
 
-  // Build difficulties list
-  const resolvedMap = new Map(
-    difficultyResolutions?.map((d) => [d.response_id, d.resolved_at]) || [],
-  );
-
-  const difficulties: LlmDifficulty[] = [];
-  llmResponses?.forEach((r) => {
-    const ambiguidades = (r.answers as Record<string, unknown>)
-      ?.llm_ambiguidades;
-    if (
-      !ambiguidades ||
-      (typeof ambiguidades === "string" && !ambiguidades.trim())
-    )
-      return;
-    difficulties.push({
-      responseId: r.id,
-      documentId: r.document_id,
-      documentTitle: docMap.get(r.document_id) || r.document_id,
-      modelName: r.respondent_name || "LLM",
-      text: String(ambiguidades),
-      resolvedAt: resolvedMap.get(r.id) || null,
-    });
-  });
-
   return (
     <div className="mx-auto max-w-4xl p-6">
       <LlmInsightsView
         projectId={id}
         errors={errors}
-        difficulties={difficulties}
         fields={fields.filter((f) => f.target !== "llm_only")}
         allFields={allFields}
         isCoordinator={isCoordinator}

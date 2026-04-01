@@ -24,8 +24,11 @@ import { getDocumentText } from "@/actions/documents";
 import {
   resolveReviewComment,
   reopenReviewComment,
+  resolveDifficulty,
+  reopenDifficulty,
 } from "@/actions/stats";
 import { toast } from "sonner";
+import { Switch } from "@/components/ui/switch";
 import type { ReviewComment, ResponseSnapshotEntry } from "./CommentCard";
 
 function formatAnswer(answer: unknown): string {
@@ -72,6 +75,7 @@ export function CommentsSplitView({
 }: CommentsSplitViewProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [showResolved, setShowResolved] = useState(false);
 
   // Group comments by document, preserving order of first occurrence
   const docGroups = useMemo(() => {
@@ -120,9 +124,18 @@ export function CommentsSplitView({
     };
   }, [currentDocId, projectId, docTextCache]);
 
-  const handleResolve = (reviewId: string) => {
+  const handleResolve = (comment: ReviewComment) => {
     startTransition(async () => {
-      const result = await resolveReviewComment(reviewId, projectId);
+      let result;
+      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
+        result = await resolveDifficulty(
+          projectId,
+          comment.difficultyResponseId,
+          comment.difficultyDocumentId!,
+        );
+      } else {
+        result = await resolveReviewComment(comment.id, projectId);
+      }
       if (result.error) {
         toast.error(result.error);
       } else {
@@ -132,9 +145,14 @@ export function CommentsSplitView({
     });
   };
 
-  const handleReopen = (reviewId: string) => {
+  const handleReopen = (comment: ReviewComment) => {
     startTransition(async () => {
-      const result = await reopenReviewComment(reviewId, projectId);
+      let result;
+      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
+        result = await reopenDifficulty(projectId, comment.difficultyResponseId);
+      } else {
+        result = await reopenReviewComment(comment.id, projectId);
+      }
       if (result.error) {
         toast.error(result.error);
       } else {
@@ -198,10 +216,38 @@ export function CommentsSplitView({
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={45} minSize={25}>
           <div className="h-full overflow-y-auto px-4 py-4 space-y-4">
-            <p className="text-xs font-medium text-muted-foreground">
-              {currentGroup.comments.length} comentário{currentGroup.comments.length !== 1 && "s"}
-            </p>
-            {currentGroup.comments.map((comment) => {
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-muted-foreground">
+                {(() => {
+                  const visible = showResolved
+                    ? currentGroup.comments
+                    : currentGroup.comments.filter((c) => !c.resolvedAt);
+                  const hidden = currentGroup.comments.length - visible.length;
+                  return (
+                    <>
+                      {visible.length} comentário{visible.length !== 1 && "s"}
+                      {!showResolved && hidden > 0 && (
+                        <span className="ml-1 text-muted-foreground/60">
+                          ({hidden} resolvido{hidden !== 1 ? "s" : ""} oculto{hidden !== 1 ? "s" : ""})
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
+              </p>
+              <div className="flex items-center gap-1.5">
+                <Switch
+                  checked={showResolved}
+                  onCheckedChange={setShowResolved}
+                  className="scale-75"
+                />
+                <span className="text-xs text-muted-foreground">Mostrar resolvidos</span>
+              </div>
+            </div>
+            {(showResolved
+              ? currentGroup.comments
+              : currentGroup.comments.filter((c) => !c.resolvedAt)
+            ).map((comment) => {
               const isResolved = !!comment.resolvedAt;
               const snapshot = comment.responseSnapshot;
 
@@ -284,7 +330,7 @@ export function CommentsSplitView({
                         variant="ghost"
                         size="sm"
                         disabled={isPending}
-                        onClick={() => handleReopen(comment.id)}
+                        onClick={() => handleReopen(comment)}
                         title="Reabrir"
                       >
                         <RotateCcw className="h-3.5 w-3.5" />
@@ -294,7 +340,7 @@ export function CommentsSplitView({
                         variant="ghost"
                         size="sm"
                         disabled={isPending}
-                        onClick={() => handleResolve(comment.id)}
+                        onClick={() => handleResolve(comment)}
                         title="Resolver"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" />

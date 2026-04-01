@@ -14,9 +14,9 @@ const reviewsTabs: Array<{
   { label: "Meu Gabarito", href: "my-verdicts", researcherOnly: true },
   { label: "Matriz de Confusão", href: "confusion" },
   { label: "Respondentes", href: "respondents", coordinatorOnly: true },
+  { label: "Erros LLM", href: "llm-insights" },
   { label: "Docs Difíceis", href: "difficulty" },
   { label: "Comentários", href: "comments" },
-  { label: "Insights LLM", href: "llm-insights" },
   { label: "Exportar", href: "export" },
 ];
 

@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,10 +46,12 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
-  source: "review" | "nota" | "sugestao";
+  source: "review" | "nota" | "sugestao" | "dificuldade";
   responseSnapshot: ResponseSnapshotEntry[] | null;
   suggestionId?: string;
   suggestionStatus?: "pending" | "approved" | "rejected";
+  difficultyResponseId?: string;
+  difficultyDocumentId?: string;
 }
 
 interface CommentCardProps {
@@ -62,10 +63,12 @@ interface CommentCardProps {
   onReopen: () => void;
   onEditField?: () => void;
   onSuggestField?: () => void;
+  onOpenDocument?: (documentId: string) => void;
 }
 
 function formatVerdictLabel(verdict: string): string {
   if (verdict === "nota") return "Nota do pesquisador";
+  if (verdict === "dificuldade") return "Dificuldade do LLM";
   if (verdict === "sugestao") return "Sugestão";
   if (verdict === "ambiguo") return "Ambíguo";
   if (verdict === "pular") return "Pular";
@@ -87,6 +90,7 @@ function verdictVariant(
   verdict: string,
 ): "default" | "secondary" | "destructive" | "outline" {
   if (verdict === "nota") return "secondary";
+  if (verdict === "dificuldade") return "secondary";
   if (verdict === "sugestao") return "outline";
   if (verdict === "ambiguo") return "secondary";
   if (verdict === "pular") return "outline";
@@ -108,6 +112,7 @@ export function CommentCard({
   onReopen,
   onEditField,
   onSuggestField,
+  onOpenDocument,
 }: CommentCardProps) {
   const router = useRouter();
   const isResolved = !!comment.resolvedAt;
@@ -152,17 +157,21 @@ export function CommentCard({
       <CardContent className="space-y-2 pt-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <Link
-              href={`/projects/${projectId}/code?doc=${comment.documentId}`}
-              className="text-sm font-medium hover:underline"
-            >
-              {comment.documentTitle}
-            </Link>
+            {onOpenDocument && comment.documentId ? (
+              <button
+                onClick={() => onOpenDocument(comment.documentId)}
+                className="text-sm font-medium hover:underline text-left"
+              >
+                {comment.documentTitle}
+              </button>
+            ) : (
+              <span className="text-sm font-medium">{comment.documentTitle || comment.fieldName}</span>
+            )}
             <div className="flex items-center gap-1.5">
               <code className="text-xs font-mono text-muted-foreground/70">
                 {comment.fieldName}
               </code>
-              {isCoordinator && onEditField && comment.source !== "nota" && (
+              {isCoordinator && onEditField && comment.source !== "nota" && comment.source !== "dificuldade" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -173,7 +182,7 @@ export function CommentCard({
                   <Pencil className="h-3 w-3" />
                 </Button>
               )}
-              {!isCoordinator && onSuggestField && comment.source !== "nota" && (
+              {!isCoordinator && onSuggestField && comment.source !== "nota" && comment.source !== "dificuldade" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -251,7 +260,7 @@ export function CommentCard({
         )}
 
         {/* Gabarito expansível (só para reviews, não para notas) */}
-        {comment.source !== "nota" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
+        {comment.source !== "nota" && comment.source !== "dificuldade" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
           <CollapsibleTrigger asChild>
             <Button
               variant="ghost"
