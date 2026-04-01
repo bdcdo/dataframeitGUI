@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/resizable";
 import { CompareNav } from "./CompareNav";
 import { ComparisonPanel } from "./ComparisonPanel";
-import { submitVerdict } from "@/actions/reviews";
+import { submitVerdict, type ResponseSnapshotEntry } from "@/actions/reviews";
 import { toast } from "sonner";
 import { normalizeForComparison } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
@@ -184,8 +184,19 @@ export function ComparePage({
         },
       }));
 
+      // Build response snapshot from current field responses
+      const snapshot: ResponseSnapshotEntry[] = fieldResponses
+        .filter((r) => r.answer !== undefined)
+        .map((r) => ({
+          id: r.id,
+          respondent_name: r.respondent_name,
+          respondent_type: r.respondent_type,
+          answer: r.answer,
+          ...(r.justification ? { justification: r.justification } : {}),
+        }));
+
       // Server call
-      await submitVerdict(projectId, currentDoc.id, currentFieldName, verdict, chosenResponseId, verdictComment);
+      await submitVerdict(projectId, currentDoc.id, currentFieldName, verdict, chosenResponseId, verdictComment, snapshot);
 
       setComment("");
       toast.success("Veredito salvo!");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,14 @@ import {
   type GabaritoRespondentAnswer,
 } from "@/actions/stats";
 
+export interface ResponseSnapshotEntry {
+  id: string;
+  respondent_name: string;
+  respondent_type: "humano" | "llm";
+  answer: unknown;
+  justification?: string;
+}
+
 export interface ReviewComment {
   id: string;
   documentId: string;
@@ -36,6 +45,7 @@ export interface ReviewComment {
   createdAt: string;
   chosenResponseId: string | null;
   source: "review" | "nota";
+  responseSnapshot: ResponseSnapshotEntry[] | null;
 }
 
 interface CommentCardProps {
@@ -97,9 +107,21 @@ export function CommentCard({
   >(null);
   const [loadingGabarito, startLoadGabarito] = useTransition();
 
+  // If snapshot exists, convert to gabarito format immediately
+  const snapshotAsGabarito: GabaritoRespondentAnswer[] | null =
+    comment.responseSnapshot
+      ? comment.responseSnapshot.map((r) => ({
+          respondentName: r.respondent_name,
+          respondentType: r.respondent_type,
+          answer: r.answer,
+          isChosen: r.id === comment.chosenResponseId,
+        }))
+      : null;
+
   const handleGabaritoToggle = (open: boolean) => {
     setGabaritoOpen(open);
-    if (open && !gabaritoData) {
+    // Only fetch if no snapshot and no cached data
+    if (open && !gabaritoData && !snapshotAsGabarito) {
       startLoadGabarito(async () => {
         const result = await fetchGabaritoForComment(
           projectId,
@@ -112,12 +134,19 @@ export function CommentCard({
     }
   };
 
+  const gabaritoEntries = snapshotAsGabarito ?? gabaritoData;
+
   return (
     <Card className={cn(isResolved && "opacity-60")}>
       <CardContent className="space-y-2 pt-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-sm font-medium">{comment.documentTitle}</p>
+            <Link
+              href={`/projects/${projectId}/code?doc=${comment.documentId}`}
+              className="text-sm font-medium hover:underline"
+            >
+              {comment.documentTitle}
+            </Link>
             <div className="flex items-center gap-1.5">
               <code className="text-xs font-mono text-muted-foreground/70">
                 {comment.fieldName}
@@ -185,12 +214,12 @@ export function CommentCard({
                   {formatVerdictLabel(comment.verdict)}
                 </Badge>
               </div>
-              {gabaritoData && gabaritoData.length > 0 ? (
+              {gabaritoEntries && gabaritoEntries.length > 0 ? (
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">
                     Respostas dos respondentes:
                   </span>
-                  {gabaritoData.map((a, i) => (
+                  {gabaritoEntries.map((a, i) => (
                     <div
                       key={i}
                       className={cn(
@@ -218,7 +247,7 @@ export function CommentCard({
                     </div>
                   ))}
                 </div>
-              ) : gabaritoData && gabaritoData.length === 0 ? (
+              ) : gabaritoEntries && gabaritoEntries.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   Nenhuma resposta encontrada.
                 </p>

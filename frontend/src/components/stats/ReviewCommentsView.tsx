@@ -10,12 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { History, ChevronDown } from "lucide-react";
+import { History, ChevronDown, PanelLeftClose } from "lucide-react";
 import { CommentCard, type ReviewComment } from "./CommentCard";
+import { CommentsSplitView } from "./CommentsSplitView";
 import { EditFieldDialog } from "./EditFieldDialog";
 import {
   resolveReviewComment,
@@ -64,6 +64,7 @@ export function ReviewCommentsView({
   const [verdictFilter, setVerdictFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [editingField, setEditingField] = useState<string | null>(null);
+  const [splitDocId, setSplitDocId] = useState<string | null>(null);
 
   const commentCountByField = useMemo(() => {
     const map = new Map<string, number>();
@@ -116,6 +117,27 @@ export function ReviewCommentsView({
 
   const [logOpen, setLogOpen] = useState(false);
 
+  // Count unique documents with review comments (for split view button)
+  const reviewDocCount = useMemo(() => {
+    const docs = new Set<string>();
+    for (const c of comments) {
+      if (c.source === "review") docs.add(c.documentId);
+    }
+    return docs.size;
+  }, [comments]);
+
+  if (splitDocId) {
+    const reviewComments = comments.filter((c) => c.source === "review");
+    return (
+      <CommentsSplitView
+        projectId={projectId}
+        comments={reviewComments}
+        initialDocId={splitDocId}
+        onBack={() => setSplitDocId(null)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Collapsible open={logOpen} onOpenChange={setLogOpen}>
@@ -127,48 +149,60 @@ export function ReviewCommentsView({
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="mt-2 space-y-2">
+          <div className="mt-2 divide-y rounded-md border">
             {schemaLog.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
+              <p className="py-3 text-center text-xs text-muted-foreground">
                 Nenhuma mudança registrada ainda.
               </p>
-            ) : schemaLog.map((entry) => (
-                <Card key={entry.id} className="border-dashed">
-                  <CardContent className="py-2.5 px-3 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <code className="text-xs font-mono text-muted-foreground/70">{entry.fieldName}</code>
-                        <Badge variant="outline" className="text-[10px] px-1 py-0">
-                          {entry.changeSummary}
-                        </Badge>
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {entry.changedBy} &middot; {new Date(entry.createdAt).toLocaleDateString("pt-BR")}
-                      </span>
-                    </div>
-                    {entry.beforeValue.description !== undefined && (
-                      <p className="text-xs text-muted-foreground">
-                        <span className="line-through">{String(entry.beforeValue.description)}</span>
-                        {" → "}
-                        <span className="font-medium text-foreground">{String(entry.afterValue.description)}</span>
-                      </p>
-                    )}
-                    {entry.beforeValue.options !== undefined && (
-                      <p className="text-xs text-muted-foreground">
-                        {Array.isArray(entry.beforeValue.options)
-                          ? (entry.beforeValue.options as string[]).join(", ") || "(vazio)"
-                          : "(vazio)"}
-                        {" → "}
-                        <span className="font-medium text-foreground">
-                          {Array.isArray(entry.afterValue.options)
-                            ? (entry.afterValue.options as string[]).join(", ") || "(vazio)"
-                            : "(vazio)"}
+            ) : schemaLog.map((entry) => {
+                const changes: { label: string; before: string; after: string }[] = [];
+                if (entry.beforeValue.description !== undefined) {
+                  changes.push({
+                    label: "descrição",
+                    before: String(entry.beforeValue.description) || "(vazio)",
+                    after: String(entry.afterValue.description) || "(vazio)",
+                  });
+                }
+                if (entry.beforeValue.help_text !== undefined) {
+                  changes.push({
+                    label: "instruções",
+                    before: String(entry.beforeValue.help_text ?? "") || "(vazio)",
+                    after: String(entry.afterValue.help_text ?? "") || "(vazio)",
+                  });
+                }
+                if (entry.beforeValue.options !== undefined) {
+                  changes.push({
+                    label: "opções",
+                    before: Array.isArray(entry.beforeValue.options)
+                      ? (entry.beforeValue.options as string[]).join(", ") || "(vazio)"
+                      : "(vazio)",
+                    after: Array.isArray(entry.afterValue.options)
+                      ? (entry.afterValue.options as string[]).join(", ") || "(vazio)"
+                      : "(vazio)",
+                  });
+                }
+                return (
+                  <div key={entry.id} className="flex items-baseline gap-2 px-3 py-1.5 text-xs">
+                    <code className="shrink-0 font-mono text-muted-foreground/70">{entry.fieldName}</code>
+                    <Badge variant="outline" className="shrink-0 text-[10px] px-1 py-0">
+                      {entry.changeSummary}
+                    </Badge>
+                    <span className="min-w-0 truncate text-muted-foreground">
+                      {changes.map((c, i) => (
+                        <span key={c.label}>
+                          {i > 0 && " · "}
+                          <span className="line-through">{c.before}</span>
+                          {" → "}
+                          <span className="font-medium text-foreground">{c.after}</span>
                         </span>
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                      ))}
+                    </span>
+                    <span className="ml-auto shrink-0 whitespace-nowrap text-muted-foreground">
+                      {entry.changedBy} · {new Date(entry.createdAt).toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                );
+              })}
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -214,6 +248,20 @@ export function ReviewCommentsView({
             <SelectItem value="nota">Notas</SelectItem>
           </SelectContent>
         </Select>
+        {reviewDocCount > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => {
+              const firstReview = comments.find((c) => c.source === "review");
+              if (firstReview) setSplitDocId(firstReview.documentId);
+            }}
+          >
+            <PanelLeftClose className="h-3.5 w-3.5" />
+            Revisar por documento
+          </Button>
+        )}
         <span className="ml-auto text-sm text-muted-foreground">
           {filtered.length} comentário{filtered.length !== 1 ? "s" : ""}
         </span>

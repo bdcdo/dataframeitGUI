@@ -11,7 +11,7 @@ export interface RespondentAnswer {
 export interface ReviewedField {
   fieldName: string;
   fieldDescription: string;
-  fieldType: "single" | "multi" | "text";
+  fieldType: "single" | "multi" | "text" | "date";
   verdict: string;
   respondentAnswers: RespondentAnswer[];
 }

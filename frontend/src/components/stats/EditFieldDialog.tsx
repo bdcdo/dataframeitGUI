@@ -24,6 +24,7 @@ const TYPE_LABELS: Record<string, string> = {
   single: "Escolha única",
   multi: "Múltipla escolha",
   text: "Texto livre",
+  date: "Data",
 };
 
 interface EditFieldDialogProps {

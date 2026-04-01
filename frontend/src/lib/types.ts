@@ -26,7 +26,7 @@ export interface Project {
 
 export interface PydanticField {
   name: string;
-  type: "single" | "multi" | "text";
+  type: "single" | "multi" | "text" | "date";
   options: string[] | null;
   description: string;
   help_text?: string;

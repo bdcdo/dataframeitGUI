@@ -359,6 +359,21 @@ export async function getDocumentForCoding(
   return { document: doc, existingAnswers: rawAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
 }
 
+export async function getDocumentText(
+  projectId: string,
+  documentId: string,
+): Promise<{ text: string; title: string } | null> {
+  const supabase = await createSupabaseServer();
+  const { data } = await supabase
+    .from("documents")
+    .select("title, text")
+    .eq("id", documentId)
+    .eq("project_id", projectId)
+    .single();
+  if (!data) return null;
+  return { text: data.text, title: data.title || documentId };
+}
+
 export async function deleteDocument(projectId: string, documentId: string) {
   const supabase = await createSupabaseServer();
   const { error } = await supabase

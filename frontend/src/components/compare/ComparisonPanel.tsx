@@ -44,7 +44,7 @@ interface ExistingVerdict {
 interface ComparisonPanelProps {
   fieldName: string;
   fieldDescription: string;
-  fieldType?: "single" | "multi" | "text";
+  fieldType?: "single" | "multi" | "text" | "date";
   fieldOptions?: string[] | null;
   fieldIndex: number;
   totalFields: number;

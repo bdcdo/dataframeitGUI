@@ -16,6 +16,18 @@ function fieldAnnotation(field: PydanticField): string {
   return "str";
 }
 
+function fieldExtra(field: PydanticField): string {
+  const extras: string[] = [];
+  if (field.target && field.target !== "all") {
+    extras.push(`"target": "${field.target}"`);
+  }
+  if (field.type === "date") {
+    extras.push(`"field_type": "date"`);
+  }
+  if (extras.length === 0) return "";
+  return `, json_schema_extra={${extras.join(", ")}}`;
+}
+
 export function generatePydanticCode(
   fields: PydanticField[],
   modelName = "Analysis"
@@ -35,15 +47,15 @@ export function generatePydanticCode(
   for (const field of fields) {
     const ann = fieldAnnotation(field);
     let desc = escapeString(field.description);
+    if (field.type === "date") {
+      desc += ". Formato: DD/MM/AAAA (use XX para partes desconhecidas)";
+    }
     if (field.help_text?.trim()) {
       desc += `. Instrucoes: ${escapeString(field.help_text.trim())}`;
     }
-    const target =
-      field.target && field.target !== "all"
-        ? `, json_schema_extra={"target": "${field.target}"}`
-        : "";
+    const extra = fieldExtra(field);
     lines.push(
-      `    ${field.name}: ${ann} = Field(description="${desc}"${target})`
+      `    ${field.name}: ${ann} = Field(description="${desc}"${extra})`
     );
   }
 
@@ -79,6 +91,10 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
 
     if (!f.description.trim()) {
       errors.push(`${label}: descrição não pode ser vazia`);
+    }
+
+    if (f.type === "date" && f.options && f.options.length > 0) {
+      errors.push(`${label}: campo de data não deve ter opções`);
     }
 
     if (

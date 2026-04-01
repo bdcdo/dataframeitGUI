@@ -68,7 +68,7 @@ function isFieldStale(
 function isAnswerCorrect(
   answer: unknown,
   verdict: string,
-  fieldType: "single" | "multi" | "text",
+  fieldType: "single" | "multi" | "text" | "date",
 ): boolean {
   if (verdict === "ambiguo" || verdict === "pular") return true;
   if (fieldType === "multi") {
@@ -314,7 +314,7 @@ export function computeConfusionData(
   const result: ConfusionData[] = [];
 
   for (const field of ctx.comparableFields) {
-    if (field.type === "text") continue;
+    if (field.type === "text" || field.type === "date") continue;
 
     const fieldReviews = ctx.uniqueReviews.filter(
       (r) =>

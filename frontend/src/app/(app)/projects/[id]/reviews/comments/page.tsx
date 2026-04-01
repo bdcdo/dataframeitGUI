@@ -29,7 +29,7 @@ export default async function CommentsPage({
     supabase
       .from("reviews")
       .select(
-        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at",
+        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at, response_snapshot",
       )
       .eq("project_id", id)
       .not("comment", "is", null)
@@ -105,6 +105,7 @@ export default async function CommentsPage({
     createdAt: r.created_at,
     chosenResponseId: r.chosen_response_id,
     source: "review",
+    responseSnapshot: (r.response_snapshot as ReviewComment["responseSnapshot"]) ?? null,
   }));
 
   const noteComments: ReviewComment[] = (responsesWithNotes || [])
@@ -125,6 +126,7 @@ export default async function CommentsPage({
       createdAt: r.created_at,
       chosenResponseId: null,
       source: "nota" as const,
+      responseSnapshot: null,
     }));
 
   const comments = [...reviewComments, ...noteComments].sort(

@@ -32,12 +32,14 @@ const TYPE_LABELS: Record<string, string> = {
   single: "Escolha única",
   multi: "Múltipla escolha",
   text: "Texto livre",
+  date: "Data",
 };
 
 const TYPE_COLORS: Record<string, string> = {
   single: "bg-blue-500/10 text-blue-700",
   multi: "bg-purple-500/10 text-purple-700",
   text: "bg-green-500/10 text-green-700",
+  date: "bg-amber-500/10 text-amber-700",
 };
 
 const TARGET_LABELS: Record<string, string> = {
@@ -61,8 +63,8 @@ export function FieldCard({
   };
 
   const handleTypeChange = (type: PydanticField["type"]) => {
-    if (type === "text") {
-      updateField({ type });
+    if (type === "text" || type === "date") {
+      updateField({ type, options: null });
     } else if (!field.options || field.options.length === 0) {
       updateField({ type, options: ["Opção 1"] });
     } else {
@@ -191,7 +193,7 @@ export function FieldCard({
             <div className="space-y-1.5">
               <Label className="text-xs">Tipo de resposta</Label>
               <div className="flex gap-1">
-                {(["single", "multi", "text"] as const).map((t) => (
+                {(["single", "multi", "text", "date"] as const).map((t) => (
                   <Button
                     key={t}
                     variant="outline"

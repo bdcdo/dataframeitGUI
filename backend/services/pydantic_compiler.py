@@ -59,6 +59,10 @@ def compile_pydantic(code: str) -> dict:
         if callable(extra):
             extra = {}
         target = extra.get("target", "all") if isinstance(extra, dict) else "all"
+        # Allow json_schema_extra to override the inferred field type (e.g. date)
+        explicit_type = extra.get("field_type") if isinstance(extra, dict) else None
+        if explicit_type:
+            field_type = explicit_type
         description = field_info.description or field_name
 
         fields.append(
