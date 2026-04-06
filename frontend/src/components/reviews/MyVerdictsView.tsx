@@ -418,26 +418,24 @@ function VerdictCard({
   onAcknowledge: (reviewId: string, status: "accepted" | "questioned", comment?: string) => void;
 }) {
   const isSpecialVerdict = item.verdict === "ambiguo" || item.verdict === "pular";
+  const otherResponses = item.responseSnapshot?.filter(
+    (r) => r.respondent_name !== userName,
+  );
 
   return (
     <div
       className={cn(
-        "space-y-2 rounded-lg border p-3",
+        "space-y-2.5 rounded-lg border p-4",
         item.isCorrect
           ? "border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20"
           : "border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/20",
       )}
     >
-      {/* Field description + correct/incorrect */}
+      {/* 1. Field question — prominent */}
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-xs font-medium leading-tight">
-            {item.fieldDescription}
-          </p>
-          <code className="text-[10px] font-mono text-muted-foreground/60">
-            {item.fieldName}
-          </code>
-        </div>
+        <p className="min-w-0 text-sm leading-snug">
+          {item.fieldDescription}
+        </p>
         {item.isCorrect ? (
           <Badge className="shrink-0 bg-green-500/10 text-green-700 text-xs">
             <Check className="mr-1 h-3 w-3" /> Correta
@@ -449,45 +447,73 @@ function VerdictCard({
         )}
       </div>
 
-      {/* Verdict with colored background */}
-      <div
-        className={cn(
-          "flex items-center gap-2 rounded px-2 py-1 text-xs",
-          isSpecialVerdict
-            ? "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
-            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400",
-        )}
-      >
-        <span className="font-medium">Gabarito:</span>
-        <span className="font-medium">{formatVerdictDisplay(item.verdict, item.fieldType)}</span>
+      {/* 2. Your answer vs Verdict — side by side comparison */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded px-2.5 py-1.5 bg-muted/60">
+          <span className="text-[11px] text-muted-foreground">Sua resposta</span>
+          <p className={cn(
+            "text-sm font-medium mt-0.5",
+            !item.isCorrect && !isSpecialVerdict && "text-red-600 dark:text-red-400",
+          )}>
+            {formatAnswer(item.myAnswer)}
+          </p>
+        </div>
+        <div
+          className={cn(
+            "rounded px-2.5 py-1.5",
+            isSpecialVerdict
+              ? "bg-amber-50 dark:bg-amber-950/30"
+              : "bg-emerald-50 dark:bg-emerald-950/30",
+          )}
+        >
+          <span className={cn(
+            "text-[11px]",
+            isSpecialVerdict
+              ? "text-amber-600 dark:text-amber-400"
+              : "text-emerald-600 dark:text-emerald-400",
+          )}>
+            Gabarito
+          </span>
+          <p className={cn(
+            "text-sm font-medium mt-0.5",
+            isSpecialVerdict
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-emerald-700 dark:text-emerald-400",
+          )}>
+            {formatVerdictDisplay(item.verdict, item.fieldType)}
+          </p>
+        </div>
       </div>
 
-      {/* All responses from snapshot with correctness */}
-      {item.responseSnapshot && item.responseSnapshot.length > 0 && (
-        <div className="space-y-0.5 rounded-md bg-background/80 p-2">
-          {item.responseSnapshot.map((r) => (
-            <RespondentRow
-              key={r.id}
-              respondent={r}
-              isMe={r.respondent_name === userName}
-              isSpecialVerdict={isSpecialVerdict}
-              verdict={item.verdict}
-              fieldType={item.fieldType}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Coordinator comment */}
+      {/* 3. Coordinator comment — why the verdict */}
       {item.coordinatorComment && (
-        <blockquote className="border-l-2 pl-3 text-xs text-muted-foreground">
+        <blockquote className="border-l-2 pl-3 text-xs text-muted-foreground italic">
           {item.coordinatorComment}
         </blockquote>
       )}
 
-      {/* Acknowledgment actions — incorretos: aceitar + comentar; ambíguos: só comentar */}
+      {/* 4. Other responses */}
+      {otherResponses && otherResponses.length > 0 && (
+        <div>
+          <p className="text-[11px] text-muted-foreground mb-1">Outras respostas</p>
+          <div className="space-y-0.5 rounded-md bg-background/80 p-2">
+            {otherResponses.map((r) => (
+              <RespondentRow
+                key={r.id}
+                respondent={r}
+                isMe={false}
+                isSpecialVerdict={isSpecialVerdict}
+                verdict={item.verdict}
+                fieldType={item.fieldType}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 5. Acknowledgment actions */}
       {(!item.isCorrect || isSpecialVerdict) && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 pt-0.5">
           {(!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") && (
             <>
               {!item.isCorrect && (
