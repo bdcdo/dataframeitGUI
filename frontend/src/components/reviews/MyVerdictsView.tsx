@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useTransition } from "react";
+import { useState, useEffect, useMemo, useTransition, useRef } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   ResizablePanelGroup,
@@ -184,6 +184,7 @@ export function MyVerdictsView({
   const [docIndex, setDocIndex] = useState(0);
   const [docTextCache, setDocTextCache] = useState<Record<string, string>>({});
   const [loadingText, setLoadingText] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const currentGroup = docGroups[docIndex];
   const currentDocId = currentGroup?.docId;
@@ -193,6 +194,11 @@ export function MyVerdictsView({
   useEffect(() => {
     setDocIndex(0);
   }, [filter, fieldFilter, searchQuery]);
+
+  // Scroll to top when document changes
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, 0);
+  }, [docIndex]);
 
   // Lazy-load document text
   useEffect(() => {
@@ -247,47 +253,17 @@ export function MyVerdictsView({
   return (
     <div className="flex h-[calc(100vh-12rem)] flex-col">
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-        <div className="flex flex-wrap items-center gap-2">
-          {isCoordinator && respondents.length > 0 && (
-            <Select
-              value={currentViewUserId || "_self"}
-              onValueChange={(v) => selectRespondent(v === "_self" ? null : v)}
-            >
-              <SelectTrigger className="w-48 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_self">Minhas respostas</SelectItem>
-                {respondents.map((r) => (
-                  <SelectItem key={r.id} value={r.id}>
-                    {r.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+      <div className="border-b px-4 py-2 space-y-1.5">
+        {/* Row 1: main filters + navigation */}
+        <div className="flex items-center gap-2">
           <Input
             placeholder="Buscar documento..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-44 h-8 text-xs"
           />
-          <Select value={fieldFilter} onValueChange={setFieldFilter}>
-            <SelectTrigger className="w-44 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os campos</SelectItem>
-              {fields.map((f) => (
-                <SelectItem key={f.name} value={f.name}>
-                  {f.description || f.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
           <Select value={filter} onValueChange={(v) => setFilter(v as FilterValue)}>
-            <SelectTrigger className="w-44 h-8 text-xs">
+            <SelectTrigger className="w-48 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -300,32 +276,52 @@ export function MyVerdictsView({
           <span className="text-xs text-muted-foreground">
             {totalItems - totalIncorrect}/{totalItems} corretos
           </span>
-        </div>
-        {docGroups.length > 0 && (
           <div className="ml-auto flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              disabled={docIndex === 0}
-              onClick={() => setDocIndex(docIndex - 1)}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {docIndex + 1}/{docGroups.length}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              disabled={docIndex === docGroups.length - 1}
-              onClick={() => setDocIndex(docIndex + 1)}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            {isCoordinator && respondents.length > 0 && (
+              <Select
+                value={currentViewUserId || "_self"}
+                onValueChange={(v) => selectRespondent(v === "_self" ? null : v)}
+              >
+                <SelectTrigger className="w-40 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_self">Minhas respostas</SelectItem>
+                  {respondents.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {docGroups.length > 0 && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={docIndex === 0}
+                  onClick={() => setDocIndex(docIndex - 1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {docIndex + 1}/{docGroups.length}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={docIndex === docGroups.length - 1}
+                  onClick={() => setDocIndex(docIndex + 1)}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {docGroups.length === 0 ? (
@@ -345,16 +341,39 @@ export function MyVerdictsView({
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={45} minSize={25}>
-            <div className="h-full overflow-y-auto px-4 py-4 space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground">
+            <div ref={scrollRef} className="h-full overflow-y-auto px-4 py-4 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="min-w-0 truncate text-xs font-medium text-muted-foreground">
                   {currentGroup.title}
                 </p>
-                <AddNoteButton
-                  projectId={projectId}
-                  documentId={currentGroup.docId}
-                  fields={fields}
-                />
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Select value={fieldFilter} onValueChange={setFieldFilter}>
+                    <SelectTrigger className="w-36 h-7 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="max-w-[min(24rem,calc(100vw-3rem))]">
+                      <SelectItem value="all">Todos os campos</SelectItem>
+                      {fields.map((f) => (
+                        <SelectItem key={f.name} value={f.name}>
+                          <div className="flex flex-col items-start gap-0.5">
+                            <code className="text-xs font-mono">{f.name}</code>
+                            {f.description && f.description !== f.name && (
+                              <span className="text-[11px] text-muted-foreground line-clamp-2">
+                                {f.description}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <AddNoteButton
+                    projectId={projectId}
+                    documentId={currentGroup.docId}
+                    documentTitle={currentGroup.title}
+                    fields={fields}
+                  />
+                </div>
               </div>
               {currentGroup.items.map((item) => (
                 <VerdictCard
@@ -466,21 +485,23 @@ function VerdictCard({
         </blockquote>
       )}
 
-      {/* Acknowledgment actions */}
-      {!item.isCorrect && (
+      {/* Acknowledgment actions — incorretos: aceitar + comentar; ambíguos: só comentar */}
+      {(!item.isCorrect || isSpecialVerdict) && (
         <div className="flex items-center gap-2">
           {(!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") && (
             <>
-              <Button
-                variant="default"
-                size="sm"
-                className="h-6 text-xs"
-                disabled={isPending}
-                onClick={() => onAcknowledge(item.reviewId, "accepted")}
-              >
-                <Check className="mr-1 h-3 w-3" />
-                Aceitar correção
-              </Button>
+              {!item.isCorrect && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-6 text-xs"
+                  disabled={isPending}
+                  onClick={() => onAcknowledge(item.reviewId, "accepted")}
+                >
+                  <Check className="mr-1 h-3 w-3" />
+                  Aceitar correção
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"

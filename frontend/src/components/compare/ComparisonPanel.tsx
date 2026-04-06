@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn, normalizeForComparison } from "@/lib/utils";
 import { CheckCircle2 } from "lucide-react";
+import { AddNoteButton } from "@/components/shared/AddNoteButton";
 
 function formatVerdictDisplay(verdict: string): string {
   if (verdict.startsWith("{")) {
@@ -42,6 +43,9 @@ interface ExistingVerdict {
 }
 
 interface ComparisonPanelProps {
+  projectId: string;
+  documentId: string;
+  documentTitle: string;
   fieldName: string;
   fieldDescription: string;
   fieldType?: "single" | "multi" | "text" | "date";
@@ -63,6 +67,9 @@ interface ComparisonPanelProps {
 }
 
 export function ComparisonPanel({
+  projectId,
+  documentId,
+  documentTitle,
   fieldName,
   fieldDescription,
   fieldType,
@@ -177,12 +184,24 @@ export function ComparisonPanel({
               </div>
             )}
 
-            <Input
-              placeholder="Comentário (opcional)"
-              value={comment}
-              onChange={(e) => onCommentChange(e.target.value)}
-              className="mt-2 text-sm"
-            />
+            <div className="mt-2 flex items-center gap-2">
+              <Input
+                placeholder="Comentário (opcional)"
+                value={comment}
+                onChange={(e) => onCommentChange(e.target.value)}
+                className="text-sm"
+              />
+              <AddNoteButton
+                key={documentId}
+                projectId={projectId}
+                documentId={documentId}
+                documentTitle={documentTitle}
+                fieldName={fieldName}
+                variant="outline"
+                size="sm"
+                label="Anotar"
+              />
+            </div>
           </>
         ) : (
           <div className="mt-2 flex items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">

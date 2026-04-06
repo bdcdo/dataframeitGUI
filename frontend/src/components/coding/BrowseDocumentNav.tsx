@@ -16,7 +16,6 @@ interface BrowseDocumentNavProps {
   projectId?: string;
   documentId?: string;
   onLlmComplete?: () => void;
-  actions?: React.ReactNode;
 }
 
 export function BrowseDocumentNav({
@@ -29,7 +28,6 @@ export function BrowseDocumentNav({
   projectId,
   documentId,
   onLlmComplete,
-  actions,
 }: BrowseDocumentNavProps) {
   return (
     <div className="flex h-8 items-center justify-between border-b px-4 text-sm">
@@ -49,7 +47,6 @@ export function BrowseDocumentNav({
         <Badge variant="secondary">
           {responseCount} {responseCount === 1 ? "resposta" : "respostas"}
         </Badge>
-        {actions}
         {projectId && documentId && (
           <RunLlmButton
             projectId={projectId}

@@ -3,10 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -24,6 +27,7 @@ import type { PydanticField } from "@/lib/types";
 interface AddNoteButtonProps {
   projectId: string;
   documentId?: string | null;
+  documentTitle?: string | null;
   fieldName?: string | null;
   fields?: PydanticField[];
   variant?: "default" | "ghost" | "outline";
@@ -34,6 +38,7 @@ interface AddNoteButtonProps {
 export function AddNoteButton({
   projectId,
   documentId,
+  documentTitle,
   fieldName: fixedFieldName,
   fields,
   variant = "ghost",
@@ -47,6 +52,12 @@ export function AddNoteButton({
   const [isPending, startTransition] = useTransition();
 
   const showFieldSelect = !fixedFieldName && fields && fields.length > 0;
+
+  // Build contextual subtitle
+  const contextParts: string[] = [];
+  if (documentTitle) contextParts.push(documentTitle);
+  if (fixedFieldName) contextParts.push(fixedFieldName);
+  const contextLabel = contextParts.length > 0 ? contextParts.join(" → ") : null;
 
   const handleSubmit = () => {
     if (!body.trim()) return;
@@ -71,51 +82,72 @@ export function AddNoteButton({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
         <Button variant={variant} size={size} className="gap-1.5 text-xs">
           <MessageSquarePlus className="h-3.5 w-3.5" />
           {label ?? "Nota"}
         </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-80 space-y-3" align="end">
-        <p className="text-xs font-medium">Adicionar nota</p>
-        {showFieldSelect && (
-          <Select value={selectedField} onValueChange={setSelectedField}>
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Campo (opcional)" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="_none">Geral (sem campo)</SelectItem>
-              {fields.map((f) => (
-                <SelectItem key={f.name} value={f.name}>
-                  {f.description || f.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Escreva sua nota..."
-          className="min-h-20 text-sm"
-          autoFocus
-        />
-        <div className="flex justify-end">
-          <Button
-            size="sm"
-            className="h-7 text-xs"
-            disabled={isPending || !body.trim()}
-            onClick={handleSubmit}
-          >
-            {isPending ? (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-            ) : null}
-            Salvar
-          </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Adicionar nota</DialogTitle>
+          {contextLabel && (
+            <DialogDescription className="text-xs truncate">
+              {contextLabel}
+            </DialogDescription>
+          )}
+        </DialogHeader>
+        <div className="space-y-3">
+          {showFieldSelect && (
+            <Select value={selectedField} onValueChange={setSelectedField}>
+              <SelectTrigger className="h-9 text-xs">
+                <SelectValue placeholder="Campo (opcional)" />
+              </SelectTrigger>
+              <SelectContent className="max-w-[calc(100vw-3rem)]">
+                <SelectItem value="_none">Geral (sem campo específico)</SelectItem>
+                {fields.map((f) => (
+                  <SelectItem key={f.name} value={f.name}>
+                    <div className="flex flex-col items-start gap-0.5">
+                      <code className="text-xs font-mono">{f.name}</code>
+                      {f.description && f.description !== f.name && (
+                        <span className="text-[11px] text-muted-foreground line-clamp-2">
+                          {f.description}
+                        </span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Escreva sua nota..."
+            className="min-h-28 text-sm"
+            autoFocus
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setOpen(false)}
+              disabled={isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              disabled={isPending || !body.trim()}
+              onClick={handleSubmit}
+            >
+              {isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              Salvar nota
+            </Button>
+          </div>
         </div>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }

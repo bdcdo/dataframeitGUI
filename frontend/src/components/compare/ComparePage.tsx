@@ -14,7 +14,6 @@ import { submitVerdict, type ResponseSnapshotEntry } from "@/actions/reviews";
 import { toast } from "sonner";
 import { normalizeForComparison } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
-import { AddNoteButton } from "@/components/shared/AddNoteButton";
 
 interface CompareResponse {
   id: string;
@@ -329,14 +328,6 @@ export function ComparePage({
           respondentNames={respondentNames}
           projectId={projectId}
           documentId={currentDoc?.id}
-          actions={
-            <AddNoteButton
-              key={currentDoc?.id}
-              projectId={projectId}
-              documentId={currentDoc?.id}
-              fieldName={currentFieldName}
-            />
-          }
         />
       )}
 
@@ -347,6 +338,9 @@ export function ComparePage({
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={50} minSize={25}>
           <ComparisonPanel
+            projectId={projectId}
+            documentId={currentDoc?.id}
+            documentTitle={docTitle}
             fieldName={currentFieldName}
             fieldDescription={currentField?.description || currentFieldName}
             fieldType={currentField?.type}
