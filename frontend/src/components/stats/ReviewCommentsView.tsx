@@ -18,12 +18,17 @@ import { CommentCard, type ReviewComment } from "./CommentCard";
 import { CommentsSplitView } from "./CommentsSplitView";
 import { EditFieldDialog } from "./EditFieldDialog";
 import { SuggestFieldDialog } from "./SuggestFieldDialog";
+import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import {
   resolveReviewComment,
   reopenReviewComment,
   resolveDifficulty,
   reopenDifficulty,
 } from "@/actions/stats";
+import {
+  resolveProjectComment,
+  reopenProjectComment,
+} from "@/actions/project-comments";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
@@ -48,8 +53,9 @@ interface ReviewCommentsViewProps {
   llmDocsWithoutAmbiguities?: number;
 }
 
-function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" | "sugestao" | "dificuldade" {
+function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" | "sugestao" | "dificuldade" | "anotacao" {
   if (verdict === "nota") return "nota";
+  if (verdict === "anotacao") return "anotacao";
   if (verdict === "dificuldade") return "dificuldade";
   if (verdict === "sugestao") return "sugestao";
   if (verdict === "ambiguo") return "ambiguo";
@@ -96,7 +102,9 @@ export function ReviewCommentsView({
   const handleResolve = (comment: ReviewComment) => {
     startTransition(async () => {
       let result;
-      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
+      if (comment.source === "anotacao") {
+        result = await resolveProjectComment(comment.id.slice("anotacao-".length), projectId);
+      } else if (comment.source === "dificuldade" && comment.difficultyResponseId) {
         result = await resolveDifficulty(
           projectId,
           comment.difficultyResponseId,
@@ -117,7 +125,9 @@ export function ReviewCommentsView({
   const handleReopen = (comment: ReviewComment) => {
     startTransition(async () => {
       let result;
-      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
+      if (comment.source === "anotacao") {
+        result = await reopenProjectComment(comment.id.slice("anotacao-".length), projectId);
+      } else if (comment.source === "dificuldade" && comment.difficultyResponseId) {
         result = await reopenDifficulty(projectId, comment.difficultyResponseId);
       } else {
         result = await reopenReviewComment(comment.id, projectId);
@@ -158,6 +168,13 @@ export function ReviewCommentsView({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
+        <AddNoteButton
+          projectId={projectId}
+          fields={fields}
+          variant="outline"
+          size="sm"
+          label="Nova nota"
+        />
         {reviewDocCount > 0 && (
           <Button
             variant="outline"
@@ -281,6 +298,7 @@ export function ReviewCommentsView({
             <SelectItem value="nota">Notas</SelectItem>
             <SelectItem value="sugestao">Sugestões</SelectItem>
             <SelectItem value="dificuldade">Dificuldade LLM</SelectItem>
+            <SelectItem value="anotacao">Anotações</SelectItem>
           </SelectContent>
         </Select>
         <span className="ml-auto text-sm text-muted-foreground">

@@ -23,6 +23,7 @@ export default async function CommentsPage({
     { data: suggestions },
     { data: llmResponses },
     { data: difficultyResolutions },
+    { data: projectComments },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -76,6 +77,12 @@ export default async function CommentsPage({
       .from("difficulty_resolutions")
       .select("response_id, resolved_at")
       .eq("project_id", id),
+    supabase
+      .from("project_comments")
+      .select("id, document_id, field_name, author_id, body, parent_id, resolved_at, resolved_by, created_at, profiles!author_id(email)")
+      .eq("project_id", id)
+      .is("parent_id", null)
+      .order("created_at", { ascending: false }),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -209,6 +216,28 @@ export default async function CommentsPage({
     });
   });
 
+  // Map project_comments (anotações soltas) as ReviewComment
+  const annotationComments: ReviewComment[] = (projectComments || []).map((c) => {
+    const p = c.profiles as unknown as { email: string | null } | null;
+    return {
+      id: `anotacao-${c.id}`,
+      documentId: c.document_id || "",
+      documentTitle: c.document_id ? docMap.get(c.document_id) || c.document_id : "",
+      fieldName: c.field_name || "(geral)",
+      fieldDescription: c.field_name
+        ? fieldMap.get(c.field_name)?.description || c.field_name
+        : "Anotação livre",
+      verdict: "anotacao",
+      comment: c.body,
+      reviewerName: p?.email?.split("@")[0] || "Anônimo",
+      resolvedAt: c.resolved_at,
+      createdAt: c.created_at,
+      chosenResponseId: null,
+      source: "anotacao" as const,
+      responseSnapshot: null,
+    };
+  });
+
   // Pending suggestions first, then all others by date
   const pendingSuggestions = suggestionComments.filter(
     (s) => s.suggestionStatus === "pending",
@@ -217,6 +246,7 @@ export default async function CommentsPage({
     ...reviewComments,
     ...noteComments,
     ...difficultyComments,
+    ...annotationComments,
     ...suggestionComments.filter((s) => s.suggestionStatus !== "pending"),
   ].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),

@@ -63,7 +63,7 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
-  source: "review" | "nota" | "sugestao" | "dificuldade";
+  source: "review" | "nota" | "sugestao" | "dificuldade" | "anotacao";
   responseSnapshot: ResponseSnapshotEntry[] | null;
   suggestionId?: string;
   suggestionStatus?: "pending" | "approved" | "rejected";
@@ -85,6 +85,7 @@ interface CommentCardProps {
 
 function formatVerdictLabel(verdict: string): string {
   if (verdict === "nota") return "Nota do pesquisador";
+  if (verdict === "anotacao") return "Anotação";
   if (verdict === "dificuldade") return "Dificuldade do LLM";
   if (verdict === "sugestao") return "Sugestão";
   if (verdict === "ambiguo") return "Ambíguo";
@@ -107,6 +108,7 @@ function verdictVariant(
   verdict: string,
 ): "default" | "secondary" | "destructive" | "outline" {
   if (verdict === "nota") return "secondary";
+  if (verdict === "anotacao") return "secondary";
   if (verdict === "dificuldade") return "secondary";
   if (verdict === "sugestao") return "outline";
   if (verdict === "ambiguo") return "secondary";
@@ -302,7 +304,7 @@ export function CommentCard({
         )}
 
         {/* Gabarito expansível (só para reviews, não para notas) */}
-        {comment.source !== "nota" && comment.source !== "dificuldade" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
+        {comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "anotacao" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
           <CollapsibleTrigger asChild>
             <Button
               variant="ghost"

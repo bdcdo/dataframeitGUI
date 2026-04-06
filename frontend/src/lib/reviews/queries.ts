@@ -65,7 +65,7 @@ function isFieldStale(
   return !!projectPydanticHash && pydanticHash !== projectPydanticHash;
 }
 
-function isAnswerCorrect(
+export function isAnswerCorrect(
   answer: unknown,
   verdict: string,
   fieldType: "single" | "multi" | "text" | "date",

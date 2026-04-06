@@ -22,6 +22,7 @@ import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
 import { toast } from "sonner";
 import { CheckCircle2, FileQuestion, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AddNoteButton } from "@/components/shared/AddNoteButton";
 
 interface CodingPageProps {
   projectId: string;
@@ -462,6 +463,14 @@ export function CodingPage({
                   onNavigate={handleDocNavigate}
                   onToggleFullscreen={toggleFullscreen}
                   parecerUrl={assignedParecerUrl}
+                  actions={
+                    <AddNoteButton
+                      key={currentDoc?.id}
+                      projectId={projectId}
+                      documentId={currentDoc?.id}
+                      fields={fields}
+                    />
+                  }
                 />
               )}
               <ResizablePanelGroup
@@ -519,6 +528,14 @@ export function CodingPage({
                   parecerUrl={browseParecerUrl}
                   projectId={projectId}
                   documentId={selectedBrowseDoc?.id}
+                  actions={
+                    <AddNoteButton
+                      key={selectedBrowseDoc?.id}
+                      projectId={projectId}
+                      documentId={selectedBrowseDoc?.id}
+                      fields={fields}
+                    />
+                  }
                 />
               )}
               <ResizablePanelGroup

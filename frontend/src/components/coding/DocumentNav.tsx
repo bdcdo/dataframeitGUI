@@ -11,9 +11,10 @@ interface DocumentNavProps {
   onNavigate: (index: number) => void;
   onToggleFullscreen?: () => void;
   parecerUrl?: string;
+  actions?: React.ReactNode;
 }
 
-export function DocumentNav({ title, currentIndex, total, onNavigate, onToggleFullscreen, parecerUrl }: DocumentNavProps) {
+export function DocumentNav({ title, currentIndex, total, onNavigate, onToggleFullscreen, parecerUrl, actions }: DocumentNavProps) {
   return (
     <div className="flex h-8 items-center justify-between border-b px-4 text-sm">
       <div className="flex items-center gap-1 min-w-0">
@@ -21,6 +22,7 @@ export function DocumentNav({ title, currentIndex, total, onNavigate, onToggleFu
         {parecerUrl && <CopyLinkButton url={parecerUrl} />}
       </div>
       <div className="flex items-center gap-1">
+        {actions}
         <Button variant="ghost" size="icon" className="h-6 w-6 disabled:opacity-50" onClick={() => onNavigate(currentIndex - 1)} disabled={currentIndex === 0}>
           <ChevronLeft className="h-4 w-4" />
         </Button>

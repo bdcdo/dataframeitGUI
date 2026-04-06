@@ -29,6 +29,7 @@ interface CompareNavProps {
   respondentNames?: string[];
   projectId?: string;
   documentId?: string;
+  actions?: React.ReactNode;
 }
 
 export function CompareNav({
@@ -49,6 +50,7 @@ export function CompareNav({
   respondentNames,
   projectId,
   documentId,
+  actions,
 }: CompareNavProps) {
   return (
     <div className="flex h-10 items-center justify-between border-b px-4 text-sm shrink-0">
@@ -88,6 +90,7 @@ export function CompareNav({
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
+        {actions}
         {projectId && documentId && (
           <RunLlmButton projectId={projectId} documentId={documentId} />
         )}

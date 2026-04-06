@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
+import { isAnswerCorrect } from "@/lib/reviews/queries";
 import type { PydanticField } from "@/lib/types";
 
 export interface VerdictItem {
@@ -9,6 +10,7 @@ export interface VerdictItem {
   documentTitle: string;
   fieldName: string;
   fieldDescription: string;
+  fieldType: "single" | "multi" | "text" | "date";
   verdict: string;
   coordinatorComment: string | null;
   myAnswer: unknown;
@@ -18,16 +20,10 @@ export interface VerdictItem {
     respondent_name: string;
     respondent_type: "humano" | "llm";
     answer: unknown;
+    justification?: string;
   }> | null;
   acknowledgmentStatus: "pending" | "accepted" | "questioned" | null;
   acknowledgmentComment: string | null;
-}
-
-function normalizeForComparison(answer: unknown): string {
-  if (typeof answer === "string") return JSON.stringify(answer.trim());
-  if (Array.isArray(answer))
-    return JSON.stringify(answer.map((v) => (typeof v === "string" ? v.trim() : v)));
-  return JSON.stringify(answer);
 }
 
 export default async function MyVerdictsPage({
@@ -76,6 +72,7 @@ export default async function MyVerdictsPage({
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const fieldDescMap = new Map(fields.map((f) => [f.name, f.description]));
+  const fieldTypeMap = new Map(fields.map((f) => [f.name, (f.type || "text") as VerdictItem["fieldType"]]));
 
   // Get document IDs where I have responses
   const myDocIds = [...new Set((myResponses || []).map((r) => r.document_id))];
@@ -146,10 +143,8 @@ export default async function MyVerdictsPage({
       const myAnswer = myAnswers[r.field_name];
       if (myAnswer === undefined) return null;
 
-      const isCorrect =
-        r.verdict === "ambiguo" ||
-        r.verdict === "pular" ||
-        normalizeForComparison(myAnswer) === normalizeForComparison(r.verdict);
+      const fieldType = fieldTypeMap.get(r.field_name) || "text";
+      const isCorrect = isAnswerCorrect(myAnswer, r.verdict, fieldType);
 
       const ack = ackMap.get(r.id);
 
@@ -159,6 +154,7 @@ export default async function MyVerdictsPage({
         documentTitle: docMap.get(r.document_id) || r.document_id,
         fieldName: r.field_name,
         fieldDescription: fieldDescMap.get(r.field_name) || r.field_name,
+        fieldType: fieldTypeMap.get(r.field_name) || "text",
         verdict: r.verdict,
         coordinatorComment: r.comment,
         myAnswer,

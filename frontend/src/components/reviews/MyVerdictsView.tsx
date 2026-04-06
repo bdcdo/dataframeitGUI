@@ -21,17 +21,21 @@ import { Input } from "@/components/ui/input";
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Check,
   X,
   Loader2,
   MessageSquare,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isAnswerCorrect } from "@/lib/reviews/queries";
 import { getDocumentText } from "@/actions/documents";
 import { acknowledgeVerdict } from "@/actions/verdicts";
 import { toast } from "sonner";
 import type { VerdictItem } from "@/app/(app)/projects/[id]/reviews/my-verdicts/page";
 import type { PydanticField } from "@/lib/types";
+import { AddNoteButton } from "@/components/shared/AddNoteButton";
 
 function formatAnswer(answer: unknown): string {
   if (answer == null) return "(sem resposta)";
@@ -46,21 +50,31 @@ function formatAnswer(answer: unknown): string {
   return String(answer);
 }
 
-function formatVerdictDisplay(verdict: string): string {
+function formatVerdictDisplay(verdict: string, fieldType?: string): string {
   if (verdict === "ambiguo") return "Ambíguo";
   if (verdict === "pular") return "Pular";
-  if (verdict.startsWith("{")) {
+  if (fieldType === "multi" || verdict.startsWith("{")) {
     try {
       const parsed = JSON.parse(verdict) as Record<string, boolean>;
       const selected = Object.entries(parsed)
         .filter(([, v]) => v)
         .map(([k]) => k);
-      return selected.length > 0 ? selected.join(", ") : "(nenhuma)";
+      return selected.length > 0 ? selected.join("; ") : "(nenhuma)";
     } catch {
       // fallback
     }
   }
   return verdict;
+}
+
+/** Sort priority: incorrect+pending first, then incorrect+questioned, then incorrect+accepted, then correct */
+function verdictSortKey(item: VerdictItem): number {
+  if (!item.isCorrect) {
+    if (!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") return 0;
+    if (item.acknowledgmentStatus === "questioned") return 1;
+    return 2; // accepted
+  }
+  return 3; // correct
 }
 
 export interface RespondentOption {
@@ -78,6 +92,8 @@ interface MyVerdictsViewProps {
   currentViewUserId?: string;
 }
 
+type FilterValue = "pending" | "incorrect" | "questioned" | "all";
+
 export function MyVerdictsView({
   projectId,
   items,
@@ -91,17 +107,56 @@ export function MyVerdictsView({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
-  const [filter, setFilter] = useState("all");
   const [commentingReviewId, setCommentingReviewId] = useState<string | null>(null);
   const [questionComment, setQuestionComment] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [fieldFilter, setFieldFilter] = useState("all");
 
-  // Group by document
+  // Determine default filter: if there are pending items, start with "pending"
+  const hasPendingItems = useMemo(
+    () => items.some((i) => !i.isCorrect && (!i.acknowledgmentStatus || i.acknowledgmentStatus === "pending")),
+    [items],
+  );
+  const [filter, setFilter] = useState<FilterValue>(hasPendingItems ? "pending" : "all");
+
+  const totalIncorrect = useMemo(() => items.filter((i) => !i.isCorrect).length, [items]);
+  const totalPending = useMemo(
+    () => items.filter((i) => !i.isCorrect && (!i.acknowledgmentStatus || i.acknowledgmentStatus === "pending")).length,
+    [items],
+  );
+  const totalQuestioned = useMemo(
+    () => items.filter((i) => i.acknowledgmentStatus === "questioned").length,
+    [items],
+  );
+  const totalItems = items.length;
+
+  // If filter is "pending" but there are no pending items, fall back to "all"
+  const effectiveFilter: FilterValue =
+    filter === "pending" && totalPending === 0 ? "all" : filter;
+
+  // Group by document with filters, search, sort
   const docGroups = useMemo(() => {
     let filtered = items;
-    if (filter === "incorrect") filtered = items.filter((i) => !i.isCorrect);
-    if (filter === "pending") filtered = items.filter((i) => !i.acknowledgmentStatus || i.acknowledgmentStatus === "pending");
-    if (filter === "questioned") filtered = items.filter((i) => i.acknowledgmentStatus === "questioned");
 
+    // Status filter
+    if (effectiveFilter === "incorrect") filtered = filtered.filter((i) => !i.isCorrect);
+    if (effectiveFilter === "pending")
+      filtered = filtered.filter(
+        (i) => !i.isCorrect && (!i.acknowledgmentStatus || i.acknowledgmentStatus === "pending"),
+      );
+    if (effectiveFilter === "questioned")
+      filtered = filtered.filter((i) => i.acknowledgmentStatus === "questioned");
+
+    // Field filter
+    if (fieldFilter !== "all") filtered = filtered.filter((i) => i.fieldName === fieldFilter);
+
+    // Search by document title
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter((i) => i.documentTitle.toLowerCase().includes(q));
+    }
+
+    // Group by document
     const map = new Map<string, { title: string; items: VerdictItem[] }>();
     for (const item of filtered) {
       if (!map.has(item.documentId)) {
@@ -109,8 +164,22 @@ export function MyVerdictsView({
       }
       map.get(item.documentId)!.items.push(item);
     }
-    return [...map.entries()].map(([docId, data]) => ({ docId, ...data }));
-  }, [items, filter]);
+
+    // Sort items within each document by priority
+    const groups = [...map.entries()].map(([docId, data]) => {
+      data.items.sort((a, b) => verdictSortKey(a) - verdictSortKey(b));
+      return { docId, ...data };
+    });
+
+    // Sort documents: those with pending items first
+    groups.sort((a, b) => {
+      const aMin = Math.min(...a.items.map(verdictSortKey));
+      const bMin = Math.min(...b.items.map(verdictSortKey));
+      return aMin - bMin;
+    });
+
+    return groups;
+  }, [items, effectiveFilter, fieldFilter, searchQuery]);
 
   const [docIndex, setDocIndex] = useState(0);
   const [docTextCache, setDocTextCache] = useState<Record<string, string>>({});
@@ -120,10 +189,10 @@ export function MyVerdictsView({
   const currentDocId = currentGroup?.docId;
   const currentText = currentDocId ? docTextCache[currentDocId] : undefined;
 
-  // Reset doc index when filter changes
+  // Reset doc index when filters change
   useEffect(() => {
     setDocIndex(0);
-  }, [filter]);
+  }, [filter, fieldFilter, searchQuery]);
 
   // Lazy-load document text
   useEffect(() => {
@@ -139,7 +208,8 @@ export function MyVerdictsView({
       setLoadingText(false);
     });
     return () => { cancelled = true; };
-  }, [currentDocId, projectId, docTextCache]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDocId, projectId]);
 
   const handleAcknowledge = (reviewId: string, status: "accepted" | "questioned", comment?: string) => {
     startTransition(async () => {
@@ -166,9 +236,6 @@ export function MyVerdictsView({
     router.push(`${pathname}${qs ? `?${qs}` : ""}`);
   };
 
-  const totalIncorrect = items.filter((i) => !i.isCorrect).length;
-  const totalItems = items.length;
-
   if (totalItems === 0) {
     return (
       <p className="py-12 text-center text-sm text-muted-foreground">
@@ -180,8 +247,8 @@ export function MyVerdictsView({
   return (
     <div className="flex h-[calc(100vh-12rem)] flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+        <div className="flex flex-wrap items-center gap-2">
           {isCoordinator && respondents.length > 0 && (
             <Select
               value={currentViewUserId || "_self"}
@@ -200,15 +267,34 @@ export function MyVerdictsView({
               </SelectContent>
             </Select>
           )}
-          <Select value={filter} onValueChange={setFilter}>
-            <SelectTrigger className="w-36 h-8 text-xs">
+          <Input
+            placeholder="Buscar documento..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-44 h-8 text-xs"
+          />
+          <Select value={fieldFilter} onValueChange={setFieldFilter}>
+            <SelectTrigger className="w-44 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os campos</SelectItem>
+              {fields.map((f) => (
+                <SelectItem key={f.name} value={f.name}>
+                  {f.description || f.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filter} onValueChange={(v) => setFilter(v as FilterValue)}>
+            <SelectTrigger className="w-44 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos ({totalItems})</SelectItem>
               <SelectItem value="incorrect">Incorretos ({totalIncorrect})</SelectItem>
-              <SelectItem value="pending">Pendentes</SelectItem>
-              <SelectItem value="questioned">Com dúvida</SelectItem>
+              <SelectItem value="pending">Aguardando feedback ({totalPending})</SelectItem>
+              <SelectItem value="questioned">Com dúvida ({totalQuestioned})</SelectItem>
             </SelectContent>
           </Select>
           <span className="text-xs text-muted-foreground">
@@ -216,7 +302,7 @@ export function MyVerdictsView({
           </span>
         </div>
         {docGroups.length > 0 && (
-          <div className="flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
@@ -260,145 +346,273 @@ export function MyVerdictsView({
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={45} minSize={25}>
             <div className="h-full overflow-y-auto px-4 py-4 space-y-4">
-              <p className="text-xs font-medium text-muted-foreground">
-                {currentGroup.title}
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {currentGroup.title}
+                </p>
+                <AddNoteButton
+                  projectId={projectId}
+                  documentId={currentGroup.docId}
+                  fields={fields}
+                />
+              </div>
               {currentGroup.items.map((item) => (
-                <div
+                <VerdictCard
                   key={item.reviewId}
-                  className={cn(
-                    "space-y-2 rounded-lg border p-3",
-                    item.isCorrect
-                      ? "border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20"
-                      : "border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/20",
-                  )}
-                >
-                  {/* Field name + correct/incorrect */}
-                  <div className="flex items-center justify-between gap-2">
-                    <code className="text-xs font-mono text-muted-foreground/70">
-                      {item.fieldName}
-                    </code>
-                    {item.isCorrect ? (
-                      <Badge className="bg-green-500/10 text-green-700 text-xs">
-                        <Check className="mr-1 h-3 w-3" /> Correta
-                      </Badge>
-                    ) : (
-                      <Badge className="bg-red-500/10 text-red-700 text-xs">
-                        <X className="mr-1 h-3 w-3" /> Incorreta
-                      </Badge>
-                    )}
-                  </div>
-
-                  {/* All responses from snapshot */}
-                  {item.responseSnapshot && item.responseSnapshot.length > 0 && (
-                    <div className="space-y-0.5 rounded-md bg-background/80 p-2">
-                      {item.responseSnapshot.map((r, i) => {
-                        const isMe = r.respondent_name === userName || r.respondent_type === "humano";
-                        return (
-                          <div
-                            key={i}
-                            className={cn(
-                              "flex items-start gap-2 rounded px-2 py-1 text-xs",
-                              isMe && r.respondent_name === userName && "bg-brand/5 font-medium",
-                            )}
-                          >
-                            <div className="min-w-0">
-                              {r.respondent_name === userName && (
-                                <span className="mr-1 text-brand">★</span>
-                              )}
-                              <span className={r.respondent_name === userName ? "font-medium" : ""}>
-                                {r.respondent_name === userName ? "Você" : r.respondent_name}
-                              </span>
-                              <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0">
-                                {r.respondent_type === "humano" ? "Humano" : "LLM"}
-                              </Badge>
-                              <span className="ml-2 text-muted-foreground">
-                                {formatAnswer(r.answer)}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Verdict */}
-                  <div className="text-xs">
-                    <span className="text-muted-foreground">Gabarito: </span>
-                    <span className="font-medium">{formatVerdictDisplay(item.verdict)}</span>
-                  </div>
-
-                  {/* Coordinator comment */}
-                  {item.coordinatorComment && (
-                    <blockquote className="border-l-2 pl-3 text-xs text-muted-foreground">
-                      {item.coordinatorComment}
-                    </blockquote>
-                  )}
-
-                  {/* Acknowledgment actions */}
-                  {!item.isCorrect && (
-                    <div className="flex items-center gap-2">
-                      {(!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") && (
-                        <>
-                          <Button
-                            variant="default"
-                            size="sm"
-                            className="h-6 text-xs"
-                            disabled={isPending}
-                            onClick={() => handleAcknowledge(item.reviewId, "accepted")}
-                          >
-                            <Check className="mr-1 h-3 w-3" />
-                            Aceitar correção
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 text-xs"
-                            disabled={isPending}
-                            onClick={() => setCommentingReviewId(
-                              commentingReviewId === item.reviewId ? null : item.reviewId,
-                            )}
-                          >
-                            <MessageSquare className="mr-1 h-3 w-3" />
-                            Comentar dúvida
-                          </Button>
-                        </>
-                      )}
-                      {item.acknowledgmentStatus === "accepted" && (
-                        <Badge className="text-xs bg-green-500/10 text-green-700">Aceita</Badge>
-                      )}
-                      {item.acknowledgmentStatus === "questioned" && (
-                        <Badge className="text-xs bg-amber-500/10 text-amber-700">Dúvida enviada</Badge>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Comment input */}
-                  {commentingReviewId === item.reviewId && (
-                    <div className="flex gap-2">
-                      <Input
-                        value={questionComment}
-                        onChange={(e) => setQuestionComment(e.target.value)}
-                        placeholder="Qual a sua dúvida?"
-                        className="text-xs h-7"
-                      />
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs shrink-0"
-                        disabled={isPending || !questionComment.trim()}
-                        onClick={() =>
-                          handleAcknowledge(item.reviewId, "questioned", questionComment)
-                        }
-                      >
-                        Enviar
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                  item={item}
+                  userName={userName}
+                  isPending={isPending}
+                  commentingReviewId={commentingReviewId}
+                  questionComment={questionComment}
+                  onSetCommentingReviewId={setCommentingReviewId}
+                  onSetQuestionComment={setQuestionComment}
+                  onAcknowledge={handleAcknowledge}
+                />
               ))}
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
+      )}
+    </div>
+  );
+}
+
+/* ── Verdict Card ── */
+
+function VerdictCard({
+  item,
+  userName,
+  isPending,
+  commentingReviewId,
+  questionComment,
+  onSetCommentingReviewId,
+  onSetQuestionComment,
+  onAcknowledge,
+}: {
+  item: VerdictItem;
+  userName: string;
+  isPending: boolean;
+  commentingReviewId: string | null;
+  questionComment: string;
+  onSetCommentingReviewId: (id: string | null) => void;
+  onSetQuestionComment: (v: string) => void;
+  onAcknowledge: (reviewId: string, status: "accepted" | "questioned", comment?: string) => void;
+}) {
+  const isSpecialVerdict = item.verdict === "ambiguo" || item.verdict === "pular";
+
+  return (
+    <div
+      className={cn(
+        "space-y-2 rounded-lg border p-3",
+        item.isCorrect
+          ? "border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20"
+          : "border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/20",
+      )}
+    >
+      {/* Field description + correct/incorrect */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-medium leading-tight">
+            {item.fieldDescription}
+          </p>
+          <code className="text-[10px] font-mono text-muted-foreground/60">
+            {item.fieldName}
+          </code>
+        </div>
+        {item.isCorrect ? (
+          <Badge className="shrink-0 bg-green-500/10 text-green-700 text-xs">
+            <Check className="mr-1 h-3 w-3" /> Correta
+          </Badge>
+        ) : (
+          <Badge className="shrink-0 bg-red-500/10 text-red-700 text-xs">
+            <X className="mr-1 h-3 w-3" /> Incorreta
+          </Badge>
+        )}
+      </div>
+
+      {/* Verdict with colored background */}
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded px-2 py-1 text-xs",
+          isSpecialVerdict
+            ? "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+            : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400",
+        )}
+      >
+        <span className="font-medium">Gabarito:</span>
+        <span className="font-medium">{formatVerdictDisplay(item.verdict, item.fieldType)}</span>
+      </div>
+
+      {/* All responses from snapshot with correctness */}
+      {item.responseSnapshot && item.responseSnapshot.length > 0 && (
+        <div className="space-y-0.5 rounded-md bg-background/80 p-2">
+          {item.responseSnapshot.map((r) => (
+            <RespondentRow
+              key={r.id}
+              respondent={r}
+              isMe={r.respondent_name === userName}
+              isSpecialVerdict={isSpecialVerdict}
+              verdict={item.verdict}
+              fieldType={item.fieldType}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Coordinator comment */}
+      {item.coordinatorComment && (
+        <blockquote className="border-l-2 pl-3 text-xs text-muted-foreground">
+          {item.coordinatorComment}
+        </blockquote>
+      )}
+
+      {/* Acknowledgment actions */}
+      {!item.isCorrect && (
+        <div className="flex items-center gap-2">
+          {(!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") && (
+            <>
+              <Button
+                variant="default"
+                size="sm"
+                className="h-6 text-xs"
+                disabled={isPending}
+                onClick={() => onAcknowledge(item.reviewId, "accepted")}
+              >
+                <Check className="mr-1 h-3 w-3" />
+                Aceitar correção
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-xs"
+                disabled={isPending}
+                onClick={() =>
+                  onSetCommentingReviewId(
+                    commentingReviewId === item.reviewId ? null : item.reviewId,
+                  )
+                }
+              >
+                <MessageSquare className="mr-1 h-3 w-3" />
+                Comentar dúvida
+              </Button>
+            </>
+          )}
+          {item.acknowledgmentStatus === "accepted" && (
+            <Badge className="text-xs bg-green-500/10 text-green-700">Aceita</Badge>
+          )}
+          {item.acknowledgmentStatus === "questioned" && (
+            <Badge className="text-xs bg-amber-500/10 text-amber-700">Dúvida enviada</Badge>
+          )}
+        </div>
+      )}
+
+      {/* Comment input */}
+      {commentingReviewId === item.reviewId && (
+        <div className="flex gap-2">
+          <Input
+            value={questionComment}
+            onChange={(e) => onSetQuestionComment(e.target.value)}
+            placeholder="Qual a sua dúvida?"
+            className="text-xs h-7"
+          />
+          <Button
+            size="sm"
+            className="h-7 text-xs shrink-0"
+            disabled={isPending || !questionComment.trim()}
+            onClick={() =>
+              onAcknowledge(item.reviewId, "questioned", questionComment)
+            }
+          >
+            Enviar
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Respondent Row ── */
+
+function RespondentRow({
+  respondent,
+  isMe,
+  isSpecialVerdict,
+  verdict,
+  fieldType,
+}: {
+  respondent: NonNullable<VerdictItem["responseSnapshot"]>[number];
+  isMe: boolean;
+  isSpecialVerdict: boolean;
+  verdict: string;
+  fieldType: VerdictItem["fieldType"];
+}) {
+  const [showJustification, setShowJustification] = useState(false);
+  const correct = isSpecialVerdict || isAnswerCorrect(respondent.answer, verdict, fieldType);
+
+  return (
+    <div className="space-y-0.5">
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded px-2 py-1 text-xs",
+          isMe && "bg-brand/5 font-medium",
+        )}
+      >
+        {/* Correctness icon */}
+        {!isSpecialVerdict && (
+          correct ? (
+            <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+          ) : (
+            <X className="h-3.5 w-3.5 shrink-0 text-red-500" />
+          )
+        )}
+
+        {/* Answer */}
+        <span
+          className={cn(
+            "min-w-0 truncate",
+            !isSpecialVerdict && !correct && "text-red-600 dark:text-red-400",
+          )}
+        >
+          {formatAnswer(respondent.answer) || (
+            <span className="italic text-muted-foreground">sem resposta</span>
+          )}
+        </span>
+
+        {/* Respondent info */}
+        <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+          {respondent.respondent_type === "llm" && (
+            <Bot className="h-3 w-3" />
+          )}
+          {isMe ? (
+            <>
+              <span className="text-brand">★</span>
+              <span className="font-medium">Você</span>
+            </>
+          ) : (
+            respondent.respondent_name
+          )}
+        </span>
+
+        {/* Justification toggle */}
+        {respondent.justification && (
+          <button
+            onClick={() => setShowJustification(!showJustification)}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          >
+            {showJustification ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+          </button>
+        )}
+      </div>
+
+      {/* Expandable justification */}
+      {showJustification && respondent.justification && (
+        <blockquote className="ml-6 border-l-2 pl-2 text-xs text-muted-foreground whitespace-pre-wrap">
+          {respondent.justification}
+        </blockquote>
       )}
     </div>
   );
