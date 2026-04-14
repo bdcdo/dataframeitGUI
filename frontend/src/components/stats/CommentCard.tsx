@@ -63,7 +63,7 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
-  source: "review" | "nota" | "sugestao" | "dificuldade" | "anotacao";
+  source: "review" | "nota" | "sugestao" | "dificuldade" | "anotacao" | "duvida";
   responseSnapshot: ResponseSnapshotEntry[] | null;
   suggestionId?: string;
   suggestionStatus?: "pending" | "approved" | "rejected";
@@ -88,6 +88,7 @@ function formatVerdictLabel(verdict: string): string {
   if (verdict === "anotacao") return "Anotação";
   if (verdict === "dificuldade") return "Dificuldade do LLM";
   if (verdict === "sugestao") return "Sugestão";
+  if (verdict === "duvida") return "Dúvida do gabarito";
   if (verdict === "ambiguo") return "Ambíguo";
   if (verdict === "pular") return "Pular";
   if (verdict.startsWith("{")) {
@@ -111,6 +112,7 @@ function verdictVariant(
   if (verdict === "anotacao") return "secondary";
   if (verdict === "dificuldade") return "secondary";
   if (verdict === "sugestao") return "outline";
+  if (verdict === "duvida") return "secondary";
   if (verdict === "ambiguo") return "secondary";
   if (verdict === "pular") return "outline";
   return "default";
@@ -389,7 +391,11 @@ export function CommentCard({
             )}
           </p>
           <div className="flex gap-1">
-            {isResolved ? (
+            {comment.source === "duvida" ? (
+              <span className="text-xs text-muted-foreground italic">
+                Resolve em Meu Gabarito
+              </span>
+            ) : isResolved ? (
               <Button
                 variant="ghost"
                 size="sm"

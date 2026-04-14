@@ -24,6 +24,7 @@ export default async function CommentsPage({
     { data: llmResponses },
     { data: difficultyResolutions },
     { data: projectComments },
+    { data: verdictQuestions },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -83,6 +84,15 @@ export default async function CommentsPage({
       .eq("project_id", id)
       .is("parent_id", null)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("verdict_acknowledgments")
+      .select(
+        "review_id, respondent_id, comment, created_at, reviews!inner(id, project_id, document_id, field_name, verdict)",
+      )
+      .eq("status", "questioned")
+      .not("comment", "is", null)
+      .eq("reviews.project_id", id)
+      .order("created_at", { ascending: false }),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -92,13 +102,16 @@ export default async function CommentsPage({
     documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
   );
 
-  // Fetch reviewer names
+  // Fetch reviewer and respondent (dúvida author) names
   const reviewerIds = [
-    ...new Set(
-      (reviews || [])
+    ...new Set([
+      ...((reviews || [])
         .map((r) => r.reviewer_id)
-        .filter((rid): rid is string => !!rid),
-    ),
+        .filter((rid): rid is string => !!rid)),
+      ...((verdictQuestions || [])
+        .map((q) => q.respondent_id)
+        .filter((rid): rid is string => !!rid)),
+    ]),
   ];
 
   const isCoordinator =
@@ -216,6 +229,41 @@ export default async function CommentsPage({
     });
   });
 
+  // Map verdict_acknowledgments (dúvidas do Meu Gabarito) as ReviewComment
+  type VerdictQuestionRow = {
+    review_id: string;
+    respondent_id: string;
+    comment: string;
+    created_at: string;
+    reviews: {
+      id: string;
+      document_id: string;
+      field_name: string;
+      verdict: string;
+    };
+  };
+  const duvidaComments: ReviewComment[] = ((verdictQuestions || []) as unknown as VerdictQuestionRow[]).map((q) => {
+    const r = q.reviews;
+    return {
+      id: `duvida-${q.review_id}-${q.respondent_id}`,
+      documentId: r.document_id,
+      documentTitle: docMap.get(r.document_id) || r.document_id,
+      fieldName: r.field_name,
+      fieldDescription: fieldMap.get(r.field_name)?.description || r.field_name,
+      fieldHelpText: fieldMap.get(r.field_name)?.help_text,
+      fieldOptions: fieldMap.get(r.field_name)?.options,
+      fieldType: fieldMap.get(r.field_name)?.type,
+      verdict: "duvida",
+      comment: q.comment,
+      reviewerName: reviewerMap.get(q.respondent_id) || "Anônimo",
+      resolvedAt: null,
+      createdAt: q.created_at,
+      chosenResponseId: null,
+      source: "duvida" as const,
+      responseSnapshot: null,
+    };
+  });
+
   // Map project_comments (anotações soltas) as ReviewComment
   const annotationComments: ReviewComment[] = (projectComments || []).map((c) => {
     const p = c.profiles as unknown as { email: string | null } | null;
@@ -246,6 +294,7 @@ export default async function CommentsPage({
     ...reviewComments,
     ...noteComments,
     ...difficultyComments,
+    ...duvidaComments,
     ...annotationComments,
     ...suggestionComments.filter((s) => s.suggestionStatus !== "pending"),
   ].sort(
