@@ -64,6 +64,9 @@ def compile_pydantic(code: str) -> dict:
         if explicit_type:
             field_type = explicit_type
         description = field_info.description or field_name
+        allow_other = (
+            bool(extra.get("allowOther", False)) if isinstance(extra, dict) else False
+        )
 
         field_dict: dict = {
             "name": field_name,
@@ -73,6 +76,9 @@ def compile_pydantic(code: str) -> dict:
             "target": target,
             "hash": _field_hash(field_name, field_type, options, description),
         }
+
+        if allow_other and field_type in ("single", "multi"):
+            field_dict["allow_other"] = True
 
         # Extract subfields from nested BaseModel
         subfields = _extract_subfields(annotation)

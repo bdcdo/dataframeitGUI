@@ -21,6 +21,10 @@ interface FieldRendererProps {
 }
 
 const NOT_INFORMED = "Não informada";
+export const OTHER_PREFIX = "Outro: ";
+const isOtherValue = (v: unknown): v is string =>
+  typeof v === "string" && v.startsWith(OTHER_PREFIX);
+const otherText = (v: string) => v.slice(OTHER_PREFIX.length);
 
 function parseDateParts(val: string): [string, string, string] {
   if (!val || val === NOT_INFORMED) return ["", "", ""];
@@ -148,6 +152,8 @@ function DateFieldRenderer({
 
 export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
   if (field.type === "single" && field.options) {
+    const otherChecked = isOtherValue(value);
+    const otherValue = otherChecked ? otherText(value as string) : "";
     return (
       <div className="flex flex-col gap-2">
         {field.options.map((option) => (
@@ -163,12 +169,47 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <span className="text-sm">{option}</span>
           </label>
         ))}
+        {field.allow_other && (
+          <div className="space-y-1.5">
+            <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 hover:bg-muted">
+              <input
+                type="radio"
+                name={field.name}
+                checked={otherChecked}
+                onChange={() => {
+                  if (!otherChecked) onChange(OTHER_PREFIX);
+                }}
+                className="accent-brand"
+              />
+              <span className="text-sm">Outro:</span>
+            </label>
+            {otherChecked && (
+              <Input
+                value={otherValue}
+                onChange={(e) => onChange(OTHER_PREFIX + e.target.value)}
+                placeholder="Digite o valor..."
+                className="ml-8 h-8 text-sm"
+              />
+            )}
+          </div>
+        )}
       </div>
     );
   }
 
   if (field.type === "multi" && field.options) {
-    const selected = Array.isArray(value) ? value : [];
+    const selected = Array.isArray(value) ? (value as unknown[]) : [];
+    const fixedOptions = field.options;
+    const selectedFixed = selected.filter(
+      (s): s is string => typeof s === "string" && fixedOptions.includes(s),
+    );
+    const otherItem = selected.find(isOtherValue) as string | undefined;
+    const otherChecked = otherItem !== undefined;
+    const otherValue = otherChecked ? otherText(otherItem as string) : "";
+
+    const withOther = (next: string | undefined): string[] =>
+      next !== undefined ? [...selectedFixed, next] : [...selectedFixed];
+
     return (
       <div className="flex flex-col gap-2">
         {field.options.map((option) => (
@@ -176,19 +217,43 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <input
               type="checkbox"
               value={option}
-              checked={selected.includes(option)}
+              checked={selectedFixed.includes(option)}
               onChange={(e) => {
-                if (e.target.checked) {
-                  onChange([...selected, option]);
-                } else {
-                  onChange(selected.filter((s) => s !== option));
-                }
+                const nextFixed = e.target.checked
+                  ? [...selectedFixed, option]
+                  : selectedFixed.filter((s) => s !== option);
+                onChange(
+                  otherChecked ? [...nextFixed, otherItem as string] : nextFixed,
+                );
               }}
               className="accent-brand"
             />
             <span className="text-sm">{option}</span>
           </label>
         ))}
+        {field.allow_other && (
+          <div className="space-y-1.5">
+            <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 hover:bg-muted">
+              <input
+                type="checkbox"
+                checked={otherChecked}
+                onChange={(e) => {
+                  onChange(withOther(e.target.checked ? OTHER_PREFIX : undefined));
+                }}
+                className="accent-brand"
+              />
+              <span className="text-sm">Outro:</span>
+            </label>
+            {otherChecked && (
+              <Input
+                value={otherValue}
+                onChange={(e) => onChange(withOther(OTHER_PREFIX + e.target.value))}
+                placeholder="Digite o valor..."
+                className="ml-8 h-8 text-sm"
+              />
+            )}
+          </div>
+        )}
       </div>
     );
   }

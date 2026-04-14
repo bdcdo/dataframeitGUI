@@ -267,6 +267,22 @@ export function FieldCard({
                 />
               </div>
             )}
+            {(field.type === "single" || field.type === "multi") && (
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-xs">Permitir &quot;Outro: ...&quot;</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Pesquisador pode digitar um valor livre além das opções acima
+                  </p>
+                </div>
+                <Switch
+                  checked={field.allow_other === true}
+                  onCheckedChange={(checked) =>
+                    updateField({ allow_other: checked ? true : undefined })
+                  }
+                />
+              </div>
+            )}
             {field.type === "text" && (
               <div className="space-y-3">
                 {/* Toggle subcampos */}

@@ -84,9 +84,19 @@ export async function saveResponse(
       const humanFields = fields.filter(
         (f) => (f.target || "all") !== "llm_only" && f.required !== false
       );
-      const allAnswered = humanFields.every(
-        (f) => answers[f.name] !== undefined && answers[f.name] !== null && answers[f.name] !== ""
-      );
+      const OTHER_PREFIX = "Outro: ";
+      const isIncompleteOther = (v: unknown) =>
+        typeof v === "string" && v === OTHER_PREFIX;
+      const allAnswered = humanFields.every((f) => {
+        const v = answers[f.name];
+        if (v === undefined || v === null || v === "") return false;
+        if (f.type === "single" && isIncompleteOther(v)) return false;
+        if (f.type === "multi" && Array.isArray(v)) {
+          if (v.length === 0) return false;
+          if (v.some(isIncompleteOther)) return false;
+        }
+        return true;
+      });
 
       if (allAnswered) {
         const { error: assignErr } = await supabase

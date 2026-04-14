@@ -48,6 +48,7 @@ export function EditFieldDialog({
   const [description, setDescription] = useState(field?.description ?? "");
   const [helpText, setHelpText] = useState(field?.help_text ?? "");
   const [options, setOptions] = useState<string[]>(field?.options ?? []);
+  const [allowOther, setAllowOther] = useState<boolean>(field?.allow_other ?? false);
   const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
   const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
   const [isSaving, startSave] = useTransition();
@@ -60,6 +61,7 @@ export function EditFieldDialog({
     setDescription(f?.description ?? "");
     setHelpText(f?.help_text ?? "");
     setOptions(f?.options ?? []);
+    setAllowOther(f?.allow_other ?? false);
     setSubfields(f?.subfields);
     setSubfieldRule(f?.subfield_rule ?? "all");
   }
@@ -80,6 +82,10 @@ export function EditFieldDialog({
               options: hasSubfields ? null : (options.length > 0 ? options : null),
               subfields: hasSubfields ? subfields : undefined,
               subfield_rule: hasSubfields ? subfieldRule : undefined,
+              allow_other:
+                (f.type === "single" || f.type === "multi") && allowOther
+                  ? true
+                  : undefined,
             }
           : f,
       );
@@ -148,9 +154,20 @@ export function EditFieldDialog({
           </div>
 
           {(field.type === "single" || field.type === "multi") && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">Opções</Label>
-              <OptionsEditor options={options} onChange={setOptions} />
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Opções</Label>
+                <OptionsEditor options={options} onChange={setOptions} />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-xs">Permitir &quot;Outro: ...&quot;</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Pesquisador pode digitar um valor livre além das opções acima
+                  </p>
+                </div>
+                <Switch checked={allowOther} onCheckedChange={setAllowOther} />
+              </div>
             </div>
           )}
 

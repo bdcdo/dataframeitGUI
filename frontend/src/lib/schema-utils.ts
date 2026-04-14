@@ -31,6 +31,9 @@ function fieldExtra(field: PydanticField): string {
   if (field.type === "date") {
     extras.push(`"field_type": "date"`);
   }
+  if ((field.type === "single" || field.type === "multi") && field.allow_other) {
+    extras.push(`"allowOther": True`);
+  }
   if (extras.length === 0) return "";
   return `, json_schema_extra={${extras.join(", ")}}`;
 }

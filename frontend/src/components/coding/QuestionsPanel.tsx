@@ -10,6 +10,19 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { PydanticField } from "@/lib/types";
 
+const OTHER_PREFIX = "Outro: ";
+const isIncompleteOther = (v: unknown) =>
+  typeof v === "string" && v === OTHER_PREFIX;
+const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
+  if (val === undefined || val === null || val === "") return false;
+  if (field.type === "single" && isIncompleteOther(val)) return false;
+  if (field.type === "multi" && Array.isArray(val)) {
+    if (val.length === 0) return false;
+    if (val.some(isIncompleteOther)) return false;
+  }
+  return true;
+};
+
 interface QuestionsPanelProps {
   fields: PydanticField[];
   answers: Record<string, any>;
@@ -30,15 +43,12 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   }, [fields]);
 
   const requiredFields = fields.filter((f) => f.required !== false);
-  const answeredRequiredCount = requiredFields.filter(
-    (f) => answers[f.name] !== undefined && answers[f.name] !== null && answers[f.name] !== ""
+  const answeredRequiredCount = requiredFields.filter((f) =>
+    isAnsweredValue(f, answers[f.name]),
   ).length;
 
   const isAnswered = useCallback(
-    (field: PydanticField) => {
-      const val = answers[field.name];
-      return val !== undefined && val !== null && val !== "";
-    },
+    (field: PydanticField) => isAnsweredValue(field, answers[field.name]),
     [answers]
   );
 

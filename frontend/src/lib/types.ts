@@ -41,6 +41,7 @@ export interface PydanticField {
   hash?: string;
   subfields?: SubfieldDef[];
   subfield_rule?: "all" | "at_least_one";
+  allow_other?: boolean;
 }
 
 export interface ProjectMember {
