@@ -1,7 +1,7 @@
 "use client";
 
 import { useOptimistic, useTransition } from "react";
-import { toggleAssignment } from "@/actions/assignments";
+import { cycleAssignment } from "@/actions/assignments";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -16,52 +16,80 @@ interface AssignmentTableProps {
   documents: Pick<Document, "id" | "external_id">[];
   researchers: (ProjectMember & { profiles: { first_name: string | null; email: string } })[];
   assignments: Assignment[];
-  type?: "codificacao" | "comparacao";
 }
 
-type OptimisticUpdate = { docId: string; userId: string; action: "add" | "remove" };
+type CellState = {
+  cod?: Assignment;
+  comp?: Assignment;
+};
 
-export function AssignmentTable({ projectId, documents, researchers, assignments, type = "codificacao" }: AssignmentTableProps) {
-  const [isPending, startTransition] = useTransition();
+type OptimisticAction = { docId: string; userId: string };
 
-  const [optimisticAssignments, setOptimistic] = useOptimistic(
-    assignments,
-    (current: Assignment[], update: OptimisticUpdate) => {
-      if (update.action === "add") {
-        return [...current, {
-          id: "optimistic",
-          project_id: projectId,
-          document_id: update.docId,
-          user_id: update.userId,
-          status: "pendente" as const,
-          type,
-          batch_id: null,
-          deadline: null,
-          completed_at: null,
-        }];
-      }
-      return current.filter(
-        (a) => !(a.document_id === update.docId && a.user_id === update.userId && a.status === "pendente")
-      );
-    }
+/**
+ * Calcula a próxima lista de assignments após um ciclo na célula (docId, userId).
+ * vazio → codificacao → comparacao → vazio
+ * Bloqueia se houver assignment não-pendente.
+ */
+function cycleOptimistic(
+  current: Assignment[],
+  projectId: string,
+  docId: string,
+  userId: string,
+): Assignment[] {
+  const related = current.filter(
+    (a) => a.document_id === docId && a.user_id === userId,
+  );
+  const others = current.filter(
+    (a) => !(a.document_id === docId && a.user_id === userId),
   );
 
-  const assignmentMap = new Map<string, Assignment>();
+  // Bloquear se algum assignment não-pendente existe
+  if (related.some((a) => a.status !== "pendente")) return current;
+
+  const hasCod = related.some((a) => a.type === "codificacao");
+  const hasComp = related.some((a) => a.type === "comparacao");
+
+  const stub = (type: "codificacao" | "comparacao"): Assignment => ({
+    id: `optimistic-${type}-${docId}-${userId}`,
+    project_id: projectId,
+    document_id: docId,
+    user_id: userId,
+    status: "pendente",
+    type,
+    batch_id: null,
+    deadline: null,
+    completed_at: null,
+  });
+
+  if (!hasCod && !hasComp) return [...others, stub("codificacao")];
+  if (hasCod && !hasComp) return [...others, stub("comparacao")];
+  if (hasComp && !hasCod) return others;
+  // ambos (sorteio): voltar para vazio
+  return others;
+}
+
+export function AssignmentTable({ projectId, documents, researchers, assignments }: AssignmentTableProps) {
+  const [isPending, startTransition] = useTransition();
+
+  const [optimisticAssignments, applyOptimistic] = useOptimistic(
+    assignments,
+    (current: Assignment[], action: OptimisticAction) =>
+      cycleOptimistic(current, projectId, action.docId, action.userId),
+  );
+
+  const cellMap = new Map<string, CellState>();
   for (const a of optimisticAssignments) {
-    assignmentMap.set(`${a.document_id}:${a.user_id}`, a);
+    const key = `${a.document_id}:${a.user_id}`;
+    const entry = cellMap.get(key) || {};
+    if (a.type === "codificacao") entry.cod = a;
+    else entry.comp = a;
+    cellMap.set(key, entry);
   }
 
-  const handleToggle = (documentId: string, userId: string) => {
-    const existing = assignmentMap.get(`${documentId}:${userId}`);
-
-    // Don't allow removing em_andamento/concluido
-    if (existing && existing.status !== "pendente") return;
-
-    const action = existing ? "remove" : "add";
-
+  const handleCycle = (documentId: string, userId: string) => {
     startTransition(async () => {
-      setOptimistic({ docId: documentId, userId, action });
-      await toggleAssignment(projectId, documentId, userId, type);
+      applyOptimistic({ docId: documentId, userId });
+      await cycleAssignment(projectId, documentId, userId);
     });
   };
 
@@ -87,61 +115,105 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
               <tr key={doc.id} className="border-b">
                 <td className="px-3 py-1.5 font-mono text-xs">{doc.external_id || doc.id.slice(0, 8)}</td>
                 {researchers.map((r) => {
-                  const assignment = assignmentMap.get(`${doc.id}:${r.user_id}`);
-                  const isAssigned = !!assignment;
-                  const status = assignment?.status;
-                  const deadline = assignment?.deadline;
+                  const state = cellMap.get(`${doc.id}:${r.user_id}`) || {};
+                  const { cod, comp } = state;
+                  const hasAny = !!(cod || comp);
+
+                  // Prioridade para status visual: concluído > em_andamento > pendente
+                  const statusOrder = { concluido: 3, em_andamento: 2, pendente: 1 } as const;
+                  const dominant = [cod, comp]
+                    .filter((a): a is Assignment => !!a)
+                    .sort(
+                      (a, b) =>
+                        (statusOrder[b.status] || 0) - (statusOrder[a.status] || 0),
+                    )[0];
+                  const status = dominant?.status;
+
+                  const deadlines = [cod?.deadline, comp?.deadline].filter(Boolean) as string[];
+                  const nearestDeadline = deadlines.sort()[0];
                   const isOverdue =
-                    deadline &&
+                    nearestDeadline &&
                     status !== "concluido" &&
-                    new Date(deadline + "T00:00:00") < today;
+                    new Date(nearestDeadline + "T00:00:00") < today;
 
                   const isNonRemovable = status === "concluido" || status === "em_andamento";
 
-                  const cellColor = status === "concluido"
-                    ? "bg-green-500 border-green-600"
+                  // Cor base pelo status
+                  const baseColor = status === "concluido"
+                    ? "bg-green-500 border-green-600 text-white"
                     : status === "em_andamento"
-                    ? "bg-yellow-400 border-yellow-500"
-                    : isAssigned
-                    ? "bg-brand border-brand"
+                    ? "bg-yellow-400 border-yellow-500 text-white"
+                    : cod && !comp
+                    ? "bg-brand border-brand text-brand-foreground"
+                    : comp && !cod
+                    ? "bg-amber-500 border-amber-600 text-white"
+                    : cod && comp
+                    ? "bg-brand border-brand text-brand-foreground"
                     : "border-muted-foreground/30 hover:border-brand/50";
+
+                  // Badge de tipo (C / R / C·R)
+                  const badgeText =
+                    cod && comp ? "C·R" : cod ? "C" : comp ? "R" : null;
+
+                  const statusIcon =
+                    status === "concluido" ? "✓" : status === "em_andamento" ? "…" : null;
 
                   const cell = (
                     <button
-                      onClick={() => handleToggle(doc.id, r.user_id)}
-                      disabled={isNonRemovable}
+                      onClick={() => handleCycle(doc.id, r.user_id)}
+                      disabled={isNonRemovable || isPending}
                       className={cn(
-                        "h-5 w-5 rounded border transition-colors",
-                        cellColor,
+                        "relative h-6 w-6 rounded border transition-colors",
+                        baseColor,
                         isOverdue && "ring-2 ring-destructive ring-offset-1",
-                        isNonRemovable && "cursor-default"
+                        (isNonRemovable || isPending) && "cursor-default",
                       )}
+                      aria-label={
+                        !hasAny
+                          ? "Atribuir codificação"
+                          : cod && !comp
+                          ? "Atribuição de codificação (clique para trocar por comparação)"
+                          : comp && !cod
+                          ? "Atribuição de comparação (clique para remover)"
+                          : "Atribuição de codificação e comparação"
+                      }
                     >
-                      {isAssigned && (
-                        <span className={cn(
-                          "text-xs",
-                          status === "concluido" || status === "em_andamento"
-                            ? "text-white"
-                            : "text-brand-foreground"
-                        )}>
-                          {status === "concluido" ? "✓" : status === "em_andamento" ? "…" : "✓"}
+                      {statusIcon && (
+                        <span className="text-xs leading-none">{statusIcon}</span>
+                      )}
+                      {badgeText && !statusIcon && (
+                        <span className="text-[9px] font-semibold leading-none">
+                          {badgeText}
+                        </span>
+                      )}
+                      {badgeText && statusIcon && (
+                        <span className="absolute -right-1 -top-1 rounded-sm bg-foreground/80 px-0.5 text-[8px] font-semibold leading-tight text-background">
+                          {badgeText}
                         </span>
                       )}
                     </button>
                   );
 
+                  const tooltipParts: string[] = [];
+                  if (cod) tooltipParts.push(`Codificação (${cod.status})`);
+                  if (comp) tooltipParts.push(`Comparação (${comp.status})`);
+                  if (nearestDeadline) {
+                    const label = `Prazo: ${new Date(nearestDeadline + "T00:00:00").toLocaleDateString(
+                      "pt-BR",
+                      { day: "numeric", month: "short" },
+                    )}${isOverdue ? " (atrasado)" : ""}`;
+                    tooltipParts.push(label);
+                  }
+
                   return (
                     <td key={r.user_id} className="px-3 py-1.5 text-center">
-                      {deadline ? (
+                      {tooltipParts.length > 0 ? (
                         <Tooltip>
                           <TooltipTrigger asChild>{cell}</TooltipTrigger>
                           <TooltipContent side="top" className="text-xs">
-                            Prazo:{" "}
-                            {new Date(deadline + "T00:00:00").toLocaleDateString("pt-BR", {
-                              day: "numeric",
-                              month: "short",
-                            })}
-                            {isOverdue && " (atrasado)"}
+                            {tooltipParts.map((p, i) => (
+                              <div key={i}>{p}</div>
+                            ))}
                           </TooltipContent>
                         </Tooltip>
                       ) : (
@@ -157,11 +229,25 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
             <tr className="bg-muted/30">
               <td className="px-3 py-1.5 font-medium">Total</td>
               {researchers.map((r) => {
-                const count = optimisticAssignments.filter((a) => a.user_id === r.user_id).length;
-                const done = optimisticAssignments.filter((a) => a.user_id === r.user_id && a.status === "concluido").length;
+                const forUser = optimisticAssignments.filter((a) => a.user_id === r.user_id);
+                const codTotal = forUser.filter((a) => a.type === "codificacao").length;
+                const codDone = forUser.filter(
+                  (a) => a.type === "codificacao" && a.status === "concluido",
+                ).length;
+                const compTotal = forUser.filter((a) => a.type === "comparacao").length;
+                const compDone = forUser.filter(
+                  (a) => a.type === "comparacao" && a.status === "concluido",
+                ).length;
                 return (
-                  <td key={r.user_id} className="px-3 py-1.5 text-center font-medium">
-                    <span>{done}/{count}</span>
+                  <td key={r.user_id} className="px-3 py-1.5 text-center text-xs font-medium">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-brand">
+                        C: {codDone}/{codTotal}
+                      </span>
+                      <span className="text-amber-600">
+                        R: {compDone}/{compTotal}
+                      </span>
+                    </div>
                   </td>
                 );
               })}

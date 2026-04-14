@@ -4,36 +4,67 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
-export async function toggleAssignment(
+/**
+ * Cicla a atribuição de um par (documento, pesquisador) por três estados:
+ *   vazio → codificacao → comparacao → vazio
+ *
+ * Assignments em_andamento/concluido de qualquer tipo bloqueiam o ciclo.
+ * Só atribuições pendentes podem ser modificadas/removidas.
+ */
+export async function cycleAssignment(
   projectId: string,
   documentId: string,
   userId: string,
-  type: "codificacao" | "comparacao" = "codificacao"
 ) {
   const supabase = await createSupabaseServer();
 
-  // Check if a pending assignment exists (only pending can be toggled off)
   const { data: existing } = await supabase
     .from("assignments")
-    .select("id, status")
+    .select("id, status, type")
     .eq("document_id", documentId)
-    .eq("user_id", userId)
-    .eq("type", type)
-    .single();
+    .eq("user_id", userId);
 
-  if (existing) {
-    if (existing.status !== "pendente") return; // don't remove em_andamento/concluido
-    await supabase.from("assignments").delete().eq("id", existing.id);
-  } else {
-    await supabase.from("assignments").insert({
+  const rows = existing || [];
+
+  // Bloquear ciclo se houver assignment não-pendente de qualquer tipo
+  const hasNonPending = rows.some((r) => r.status !== "pendente");
+  if (hasNonPending) return;
+
+  const pendingCod = rows.find((r) => r.type === "codificacao");
+  const pendingComp = rows.find((r) => r.type === "comparacao");
+
+  if (!pendingCod && !pendingComp) {
+    // vazio → codificacao
+    const { error } = await supabase.from("assignments").insert({
       project_id: projectId,
       document_id: documentId,
       user_id: userId,
-      type,
+      type: "codificacao",
     });
+    if (error) throw new Error(error.message);
+  } else if (pendingCod && !pendingComp) {
+    // codificacao → comparacao (UPDATE atômico, preserva id e metadados)
+    const { error } = await supabase
+      .from("assignments")
+      .update({ type: "comparacao" })
+      .eq("id", pendingCod.id);
+    if (error) throw new Error(error.message);
+  } else if (pendingComp && !pendingCod) {
+    // comparacao → vazio
+    const { error } = await supabase.from("assignments").delete().eq("id", pendingComp.id);
+    if (error) throw new Error(error.message);
+  } else if (pendingCod && pendingComp) {
+    // "ambos" (vindo de sorteio): remover tudo para voltar ao vazio
+    const { error } = await supabase
+      .from("assignments")
+      .delete()
+      .in("id", [pendingCod.id, pendingComp.id]);
+    if (error) throw new Error(error.message);
   }
 
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
 }
 
 export async function clearPendingAssignments(
@@ -50,6 +81,8 @@ export async function clearPendingAssignments(
     .eq("type", type);
 
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
   return { deleted: count ?? 0 };
 }
 
@@ -420,6 +453,8 @@ export async function smartRandomize(params: LotteryParams) {
   }
 
   revalidatePath(`/projects/${params.projectId}/analyze/assignments`);
+  revalidatePath(`/projects/${params.projectId}/analyze/code`);
+  revalidatePath(`/projects/${params.projectId}/analyze/compare`);
   return { count: newAssignments.length, preserved };
 }
 

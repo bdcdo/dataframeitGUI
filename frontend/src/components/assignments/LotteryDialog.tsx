@@ -43,7 +43,6 @@ interface LotteryDialogProps {
   totalDocs: number;
   totalResearchers: number;
   coordinators?: CoordinatorOption[];
-  type?: "codificacao" | "comparacao";
 }
 
 export function LotteryDialog({
@@ -51,11 +50,13 @@ export function LotteryDialog({
   totalDocs,
   totalResearchers,
   coordinators = [],
-  type = "codificacao",
 }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+
+  // Tipo do sorteio (codificação ou comparação)
+  const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
 
   // Distribution
   const [researchersPerDoc, setResearchersPerDoc] = useState(2);
@@ -174,6 +175,31 @@ export function LotteryDialog({
         </DialogHeader>
 
         <div className="space-y-5">
+          {/* Tipo do sorteio */}
+          <div>
+            <Label>Tipo</Label>
+            <RadioGroup
+              value={type}
+              onValueChange={(v) => setType(v as "codificacao" | "comparacao")}
+              className="mt-2 flex gap-4"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="codificacao" id="type-cod" />
+                <Label htmlFor="type-cod" className="font-normal">
+                  Codificação
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="comparacao" id="type-comp" />
+                <Label htmlFor="type-comp" className="font-normal">
+                  Comparação
+                </Label>
+              </div>
+            </RadioGroup>
+          </div>
+
+          <Separator />
+
           {/* Label */}
           <div>
             <Label htmlFor="batch-label">Rótulo (opcional)</Label>

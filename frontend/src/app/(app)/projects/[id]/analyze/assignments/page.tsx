@@ -4,7 +4,6 @@ import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { AssignmentTable } from "@/components/assignments/AssignmentTable";
 import { LotteryDialog } from "@/components/assignments/LotteryDialog";
 import { ClearPendingButton } from "@/components/assignments/ClearPendingButton";
-import { AssignmentTypeToggle } from "@/components/assignments/AssignmentTypeToggle";
 import type { ProjectMember } from "@/lib/types";
 
 function getCachedDocuments(projectId: string) {
@@ -41,14 +40,10 @@ function getCachedMembers(projectId: string, role: string) {
 
 export default async function AssignmentsPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ type?: string }>;
 }) {
   const { id } = await params;
-  const sp = await searchParams;
-  const assignmentType = sp.type === "comparacao" ? "comparacao" as const : "codificacao" as const;
   const supabase = await createSupabaseServer();
 
   const [documents, researchers, { data: assignments }, coordinators] =
@@ -58,8 +53,7 @@ export default async function AssignmentsPage({
       supabase
         .from("assignments")
         .select("id, project_id, document_id, user_id, status, type, batch_id, deadline, completed_at")
-        .eq("project_id", id)
-        .eq("type", assignmentType),
+        .eq("project_id", id),
       getCachedMembers(id, "coordenador"),
     ]);
 
@@ -87,23 +81,30 @@ export default async function AssignmentsPage({
     return aHas - bHas;
   });
 
-  const pendingCount = (assignments || []).filter(
-    (a) => a.status === "pendente",
-  ).length;
+  const pendingByType = {
+    codificacao: (assignments || []).filter(
+      (a) => a.status === "pendente" && a.type === "codificacao",
+    ).length,
+    comparacao: (assignments || []).filter(
+      (a) => a.status === "pendente" && a.type === "comparacao",
+    ).length,
+  };
+  const hasPending = pendingByType.codificacao + pendingByType.comparacao > 0;
 
   return (
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h2 className="text-lg font-semibold">Atribuições</h2>
-          <AssignmentTypeToggle current={assignmentType} />
+          <span className="text-xs text-muted-foreground">
+            Clique cicla: vazio → <span className="text-brand font-medium">C</span> codificação → <span className="text-amber-600 font-medium">R</span> comparação → vazio
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          {pendingCount > 0 && (
+          {hasPending && (
             <ClearPendingButton
               projectId={id}
-              pendingCount={pendingCount}
-              type={assignmentType}
+              pendingByType={pendingByType}
             />
           )}
           <LotteryDialog
@@ -111,7 +112,6 @@ export default async function AssignmentsPage({
             totalDocs={(documents || []).length}
             totalResearchers={typedResearchers.length}
             coordinators={coordinatorOptions}
-            type={assignmentType}
           />
         </div>
       </div>
@@ -120,7 +120,6 @@ export default async function AssignmentsPage({
         documents={sortedDocuments}
         researchers={allResearchersForTable}
         assignments={assignments || []}
-        type={assignmentType}
       />
     </div>
   );
