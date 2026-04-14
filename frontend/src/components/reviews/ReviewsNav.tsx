@@ -13,11 +13,11 @@ const reviewsTabs: Array<{
   { label: "Gabarito", href: "gabarito" },
   { label: "Meu Gabarito", href: "my-verdicts" },
   { label: "Matriz de Confusão", href: "confusion" },
-  { label: "Respondentes", href: "respondents", coordinatorOnly: true },
   { label: "Erros LLM", href: "llm-insights" },
-  { label: "Docs Difíceis", href: "difficulty" },
   { label: "Comentários", href: "comments" },
   { label: "Exportar", href: "export" },
+  { label: "Respondentes", href: "respondents", coordinatorOnly: true },
+  { label: "Docs Difíceis", href: "difficulty", coordinatorOnly: true },
 ];
 
 interface ReviewsNavProps {

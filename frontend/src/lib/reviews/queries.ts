@@ -22,6 +22,7 @@ interface ResponseRow {
   justifications: Record<string, string> | null;
   pydantic_hash: string | null;
   answer_field_hashes: Record<string, string> | null;
+  created_at: string;
 }
 
 interface ReviewRow {
@@ -129,7 +130,20 @@ function getRespondentDisplayName(
 export async function fetchReviewBaseData(
   supabase: SupabaseClient,
   projectId: string,
+  options?: { since?: string },
 ): Promise<ReviewComputationContext> {
+  let responsesQuery = supabase
+    .from("responses")
+    .select(
+      "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes, created_at",
+    )
+    .eq("project_id", projectId)
+    .eq("is_current", true);
+
+  if (options?.since) {
+    responsesQuery = responsesQuery.gte("created_at", options.since);
+  }
+
   const [
     { data: project },
     { data: responses },
@@ -141,13 +155,7 @@ export async function fetchReviewBaseData(
       .select("pydantic_fields, pydantic_hash, created_by")
       .eq("id", projectId)
       .single(),
-    supabase
-      .from("responses")
-      .select(
-        "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes",
-      )
-      .eq("project_id", projectId)
-      .eq("is_current", true),
+    responsesQuery,
     supabase
       .from("reviews")
       .select(
@@ -209,6 +217,7 @@ export async function fetchReviewBaseData(
         string,
         string
       > | null,
+      created_at: r.created_at,
     });
     responsesByDoc.set(r.document_id, list);
   });
