@@ -44,19 +44,35 @@ export async function addMember(
   if (profile) {
     userId = profile.id;
   } else {
-    // Create user in Clerk and sync to Supabase
+    // Create or reuse Clerk user, then sync to Supabase
     try {
       const clerk = await clerkClient();
-      const clerkUser = await clerk.users.createUser({
+
+      // Pre-check: o usuario pode ja existir no Clerk (ex: signup
+      // anterior bloqueado pelo Cloudflare Turnstile deixa o user
+      // criado mas sem profile no Supabase). Reusar evita 422
+      // form_identifier_exists na chamada de createUser.
+      const existing = await clerk.users.getUserList({
         emailAddress: [email],
       });
-      userId = await syncClerkUserToSupabase(
-        clerkUser.id,
-        email,
-      );
-      invited = true;
+
+      const clerkUserId =
+        existing.data.length > 0
+          ? existing.data[0].id
+          : (await clerk.users.createUser({ emailAddress: [email] })).id;
+
+      userId = await syncClerkUserToSupabase(clerkUserId, email);
+      invited = existing.data.length === 0;
     } catch (e) {
-      return { error: `Erro ao convidar: ${e instanceof Error ? e.message : "Erro desconhecido"}` };
+      // ClerkAPIResponseError tem .errors com detalhes; logar pra
+      // diagnostico server-side e mostrar mensagem amigavel ao coordenador.
+      console.error("[addMember] erro ao criar/sincronizar usuario Clerk", {
+        email,
+        error: e,
+        clerkErrors: (e as { errors?: unknown })?.errors,
+      });
+      const msg = e instanceof Error ? e.message : "Erro desconhecido";
+      return { error: `Erro ao convidar: ${msg}` };
     }
   }
 
