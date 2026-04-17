@@ -70,7 +70,8 @@ export default async function ComparePageRoute({
     );
   }
 
-  // For researchers, fetch their comparison assignments to filter docs
+  // For researchers, fetch their comparison assignments to filter docs.
+  // Sem atribuições, o Set fica vazio e filtra tudo — pesquisador só vê o que lhe foi atribuído.
   let assignedDocIds: Set<string> | null = null;
   if (!isCoordinator) {
     const { data: comparisonAssignments } = await supabase
@@ -80,9 +81,9 @@ export default async function ComparePageRoute({
       .eq("user_id", user.id)
       .eq("type", "comparacao");
 
-    if (comparisonAssignments && comparisonAssignments.length > 0) {
-      assignedDocIds = new Set(comparisonAssignments.map((a) => a.document_id));
-    }
+    assignedDocIds = new Set(
+      (comparisonAssignments ?? []).map((a) => a.document_id),
+    );
   }
 
   // Group responses by document
