@@ -136,6 +136,11 @@ function classifyChange(
     if (o.type !== n.type) hasStructural = true;
     if ((o.target ?? "all") !== (n.target ?? "all")) hasStructural = true;
     if ((o.required ?? true) !== (n.required ?? true)) hasStructural = true;
+    if ((o.subfield_rule ?? null) !== (n.subfield_rule ?? null)) hasStructural = true;
+    if ((o.allow_other ?? false) !== (n.allow_other ?? false)) hasStructural = true;
+    if (JSON.stringify(o.subfields ?? null) !== JSON.stringify(n.subfields ?? null)) {
+      hasStructural = true;
+    }
 
     const optsOld = o.options ?? [];
     const optsNew = n.options ?? [];
@@ -188,6 +193,37 @@ function bumpVersion(
   return { major: current.major, minor: current.minor, patch: current.patch + 1 };
 }
 
+// Classifica um diff de schema_change_log (before/after por campo) como estrutural (minor)
+// ou textual (patch). Add/remove são sempre estruturais.
+function fieldDiffIsStructural(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): boolean {
+  if (Object.keys(before).length === 0 || Object.keys(after).length === 0) return true;
+
+  for (const k of ["type", "target", "required", "subfield_rule", "allow_other"]) {
+    if (before[k] !== undefined || after[k] !== undefined) return true;
+  }
+
+  if (before.subfields !== undefined || after.subfields !== undefined) {
+    if (JSON.stringify(before.subfields ?? null) !== JSON.stringify(after.subfields ?? null)) {
+      return true;
+    }
+  }
+
+  const bOpts = before.options;
+  const aOpts = after.options;
+  if (bOpts !== undefined || aOpts !== undefined) {
+    const bArr = Array.isArray(bOpts) ? (bOpts as unknown[]) : [];
+    const aArr = Array.isArray(aOpts) ? (aOpts as unknown[]) : [];
+    const bSet = new Set(bArr);
+    const aSet = new Set(aArr);
+    const sameSet = bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
+    if (!sameSet) return true;
+  }
+  return false;
+}
+
 // ---------- Save from GUI ----------
 
 export async function saveSchemaFromGUI(
@@ -226,6 +262,46 @@ export async function saveSchemaFromGUI(
     after_value: Record<string, unknown>;
   }[] = [];
 
+  const newMap = new Map(fields.map((f) => [f.name, f]));
+
+  function snapshotOf(field: PydanticField): Record<string, unknown> {
+    return {
+      name: field.name,
+      type: field.type,
+      description: field.description,
+      help_text: field.help_text ?? null,
+      options: field.options ?? null,
+      target: field.target ?? null,
+      required: field.required ?? null,
+      subfields: field.subfields ?? null,
+      subfield_rule: field.subfield_rule ?? null,
+      allow_other: field.allow_other ?? null,
+    };
+  }
+
+  // Campos adicionados: sem entry anterior
+  for (const f of fields) {
+    if (oldMap.has(f.name)) continue;
+    logEntries.push({
+      field_name: f.name,
+      change_summary: "campo adicionado",
+      before_value: {},
+      after_value: snapshotOf(f),
+    });
+  }
+
+  // Campos removidos: sem entry atual
+  for (const o of oldFields) {
+    if (newMap.has(o.name)) continue;
+    logEntries.push({
+      field_name: o.name,
+      change_summary: "campo removido",
+      before_value: snapshotOf(o),
+      after_value: {},
+    });
+  }
+
+  // Campos modificados: compara atributo por atributo
   for (const f of fields) {
     const old = oldMap.get(f.name);
     if (!old) continue;
@@ -249,6 +325,38 @@ export async function saveSchemaFromGUI(
       diffs.push(f.type === "text" ? "respostas padronizadas" : "opções");
       before.options = old.options;
       after.options = f.options;
+    }
+    if (old.type !== f.type) {
+      diffs.push("tipo");
+      before.type = old.type;
+      after.type = f.type;
+    }
+    if ((old.target ?? "all") !== (f.target ?? "all")) {
+      diffs.push("alvo");
+      before.target = old.target ?? null;
+      after.target = f.target ?? null;
+    }
+    if ((old.required ?? true) !== (f.required ?? true)) {
+      diffs.push("obrigatório");
+      before.required = old.required ?? null;
+      after.required = f.required ?? null;
+    }
+    if ((old.subfield_rule ?? null) !== (f.subfield_rule ?? null)) {
+      diffs.push("regra de subcampos");
+      before.subfield_rule = old.subfield_rule ?? null;
+      after.subfield_rule = f.subfield_rule ?? null;
+    }
+    if ((old.allow_other ?? false) !== (f.allow_other ?? false)) {
+      diffs.push("permite outro");
+      before.allow_other = old.allow_other ?? false;
+      after.allow_other = f.allow_other ?? false;
+    }
+    const oldSubs = JSON.stringify(old.subfields ?? null);
+    const newSubs = JSON.stringify(f.subfields ?? null);
+    if (oldSubs !== newSubs) {
+      diffs.push("subcampos");
+      before.subfields = old.subfields ?? null;
+      after.subfields = f.subfields ?? null;
     }
 
     if (diffs.length > 0) {
@@ -287,9 +395,46 @@ export async function saveSchemaFromGUI(
 }
 
 // ---------- Backfill retroativo usando schema_change_log ----------
-// Reconstrói a versão do projeto a partir do histórico de mudanças já registradas.
-// Útil em projetos que existem desde antes do versionamento ter sido introduzido.
-// Idempotente: respeitar entries já classificadas como 'major', reclassificar as demais.
+// Reconstrói a versão do projeto a partir do histórico já registrado.
+// - Classifica entries não classificadas (minor/patch), respeita majors já setados.
+// - Reconstrói snapshots do schema em cada versão (reverter diffs do atual).
+// - Atribui versão a cada resposta usando answer_field_hashes quando disponível;
+//   cai em created_at quando não (responses pré-hash).
+// - Rastreia o método em responses.version_inferred_from.
+// Idempotente.
+
+type FieldSnapshot = Partial<PydanticField> & { name: string };
+
+function cloneFieldSnapshot(f: FieldSnapshot): FieldSnapshot {
+  return {
+    ...f,
+    options: f.options ? [...f.options] : f.options,
+  };
+}
+
+function cloneSnapshotMap(snap: Map<string, FieldSnapshot>): Map<string, FieldSnapshot> {
+  const out = new Map<string, FieldSnapshot>();
+  for (const [k, v] of snap) out.set(k, cloneFieldSnapshot(v));
+  return out;
+}
+
+function versionKey(v: { major: number; minor: number; patch: number }) {
+  return `${v.major}.${v.minor}.${v.patch}`;
+}
+
+function computeHashesFromSnapshot(snap: Map<string, FieldSnapshot>): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const [name, field] of snap) {
+    if (!field.type || field.description == null) continue;
+    hashes[name] = computeFieldHash(
+      name,
+      field.type,
+      field.options ?? null,
+      field.description,
+    );
+  }
+  return hashes;
+}
 
 export async function backfillSchemaVersionHistory(projectId: string) {
   const user = await getAuthUser();
@@ -297,76 +442,76 @@ export async function backfillSchemaVersionHistory(projectId: string) {
 
   const supabase = await createSupabaseServer();
 
-  const { data: log, error: logErr } = await supabase
-    .from("schema_change_log")
-    .select("id, field_name, before_value, after_value, created_at, change_type")
-    .eq("project_id", projectId)
-    .order("created_at", { ascending: true });
-  if (logErr) throw new Error(logErr.message);
+  const [{ data: project }, { data: log, error: logErr }] = await Promise.all([
+    supabase
+      .from("projects")
+      .select(
+        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      )
+      .eq("id", projectId)
+      .single(),
+    supabase
+      .from("schema_change_log")
+      .select("id, field_name, before_value, after_value, created_at, change_type")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: true }),
+  ]);
 
+  if (logErr) throw new Error(logErr.message);
+  if (!project) throw new Error("Projeto não encontrado ou sem permissão");
+
+  // 1) Classify entries and compute cumulative version per entry
   let current = { major: 0, minor: 1, patch: 0 };
-  const logUpdates: Array<{
+  type EnrichedEntry = {
     id: string;
-    change_type: ChangeType;
-    version_major: number;
-    version_minor: number;
-    version_patch: number;
-  }> = [];
-  const versionByTimestamp: Array<{ createdAt: number; version: typeof current }> = [];
+    field_name: string;
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+    createdAt: number;
+    changeType: ChangeType;
+    version: { major: number; minor: number; patch: number };
+  };
+  const enriched: EnrichedEntry[] = [];
 
   for (const entry of log ?? []) {
+    const before = (entry.before_value ?? {}) as Record<string, unknown>;
+    const after = (entry.after_value ?? {}) as Record<string, unknown>;
+
     let type: ChangeType;
     if (entry.change_type === "major") {
       type = "major";
     } else {
-      // Infer from before/after payload
-      const before = (entry.before_value ?? {}) as Record<string, unknown>;
-      const after = (entry.after_value ?? {}) as Record<string, unknown>;
-      const bOpts = before.options;
-      const aOpts = after.options;
-      const optsTouched = bOpts !== undefined || aOpts !== undefined;
-
-      let structural = false;
-      if (optsTouched) {
-        const bArr = Array.isArray(bOpts) ? (bOpts as unknown[]) : [];
-        const aArr = Array.isArray(aOpts) ? (aOpts as unknown[]) : [];
-        const bSet = new Set(bArr);
-        const aSet = new Set(aArr);
-        const sameSet =
-          bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
-        if (!sameSet) structural = true;
-      }
-      type = structural ? "minor" : "patch";
+      type = fieldDiffIsStructural(before, after) ? "minor" : "patch";
     }
 
     current = bumpVersion(current, type);
-    logUpdates.push({
+    enriched.push({
       id: entry.id as string,
-      change_type: type,
-      version_major: current.major,
-      version_minor: current.minor,
-      version_patch: current.patch,
-    });
-    versionByTimestamp.push({
+      field_name: entry.field_name as string,
+      before,
+      after,
       createdAt: new Date(entry.created_at as string).getTime(),
+      changeType: type,
       version: { ...current },
     });
   }
 
-  // Update each log entry (idempotent)
-  for (const u of logUpdates) {
-    await supabase
-      .from("schema_change_log")
-      .update({
-        change_type: u.change_type,
-        version_major: u.version_major,
-        version_minor: u.version_minor,
-        version_patch: u.version_patch,
-      })
-      .eq("id", u.id);
-  }
+  // 2) Update each log entry with classification + version
+  await Promise.all(
+    enriched.map((e) =>
+      supabase
+        .from("schema_change_log")
+        .update({
+          change_type: e.changeType,
+          version_major: e.version.major,
+          version_minor: e.version.minor,
+          version_patch: e.version.patch,
+        })
+        .eq("id", e.id),
+    ),
+  );
 
-  // Set project current version
+  // 3) Set project current version
   await supabase
     .from("projects")
     .update({
@@ -376,46 +521,211 @@ export async function backfillSchemaVersionHistory(projectId: string) {
     })
     .eq("id", projectId);
 
-  // Set response versions based on timestamps.
-  const { data: responses } = await supabase
-    .from("responses")
-    .select("id, created_at")
-    .eq("project_id", projectId);
+  // 4) Reconstruct snapshots at each version, walking log in reverse.
+  // Current project fields = snapshot of the "current" version after all entries applied.
+  const currentSnap = new Map<string, FieldSnapshot>();
+  for (const f of (project?.pydantic_fields as PydanticField[]) ?? []) {
+    currentSnap.set(f.name, cloneFieldSnapshot({ ...f }));
+  }
 
-  // Sort versionByTimestamp desc for lookup
-  const versionByTsDesc = [...versionByTimestamp].sort(
-    (a, b) => b.createdAt - a.createdAt,
-  );
+  // Map: versionKey -> snapshot map (fieldName -> snapshot)
+  const snapByVersion = new Map<string, Map<string, FieldSnapshot>>();
+  snapByVersion.set(versionKey(current), cloneSnapshotMap(currentSnap));
 
-  const byVersionKey = new Map<string, string[]>();
-  for (const r of responses ?? []) {
-    const ts = new Date(r.created_at as string).getTime();
-    let version = { major: 0, minor: 1, patch: 0 };
-    for (const v of versionByTsDesc) {
-      if (v.createdAt <= ts) {
-        version = v.version;
-        break;
+  // Group entries by version so we revert all at once per version-change
+  const versionsDesc: Array<{ key: string; version: typeof current }> = [];
+  const entriesByVersion = new Map<string, EnrichedEntry[]>();
+  for (const e of enriched) {
+    const k = versionKey(e.version);
+    if (!entriesByVersion.has(k)) {
+      entriesByVersion.set(k, []);
+      versionsDesc.push({ key: k, version: e.version });
+    }
+    entriesByVersion.get(k)!.push(e);
+  }
+  // Sort desc so we revert from latest → earliest
+  versionsDesc.sort((a, b) => {
+    if (a.version.major !== b.version.major) return b.version.major - a.version.major;
+    if (a.version.minor !== b.version.minor) return b.version.minor - a.version.minor;
+    return b.version.patch - a.version.patch;
+  });
+
+  const workingSnap = cloneSnapshotMap(currentSnap);
+  for (let idx = 0; idx < versionsDesc.length; idx++) {
+    const { key, version } = versionsDesc[idx];
+    // Snapshot at version `version` (before reverting) — if not already stored
+    if (!snapByVersion.has(key)) {
+      snapByVersion.set(key, cloneSnapshotMap(workingSnap));
+    }
+    // Revert all entries at this version
+    const group = entriesByVersion.get(key)!;
+    for (const e of group) {
+      // Skip project-level entries (publishMajorVersion)
+      if (e.field_name === "(projeto)") continue;
+      const isAdd = Object.keys(e.before).length === 0;
+      const isRemove = Object.keys(e.after).length === 0;
+      if (isAdd) {
+        // Pré-E: o campo não existia
+        workingSnap.delete(e.field_name);
+      } else if (isRemove) {
+        // Pré-E: o campo existia como `before`
+        const snap = { name: e.field_name, ...(e.before as Partial<PydanticField>) };
+        workingSnap.set(e.field_name, snap);
+      } else {
+        // Campo modificado: reverte atributos listados em `before`
+        const existing = workingSnap.get(e.field_name) ?? { name: e.field_name };
+        workingSnap.set(e.field_name, {
+          ...existing,
+          ...(e.before as Partial<PydanticField>),
+          name: e.field_name,
+        });
       }
     }
-    const key = `${version.major}.${version.minor}.${version.patch}`;
-    if (!byVersionKey.has(key)) byVersionKey.set(key, []);
-    byVersionKey.get(key)!.push(r.id as string);
-  }
-
-  for (const [key, ids] of byVersionKey) {
-    const [maj, min, pat] = key.split(".").map((v) => Number.parseInt(v, 10));
-    for (let i = 0; i < ids.length; i += 100) {
-      const chunk = ids.slice(i, i + 100);
-      await supabase
-        .from("responses")
-        .update({
-          schema_version_major: maj,
-          schema_version_minor: min,
-          schema_version_patch: pat,
-        })
-        .in("id", chunk);
+    // Após reverter, workingSnap representa a versão anterior
+    const prev = versionsDesc[idx + 1];
+    if (!prev) {
+      // 0.1.0 inicial (pré-primeira entry)
+      snapByVersion.set(versionKey({ major: 0, minor: 1, patch: 0 }), cloneSnapshotMap(workingSnap));
     }
   }
+
+  // Compute hashes per version
+  const hashesByVersion = new Map<string, Record<string, string>>();
+  for (const [k, snap] of snapByVersion) {
+    hashesByVersion.set(k, computeHashesFromSnapshot(snap));
+  }
+
+  // 5) Assign versions to responses (paginate to avoid implicit 1000-row cap)
+  const RESPONSES_PAGE = 500;
+  type ResponseRow = {
+    id: string;
+    created_at: string;
+    answer_field_hashes: Record<string, string> | null;
+    version_inferred_from: string | null;
+  };
+  const responses: ResponseRow[] = [];
+  for (let from = 0; ; from += RESPONSES_PAGE) {
+    const { data: page, error: pageErr } = await supabase
+      .from("responses")
+      .select("id, created_at, answer_field_hashes, version_inferred_from")
+      .eq("project_id", projectId)
+      .range(from, from + RESPONSES_PAGE - 1);
+    if (pageErr) throw new Error(pageErr.message);
+    if (!page || page.length === 0) break;
+    responses.push(...(page as unknown as ResponseRow[]));
+    if (page.length < RESPONSES_PAGE) break;
+  }
+
+  const allVersionKeys = [...hashesByVersion.keys()];
+  const versionByKey = new Map<string, { major: number; minor: number; patch: number }>();
+  for (const k of allVersionKeys) {
+    const [mj, mn, pt] = k.split(".").map((n) => Number.parseInt(n, 10));
+    versionByKey.set(k, { major: mj, minor: mn, patch: pt });
+  }
+  // Timestamp of each version (from entries; initial version = 0)
+  const versionTs = new Map<string, number>();
+  for (const e of enriched) {
+    const k = versionKey(e.version);
+    if (!versionTs.has(k)) versionTs.set(k, e.createdAt);
+  }
+  versionTs.set(versionKey({ major: 0, minor: 1, patch: 0 }), 0);
+
+  // Bucket updates by (version, method)
+  const updates = new Map<
+    string, // versionKey + "|" + method
+    { version: { major: number; minor: number; patch: number }; method: string; ids: string[] }
+  >();
+
+  let countLiveSave = 0;
+
+  for (const r of responses) {
+    // Preserve live_save entries as-is (precisão total)
+    if (r.version_inferred_from === "live_save") {
+      countLiveSave++;
+      continue;
+    }
+
+    const rHashes = (r.answer_field_hashes as Record<string, string> | null) ?? null;
+    const ts = new Date(r.created_at as string).getTime();
+
+    let chosenKey: string | null = null;
+    let chosenMethod: "hashes" | "created_at" | "fallback_created_at" = "created_at";
+
+    if (rHashes && Object.keys(rHashes).length > 0) {
+      // Score each version
+      let bestScore = -1;
+      let bestKey: string | null = null;
+      let bestTieTs = Infinity;
+      for (const [k, vHashes] of hashesByVersion) {
+        let score = 0;
+        for (const [fn, h] of Object.entries(rHashes)) {
+          if (vHashes[fn] === h) score++;
+        }
+        if (score === 0) continue;
+        const kTs = versionTs.get(k) ?? 0;
+        const tieMetric = Math.abs(kTs - ts);
+        if (
+          score > bestScore ||
+          (score === bestScore && tieMetric < bestTieTs)
+        ) {
+          bestScore = score;
+          bestKey = k;
+          bestTieTs = tieMetric;
+        }
+      }
+      if (bestKey) {
+        chosenKey = bestKey;
+        chosenMethod = "hashes";
+      }
+    }
+
+    if (!chosenKey) {
+      // Fallback timestamp
+      const candidates = [...versionTs.entries()]
+        .filter(([, t]) => t <= ts)
+        .sort((a, b) => b[1] - a[1]);
+      chosenKey = candidates.length > 0
+        ? candidates[0][0]
+        : versionKey({ major: 0, minor: 1, patch: 0 });
+      chosenMethod = rHashes && Object.keys(rHashes).length > 0
+        ? "fallback_created_at"
+        : "created_at";
+    }
+
+    const v = versionByKey.get(chosenKey) ?? { major: 0, minor: 1, patch: 0 };
+    const bucketKey = `${chosenKey}|${chosenMethod}`;
+    if (!updates.has(bucketKey)) {
+      updates.set(bucketKey, { version: v, method: chosenMethod, ids: [] });
+    }
+    updates.get(bucketKey)!.ids.push(r.id as string);
+  }
+
+  let countHashes = 0;
+  let countCreatedAt = 0;
+  let countFallback = 0;
+
+  const updatePromises = [];
+  for (const bucket of updates.values()) {
+    if (bucket.method === "hashes") countHashes += bucket.ids.length;
+    else if (bucket.method === "created_at") countCreatedAt += bucket.ids.length;
+    else if (bucket.method === "fallback_created_at") countFallback += bucket.ids.length;
+
+    for (let i = 0; i < bucket.ids.length; i += 100) {
+      const chunk = bucket.ids.slice(i, i + 100);
+      updatePromises.push(
+        supabase
+          .from("responses")
+          .update({
+            schema_version_major: bucket.version.major,
+            schema_version_minor: bucket.version.minor,
+            schema_version_patch: bucket.version.patch,
+            version_inferred_from: bucket.method,
+          })
+          .in("id", chunk),
+      );
+    }
+  }
+  await Promise.all(updatePromises);
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/config/schema`);
@@ -423,8 +733,14 @@ export async function backfillSchemaVersionHistory(projectId: string) {
 
   return {
     finalVersion: current,
-    logEntriesUpdated: logUpdates.length,
-    responsesUpdated: (responses ?? []).length,
+    logEntriesUpdated: enriched.length,
+    responsesProcessed: responses.length,
+    byMethod: {
+      hashes: countHashes,
+      created_at: countCreatedAt,
+      fallback_created_at: countFallback,
+      live_save: countLiveSave,
+    },
   };
 }
 

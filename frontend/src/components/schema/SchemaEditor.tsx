@@ -97,8 +97,10 @@ export function SchemaEditor({
       try {
         const result = await backfillSchemaVersionHistory(projectId);
         const v = result.finalVersion;
+        const m = result.byMethod;
         toast.success(
-          `Versão reconstruída: v${v.major}.${v.minor}.${v.patch} (${result.logEntriesUpdated} entradas, ${result.responsesUpdated} respostas)`,
+          `v${v.major}.${v.minor}.${v.patch} · ${result.logEntriesUpdated} entradas, ${result.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
+          { duration: 10000 },
         );
         setBackfillDialogOpen(false);
         router.refresh();
@@ -356,12 +358,13 @@ export function SchemaEditor({
           <AlertDialogHeader>
             <AlertDialogTitle>Reconstruir versão pelo histórico?</AlertDialogTitle>
             <AlertDialogDescription>
-              Isso percorre todas as entradas do histórico de mudanças do schema em
-              ordem cronológica e reatribui change_type (MINOR quando houve adição/remoção
-              de opções; PATCH quando só texto foi alterado; MAJOR preservado se já existir).
-              A versão do projeto e as versões das respostas existentes são recalculadas
-              com base nos timestamps. Útil em projetos antigos que começaram antes do
-              versionamento. Idempotente — pode rodar de novo sem problemas.
+              Percorre o histórico de mudanças em ordem cronológica, classifica cada
+              entrada (MINOR em mudanças estruturais; PATCH em texto; MAJOR preservado)
+              e reconstrói o schema em cada versão. Para atribuir versão a cada resposta,
+              tenta match por <strong>answer_field_hashes</strong> (hashes gravados a cada
+              save); se não bater, cai em <strong>created_at</strong>. Respostas salvas
+              diretamente na plataforma (live_save) preservam a versão original.
+              Idempotente — pode rodar de novo sem problemas.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

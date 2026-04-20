@@ -581,6 +581,7 @@ export type Database = {
           schema_version_major: number | null
           schema_version_minor: number | null
           schema_version_patch: number | null
+          version_inferred_from: string | null
         }
         Insert: {
           answer_field_hashes?: Json | null
@@ -598,6 +599,7 @@ export type Database = {
           schema_version_major?: number | null
           schema_version_minor?: number | null
           schema_version_patch?: number | null
+          version_inferred_from?: string | null
         }
         Update: {
           answer_field_hashes?: Json | null
@@ -615,6 +617,7 @@ export type Database = {
           schema_version_major?: number | null
           schema_version_minor?: number | null
           schema_version_patch?: number | null
+          version_inferred_from?: string | null
         }
         Relationships: [
           {

@@ -64,6 +64,7 @@ export async function saveResponse(
       schema_version_major: project?.schema_version_major ?? 0,
       schema_version_minor: project?.schema_version_minor ?? 1,
       schema_version_patch: project?.schema_version_patch ?? 0,
+      version_inferred_from: "live_save",
     };
 
     if (existing) {
