@@ -20,10 +20,11 @@ import {
   saveSchema,
   saveSchemaFromGUI,
   publishMajorVersion,
+  backfillSchemaVersionHistory,
 } from "@/actions/schema";
 import { validateGUIFields, generatePydanticCode } from "@/lib/schema-utils";
 import { toast } from "sonner";
-import { LayoutGrid, Code, Rocket, Info, X } from "lucide-react";
+import { LayoutGrid, Code, Rocket, Info, X, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SchemaBuilderGUI } from "./SchemaBuilderGUI";
 import type { PydanticField } from "@/lib/types";
@@ -64,6 +65,7 @@ export function SchemaEditor({
   const [errors, setErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
   const [majorDialogOpen, setMajorDialogOpen] = useState(false);
+  const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
   const [helpDismissed, setHelpDismissed] = useState(() => {
     if (typeof window === "undefined") return true;
     return window.localStorage.getItem(VERSIONING_HELP_KEY) === "1";
@@ -85,6 +87,23 @@ export function SchemaEditor({
         router.refresh();
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Erro ao publicar MAJOR";
+        toast.error(msg);
+      }
+    });
+  };
+
+  const handleBackfill = () => {
+    startTransition(async () => {
+      try {
+        const result = await backfillSchemaVersionHistory(projectId);
+        const v = result.finalVersion;
+        toast.success(
+          `Versão reconstruída: v${v.major}.${v.minor}.${v.patch} (${result.logEntriesUpdated} entradas, ${result.responsesUpdated} respostas)`,
+        );
+        setBackfillDialogOpen(false);
+        router.refresh();
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Erro ao reconstruir";
         toast.error(msg);
       }
     });
@@ -232,6 +251,17 @@ export function SchemaEditor({
             </Badge>
           )}
           <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 text-xs text-muted-foreground"
+            onClick={() => setBackfillDialogOpen(true)}
+            disabled={isPending}
+            title="Reconstruir versão a partir do histórico de mudanças"
+          >
+            <History className="h-3.5 w-3.5" />
+            Reconstruir histórico
+          </Button>
+          <Button
             variant="outline"
             size="sm"
             className="h-7 gap-1.5 text-xs"
@@ -320,6 +350,28 @@ export function SchemaEditor({
           </Badge>
         )}
       </div>
+
+      <AlertDialog open={backfillDialogOpen} onOpenChange={setBackfillDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reconstruir versão pelo histórico?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Isso percorre todas as entradas do histórico de mudanças do schema em
+              ordem cronológica e reatribui change_type (MINOR quando houve adição/remoção
+              de opções; PATCH quando só texto foi alterado; MAJOR preservado se já existir).
+              A versão do projeto e as versões das respostas existentes são recalculadas
+              com base nos timestamps. Útil em projetos antigos que começaram antes do
+              versionamento. Idempotente — pode rodar de novo sem problemas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBackfill} disabled={isPending}>
+              Reconstruir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={majorDialogOpen} onOpenChange={setMajorDialogOpen}>
         <AlertDialogContent>

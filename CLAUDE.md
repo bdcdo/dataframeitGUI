@@ -80,7 +80,14 @@ Para aplicar migrations pendentes: `npx supabase db push`
 
 ## Deploy
 
-Vercel faz deploy automatico a partir de push no branch `main`. Sempre que terminar uma tarefa, commitar e pushar para `main` para que o deploy aconteca. A unica excecao e quando o usuario **explicitamente pedir para criar uma branch separada** no inicio da tarefa — nesse caso, deixar na branch sem merge para main.
+Vercel faz deploy automatico a partir de merge no branch `main`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
+
+1. Criar branch descritiva (`feat/...`, `fix/...`) no inicio da tarefa
+2. Commitar nela
+3. Ao final, abrir PR contra `main` via `gh pr create`
+4. Deixar o usuario revisar e fazer o merge
+
+Nunca fazer push direto para `main`, nem fazer merge do PR pelo Claude — so o usuario faz merge.
 
 ## Como rodar
 

@@ -286,6 +286,148 @@ export async function saveSchemaFromGUI(
   }
 }
 
+// ---------- Backfill retroativo usando schema_change_log ----------
+// Reconstrói a versão do projeto a partir do histórico de mudanças já registradas.
+// Útil em projetos que existem desde antes do versionamento ter sido introduzido.
+// Idempotente: respeitar entries já classificadas como 'major', reclassificar as demais.
+
+export async function backfillSchemaVersionHistory(projectId: string) {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
+  const supabase = await createSupabaseServer();
+
+  const { data: log, error: logErr } = await supabase
+    .from("schema_change_log")
+    .select("id, field_name, before_value, after_value, created_at, change_type")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: true });
+  if (logErr) throw new Error(logErr.message);
+
+  let current = { major: 0, minor: 1, patch: 0 };
+  const logUpdates: Array<{
+    id: string;
+    change_type: ChangeType;
+    version_major: number;
+    version_minor: number;
+    version_patch: number;
+  }> = [];
+  const versionByTimestamp: Array<{ createdAt: number; version: typeof current }> = [];
+
+  for (const entry of log ?? []) {
+    let type: ChangeType;
+    if (entry.change_type === "major") {
+      type = "major";
+    } else {
+      // Infer from before/after payload
+      const before = (entry.before_value ?? {}) as Record<string, unknown>;
+      const after = (entry.after_value ?? {}) as Record<string, unknown>;
+      const bOpts = before.options;
+      const aOpts = after.options;
+      const optsTouched = bOpts !== undefined || aOpts !== undefined;
+
+      let structural = false;
+      if (optsTouched) {
+        const bArr = Array.isArray(bOpts) ? (bOpts as unknown[]) : [];
+        const aArr = Array.isArray(aOpts) ? (aOpts as unknown[]) : [];
+        const bSet = new Set(bArr);
+        const aSet = new Set(aArr);
+        const sameSet =
+          bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
+        if (!sameSet) structural = true;
+      }
+      type = structural ? "minor" : "patch";
+    }
+
+    current = bumpVersion(current, type);
+    logUpdates.push({
+      id: entry.id as string,
+      change_type: type,
+      version_major: current.major,
+      version_minor: current.minor,
+      version_patch: current.patch,
+    });
+    versionByTimestamp.push({
+      createdAt: new Date(entry.created_at as string).getTime(),
+      version: { ...current },
+    });
+  }
+
+  // Update each log entry (idempotent)
+  for (const u of logUpdates) {
+    await supabase
+      .from("schema_change_log")
+      .update({
+        change_type: u.change_type,
+        version_major: u.version_major,
+        version_minor: u.version_minor,
+        version_patch: u.version_patch,
+      })
+      .eq("id", u.id);
+  }
+
+  // Set project current version
+  await supabase
+    .from("projects")
+    .update({
+      schema_version_major: current.major,
+      schema_version_minor: current.minor,
+      schema_version_patch: current.patch,
+    })
+    .eq("id", projectId);
+
+  // Set response versions based on timestamps.
+  const { data: responses } = await supabase
+    .from("responses")
+    .select("id, created_at")
+    .eq("project_id", projectId);
+
+  // Sort versionByTimestamp desc for lookup
+  const versionByTsDesc = [...versionByTimestamp].sort(
+    (a, b) => b.createdAt - a.createdAt,
+  );
+
+  const byVersionKey = new Map<string, string[]>();
+  for (const r of responses ?? []) {
+    const ts = new Date(r.created_at as string).getTime();
+    let version = { major: 0, minor: 1, patch: 0 };
+    for (const v of versionByTsDesc) {
+      if (v.createdAt <= ts) {
+        version = v.version;
+        break;
+      }
+    }
+    const key = `${version.major}.${version.minor}.${version.patch}`;
+    if (!byVersionKey.has(key)) byVersionKey.set(key, []);
+    byVersionKey.get(key)!.push(r.id as string);
+  }
+
+  for (const [key, ids] of byVersionKey) {
+    const [maj, min, pat] = key.split(".").map((v) => Number.parseInt(v, 10));
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      await supabase
+        .from("responses")
+        .update({
+          schema_version_major: maj,
+          schema_version_minor: min,
+          schema_version_patch: pat,
+        })
+        .in("id", chunk);
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
+  revalidatePath(`/projects/${projectId}/config/schema`);
+  revalidatePath(`/projects/${projectId}/reviews`);
+
+  return {
+    finalVersion: current,
+    logEntriesUpdated: logUpdates.length,
+    responsesUpdated: (responses ?? []).length,
+  };
+}
+
 // ---------- MAJOR version bump (manual) ----------
 
 export async function publishMajorVersion(projectId: string) {
