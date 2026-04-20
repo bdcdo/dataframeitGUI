@@ -136,6 +136,11 @@ function classifyChange(
     if (o.type !== n.type) hasStructural = true;
     if ((o.target ?? "all") !== (n.target ?? "all")) hasStructural = true;
     if ((o.required ?? true) !== (n.required ?? true)) hasStructural = true;
+    if ((o.subfield_rule ?? null) !== (n.subfield_rule ?? null)) hasStructural = true;
+    if ((o.allow_other ?? false) !== (n.allow_other ?? false)) hasStructural = true;
+    if (JSON.stringify(o.subfields ?? null) !== JSON.stringify(n.subfields ?? null)) {
+      hasStructural = true;
+    }
 
     const optsOld = o.options ?? [];
     const optsNew = n.options ?? [];
@@ -188,6 +193,37 @@ function bumpVersion(
   return { major: current.major, minor: current.minor, patch: current.patch + 1 };
 }
 
+// Classifica um diff de schema_change_log (before/after por campo) como estrutural (minor)
+// ou textual (patch). Add/remove são sempre estruturais.
+function fieldDiffIsStructural(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): boolean {
+  if (Object.keys(before).length === 0 || Object.keys(after).length === 0) return true;
+
+  for (const k of ["type", "target", "required", "subfield_rule", "allow_other"]) {
+    if (before[k] !== undefined || after[k] !== undefined) return true;
+  }
+
+  if (before.subfields !== undefined || after.subfields !== undefined) {
+    if (JSON.stringify(before.subfields ?? null) !== JSON.stringify(after.subfields ?? null)) {
+      return true;
+    }
+  }
+
+  const bOpts = before.options;
+  const aOpts = after.options;
+  if (bOpts !== undefined || aOpts !== undefined) {
+    const bArr = Array.isArray(bOpts) ? (bOpts as unknown[]) : [];
+    const aArr = Array.isArray(aOpts) ? (aOpts as unknown[]) : [];
+    const bSet = new Set(bArr);
+    const aSet = new Set(aArr);
+    const sameSet = bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
+    if (!sameSet) return true;
+  }
+  return false;
+}
+
 // ---------- Save from GUI ----------
 
 export async function saveSchemaFromGUI(
@@ -237,6 +273,9 @@ export async function saveSchemaFromGUI(
       options: field.options ?? null,
       target: field.target ?? null,
       required: field.required ?? null,
+      subfields: field.subfields ?? null,
+      subfield_rule: field.subfield_rule ?? null,
+      allow_other: field.allow_other ?? null,
     };
   }
 
@@ -301,6 +340,23 @@ export async function saveSchemaFromGUI(
       diffs.push("obrigatório");
       before.required = old.required ?? null;
       after.required = f.required ?? null;
+    }
+    if ((old.subfield_rule ?? null) !== (f.subfield_rule ?? null)) {
+      diffs.push("regra de subcampos");
+      before.subfield_rule = old.subfield_rule ?? null;
+      after.subfield_rule = f.subfield_rule ?? null;
+    }
+    if ((old.allow_other ?? false) !== (f.allow_other ?? false)) {
+      diffs.push("permite outro");
+      before.allow_other = old.allow_other ?? false;
+      after.allow_other = f.allow_other ?? false;
+    }
+    const oldSubs = JSON.stringify(old.subfields ?? null);
+    const newSubs = JSON.stringify(f.subfields ?? null);
+    if (oldSubs !== newSubs) {
+      diffs.push("subcampos");
+      before.subfields = old.subfields ?? null;
+      after.subfields = f.subfields ?? null;
     }
 
     if (diffs.length > 0) {
@@ -402,6 +458,7 @@ export async function backfillSchemaVersionHistory(projectId: string) {
   ]);
 
   if (logErr) throw new Error(logErr.message);
+  if (!project) throw new Error("Projeto não encontrado ou sem permissão");
 
   // 1) Classify entries and compute cumulative version per entry
   let current = { major: 0, minor: 1, patch: 0 };
@@ -424,27 +481,7 @@ export async function backfillSchemaVersionHistory(projectId: string) {
     if (entry.change_type === "major") {
       type = "major";
     } else {
-      // Estruturais: add/remove de campo (before ou after vazios), mudança de type/target/required/options
-      const isAdd = Object.keys(before).length === 0;
-      const isRemove = Object.keys(after).length === 0;
-      let structural = isAdd || isRemove;
-      if (!structural) {
-        if (before.type !== undefined || after.type !== undefined) structural = true;
-        if (before.target !== undefined || after.target !== undefined) structural = true;
-        if (before.required !== undefined || after.required !== undefined) structural = true;
-        const bOpts = before.options;
-        const aOpts = after.options;
-        if (bOpts !== undefined || aOpts !== undefined) {
-          const bArr = Array.isArray(bOpts) ? (bOpts as unknown[]) : [];
-          const aArr = Array.isArray(aOpts) ? (aOpts as unknown[]) : [];
-          const bSet = new Set(bArr);
-          const aSet = new Set(aArr);
-          const sameSet =
-            bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
-          if (!sameSet) structural = true;
-        }
-      }
-      type = structural ? "minor" : "patch";
+      type = fieldDiffIsStructural(before, after) ? "minor" : "patch";
     }
 
     current = bumpVersion(current, type);
@@ -460,17 +497,19 @@ export async function backfillSchemaVersionHistory(projectId: string) {
   }
 
   // 2) Update each log entry with classification + version
-  for (const e of enriched) {
-    await supabase
-      .from("schema_change_log")
-      .update({
-        change_type: e.changeType,
-        version_major: e.version.major,
-        version_minor: e.version.minor,
-        version_patch: e.version.patch,
-      })
-      .eq("id", e.id);
-  }
+  await Promise.all(
+    enriched.map((e) =>
+      supabase
+        .from("schema_change_log")
+        .update({
+          change_type: e.changeType,
+          version_major: e.version.major,
+          version_minor: e.version.minor,
+          version_patch: e.version.patch,
+        })
+        .eq("id", e.id),
+    ),
+  );
 
   // 3) Set project current version
   await supabase
@@ -556,11 +595,26 @@ export async function backfillSchemaVersionHistory(projectId: string) {
     hashesByVersion.set(k, computeHashesFromSnapshot(snap));
   }
 
-  // 5) Assign versions to responses
-  const { data: responses } = await supabase
-    .from("responses")
-    .select("id, created_at, answer_field_hashes, version_inferred_from")
-    .eq("project_id", projectId);
+  // 5) Assign versions to responses (paginate to avoid implicit 1000-row cap)
+  const RESPONSES_PAGE = 500;
+  type ResponseRow = {
+    id: string;
+    created_at: string;
+    answer_field_hashes: Record<string, string> | null;
+    version_inferred_from: string | null;
+  };
+  const responses: ResponseRow[] = [];
+  for (let from = 0; ; from += RESPONSES_PAGE) {
+    const { data: page, error: pageErr } = await supabase
+      .from("responses")
+      .select("id, created_at, answer_field_hashes, version_inferred_from")
+      .eq("project_id", projectId)
+      .range(from, from + RESPONSES_PAGE - 1);
+    if (pageErr) throw new Error(pageErr.message);
+    if (!page || page.length === 0) break;
+    responses.push(...(page as unknown as ResponseRow[]));
+    if (page.length < RESPONSES_PAGE) break;
+  }
 
   const allVersionKeys = [...hashesByVersion.keys()];
   const versionByKey = new Map<string, { major: number; minor: number; patch: number }>();
@@ -584,7 +638,7 @@ export async function backfillSchemaVersionHistory(projectId: string) {
 
   let countLiveSave = 0;
 
-  for (const r of responses ?? []) {
+  for (const r of responses) {
     // Preserve live_save entries as-is (precisão total)
     if (r.version_inferred_from === "live_save") {
       countLiveSave++;
@@ -650,23 +704,28 @@ export async function backfillSchemaVersionHistory(projectId: string) {
   let countCreatedAt = 0;
   let countFallback = 0;
 
-  for (const [, bucket] of updates) {
-    for (let i = 0; i < bucket.ids.length; i += 100) {
-      const chunk = bucket.ids.slice(i, i + 100);
-      await supabase
-        .from("responses")
-        .update({
-          schema_version_major: bucket.version.major,
-          schema_version_minor: bucket.version.minor,
-          schema_version_patch: bucket.version.patch,
-          version_inferred_from: bucket.method,
-        })
-        .in("id", chunk);
-    }
+  const updatePromises = [];
+  for (const bucket of updates.values()) {
     if (bucket.method === "hashes") countHashes += bucket.ids.length;
     else if (bucket.method === "created_at") countCreatedAt += bucket.ids.length;
     else if (bucket.method === "fallback_created_at") countFallback += bucket.ids.length;
+
+    for (let i = 0; i < bucket.ids.length; i += 100) {
+      const chunk = bucket.ids.slice(i, i + 100);
+      updatePromises.push(
+        supabase
+          .from("responses")
+          .update({
+            schema_version_major: bucket.version.major,
+            schema_version_minor: bucket.version.minor,
+            schema_version_patch: bucket.version.patch,
+            version_inferred_from: bucket.method,
+          })
+          .in("id", chunk),
+      );
+    }
   }
+  await Promise.all(updatePromises);
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/config/schema`);
@@ -675,7 +734,7 @@ export async function backfillSchemaVersionHistory(projectId: string) {
   return {
     finalVersion: current,
     logEntriesUpdated: enriched.length,
-    responsesUpdated: (responses ?? []).length,
+    responsesProcessed: responses.length,
     byMethod: {
       hashes: countHashes,
       created_at: countCreatedAt,

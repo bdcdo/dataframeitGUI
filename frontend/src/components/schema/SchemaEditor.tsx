@@ -99,7 +99,7 @@ export function SchemaEditor({
         const v = result.finalVersion;
         const m = result.byMethod;
         toast.success(
-          `v${v.major}.${v.minor}.${v.patch} · ${result.logEntriesUpdated} entradas, ${result.responsesUpdated} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
+          `v${v.major}.${v.minor}.${v.patch} · ${result.logEntriesUpdated} entradas, ${result.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
           { duration: 10000 },
         );
         setBackfillDialogOpen(false);
