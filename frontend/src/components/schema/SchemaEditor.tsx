@@ -2,16 +2,28 @@
 
 import { useState, useTransition } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   validateSchema,
   saveSchema,
   saveSchemaFromGUI,
+  publishMajorVersion,
 } from "@/actions/schema";
 import { validateGUIFields, generatePydanticCode } from "@/lib/schema-utils";
 import { toast } from "sonner";
-import { LayoutGrid, Code } from "lucide-react";
+import { LayoutGrid, Code, Rocket, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SchemaBuilderGUI } from "./SchemaBuilderGUI";
 import type { PydanticField } from "@/lib/types";
@@ -21,17 +33,22 @@ const MonacoEditor = dynamic(
   { ssr: false }
 );
 
+const VERSIONING_HELP_KEY = "schema-versioning-help-dismissed";
+
 interface SchemaEditorProps {
   projectId: string;
   initialCode: string | null;
   initialFields: PydanticField[] | null;
+  currentVersion: string;
 }
 
 export function SchemaEditor({
   projectId,
   initialCode,
   initialFields,
+  currentVersion,
 }: SchemaEditorProps) {
+  const router = useRouter();
   const defaultMode =
     !initialFields?.length && initialCode ? "code" : "gui";
 
@@ -46,6 +63,32 @@ export function SchemaEditor({
   >("idle");
   const [errors, setErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
+  const [majorDialogOpen, setMajorDialogOpen] = useState(false);
+  const [helpDismissed, setHelpDismissed] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(VERSIONING_HELP_KEY) === "1";
+  });
+
+  const dismissHelp = () => {
+    setHelpDismissed(true);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(VERSIONING_HELP_KEY, "1");
+    }
+  };
+
+  const handlePublishMajor = () => {
+    startTransition(async () => {
+      try {
+        const bumped = await publishMajorVersion(projectId);
+        toast.success(`Nova versão MAJOR publicada: ${bumped.major}.${bumped.minor}.${bumped.patch}`);
+        setMajorDialogOpen(false);
+        router.refresh();
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Erro ao publicar MAJOR";
+        toast.error(msg);
+      }
+    });
+  };
 
   // --- Troca de modo ---
 
@@ -141,31 +184,40 @@ export function SchemaEditor({
     <div className="flex h-[calc(100vh-148px)] flex-col">
       {/* Header: toggle de modo */}
       <div className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-7 text-xs gap-1.5",
-              mode === "gui" && "bg-background shadow-sm"
-            )}
-            onClick={() => (mode === "code" ? switchToGUI() : undefined)}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 text-xs gap-1.5",
+                mode === "gui" && "bg-background shadow-sm"
+              )}
+              onClick={() => (mode === "code" ? switchToGUI() : undefined)}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Visual
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-7 text-xs gap-1.5",
+                mode === "code" && "bg-background shadow-sm"
+              )}
+              onClick={() => (mode === "gui" ? switchToCode() : undefined)}
+            >
+              <Code className="h-3.5 w-3.5" />
+              Código
+            </Button>
+          </div>
+          <Badge
+            variant="outline"
+            className="h-6 px-2 font-mono text-xs"
+            title="Versão atual do schema"
           >
-            <LayoutGrid className="h-3.5 w-3.5" />
-            Visual
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "h-7 text-xs gap-1.5",
-              mode === "code" && "bg-background shadow-sm"
-            )}
-            onClick={() => (mode === "gui" ? switchToCode() : undefined)}
-          >
-            <Code className="h-3.5 w-3.5" />
-            Código
-          </Button>
+            v{currentVersion}
+          </Badge>
         </div>
 
         <div className="flex items-center gap-2">
@@ -179,8 +231,45 @@ export function SchemaEditor({
               {llmOnlyCount} LLM-only
             </Badge>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => setMajorDialogOpen(true)}
+            disabled={isPending}
+            title="Consolidar baseline e bumpar MAJOR"
+          >
+            <Rocket className="h-3.5 w-3.5" />
+            Publicar MAJOR
+          </Button>
         </div>
       </div>
+
+      {!helpDismissed && (
+        <div className="flex items-start gap-2 border-b bg-blue-500/5 px-4 py-2 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" />
+          <div className="flex-1">
+            <strong className="text-foreground">Sobre versões do schema.</strong>{" "}
+            Toda edição bumpa a versão automaticamente (MINOR para mudanças
+            estruturais como adicionar/remover campo ou opção, PATCH para texto).
+            Nenhuma edição apaga respostas — elas ficam rotuladas com a versão em
+            que foram dadas. Quando você quiser consolidar o codebook como{" "}
+            <strong className="text-foreground">baseline oficial</strong>, clique em{" "}
+            <strong className="text-foreground">Publicar MAJOR</strong>. A partir daí,
+            o filtro padrão da aba Comparar passa a ignorar respostas de versões
+            anteriores.
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 shrink-0"
+            onClick={dismissHelp}
+            title="Dispensar"
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
+      )}
 
       {/* Conteúdo */}
       <div className="flex-1 overflow-hidden">
@@ -231,6 +320,26 @@ export function SchemaEditor({
           </Badge>
         )}
       </div>
+
+      <AlertDialog open={majorDialogOpen} onOpenChange={setMajorDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Publicar nova versão MAJOR?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Isso bumpa a versão do projeto de <strong>{currentVersion}</strong> para uma nova MAJOR
+              (próximo inteiro). Use quando o codebook estiver estável e você quiser declarar uma
+              baseline oficial. A partir daí, o filtro padrão da aba Comparar ignorará respostas
+              de versões anteriores. Respostas antigas continuam salvas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handlePublishMajor} disabled={isPending}>
+              Publicar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -481,6 +481,9 @@ export type Database = {
           pydantic_fields: Json | null
           pydantic_hash: string | null
           resolution_rule: string | null
+          schema_version_major: number
+          schema_version_minor: number
+          schema_version_patch: number
         }
         Insert: {
           allow_researcher_review?: boolean | null
@@ -498,6 +501,9 @@ export type Database = {
           pydantic_fields?: Json | null
           pydantic_hash?: string | null
           resolution_rule?: string | null
+          schema_version_major?: number
+          schema_version_minor?: number
+          schema_version_patch?: number
         }
         Update: {
           allow_researcher_review?: boolean | null
@@ -515,6 +521,9 @@ export type Database = {
           pydantic_fields?: Json | null
           pydantic_hash?: string | null
           resolution_rule?: string | null
+          schema_version_major?: number
+          schema_version_minor?: number
+          schema_version_patch?: number
         }
         Relationships: [
           {
@@ -569,6 +578,9 @@ export type Database = {
           respondent_id: string | null
           respondent_name: string | null
           respondent_type: string
+          schema_version_major: number | null
+          schema_version_minor: number | null
+          schema_version_patch: number | null
         }
         Insert: {
           answer_field_hashes?: Json | null
@@ -583,6 +595,9 @@ export type Database = {
           respondent_id?: string | null
           respondent_name?: string | null
           respondent_type: string
+          schema_version_major?: number | null
+          schema_version_minor?: number | null
+          schema_version_patch?: number | null
         }
         Update: {
           answer_field_hashes?: Json | null
@@ -597,6 +612,9 @@ export type Database = {
           respondent_id?: string | null
           respondent_name?: string | null
           respondent_type?: string
+          schema_version_major?: number | null
+          schema_version_minor?: number | null
+          schema_version_patch?: number | null
         }
         Relationships: [
           {
@@ -708,31 +726,43 @@ export type Database = {
           after_value: Json | null
           before_value: Json | null
           change_summary: string
+          change_type: string | null
           changed_by: string
           created_at: string
           field_name: string
           id: string
           project_id: string
+          version_major: number | null
+          version_minor: number | null
+          version_patch: number | null
         }
         Insert: {
           after_value?: Json | null
           before_value?: Json | null
           change_summary: string
+          change_type?: string | null
           changed_by: string
           created_at?: string
           field_name: string
           id?: string
           project_id: string
+          version_major?: number | null
+          version_minor?: number | null
+          version_patch?: number | null
         }
         Update: {
           after_value?: Json | null
           before_value?: Json | null
           change_summary?: string
+          change_type?: string | null
           changed_by?: string
           created_at?: string
           field_name?: string
           id?: string
           project_id?: string
+          version_major?: number | null
+          version_minor?: number | null
+          version_patch?: number | null
         }
         Relationships: [
           {

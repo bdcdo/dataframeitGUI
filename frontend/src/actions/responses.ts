@@ -34,7 +34,9 @@ export async function saveResponse(
         .single(),
       supabase
         .from("projects")
-        .select("pydantic_hash, pydantic_fields")
+        .select(
+          "pydantic_hash, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+        )
         .eq("id", projectId)
         .single(),
     ]);
@@ -59,6 +61,9 @@ export async function saveResponse(
       justifications,
       pydantic_hash: project?.pydantic_hash ?? null,
       answer_field_hashes: answerFieldHashes,
+      schema_version_major: project?.schema_version_major ?? 0,
+      schema_version_minor: project?.schema_version_minor ?? 1,
+      schema_version_patch: project?.schema_version_patch ?? 0,
     };
 
     if (existing) {
@@ -104,7 +109,8 @@ export async function saveResponse(
           .update({ status: "concluido", completed_at: new Date().toISOString() })
           .eq("project_id", projectId)
           .eq("document_id", documentId)
-          .eq("user_id", user.id);
+          .eq("user_id", user.id)
+          .eq("type", "codificacao");
         if (assignErr) return { success: false, error: assignErr.message };
       } else {
         // So regredir se NAO esta concluido (evita desfazer progresso por auto-save)
@@ -114,7 +120,8 @@ export async function saveResponse(
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("user_id", user.id)
-          .single();
+          .eq("type", "codificacao")
+          .maybeSingle();
 
         if (currentAssignment && currentAssignment.status !== "concluido") {
           const { error: assignErr } = await supabase
@@ -122,7 +129,8 @@ export async function saveResponse(
             .update({ status: "em_andamento", completed_at: null })
             .eq("project_id", projectId)
             .eq("document_id", documentId)
-            .eq("user_id", user.id);
+            .eq("user_id", user.id)
+            .eq("type", "codificacao");
           if (assignErr) return { success: false, error: assignErr.message };
         }
       }

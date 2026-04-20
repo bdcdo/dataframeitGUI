@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup } from "./AgreementGroup";
 import { MultiOptionReview } from "./MultiOptionReview";
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { cn, normalizeForComparison } from "@/lib/utils";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
+import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
+import type { PydanticField } from "@/lib/types";
 
 function formatVerdictDisplay(verdict: string): string {
   if (verdict.startsWith("{")) {
@@ -34,6 +37,7 @@ interface ComparisonResponse {
   justification?: string;
   is_current: boolean;
   isFieldStale: boolean;
+  schemaVersion?: string | null;
 }
 
 interface ExistingVerdict {
@@ -50,20 +54,20 @@ interface ComparisonPanelProps {
   fieldDescription: string;
   fieldType?: "single" | "multi" | "text" | "date";
   fieldOptions?: string[] | null;
+  fields: PydanticField[];
   fieldIndex: number;
   totalFields: number;
   responses: ComparisonResponse[];
   existingVerdict: ExistingVerdict | null;
   reviewed: boolean[];
-  concordant?: boolean[];
   isDivergent: boolean;
   onFieldNavigate: (index: number) => void;
-  onVerdict: (
-    verdict: string,
-    chosenResponseId?: string,
-  ) => void;
+  onVerdict: (verdict: string, chosenResponseId?: string) => void;
+  onMarkReviewed: () => void;
   comment: string;
   onCommentChange: (value: string) => void;
+  commentCount: number;
+  suggestionCount: number;
 }
 
 export function ComparisonPanel({
@@ -74,18 +78,23 @@ export function ComparisonPanel({
   fieldDescription,
   fieldType,
   fieldOptions,
+  fields,
   fieldIndex,
   totalFields,
   responses,
   existingVerdict,
   reviewed,
-  concordant,
   isDivergent,
   onFieldNavigate,
   onVerdict,
+  onMarkReviewed,
   comment,
   onCommentChange,
+  commentCount,
+  suggestionCount,
 }: ComparisonPanelProps) {
+  const [suggestOpen, setSuggestOpen] = useState(false);
+
   const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
   const groupCount = useMemo(() => {
     const keys = new Set(
@@ -96,6 +105,8 @@ export function ComparisonPanel({
     return keys.size;
   }, [responses]);
 
+  const feedbackBadge = commentCount + suggestionCount;
+
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 border-b px-4 py-1.5">
@@ -103,15 +114,34 @@ export function ComparisonPanel({
           total={totalFields}
           currentIndex={fieldIndex}
           answered={reviewed}
-          concordant={concordant}
           onNavigate={onFieldNavigate}
         />
-        <p className="mt-1.5 text-sm font-medium">
-          <span className="text-muted-foreground">
-            Campo {fieldIndex + 1}/{totalFields}:
-          </span>{" "}
-          {fieldDescription || fieldName}
-        </p>
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-sm font-medium">
+            <span className="text-muted-foreground">
+              Campo {fieldIndex + 1}/{totalFields}:
+            </span>{" "}
+            {fieldDescription || fieldName}
+          </p>
+          <div className="flex shrink-0 items-center gap-1">
+            {feedbackBadge > 0 && (
+              <Badge
+                variant="secondary"
+                className="h-5 gap-1 px-1.5 text-[10px]"
+                title={`${commentCount} nota(s), ${suggestionCount} sugestão(ões) de schema`}
+              >
+                <MessageSquare className="h-3 w-3" />
+                {commentCount}
+                {suggestionCount > 0 && (
+                  <>
+                    <Lightbulb className="ml-1 h-3 w-3" />
+                    {suggestionCount}
+                  </>
+                )}
+              </Badge>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-2">
@@ -184,12 +214,12 @@ export function ComparisonPanel({
               </div>
             )}
 
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <Input
                 placeholder="Comentário (opcional)"
                 value={comment}
                 onChange={(e) => onCommentChange(e.target.value)}
-                className="text-sm"
+                className="flex-1 min-w-[180px] text-sm"
               />
               <AddNoteButton
                 key={documentId}
@@ -201,12 +231,27 @@ export function ComparisonPanel({
                 size="sm"
                 label="Anotar"
               />
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() => setSuggestOpen(true)}
+                title="Sugerir alteração ao codebook neste campo"
+              >
+                <Lightbulb className="h-3.5 w-3.5" />
+                Sugerir
+              </Button>
             </div>
           </>
         ) : (
-          <div className="mt-2 flex items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-            Concordante — todos os respondentes concordam.
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+              Concordante — todos os respondentes concordam.
+            </div>
+            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onMarkReviewed}>
+              Marcar doc como revisado
+            </Button>
           </div>
         )}
       </div>
@@ -218,6 +263,14 @@ export function ComparisonPanel({
           optionCount={isMulti ? fieldOptions.length : undefined}
         />
       )}
+
+      <SuggestFieldDialog
+        projectId={projectId}
+        fieldName={fieldName}
+        allFields={fields}
+        open={suggestOpen}
+        onOpenChange={setSuggestOpen}
+      />
     </div>
   );
 }

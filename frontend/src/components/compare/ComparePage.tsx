@@ -10,20 +10,26 @@ import {
 } from "@/components/ui/resizable";
 import { CompareNav } from "./CompareNav";
 import { ComparisonPanel } from "./ComparisonPanel";
-import { submitVerdict, type ResponseSnapshotEntry } from "@/actions/reviews";
+import { CompareDocList, type DocListEntry } from "./CompareDocList";
+import { submitVerdict, markCompareDocReviewed, type ResponseSnapshotEntry } from "@/actions/reviews";
 import { toast } from "sonner";
 import { normalizeForComparison } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
+import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
 
 interface CompareResponse {
   id: string;
   respondent_type: "humano" | "llm";
   respondent_name: string;
-  answers: Record<string, any>;
+  answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
   is_current: boolean;
   pydantic_hash: string | null;
   answer_field_hashes: Record<string, string> | null;
+  schema_version_major: number | null;
+  schema_version_minor: number | null;
+  schema_version_patch: number | null;
+  created_at: string;
 }
 
 interface CompareDocument {
@@ -48,6 +54,12 @@ interface ComparePageProps {
   existingReviews: Record<string, Record<string, ExistingVerdictInfo>>;
   projectPydanticHash: string | null;
   respondentNames: string[];
+  coverageByDoc: Record<string, DocCoverage>;
+  commentCountsByKey: Record<string, number>;
+  suggestionCountsByField: Record<string, number>;
+  availableVersions: string[];
+  latestMajorLabel: string | null;
+  currentProjectVersion: string;
 }
 
 export function ComparePage({
@@ -59,69 +71,54 @@ export function ComparePage({
   existingReviews,
   projectPydanticHash,
   respondentNames,
+  coverageByDoc,
+  commentCountsByKey,
+  suggestionCountsByField,
+  availableVersions,
+  latestMajorLabel,
+  currentProjectVersion,
 }: ComparePageProps) {
   const [docIndex, setDocIndex] = useState(0);
   const [fieldIndex, setFieldIndex] = useState(0);
   const [filter, setFilter] = useState("all");
-  const [respondentFilter, setRespondentFilter] = useState("all");
   const [comment, setComment] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showConcordant, setShowConcordant] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
 
-  // Optimistic local reviews state (merges server data with client-side submissions)
   const [localReviews, setLocalReviews] = useState<
     Record<string, Record<string, ExistingVerdictInfo>>
   >(existingReviews);
-
-  // All comparable field names (schema order, excluding llm_only/human_only)
-  const comparableFieldNames = useMemo(
-    () => fields.filter((f) => f.target !== "llm_only" && f.target !== "human_only").map((f) => f.name),
-    [fields]
-  );
 
   const currentDoc = documents[docIndex];
   const allDocDivergent = currentDoc ? (divergentFields[currentDoc.id] || []) : [];
   const divergentSet = useMemo(() => new Set(allDocDivergent), [allDocDivergent]);
 
-  // Active field list depends on toggle: all comparable fields (schema order) or only divergent
-  const docFieldList = showConcordant ? comparableFieldNames : allDocDivergent;
   const docFields = filter === "all"
-    ? docFieldList
-    : docFieldList.filter((fn) => fn === filter);
+    ? allDocDivergent
+    : allDocDivergent.filter((fn) => fn === filter);
   const currentFieldName = docFields[fieldIndex];
   const currentField = fields.find((f) => f.name === currentFieldName);
   const isCurrentFieldDivergent = divergentSet.has(currentFieldName);
-  const allDocResponses = currentDoc ? (responses[currentDoc.id] || []) : [];
-  const docResponses = respondentFilter === "all"
-    ? allDocResponses
-    : allDocResponses.filter((r) => r.respondent_name === respondentFilter);
+  const docResponses = currentDoc ? (responses[currentDoc.id] || []) : [];
 
-  // For concordant fields: mark as "reviewed" automatically (no action needed)
-  const reviewed = docFields.map((fn) =>
-    divergentSet.has(fn) ? !!localReviews[currentDoc?.id]?.[fn] : true
-  );
-  const concordant = docFields.map((fn) => !divergentSet.has(fn));
+  const reviewed = docFields.map((fn) => !!localReviews[currentDoc?.id]?.[fn]);
 
-  // Count docs with all divergent fields reviewed
   const reviewedDocsCount = useMemo(() => {
     return documents.filter((doc) => {
-      const docFields = divergentFields[doc.id] || [];
-      if (docFields.length === 0) return false;
-      return docFields.every((fn) => !!localReviews[doc.id]?.[fn]);
+      const fieldsForDoc = divergentFields[doc.id] || [];
+      if (fieldsForDoc.length === 0) return false;
+      return fieldsForDoc.every((fn) => !!localReviews[doc.id]?.[fn]);
     }).length;
   }, [documents, divergentFields, localReviews]);
 
-  // Current field's existing verdict
   const currentVerdict = currentDoc && currentFieldName
     ? localReviews[currentDoc.id]?.[currentFieldName] ?? null
     : null;
 
-  // Reset comment when navigating to a different field or document
   useEffect(() => {
     setComment(currentVerdict?.comment || "");
   }, [currentFieldName, currentDoc?.id, currentVerdict?.comment]);
 
-  // Build current field hash lookup
   const currentFieldHashes = useMemo(() => {
     const map: Record<string, string> = {};
     for (const f of fields) {
@@ -130,7 +127,6 @@ export function ComparePage({
     return map;
   }, [fields]);
 
-  // Prepare responses for current field, computing per-field staleness
   const fieldResponses = docResponses.map((r) => {
     let isFieldStale = false;
     if (r.answer_field_hashes) {
@@ -140,6 +136,10 @@ export function ComparePage({
     } else {
       isFieldStale = !!projectPydanticHash && r.pydantic_hash !== projectPydanticHash;
     }
+    const version =
+      r.schema_version_major !== null
+        ? `${r.schema_version_major}.${r.schema_version_minor ?? 0}.${r.schema_version_patch ?? 0}`
+        : null;
     return {
       id: r.id,
       respondent_type: r.respondent_type,
@@ -150,10 +150,10 @@ export function ComparePage({
       justification: r.justifications?.[currentFieldName],
       is_current: r.is_current,
       isFieldStale,
+      schemaVersion: version,
     };
   });
 
-  // Group field responses by answer for keyboard shortcuts (excludes undefined answers)
   const answerGroups = useMemo(() => {
     const map = new Map<string, typeof fieldResponses>();
     for (const r of fieldResponses) {
@@ -171,7 +171,6 @@ export function ComparePage({
 
       const verdictComment = comment || undefined;
 
-      // Optimistic update
       setLocalReviews((prev) => ({
         ...prev,
         [currentDoc.id]: {
@@ -184,7 +183,6 @@ export function ComparePage({
         },
       }));
 
-      // Build response snapshot from current field responses
       const snapshot: ResponseSnapshotEntry[] = fieldResponses
         .filter((r) => r.answer !== undefined)
         .map((r) => ({
@@ -195,29 +193,29 @@ export function ComparePage({
           ...(r.justification ? { justification: r.justification } : {}),
         }));
 
-      // Server call
       await submitVerdict(projectId, currentDoc.id, currentFieldName, verdict, chosenResponseId, verdictComment, snapshot);
 
       setComment("");
       toast.success("Veredito salvo!");
 
-      // Check if all DIVERGENT fields for this doc are now reviewed
       const allFieldsReviewed = allDocDivergent.every((fn) => {
-        if (fn === currentFieldName) return true; // just submitted
+        if (fn === currentFieldName) return true;
         return !!localReviews[currentDoc.id]?.[fn];
       });
 
-      if (allFieldsReviewed && docIndex < documents.length - 1) {
-        toast.success("Todos os campos revisados! Avançando...");
-        setTimeout(() => {
-          setDocIndex(docIndex + 1);
-          setFieldIndex(0);
-        }, 1500);
+      if (allFieldsReviewed) {
+        toast.success("Revisão do documento concluída!");
+        if (docIndex < documents.length - 1) {
+          setTimeout(() => {
+            setDocIndex(docIndex + 1);
+            setFieldIndex(0);
+          }, 1500);
+        }
       } else if (fieldIndex < docFields.length - 1) {
         setFieldIndex(fieldIndex + 1);
       }
     },
-    [projectId, currentDoc, currentFieldName, isCurrentFieldDivergent, fieldIndex, docFields, allDocDivergent, docIndex, documents.length, localReviews, comment]
+    [projectId, currentDoc, currentFieldName, isCurrentFieldDivergent, fieldIndex, docFields, allDocDivergent, docIndex, documents.length, localReviews, comment, fieldResponses]
   );
 
   const handleDocNavigate = useCallback(
@@ -231,12 +229,16 @@ export function ComparePage({
 
   const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
 
-  // Keyboard shortcuts
+  const handleMarkReviewed = useCallback(async () => {
+    if (!currentDoc) return;
+    await markCompareDocReviewed(projectId, currentDoc.id);
+    toast.success("Documento marcado como revisado.");
+  }, [projectId, currentDoc]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
-      // Fullscreen toggle
       if (e.key === "F" && e.ctrlKey && e.shiftKey) {
         e.preventDefault();
         setIsFullscreen((prev) => !prev);
@@ -247,14 +249,11 @@ export function ComparePage({
         return;
       }
 
-      // Navigation always works
       if (e.key === "n" && fieldIndex < docFields.length - 1) { setFieldIndex(fieldIndex + 1); return; }
       if (e.key === "p" && fieldIndex > 0) { setFieldIndex(fieldIndex - 1); return; }
 
-      // Verdict shortcuts only for divergent fields
       if (!isCurrentFieldDivergent) return;
 
-      // Multi-select fields handle their own keyboard shortcuts (number keys + Enter)
       const isMultiField = currentField?.type === "multi" && currentField.options?.length;
       if (isMultiField) {
         if (e.key === "a") handleVerdict("ambiguo");
@@ -262,7 +261,6 @@ export function ComparePage({
         return;
       }
 
-      // Number keys: select answer group (single/text fields only)
       const num = parseInt(e.key);
       if (num >= 1 && num <= answerGroups.length) {
         const group = answerGroups[num - 1];
@@ -279,12 +277,40 @@ export function ComparePage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [answerGroups, handleVerdict, fieldIndex, docFields.length, isFullscreen, isCurrentFieldDivergent, currentField]);
 
+  const docListEntries: DocListEntry[] = documents.map((d) => {
+    const c = coverageByDoc[d.id];
+    const reviewedOverride = localReviews[d.id]
+      ? (divergentFields[d.id] ?? []).filter((fn) => !!localReviews[d.id][fn]).length
+      : c?.reviewedCount ?? 0;
+    return {
+      id: d.id,
+      title: d.title,
+      external_id: d.external_id,
+      humanCount: c?.humanCount ?? 0,
+      totalCount: c?.totalCount ?? 0,
+      assignedCodingCount: c?.assignedCodingCount ?? 0,
+      humansFromAssigned: c?.humansFromAssigned ?? 0,
+      divergentCount: c?.divergentCount ?? 0,
+      reviewedCount: reviewedOverride,
+      assignmentStatus: c?.assignmentStatus ?? null,
+    };
+  });
+
   if (!currentDoc || docFields.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-muted-foreground">
-        {showConcordant
-          ? "Nenhum campo comparável encontrado."
-          : "Nenhuma divergência encontrada."}
+      <div className="flex h-[calc(100vh-96px)] w-full">
+        <CompareDocList
+          docs={docListEntries}
+          currentIndex={docIndex}
+          onSelect={handleDocNavigate}
+          collapsed={listCollapsed}
+          onToggle={() => setListCollapsed((v) => !v)}
+        />
+        <div className="flex flex-1 items-center justify-center text-muted-foreground">
+          {documents.length === 0
+            ? "Nenhum documento na fila com os filtros atuais."
+            : "Nenhuma divergência neste documento."}
+        </div>
       </div>
     );
   }
@@ -292,6 +318,11 @@ export function ComparePage({
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
   const parecerUrl = `${baseUrl}/projects/${projectId}/analyze/code?doc=${currentDoc.id}`;
   const docTitle = currentDoc.title || currentDoc.external_id || "Documento";
+
+  const fieldCommentCount =
+    (commentCountsByKey[`${currentDoc.id}|${currentFieldName}`] ?? 0) +
+    (commentCountsByKey[`${currentDoc.id}|`] ?? 0);
+  const fieldSuggestionCount = suggestionCountsByField[currentFieldName] ?? 0;
 
   return (
     <div
@@ -321,45 +352,58 @@ export function ComparePage({
           reviewedDocsCount={reviewedDocsCount}
           onToggleFullscreen={toggleFullscreen}
           parecerUrl={parecerUrl}
-          showConcordant={showConcordant}
-          onToggleConcordant={(v) => { setShowConcordant(v); setFieldIndex(0); }}
-          respondentFilter={respondentFilter}
-          onRespondentFilterChange={setRespondentFilter}
           respondentNames={respondentNames}
+          availableVersions={availableVersions}
+          latestMajorLabel={latestMajorLabel}
+          currentProjectVersion={currentProjectVersion}
           projectId={projectId}
           documentId={currentDoc?.id}
         />
       )}
 
-      <ResizablePanelGroup className="flex-1">
-        <ResizablePanel defaultSize={50} minSize={25}>
-          <DocumentReader text={currentDoc.text} />
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={50} minSize={25}>
-          <ComparisonPanel
-            projectId={projectId}
-            documentId={currentDoc?.id}
-            documentTitle={docTitle}
-            fieldName={currentFieldName}
-            fieldDescription={currentField?.description || currentFieldName}
-            fieldType={currentField?.type}
-            fieldOptions={currentField?.options}
-            fieldIndex={fieldIndex}
-            totalFields={docFields.length}
-            responses={fieldResponses}
-            existingVerdict={currentVerdict}
-            reviewed={reviewed}
-            concordant={concordant}
-            isDivergent={isCurrentFieldDivergent}
-            onFieldNavigate={setFieldIndex}
-            onVerdict={handleVerdict}
-            comment={comment}
-            onCommentChange={setComment}
+      <div className="flex flex-1 overflow-hidden">
+        {!isFullscreen && (
+          <CompareDocList
+            docs={docListEntries}
+            currentIndex={docIndex}
+            onSelect={handleDocNavigate}
+            collapsed={listCollapsed}
+            onToggle={() => setListCollapsed((v) => !v)}
           />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        )}
 
+        <ResizablePanelGroup className="flex-1">
+          <ResizablePanel defaultSize={50} minSize={25}>
+            <DocumentReader text={currentDoc.text} />
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={50} minSize={25}>
+            <ComparisonPanel
+              projectId={projectId}
+              documentId={currentDoc?.id}
+              documentTitle={docTitle}
+              fieldName={currentFieldName}
+              fieldDescription={currentField?.description || currentFieldName}
+              fieldType={currentField?.type}
+              fieldOptions={currentField?.options}
+              fields={fields}
+              fieldIndex={fieldIndex}
+              totalFields={docFields.length}
+              responses={fieldResponses}
+              existingVerdict={currentVerdict}
+              reviewed={reviewed}
+              isDivergent={isCurrentFieldDivergent}
+              onFieldNavigate={setFieldIndex}
+              onVerdict={handleVerdict}
+              onMarkReviewed={handleMarkReviewed}
+              comment={comment}
+              onCommentChange={setComment}
+              commentCount={fieldCommentCount}
+              suggestionCount={fieldSuggestionCount}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
     </div>
   );
 }

@@ -2,12 +2,10 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 import { CompareFieldFilter } from "./CompareFieldFilter";
-import { RespondentFilter } from "./RespondentFilter";
+import { CompareFilters } from "./CompareFilters";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
 import type { PydanticField } from "@/lib/types";
 
@@ -22,11 +20,10 @@ interface CompareNavProps {
   reviewedDocsCount: number;
   onToggleFullscreen: () => void;
   parecerUrl?: string;
-  showConcordant: boolean;
-  onToggleConcordant: (value: boolean) => void;
-  respondentFilter?: string;
-  onRespondentFilterChange?: (value: string) => void;
-  respondentNames?: string[];
+  respondentNames: string[];
+  availableVersions: string[];
+  latestMajorLabel: string | null;
+  currentProjectVersion: string;
   projectId?: string;
   documentId?: string;
 }
@@ -42,42 +39,35 @@ export function CompareNav({
   reviewedDocsCount,
   onToggleFullscreen,
   parecerUrl,
-  showConcordant,
-  onToggleConcordant,
-  respondentFilter,
-  onRespondentFilterChange,
   respondentNames,
+  availableVersions,
+  latestMajorLabel,
+  currentProjectVersion,
   projectId,
   documentId,
 }: CompareNavProps) {
   return (
     <div className="flex h-10 items-center justify-between border-b px-4 text-sm shrink-0">
-      <div className="flex items-center gap-1 min-w-0">
+      <div className="flex min-w-0 items-center gap-1">
         <span className="truncate font-medium">{title}</span>
         {parecerUrl && <CopyLinkButton url={parecerUrl} />}
+        <Badge
+          variant="outline"
+          className="ml-2 h-5 shrink-0 px-1.5 text-[10px] font-mono"
+          title="Versão atual do schema do projeto"
+        >
+          v{currentProjectVersion}
+        </Badge>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex shrink-0 items-center gap-2">
         <Badge variant="secondary" className="text-xs">
           {reviewedDocsCount}/{totalDocs} docs
         </Badge>
-        <div className="flex items-center gap-1.5">
-          <Switch
-            id="show-concordant"
-            checked={showConcordant}
-            onCheckedChange={onToggleConcordant}
-            className="h-4 w-7 [&>span]:h-3 [&>span]:w-3"
-          />
-          <Label htmlFor="show-concordant" className="cursor-pointer text-xs text-muted-foreground">
-            Todos
-          </Label>
-        </div>
-        {respondentNames && onRespondentFilterChange && (
-          <RespondentFilter
-            value={respondentFilter ?? "all"}
-            onChange={onRespondentFilterChange}
-            respondentNames={respondentNames}
-          />
-        )}
+        <CompareFilters
+          respondentNames={respondentNames}
+          availableVersions={availableVersions}
+          latestMajorLabel={latestMajorLabel}
+        />
         <CompareFieldFilter value={filter} onChange={onFilterChange} fields={fields} />
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onDocNavigate(docIndex - 1)} disabled={docIndex === 0}>
