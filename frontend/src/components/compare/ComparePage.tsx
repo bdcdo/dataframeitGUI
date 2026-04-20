@@ -362,15 +362,13 @@ export function ComparePage({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {!isFullscreen && (
-          <CompareDocList
-            docs={docListEntries}
-            currentIndex={docIndex}
-            onSelect={handleDocNavigate}
-            collapsed={listCollapsed}
-            onToggle={() => setListCollapsed((v) => !v)}
-          />
-        )}
+        <CompareDocList
+          docs={docListEntries}
+          currentIndex={docIndex}
+          onSelect={handleDocNavigate}
+          collapsed={listCollapsed}
+          onToggle={() => setListCollapsed((v) => !v)}
+        />
 
         <ResizablePanelGroup className="flex-1">
           <ResizablePanel defaultSize={50} minSize={25}>
