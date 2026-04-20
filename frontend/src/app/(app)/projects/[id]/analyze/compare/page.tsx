@@ -6,7 +6,7 @@ import { normalizeForComparison } from "@/lib/utils";
 import {
   readCompareFilters,
   type CompareFiltersValue,
-} from "@/components/compare/CompareFilters";
+} from "@/lib/compare-filters";
 import type { PydanticField } from "@/lib/types";
 
 interface CompareDoc {
