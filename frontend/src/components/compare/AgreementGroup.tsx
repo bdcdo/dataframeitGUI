@@ -13,6 +13,15 @@ interface AgreementResponse {
   justification?: string;
   is_current: boolean;
   isFieldStale: boolean;
+  schemaVersion?: string | null;
+}
+
+function compareVersionsDesc(a: string, b: string): number {
+  const [am, an, ap] = a.split(".").map((n) => Number.parseInt(n, 10));
+  const [bm, bn, bp] = b.split(".").map((n) => Number.parseInt(n, 10));
+  if (am !== bm) return bm - am;
+  if (an !== bn) return bn - an;
+  return bp - ap;
 }
 
 interface ExistingVerdict {
@@ -81,6 +90,13 @@ export function AgreementGroup({
           const isChosen = group.responses.some(
             (r) => r.id === existingVerdict?.chosenResponseId,
           );
+          const versions = [
+            ...new Set(
+              group.responses
+                .map((r) => r.schemaVersion)
+                .filter((v): v is string => !!v),
+            ),
+          ].sort(compareVersionsDesc);
 
           return (
             <AnswerCard
@@ -93,6 +109,7 @@ export function AgreementGroup({
               llmJustification={llmResponse?.justification}
               staleCount={staleCount}
               isChosen={isChosen}
+              versions={versions}
               onVote={() => onVote(group.displayAnswer, group.responses[0].id)}
             />
           );
