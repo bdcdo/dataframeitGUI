@@ -85,9 +85,9 @@ Vercel faz deploy automatico a partir de merge no branch `main`. A partir de 202
 1. Criar branch descritiva (`feat/...`, `fix/...`) no inicio da tarefa
 2. Commitar nela
 3. Ao final, abrir PR contra `main` via `gh pr create`
-4. Deixar o usuario revisar e fazer o merge
+4. Deixar o usuario revisar o PR
 
-Nunca fazer push direto para `main`, nem fazer merge do PR pelo Claude — so o usuario faz merge.
+Nunca fazer push direto para `main`. Merge do PR pode ser feito pelo Claude quando o usuario pedir explicitamente.
 
 ## Como rodar
 
