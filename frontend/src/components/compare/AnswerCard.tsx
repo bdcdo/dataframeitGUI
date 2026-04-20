@@ -18,6 +18,7 @@ interface AnswerCardProps {
   llmJustification?: string;
   staleCount: number;
   isChosen: boolean;
+  versions: string[];
   onVote: () => void;
 }
 
@@ -30,6 +31,7 @@ export function AnswerCard({
   llmJustification,
   staleCount,
   isChosen,
+  versions,
   onVote,
 }: AnswerCardProps) {
   const [showJustification, setShowJustification] = useState(false);
@@ -79,6 +81,29 @@ export function AnswerCard({
                   ? "desatualizada"
                   : `${staleCount} de ${respondentCount} desatualizadas`}
               </span>
+            )}
+
+            {versions.length === 1 && (
+              <span
+                className="font-mono text-[10px] text-muted-foreground"
+                title="Versão do schema em que esta resposta foi salva"
+              >
+                v{versions[0]}
+              </span>
+            )}
+            {versions.length > 1 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-default font-mono text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2">
+                    {versions.length} versões
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {versions.map((v) => (
+                    <div key={v}>v{v}</div>
+                  ))}
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
 

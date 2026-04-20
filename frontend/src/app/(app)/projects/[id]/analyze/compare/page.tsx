@@ -154,11 +154,24 @@ export default async function ComparePageRoute({
   const minVersion = resolveMinVersion(filters.version, projectVersion);
   const sinceMs = filters.since ? new Date(filters.since).getTime() : null;
 
-  // Build distinct ordered version list desc
+  // Build distinct ordered version list desc — une versões do schema_change_log
+  // com as efetivamente gravadas em responses (cobre respostas cuja versão
+  // veio do backfill por hashes/created_at e não tem entry classificada no log).
   const versionSet = new Set<string>();
   for (const v of versionLog ?? []) {
     if (v.version_major !== null && v.version_minor !== null && v.version_patch !== null) {
       versionSet.add(`${v.version_major}.${v.version_minor}.${v.version_patch}`);
+    }
+  }
+  for (const r of allResponses ?? []) {
+    if (
+      r.schema_version_major !== null &&
+      r.schema_version_minor !== null &&
+      r.schema_version_patch !== null
+    ) {
+      versionSet.add(
+        `${r.schema_version_major}.${r.schema_version_minor}.${r.schema_version_patch}`,
+      );
     }
   }
   const availableVersions = [...versionSet].sort((a, b) => {

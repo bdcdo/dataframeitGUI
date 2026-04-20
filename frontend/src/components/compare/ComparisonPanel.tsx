@@ -163,6 +163,7 @@ export function ComparisonPanel({
               justification: r.justification,
               is_current: r.is_current,
               isFieldStale: r.isFieldStale,
+              schemaVersion: r.schemaVersion,
             }))}
             existingVerdict={existingVerdict}
             onVote={(displayAnswer, chosenResponseId) =>
