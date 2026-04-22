@@ -1,4 +1,8 @@
-import type { PydanticField } from "@/lib/types";
+import type {
+  ConditionScalar,
+  FieldCondition,
+  PydanticField,
+} from "@/lib/types";
 
 // ---------- Geração de código Pydantic (pure, client-safe) ----------
 
@@ -15,7 +19,7 @@ function subfieldClassName(fieldName: string): string {
   return `_${fieldName}_fields`;
 }
 
-function fieldAnnotation(field: PydanticField): string {
+function baseAnnotation(field: PydanticField): string {
   if (field.type === "single" && field.options) {
     return `Literal[${field.options.map((o) => `"${escapeString(o)}"`).join(", ")}]`;
   }
@@ -26,6 +30,38 @@ function fieldAnnotation(field: PydanticField): string {
     return subfieldClassName(field.name);
   }
   return "str";
+}
+
+function fieldAnnotation(field: PydanticField): string {
+  const base = baseAnnotation(field);
+  if (field.condition) return `Optional[${base}]`;
+  return base;
+}
+
+function pythonScalar(value: ConditionScalar): string {
+  if (typeof value === "boolean") return value ? "True" : "False";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "None";
+  return `"${escapeString(value)}"`;
+}
+
+function pythonScalarList(values: ConditionScalar[]): string {
+  return `[${values.map(pythonScalar).join(", ")}]`;
+}
+
+function conditionToPython(condition: FieldCondition): string {
+  const parts: string[] = [`"field": "${escapeString(condition.field)}"`];
+  if ("equals" in condition) {
+    parts.push(`"equals": ${pythonScalar(condition.equals)}`);
+  } else if ("not_equals" in condition) {
+    parts.push(`"not_equals": ${pythonScalar(condition.not_equals)}`);
+  } else if ("in" in condition) {
+    parts.push(`"in": ${pythonScalarList(condition.in)}`);
+  } else if ("not_in" in condition) {
+    parts.push(`"not_in": ${pythonScalarList(condition.not_in)}`);
+  } else if ("exists" in condition) {
+    parts.push(`"exists": ${condition.exists ? "True" : "False"}`);
+  }
+  return `{${parts.join(", ")}}`;
 }
 
 function fieldExtra(field: PydanticField): string {
@@ -49,6 +85,9 @@ function fieldExtra(field: PydanticField): string {
   }
   if (field.help_text?.trim()) {
     extras.push(`"help_text": "${escapeString(field.help_text.trim())}"`);
+  }
+  if (field.condition) {
+    extras.push(`"condition": ${conditionToPython(field.condition)}`);
   }
   if (extras.length === 0) return "";
   return `, json_schema_extra={${extras.join(", ")}}`;
@@ -97,8 +136,12 @@ export function generatePydanticCode(
       desc += `. Instrucoes: ${escapeString(field.help_text.trim())}`;
     }
     const extra = fieldExtra(field);
+    // Optional[...] sem default=None continua required no Pydantic v2; o
+    // default=None garante que o código gerado seja utilizável standalone
+    // e compatível com LLM que omita o campo (Optional).
+    const defaultPart = field.condition ? "default=None, " : "";
     lines.push(
-      `    ${field.name}: ${ann} = Field(description="${desc}"${extra})`
+      `    ${field.name}: ${ann} = Field(${defaultPart}description="${desc}"${extra})`
     );
   }
 
@@ -172,6 +215,51 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
       for (let j = 0; j < f.options.length; j++) {
         if (!f.options[j].trim()) {
           errors.push(`${label}: opção ${j + 1} está vazia`);
+        }
+      }
+    }
+
+    if (f.condition) {
+      const trigger = f.condition.field;
+      if (!trigger) {
+        errors.push(`${label}: condição sem campo gatilho`);
+      } else if (trigger === f.name) {
+        errors.push(`${label}: condição não pode referenciar o próprio campo`);
+      } else {
+        const earlier = fields.slice(0, i);
+        const triggerField = earlier.find((g) => g.name === trigger);
+        if (!triggerField) {
+          errors.push(
+            `${label}: campo gatilho "${trigger}" inexistente ou posterior ao campo condicional`,
+          );
+        } else if ("equals" in f.condition || "not_equals" in f.condition) {
+          const val =
+            "equals" in f.condition
+              ? f.condition.equals
+              : f.condition.not_equals;
+          if (
+            triggerField.options &&
+            typeof val === "string" &&
+            !triggerField.options.includes(val)
+          ) {
+            errors.push(
+              `${label}: valor "${val}" não está nas opções de "${trigger}"`,
+            );
+          }
+        } else if ("in" in f.condition || "not_in" in f.condition) {
+          const vals =
+            "in" in f.condition ? f.condition.in : f.condition.not_in;
+          if (!Array.isArray(vals) || vals.length === 0) {
+            errors.push(`${label}: lista de valores da condição vazia`);
+          } else if (triggerField.options) {
+            for (const v of vals) {
+              if (typeof v === "string" && !triggerField.options.includes(v)) {
+                errors.push(
+                  `${label}: valor "${v}" não está nas opções de "${trigger}"`,
+                );
+              }
+            }
+          }
         }
       }
     }

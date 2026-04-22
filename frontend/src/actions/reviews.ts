@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { normalizeForComparison } from "@/lib/utils";
+import { isFieldVisible } from "@/lib/conditional";
 import type { PydanticField } from "@/lib/types";
 
 export interface ResponseSnapshotEntry {
@@ -71,9 +72,19 @@ async function syncCompareAssignment(
   for (const field of fields) {
     if (field.target === "llm_only" || field.target === "human_only") continue;
 
+    const applicable = field.condition
+      ? activeResponses.filter((r) =>
+          isFieldVisible(
+            field,
+            (r.answers as Record<string, unknown>) ?? {},
+          ),
+        )
+      : activeResponses;
+    if (applicable.length < 2) continue;
+
     if (field.type === "multi" && field.options?.length) {
       const opts = new Set<string>(field.options);
-      for (const r of activeResponses) {
+      for (const r of applicable) {
         const arr = (r.answers as Record<string, unknown>)?.[field.name];
         if (Array.isArray(arr)) {
           for (const v of arr) if (typeof v === "string") opts.add(v);
@@ -81,7 +92,7 @@ async function syncCompareAssignment(
       }
       let hasDivergence = false;
       for (const opt of opts) {
-        const sels = activeResponses.map((r) => {
+        const sels = applicable.map((r) => {
           const arr = (r.answers as Record<string, unknown>)?.[field.name];
           return Array.isArray(arr) && arr.includes(opt);
         });
@@ -92,7 +103,7 @@ async function syncCompareAssignment(
       }
       if (hasDivergence) divergentFields.push(field.name);
     } else {
-      const ans = activeResponses.map(
+      const ans = applicable.map(
         (r) => (r.answers as Record<string, unknown>)?.[field.name],
       );
       const unique = new Set(ans.map((a) => normalizeForComparison(a)));

@@ -3,6 +3,7 @@ import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { normalizeForComparison } from "@/lib/utils";
+import { isFieldVisible } from "@/lib/conditional";
 import {
   readCompareFilters,
   type CompareFiltersValue,
@@ -288,9 +289,18 @@ export default async function ComparePageRoute({
     for (const field of fields) {
       if (field.target === "llm_only" || field.target === "human_only") continue;
 
+      // For conditional fields, a response that never triggered the condition
+      // legitimately has no value — don't treat that absence as divergence.
+      const applicableResponses = field.condition
+        ? qualifiedResponses.filter((r) =>
+            isFieldVisible(field, r.answers ?? {}),
+          )
+        : qualifiedResponses;
+      if (applicableResponses.length < 2) continue;
+
       if (field.type === "multi" && field.options?.length) {
         const comparableOptions = new Set<string>(field.options);
-        for (const r of qualifiedResponses) {
+        for (const r of applicableResponses) {
           const arr = r.answers?.[field.name];
           if (Array.isArray(arr)) {
             for (const v of arr) {
@@ -300,7 +310,7 @@ export default async function ComparePageRoute({
         }
         let hasDivergence = false;
         for (const opt of comparableOptions) {
-          const selections = qualifiedResponses.map((r) => {
+          const selections = applicableResponses.map((r) => {
             const arr = r.answers?.[field.name];
             return Array.isArray(arr) && arr.includes(opt);
           });
@@ -311,7 +321,7 @@ export default async function ComparePageRoute({
         }
         if (hasDivergence) divergent.push(field.name);
       } else {
-        const answers = qualifiedResponses.map((r) => r.answers?.[field.name]);
+        const answers = applicableResponses.map((r) => r.answers?.[field.name]);
         const uniqueAnswers = new Set(answers.map((a) => normalizeForComparison(a)));
         if (uniqueAnswers.size > 1) {
           divergent.push(field.name);

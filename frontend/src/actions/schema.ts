@@ -141,6 +141,9 @@ function classifyChange(
     if (JSON.stringify(o.subfields ?? null) !== JSON.stringify(n.subfields ?? null)) {
       hasStructural = true;
     }
+    if (JSON.stringify(o.condition ?? null) !== JSON.stringify(n.condition ?? null)) {
+      hasStructural = true;
+    }
 
     const optsOld = o.options ?? [];
     const optsNew = n.options ?? [];
@@ -211,6 +214,12 @@ function fieldDiffIsStructural(
     }
   }
 
+  if (before.condition !== undefined || after.condition !== undefined) {
+    if (JSON.stringify(before.condition ?? null) !== JSON.stringify(after.condition ?? null)) {
+      return true;
+    }
+  }
+
   const bOpts = before.options;
   const aOpts = after.options;
   if (bOpts !== undefined || aOpts !== undefined) {
@@ -276,6 +285,7 @@ export async function saveSchemaFromGUI(
       subfields: field.subfields ?? null,
       subfield_rule: field.subfield_rule ?? null,
       allow_other: field.allow_other ?? null,
+      condition: field.condition ?? null,
     };
   }
 
@@ -357,6 +367,13 @@ export async function saveSchemaFromGUI(
       diffs.push("subcampos");
       before.subfields = old.subfields ?? null;
       after.subfields = f.subfields ?? null;
+    }
+    const oldCond = JSON.stringify(old.condition ?? null);
+    const newCond = JSON.stringify(f.condition ?? null);
+    if (oldCond !== newCond) {
+      diffs.push("condição");
+      before.condition = old.condition ?? null;
+      after.condition = f.condition ?? null;
     }
 
     if (diffs.length > 0) {

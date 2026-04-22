@@ -78,6 +78,7 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
             field={field}
             index={i}
             total={fields.length}
+            allFields={fields}
             isExpanded={expandedIndex === i}
             onToggle={() =>
               setExpandedIndex(expandedIndex === i ? null : i)
