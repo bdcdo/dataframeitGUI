@@ -52,10 +52,19 @@ function initialFromField(
   suggestion?: PendingSuggestion | null,
 ) {
   const ch = suggestion?.changes ?? {};
+  // Distinguish "no change" (undefined) from "clear" (null) in suggestions:
+  // null in suggested_changes means the suggestion explicitly wants to empty
+  // the field, so ?? against the current field value would mask that intent.
   return {
     description: ch.description ?? field?.description ?? "",
-    helpText: (ch.help_text ?? field?.help_text ?? "") as string,
-    options: (ch.options ?? field?.options ?? []) as string[],
+    helpText:
+      ch.help_text !== undefined
+        ? (ch.help_text ?? "")
+        : (field?.help_text ?? ""),
+    options:
+      ch.options !== undefined
+        ? (ch.options ?? [])
+        : (field?.options ?? []),
   };
 }
 

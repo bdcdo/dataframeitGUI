@@ -15,17 +15,19 @@ CREATE INDEX idx_note_resolutions_response ON note_resolutions(response_id);
 
 ALTER TABLE note_resolutions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Members view note_resolutions" ON note_resolutions
-  FOR SELECT USING (
-    project_id IN (SELECT project_id FROM project_members WHERE user_id = clerk_uid())
-  );
+-- Any project member can view note resolutions
+CREATE POLICY "Members view note_resolutions" ON note_resolutions FOR SELECT USING (
+  project_id IN (SELECT auth_user_project_ids())
+);
 
-CREATE POLICY "Members insert note_resolutions" ON note_resolutions
-  FOR INSERT WITH CHECK (
-    project_id IN (SELECT project_id FROM project_members WHERE user_id = clerk_uid())
-  );
+-- Coordinators can insert note resolutions
+CREATE POLICY "Coordinators insert note_resolutions" ON note_resolutions FOR INSERT WITH CHECK (
+  project_id IN (SELECT auth_user_coordinator_project_ids())
+  OR project_id IN (SELECT id FROM projects WHERE created_by = auth.uid())
+);
 
-CREATE POLICY "Members delete note_resolutions" ON note_resolutions
-  FOR DELETE USING (
-    project_id IN (SELECT project_id FROM project_members WHERE user_id = clerk_uid())
-  );
+-- Coordinators can delete note resolutions (reopen)
+CREATE POLICY "Coordinators delete note_resolutions" ON note_resolutions FOR DELETE USING (
+  project_id IN (SELECT auth_user_coordinator_project_ids())
+  OR project_id IN (SELECT id FROM projects WHERE created_by = auth.uid())
+);

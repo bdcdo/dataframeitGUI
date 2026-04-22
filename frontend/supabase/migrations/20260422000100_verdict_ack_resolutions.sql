@@ -13,9 +13,8 @@ CREATE INDEX idx_verdict_ack_unresolved
 CREATE POLICY "Coordinators can update verdict_acknowledgments" ON verdict_acknowledgments
   FOR UPDATE USING (
     review_id IN (
-      SELECT id FROM reviews WHERE project_id IN (
-        SELECT project_id FROM project_members
-        WHERE user_id = clerk_uid() AND role = 'coordenador'
-      )
+      SELECT id FROM reviews
+      WHERE project_id IN (SELECT auth_user_coordinator_project_ids())
+         OR project_id IN (SELECT id FROM projects WHERE created_by = auth.uid())
     )
   );
