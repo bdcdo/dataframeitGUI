@@ -16,11 +16,15 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { OptionsEditor } from "@/components/schema/OptionsEditor";
+import {
+  ConditionEditor,
+  candidateTriggersFor,
+} from "@/components/schema/ConditionEditor";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { PydanticField, SubfieldDef } from "@/lib/types";
+import type { FieldCondition, PydanticField, SubfieldDef } from "@/lib/types";
 
 const TYPE_LABELS: Record<string, string> = {
   single: "Escolha única",
@@ -85,6 +89,7 @@ export function EditFieldDialog({
   const [allowOther, setAllowOther] = useState<boolean>(field?.allow_other ?? false);
   const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
   const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
+  const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);
   const [isSaving, startSave] = useTransition();
 
   // Reset state when dialog opens with a different field or suggestion
@@ -100,6 +105,7 @@ export function EditFieldDialog({
     setAllowOther(f?.allow_other ?? false);
     setSubfields(f?.subfields);
     setSubfieldRule(f?.subfield_rule ?? "all");
+    setCondition(f?.condition);
   }
 
   if (!field) return null;
@@ -122,6 +128,7 @@ export function EditFieldDialog({
                 (f.type === "single" || f.type === "multi") && allowOther
                   ? true
                   : undefined,
+              condition,
             }
           : f,
       );
@@ -350,6 +357,13 @@ export function EditFieldDialog({
               )}
             </div>
           )}
+
+          <ConditionEditor
+            fieldName={fieldName}
+            condition={condition}
+            candidateTriggers={candidateTriggersFor(allFields, fieldName)}
+            onChange={setCondition}
+          />
         </div>
 
         <DialogFooter>

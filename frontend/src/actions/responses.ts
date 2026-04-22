@@ -3,6 +3,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
+import { isFieldVisible } from "@/lib/conditional";
 import type { PydanticField } from "@/lib/types";
 
 export async function saveResponse(
@@ -56,8 +57,18 @@ export async function saveResponse(
       if (f.hash) answerFieldHashes[f.name] = f.hash;
     }
 
+    // Drop values of fields whose visibility condition is not satisfied —
+    // prevents orphaned answers from earlier trigger values ending up in the
+    // persisted payload.
+    const sanitizedAnswers: Record<string, unknown> = { ...answers };
+    for (const f of fields) {
+      if (f.condition && !isFieldVisible(f, sanitizedAnswers)) {
+        delete sanitizedAnswers[f.name];
+      }
+    }
+
     const responsePayload = {
-      answers,
+      answers: sanitizedAnswers,
       justifications,
       pydantic_hash: project?.pydantic_hash ?? null,
       answer_field_hashes: answerFieldHashes,
@@ -88,13 +99,16 @@ export async function saveResponse(
 
     if (fields.length > 0) {
       const humanFields = fields.filter(
-        (f) => (f.target || "all") !== "llm_only" && f.required !== false
+        (f) =>
+          (f.target || "all") !== "llm_only" &&
+          f.required !== false &&
+          isFieldVisible(f, sanitizedAnswers),
       );
       const OTHER_PREFIX = "Outro: ";
       const isIncompleteOther = (v: unknown) =>
         typeof v === "string" && v === OTHER_PREFIX;
       const allAnswered = humanFields.every((f) => {
-        const v = answers[f.name];
+        const v = sanitizedAnswers[f.name];
         if (v === undefined || v === null || v === "") return false;
         if (f.type === "single" && isIncompleteOther(v)) return false;
         if (f.type === "multi" && Array.isArray(v)) {

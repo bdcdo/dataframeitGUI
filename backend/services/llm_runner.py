@@ -11,6 +11,7 @@ import time
 from collections import Counter
 
 import pandas as pd
+from dataframeit.conditional import evaluate_condition
 from services.supabase_client import get_supabase
 from services.pydantic_compiler import compile_pydantic, find_root_model
 
@@ -254,6 +255,14 @@ async def run_llm(
             "project_id", project_id
         ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
 
+        # Build per-field condition map once (same across all rows)
+        project_fields = project.get("pydantic_fields") or []
+        field_conditions = {
+            f["name"]: f.get("condition")
+            for f in project_fields
+            if isinstance(f, dict) and f.get("condition")
+        }
+
         # Save responses — use row["id"] (not index correlation) for safety
         for _, row in result_df.iterrows():
             doc_id = row["id"]
@@ -271,6 +280,17 @@ async def run_llm(
                 just_col = f"{field_name}_justification"
                 if just_col in row and row[just_col]:
                     justifications[field_name] = str(row[just_col])
+
+            # Post-process conditional fields: remove values for fields whose
+            # visibility condition is not satisfied by the sibling answers.
+            # dataframeit core mode doesn't evaluate conditions itself, so the
+            # LLM may have filled them even though Optional; we prune here to
+            # keep the stored answers consistent with the researcher UX.
+            if field_conditions:
+                for field_name, condition in field_conditions.items():
+                    if not evaluate_condition(condition, answers, field_name):
+                        answers.pop(field_name, None)
+                        justifications.pop(field_name, None)
 
             sb.table("responses").insert({
                 "project_id": project_id,

@@ -14,12 +14,14 @@ import { Switch } from "@/components/ui/switch";
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
+import { ConditionEditor, candidateTriggersFor } from "./ConditionEditor";
 import type { PydanticField } from "@/lib/types";
 
 interface FieldCardProps {
   field: PydanticField;
   index: number;
   total: number;
+  allFields: PydanticField[];
   isExpanded: boolean;
   onToggle: () => void;
   onChange: (field: PydanticField) => void;
@@ -51,6 +53,7 @@ export function FieldCard({
   field,
   index,
   total,
+  allFields,
   isExpanded,
   onToggle,
   onChange,
@@ -413,6 +416,13 @@ export function FieldCard({
                 )}
               </div>
             )}
+
+            <ConditionEditor
+              fieldName={field.name}
+              condition={field.condition}
+              candidateTriggers={candidateTriggersFor(allFields, field.name)}
+              onChange={(condition) => updateField({ condition })}
+            />
           </div>
         </CollapsibleContent>
       </div>

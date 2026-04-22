@@ -65,6 +65,9 @@ def compile_pydantic(code: str) -> dict:
         subfield_rule = (
             subfield_rule_raw.strip() if isinstance(subfield_rule_raw, str) else None
         ) or None
+        condition = _sanitize_condition(
+            extra.get("condition") if is_dict_extra else None
+        )
 
         # If help_text was carried structurally, strip the ". Instrucoes: ..."
         # suffix from description so the returned description is the pure form.
@@ -93,6 +96,9 @@ def compile_pydantic(code: str) -> dict:
         if subfields:
             field_dict["subfields"] = subfields
             field_dict["subfield_rule"] = subfield_rule or "all"
+
+        if condition is not None:
+            field_dict["condition"] = condition
 
         fields.append(field_dict)
 
@@ -153,6 +159,33 @@ def _field_hash(name: str, field_type: str, options: list[str] | None, descripti
     """Stable hash for a field, excluding target."""
     content = f"{name}|{field_type}|{sorted(options) if options else ''}|{description}"
     return hashlib.sha256(content.encode()).hexdigest()[:12]
+
+
+_CONDITION_OPS = ("equals", "not_equals", "in", "not_in", "exists")
+
+
+def _sanitize_condition(raw: object) -> dict | None:
+    """Return a well-formed condition dict or None.
+
+    Accepts only the shape consumed by ``dataframeit.conditional.evaluate_condition``:
+    a dict with ``field`` and exactly one of equals/not_equals/in/not_in/exists.
+    """
+    if not isinstance(raw, dict):
+        return None
+    field = raw.get("field")
+    if not isinstance(field, str) or not field:
+        return None
+    for op in _CONDITION_OPS:
+        if op in raw:
+            value = raw[op]
+            if op in ("in", "not_in"):
+                if not isinstance(value, list):
+                    return None
+                return {"field": field, op: list(value)}
+            if op == "exists":
+                return {"field": field, op: bool(value)}
+            return {"field": field, op: value}
+    return None
 
 
 def _exec_compiled(compiled_code: object, namespace: dict) -> None:

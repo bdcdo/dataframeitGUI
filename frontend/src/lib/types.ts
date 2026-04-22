@@ -30,6 +30,15 @@ export interface SubfieldDef {
   required?: boolean;
 }
 
+export type ConditionScalar = string | number | boolean;
+
+export type FieldCondition =
+  | { field: string; equals: ConditionScalar }
+  | { field: string; not_equals: ConditionScalar }
+  | { field: string; in: ConditionScalar[] }
+  | { field: string; not_in: ConditionScalar[] }
+  | { field: string; exists: boolean };
+
 export interface PydanticField {
   name: string;
   type: "single" | "multi" | "text" | "date";
@@ -42,6 +51,7 @@ export interface PydanticField {
   subfields?: SubfieldDef[];
   subfield_rule?: "all" | "at_least_one";
   allow_other?: boolean;
+  condition?: FieldCondition;
 }
 
 export interface ProjectMember {

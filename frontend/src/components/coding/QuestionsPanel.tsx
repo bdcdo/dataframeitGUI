@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -8,6 +8,7 @@ import { FieldRenderer } from "./FieldRenderer";
 import { Check, Loader2, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { isFieldVisible } from "@/lib/conditional";
 import type { PydanticField } from "@/lib/types";
 
 const OTHER_PREFIX = "Outro: ";
@@ -42,7 +43,33 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     setHighlightedFields(new Set());
   }, [fields]);
 
-  const requiredFields = fields.filter((f) => f.required !== false);
+  const visibleFields = useMemo(
+    () => fields.filter((f) => isFieldVisible(f, answers)),
+    [fields, answers],
+  );
+  const visibleNames = useMemo(
+    () => new Set(visibleFields.map((f) => f.name)),
+    [visibleFields],
+  );
+
+  // When a trigger answer changes, fields that became invisible should not
+  // keep stale values; clear them so they don't end up in the saved payload.
+  useEffect(() => {
+    if (readOnly) return;
+    for (const f of fields) {
+      if (!f.condition) continue;
+      if (visibleNames.has(f.name)) continue;
+      const v = answers[f.name];
+      if (v !== undefined && v !== null && v !== "") {
+        onAnswer(f.name, null);
+      }
+    }
+    // Only react when the set of visible fields changes — answers churn
+    // is handled by the visibility recomputation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleNames]);
+
+  const requiredFields = visibleFields.filter((f) => f.required !== false);
   const answeredRequiredCount = requiredFields.filter((f) =>
     isAnsweredValue(f, answers[f.name]),
   ).length;
@@ -68,20 +95,20 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   const handleSubmitWithValidation = useCallback(() => {
     if (submitting) return;
 
-    const unanswered = fields
+    const unanswered = visibleFields
       .filter((f) => (f.target || "all") !== "llm_only" && f.required !== false && !isAnswered(f))
       .map((f) => f.name);
 
     if (unanswered.length > 0) {
       setHighlightedFields(new Set(unanswered));
-      const firstIdx = fields.findIndex((f) => unanswered.includes(f.name));
+      const firstIdx = visibleFields.findIndex((f) => unanswered.includes(f.name));
       questionRefs.current[firstIdx]?.scrollIntoView({ behavior: "smooth", block: "center" });
       toast.warning("Preencha todas as perguntas obrigatórias");
       return;
     }
 
     onSubmit();
-  }, [fields, isAnswered, onSubmit, submitting]);
+  }, [visibleFields, isAnswered, onSubmit, submitting]);
 
   return (
     <div className="flex h-full flex-col bg-card">
@@ -94,7 +121,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
 
       {/* Lista de perguntas scrollável */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
-        {fields.map((field, i) => (
+        {visibleFields.map((field, i) => (
           <div
             key={field.name}
             ref={(el) => { questionRefs.current[i] = el; }}

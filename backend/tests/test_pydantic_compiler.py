@@ -282,6 +282,93 @@ def test_no_basemodel_returns_error():
     assert "BaseModel" in result["errors"][0]
 
 
+def test_condition_equals_round_trips():
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    houve_provimento: Literal["sim", "nao"] = Field(description="Houve provimento?")
+    provimento_parcial: Optional[Literal["sim", "nao"]] = Field(
+        description="Provimento foi parcial?",
+        json_schema_extra={"condition": {"field": "houve_provimento", "equals": "sim"}},
+    )
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    f = _field(result, "provimento_parcial")
+    assert f["condition"] == {"field": "houve_provimento", "equals": "sim"}
+
+
+def test_condition_in_list_round_trips():
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    tipo: Literal["a", "b", "c"] = Field(description="Tipo")
+    follow: Optional[str] = Field(
+        description="Follow-up",
+        json_schema_extra={"condition": {"field": "tipo", "in": ["a", "b"]}},
+    )
+'''
+    result = compile_pydantic(code)
+    f = _field(result, "follow")
+    assert f["condition"] == {"field": "tipo", "in": ["a", "b"]}
+
+
+def test_condition_exists_round_trips():
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    note: Optional[str] = Field(description="note")
+    extra: Optional[str] = Field(
+        description="extra",
+        json_schema_extra={"condition": {"field": "note", "exists": True}},
+    )
+'''
+    result = compile_pydantic(code)
+    f = _field(result, "extra")
+    assert f["condition"] == {"field": "note", "exists": True}
+
+
+def test_condition_hash_exclusion():
+    """Adding or changing a condition must not change the field hash —
+    it would invalidate existing responses whose value is still valid."""
+    without = '''from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    x: Literal["a"] = Field(description="desc")
+'''
+    with_cond = '''from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    x: Optional[Literal["a"]] = Field(
+        description="desc",
+        json_schema_extra={"condition": {"field": "other", "equals": "a"}},
+    )
+'''
+    h1 = _field(compile_pydantic(without), "x")["hash"]
+    h2 = _field(compile_pydantic(with_cond), "x")["hash"]
+    assert h1 == h2
+
+
+def test_malformed_condition_is_dropped():
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    x: Optional[Literal["a"]] = Field(
+        description="desc",
+        json_schema_extra={"condition": {"wrong": "shape"}},
+    )
+'''
+    result = compile_pydantic(code)
+    f = _field(result, "x")
+    assert "condition" not in f
+
+
 def test_multiline_help_text_round_trips():
     """compile_pydantic must strip a multi-line suffix correctly when
     help_text contains newlines."""
