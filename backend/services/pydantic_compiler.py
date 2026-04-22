@@ -29,18 +29,7 @@ def compile_pydantic(code: str) -> dict:
     except Exception as e:
         return {"valid": False, "fields": [], "model_name": None, "errors": [str(e)]}
 
-    # Find the BaseModel subclass
-    from pydantic import BaseModel
-
-    model_class = None
-    for name, obj in namespace.items():
-        if (
-            isinstance(obj, type)
-            and issubclass(obj, BaseModel)
-            and obj is not BaseModel
-        ):
-            model_class = obj
-            break
+    model_class = find_root_model(namespace)
 
     if model_class is None:
         return {
@@ -58,15 +47,31 @@ def compile_pydantic(code: str) -> dict:
         extra = field_info.json_schema_extra or {}
         if callable(extra):
             extra = {}
-        target = extra.get("target", "all") if isinstance(extra, dict) else "all"
+        is_dict_extra = isinstance(extra, dict)
+        target = extra.get("target", "all") if is_dict_extra else "all"
         # Allow json_schema_extra to override the inferred field type (e.g. date)
-        explicit_type = extra.get("field_type") if isinstance(extra, dict) else None
+        explicit_type = extra.get("field_type") if is_dict_extra else None
         if explicit_type:
             field_type = explicit_type
         description = field_info.description or field_name
         allow_other = (
-            bool(extra.get("allowOther", False)) if isinstance(extra, dict) else False
+            bool(extra.get("allowOther", False)) if is_dict_extra else False
         )
+        help_text_raw = extra.get("help_text") if is_dict_extra else None
+        help_text = help_text_raw.strip() if isinstance(help_text_raw, str) else None
+        if not help_text:
+            help_text = None
+        subfield_rule_raw = extra.get("subfield_rule") if is_dict_extra else None
+        subfield_rule = (
+            subfield_rule_raw.strip() if isinstance(subfield_rule_raw, str) else None
+        ) or None
+
+        # If help_text was carried structurally, strip the ". Instrucoes: ..."
+        # suffix from description so the returned description is the pure form.
+        if help_text:
+            suffix = f". Instrucoes: {help_text}"
+            if description.endswith(suffix):
+                description = description[: -len(suffix)]
 
         field_dict: dict = {
             "name": field_name,
@@ -77,6 +82,9 @@ def compile_pydantic(code: str) -> dict:
             "hash": _field_hash(field_name, field_type, options, description),
         }
 
+        if help_text:
+            field_dict["help_text"] = help_text
+
         if allow_other and field_type in ("single", "multi"):
             field_dict["allow_other"] = True
 
@@ -84,6 +92,7 @@ def compile_pydantic(code: str) -> dict:
         subfields = _extract_subfields(annotation)
         if subfields:
             field_dict["subfields"] = subfields
+            field_dict["subfield_rule"] = subfield_rule or "all"
 
         fields.append(field_dict)
 
@@ -93,6 +102,51 @@ def compile_pydantic(code: str) -> dict:
         "model_name": model_class.__name__,
         "errors": errors,
     }
+
+
+def find_root_model(namespace: dict):
+    """Return the "main" BaseModel subclass in a namespace, or None.
+
+    Selection rules, in order:
+      1. A class explicitly named "Analysis" (the convention of the frontend
+         generator) — chosen even if not last, so manually-edited code that
+         declares helper classes after the root still works.
+      2. A BaseModel that is not referenced by any other BaseModel's fields —
+         i.e. the "root" of the type graph. Robust against arbitrary class
+         ordering.
+      3. Fallback to the last BaseModel defined, matching the generator's
+         convention of declaring nested classes before the root.
+    """
+    from pydantic import BaseModel
+
+    candidates = [
+        obj
+        for obj in namespace.values()
+        if isinstance(obj, type) and issubclass(obj, BaseModel) and obj is not BaseModel
+    ]
+    if not candidates:
+        return None
+
+    analysis = namespace.get("Analysis")
+    if analysis in candidates:
+        return analysis
+
+    referenced: set[type] = set()
+    for cls in candidates:
+        for field_info in cls.model_fields.values():
+            ann = field_info.annotation
+            if (
+                isinstance(ann, type)
+                and issubclass(ann, BaseModel)
+                and ann is not BaseModel
+                and ann is not cls
+            ):
+                referenced.add(ann)
+    roots = [c for c in candidates if c not in referenced]
+    if len(roots) == 1:
+        return roots[0]
+
+    return candidates[-1]
 
 
 def _field_hash(name: str, field_type: str, options: list[str] | None, description: str) -> str:

@@ -3,7 +3,12 @@ import type { PydanticField } from "@/lib/types";
 // ---------- Geração de código Pydantic (pure, client-safe) ----------
 
 function escapeString(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
 }
 
 function subfieldClassName(fieldName: string): string {
@@ -33,6 +38,17 @@ function fieldExtra(field: PydanticField): string {
   }
   if ((field.type === "single" || field.type === "multi") && field.allow_other) {
     extras.push(`"allowOther": True`);
+  }
+  if (
+    field.subfields &&
+    field.subfields.length > 0 &&
+    field.subfield_rule &&
+    field.subfield_rule !== "all"
+  ) {
+    extras.push(`"subfield_rule": "${field.subfield_rule}"`);
+  }
+  if (field.help_text?.trim()) {
+    extras.push(`"help_text": "${escapeString(field.help_text.trim())}"`);
   }
   if (extras.length === 0) return "";
   return `, json_schema_extra={${extras.join(", ")}}`;
