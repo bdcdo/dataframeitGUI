@@ -3,7 +3,12 @@ import type { PydanticField } from "@/lib/types";
 // ---------- Geração de código Pydantic (pure, client-safe) ----------
 
 function escapeString(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
 }
 
 function subfieldClassName(fieldName: string): string {

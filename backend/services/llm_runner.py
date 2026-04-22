@@ -12,7 +12,7 @@ from collections import Counter
 
 import pandas as pd
 from services.supabase_client import get_supabase
-from services.pydantic_compiler import compile_pydantic
+from services.pydantic_compiler import compile_pydantic, find_root_model
 
 # In-memory job tracking
 _jobs: dict[str, dict] = {}
@@ -49,16 +49,7 @@ def _compile_model(pydantic_code: str):
     namespace: dict = {}
     compiled = compile(pydantic_code, "<pydantic_schema>", "exec")  # noqa: S102
     _run_compiled(compiled, namespace)
-
-    from pydantic import BaseModel
-    # Pick the last BaseModel subclass: by convention (and by how the frontend
-    # generates code), nested subfield classes are defined before the main
-    # Analysis model, so the root class is always the last one in namespace.
-    model_class = None
-    for obj in namespace.values():
-        if isinstance(obj, type) and issubclass(obj, BaseModel) and obj is not BaseModel:
-            model_class = obj
-    return model_class
+    return find_root_model(namespace)
 
 
 def _run_compiled(compiled_code: object, namespace: dict) -> None:
