@@ -136,8 +136,12 @@ export function generatePydanticCode(
       desc += `. Instrucoes: ${escapeString(field.help_text.trim())}`;
     }
     const extra = fieldExtra(field);
+    // Optional[...] sem default=None continua required no Pydantic v2; o
+    // default=None garante que o código gerado seja utilizável standalone
+    // e compatível com LLM que omita o campo (Optional).
+    const defaultPart = field.condition ? "default=None, " : "";
     lines.push(
-      `    ${field.name}: ${ann} = Field(description="${desc}"${extra})`
+      `    ${field.name}: ${ann} = Field(${defaultPart}description="${desc}"${extra})`
     );
   }
 

@@ -11,7 +11,7 @@ import time
 from collections import Counter
 
 import pandas as pd
-from dataframeit.conditional import evaluate_condition
+from services.condition_evaluator import evaluate_condition, extract_field_conditions
 from services.supabase_client import get_supabase
 from services.pydantic_compiler import compile_pydantic, find_root_model
 
@@ -255,13 +255,11 @@ async def run_llm(
             "project_id", project_id
         ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
 
-        # Build per-field condition map once (same across all rows)
-        project_fields = project.get("pydantic_fields") or []
-        field_conditions = {
-            f["name"]: f.get("condition")
-            for f in project_fields
-            if isinstance(f, dict) and f.get("condition")
-        }
+        # Build per-field condition map once (same across all rows).
+        # Fonte: pydantic_code compilado (regra CLAUDE.md "Pydantic = fonte
+        # de verdade"). Nunca ler de projects.pydantic_fields aqui — a coluna
+        # pode ficar defasada se o coordenador editar o código direto.
+        field_conditions = extract_field_conditions(model_class)
 
         # Save responses — use row["id"] (not index correlation) for safety
         for _, row in result_df.iterrows():
