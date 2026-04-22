@@ -61,19 +61,25 @@ const DailyPaceChartInner = dynamic(
                 dot={{ r: 3 }}
                 activeDot={{ r: 5 }}
               />
-              {requiredPace !== null && requiredPace > 0 && (
-                <ReferenceLine
-                  y={requiredPace}
-                  stroke="hsl(var(--destructive))"
-                  strokeDasharray="5 5"
-                  label={{
-                    value: `Meta: ${requiredPace}/dia`,
-                    position: "insideTopRight",
-                    fontSize: 11,
-                    fill: "hsl(var(--destructive))",
-                  }}
-                />
-              )}
+              <ReferenceLine
+                y={requiredPace !== null && requiredPace > 0 ? requiredPace : 0}
+                stroke={
+                  requiredPace !== null && requiredPace > 0
+                    ? "hsl(var(--destructive))"
+                    : "transparent"
+                }
+                strokeDasharray="5 5"
+                label={
+                  requiredPace !== null && requiredPace > 0
+                    ? {
+                        value: `Meta: ${requiredPace}/dia`,
+                        position: "insideTopRight",
+                        fontSize: 11,
+                        fill: "hsl(var(--destructive))",
+                      }
+                    : undefined
+                }
+              />
             </LineChart>
           </ResponsiveContainer>
         );

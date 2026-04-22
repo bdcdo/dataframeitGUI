@@ -79,7 +79,7 @@ export function ActivityCalendar({ activityMap }: ActivityCalendarProps) {
               {Array.from({ length: 7 }, (_, di) => {
                 const entry = week[di];
                 if (!entry || entry.count === -1) {
-                  return <div key={di} className="h-3 w-3" />;
+                  return <div key={`pad-${wi}-${di}`} className="h-3 w-3" />;
                 }
                 const d = new Date(entry.date + "T00:00:00");
                 const formatted = d.toLocaleDateString("pt-BR", {
@@ -87,7 +87,7 @@ export function ActivityCalendar({ activityMap }: ActivityCalendarProps) {
                   month: "short",
                 });
                 return (
-                  <Tooltip key={di}>
+                  <Tooltip key={entry.date}>
                     <TooltipTrigger asChild>
                       <div
                         className={cn(
