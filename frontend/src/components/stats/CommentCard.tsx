@@ -67,8 +67,15 @@ export interface ReviewComment {
   responseSnapshot: ResponseSnapshotEntry[] | null;
   suggestionId?: string;
   suggestionStatus?: "pending" | "approved" | "rejected";
+  suggestionChanges?: {
+    description?: string;
+    help_text?: string | null;
+    options?: string[] | null;
+  };
   difficultyResponseId?: string;
   difficultyDocumentId?: string;
+  duvidaReviewId?: string;
+  duvidaRespondentId?: string;
 }
 
 interface CommentCardProps {
@@ -391,11 +398,8 @@ export function CommentCard({
             )}
           </p>
           <div className="flex gap-1">
-            {comment.source === "duvida" ? (
-              <span className="text-xs text-muted-foreground italic">
-                Resolve em Meu Gabarito
-              </span>
-            ) : isResolved ? (
+            {comment.source === "sugestao" &&
+            comment.suggestionStatus !== "pending" ? null : isResolved ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -411,7 +415,11 @@ export function CommentCard({
                 size="sm"
                 disabled={isPending}
                 onClick={onResolve}
-                title="Resolver"
+                title={
+                  comment.source === "sugestao"
+                    ? "Editar e aprovar"
+                    : "Resolver"
+                }
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
               </Button>

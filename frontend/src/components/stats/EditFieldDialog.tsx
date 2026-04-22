@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { OptionsEditor } from "@/components/schema/OptionsEditor";
 import { saveSchemaFromGUI } from "@/actions/schema";
+import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import type { PydanticField, SubfieldDef } from "@/lib/types";
@@ -28,12 +29,34 @@ const TYPE_LABELS: Record<string, string> = {
   date: "Data",
 };
 
+export interface PendingSuggestion {
+  id: string;
+  changes: {
+    description?: string;
+    help_text?: string | null;
+    options?: string[] | null;
+  };
+}
+
 interface EditFieldDialogProps {
   projectId: string;
   fieldName: string;
   allFields: PydanticField[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  pendingSuggestion?: PendingSuggestion | null;
+}
+
+function initialFromField(
+  field: PydanticField | undefined,
+  suggestion?: PendingSuggestion | null,
+) {
+  const ch = suggestion?.changes ?? {};
+  return {
+    description: ch.description ?? field?.description ?? "",
+    helpText: (ch.help_text ?? field?.help_text ?? "") as string,
+    options: (ch.options ?? field?.options ?? []) as string[],
+  };
 }
 
 export function EditFieldDialog({
@@ -42,25 +65,29 @@ export function EditFieldDialog({
   allFields,
   open,
   onOpenChange,
+  pendingSuggestion,
 }: EditFieldDialogProps) {
   const router = useRouter();
   const field = allFields.find((f) => f.name === fieldName);
-  const [description, setDescription] = useState(field?.description ?? "");
-  const [helpText, setHelpText] = useState(field?.help_text ?? "");
-  const [options, setOptions] = useState<string[]>(field?.options ?? []);
+  const initial = initialFromField(field, pendingSuggestion);
+  const [description, setDescription] = useState(initial.description);
+  const [helpText, setHelpText] = useState(initial.helpText);
+  const [options, setOptions] = useState<string[]>(initial.options);
   const [allowOther, setAllowOther] = useState<boolean>(field?.allow_other ?? false);
   const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
   const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
   const [isSaving, startSave] = useTransition();
 
-  // Reset state when dialog opens with a different field
-  const [prevFieldName, setPrevFieldName] = useState(fieldName);
-  if (fieldName !== prevFieldName) {
-    setPrevFieldName(fieldName);
+  // Reset state when dialog opens with a different field or suggestion
+  const resetKey = `${fieldName}::${pendingSuggestion?.id ?? ""}`;
+  const [prevKey, setPrevKey] = useState(resetKey);
+  if (resetKey !== prevKey) {
+    setPrevKey(resetKey);
     const f = allFields.find((ff) => ff.name === fieldName);
-    setDescription(f?.description ?? "");
-    setHelpText(f?.help_text ?? "");
-    setOptions(f?.options ?? []);
+    const init = initialFromField(f, pendingSuggestion);
+    setDescription(init.description);
+    setHelpText(init.helpText);
+    setOptions(init.options);
     setAllowOther(f?.allow_other ?? false);
     setSubfields(f?.subfields);
     setSubfieldRule(f?.subfield_rule ?? "all");
@@ -90,8 +117,18 @@ export function EditFieldDialog({
           : f,
       );
       try {
-        await saveSchemaFromGUI(projectId, updatedFields);
-        toast.success("Campo atualizado");
+        if (pendingSuggestion) {
+          const result = await approveSchemaSuggestionWithEdits(
+            pendingSuggestion.id,
+            projectId,
+            updatedFields,
+          );
+          if (result.error) throw new Error(result.error);
+          toast.success("Sugestão aprovada e campo atualizado");
+        } else {
+          await saveSchemaFromGUI(projectId, updatedFields);
+          toast.success("Campo atualizado");
+        }
         onOpenChange(false);
         router.refresh();
       } catch (e) {
@@ -107,12 +144,21 @@ export function EditFieldDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            Editar campo
+            {pendingSuggestion ? "Aprovar sugestão (com edições)" : "Editar campo"}
             <code className="text-sm font-mono text-muted-foreground">
               {fieldName}
             </code>
           </DialogTitle>
         </DialogHeader>
+        {pendingSuggestion && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Os campos abaixo vêm da sugestão original. Ajuste o que for
+              necessário e clique em Salvar para aprovar.
+            </span>
+          </div>
+        )}
 
         <div className="space-y-4">
           <div className="flex items-center gap-2">
