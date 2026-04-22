@@ -65,7 +65,8 @@ import {
 import { ChevronRight } from "lucide-react";
 import { DocumentSelector } from "./DocumentSelector";
 import { LlmRunHistory } from "./LlmRunHistory";
-import type { LlmRunHistoryItem } from "@/actions/llm";
+import { LlmErrorCard, type LlmErrorInfo } from "./LlmErrorCard";
+import type { LlmRunRecord } from "@/actions/llm";
 
 function formatEta(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -89,9 +90,10 @@ interface LlmTabProps {
     llm_kwargs: Record<string, any>;
   };
   pydanticFields: PydanticField[] | null;
+  pydanticCode: string | null;
   totalDocs: number;
   docsWithLlm: number;
-  runHistory: LlmRunHistoryItem[];
+  runs: LlmRunRecord[];
 }
 
 export function LlmTab({
@@ -100,9 +102,10 @@ export function LlmTab({
   projectDescription,
   config: initialConfig,
   pydanticFields,
+  pydanticCode,
   totalDocs,
   docsWithLlm,
-  runHistory,
+  runs,
 }: LlmTabProps) {
   // Prompt state
   const [prompt, setPrompt] = useState(initialPrompt);
@@ -125,6 +128,7 @@ export function LlmTab({
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [currentBatch, setCurrentBatch] = useState(0);
   const [totalBatches, setTotalBatches] = useState(0);
+  const [errorInfo, setErrorInfo] = useState<LlmErrorInfo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -208,6 +212,7 @@ export function LlmTab({
   const handleRun = async () => {
     if (isStartingRun || status === "running") return;
     setIsStartingRun(true);
+    setErrorInfo(null);
     try {
       // Save config before running
       await Promise.all([
@@ -257,6 +262,10 @@ export function LlmTab({
           eta_seconds: number | null;
           current_batch: number;
           total_batches: number;
+          error_traceback: string | null;
+          error_type: string | null;
+          error_line: number | null;
+          error_column: number | null;
         }>(`/api/llm/status/${id}`);
         setProgress(res.progress);
         setTotal(res.total);
@@ -269,15 +278,43 @@ export function LlmTab({
           if (intervalRef.current) clearInterval(intervalRef.current);
           intervalRef.current = null;
           if (res.status === "completed") toast.success("LLM concluído!");
-          if (res.status === "error")
-            toast.error(res.errors[0] || "Erro na execução");
+          if (res.status === "error") {
+            const msg = res.errors[0] || "Erro na execução";
+            setErrorInfo({
+              message: msg,
+              type: res.error_type,
+              traceback: res.error_traceback,
+              line: res.error_line,
+              column: res.error_column,
+              pydanticCode,
+            });
+            toast.error(msg, {
+              duration: 10000,
+              action: {
+                label: "Ver detalhes",
+                onClick: () =>
+                  document
+                    .getElementById("llm-error-card")
+                    ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+              },
+            });
+          }
         }
       } catch (e: any) {
         if (intervalRef.current) clearInterval(intervalRef.current);
         intervalRef.current = null;
         setStatus("error");
         setPhase("error");
-        toast.error(e?.message ?? "Não foi possível atualizar o progresso");
+        const msg = e?.message ?? "Não foi possível atualizar o progresso";
+        setErrorInfo({
+          message: msg,
+          type: "NetworkError",
+          traceback: null,
+          line: null,
+          column: null,
+          pydanticCode,
+        });
+        toast.error(msg);
       }
     }, 2000);
   };
@@ -781,7 +818,26 @@ export function LlmTab({
           </div>
         )}
 
-        <LlmRunHistory history={runHistory} />
+        {errorInfo && (
+          <LlmErrorCard
+            id="llm-error-card"
+            error={errorInfo}
+            onDismiss={() => setErrorInfo(null)}
+          />
+        )}
+
+        <LlmRunHistory
+          runs={runs}
+          pydanticCode={pydanticCode}
+          onOpenError={(err) => {
+            setErrorInfo(err);
+            setTimeout(() => {
+              document
+                .getElementById("llm-error-card")
+                ?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 50);
+          }}
+        />
         </CardContent>
       </Card>
     </div>

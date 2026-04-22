@@ -35,6 +35,11 @@ class StatusResponse(BaseModel):
     eta_seconds: float | None = None
     current_batch: int = 0
     total_batches: int = 0
+    # Populated only when status == "error"
+    error_traceback: str | None = None
+    error_type: str | None = None
+    error_line: int | None = None
+    error_column: int | None = None
 
 
 @router.post("/run", response_model=RunResponse)
