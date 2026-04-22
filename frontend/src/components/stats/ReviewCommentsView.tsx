@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { History, ChevronDown, PanelLeftClose } from "lucide-react";
 import { CommentCard, type ReviewComment } from "./CommentCard";
 import { CommentsSplitView } from "./CommentsSplitView";
-import { EditFieldDialog } from "./EditFieldDialog";
+import { EditFieldDialog, type PendingSuggestion } from "./EditFieldDialog";
 import { SuggestFieldDialog } from "./SuggestFieldDialog";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import {
@@ -24,6 +24,10 @@ import {
   reopenReviewComment,
   resolveDifficulty,
   reopenDifficulty,
+  resolveNote,
+  reopenNote,
+  resolveDuvida,
+  reopenDuvida,
 } from "@/actions/stats";
 import {
   resolveProjectComment,
@@ -80,6 +84,8 @@ export function ReviewCommentsView({
   const [verdictFilter, setVerdictFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [editingField, setEditingField] = useState<string | null>(null);
+  const [pendingSuggestion, setPendingSuggestion] =
+    useState<PendingSuggestion | null>(null);
   const [suggestingField, setSuggestingField] = useState<string | null>(null);
   const [splitDocId, setSplitDocId] = useState<string | null>(null);
 
@@ -101,10 +107,24 @@ export function ReviewCommentsView({
   }, [comments, fieldFilter, statusFilter, verdictFilter, searchQuery]);
 
   const handleResolve = (comment: ReviewComment) => {
+    // Sugestão: abre EditFieldDialog pré-preenchido com a proposta.
+    // Ao salvar o dialog, a sugestão é marcada como aprovada.
+    if (comment.source === "sugestao" && comment.suggestionId) {
+      setPendingSuggestion({
+        id: comment.suggestionId,
+        changes: comment.suggestionChanges ?? {},
+      });
+      setEditingField(comment.fieldName);
+      return;
+    }
     startTransition(async () => {
-      let result;
+      let result: { success?: boolean; error?: string };
       if (comment.source === "anotacao") {
         result = await resolveProjectComment(comment.id.slice("anotacao-".length), projectId);
+      } else if (comment.source === "nota") {
+        result = await resolveNote(projectId, comment.id.slice("nota-".length));
+      } else if (comment.source === "duvida" && comment.duvidaReviewId && comment.duvidaRespondentId) {
+        result = await resolveDuvida(projectId, comment.duvidaReviewId, comment.duvidaRespondentId);
       } else if (comment.source === "dificuldade" && comment.difficultyResponseId) {
         result = await resolveDifficulty(
           projectId,
@@ -125,9 +145,13 @@ export function ReviewCommentsView({
 
   const handleReopen = (comment: ReviewComment) => {
     startTransition(async () => {
-      let result;
+      let result: { success?: boolean; error?: string };
       if (comment.source === "anotacao") {
         result = await reopenProjectComment(comment.id.slice("anotacao-".length), projectId);
+      } else if (comment.source === "nota") {
+        result = await reopenNote(projectId, comment.id.slice("nota-".length));
+      } else if (comment.source === "duvida" && comment.duvidaReviewId && comment.duvidaRespondentId) {
+        result = await reopenDuvida(projectId, comment.duvidaReviewId, comment.duvidaRespondentId);
       } else if (comment.source === "dificuldade" && comment.difficultyResponseId) {
         result = await reopenDifficulty(projectId, comment.difficultyResponseId);
       } else {
@@ -346,8 +370,12 @@ export function ReviewCommentsView({
           fieldName={editingField}
           allFields={fields}
           open={!!editingField}
+          pendingSuggestion={pendingSuggestion}
           onOpenChange={(open) => {
-            if (!open) setEditingField(null);
+            if (!open) {
+              setEditingField(null);
+              setPendingSuggestion(null);
+            }
           }}
         />
       )}

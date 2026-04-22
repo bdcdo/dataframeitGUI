@@ -91,3 +91,29 @@ export async function resolveSchemaSuggestion(
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   return {};
 }
+
+export async function approveSchemaSuggestionWithEdits(
+  suggestionId: string,
+  projectId: string,
+  editedFields: PydanticField[],
+): Promise<{ error?: string }> {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+
+  const supabase = await createSupabaseServer();
+
+  await saveSchemaFromGUI(projectId, editedFields);
+
+  const { error } = await supabase
+    .from("schema_suggestions")
+    .update({
+      status: "approved",
+      resolved_by: user.id,
+      resolved_at: new Date().toISOString(),
+    })
+    .eq("id", suggestionId);
+
+  if (error) return { error: error.message };
+  revalidatePath(`/projects/${projectId}/reviews/comments`);
+  return {};
+}

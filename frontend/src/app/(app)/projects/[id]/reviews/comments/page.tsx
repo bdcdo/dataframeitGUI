@@ -25,6 +25,7 @@ export default async function CommentsPage({
     { data: difficultyResolutions },
     { data: projectComments },
     { data: verdictQuestions },
+    { data: noteResolutions },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -65,7 +66,7 @@ export default async function CommentsPage({
       .limit(50),
     supabase
       .from("schema_suggestions")
-      .select("id, field_name, suggested_changes, reason, status, created_at, profiles!suggested_by(email)")
+      .select("id, field_name, suggested_changes, reason, status, resolved_at, created_at, profiles!suggested_by(email)")
       .eq("project_id", id)
       .order("created_at", { ascending: false }),
     supabase
@@ -87,13 +88,21 @@ export default async function CommentsPage({
     supabase
       .from("verdict_acknowledgments")
       .select(
-        "review_id, respondent_id, comment, created_at, reviews!inner(id, project_id, document_id, field_name, verdict)",
+        "review_id, respondent_id, comment, resolved_at, created_at, reviews!inner(id, project_id, document_id, field_name, verdict)",
       )
       .eq("status", "questioned")
       .not("comment", "is", null)
       .eq("reviews.project_id", id)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("note_resolutions")
+      .select("response_id, resolved_at")
+      .eq("project_id", id),
   ]);
+
+  const noteResolvedMap = new Map(
+    (noteResolutions || []).map((n) => [n.response_id, n.resolved_at]),
+  );
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 
@@ -163,7 +172,7 @@ export default async function CommentsPage({
       verdict: "nota",
       comment: (r.justifications as Record<string, string>)._notes,
       reviewerName: r.respondent_name || "Anônimo",
-      resolvedAt: null,
+      resolvedAt: noteResolvedMap.get(r.id) ?? null,
       createdAt: r.created_at,
       chosenResponseId: null,
       source: "nota" as const,
@@ -187,13 +196,26 @@ export default async function CommentsPage({
       verdict: "sugestao",
       comment: `${s.reason || "Sem motivo"}${changedKeys ? ` (alterações: ${changedKeys})` : ""}`,
       reviewerName: p?.email?.split("@")[0] || "Anônimo",
-      resolvedAt: null,
+      resolvedAt: (s.resolved_at as string | null) ?? null,
       createdAt: s.created_at,
       chosenResponseId: null,
       source: "sugestao" as const,
       responseSnapshot: null,
       suggestionId: s.id as string,
       suggestionStatus: s.status as "pending" | "approved" | "rejected",
+      suggestionChanges: {
+        description:
+          typeof changes.description === "string" ? changes.description : undefined,
+        help_text:
+          changes.help_text === null || typeof changes.help_text === "string"
+            ? (changes.help_text as string | null)
+            : undefined,
+        options: Array.isArray(changes.options)
+          ? (changes.options as string[])
+          : changes.options === null
+            ? null
+            : undefined,
+      },
     };
   });
 
@@ -234,6 +256,7 @@ export default async function CommentsPage({
     review_id: string;
     respondent_id: string;
     comment: string;
+    resolved_at: string | null;
     created_at: string;
     reviews: {
       id: string;
@@ -256,11 +279,13 @@ export default async function CommentsPage({
       verdict: "duvida",
       comment: q.comment,
       reviewerName: reviewerMap.get(q.respondent_id) || "Anônimo",
-      resolvedAt: null,
+      resolvedAt: q.resolved_at,
       createdAt: q.created_at,
       chosenResponseId: null,
       source: "duvida" as const,
       responseSnapshot: null,
+      duvidaReviewId: q.review_id,
+      duvidaRespondentId: q.respondent_id,
     };
   });
 
