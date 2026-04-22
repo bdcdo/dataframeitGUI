@@ -51,10 +51,14 @@ def _compile_model(pydantic_code: str):
     _run_compiled(compiled, namespace)
 
     from pydantic import BaseModel
+    # Pick the last BaseModel subclass: by convention (and by how the frontend
+    # generates code), nested subfield classes are defined before the main
+    # Analysis model, so the root class is always the last one in namespace.
+    model_class = None
     for obj in namespace.values():
         if isinstance(obj, type) and issubclass(obj, BaseModel) and obj is not BaseModel:
-            return obj
-    return None
+            model_class = obj
+    return model_class
 
 
 def _run_compiled(compiled_code: object, namespace: dict) -> None:

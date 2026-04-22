@@ -29,7 +29,10 @@ def compile_pydantic(code: str) -> dict:
     except Exception as e:
         return {"valid": False, "fields": [], "model_name": None, "errors": [str(e)]}
 
-    # Find the BaseModel subclass
+    # Find the "main" BaseModel subclass. The frontend-generated code defines
+    # nested BaseModel classes (for subfields) before the main class, so we
+    # iterate all candidates and pick the last one — which matches the
+    # convention of defining the root model after its dependencies.
     from pydantic import BaseModel
 
     model_class = None
@@ -40,7 +43,6 @@ def compile_pydantic(code: str) -> dict:
             and obj is not BaseModel
         ):
             model_class = obj
-            break
 
     if model_class is None:
         return {
@@ -58,15 +60,25 @@ def compile_pydantic(code: str) -> dict:
         extra = field_info.json_schema_extra or {}
         if callable(extra):
             extra = {}
-        target = extra.get("target", "all") if isinstance(extra, dict) else "all"
+        is_dict_extra = isinstance(extra, dict)
+        target = extra.get("target", "all") if is_dict_extra else "all"
         # Allow json_schema_extra to override the inferred field type (e.g. date)
-        explicit_type = extra.get("field_type") if isinstance(extra, dict) else None
+        explicit_type = extra.get("field_type") if is_dict_extra else None
         if explicit_type:
             field_type = explicit_type
         description = field_info.description or field_name
         allow_other = (
-            bool(extra.get("allowOther", False)) if isinstance(extra, dict) else False
+            bool(extra.get("allowOther", False)) if is_dict_extra else False
         )
+        help_text = extra.get("help_text") if is_dict_extra else None
+        subfield_rule = extra.get("subfield_rule") if is_dict_extra else None
+
+        # If help_text was carried structurally, strip the ". Instrucoes: ..."
+        # suffix from description so the returned description is the pure form.
+        if help_text:
+            suffix = f". Instrucoes: {help_text}"
+            if description.endswith(suffix):
+                description = description[: -len(suffix)]
 
         field_dict: dict = {
             "name": field_name,
@@ -77,6 +89,9 @@ def compile_pydantic(code: str) -> dict:
             "hash": _field_hash(field_name, field_type, options, description),
         }
 
+        if help_text:
+            field_dict["help_text"] = help_text
+
         if allow_other and field_type in ("single", "multi"):
             field_dict["allow_other"] = True
 
@@ -84,6 +99,7 @@ def compile_pydantic(code: str) -> dict:
         subfields = _extract_subfields(annotation)
         if subfields:
             field_dict["subfields"] = subfields
+            field_dict["subfield_rule"] = subfield_rule or "all"
 
         fields.append(field_dict)
 

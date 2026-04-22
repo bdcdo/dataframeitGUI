@@ -43,6 +43,7 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
 - Supabase client: `lib/supabase/server.ts` (server, autenticado via Clerk JWT) e `lib/supabase/admin.ts` (service key)
 - **FastAPI** so para LLM e Pydantic (nao para CRUD)
 - **EditFieldDialog**: toda config de schema acessivel na aba Schema deve ser igualmente acessivel via `EditFieldDialog` inline (Comentarios e LLM Insights). Ao adicionar um campo novo a `PydanticField`, garantir que ambos os editores (FieldCard e EditFieldDialog) o exponham.
+- **Pydantic = fonte de verdade do schema**: toda propriedade de `PydanticField` (definida em `frontend/src/lib/types.ts`) deve ser transportada no codigo Pydantic gerado — via annotation, `Field(...)` ou `json_schema_extra={...}`. E proibido depender apenas do JSON em `projects.pydantic_fields` para reconstruir um campo. Motivo: permitir que coordenadores editem o codigo Pydantic direto sem perder informacao, alem de garantir round-trip completo `UI -> pydantic_code -> compile_pydantic -> UI`. Ao adicionar um campo novo a `PydanticField`, atualize (a) `generatePydanticCode()` em `frontend/src/lib/schema-utils.ts` para emitir a propriedade e (b) `compile_pydantic()` em `backend/services/pydantic_compiler.py` para le-la de volta.
 - Testes: **Vitest** (frontend), **pytest** (backend)
 
 ## Estrutura
