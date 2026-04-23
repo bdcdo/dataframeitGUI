@@ -611,11 +611,20 @@ async def run_llm(
                 "respondent_name": f"{llm_provider}/{llm_model}",
                 "answers": answers,
                 "justifications": justifications if justifications else None,
-                # Respostas parciais são persistidas como is_current=False para
-                # não poluírem a aba Comparar; ficam disponíveis para auditoria.
+                # is_current: respostas parciais já nascem como False para não
+                # poluírem Comparar (ver PR #65). Uma run posterior sobre os
+                # mesmos docs também vai marcar esta resposta como False via
+                # bulk update logo acima.
                 "is_current": not is_partial,
+                # is_partial: imutável após o insert. Preserva o classificador
+                # "cobertura baixa" mesmo depois que uma run posterior supersede
+                # esta resposta (ver migration 20260425000000).
+                "is_partial": is_partial,
                 "pydantic_hash": pydantic_hash,
                 "answer_field_hashes": answer_field_hashes,
+                # Correlaciona a resposta com a execução que a produziu para a
+                # aba LLM > Respostas (ver migration 20260424000000).
+                "llm_job_id": job_id,
             }).execute()
 
         # Update project hash

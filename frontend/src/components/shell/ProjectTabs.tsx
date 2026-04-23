@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Eye, EyeOff, Users } from "lucide-react";
+import { LlmRunningBadge } from "@/components/llm/LlmRunningBadge";
 
 interface ProjectMember {
   userId: string;
@@ -17,12 +18,14 @@ interface ProjectTabsProps {
   isCoordinator: boolean;
   isMaster?: boolean;
   projectMembers?: ProjectMember[];
+  isLlmRunning?: boolean;
 }
 
 const tabs = [
   { label: "Meu Progresso", href: "my-progress" },
   { label: "Analisar", href: "analyze" },
   { label: "Revisar", href: "reviews" },
+  { label: "LLM", href: "llm", coordinatorOnly: true },
   { label: "Configurações", href: "config", coordinatorOnly: true },
 ];
 
@@ -31,6 +34,7 @@ export function ProjectTabs({
   isCoordinator,
   isMaster = false,
   projectMembers = [],
+  isLlmRunning = false,
 }: ProjectTabsProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -119,6 +123,7 @@ export function ProjectTabs({
               )}
             >
               {tab.label}
+              {tab.href === "llm" && isLlmRunning && <LlmRunningBadge />}
               {isActive && (
                 <span className="absolute inset-x-1 -bottom-[5px] h-0.5 rounded-full bg-brand" />
               )}

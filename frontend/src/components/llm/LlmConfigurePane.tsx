@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -64,9 +65,7 @@ import {
 } from "@/components/ui/collapsible";
 import { ChevronRight } from "lucide-react";
 import { DocumentSelector } from "./DocumentSelector";
-import { LlmRunHistory } from "./LlmRunHistory";
 import { LlmErrorCard, type LlmErrorInfo } from "./LlmErrorCard";
-import type { LlmRunRecord } from "@/actions/llm";
 
 function formatEta(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -80,7 +79,7 @@ function formatEta(seconds: number): string {
 
 type FilterMode = "all" | "pending" | "max_responses" | "random_sample" | "specific";
 
-interface LlmTabProps {
+interface LlmConfigurePaneProps {
   projectId: string;
   promptTemplate: string;
   projectDescription: string;
@@ -93,10 +92,9 @@ interface LlmTabProps {
   pydanticCode: string | null;
   totalDocs: number;
   docsWithLlm: number;
-  runs: LlmRunRecord[];
 }
 
-export function LlmTab({
+export function LlmConfigurePane({
   projectId,
   promptTemplate: initialPrompt,
   projectDescription,
@@ -105,8 +103,9 @@ export function LlmTab({
   pydanticCode,
   totalDocs,
   docsWithLlm,
-  runs,
-}: LlmTabProps) {
+}: LlmConfigurePaneProps) {
+  const router = useRouter();
+
   // Prompt state
   const [prompt, setPrompt] = useState(initialPrompt);
   const [savingPrompt, setSavingPrompt] = useState(false);
@@ -120,7 +119,7 @@ export function LlmTab({
   const [maxResponseCount, setMaxResponseCount] = useState(0);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [eligibleCount, setEligibleCount] = useState<number | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [, setJobId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState<string>("idle");
@@ -241,6 +240,8 @@ export function LlmTab({
       setTotalBatches(0);
       setProgress(0);
       setTotal(0);
+      // Refresca o layout do projeto para o badge "LLM rodando" aparecer na aba.
+      router.refresh();
       pollProgress(res.job_id);
     } catch (e: any) {
       toast.error(e.message);
@@ -278,6 +279,8 @@ export function LlmTab({
         if (res.status !== "running") {
           if (intervalRef.current) clearInterval(intervalRef.current);
           intervalRef.current = null;
+          // Refresca o layout para o badge de execução desaparecer.
+          router.refresh();
           if (res.status === "completed") toast.success("LLM concluído!");
           if (res.status === "error") {
             const msg = res.errors[0] || "Erro na execução";
@@ -675,7 +678,7 @@ export function LlmTab({
                   }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Abaixo disso, a resposta entra como <code>is_current=false</code> (fica fora do Comparar).
+                  Abaixo disso, a resposta entra como <code>is_current=false</code> e aparece marcada como parcial na aba Respostas.
                 </p>
               </div>
               <div className="space-y-1.5">
@@ -880,19 +883,6 @@ export function LlmTab({
             onDismiss={() => setErrorInfo(null)}
           />
         )}
-
-        <LlmRunHistory
-          runs={runs}
-          pydanticCode={pydanticCode}
-          onOpenError={(err) => {
-            setErrorInfo(err);
-            setTimeout(() => {
-              document
-                .getElementById("llm-error-card")
-                ?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }, 50);
-          }}
-        />
         </CardContent>
       </Card>
     </div>

@@ -71,7 +71,7 @@ export async function saveSchema(
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/reviews`);
-  revalidatePath(`/projects/${projectId}/config/llm`);
+  revalidatePath(`/projects/${projectId}/llm/configure`);
   revalidateTag(`project-${projectId}-progress`, { expire: 60 });
 }
 
@@ -84,7 +84,7 @@ export async function savePrompt(projectId: string, promptTemplate: string) {
 
   if (error) throw new Error(error.message);
   revalidatePath(`/projects/${projectId}/analyze/code`);
-  revalidatePath(`/projects/${projectId}/config/llm`);
+  revalidatePath(`/projects/${projectId}/llm/configure`);
 }
 
 // ---------- Hash por campo (reproduz backend _field_hash) ----------
@@ -810,7 +810,7 @@ export async function publishMajorVersion(projectId: string) {
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/reviews`);
-  revalidatePath(`/projects/${projectId}/config/llm`);
+  revalidatePath(`/projects/${projectId}/llm/configure`);
   return bumped;
 }
 
@@ -854,6 +854,6 @@ export async function saveLlmConfig(
     .eq("id", projectId);
 
   if (error) throw new Error(error.message);
-  revalidatePath(`/projects/${projectId}/config/llm`);
+  revalidatePath(`/projects/${projectId}/llm/configure`);
   revalidatePath(`/projects/${projectId}/config`);
 }

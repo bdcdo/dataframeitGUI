@@ -99,6 +99,106 @@ export async function getLlmRuns(
   return (data ?? []) as unknown as LlmRunRecord[];
 }
 
+export async function getRunningLlmCount(projectId: string): Promise<number> {
+  const supabase = await createSupabaseServer();
+  const { count } = await supabase
+    .from("llm_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", projectId)
+    .eq("status", "running");
+  return count ?? 0;
+}
+
+export async function getLlmRunStats(
+  jobId: string
+): Promise<{ current: number; partial: number }> {
+  const supabase = await createSupabaseServer();
+  // Usa is_partial (imutável) em vez de is_current para distinguir complete vs
+  // partial. is_current muda quando uma run posterior roda nos mesmos docs, o
+  // que inflaria artificialmente a contagem de parciais de runs antigas.
+  const [{ count: complete }, { count: partial }] = await Promise.all([
+    supabase
+      .from("responses")
+      .select("id", { count: "exact", head: true })
+      .eq("llm_job_id", jobId)
+      .eq("is_partial", false),
+    supabase
+      .from("responses")
+      .select("id", { count: "exact", head: true })
+      .eq("llm_job_id", jobId)
+      .eq("is_partial", true),
+  ]);
+  return { current: complete ?? 0, partial: partial ?? 0 };
+}
+
+export interface LlmResponseRecord {
+  id: string;
+  document_id: string;
+  llm_job_id: string | null;
+  is_current: boolean;
+  is_partial: boolean;
+  answers: Record<string, unknown>;
+  justifications: Record<string, string> | null;
+  respondent_name: string | null;
+  created_at: string;
+  document: {
+    id: string;
+    title: string | null;
+    external_id: string | null;
+  } | null;
+}
+
+export async function getLlmResponsesForProject(
+  projectId: string,
+  options: { jobId?: string; limit?: number; offset?: number } = {}
+): Promise<LlmResponseRecord[]> {
+  const supabase = await createSupabaseServer();
+  const limit = options.limit ?? 200;
+  const offset = options.offset ?? 0;
+
+  let query = supabase
+    .from("responses")
+    .select(
+      "id, document_id, llm_job_id, is_current, is_partial, answers, " +
+        "justifications, respondent_name, created_at, " +
+        "documents(id, title, external_id)"
+    )
+    .eq("project_id", projectId)
+    .eq("respondent_type", "llm")
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (options.jobId) query = query.eq("llm_job_id", options.jobId);
+
+  const { data } = await query;
+
+  return ((data ?? []) as unknown as Array<{
+    id: string;
+    document_id: string;
+    llm_job_id: string | null;
+    is_current: boolean;
+    is_partial: boolean;
+    answers: Record<string, unknown> | null;
+    justifications: Record<string, string> | null;
+    respondent_name: string | null;
+    created_at: string;
+    documents:
+      | { id: string; title: string | null; external_id: string | null }
+      | null;
+  }>).map((r) => ({
+    id: r.id,
+    document_id: r.document_id,
+    llm_job_id: r.llm_job_id,
+    is_current: r.is_current,
+    is_partial: r.is_partial,
+    answers: r.answers ?? {},
+    justifications: r.justifications,
+    respondent_name: r.respondent_name,
+    created_at: r.created_at,
+    document: r.documents,
+  }));
+}
+
 export async function getDocumentsForSelection(
   projectId: string
 ): Promise<DocSelectionItem[]> {

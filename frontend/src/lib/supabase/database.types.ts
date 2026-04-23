@@ -572,7 +572,9 @@ export type Database = {
           document_id: string | null
           id: string
           is_current: boolean | null
+          is_partial: boolean
           justifications: Json | null
+          llm_job_id: string | null
           project_id: string | null
           pydantic_hash: string | null
           respondent_id: string | null
@@ -590,7 +592,9 @@ export type Database = {
           document_id?: string | null
           id?: string
           is_current?: boolean | null
+          is_partial?: boolean
           justifications?: Json | null
+          llm_job_id?: string | null
           project_id?: string | null
           pydantic_hash?: string | null
           respondent_id?: string | null
@@ -608,7 +612,9 @@ export type Database = {
           document_id?: string | null
           id?: string
           is_current?: boolean | null
+          is_partial?: boolean
           justifications?: Json | null
+          llm_job_id?: string | null
           project_id?: string | null
           pydantic_hash?: string | null
           respondent_id?: string | null
