@@ -40,6 +40,10 @@ class StatusResponse(BaseModel):
     error_type: str | None = None
     error_line: int | None = None
     error_column: int | None = None
+    # Snapshot of the pydantic_code used in this run — sent with errors so the
+    # frontend can render the code window against the actual failed version,
+    # not the project's current (possibly edited) code.
+    pydantic_code: str | None = None
 
 
 @router.post("/run", response_model=RunResponse)

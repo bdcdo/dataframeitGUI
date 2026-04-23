@@ -28,6 +28,18 @@ function formatModelOrDash(provider: string | null, model: string | null): strin
   return formatModelLabel(`${provider}/${model}`);
 }
 
+const FILTER_LABELS: Record<string, string> = {
+  all: "Todos",
+  pending: "Pendentes",
+  max_responses: "Até N respostas",
+  random_sample: "Amostra aleatória",
+};
+
+function formatFilterMode(mode: string | null): string {
+  if (!mode) return "—";
+  return FILTER_LABELS[mode] ?? mode;
+}
+
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR", {
     day: "2-digit",
@@ -125,7 +137,7 @@ export function LlmRunHistory({
                       {formatModelOrDash(run.llm_provider, run.llm_model)}
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">
-                      {run.filter_mode ?? "—"}
+                      {formatFilterMode(run.filter_mode)}
                     </td>
                     <td className="px-3 py-2 text-right text-muted-foreground">
                       {run.document_count ?? "—"}

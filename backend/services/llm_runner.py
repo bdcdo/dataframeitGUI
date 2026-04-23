@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _jobs: dict[str, dict] = {}
 
 
-def _error_status_from_row(row: dict) -> dict:
+def _status_from_row(row: dict) -> dict:
     """Shape a llm_runs row as a StatusResponse-compatible dict."""
     return {
         "status": row.get("status", "error"),
@@ -40,6 +40,7 @@ def _error_status_from_row(row: dict) -> dict:
         "error_type": row.get("error_type"),
         "error_line": row.get("error_line"),
         "error_column": row.get("error_column"),
+        "pydantic_code": row.get("pydantic_code"),
     }
 
 
@@ -52,14 +53,14 @@ def get_job_status(job_id: str) -> dict:
         row = (
             sb.table("llm_runs")
             .select("status, phase, progress, total, error_message, error_type, "
-                    "error_traceback, error_line, error_column")
+                    "error_traceback, error_line, error_column, pydantic_code")
             .eq("job_id", job_id)
             .maybe_single()
             .execute()
             .data
         )
         if row:
-            return _error_status_from_row(row)
+            return _status_from_row(row)
     except Exception:
         logger.exception("Failed to fetch job status from llm_runs fallback")
     return {"status": "error", "phase": "error", "progress": 0, "total": 0,
@@ -251,6 +252,7 @@ async def run_llm(
         "current_batch": 0, "total_batches": 0,
         "error_traceback": None, "error_type": None,
         "error_line": None, "error_column": None,
+        "pydantic_code": None,
     }
     _persist_run_insert(sb, job_id, project_id, filter_mode)
 
@@ -291,6 +293,7 @@ async def run_llm(
         docs = _filter_docs(sb, docs, project_id, filter_mode, max_response_count, sample_size)
 
         _jobs[job_id]["total"] = len(docs)
+        _jobs[job_id]["pydantic_code"] = pydantic_code
         _persist_run_snapshot(sb, job_id, project, len(docs))
 
         if not docs:

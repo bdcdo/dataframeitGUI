@@ -266,6 +266,7 @@ export function LlmTab({
           error_type: string | null;
           error_line: number | null;
           error_column: number | null;
+          pydantic_code: string | null;
         }>(`/api/llm/status/${id}`);
         setProgress(res.progress);
         setTotal(res.total);
@@ -286,7 +287,9 @@ export function LlmTab({
               traceback: res.error_traceback,
               line: res.error_line,
               column: res.error_column,
-              pydanticCode,
+              // Prefer the snapshot stored with the run — the project's current
+              // pydanticCode may have been edited between run start and failure.
+              pydanticCode: res.pydantic_code ?? pydanticCode,
             });
             toast.error(msg, {
               duration: 10000,

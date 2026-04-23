@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/collapsible";
 import { AlertCircle, ChevronRight, Copy, X, Check } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 export interface LlmErrorInfo {
   message: string;
@@ -133,11 +134,17 @@ export function LlmErrorCard({ id, error, onDismiss }: LlmErrorCardProps) {
                       key={l.lineNumber}
                       className={
                         l.highlighted
-                          ? "bg-destructive/10"
+                          ? "bg-destructive/20"
                           : "hover:bg-muted/30"
                       }
                     >
-                      <td className="select-none border-r px-2 py-0.5 text-right text-muted-foreground">
+                      <td
+                        className={cn(
+                          "select-none border-r px-2 py-0.5 text-right text-muted-foreground",
+                          l.highlighted &&
+                            "border-l-2 border-l-destructive font-medium text-destructive"
+                        )}
+                      >
                         {l.lineNumber}
                       </td>
                       <td className="whitespace-pre px-2 py-0.5">
