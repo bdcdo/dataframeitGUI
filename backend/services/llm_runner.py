@@ -426,6 +426,32 @@ async def run_llm(
         parallel_requests = llm_kwargs.pop("parallel_requests", 5)
         rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
 
+        # Thresholds configuráveis por projeto para detecção de respostas
+        # parciais. Valores fora de [0, 1] caem para o default. São popados
+        # de llm_kwargs para não vazarem para o LLM / dataframeit.
+        def _threshold(key: str, default: float) -> float:
+            raw = llm_kwargs.pop(key, None)
+            if raw is None:
+                return default
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "llm_kwargs['%s']=%r não é número, usando default %s",
+                    key, raw, default,
+                )
+                return default
+            if not 0 <= v <= 1:
+                logger.warning(
+                    "llm_kwargs['%s']=%s fora de [0,1], usando default %s",
+                    key, v, default,
+                )
+                return default
+            return v
+
+        partial_coverage_threshold = _threshold("partial_coverage_threshold", 0.5)
+        run_failure_threshold = _threshold("run_failure_threshold", 0.3)
+
         DATAFRAMEIT_PARAMS = {
             "api_key", "max_retries", "base_delay", "max_delay", "track_tokens",
             "use_search", "search_provider", "search_per_field", "max_results",
@@ -502,12 +528,6 @@ async def run_llm(
             else:
                 expected_llm_fields.add(name)
 
-        PARTIAL_COVERAGE_THRESHOLD = 0.5
-        # Se >= este share dos docs processados produziu resposta parcial,
-        # consideramos a run comprometida (provável incompatibilidade
-        # schema × provider) e marcamos como erro para alertar o usuário.
-        RUN_FAILURE_THRESHOLD = 0.3
-
         partial_warnings: list[str] = []
 
         # Save responses — use row["id"] (not index correlation) for safety
@@ -571,7 +591,7 @@ async def run_llm(
             }
             answered = set(answers.keys()) & active_expected
             coverage = len(answered) / len(active_expected) if active_expected else 1.0
-            is_partial = coverage < PARTIAL_COVERAGE_THRESHOLD
+            is_partial = coverage < partial_coverage_threshold
 
             if is_partial:
                 missing = sorted(active_expected - answered)
@@ -608,7 +628,7 @@ async def run_llm(
         partial_ratio = (
             len(partial_warnings) / total_processed if total_processed else 0.0
         )
-        if partial_ratio >= RUN_FAILURE_THRESHOLD:
+        if partial_ratio >= run_failure_threshold:
             raise RuntimeError(
                 f"Run comprometida: {len(partial_warnings)}/{total_processed} "
                 f"docs ({int(partial_ratio * 100)}%) com resposta parcial. "
