@@ -616,6 +616,9 @@ async def run_llm(
                 "is_current": not is_partial,
                 "pydantic_hash": pydantic_hash,
                 "answer_field_hashes": answer_field_hashes,
+                # Correlaciona a resposta com a execução que a produziu para a
+                # aba LLM > Respostas (ver migration 20260424000000).
+                "llm_job_id": job_id,
             }).execute()
 
         # Update project hash
