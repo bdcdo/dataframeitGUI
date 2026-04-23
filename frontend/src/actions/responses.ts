@@ -101,6 +101,7 @@ export async function saveResponse(
       const humanFields = fields.filter(
         (f) =>
           (f.target || "all") !== "llm_only" &&
+          f.target !== "none" &&
           f.required !== false &&
           isFieldVisible(f, sanitizedAnswers),
       );

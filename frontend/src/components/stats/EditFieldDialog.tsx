@@ -233,6 +233,16 @@ export function EditFieldDialog({
             </div>
           )}
 
+          {field.type === "date" && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Valores sentinela (opcional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Aparecem como botões ao lado do campo de data (ex: &quot;Não identificável&quot;).
+              </p>
+              <OptionsEditor options={options} onChange={setOptions} />
+            </div>
+          )}
+
           {field.type === "text" && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">

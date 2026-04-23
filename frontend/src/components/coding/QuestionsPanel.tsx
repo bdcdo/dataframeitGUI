@@ -44,7 +44,10 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   }, [fields]);
 
   const visibleFields = useMemo(
-    () => fields.filter((f) => isFieldVisible(f, answers)),
+    () =>
+      fields.filter(
+        (f) => f.target !== "none" && isFieldVisible(f, answers),
+      ),
     [fields, answers],
   );
   const visibleNames = useMemo(

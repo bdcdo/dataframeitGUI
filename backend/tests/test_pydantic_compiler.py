@@ -385,3 +385,107 @@ def test_multiline_help_text_round_trips():
     f = _field(result, "x")
     assert f["description"] == "linha1\nlinha2"
     assert f["help_text"] == "ins1\nins2"
+
+
+def test_target_none_round_trips():
+    """target="none" is preserved by the compiler (used to hide fields from
+    both humans and LLM while keeping them in pydantic_code as source of
+    truth)."""
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    hidden_field: Literal["a", "b"] = Field(
+        description="Hidden",
+        json_schema_extra={"target": "none"},
+    )
+    visible: Literal["x"] = Field(description="Visible")
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    hidden = _field(result, "hidden_field")
+    assert hidden["target"] == "none"
+    visible = _field(result, "visible")
+    assert visible["target"] == "all"
+
+
+def test_date_field_with_sentinel_options_round_trips():
+    """Date fields carry sentinel options (ex: 'Não identificável') via
+    json_schema_extra because the annotation itself is `str`, not Literal."""
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    birth_date: str = Field(
+        description="Data de nascimento",
+        json_schema_extra={
+            "field_type": "date",
+            "options": ["Não identificável"],
+        },
+    )
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    f = _field(result, "birth_date")
+    assert f["type"] == "date"
+    assert f["options"] == ["Não identificável"]
+
+
+def test_date_description_strips_generated_suffixes():
+    """generatePydanticCode appends ". Formato: DD/MM/AAAA..." and, when
+    options exist, ". Caso não seja possível informar a data, usar um dos
+    seguintes valores: ..." to the description. The compiler must strip
+    both suffixes so the description round-trips cleanly (otherwise each
+    UI -> compile -> UI cycle accumulates the suffix)."""
+    # Date without options: only the format suffix
+    code_no_opts = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    d: str = Field(
+        description="Data da decisão. Formato: DD/MM/AAAA (use XX para partes desconhecidas)",
+        json_schema_extra={"field_type": "date"},
+    )
+'''
+    result = compile_pydantic(code_no_opts)
+    assert result["valid"], result["errors"]
+    f = _field(result, "d")
+    assert f["description"] == "Data da decisão"
+    assert f["type"] == "date"
+
+    # Date with options: both suffixes, stripped in reverse order
+    code_with_opts = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    d: str = Field(
+        description='Data da decisão. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: "Não identificável", "Não aplicável"',
+        json_schema_extra={
+            "field_type": "date",
+            "options": ["Não identificável", "Não aplicável"],
+        },
+    )
+'''
+    result = compile_pydantic(code_with_opts)
+    assert result["valid"], result["errors"]
+    f = _field(result, "d")
+    assert f["description"] == "Data da decisão"
+    assert f["options"] == ["Não identificável", "Não aplicável"]
+
+    # Date with options AND help_text: all three suffixes combined
+    code_full = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    d: str = Field(
+        description='Data da decisão. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: "Não identificável". Instrucoes: Use a data da publicação',
+        json_schema_extra={
+            "field_type": "date",
+            "options": ["Não identificável"],
+            "help_text": "Use a data da publicação",
+        },
+    )
+'''
+    result = compile_pydantic(code_full)
+    assert result["valid"], result["errors"]
+    f = _field(result, "d")
+    assert f["description"] == "Data da decisão"
+    assert f["help_text"] == "Use a data da publicação"
+    assert f["options"] == ["Não identificável"]

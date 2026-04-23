@@ -53,6 +53,12 @@ def compile_pydantic(code: str) -> dict:
         explicit_type = extra.get("field_type") if is_dict_extra else None
         if explicit_type:
             field_type = explicit_type
+        # Date fields carry options as sentinels in json_schema_extra because
+        # the annotation itself is `str`, not Literal.
+        if field_type == "date" and is_dict_extra:
+            raw_opts = extra.get("options")
+            if isinstance(raw_opts, (list, tuple)) and raw_opts:
+                options = [str(o) for o in raw_opts]
         description = field_info.description or field_name
         allow_other = (
             bool(extra.get("allowOther", False)) if is_dict_extra else False
@@ -75,6 +81,24 @@ def compile_pydantic(code: str) -> dict:
             suffix = f". Instrucoes: {help_text}"
             if description.endswith(suffix):
                 description = description[: -len(suffix)]
+
+        # Date fields: strip suffixes added by generatePydanticCode so the
+        # description round-trips cleanly (otherwise each UI -> compile -> UI
+        # cycle accumulates the suffix).
+        if field_type == "date":
+            if options:
+                sentinel_list = ", ".join(f'"{o}"' for o in options)
+                sentinel_suffix = (
+                    f". Caso não seja possível informar a data, "
+                    f"usar um dos seguintes valores: {sentinel_list}"
+                )
+                if description.endswith(sentinel_suffix):
+                    description = description[: -len(sentinel_suffix)]
+            date_format_suffix = (
+                ". Formato: DD/MM/AAAA (use XX para partes desconhecidas)"
+            )
+            if description.endswith(date_format_suffix):
+                description = description[: -len(date_format_suffix)]
 
         field_dict: dict = {
             "name": field_name,

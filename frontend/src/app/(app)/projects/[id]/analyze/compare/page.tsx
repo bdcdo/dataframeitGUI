@@ -287,7 +287,7 @@ export default async function ComparePageRoute({
     // Compute divergence on qualified responses
     const divergent: string[] = [];
     for (const field of fields) {
-      if (field.target === "llm_only" || field.target === "human_only") continue;
+      if (field.target === "llm_only" || field.target === "human_only" || field.target === "none") continue;
 
       // For conditional fields, a response that never triggered the condition
       // legitimately has no value — don't treat that absence as divergence.

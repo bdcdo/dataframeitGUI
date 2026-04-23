@@ -71,6 +71,15 @@ function fieldExtra(field: PydanticField): string {
   }
   if (field.type === "date") {
     extras.push(`"field_type": "date"`);
+    // Date fields carry options as sentinel values (ex: "Não identificável")
+    // rendered alongside the date picker. They must be carried in
+    // json_schema_extra because the annotation itself is `str`, not Literal.
+    if (field.options && field.options.length > 0) {
+      const opts = field.options
+        .map((o) => `"${escapeString(o)}"`)
+        .join(", ");
+      extras.push(`"options": [${opts}]`);
+    }
   }
   if ((field.type === "single" || field.type === "multi") && field.allow_other) {
     extras.push(`"allowOther": True`);
@@ -103,7 +112,11 @@ export function generatePydanticCode(
     "",
   ];
 
-  // Generate nested BaseModel classes for composite text fields
+  // Generate nested BaseModel classes for composite text fields.
+  // Note: fields with target="none" are emitted in the Pydantic code
+  // (to preserve round-trip with pydantic_code as source of truth) but
+  // are filtered out in the backend before the LLM run and in the UI
+  // renderers that show fields to humans.
   for (const field of fields) {
     if (field.subfields && field.subfields.length > 0) {
       lines.push("");
@@ -131,6 +144,16 @@ export function generatePydanticCode(
     let desc = escapeString(field.description);
     if (field.type === "date") {
       desc += ". Formato: DD/MM/AAAA (use XX para partes desconhecidas)";
+    }
+    if (
+      field.type === "date" &&
+      field.options &&
+      field.options.length > 0
+    ) {
+      const sentinelList = field.options
+        .map((o) => `\\"${escapeString(o)}\\"`)
+        .join(", ");
+      desc += `. Caso não seja possível informar a data, usar um dos seguintes valores: ${sentinelList}`;
     }
     if (field.help_text?.trim()) {
       desc += `. Instrucoes: ${escapeString(field.help_text.trim())}`;
@@ -177,10 +200,6 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
 
     if (!f.description.trim()) {
       errors.push(`${label}: descrição não pode ser vazia`);
-    }
-
-    if (f.type === "date" && f.options && f.options.length > 0) {
-      errors.push(`${label}: campo de data não deve ter opções`);
     }
 
     if (f.subfields && f.subfields.length > 0) {

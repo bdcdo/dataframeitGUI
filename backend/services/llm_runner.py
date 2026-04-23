@@ -156,6 +156,42 @@ def _extend_model_with_justifications(model_class):
     )
 
 
+def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
+    """Return a model class excluding fields that should not be sent to the LLM.
+
+    A field is excluded when its ``target`` in ``pydantic_fields`` is either
+    ``"none"`` (hidden from everyone) or ``"human_only"``. Returns the original
+    ``model_class`` unchanged when no fields need to be excluded.
+
+    Note: the filtered model is created with ``__base__=BaseModel``, so any
+    custom ``model_config`` or validators on the original class are not
+    preserved. This is acceptable because ``dataframeit`` only inspects the
+    schema (fields + annotations). If custom validators become relevant,
+    switch to ``__base__=model_class`` and drop excluded fields differently.
+    """
+    from pydantic import BaseModel, create_model
+
+    excluded_names = {
+        f["name"]
+        for f in (pydantic_fields or [])
+        if f.get("target") in ("none", "human_only")
+    }
+    if not excluded_names:
+        return model_class
+
+    kept: dict = {}
+    for name, info in model_class.model_fields.items():
+        if name in excluded_names:
+            continue
+        kept[name] = (info.annotation, info)
+
+    return create_model(
+        f"{model_class.__name__}ForLLM",
+        __base__=BaseModel,
+        **kept,
+    )
+
+
 def _compile_model(pydantic_code: str):
     """Compile Pydantic code and return the model class."""
     namespace: dict = {}
@@ -305,6 +341,12 @@ async def run_llm(
         model_class = _compile_model(pydantic_code)
         if not model_class:
             raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
+
+        # Filter out fields that should not be sent to the LLM
+        # (target="none" hides from everyone; target="human_only" hides from LLM)
+        model_class = _filter_model_for_llm(
+            model_class, project.get("pydantic_fields") or []
+        )
 
         # Optionally extend model with justification fields
         include_justifications = llm_kwargs.pop("include_justifications", False)
