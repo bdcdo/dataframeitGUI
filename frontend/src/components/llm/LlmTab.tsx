@@ -652,6 +652,58 @@ export function LlmTab({
                   Pausa entre requisições para evitar rate limits.
                 </p>
               </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm">Cobertura mínima por documento (%)</Label>
+                <Input
+                  type="number"
+                  step={1}
+                  min={0}
+                  max={100}
+                  value={Math.round(
+                    ((config.llm_kwargs.partial_coverage_threshold as number | undefined) ?? 0.5) * 100,
+                  )}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    if (!isNaN(v) && v >= 0 && v <= 100)
+                      setConfig((c) => ({
+                        ...c,
+                        llm_kwargs: {
+                          ...c.llm_kwargs,
+                          partial_coverage_threshold: v / 100,
+                        },
+                      }));
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Abaixo disso, a resposta entra como <code>is_current=false</code> (fica fora do Comparar).
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm">Máx. % de docs parciais por rodada</Label>
+                <Input
+                  type="number"
+                  step={1}
+                  min={0}
+                  max={100}
+                  value={Math.round(
+                    ((config.llm_kwargs.run_failure_threshold as number | undefined) ?? 0.3) * 100,
+                  )}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    if (!isNaN(v) && v >= 0 && v <= 100)
+                      setConfig((c) => ({
+                        ...c,
+                        llm_kwargs: {
+                          ...c.llm_kwargs,
+                          run_failure_threshold: v / 100,
+                        },
+                      }));
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Se essa fração dos documentos vier parcial, a rodada inteira é marcada como erro.
+                </p>
+              </div>
             </div>
           </CollapsibleContent>
         </Collapsible>

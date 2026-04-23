@@ -107,15 +107,25 @@ def _persist_run_snapshot(
         logger.exception("Failed to UPDATE llm_runs snapshot for job %s", job_id)
 
 
-def _persist_run_completion(sb, job_id: str, progress: int, total: int) -> None:
+def _persist_run_completion(
+    sb, job_id: str, progress: int, total: int, warnings: list[str] | None = None
+) -> None:
     try:
-        sb.table("llm_runs").update({
+        payload: dict = {
             "status": "completed",
             "phase": "completed",
             "progress": progress,
             "total": total,
             "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("job_id", job_id).execute()
+        }
+        # Persistir warnings de cobertura parcial reutilizando error_message
+        # (evita migration). Motivo: llm_runs.error_message é o único campo
+        # livre para texto diagnóstico pós-completion.
+        if warnings:
+            payload["error_message"] = "Warnings ({} doc(s)): {}".format(
+                len(warnings), " | ".join(warnings[:20])
+            )
+        sb.table("llm_runs").update(payload).eq("job_id", job_id).execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs completion for job %s", job_id)
 
@@ -154,6 +164,58 @@ def _extend_model_with_justifications(model_class):
         __base__=model_class,
         **extra_fields,
     )
+
+
+# Separador usado para achatar nested BaseModels em top-level (ver
+# _flatten_nested_basemodels abaixo). Dois underscores minimizam colisão com
+# nomes de campo reais (q2_id_..., q24a_...).
+_NESTED_FLATTEN_SEP = "__"
+
+
+def _flatten_nested_basemodels(model_class):
+    """Expande fields cujo tipo é um BaseModel em campos top-level.
+
+    Motivação: alguns providers (Gemini em especial) achatam silenciosamente
+    subfields de BaseModel aninhado no topo do JSON de saída. Como os
+    subfields desses modelos costumam ter defaults (Optional[str]=None),
+    o Pydantic aceita o dict vazio para o BaseModel pai sem erro, e a
+    resposta é persistida com quase nenhum campo real. Achatar antes de
+    enviar ao LLM elimina essa classe de falha silenciosa.
+
+    Retorna (FlatModel, field_map) onde field_map[original_name] é uma
+    lista de (flat_name, sub_name) usada para reconstruir o dict aninhado
+    após o parse. Quando nenhum field é BaseModel, retorna o próprio
+    model_class com field_map vazio.
+    """
+    from pydantic import BaseModel, create_model
+
+    flat_fields: dict = {}
+    field_map: dict[str, list[tuple[str, str]]] = {}
+
+    for name, info in model_class.model_fields.items():
+        ann = info.annotation
+        if (
+            isinstance(ann, type)
+            and issubclass(ann, BaseModel)
+            and ann is not BaseModel
+        ):
+            field_map[name] = []
+            for sub_name, sub_info in ann.model_fields.items():
+                flat_name = f"{name}{_NESTED_FLATTEN_SEP}{sub_name}"
+                flat_fields[flat_name] = (sub_info.annotation, sub_info)
+                field_map[name].append((flat_name, sub_name))
+        else:
+            flat_fields[name] = (info.annotation, info)
+
+    if not field_map:
+        return model_class, field_map
+
+    flat_model = create_model(
+        f"{model_class.__name__}Flat",
+        __base__=BaseModel,
+        **flat_fields,
+    )
+    return flat_model, field_map
 
 
 def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
@@ -348,6 +410,13 @@ async def run_llm(
             model_class, project.get("pydantic_fields") or []
         )
 
+        # Achatar nested BaseModels em top-level ANTES do extend. Evita o
+        # padrão em que o provider (Gemini) retorna os subfields flat e o
+        # Pydantic aceita o dict vazio para o BaseModel pai, produzindo
+        # resposta quase sem dados. field_map é usado no save loop para
+        # reconstruir o formato aninhado ao persistir em responses.answers.
+        model_class, nested_field_map = _flatten_nested_basemodels(model_class)
+
         # Optionally extend model with justification fields
         include_justifications = llm_kwargs.pop("include_justifications", False)
         if include_justifications:
@@ -356,6 +425,32 @@ async def run_llm(
         # Separate dataframeit params from model-specific params (temperature, thinking_level, etc.)
         parallel_requests = llm_kwargs.pop("parallel_requests", 5)
         rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
+
+        # Thresholds configuráveis por projeto para detecção de respostas
+        # parciais. Valores fora de [0, 1] caem para o default. São popados
+        # de llm_kwargs para não vazarem para o LLM / dataframeit.
+        def _threshold(key: str, default: float) -> float:
+            raw = llm_kwargs.pop(key, None)
+            if raw is None:
+                return default
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "llm_kwargs['%s']=%r não é número, usando default %s",
+                    key, raw, default,
+                )
+                return default
+            if not 0 <= v <= 1:
+                logger.warning(
+                    "llm_kwargs['%s']=%s fora de [0,1], usando default %s",
+                    key, v, default,
+                )
+                return default
+            return v
+
+        partial_coverage_threshold = _threshold("partial_coverage_threshold", 0.5)
+        run_failure_threshold = _threshold("run_failure_threshold", 0.3)
 
         DATAFRAMEIT_PARAMS = {
             "api_key", "max_retries", "base_delay", "max_delay", "track_tokens",
@@ -420,6 +515,21 @@ async def run_llm(
         # pode ficar defasada se o coordenador editar o código direto.
         field_conditions = extract_field_conditions(model_class)
 
+        # Set dos campos top-level que esperamos ver preenchidos em
+        # responses.answers após reconstrução. Subfields flat (foo__bar)
+        # contam pelo seu parent (foo), pois o que importa para detecção de
+        # parcial é se o conceito de alto nível ficou representado.
+        expected_llm_fields = set()
+        for name in model_class.model_fields:
+            if name.endswith("_justification"):
+                continue
+            if _NESTED_FLATTEN_SEP in name:
+                expected_llm_fields.add(name.split(_NESTED_FLATTEN_SEP, 1)[0])
+            else:
+                expected_llm_fields.add(name)
+
+        partial_warnings: list[str] = []
+
         # Save responses — use row["id"] (not index correlation) for safety
         for _, row in result_df.iterrows():
             doc_id = row["id"]
@@ -438,6 +548,28 @@ async def run_llm(
                 if just_col in row and row[just_col]:
                     justifications[field_name] = str(row[just_col])
 
+            # Reconstruir dicts aninhados a partir dos subfields flat (ver
+            # _flatten_nested_basemodels). Deve rodar ANTES do prune de
+            # condicionais para que condições que referenciam o field pai
+            # (ex.: q21 em q24a) continuem sendo avaliadas sobre o shape
+            # original que a UI / humanas usam. Justifications de subfields
+            # são concatenadas em string para manter Record<string,string>
+            # esperado pelo frontend.
+            for original_name, subs in nested_field_map.items():
+                sub_dict: dict = {}
+                sub_justs: dict = {}
+                for flat_name, sub_name in subs:
+                    if flat_name in answers:
+                        sub_dict[sub_name] = answers.pop(flat_name)
+                    if flat_name in justifications:
+                        sub_justs[sub_name] = justifications.pop(flat_name)
+                if sub_dict:
+                    answers[original_name] = sub_dict
+                if sub_justs:
+                    justifications[original_name] = "\n".join(
+                        f"{k}: {v}" for k, v in sub_justs.items()
+                    )
+
             # Post-process conditional fields: remove values for fields whose
             # visibility condition is not satisfied by the sibling answers.
             # dataframeit core mode doesn't evaluate conditions itself, so the
@@ -449,6 +581,29 @@ async def run_llm(
                         answers.pop(field_name, None)
                         justifications.pop(field_name, None)
 
+            # Detectar respostas parciais: campos esperados cuja condition
+            # está satisfeita mas que não vieram do LLM. Excluímos condicionais
+            # não-satisfeitas porque ausência delas é legítima.
+            active_expected = {
+                name for name in expected_llm_fields
+                if name not in field_conditions
+                or evaluate_condition(field_conditions[name], answers, name)
+            }
+            answered = set(answers.keys()) & active_expected
+            coverage = len(answered) / len(active_expected) if active_expected else 1.0
+            is_partial = coverage < partial_coverage_threshold
+
+            if is_partial:
+                missing = sorted(active_expected - answered)
+                warning_msg = (
+                    f"doc={doc_id}: cobertura baixa "
+                    f"({len(answered)}/{len(active_expected)}); "
+                    f"faltaram: {missing[:8]}{'...' if len(missing) > 8 else ''}"
+                )
+                logger.warning("LLM partial response — %s", warning_msg)
+                partial_warnings.append(warning_msg)
+                _jobs[job_id].setdefault("warnings", []).append(warning_msg)
+
             sb.table("responses").insert({
                 "project_id": project_id,
                 "document_id": doc_id,
@@ -456,7 +611,9 @@ async def run_llm(
                 "respondent_name": f"{llm_provider}/{llm_model}",
                 "answers": answers,
                 "justifications": justifications if justifications else None,
-                "is_current": True,
+                # Respostas parciais são persistidas como is_current=False para
+                # não poluírem a aba Comparar; ficam disponíveis para auditoria.
+                "is_current": not is_partial,
                 "pydantic_hash": pydantic_hash,
                 "answer_field_hashes": answer_field_hashes,
             }).execute()
@@ -464,9 +621,28 @@ async def run_llm(
         # Update project hash
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq("id", project_id).execute()
 
+        # Check de run comprometida: se uma fração grande dos docs produziu
+        # resposta parcial, a run é marcada como erro para ficar visível na UI
+        # em vez de passar como "completed" com warnings enterrados.
+        total_processed = len(result_df)
+        partial_ratio = (
+            len(partial_warnings) / total_processed if total_processed else 0.0
+        )
+        if partial_ratio >= run_failure_threshold:
+            raise RuntimeError(
+                f"Run comprometida: {len(partial_warnings)}/{total_processed} "
+                f"docs ({int(partial_ratio * 100)}%) com resposta parcial. "
+                f"Respostas gravadas com is_current=false. "
+                f"Exemplos: {' || '.join(partial_warnings[:3])}"
+            )
+
         _jobs[job_id].update(status="completed", phase="completed", eta_seconds=0)
         _persist_run_completion(
-            sb, job_id, _jobs[job_id]["progress"], _jobs[job_id]["total"]
+            sb,
+            job_id,
+            _jobs[job_id]["progress"],
+            _jobs[job_id]["total"],
+            warnings=partial_warnings or None,
         )
 
     except Exception as e:

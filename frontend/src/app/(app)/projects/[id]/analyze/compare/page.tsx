@@ -250,6 +250,13 @@ export default async function ComparePageRoute({
       // Keep only active (is_current) OR human responses — antigos (is_current=false) do LLM ficam fora
       if (!r.is_current && r.respondent_type !== "humano") return false;
 
+      // Respostas pré-versionamento (pydantic_hash NULL) foram gravadas antes
+      // da migration 20260420 que introduziu schema_version_*. Elas têm
+      // `rv = {0,0,0}` via os `?? 0` abaixo e por isso passam o filtro
+      // latest_major, reaparecendo como "divergências" mesmo quando a versão
+      // atual tem consenso. Quando há filtro de versão ativo, descartamos.
+      if (minVersion && r.pydantic_hash === null) return false;
+
       if (minVersion) {
         const rv = {
           major: r.schema_version_major ?? 0,
