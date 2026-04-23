@@ -1,6 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { LlmTab } from "@/components/llm/LlmTab";
-import { getLlmRunHistory } from "@/actions/llm";
+import { getLlmRuns } from "@/actions/llm";
 import type { PydanticField } from "@/lib/types";
 
 export default async function LlmConfigPage({
@@ -11,12 +11,12 @@ export default async function LlmConfigPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, { count: totalDocs }, { data: llmResponses }, runHistory] =
+  const [{ data: project }, { count: totalDocs }, { data: llmResponses }, runs] =
     await Promise.all([
       supabase
         .from("projects")
         .select(
-          "prompt_template, description, llm_provider, llm_model, llm_kwargs, pydantic_fields"
+          "prompt_template, description, llm_provider, llm_model, llm_kwargs, pydantic_fields, pydantic_code"
         )
         .eq("id", id)
         .single(),
@@ -30,7 +30,7 @@ export default async function LlmConfigPage({
         .eq("project_id", id)
         .eq("respondent_type", "llm")
         .eq("is_current", true),
-      getLlmRunHistory(id),
+      getLlmRuns(id),
     ]);
 
   const docsWithLlm = new Set(llmResponses?.map((r) => r.document_id)).size;
@@ -50,9 +50,10 @@ export default async function LlmConfigPage({
           },
       }}
       pydanticFields={(project?.pydantic_fields as PydanticField[]) || null}
+      pydanticCode={(project?.pydantic_code as string | null) ?? null}
       totalDocs={totalDocs ?? 0}
       docsWithLlm={docsWithLlm}
-      runHistory={runHistory}
+      runs={runs}
     />
   );
 }

@@ -58,47 +58,45 @@ export interface DocSelectionItem {
   llmResponseCount: number;
 }
 
-export interface LlmRunHistoryItem {
-  respondent_name: string;
-  docCount: number;
-  latestAt: string;
+export interface LlmRunRecord {
+  id: string;
+  job_id: string;
+  status: "running" | "completed" | "error";
+  phase: string | null;
+  llm_provider: string | null;
+  llm_model: string | null;
+  filter_mode: string | null;
+  document_count: number | null;
+  progress: number;
+  total: number;
+  pydantic_code: string | null;
+  error_message: string | null;
+  error_type: string | null;
+  error_traceback: string | null;
+  error_line: number | null;
+  error_column: number | null;
+  started_at: string;
+  completed_at: string | null;
 }
 
-export async function getLlmRunHistory(
-  projectId: string
-): Promise<LlmRunHistoryItem[]> {
+export async function getLlmRuns(
+  projectId: string,
+  limit = 20
+): Promise<LlmRunRecord[]> {
   const supabase = await createSupabaseServer();
 
-  const { data: responses } = await supabase
-    .from("responses")
-    .select("respondent_name, document_id, created_at")
+  const { data } = await supabase
+    .from("llm_runs")
+    .select(
+      "id, job_id, status, phase, llm_provider, llm_model, filter_mode, " +
+        "document_count, progress, total, pydantic_code, error_message, " +
+        "error_type, error_traceback, error_line, error_column, started_at, completed_at"
+    )
     .eq("project_id", projectId)
-    .eq("respondent_type", "llm")
-    .eq("is_current", true);
+    .order("started_at", { ascending: false })
+    .limit(limit);
 
-  if (!responses || responses.length === 0) return [];
-
-  const groups = new Map<
-    string,
-    { docs: Set<string>; latestAt: string }
-  >();
-  for (const r of responses) {
-    const name = r.respondent_name ?? "unknown";
-    if (!groups.has(name)) {
-      groups.set(name, { docs: new Set(), latestAt: r.created_at });
-    }
-    const g = groups.get(name)!;
-    g.docs.add(r.document_id);
-    if (r.created_at > g.latestAt) g.latestAt = r.created_at;
-  }
-
-  return [...groups.entries()]
-    .map(([name, g]) => ({
-      respondent_name: name,
-      docCount: g.docs.size,
-      latestAt: g.latestAt,
-    }))
-    .sort((a, b) => b.latestAt.localeCompare(a.latestAt));
+  return (data ?? []) as unknown as LlmRunRecord[];
 }
 
 export async function getDocumentsForSelection(

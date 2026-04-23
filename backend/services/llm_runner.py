@@ -6,25 +6,136 @@ This is intentional — only authenticated coordinators can define schemas.
 The backend runs in an isolated container.
 """
 import hashlib
+import logging
 import random
+import re
 import time
+import traceback
 from collections import Counter
+from datetime import datetime, timezone
 
 import pandas as pd
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
 from services.supabase_client import get_supabase
 from services.pydantic_compiler import compile_pydantic, find_root_model
 
+logger = logging.getLogger(__name__)
+
 # In-memory job tracking
 _jobs: dict[str, dict] = {}
 
 
+def _status_from_row(row: dict) -> dict:
+    """Shape a llm_runs row as a StatusResponse-compatible dict."""
+    return {
+        "status": row.get("status", "error"),
+        "phase": row.get("phase", "error"),
+        "progress": row.get("progress") or 0,
+        "total": row.get("total") or 0,
+        "errors": [row["error_message"]] if row.get("error_message") else [],
+        "eta_seconds": None,
+        "current_batch": 0,
+        "total_batches": 0,
+        "error_traceback": row.get("error_traceback"),
+        "error_type": row.get("error_type"),
+        "error_line": row.get("error_line"),
+        "error_column": row.get("error_column"),
+        "pydantic_code": row.get("pydantic_code"),
+    }
+
+
 def get_job_status(job_id: str) -> dict:
-    if job_id not in _jobs:
-        return {"status": "error", "phase": "error", "progress": 0, "total": 0,
-                "errors": ["Job not found"], "eta_seconds": None,
-                "current_batch": 0, "total_batches": 0}
-    return _jobs[job_id]
+    if job_id in _jobs:
+        return _jobs[job_id]
+    # Fallback: job vanished from memory (container restart) but may exist in DB.
+    try:
+        sb = get_supabase()
+        row = (
+            sb.table("llm_runs")
+            .select("status, phase, progress, total, error_message, error_type, "
+                    "error_traceback, error_line, error_column, pydantic_code")
+            .eq("job_id", job_id)
+            .maybe_single()
+            .execute()
+            .data
+        )
+        if row:
+            return _status_from_row(row)
+    except Exception:
+        logger.exception("Failed to fetch job status from llm_runs fallback")
+    return {"status": "error", "phase": "error", "progress": 0, "total": 0,
+            "errors": ["Job not found"], "eta_seconds": None,
+            "current_batch": 0, "total_batches": 0}
+
+
+def _extract_pydantic_location(exc: Exception, tb: str) -> tuple[int | None, int | None]:
+    """Best-effort line/column inside pydantic_code where the error originated."""
+    if isinstance(exc, SyntaxError) and exc.filename in (None, "<pydantic_schema>"):
+        return exc.lineno, exc.offset
+    m = re.search(r'File "<pydantic_schema>", line (\d+)', tb)
+    if m:
+        return int(m.group(1)), None
+    return None, None
+
+
+def _persist_run_insert(sb, job_id: str, project_id: str, filter_mode: str) -> None:
+    """Insert the initial 'running' row as soon as the job starts."""
+    try:
+        sb.table("llm_runs").insert({
+            "job_id": job_id,
+            "project_id": project_id,
+            "filter_mode": filter_mode,
+            "status": "running",
+            "phase": "loading",
+        }).execute()
+    except Exception:
+        logger.exception("Failed to INSERT llm_runs row for job %s", job_id)
+
+
+def _persist_run_snapshot(
+    sb, job_id: str, project: dict, doc_count: int
+) -> None:
+    """Backfill provider/model/pydantic snapshot after the project is loaded."""
+    try:
+        sb.table("llm_runs").update({
+            "llm_provider": project.get("llm_provider"),
+            "llm_model": project.get("llm_model"),
+            "document_count": doc_count,
+            "pydantic_code": project.get("pydantic_code"),
+        }).eq("job_id", job_id).execute()
+    except Exception:
+        logger.exception("Failed to UPDATE llm_runs snapshot for job %s", job_id)
+
+
+def _persist_run_completion(sb, job_id: str, progress: int, total: int) -> None:
+    try:
+        sb.table("llm_runs").update({
+            "status": "completed",
+            "phase": "completed",
+            "progress": progress,
+            "total": total,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("job_id", job_id).execute()
+    except Exception:
+        logger.exception("Failed to UPDATE llm_runs completion for job %s", job_id)
+
+
+def _persist_run_error(sb, job_id: str, exc: Exception, tb: str) -> tuple[int | None, int | None]:
+    line, col = _extract_pydantic_location(exc, tb)
+    try:
+        sb.table("llm_runs").update({
+            "status": "error",
+            "phase": "error",
+            "error_message": str(exc),
+            "error_type": type(exc).__name__,
+            "error_traceback": tb,
+            "error_line": line,
+            "error_column": col,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("job_id", job_id).execute()
+    except Exception:
+        logger.exception("Failed to UPDATE llm_runs error for job %s", job_id)
+    return line, col
 
 
 def _extend_model_with_justifications(model_class):
@@ -139,7 +250,11 @@ async def run_llm(
         "status": "running", "phase": "loading", "progress": 0, "total": 0,
         "errors": [], "started_at": time.time(), "eta_seconds": None,
         "current_batch": 0, "total_batches": 0,
+        "error_traceback": None, "error_type": None,
+        "error_line": None, "error_column": None,
+        "pydantic_code": None,
     }
+    _persist_run_insert(sb, job_id, project_id, filter_mode)
 
     try:
         # Load project (only needed columns)
@@ -178,16 +293,18 @@ async def run_llm(
         docs = _filter_docs(sb, docs, project_id, filter_mode, max_response_count, sample_size)
 
         _jobs[job_id]["total"] = len(docs)
+        _jobs[job_id]["pydantic_code"] = pydantic_code
+        _persist_run_snapshot(sb, job_id, project, len(docs))
 
         if not docs:
             _jobs[job_id]["status"] = "completed"
+            _persist_run_completion(sb, job_id, 0, 0)
             return
 
         # Compile Pydantic model
         model_class = _compile_model(pydantic_code)
         if not model_class:
-            _jobs[job_id] = {"status": "error", "progress": 0, "total": 0, "errors": ["No BaseModel found"]}
-            return
+            raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
 
         # Optionally extend model with justification fields
         include_justifications = llm_kwargs.pop("include_justifications", False)
@@ -306,11 +423,21 @@ async def run_llm(
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq("id", project_id).execute()
 
         _jobs[job_id].update(status="completed", phase="completed", eta_seconds=0)
+        _persist_run_completion(
+            sb, job_id, _jobs[job_id]["progress"], _jobs[job_id]["total"]
+        )
 
     except Exception as e:
+        tb = traceback.format_exc()
+        line, col = _persist_run_error(sb, job_id, e, tb)
         _jobs[job_id]["status"] = "error"
         _jobs[job_id]["phase"] = "error"
         _jobs[job_id]["errors"].append(str(e))
+        _jobs[job_id]["error_type"] = type(e).__name__
+        _jobs[job_id]["error_traceback"] = tb
+        _jobs[job_id]["error_line"] = line
+        _jobs[job_id]["error_column"] = col
+        logger.exception("LLM run %s failed", job_id)
 
 
 async def run_llm_fields(
