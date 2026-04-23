@@ -65,7 +65,7 @@ function DateFieldRenderer({
   onChange: (v: string) => void;
   options?: string[] | null;
 }) {
-  const sentinels = options ?? [];
+  const sentinels = (options ?? []).filter((o) => o !== NOT_INFORMED);
   const activeSentinel = sentinels.find((o) => value === o);
   const isNotInformed = value === NOT_INFORMED;
   const isSentinelActive = Boolean(activeSentinel) || isNotInformed;

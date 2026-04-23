@@ -162,6 +162,12 @@ def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
     A field is excluded when its ``target`` in ``pydantic_fields`` is either
     ``"none"`` (hidden from everyone) or ``"human_only"``. Returns the original
     ``model_class`` unchanged when no fields need to be excluded.
+
+    Note: the filtered model is created with ``__base__=BaseModel``, so any
+    custom ``model_config`` or validators on the original class are not
+    preserved. This is acceptable because ``dataframeit`` only inspects the
+    schema (fields + annotations). If custom validators become relevant,
+    switch to ``__base__=model_class`` and drop excluded fields differently.
     """
     from pydantic import BaseModel, create_model
 

@@ -429,3 +429,63 @@ class Analysis(BaseModel):
     f = _field(result, "birth_date")
     assert f["type"] == "date"
     assert f["options"] == ["Não identificável"]
+
+
+def test_date_description_strips_generated_suffixes():
+    """generatePydanticCode appends ". Formato: DD/MM/AAAA..." and, when
+    options exist, ". Caso não seja possível informar a data, usar um dos
+    seguintes valores: ..." to the description. The compiler must strip
+    both suffixes so the description round-trips cleanly (otherwise each
+    UI -> compile -> UI cycle accumulates the suffix)."""
+    # Date without options: only the format suffix
+    code_no_opts = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    d: str = Field(
+        description="Data da decisão. Formato: DD/MM/AAAA (use XX para partes desconhecidas)",
+        json_schema_extra={"field_type": "date"},
+    )
+'''
+    result = compile_pydantic(code_no_opts)
+    assert result["valid"], result["errors"]
+    f = _field(result, "d")
+    assert f["description"] == "Data da decisão"
+    assert f["type"] == "date"
+
+    # Date with options: both suffixes, stripped in reverse order
+    code_with_opts = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    d: str = Field(
+        description='Data da decisão. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: "Não identificável", "Não aplicável"',
+        json_schema_extra={
+            "field_type": "date",
+            "options": ["Não identificável", "Não aplicável"],
+        },
+    )
+'''
+    result = compile_pydantic(code_with_opts)
+    assert result["valid"], result["errors"]
+    f = _field(result, "d")
+    assert f["description"] == "Data da decisão"
+    assert f["options"] == ["Não identificável", "Não aplicável"]
+
+    # Date with options AND help_text: all three suffixes combined
+    code_full = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    d: str = Field(
+        description='Data da decisão. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: "Não identificável". Instrucoes: Use a data da publicação',
+        json_schema_extra={
+            "field_type": "date",
+            "options": ["Não identificável"],
+            "help_text": "Use a data da publicação",
+        },
+    )
+'''
+    result = compile_pydantic(code_full)
+    assert result["valid"], result["errors"]
+    f = _field(result, "d")
+    assert f["description"] == "Data da decisão"
+    assert f["help_text"] == "Use a data da publicação"
+    assert f["options"] == ["Não identificável"]

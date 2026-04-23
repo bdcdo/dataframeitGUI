@@ -248,8 +248,8 @@ export function FieldCard({
               </div>
             </div>
 
-            {/* Obrigatório (não faz sentido para llm_only) */}
-            {(field.target || "all") !== "llm_only" && (
+            {/* Obrigatório (não faz sentido para llm_only nem oculto) */}
+            {(field.target || "all") !== "llm_only" && field.target !== "none" && (
               <div className="flex items-center justify-between">
                 <div>
                   <Label className="text-xs">Obrigatório</Label>

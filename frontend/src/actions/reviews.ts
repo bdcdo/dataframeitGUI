@@ -70,7 +70,12 @@ async function syncCompareAssignment(
 
   const divergentFields: string[] = [];
   for (const field of fields) {
-    if (field.target === "llm_only" || field.target === "human_only") continue;
+    if (
+      field.target === "llm_only" ||
+      field.target === "human_only" ||
+      field.target === "none"
+    )
+      continue;
 
     const applicable = field.condition
       ? activeResponses.filter((r) =>

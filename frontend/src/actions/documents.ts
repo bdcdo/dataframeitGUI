@@ -339,7 +339,7 @@ export async function getDocumentForCoding(
   // Sanitize answers against current schema options
   if (rawAnswers && project?.pydantic_fields) {
     const fields = (project.pydantic_fields as { name: string; type: string; options: string[] | null; target?: string }[])
-      .filter((f) => f.target !== "llm_only");
+      .filter((f) => f.target !== "llm_only" && f.target !== "none");
     const clean: Record<string, unknown> = {};
     for (const field of fields) {
       const val = rawAnswers[field.name];
