@@ -23,7 +23,7 @@ export function classifyResponse(r: LlmResponseRecord): ResponseStatus {
     return true;
   });
   if (!hasValue) return "empty";
-  return r.is_current ? "complete" : "partial";
+  return r.is_partial ? "partial" : "complete";
 }
 
 function StatusBadge({ status }: { status: ResponseStatus }) {

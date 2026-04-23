@@ -113,19 +113,22 @@ export async function getLlmRunStats(
   jobId: string
 ): Promise<{ current: number; partial: number }> {
   const supabase = await createSupabaseServer();
-  const [{ count: current }, { count: partial }] = await Promise.all([
+  // Usa is_partial (imutável) em vez de is_current para distinguir complete vs
+  // partial. is_current muda quando uma run posterior roda nos mesmos docs, o
+  // que inflaria artificialmente a contagem de parciais de runs antigas.
+  const [{ count: complete }, { count: partial }] = await Promise.all([
     supabase
       .from("responses")
       .select("id", { count: "exact", head: true })
       .eq("llm_job_id", jobId)
-      .eq("is_current", true),
+      .eq("is_partial", false),
     supabase
       .from("responses")
       .select("id", { count: "exact", head: true })
       .eq("llm_job_id", jobId)
-      .eq("is_current", false),
+      .eq("is_partial", true),
   ]);
-  return { current: current ?? 0, partial: partial ?? 0 };
+  return { current: complete ?? 0, partial: partial ?? 0 };
 }
 
 export interface LlmResponseRecord {
@@ -133,6 +136,7 @@ export interface LlmResponseRecord {
   document_id: string;
   llm_job_id: string | null;
   is_current: boolean;
+  is_partial: boolean;
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
   respondent_name: string | null;
@@ -155,8 +159,9 @@ export async function getLlmResponsesForProject(
   let query = supabase
     .from("responses")
     .select(
-      "id, document_id, llm_job_id, is_current, answers, justifications, " +
-        "respondent_name, created_at, documents(id, title, external_id)"
+      "id, document_id, llm_job_id, is_current, is_partial, answers, " +
+        "justifications, respondent_name, created_at, " +
+        "documents(id, title, external_id)"
     )
     .eq("project_id", projectId)
     .eq("respondent_type", "llm")
@@ -172,6 +177,7 @@ export async function getLlmResponsesForProject(
     document_id: string;
     llm_job_id: string | null;
     is_current: boolean;
+    is_partial: boolean;
     answers: Record<string, unknown> | null;
     justifications: Record<string, string> | null;
     respondent_name: string | null;
@@ -184,6 +190,7 @@ export async function getLlmResponsesForProject(
     document_id: r.document_id,
     llm_job_id: r.llm_job_id,
     is_current: r.is_current,
+    is_partial: r.is_partial,
     answers: r.answers ?? {},
     justifications: r.justifications,
     respondent_name: r.respondent_name,
