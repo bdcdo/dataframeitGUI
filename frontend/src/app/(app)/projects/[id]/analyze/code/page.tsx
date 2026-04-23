@@ -68,7 +68,7 @@ export default async function CodePage({
 
   // Sanitize: remove answers whose values don't match current schema options
   const fields = ((project?.pydantic_fields || []) as PydanticField[]).filter(
-    (f) => f.target !== "llm_only"
+    (f) => f.target !== "llm_only" && f.target !== "none"
   );
   const existingAnswers: Record<string, Record<string, unknown>> = {};
   for (const [docId, answers] of Object.entries(rawAnswers)) {

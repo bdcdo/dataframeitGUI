@@ -163,7 +163,9 @@ export default async function LlmInsightsPage({
       <LlmInsightsView
         projectId={id}
         errors={errors}
-        fields={fields.filter((f) => f.target !== "llm_only")}
+        fields={fields.filter(
+          (f) => f.target !== "llm_only" && f.target !== "none",
+        )}
         allFields={allFields}
         isCoordinator={isCoordinator}
         summary={{ totalLlmDocs, totalErrors, errorRate, unreviewedLlmDocs }}

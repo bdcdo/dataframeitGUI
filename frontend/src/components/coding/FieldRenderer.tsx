@@ -59,12 +59,19 @@ function isValidDatePart(
 function DateFieldRenderer({
   value,
   onChange,
+  options,
 }: {
   value: string;
   onChange: (v: string) => void;
+  options?: string[] | null;
 }) {
-  const [day, month, year] = parseDateParts(value);
+  const sentinels = options ?? [];
+  const activeSentinel = sentinels.find((o) => value === o);
   const isNotInformed = value === NOT_INFORMED;
+  const isSentinelActive = Boolean(activeSentinel) || isNotInformed;
+  const [day, month, year] = parseDateParts(
+    isSentinelActive ? "" : value,
+  );
   const monthRef = useRef<HTMLInputElement>(null);
   const yearRef = useRef<HTMLInputElement>(null);
 
@@ -88,7 +95,7 @@ function DateFieldRenderer({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
         <Button
           type="button"
           variant="outline"
@@ -102,6 +109,25 @@ function DateFieldRenderer({
           {isNotInformed && <Check className="mr-1 h-3 w-3" />}
           Não informada
         </Button>
+        {sentinels.map((opt) => {
+          const active = value === opt;
+          return (
+            <Button
+              key={opt}
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(
+                "h-7 text-xs",
+                active && "bg-brand-muted text-brand border-brand",
+              )}
+              onClick={() => onChange(active ? "" : opt)}
+            >
+              {active && <Check className="mr-1 h-3 w-3" />}
+              {opt}
+            </Button>
+          );
+        })}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -117,7 +143,7 @@ function DateFieldRenderer({
           </Tooltip>
         </TooltipProvider>
       </div>
-      {!isNotInformed && (
+      {!isSentinelActive && (
         <div className="flex items-center gap-1">
           <Input
             className="w-14 text-center text-sm font-mono"
@@ -263,6 +289,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
       <DateFieldRenderer
         value={(value as string) || ""}
         onChange={(v) => onChange(v)}
+        options={field.options}
       />
     );
   }

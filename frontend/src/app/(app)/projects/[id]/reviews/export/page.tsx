@@ -47,7 +47,9 @@ export default async function ExportPage({
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const minResponses = project?.min_responses_for_comparison || 2;
 
-  const exportableFields = fields.filter((f) => f.target !== "llm_only");
+  const exportableFields = fields.filter(
+    (f) => f.target !== "llm_only" && f.target !== "none",
+  );
 
   // --- Dataset 1: Individual responses ---
   const individualHeaders = [

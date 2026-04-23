@@ -385,3 +385,47 @@ def test_multiline_help_text_round_trips():
     f = _field(result, "x")
     assert f["description"] == "linha1\nlinha2"
     assert f["help_text"] == "ins1\nins2"
+
+
+def test_target_none_round_trips():
+    """target="none" is preserved by the compiler (used to hide fields from
+    both humans and LLM while keeping them in pydantic_code as source of
+    truth)."""
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    hidden_field: Literal["a", "b"] = Field(
+        description="Hidden",
+        json_schema_extra={"target": "none"},
+    )
+    visible: Literal["x"] = Field(description="Visible")
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    hidden = _field(result, "hidden_field")
+    assert hidden["target"] == "none"
+    visible = _field(result, "visible")
+    assert visible["target"] == "all"
+
+
+def test_date_field_with_sentinel_options_round_trips():
+    """Date fields carry sentinel options (ex: 'Não identificável') via
+    json_schema_extra because the annotation itself is `str`, not Literal."""
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    birth_date: str = Field(
+        description="Data de nascimento",
+        json_schema_extra={
+            "field_type": "date",
+            "options": ["Não identificável"],
+        },
+    )
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    f = _field(result, "birth_date")
+    assert f["type"] == "date"
+    assert f["options"] == ["Não identificável"]

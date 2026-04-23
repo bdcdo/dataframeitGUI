@@ -45,7 +45,7 @@ export interface PydanticField {
   options: string[] | null;
   description: string;
   help_text?: string;
-  target?: "all" | "llm_only" | "human_only";
+  target?: "all" | "llm_only" | "human_only" | "none";
   required?: boolean;
   hash?: string;
   subfields?: SubfieldDef[];

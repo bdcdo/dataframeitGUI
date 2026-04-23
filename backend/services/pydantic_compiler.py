@@ -53,6 +53,12 @@ def compile_pydantic(code: str) -> dict:
         explicit_type = extra.get("field_type") if is_dict_extra else None
         if explicit_type:
             field_type = explicit_type
+        # Date fields carry options as sentinels in json_schema_extra because
+        # the annotation itself is `str`, not Literal.
+        if field_type == "date" and is_dict_extra:
+            raw_opts = extra.get("options")
+            if isinstance(raw_opts, (list, tuple)) and raw_opts:
+                options = [str(o) for o in raw_opts]
         description = field_info.description or field_name
         allow_other = (
             bool(extra.get("allowOther", False)) if is_dict_extra else False

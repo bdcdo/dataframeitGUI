@@ -47,6 +47,7 @@ const TYPE_COLORS: Record<string, string> = {
 const TARGET_LABELS: Record<string, string> = {
   llm_only: "Apenas LLM",
   human_only: "Apenas humano",
+  none: "Oculto",
 };
 
 export function FieldCard({
@@ -66,8 +67,12 @@ export function FieldCard({
   };
 
   const handleTypeChange = (type: PydanticField["type"]) => {
-    if (type === "text" || type === "date") {
+    if (type === "text") {
       updateField({ type, options: null });
+    } else if (type === "date") {
+      // Preserve existing options when switching to date — they become
+      // sentinels rendered alongside the date picker (ex: "Não identificável").
+      updateField({ type });
     } else if (!field.options || field.options.length === 0) {
       updateField({ type, options: ["Opção 1"] });
     } else {
@@ -217,12 +222,13 @@ export function FieldCard({
             {/* Destino */}
             <div className="space-y-1.5">
               <Label className="text-xs">Quem responde</Label>
-              <div className="flex gap-1">
+              <div className="flex gap-1 flex-wrap">
                 {(
                   [
                     ["all", "Todos"],
                     ["llm_only", "Apenas LLM"],
                     ["human_only", "Apenas humano"],
+                    ["none", "Oculto (ninguém vê)"],
                   ] as const
                 ).map(([value, label]) => (
                   <Button
@@ -267,6 +273,20 @@ export function FieldCard({
                 <OptionsEditor
                   options={field.options || []}
                   onChange={(opts) => updateField({ options: opts })}
+                />
+              </div>
+            )}
+            {field.type === "date" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Valores sentinela (opcional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Aparecem como botões ao lado do campo de data (ex: &quot;Não identificável&quot;).
+                </p>
+                <OptionsEditor
+                  options={field.options || []}
+                  onChange={(opts) =>
+                    updateField({ options: opts.length > 0 ? opts : null })
+                  }
                 />
               </div>
             )}
