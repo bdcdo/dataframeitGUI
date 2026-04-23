@@ -107,15 +107,25 @@ def _persist_run_snapshot(
         logger.exception("Failed to UPDATE llm_runs snapshot for job %s", job_id)
 
 
-def _persist_run_completion(sb, job_id: str, progress: int, total: int) -> None:
+def _persist_run_completion(
+    sb, job_id: str, progress: int, total: int, warnings: list[str] | None = None
+) -> None:
     try:
-        sb.table("llm_runs").update({
+        payload: dict = {
             "status": "completed",
             "phase": "completed",
             "progress": progress,
             "total": total,
             "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("job_id", job_id).execute()
+        }
+        # Persistir warnings de cobertura parcial reutilizando error_message
+        # (evita migration). Motivo: llm_runs.error_message é o único campo
+        # livre para texto diagnóstico pós-completion.
+        if warnings:
+            payload["error_message"] = "Warnings ({} doc(s)): {}".format(
+                len(warnings), " | ".join(warnings[:20])
+            )
+        sb.table("llm_runs").update(payload).eq("job_id", job_id).execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs completion for job %s", job_id)
 
@@ -420,6 +430,18 @@ async def run_llm(
         # pode ficar defasada se o coordenador editar o código direto.
         field_conditions = extract_field_conditions(model_class)
 
+        # Set dos campos que esperamos ser preenchidos pelo LLM — exclui os
+        # *_justification adicionados por _extend_model_with_justifications.
+        # Usamos este set abaixo para detectar respostas parciais (ex.: quando
+        # o provider achata um nested BaseModel e ignora os demais campos).
+        expected_llm_fields = {
+            name for name in model_class.model_fields
+            if not name.endswith("_justification")
+        }
+        PARTIAL_COVERAGE_THRESHOLD = 0.5
+
+        partial_warnings: list[str] = []
+
         # Save responses — use row["id"] (not index correlation) for safety
         for _, row in result_df.iterrows():
             doc_id = row["id"]
@@ -449,6 +471,29 @@ async def run_llm(
                         answers.pop(field_name, None)
                         justifications.pop(field_name, None)
 
+            # Detectar respostas parciais: campos esperados cuja condition
+            # está satisfeita mas que não vieram do LLM. Excluímos condicionais
+            # não-satisfeitas porque ausência delas é legítima.
+            active_expected = {
+                name for name in expected_llm_fields
+                if name not in field_conditions
+                or evaluate_condition(field_conditions[name], answers, name)
+            }
+            answered = set(answers.keys()) & active_expected
+            coverage = len(answered) / len(active_expected) if active_expected else 1.0
+            is_partial = coverage < PARTIAL_COVERAGE_THRESHOLD
+
+            if is_partial:
+                missing = sorted(active_expected - answered)
+                warning_msg = (
+                    f"doc={doc_id}: cobertura baixa "
+                    f"({len(answered)}/{len(active_expected)}); "
+                    f"faltaram: {missing[:8]}{'...' if len(missing) > 8 else ''}"
+                )
+                logger.warning("LLM partial response — %s", warning_msg)
+                partial_warnings.append(warning_msg)
+                _jobs[job_id].setdefault("warnings", []).append(warning_msg)
+
             sb.table("responses").insert({
                 "project_id": project_id,
                 "document_id": doc_id,
@@ -456,7 +501,9 @@ async def run_llm(
                 "respondent_name": f"{llm_provider}/{llm_model}",
                 "answers": answers,
                 "justifications": justifications if justifications else None,
-                "is_current": True,
+                # Respostas parciais são persistidas como is_current=False para
+                # não poluírem a aba Comparar; ficam disponíveis para auditoria.
+                "is_current": not is_partial,
                 "pydantic_hash": pydantic_hash,
                 "answer_field_hashes": answer_field_hashes,
             }).execute()
@@ -466,7 +513,11 @@ async def run_llm(
 
         _jobs[job_id].update(status="completed", phase="completed", eta_seconds=0)
         _persist_run_completion(
-            sb, job_id, _jobs[job_id]["progress"], _jobs[job_id]["total"]
+            sb,
+            job_id,
+            _jobs[job_id]["progress"],
+            _jobs[job_id]["total"],
+            warnings=partial_warnings or None,
         )
 
     except Exception as e:
