@@ -281,7 +281,9 @@ export function CommentCard({
             />
           )}
 
-        {/* Suggestion actions (coordinator: approve/reject) */}
+        {/* Suggestion actions (coordinator: review/reject)
+            "Revisar" abre EditFieldDialog pré-preenchido (via onResolve);
+            salvar lá aprova com os valores finais editados. */}
         {comment.source === "sugestao" && comment.suggestionId && (
           <div className="flex items-center gap-2">
             {comment.suggestionStatus === "pending" && isCoordinator && (
@@ -290,16 +292,11 @@ export function CommentCard({
                   variant="default"
                   size="sm"
                   className="h-6 text-xs"
-                  disabled={suggestionPending}
-                  onClick={() => {
-                    startSuggestionAction(async () => {
-                      const result = await resolveSchemaSuggestion(comment.suggestionId!, projectId, "approved");
-                      if (result.error) toast.error(result.error);
-                      else { toast.success("Sugestão aprovada e aplicada"); router.refresh(); }
-                    });
-                  }}
+                  disabled={suggestionPending || isPending}
+                  onClick={onResolve}
+                  title="Abre editor para revisar antes de aprovar"
                 >
-                  Aprovar
+                  Revisar
                 </Button>
                 <Button
                   variant="outline"
@@ -413,8 +410,7 @@ export function CommentCard({
             )}
           </p>
           <div className="flex gap-1">
-            {comment.source === "sugestao" &&
-            comment.suggestionStatus !== "pending" ? null : isResolved ? (
+            {comment.source === "sugestao" ? null : isResolved ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -430,11 +426,7 @@ export function CommentCard({
                 size="sm"
                 disabled={isPending}
                 onClick={onResolve}
-                title={
-                  comment.source === "sugestao"
-                    ? "Editar e aprovar"
-                    : "Resolver"
-                }
+                title="Resolver"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
               </Button>
