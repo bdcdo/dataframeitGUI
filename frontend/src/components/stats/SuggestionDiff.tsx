@@ -34,14 +34,14 @@ export function SuggestionDiff({ changes, current }: SuggestionDiffProps) {
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
             Descrição
           </span>
-          <div className="leading-relaxed">
-            <span className="line-through text-muted-foreground">
+          <div className="leading-relaxed break-words">
+            <del className="text-muted-foreground">
               {emptyMark(current.description)}
-            </span>
+            </del>
             <span className="mx-1.5 text-muted-foreground">→</span>
-            <span className="font-medium text-foreground">
+            <ins className="font-medium text-foreground no-underline">
               {emptyMark(changes.description ?? "")}
-            </span>
+            </ins>
           </div>
         </div>
       )}
@@ -56,17 +56,17 @@ export function SuggestionDiff({ changes, current }: SuggestionDiffProps) {
               <span className="text-[10px] font-medium text-muted-foreground">
                 Atual
               </span>
-              <p className="whitespace-pre-wrap text-muted-foreground line-through">
+              <del className="block whitespace-pre-wrap break-words text-muted-foreground">
                 {emptyMark(current.help_text ?? "")}
-              </p>
+              </del>
             </div>
             <div className="rounded border border-dashed border-brand/40 bg-brand/5 px-2 py-1">
               <span className="text-[10px] font-medium text-brand">
                 Proposto
               </span>
-              <p className="whitespace-pre-wrap font-medium text-foreground">
+              <ins className="block whitespace-pre-wrap break-words font-medium text-foreground no-underline">
                 {emptyMark(changes.help_text ?? "")}
-              </p>
+              </ins>
             </div>
           </div>
         </div>
@@ -114,6 +114,7 @@ function OptionsDiff({
     <div className="flex flex-wrap items-center gap-1">
       {isClear && (
         <Badge
+          aria-label="Todas as opções serão removidas"
           className={cn(
             "text-[10px] px-1.5 py-0 font-normal",
             "bg-red-500/10 text-red-700",
@@ -126,7 +127,7 @@ function OptionsDiff({
         <Badge
           key={`kept-${o}`}
           variant="outline"
-          className="text-[10px] px-1.5 py-0 font-normal"
+          className="text-[10px] px-1.5 py-0 font-normal break-all"
         >
           {o}
         </Badge>
@@ -134,23 +135,25 @@ function OptionsDiff({
       {removed.map((o) => (
         <Badge
           key={`rem-${o}`}
+          aria-label={`Opção removida: ${o}`}
           className={cn(
-            "text-[10px] px-1.5 py-0 font-normal line-through",
+            "text-[10px] px-1.5 py-0 font-normal break-all",
             "bg-red-500/10 text-red-700",
           )}
         >
-          {o}
+          <del>{o}</del>
         </Badge>
       ))}
       {added.map((o) => (
         <Badge
           key={`add-${o}`}
+          aria-label={`Opção adicionada: ${o}`}
           className={cn(
-            "text-[10px] px-1.5 py-0 font-normal",
+            "text-[10px] px-1.5 py-0 font-normal break-all",
             "bg-green-500/10 text-green-700",
           )}
         >
-          + {o}
+          <ins className="no-underline">+ {o}</ins>
         </Badge>
       ))}
     </div>
