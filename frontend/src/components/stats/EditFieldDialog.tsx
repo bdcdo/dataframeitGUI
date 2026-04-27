@@ -160,7 +160,7 @@ export function EditFieldDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {pendingSuggestion ? "Aprovar sugestão (com edições)" : "Editar campo"}
+            {pendingSuggestion ? "Revisar sugestão" : "Editar campo"}
             <code className="text-sm font-mono text-muted-foreground">
               {fieldName}
             </code>

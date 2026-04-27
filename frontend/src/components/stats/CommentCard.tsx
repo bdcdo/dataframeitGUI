@@ -292,7 +292,7 @@ export function CommentCard({
                   variant="default"
                   size="sm"
                   className="h-6 text-xs"
-                  disabled={suggestionPending}
+                  disabled={suggestionPending || isPending}
                   onClick={onResolve}
                   title="Abre editor para revisar antes de aprovar"
                 >
