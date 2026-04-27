@@ -183,18 +183,18 @@ export default async function CommentsPage({
   const suggestionComments: ReviewComment[] = (suggestions || []).map((s) => {
     const p = s.profiles as unknown as { email: string | null } | null;
     const changes = s.suggested_changes as Record<string, unknown>;
-    const changedKeys = Object.keys(changes).join(", ");
+    const currentField = fieldMap.get(s.field_name);
     return {
       id: `sugestao-${s.id}`,
       documentId: "",
       documentTitle: "",
       fieldName: s.field_name,
-      fieldDescription: fieldMap.get(s.field_name)?.description || s.field_name,
-      fieldHelpText: fieldMap.get(s.field_name)?.help_text,
-      fieldOptions: fieldMap.get(s.field_name)?.options,
-      fieldType: fieldMap.get(s.field_name)?.type,
+      fieldDescription: currentField?.description || s.field_name,
+      fieldHelpText: currentField?.help_text,
+      fieldOptions: currentField?.options,
+      fieldType: currentField?.type,
       verdict: "sugestao",
-      comment: `${s.reason || "Sem motivo"}${changedKeys ? ` (alterações: ${changedKeys})` : ""}`,
+      comment: s.reason || "Sem motivo",
       reviewerName: p?.email?.split("@")[0] || "Anônimo",
       resolvedAt: (s.resolved_at as string | null) ?? null,
       createdAt: s.created_at,
@@ -215,6 +215,11 @@ export default async function CommentsPage({
           : changes.options === null
             ? null
             : undefined,
+      },
+      fieldSnapshot: {
+        description: currentField?.description ?? "",
+        help_text: currentField?.help_text ?? null,
+        options: currentField?.options ?? null,
       },
     };
   });

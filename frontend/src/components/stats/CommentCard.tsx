@@ -24,6 +24,7 @@ import {
   type GabaritoRespondentAnswer,
 } from "@/actions/stats";
 import { resolveSchemaSuggestion } from "@/actions/suggestions";
+import { SuggestionDiff } from "./SuggestionDiff";
 import { toast } from "sonner";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -71,6 +72,11 @@ export interface ReviewComment {
     description?: string;
     help_text?: string | null;
     options?: string[] | null;
+  };
+  fieldSnapshot?: {
+    description: string;
+    help_text: string | null;
+    options: string[] | null;
   };
   difficultyResponseId?: string;
   difficultyDocumentId?: string;
@@ -265,6 +271,15 @@ export function CommentCard({
         <blockquote className="border-l-2 pl-3 text-sm text-foreground">
           {comment.comment}
         </blockquote>
+
+        {comment.source === "sugestao" &&
+          comment.suggestionChanges &&
+          comment.fieldSnapshot && (
+            <SuggestionDiff
+              changes={comment.suggestionChanges}
+              current={comment.fieldSnapshot}
+            />
+          )}
 
         {/* Suggestion actions (coordinator: approve/reject) */}
         {comment.source === "sugestao" && comment.suggestionId && (
