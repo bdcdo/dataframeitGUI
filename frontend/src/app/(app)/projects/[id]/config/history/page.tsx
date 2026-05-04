@@ -14,6 +14,8 @@ export default async function SchemaHistoryPage({
   const { id } = await params;
   const supabase = await createSupabaseServer();
 
+  const HISTORY_LIMIT = 200;
+
   const [{ data: project }, { data: changes }] = await Promise.all([
     supabase
       .from("projects")
@@ -23,11 +25,11 @@ export default async function SchemaHistoryPage({
     supabase
       .from("schema_change_log")
       .select(
-        "id, field_name, change_summary, before_value, after_value, created_at, change_type, version_major, version_minor, version_patch, profiles(first_name, last_name, email)",
+        "id, field_name, change_summary, before_value, after_value, created_at, change_type, version_major, version_minor, version_patch, changed_by, profiles(first_name, last_name, email)",
       )
       .eq("project_id", id)
       .order("created_at", { ascending: false })
-      .limit(200),
+      .limit(HISTORY_LIMIT),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
@@ -59,15 +61,23 @@ export default async function SchemaHistoryPage({
       beforeValue: (c.before_value as Record<string, unknown>) ?? {},
       afterValue: (c.after_value as Record<string, unknown>) ?? {},
       changedBy,
+      userId: (c.changed_by as string | null) ?? "",
       createdAt: c.created_at as string,
       changeType: (c.change_type as SchemaChangeType | null) ?? null,
       version,
     };
   });
 
+  const truncated = entries.length >= HISTORY_LIMIT;
+
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
-      <SchemaHistoryView entries={entries} fieldOptions={fieldOptions} />
+      <SchemaHistoryView
+        entries={entries}
+        fieldOptions={fieldOptions}
+        truncated={truncated}
+        limit={HISTORY_LIMIT}
+      />
     </div>
   );
 }

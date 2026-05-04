@@ -37,7 +37,7 @@ const DOT_COLOR: Record<SchemaChangeType, string> = {
 
 export function SchemaChangeGroup({ group }: SchemaChangeGroupProps) {
   const fieldCount = group.entries.length;
-  const hasType = group.changeType !== null;
+  const { changeType } = group;
 
   // Expandir por padrão se commit pequeno
   const defaultExpanded = fieldCount <= 3;
@@ -52,7 +52,7 @@ export function SchemaChangeGroup({ group }: SchemaChangeGroupProps) {
       <span
         className={cn(
           "absolute left-0 top-[6px] h-3.5 w-3.5 rounded-full ring-4 ring-background",
-          hasType ? DOT_COLOR[group.changeType!] : "bg-muted-foreground/30",
+          changeType ? DOT_COLOR[changeType] : "bg-muted-foreground/30",
         )}
         aria-hidden
       />
@@ -69,14 +69,14 @@ export function SchemaChangeGroup({ group }: SchemaChangeGroupProps) {
         >
           {formatVersion(group.version)}
         </Badge>
-        {hasType && (
+        {changeType && (
           <Badge
             className={cn(
               "h-5 border px-1.5 py-0 text-[10px] font-medium",
-              TYPE_BADGE[group.changeType!],
+              TYPE_BADGE[changeType],
             )}
           >
-            {TYPE_LABEL[group.changeType!]}
+            {TYPE_LABEL[changeType]}
           </Badge>
         )}
         <span className="text-xs text-muted-foreground">

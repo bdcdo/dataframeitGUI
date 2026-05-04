@@ -142,6 +142,7 @@ export interface SchemaChangeEntry {
   beforeValue: Record<string, unknown>;
   afterValue: Record<string, unknown>;
   changedBy: string;
+  userId: string;
   createdAt: string;
   changeType: SchemaChangeType | null;
   version: { major: number; minor: number; patch: number } | null;

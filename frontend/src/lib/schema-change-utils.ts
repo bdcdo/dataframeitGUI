@@ -12,6 +12,7 @@ export interface ChangeGroup {
   changeType: SchemaChangeType | null;
   version: { major: number; minor: number; patch: number } | null;
   changedBy: string;
+  userId: string;
   createdAt: string;
   entries: SchemaChangeEntry[];
 }
@@ -68,13 +69,7 @@ function subfieldsEqual(
 ): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].key !== b[i].key) return false;
-    if (a[i].label !== b[i].label) return false;
-    if (Boolean(a[i].required) !== Boolean(b[i].required)) return false;
-  }
-  return true;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function conditionEqual(
@@ -198,11 +193,15 @@ export function groupChangesByCommit(entries: SchemaChangeEntry[]): ChangeGroup[
         last.version.major === entry.version.major &&
         last.version.minor === entry.version.minor &&
         last.version.patch === entry.version.patch);
+    // Janela deslizante: compara contra a entry mais antiga já incluída.
+    // sorted está em DESC, então o último elemento de `last.entries` é o mais antigo.
+    const tail = last?.entries[last.entries.length - 1];
     if (
       last &&
-      last.changedBy === entry.changedBy &&
+      tail &&
+      last.userId === entry.userId &&
       versionMatches &&
-      Math.abs(new Date(last.createdAt).getTime() - ts) <= GROUPING_WINDOW_MS
+      Math.abs(new Date(tail.createdAt).getTime() - ts) <= GROUPING_WINDOW_MS
     ) {
       last.entries.push(entry);
     } else {
@@ -211,6 +210,7 @@ export function groupChangesByCommit(entries: SchemaChangeEntry[]): ChangeGroup[
         changeType: entry.changeType,
         version: entry.version,
         changedBy: entry.changedBy,
+        userId: entry.userId,
         createdAt: entry.createdAt,
         entries: [entry],
       });

@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { History } from "lucide-react";
+import { History, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SchemaChangeGroup } from "./SchemaChangeGroup";
 import {
@@ -22,6 +22,8 @@ import type { SchemaChangeEntry, SchemaChangeType } from "@/lib/types";
 interface SchemaHistoryViewProps {
   entries: SchemaChangeEntry[];
   fieldOptions: { name: string; description: string }[];
+  truncated?: boolean;
+  limit?: number;
 }
 
 type TypeFilter = "all" | SchemaChangeType;
@@ -37,6 +39,8 @@ const TYPE_BUTTONS: { value: TypeFilter; label: string }[] = [
 export function SchemaHistoryView({
   entries,
   fieldOptions,
+  truncated = false,
+  limit = 200,
 }: SchemaHistoryViewProps) {
   const [search, setSearch] = useState("");
   const [fieldFilter, setFieldFilter] = useState("all");
@@ -154,6 +158,15 @@ export function SchemaHistoryView({
               : ""}
           </span>
         </div>
+        {truncated && (
+          <div className="flex items-center gap-1.5 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+            <Info className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              Mostrando as últimas {limit} mudanças. Use os filtros (campo, autor, tipo) para
+              localizar entradas mais antigas.
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pt-4">

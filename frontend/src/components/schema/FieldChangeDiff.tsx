@@ -331,7 +331,7 @@ function OptionsListDiff({
         <Badge
           key={`kept-${o}`}
           variant="outline"
-          className="text-[10px] px-1.5 py-0 font-normal break-all"
+          className="text-[10px] px-1.5 py-0 font-normal break-words"
         >
           {o}
         </Badge>
@@ -341,7 +341,7 @@ function OptionsListDiff({
           key={`rem-${o}`}
           aria-label={`Opção removida: ${o}`}
           className={cn(
-            "text-[10px] px-1.5 py-0 font-normal break-all",
+            "text-[10px] px-1.5 py-0 font-normal break-words",
             "bg-red-500/10 text-red-700 hover:bg-red-500/10",
           )}
         >
@@ -353,7 +353,7 @@ function OptionsListDiff({
           key={`add-${o}`}
           aria-label={`Opção adicionada: ${o}`}
           className={cn(
-            "text-[10px] px-1.5 py-0 font-normal break-all",
+            "text-[10px] px-1.5 py-0 font-normal break-words",
             "bg-green-500/10 text-green-700 hover:bg-green-500/10",
           )}
         >
@@ -385,7 +385,7 @@ function SubfieldsDiff({
         <Badge
           key={`kept-${s.key}`}
           variant="outline"
-          className="text-[10px] px-1.5 py-0 font-normal break-all"
+          className="text-[10px] px-1.5 py-0 font-normal break-words"
         >
           {s.label || s.key}
         </Badge>
@@ -394,7 +394,7 @@ function SubfieldsDiff({
         <Badge
           key={`rem-${s.key}`}
           className={cn(
-            "text-[10px] px-1.5 py-0 font-normal break-all",
+            "text-[10px] px-1.5 py-0 font-normal break-words",
             "bg-red-500/10 text-red-700 hover:bg-red-500/10",
           )}
         >
@@ -405,7 +405,7 @@ function SubfieldsDiff({
         <Badge
           key={`add-${s.key}`}
           className={cn(
-            "text-[10px] px-1.5 py-0 font-normal break-all",
+            "text-[10px] px-1.5 py-0 font-normal break-words",
             "bg-green-500/10 text-green-700 hover:bg-green-500/10",
           )}
         >
