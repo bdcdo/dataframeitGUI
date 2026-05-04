@@ -239,7 +239,9 @@ export function MyVerdictsView({
       params.delete("viewAsUser");
     }
     const qs = params.toString();
-    router.push(`${pathname}${qs ? `?${qs}` : ""}`);
+    startTransition(() => {
+      router.push(`${pathname}${qs ? `?${qs}` : ""}`);
+    });
   };
 
   if (totalItems === 0) {
@@ -281,6 +283,7 @@ export function MyVerdictsView({
               <Select
                 value={currentViewUserId || "_self"}
                 onValueChange={(v) => selectRespondent(v === "_self" ? null : v)}
+                disabled={isPending}
               >
                 <SelectTrigger className="w-40 h-8 text-xs">
                   <SelectValue />

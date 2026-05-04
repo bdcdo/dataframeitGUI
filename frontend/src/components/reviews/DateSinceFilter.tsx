@@ -1,6 +1,8 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +32,7 @@ export function DateSinceFilter() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
   const current = searchParams.get("since");
 
   const activeDays: number | null | "custom" = (() => {
@@ -48,12 +51,17 @@ export function DateSinceFilter() {
       params.set("since", isoDaysAgo(days));
     }
     const qs = params.toString();
-    router.push(qs ? `${pathname}?${qs}` : pathname);
+    startTransition(() => {
+      router.push(qs ? `${pathname}?${qs}` : pathname);
+    });
   };
 
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="text-muted-foreground">Desde:</span>
+    <div className="flex items-center gap-2 text-xs" aria-busy={isPending}>
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        Desde:
+        {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+      </span>
       <div className="flex items-center gap-1">
         {PRESETS.map((p) => {
           const isActive =
@@ -65,6 +73,7 @@ export function DateSinceFilter() {
               variant={isActive ? "default" : "outline"}
               size="xs"
               onClick={() => setSince(p.days)}
+              disabled={isPending}
               className={cn(!isActive && "text-muted-foreground")}
             >
               {p.label}

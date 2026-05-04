@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -46,7 +47,7 @@ export function LlmResponsesPane({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
@@ -106,11 +107,15 @@ export function LlmResponsesPane({
       </header>
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-muted-foreground">Execução</label>
+        <div className="flex items-center gap-2" aria-busy={isPending}>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            Execução
+            {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+          </label>
           <Select
             value={activeJobId ?? "all"}
             onValueChange={setJobFilter}
+            disabled={isPending}
           >
             <SelectTrigger className="h-8 w-64 text-xs">
               <SelectValue />
