@@ -10,10 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { History, ChevronDown, PanelLeftClose } from "lucide-react";
+import { PanelLeftClose } from "lucide-react";
 import { CommentCard, type ReviewComment } from "./CommentCard";
 import { CommentsSplitView } from "./CommentsSplitView";
 import { EditFieldDialog, type PendingSuggestion } from "./EditFieldDialog";
@@ -34,25 +32,13 @@ import {
   reopenProjectComment,
 } from "@/actions/project-comments";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
-
-export interface SchemaChangeEntry {
-  id: string;
-  fieldName: string;
-  changeSummary: string;
-  beforeValue: Record<string, unknown>;
-  afterValue: Record<string, unknown>;
-  changedBy: string;
-  createdAt: string;
-}
 
 interface ReviewCommentsViewProps {
   projectId: string;
   comments: ReviewComment[];
   fields: PydanticField[];
   isCoordinator: boolean;
-  schemaLog?: SchemaChangeEntry[];
   totalLlmDocs?: number;
   llmDocsWithoutAmbiguities?: number;
 }
@@ -73,7 +59,6 @@ export function ReviewCommentsView({
   comments,
   fields,
   isCoordinator,
-  schemaLog = [],
   totalLlmDocs = 0,
   llmDocsWithoutAmbiguities = 0,
 }: ReviewCommentsViewProps) {
@@ -166,8 +151,6 @@ export function ReviewCommentsView({
     });
   };
 
-  const [logOpen, setLogOpen] = useState(false);
-
   // Count unique documents with review/difficulty comments (for split view button)
   const splitSources = new Set(["review", "dificuldade"]);
   const reviewDocCount = useMemo(() => {
@@ -214,72 +197,6 @@ export function ReviewCommentsView({
             Revisar por documento
           </Button>
         )}
-        <Collapsible open={logOpen} onOpenChange={setLogOpen} className="ml-auto">
-          <CollapsibleTrigger asChild>
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
-              <History className="h-3.5 w-3.5" />
-              Histórico de mudanças no schema{schemaLog.length > 0 && ` (${schemaLog.length})`}
-              <ChevronDown className={cn("h-3 w-3 transition-transform", logOpen && "rotate-180")} />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-          <div className="mt-2 divide-y rounded-md border">
-            {schemaLog.length === 0 ? (
-              <p className="py-3 text-center text-xs text-muted-foreground">
-                Nenhuma mudança registrada ainda.
-              </p>
-            ) : schemaLog.map((entry) => {
-                const changes: { label: string; before: string; after: string }[] = [];
-                if (entry.beforeValue.description !== undefined) {
-                  changes.push({
-                    label: "descrição",
-                    before: String(entry.beforeValue.description) || "(vazio)",
-                    after: String(entry.afterValue.description) || "(vazio)",
-                  });
-                }
-                if (entry.beforeValue.help_text !== undefined) {
-                  changes.push({
-                    label: "instruções",
-                    before: String(entry.beforeValue.help_text ?? "") || "(vazio)",
-                    after: String(entry.afterValue.help_text ?? "") || "(vazio)",
-                  });
-                }
-                if (entry.beforeValue.options !== undefined) {
-                  changes.push({
-                    label: "opções",
-                    before: Array.isArray(entry.beforeValue.options)
-                      ? (entry.beforeValue.options as string[]).join(", ") || "(vazio)"
-                      : "(vazio)",
-                    after: Array.isArray(entry.afterValue.options)
-                      ? (entry.afterValue.options as string[]).join(", ") || "(vazio)"
-                      : "(vazio)",
-                  });
-                }
-                return (
-                  <div key={entry.id} className="flex items-baseline gap-2 px-3 py-1.5 text-xs">
-                    <code className="shrink-0 font-mono text-muted-foreground/70">{entry.fieldName}</code>
-                    <Badge variant="outline" className="shrink-0 text-[10px] px-1 py-0">
-                      {entry.changeSummary}
-                    </Badge>
-                    <span className="min-w-0 truncate text-muted-foreground">
-                      {changes.map((c, i) => (
-                        <span key={c.label}>
-                          {i > 0 && " · "}
-                          <span className="line-through">{c.before}</span>
-                          {" → "}
-                          <span className="font-medium text-foreground">{c.after}</span>
-                        </span>
-                      ))}
-                    </span>
-                    <span className="ml-auto shrink-0 whitespace-nowrap text-muted-foreground">
-                      {entry.changedBy} · {new Date(entry.createdAt).toLocaleDateString("pt-BR")}
-                    </span>
-                  </div>
-                );
-              })}
-          </div>
-          </CollapsibleContent>
-        </Collapsible>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input

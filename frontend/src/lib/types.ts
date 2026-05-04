@@ -143,3 +143,18 @@ export interface QuestionMeta {
   field_name: string;
   priority: "ALTA" | "MEDIA" | "BAIXA";
 }
+
+export type SchemaChangeType = "major" | "minor" | "patch" | "initial";
+
+export interface SchemaChangeEntry {
+  id: string;
+  fieldName: string;
+  changeSummary: string;
+  beforeValue: Record<string, unknown>;
+  afterValue: Record<string, unknown>;
+  changedBy: string;
+  userId: string;
+  createdAt: string;
+  changeType: SchemaChangeType | null;
+  version: { major: number; minor: number; patch: number } | null;
+}
