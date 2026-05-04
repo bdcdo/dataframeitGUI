@@ -126,6 +126,17 @@ export interface Review {
   created_at: string;
 }
 
+export interface ResponseEquivalence {
+  id: string;
+  project_id: string;
+  document_id: string;
+  field_name: string;
+  response_a_id: string;
+  response_b_id: string;
+  reviewer_id: string | null;
+  created_at: string;
+}
+
 export interface QuestionMeta {
   id: string;
   project_id: string;

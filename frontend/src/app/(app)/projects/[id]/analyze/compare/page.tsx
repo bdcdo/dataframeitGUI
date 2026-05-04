@@ -2,8 +2,8 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
-import { normalizeForComparison } from "@/lib/utils";
-import { isFieldVisible } from "@/lib/conditional";
+import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import type { EquivalencePair } from "@/lib/equivalence";
 import {
   readCompareFilters,
   type CompareFiltersValue,
@@ -100,6 +100,7 @@ export default async function ComparePageRoute({
     { data: allResponses, error: responsesError },
     { data: versionLog },
     { data: allAssignments },
+    { data: allEquivalences },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -131,7 +132,30 @@ export default async function ComparePageRoute({
       .from("assignments")
       .select("document_id, user_id, type, status")
       .eq("project_id", id),
+    supabase
+      .from("response_equivalences")
+      .select("id, document_id, field_name, response_a_id, response_b_id")
+      .eq("project_id", id),
   ]);
+
+  // Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
+  // detection on the server and for fusing answer cards on the client.
+  const equivByDocField = new Map<
+    string,
+    Map<string, Array<EquivalencePair & { id: string }>>
+  >();
+  for (const eq of allEquivalences ?? []) {
+    if (!equivByDocField.has(eq.document_id)) {
+      equivByDocField.set(eq.document_id, new Map());
+    }
+    const fieldMap = equivByDocField.get(eq.document_id)!;
+    if (!fieldMap.has(eq.field_name)) fieldMap.set(eq.field_name, []);
+    fieldMap.get(eq.field_name)!.push({
+      id: eq.id,
+      response_a_id: eq.response_a_id,
+      response_b_id: eq.response_b_id,
+    });
+  }
 
   const isCoordinator =
     membership?.role === "coordenador" || project?.created_by === user.id || user.isMaster;
@@ -291,50 +315,13 @@ export default async function ComparePageRoute({
     if (totalCount < filters.minTotal) continue;
     if (assignedCodingCount > 0 && pct < filters.minAssignedPct) continue;
 
-    // Compute divergence on qualified responses
-    const divergent: string[] = [];
-    for (const field of fields) {
-      if (field.target === "llm_only" || field.target === "human_only" || field.target === "none") continue;
-
-      // For conditional fields, a response that never triggered the condition
-      // legitimately has no value — don't treat that absence as divergence.
-      const applicableResponses = field.condition
-        ? qualifiedResponses.filter((r) =>
-            isFieldVisible(field, r.answers ?? {}),
-          )
-        : qualifiedResponses;
-      if (applicableResponses.length < 2) continue;
-
-      if (field.type === "multi" && field.options?.length) {
-        const comparableOptions = new Set<string>(field.options);
-        for (const r of applicableResponses) {
-          const arr = r.answers?.[field.name];
-          if (Array.isArray(arr)) {
-            for (const v of arr) {
-              if (typeof v === "string") comparableOptions.add(v);
-            }
-          }
-        }
-        let hasDivergence = false;
-        for (const opt of comparableOptions) {
-          const selections = applicableResponses.map((r) => {
-            const arr = r.answers?.[field.name];
-            return Array.isArray(arr) && arr.includes(opt);
-          });
-          if (selections.length > 0 && !selections.every((s) => s === selections[0])) {
-            hasDivergence = true;
-            break;
-          }
-        }
-        if (hasDivergence) divergent.push(field.name);
-      } else {
-        const answers = applicableResponses.map((r) => r.answers?.[field.name]);
-        const uniqueAnswers = new Set(answers.map((a) => normalizeForComparison(a)));
-        if (uniqueAnswers.size > 1) {
-          divergent.push(field.name);
-        }
-      }
-    }
+    // Equivalence-aware divergence detection (free-text fields can have
+    // responses fused via the reviewer's "marcar como equivalentes" action).
+    const divergent = computeDivergentFieldNames(
+      fields,
+      qualifiedResponses,
+      equivByDocField.get(docId),
+    );
 
     if (divergent.length === 0) continue;
 
@@ -429,6 +416,21 @@ export default async function ComparePageRoute({
     return pendB - pendA;
   });
 
+  // Serialize equivalences for the client component (Maps don't cross the
+  // RSC boundary). Only ship pairs for documents in the qualified list.
+  const equivalencesByDocField: Record<
+    string,
+    Record<string, Array<{ id: string; response_a_id: string; response_b_id: string }>>
+  > = {};
+  for (const docId of qualifiedDocIds) {
+    const fieldMap = equivByDocField.get(docId);
+    if (!fieldMap) continue;
+    equivalencesByDocField[docId] = {};
+    for (const [fieldName, pairs] of fieldMap) {
+      equivalencesByDocField[docId][fieldName] = pairs;
+    }
+  }
+
   return (
     <ComparePage
       projectId={id}
@@ -445,6 +447,7 @@ export default async function ComparePageRoute({
       availableVersions={availableVersions}
       latestMajorLabel={latestMajorLabel}
       currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
+      equivalencesByDocField={equivalencesByDocField}
     />
   );
 }

@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
-import { AgreementGroup } from "./AgreementGroup";
+import { AgreementGroup, type FieldEquivalencePair } from "./AgreementGroup";
 import { MultiOptionReview } from "./MultiOptionReview";
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn, normalizeForComparison } from "@/lib/utils";
+import { buildEquivalenceClasses } from "@/lib/equivalence";
 import { CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
@@ -68,6 +69,14 @@ interface ComparisonPanelProps {
   onCommentChange: (value: string) => void;
   commentCount: number;
   suggestionCount: number;
+  allowEquivalence: boolean;
+  equivalences: FieldEquivalencePair[];
+  onConfirmEquivalent: (
+    responseIds: string[],
+    gabaritoId: string,
+    verdictDisplay: string,
+  ) => Promise<void>;
+  onUnmarkEquivalencePair: (pairId: string) => Promise<void>;
 }
 
 export function ComparisonPanel({
@@ -92,18 +101,34 @@ export function ComparisonPanel({
   onCommentChange,
   commentCount,
   suggestionCount,
+  allowEquivalence,
+  equivalences,
+  onConfirmEquivalent,
+  onUnmarkEquivalencePair,
 }: ComparisonPanelProps) {
   const [suggestOpen, setSuggestOpen] = useState(false);
 
   const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
   const groupCount = useMemo(() => {
-    const keys = new Set(
-      responses
-        .filter((r) => r.answer !== undefined)
-        .map((r) => normalizeForComparison(r.answer)),
-    );
+    const present = responses.filter((r) => r.answer !== undefined);
+    const ids = present.map((r) => r.id);
+    const classes = buildEquivalenceClasses(ids, equivalences);
+    const inAnyPair = new Set<string>();
+    for (const p of equivalences) {
+      inAnyPair.add(p.response_a_id);
+      inAnyPair.add(p.response_b_id);
+    }
+    const keys = new Set<string>();
+    for (const r of present) {
+      const classKey = classes.get(r.id) ?? r.id;
+      keys.add(
+        inAnyPair.has(r.id)
+          ? `eq:${classKey}`
+          : `raw:${normalizeForComparison(r.answer)}`,
+      );
+    }
     return keys.size;
-  }, [responses]);
+  }, [responses, equivalences]);
 
   const feedbackBadge = commentCount + suggestionCount;
 
@@ -155,6 +180,7 @@ export function ComparisonPanel({
           />
         ) : (
           <AgreementGroup
+            key={`${documentId}|${fieldName}`}
             responses={responses.map((r) => ({
               id: r.id,
               respondent_type: r.respondent_type,
@@ -169,6 +195,10 @@ export function ComparisonPanel({
             onVote={(displayAnswer, chosenResponseId) =>
               onVerdict(displayAnswer, chosenResponseId)
             }
+            allowEquivalence={allowEquivalence}
+            equivalences={equivalences}
+            onConfirmEquivalent={onConfirmEquivalent}
+            onUnmarkPair={onUnmarkEquivalencePair}
           />
         )}
 
@@ -262,6 +292,7 @@ export function ComparisonPanel({
           groupCount={groupCount}
           isMulti={!!isMulti}
           optionCount={isMulti ? fieldOptions.length : undefined}
+          allowEquivalence={allowEquivalence}
         />
       )}
 
