@@ -134,7 +134,7 @@ export default async function ComparePageRoute({
       .eq("project_id", id),
     supabase
       .from("response_equivalences")
-      .select("id, document_id, field_name, response_a_id, response_b_id")
+      .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
       .eq("project_id", id),
   ]);
 
@@ -142,7 +142,7 @@ export default async function ComparePageRoute({
   // detection on the server and for fusing answer cards on the client.
   const equivByDocField = new Map<
     string,
-    Map<string, Array<EquivalencePair & { id: string }>>
+    Map<string, Array<EquivalencePair & { id: string; reviewer_id: string | null }>>
   >();
   for (const eq of allEquivalences ?? []) {
     if (!equivByDocField.has(eq.document_id)) {
@@ -154,6 +154,7 @@ export default async function ComparePageRoute({
       id: eq.id,
       response_a_id: eq.response_a_id,
       response_b_id: eq.response_b_id,
+      reviewer_id: eq.reviewer_id ?? null,
     });
   }
 
@@ -420,7 +421,15 @@ export default async function ComparePageRoute({
   // RSC boundary). Only ship pairs for documents in the qualified list.
   const equivalencesByDocField: Record<
     string,
-    Record<string, Array<{ id: string; response_a_id: string; response_b_id: string }>>
+    Record<
+      string,
+      Array<{
+        id: string;
+        response_a_id: string;
+        response_b_id: string;
+        reviewer_id: string | null;
+      }>
+    >
   > = {};
   for (const docId of qualifiedDocIds) {
     const fieldMap = equivByDocField.get(docId);
@@ -448,6 +457,8 @@ export default async function ComparePageRoute({
       latestMajorLabel={latestMajorLabel}
       currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
       equivalencesByDocField={equivalencesByDocField}
+      currentUserId={user.id}
+      canManageAnyPair={isCoordinator}
     />
   );
 }

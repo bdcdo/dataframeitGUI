@@ -5,7 +5,7 @@ import { AnswerCard, type EquivalentVariant } from "./AnswerCard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { normalizeForComparison } from "@/lib/utils";
-import { buildEquivalenceClasses } from "@/lib/equivalence";
+import { buildResponseGroupKeys } from "@/lib/equivalence";
 import { Link2 } from "lucide-react";
 
 interface AgreementResponse {
@@ -23,6 +23,7 @@ export interface FieldEquivalencePair {
   id: string;
   response_a_id: string;
   response_b_id: string;
+  reviewer_id: string | null;
 }
 
 function compareVersionsDesc(a: string, b: string): number {
@@ -51,6 +52,8 @@ interface AgreementGroupProps {
     verdictDisplay: string,
   ) => Promise<void>;
   onUnmarkPair?: (pairId: string) => Promise<void>;
+  currentUserId: string;
+  canManageAnyPair: boolean;
 }
 
 function formatAnswer(answer: unknown): string {
@@ -83,6 +86,8 @@ export function AgreementGroup({
   equivalences,
   onConfirmEquivalent,
   onUnmarkPair,
+  currentUserId,
+  canManageAnyPair,
 }: AgreementGroupProps) {
   // Track selection order so the first selected card is the default gabarito.
   const [selectionOrder, setSelectionOrder] = useState<string[]>([]);
@@ -91,23 +96,16 @@ export function AgreementGroup({
 
   const groups = useMemo<RenderedGroup[]>(() => {
     const present = responses.filter((r) => r.answer !== undefined);
-    const ids = present.map((r) => r.id);
-    const classes = buildEquivalenceClasses(ids, equivalences);
-    const inAnyPair = new Set<string>();
-    for (const p of equivalences) {
-      inAnyPair.add(p.response_a_id);
-      inAnyPair.add(p.response_b_id);
-    }
+    const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
+      normalizeForComparison(r.answer),
+    );
 
     const map = new Map<string, RenderedGroup>();
     for (const r of present) {
-      const classKey = classes.get(r.id) ?? r.id;
-      const key = inAnyPair.has(r.id)
-        ? `eq:${classKey}`
-        : `raw:${normalizeForComparison(r.answer)}`;
+      const key = groupKeys.get(r.id) ?? r.id;
       if (!map.has(key)) {
         map.set(key, {
-          groupKey: classKey,
+          groupKey: key,
           displayAnswer: formatAnswer(r.answer),
           responses: [],
           variants: [],
@@ -128,6 +126,7 @@ export function AgreementGroup({
           if (a && b) {
             group.variants.push({
               pairId: p.id,
+              reviewerId: p.reviewer_id,
               respondentName: `${a.respondent_name} ↔ ${b.respondent_name}`,
               answerDisplay: `${formatAnswer(a.answer)} · ${formatAnswer(b.answer)}`,
             });
@@ -257,6 +256,9 @@ export function AgreementGroup({
                 group.variants.length > 0 ? group.variants : undefined
               }
               onUnmarkPair={onUnmarkPair ? handleUnmark : undefined}
+              canUnmarkPair={(v) =>
+                canManageAnyPair || v.reviewerId === currentUserId
+              }
             />
           );
         })}

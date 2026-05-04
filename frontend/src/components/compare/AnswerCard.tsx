@@ -24,6 +24,7 @@ import {
 
 export interface EquivalentVariant {
   pairId: string; // response_equivalences.id
+  reviewerId: string | null;
   respondentName: string;
   answerDisplay: string;
 }
@@ -51,6 +52,7 @@ interface AnswerCardProps {
   // When this card represents 2+ responses fused via equivalence pairs.
   equivalentVariants?: EquivalentVariant[];
   onUnmarkPair?: (pairId: string) => void;
+  canUnmarkPair?: (variant: EquivalentVariant) => boolean;
 }
 
 export function AnswerCard({
@@ -72,6 +74,7 @@ export function AnswerCard({
   onSetGabarito,
   equivalentVariants,
   onUnmarkPair,
+  canUnmarkPair,
 }: AnswerCardProps) {
   const [showJustification, setShowJustification] = useState(false);
   const allStale = staleCount > 0 && staleCount === respondentCount;
@@ -90,6 +93,7 @@ export function AnswerCard({
       }}
       className={cn(
         "w-full cursor-pointer rounded-lg border p-2.5 text-left transition-colors hover:bg-accent/50",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
         isChosen
           ? "border-green-500/50 bg-green-500/5"
           : selected
@@ -169,32 +173,36 @@ export function AnswerCard({
                     Respostas equivalentes
                   </p>
                   <ul className="space-y-1">
-                    {equivalentVariants!.map((v) => (
-                      <li
-                        key={v.pairId}
-                        className="flex items-center justify-between gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate">{v.answerDisplay}</p>
-                          <p className="truncate text-[10px] text-muted-foreground">
-                            {v.respondentName}
-                          </p>
-                        </div>
-                        {onUnmarkPair && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onUnmarkPair(v.pairId);
-                            }}
-                            className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                            title="Desfazer equivalência"
-                            aria-label="Desfazer equivalência"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        )}
-                      </li>
-                    ))}
+                    {equivalentVariants!.map((v) => {
+                      const showUnmark =
+                        !!onUnmarkPair && (canUnmarkPair?.(v) ?? true);
+                      return (
+                        <li
+                          key={v.pairId}
+                          className="flex items-center justify-between gap-2 rounded px-1.5 py-1 text-xs hover:bg-muted"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate">{v.answerDisplay}</p>
+                            <p className="truncate text-[10px] text-muted-foreground">
+                              {v.respondentName}
+                            </p>
+                          </div>
+                          {showUnmark && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onUnmarkPair!(v.pairId);
+                              }}
+                              className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              title="Desfazer equivalência"
+                              aria-label="Desfazer equivalência"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </PopoverContent>
               </Popover>

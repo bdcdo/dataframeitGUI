@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn, normalizeForComparison } from "@/lib/utils";
-import { buildEquivalenceClasses } from "@/lib/equivalence";
+import { buildResponseGroupKeys } from "@/lib/equivalence";
 import { CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
@@ -77,6 +77,8 @@ interface ComparisonPanelProps {
     verdictDisplay: string,
   ) => Promise<void>;
   onUnmarkEquivalencePair: (pairId: string) => Promise<void>;
+  currentUserId: string;
+  canManageAnyPair: boolean;
 }
 
 export function ComparisonPanel({
@@ -105,28 +107,19 @@ export function ComparisonPanel({
   equivalences,
   onConfirmEquivalent,
   onUnmarkEquivalencePair,
+  currentUserId,
+  canManageAnyPair,
 }: ComparisonPanelProps) {
   const [suggestOpen, setSuggestOpen] = useState(false);
 
   const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
   const groupCount = useMemo(() => {
     const present = responses.filter((r) => r.answer !== undefined);
-    const ids = present.map((r) => r.id);
-    const classes = buildEquivalenceClasses(ids, equivalences);
-    const inAnyPair = new Set<string>();
-    for (const p of equivalences) {
-      inAnyPair.add(p.response_a_id);
-      inAnyPair.add(p.response_b_id);
-    }
+    const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
+      normalizeForComparison(r.answer),
+    );
     const keys = new Set<string>();
-    for (const r of present) {
-      const classKey = classes.get(r.id) ?? r.id;
-      keys.add(
-        inAnyPair.has(r.id)
-          ? `eq:${classKey}`
-          : `raw:${normalizeForComparison(r.answer)}`,
-      );
-    }
+    for (const r of present) keys.add(groupKeys.get(r.id) ?? r.id);
     return keys.size;
   }, [responses, equivalences]);
 
@@ -199,6 +192,8 @@ export function ComparisonPanel({
             equivalences={equivalences}
             onConfirmEquivalent={onConfirmEquivalent}
             onUnmarkPair={onUnmarkEquivalencePair}
+            currentUserId={currentUserId}
+            canManageAnyPair={canManageAnyPair}
           />
         )}
 

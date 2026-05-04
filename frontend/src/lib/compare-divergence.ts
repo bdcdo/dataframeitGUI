@@ -1,6 +1,6 @@
 import { normalizeForComparison } from "@/lib/utils";
 import { isFieldVisible } from "@/lib/conditional";
-import { buildEquivalenceClasses, type EquivalencePair } from "@/lib/equivalence";
+import { buildResponseGroupKeys, type EquivalencePair } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 
 // A field is free-text when there is no fixed option set —
@@ -67,36 +67,28 @@ export function computeDivergentFieldNames(
       continue;
     }
 
-    // Scalar / free-text path.
-    const useEquivalences =
-      isFreeTextField(field) && equivalencesByField?.has(field.name);
-    let classes: Map<string, string> | null = null;
-    if (useEquivalences) {
-      classes = buildEquivalenceClasses(
-        applicable.map((r) => r.id),
-        equivalencesByField!.get(field.name) ?? [],
+    // Scalar / free-text path. For free-text we run union-find over both
+    // explicit pairs and same-normalized-answer edges, so responses with
+    // identical text always land in the same group regardless of pairs.
+    if (isFreeTextField(field)) {
+      const pairs = equivalencesByField?.get(field.name) ?? [];
+      const items = applicable.map((r) => ({
+        id: r.id,
+        answer: (r.answers as Record<string, unknown>)?.[field.name],
+      }));
+      const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
+        normalizeForComparison(r.answer),
       );
+      const keys = new Set<string>();
+      for (const r of applicable) keys.add(groupKeys.get(r.id) ?? r.id);
+      if (keys.size > 1) divergent.push(field.name);
+      continue;
     }
 
     const keys = new Set<string>();
     for (const r of applicable) {
       const raw = (r.answers as Record<string, unknown>)?.[field.name];
-      if (classes) {
-        // Equivalence-aware key: classKey + answer; this way two responses
-        // are only fused when the reviewer explicitly marked them so.
-        // Responses outside any pair land in a class of their own (id == classKey)
-        // and we still distinguish them by their normalized answer.
-        const classKey = classes.get(r.id) ?? r.id;
-        const pairs = equivalencesByField!.get(field.name) ?? [];
-        const isInAnyPair = pairs.some(
-          (p) => p.response_a_id === r.id || p.response_b_id === r.id,
-        );
-        keys.add(
-          isInAnyPair ? `eq:${classKey}` : `raw:${normalizeForComparison(raw)}`,
-        );
-      } else {
-        keys.add(normalizeForComparison(raw));
-      }
+      keys.add(normalizeForComparison(raw));
     }
     if (keys.size > 1) divergent.push(field.name);
   }

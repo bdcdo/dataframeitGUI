@@ -70,9 +70,16 @@ export async function syncCompareAssignment(
   }
 
   const fields = (project?.pydantic_fields as PydanticField[]) || [];
-  const activeResponses = (responses ?? []).filter(
-    (r) => r.is_current || r.respondent_type === "humano",
-  ) as Array<{ id: string; answers: Record<string, unknown> }>;
+  type ActiveResponse = {
+    id: string;
+    answers: Record<string, unknown>;
+  };
+  const activeResponses: ActiveResponse[] = (responses ?? [])
+    .filter((r) => r.is_current || r.respondent_type === "humano")
+    .map((r) => ({
+      id: r.id,
+      answers: (r.answers ?? {}) as Record<string, unknown>,
+    }));
 
   const equivalencesByField = new Map<string, EquivalencePair[]>();
   for (const eq of equivalences ?? []) {

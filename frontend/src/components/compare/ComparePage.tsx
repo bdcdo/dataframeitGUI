@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner";
 import { normalizeForComparison } from "@/lib/utils";
 import { isFreeTextField } from "@/lib/compare-divergence";
-import { buildEquivalenceClasses } from "@/lib/equivalence";
+import { buildResponseGroupKeys } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
 
@@ -27,6 +27,7 @@ interface EquivalencePairWire {
   id: string;
   response_a_id: string;
   response_b_id: string;
+  reviewer_id: string | null;
 }
 
 interface CompareResponse {
@@ -76,6 +77,8 @@ interface ComparePageProps {
     string,
     Record<string, EquivalencePairWire[]>
   >;
+  currentUserId: string;
+  canManageAnyPair: boolean;
 }
 
 export function ComparePage({
@@ -94,6 +97,8 @@ export function ComparePage({
   latestMajorLabel,
   currentProjectVersion,
   equivalencesByDocField,
+  currentUserId,
+  canManageAnyPair,
 }: ComparePageProps) {
   const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
   const [fieldIndex, setFieldIndex] = useState(0);
@@ -229,19 +234,14 @@ export function ComparePage({
 
   const answerGroups = useMemo(() => {
     const present = fieldResponses.filter((r) => r.answer !== undefined);
-    const ids = present.map((r) => r.id);
-    const classes = buildEquivalenceClasses(ids, currentFieldEquivalences);
-    const inAnyPair = new Set<string>();
-    for (const p of currentFieldEquivalences) {
-      inAnyPair.add(p.response_a_id);
-      inAnyPair.add(p.response_b_id);
-    }
+    const groupKeys = buildResponseGroupKeys(
+      present,
+      currentFieldEquivalences,
+      (r) => normalizeForComparison(r.answer),
+    );
     const map = new Map<string, typeof fieldResponses>();
     for (const r of present) {
-      const classKey = classes.get(r.id) ?? r.id;
-      const key = inAnyPair.has(r.id)
-        ? `eq:${classKey}`
-        : `raw:${normalizeForComparison(r.answer)}`;
+      const key = groupKeys.get(r.id) ?? r.id;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
@@ -333,18 +333,19 @@ export function ComparePage({
       if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) return;
 
       const verdictComment = comment || undefined;
+      const docId = currentDoc.id;
+      const fieldName = currentFieldName;
 
-      const nextDocReviews = {
-        ...localReviews[currentDoc.id],
-        [currentFieldName]: {
-          verdict: verdictDisplay,
-          chosenResponseId: gabaritoId,
-          comment: verdictComment ?? null,
-        },
-      };
       setLocalReviews((prev) => ({
         ...prev,
-        [currentDoc.id]: { ...prev[currentDoc.id], ...nextDocReviews },
+        [docId]: {
+          ...prev[docId],
+          [fieldName]: {
+            verdict: verdictDisplay,
+            chosenResponseId: gabaritoId,
+            comment: verdictComment ?? null,
+          },
+        },
       }));
 
       const snapshot: ResponseSnapshotEntry[] = fieldResponses
@@ -360,8 +361,8 @@ export function ComparePage({
       try {
         await confirmEquivalentVerdict(
           projectId,
-          currentDoc.id,
-          currentFieldName,
+          docId,
+          fieldName,
           responseIds,
           gabaritoId,
           verdictDisplay,
@@ -372,6 +373,32 @@ export function ComparePage({
         toast.success(
           `${responseIds.length} respostas marcadas como equivalentes.`,
         );
+
+        // Mirror handleVerdict: when this confirmation closes the last
+        // divergent field of the doc, schedule a jump to the next doc;
+        // otherwise advance to the next field in the current doc.
+        const nextReviewedSet = new Set([
+          ...Object.keys(localReviews[docId] ?? {}),
+          fieldName,
+        ]);
+        const allFieldsReviewed = allDocDivergent.every((fn) =>
+          nextReviewedSet.has(fn),
+        );
+        if (allFieldsReviewed) {
+          toast.success("Revisão do documento concluída!");
+          if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+          advanceTimerRef.current = setTimeout(() => {
+            advanceTimerRef.current = null;
+            const docs = documentsRef.current;
+            const idx = docs.findIndex((d) => d.id === docId);
+            if (idx >= 0 && idx < docs.length - 1) {
+              setPinnedDocId(docs[idx + 1].id);
+              setFieldIndex(0);
+            }
+          }, 1500);
+        } else if (fieldIndex < docFields.length - 1) {
+          setFieldIndex(fieldIndex + 1);
+        }
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Falha ao marcar equivalentes.",
@@ -383,6 +410,9 @@ export function ComparePage({
       currentDoc,
       currentFieldName,
       isCurrentFieldDivergent,
+      fieldIndex,
+      docFields,
+      allDocDivergent,
       localReviews,
       comment,
       fieldResponses,
@@ -570,6 +600,8 @@ export function ComparePage({
               equivalences={currentFieldEquivalences}
               onConfirmEquivalent={handleConfirmEquivalent}
               onUnmarkEquivalencePair={handleUnmarkPair}
+              currentUserId={currentUserId}
+              canManageAnyPair={canManageAnyPair}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
