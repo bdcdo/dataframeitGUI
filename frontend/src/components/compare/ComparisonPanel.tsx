@@ -287,7 +287,6 @@ export function ComparisonPanel({
           groupCount={groupCount}
           isMulti={!!isMulti}
           optionCount={isMulti ? fieldOptions.length : undefined}
-          allowEquivalence={allowEquivalence}
         />
       )}
 

@@ -173,9 +173,10 @@ export function AgreementGroup({
     );
     if (!gabaritoGroup) return;
     const gabaritoResponseId = gabaritoGroup.responses[0].id;
-    const responseIds = selectedGroups.flatMap((g) =>
-      g.responses.map((r) => r.id),
-    );
+    // Send only one representative per group: responses sharing the same
+    // literal answer are already fused server-side via same-answer fusion,
+    // so adding redundant intra-group pairs would just create useless rows.
+    const responseIds = selectedGroups.map((g) => g.responses[0].id);
     const verdictDisplay = gabaritoGroup.displayAnswer;
     startTransition(async () => {
       await onConfirmEquivalent(responseIds, gabaritoResponseId, verdictDisplay);
@@ -196,6 +197,11 @@ export function AgreementGroup({
     const g = selectedGroups.find((s) => s.groupKey === effectiveGabarito);
     return g?.displayAnswer ?? "";
   })();
+
+  const selectedResponseCount = selectedGroups.reduce(
+    (acc, g) => acc + g.responses.length,
+    0,
+  );
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -278,7 +284,7 @@ export function AgreementGroup({
               onClick={handleConfirm}
             >
               <Link2 className="h-3.5 w-3.5" />
-              Confirmar {selectedGroups.length} como equivalentes
+              Confirmar {selectedResponseCount} respostas como equivalentes
             </Button>
           </div>
         )}

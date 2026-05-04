@@ -91,8 +91,9 @@ export async function confirmEquivalentVerdict(
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
 }
 
-// Removes a single equivalence pair. Verdict is left untouched — if the
-// reviewer wants to reopen, they vote again. Returns nothing.
+// Removes a single equivalence pair. Also clears the current reviewer's
+// verdict for the affected (doc, field), since the previously chosen
+// gabarito no longer represents a fused group — forcing a fresh vote.
 export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
@@ -104,7 +105,7 @@ export async function unmarkEquivalencePair(
 
   const { data: row } = await supabase
     .from("response_equivalences")
-    .select("document_id")
+    .select("document_id, field_name")
     .eq("id", equivalenceId)
     .eq("project_id", projectId)
     .maybeSingle();
@@ -116,7 +117,15 @@ export async function unmarkEquivalencePair(
     .eq("project_id", projectId);
   if (error) throw new Error(error.message);
 
-  if (row?.document_id) {
+  if (row?.document_id && row.field_name) {
+    await supabase
+      .from("reviews")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("document_id", row.document_id)
+      .eq("field_name", row.field_name)
+      .eq("reviewer_id", user.id);
+
     await syncCompareAssignment(supabase, projectId, row.document_id, user.id);
   }
 

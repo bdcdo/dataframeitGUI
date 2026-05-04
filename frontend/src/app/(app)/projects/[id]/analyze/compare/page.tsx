@@ -134,6 +134,10 @@ export default async function ComparePageRoute({
       .eq("project_id", id),
     supabase
       .from("response_equivalences")
+      // Project-scoped fetch (RLS filters anyway). For very large projects
+      // it might be worth gating by `qualifiedDocIds` in a 2-phase fetch,
+      // but volume should stay low — pairs are only created on free-text
+      // divergences. Revisit if it becomes a bottleneck.
       .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
       .eq("project_id", id),
   ]);

@@ -26,17 +26,19 @@ CREATE INDEX idx_response_equiv_project
 
 ALTER TABLE response_equivalences ENABLE ROW LEVEL SECURITY;
 
--- Any project member can view equivalences (shared scope).
+-- Any project member (or master) can view equivalences (shared scope).
 CREATE POLICY "Members view response_equivalences" ON response_equivalences
 FOR SELECT USING (
   project_id IN (SELECT auth_user_project_ids())
   OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  OR is_master()
 );
 
--- The reviewer who created the row, coordinators, or the project creator can manage.
+-- The reviewer who created the row, coordinators, project creator, or master can manage.
 CREATE POLICY "Reviewers manage response_equivalences" ON response_equivalences
 FOR ALL USING (
   reviewer_id = clerk_uid()
   OR project_id IN (SELECT auth_user_coordinator_project_ids())
   OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  OR is_master()
 );

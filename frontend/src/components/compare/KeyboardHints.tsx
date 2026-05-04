@@ -8,10 +8,9 @@ interface KeyboardHintsProps {
   groupCount: number;
   isMulti?: boolean;
   optionCount?: number;
-  allowEquivalence?: boolean;
 }
 
-export function KeyboardHints({ groupCount, isMulti, optionCount, allowEquivalence }: KeyboardHintsProps) {
+export function KeyboardHints({ groupCount, isMulti, optionCount }: KeyboardHintsProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -65,14 +64,6 @@ export function KeyboardHints({ groupCount, isMulti, optionCount, allowEquivalen
           <span>
             <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Ctrl+Shift+F</kbd> Tela cheia
           </span>
-          {allowEquivalence && (
-            <span className="basis-full text-[11px]">
-              Equivalência: marque os <em>checkboxes</em> dos cards corretos e
-              clique <strong>Confirmar como equivalentes</strong>; o radio
-              <kbd className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">Gabarito</kbd>
-              indica qual fica registrada.
-            </span>
-          )}
         </div>
       )}
     </div>

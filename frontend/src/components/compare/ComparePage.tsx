@@ -336,16 +336,17 @@ export function ComparePage({
       const docId = currentDoc.id;
       const fieldName = currentFieldName;
 
+      const nextDocReviews = {
+        ...localReviews[docId],
+        [fieldName]: {
+          verdict: verdictDisplay,
+          chosenResponseId: gabaritoId,
+          comment: verdictComment ?? null,
+        },
+      };
       setLocalReviews((prev) => ({
         ...prev,
-        [docId]: {
-          ...prev[docId],
-          [fieldName]: {
-            verdict: verdictDisplay,
-            chosenResponseId: gabaritoId,
-            comment: verdictComment ?? null,
-          },
-        },
+        [docId]: { ...prev[docId], ...nextDocReviews },
       }));
 
       const snapshot: ResponseSnapshotEntry[] = fieldResponses
@@ -374,15 +375,10 @@ export function ComparePage({
           `${responseIds.length} respostas marcadas como equivalentes.`,
         );
 
-        // Mirror handleVerdict: when this confirmation closes the last
-        // divergent field of the doc, schedule a jump to the next doc;
-        // otherwise advance to the next field in the current doc.
-        const nextReviewedSet = new Set([
-          ...Object.keys(localReviews[docId] ?? {}),
-          fieldName,
-        ]);
-        const allFieldsReviewed = allDocDivergent.every((fn) =>
-          nextReviewedSet.has(fn),
+        // Usa `nextDocReviews` (já contém o veredito recém-emitido) em vez de
+        // `localReviews`, que ainda reflete o estado pré-setState neste closure.
+        const allFieldsReviewed = allDocDivergent.every(
+          (fn) => !!nextDocReviews[fn],
         );
         if (allFieldsReviewed) {
           toast.success("Revisão do documento concluída!");
