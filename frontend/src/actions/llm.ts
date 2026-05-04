@@ -141,6 +141,10 @@ export interface LlmResponseRecord {
   justifications: Record<string, string> | null;
   respondent_name: string | null;
   created_at: string;
+  // Diagnostico por documento gravado pelo backend quando a resposta saiu
+  // vazia, parcial ou com erro do dataframeit. Null quando a resposta foi
+  // integra. Ver migration 20260504000002_responses_llm_error.sql.
+  llm_error: string | null;
   document: {
     id: string;
     title: string | null;
@@ -160,7 +164,7 @@ export async function getLlmResponsesForProject(
     .from("responses")
     .select(
       "id, document_id, llm_job_id, is_current, is_partial, answers, " +
-        "justifications, respondent_name, created_at, " +
+        "justifications, respondent_name, created_at, llm_error, " +
         "documents(id, title, external_id)"
     )
     .eq("project_id", projectId)
@@ -182,6 +186,7 @@ export async function getLlmResponsesForProject(
     justifications: Record<string, string> | null;
     respondent_name: string | null;
     created_at: string;
+    llm_error: string | null;
     documents:
       | { id: string; title: string | null; external_id: string | null }
       | null;
@@ -195,8 +200,35 @@ export async function getLlmResponsesForProject(
     justifications: r.justifications,
     respondent_name: r.respondent_name,
     created_at: r.created_at,
+    llm_error: r.llm_error,
     document: r.documents,
   }));
+}
+
+export interface RunningLlmJob {
+  job_id: string;
+  started_at: string;
+}
+
+/**
+ * Retorna a run LLM com status='running' mais recente do projeto, ou null.
+ * Usado pelo LlmConfigurePane para retomar o card de execução em andamento
+ * quando o usuário recarrega a página ou volta para a aba.
+ */
+export async function getRunningLlmJob(
+  projectId: string
+): Promise<RunningLlmJob | null> {
+  const supabase = await createSupabaseServer();
+  const { data } = await supabase
+    .from("llm_runs")
+    .select("job_id, started_at")
+    .eq("project_id", projectId)
+    .eq("status", "running")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+  return { job_id: data.job_id, started_at: data.started_at };
 }
 
 export async function getDocumentsForSelection(

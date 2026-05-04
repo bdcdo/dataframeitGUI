@@ -41,6 +41,12 @@ def _status_from_row(row: dict) -> dict:
         "error_line": row.get("error_line"),
         "error_column": row.get("error_column"),
         "pydantic_code": row.get("pydantic_code"),
+        # Counters não são persistidos em llm_runs (vivem em _jobs), então no
+        # fallback ficam 0. Aceitável porque o fallback só dispara quando o
+        # container reiniciou — caso em que a run em si já não está mais rodando.
+        "processed_complete": 0,
+        "processed_partial": 0,
+        "processed_empty": 0,
     }
 
 
@@ -79,37 +85,47 @@ def _extract_pydantic_location(exc: Exception, tb: str) -> tuple[int | None, int
 
 
 def _persist_run_insert(sb, job_id: str, project_id: str, filter_mode: str) -> None:
-    """Insert the initial 'running' row as soon as the job starts."""
-    try:
-        sb.table("llm_runs").insert({
-            "job_id": job_id,
-            "project_id": project_id,
-            "filter_mode": filter_mode,
-            "status": "running",
-            "phase": "loading",
-        }).execute()
-    except Exception:
-        logger.exception("Failed to INSERT llm_runs row for job %s", job_id)
+    """Insert the initial 'running' row as soon as the job starts.
+
+    Re-raise on failure: se o INSERT em llm_runs morrer silenciosamente, a run
+    fica órfã (executa em memória mas não aparece na aba Execuções), o que já
+    enganou o usuário no passado. Melhor falhar a request do /run e mostrar o
+    erro de cara em vez de seguir uma execução invisível.
+    """
+    sb.table("llm_runs").insert({
+        "job_id": job_id,
+        "project_id": project_id,
+        "filter_mode": filter_mode,
+        "status": "running",
+        "phase": "loading",
+    }).execute()
 
 
 def _persist_run_snapshot(
     sb, job_id: str, project: dict, doc_count: int
 ) -> None:
-    """Backfill provider/model/pydantic snapshot after the project is loaded."""
-    try:
-        sb.table("llm_runs").update({
-            "llm_provider": project.get("llm_provider"),
-            "llm_model": project.get("llm_model"),
-            "document_count": doc_count,
-            "pydantic_code": project.get("pydantic_code"),
-        }).eq("job_id", job_id).execute()
-    except Exception:
-        logger.exception("Failed to UPDATE llm_runs snapshot for job %s", job_id)
+    """Backfill provider/model/pydantic snapshot after the project is loaded.
+
+    Não engolir erro: se essa atualização falhar, a aba Execuções fica sem
+    metadados da run e o usuário não consegue diagnosticar nada depois.
+    """
+    sb.table("llm_runs").update({
+        "llm_provider": project.get("llm_provider"),
+        "llm_model": project.get("llm_model"),
+        "document_count": doc_count,
+        "pydantic_code": project.get("pydantic_code"),
+    }).eq("job_id", job_id).execute()
 
 
 def _persist_run_completion(
     sb, job_id: str, progress: int, total: int, warnings: list[str] | None = None
 ) -> None:
+    """Mark the run as completed. Errors here are logged but do not re-raise.
+
+    Diferente de _persist_run_insert/_snapshot: aqui a execução já terminou e o
+    payload já está em responses. Ressuscitar a exception levaria a `_persist_run_error`
+    em cascata e duplicaria o registro de falha. Logar é suficiente.
+    """
     try:
         payload: dict = {
             "status": "completed",
@@ -146,6 +162,27 @@ def _persist_run_error(sb, job_id: str, exc: Exception, tb: str) -> tuple[int | 
     except Exception:
         logger.exception("Failed to UPDATE llm_runs error for job %s", job_id)
     return line, col
+
+
+def _answers_have_content(answers: dict) -> bool:
+    """True se algum field tem valor significativo. Espelha
+    LlmResponseRow.classifyResponse no frontend para counters consistentes.
+    """
+    for v in answers.values():
+        if v is None:
+            continue
+        if isinstance(v, str):
+            if v.strip():
+                return True
+        elif isinstance(v, list):
+            if v:
+                return True
+        elif isinstance(v, dict):
+            if v:
+                return True
+        else:
+            return True
+    return False
 
 
 def _extend_model_with_justifications(model_class):
@@ -334,15 +371,14 @@ def _filter_docs(
     return docs
 
 
-async def run_llm(
-    job_id: str,
-    project_id: str,
-    document_ids: list[str] | None = None,
-    filter_mode: str = "all",
-    max_response_count: int | None = None,
-    sample_size: int | None = None,
-):
-    """Run dataframeit on all (or filtered) documents."""
+def init_job(job_id: str, project_id: str, filter_mode: str) -> None:
+    """Inicializar estado do job + INSERT em llm_runs.
+
+    Chamado sincronamente pelo endpoint /run antes do background task. Se
+    o INSERT falhar (RLS, conexão, payload malformado), a exceção sobe pro
+    handler do FastAPI e o usuário vê 500 em vez de uma run fantasma que
+    nunca aparece em Execuções.
+    """
     sb = get_supabase()
     _jobs[job_id] = {
         "status": "running", "phase": "loading", "progress": 0, "total": 0,
@@ -351,8 +387,32 @@ async def run_llm(
         "error_traceback": None, "error_type": None,
         "error_line": None, "error_column": None,
         "pydantic_code": None,
+        # Counters atualizados durante a fase de saving para o frontend
+        # mostrar feedback ao vivo de quantos documentos saíram completos /
+        # parciais / vazios (ver LlmConfigurePane). Classificação espelha
+        # LlmResponseRow.classifyResponse no frontend.
+        "processed_complete": 0,
+        "processed_partial": 0,
+        "processed_empty": 0,
     }
     _persist_run_insert(sb, job_id, project_id, filter_mode)
+
+
+async def run_llm(
+    job_id: str,
+    project_id: str,
+    document_ids: list[str] | None = None,
+    filter_mode: str = "all",
+    max_response_count: int | None = None,
+    sample_size: int | None = None,
+):
+    """Run dataframeit on all (or filtered) documents.
+
+    Pré-condição: init_job(job_id, project_id, filter_mode) já foi chamado
+    pelo handler do /run. Aqui já assumimos _jobs[job_id] populado e
+    llm_runs row existente.
+    """
+    sb = get_supabase()
 
     try:
         # Load project (only needed columns)
@@ -529,6 +589,10 @@ async def run_llm(
                 expected_llm_fields.add(name)
 
         partial_warnings: list[str] = []
+        # Sample de _error_details reais por mensagem para incluir no
+        # RuntimeError quando a run for marcada como comprometida. Mais útil
+        # do que só "cobertura baixa" porque diz a causa.
+        dfi_error_samples: dict[str, str] = {}
 
         # Save responses — use row["id"] (not index correlation) for safety
         for _, row in result_df.iterrows():
@@ -536,16 +600,32 @@ async def run_llm(
             answers = {}
             justifications = {}
 
+            # Diagnóstico cru do dataframeit (ver dataframeit/core.py:451-452):
+            # _dataframeit_status é 'processed' ou 'error'; _error_details traz
+            # a mensagem da exceção quando a row falhou. Sem ler isso, qualquer
+            # falha de provider/parse/timeout vira "resposta vazia" sem motivo.
+            dfi_status = row.get("_dataframeit_status")
+            dfi_error_raw = row.get("_error_details")
+            dfi_error: str | None = (
+                str(dfi_error_raw) if dfi_error_raw is not None and pd.notna(dfi_error_raw) else None
+            )
+
             for field_name in model_class.model_fields:
                 val = row.get(field_name)
-                if val is not None:
+                # pd.isna lida com np.nan que dataframeit deixa em rows com erro;
+                # `val is not None` sozinho deixaria passar NaN como "preenchido".
+                if val is not None and not (
+                    isinstance(val, float) and pd.isna(val)
+                ):
                     if isinstance(val, list):
                         answers[field_name] = val
                     else:
                         answers[field_name] = str(val)
 
                 just_col = f"{field_name}_justification"
-                if just_col in row and row[just_col]:
+                if just_col in row and row[just_col] and not (
+                    isinstance(row[just_col], float) and pd.isna(row[just_col])
+                ):
                     justifications[field_name] = str(row[just_col])
 
             # Reconstruir dicts aninhados a partir dos subfields flat (ver
@@ -570,6 +650,11 @@ async def run_llm(
                         f"{k}: {v}" for k, v in sub_justs.items()
                     )
 
+            # Snapshot pré-prune para diagnosticar quando o evaluate_condition
+            # zera campos. Se uma resposta sai com 1 campo só mas pre_prune
+            # tinha muitos, o problema está nas conditions — não no LLM.
+            answers_pre_prune_keys = sorted(answers.keys())
+
             # Post-process conditional fields: remove values for fields whose
             # visibility condition is not satisfied by the sibling answers.
             # dataframeit core mode doesn't evaluate conditions itself, so the
@@ -593,6 +678,50 @@ async def run_llm(
             coverage = len(answered) / len(active_expected) if active_expected else 1.0
             is_partial = coverage < partial_coverage_threshold
 
+            # Classificação para counters ao vivo. Espelha
+            # LlmResponseRow.classifyResponse no frontend: vazia se nenhum
+            # field tem conteúdo significativo; senão complete ou partial.
+            is_empty = not _answers_have_content(answers)
+            if is_empty:
+                _jobs[job_id]["processed_empty"] += 1
+            elif is_partial:
+                _jobs[job_id]["processed_partial"] += 1
+            else:
+                _jobs[job_id]["processed_complete"] += 1
+
+            # Construir mensagem para responses.llm_error. Hierarquia:
+            # 1. Erro cru do dataframeit (timeout, parse, structured-output null)
+            # 2. Diagnóstico de prune (caso mais sutil — LLM trouxe os campos
+            #    mas evaluate_condition zerou) ou de "LLM trouxe vazio"
+            # null caso a resposta esteja saudável.
+            llm_error_msg: str | None = None
+            if dfi_error:
+                llm_error_msg = f"dataframeit: {dfi_error}"
+            elif is_empty:
+                llm_error_msg = (
+                    f"answers vazio após prune; pre_prune_keys={answers_pre_prune_keys}; "
+                    f"dfi_status={dfi_status}"
+                )
+            elif is_partial:
+                llm_error_msg = (
+                    f"cobertura baixa ({len(answered)}/{len(active_expected)}); "
+                    f"pre_prune_keys={answers_pre_prune_keys}; "
+                    f"post_prune_keys={sorted(answers.keys())}"
+                )
+
+            if is_partial or is_empty or dfi_error:
+                logger.warning(
+                    "LLM row diag doc=%s status=%s error=%s pre_prune=%s post_prune=%s",
+                    doc_id, dfi_status, dfi_error,
+                    answers_pre_prune_keys, sorted(answers.keys()),
+                )
+
+            if dfi_error:
+                # Agrupa por mensagem (truncada) para o RuntimeError final.
+                key = dfi_error[:120]
+                if key not in dfi_error_samples:
+                    dfi_error_samples[key] = f"doc={doc_id}: {dfi_error}"
+
             if is_partial:
                 missing = sorted(active_expected - answered)
                 warning_msg = (
@@ -600,7 +729,6 @@ async def run_llm(
                     f"({len(answered)}/{len(active_expected)}); "
                     f"faltaram: {missing[:8]}{'...' if len(missing) > 8 else ''}"
                 )
-                logger.warning("LLM partial response — %s", warning_msg)
                 partial_warnings.append(warning_msg)
                 _jobs[job_id].setdefault("warnings", []).append(warning_msg)
 
@@ -625,6 +753,10 @@ async def run_llm(
                 # Correlaciona a resposta com a execução que a produziu para a
                 # aba LLM > Respostas (ver migration 20260424000000).
                 "llm_job_id": job_id,
+                # Diagnóstico por documento (ver migration 20260504000002).
+                # Null quando a resposta é saudável; senão traz o motivo real
+                # (erro do dataframeit, prune zerou, ou cobertura baixa).
+                "llm_error": llm_error_msg,
             }).execute()
 
         # Update project hash
@@ -638,12 +770,23 @@ async def run_llm(
             len(partial_warnings) / total_processed if total_processed else 0.0
         )
         if partial_ratio >= run_failure_threshold:
-            raise RuntimeError(
+            # Inclui exemplos de _error_details reais (quando dataframeit
+            # falhou) além dos warnings de cobertura. Mais útil que só
+            # "cobertura baixa" porque diz a causa primária.
+            error_examples = list(dfi_error_samples.values())[:3]
+            sections = [
                 f"Run comprometida: {len(partial_warnings)}/{total_processed} "
                 f"docs ({int(partial_ratio * 100)}%) com resposta parcial. "
-                f"Respostas gravadas com is_current=false. "
-                f"Exemplos: {' || '.join(partial_warnings[:3])}"
+                f"Respostas gravadas com is_current=false."
+            ]
+            if error_examples:
+                sections.append(
+                    "Erros do provider: " + " || ".join(error_examples)
+                )
+            sections.append(
+                "Exemplos de cobertura baixa: " + " || ".join(partial_warnings[:3])
             )
+            raise RuntimeError(" ".join(sections))
 
         _jobs[job_id].update(status="completed", phase="completed", eta_seconds=0)
         _persist_run_completion(

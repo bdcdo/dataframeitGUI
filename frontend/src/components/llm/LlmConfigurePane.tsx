@@ -30,7 +30,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { saveLlmConfig, savePrompt, toggleLlmField } from "@/actions/schema";
-import { getEligibleDocCount } from "@/actions/llm";
+import { getEligibleDocCount, getRunningLlmJob } from "@/actions/llm";
 import { fetchFastAPI } from "@/lib/api";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
 import {
@@ -127,6 +127,9 @@ export function LlmConfigurePane({
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [currentBatch, setCurrentBatch] = useState(0);
   const [totalBatches, setTotalBatches] = useState(0);
+  const [processedComplete, setProcessedComplete] = useState(0);
+  const [processedPartial, setProcessedPartial] = useState(0);
+  const [processedEmpty, setProcessedEmpty] = useState(0);
   const [errorInfo, setErrorInfo] = useState<LlmErrorInfo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -160,6 +163,27 @@ export function LlmConfigurePane({
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);
+
+  // Retomar polling se houver uma run em execucao ao montar (ex.: usuario
+  // recarregou a pagina ou voltou para a aba). Sem isso, o card de execucao
+  // some quando a aba fecha e o usuario nao tem feedback algum ate ir em
+  // /llm/runs ou aguardar terminar.
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      const running = await getRunningLlmJob(projectId);
+      if (cancelled || !running) return;
+      setJobId(running.job_id);
+      setStatus("running");
+      setPhase("loading");
+      pollProgress(running.job_id);
+    }
+    check();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // Fetch eligible count when filter mode changes
   useEffect(() => {
@@ -240,6 +264,9 @@ export function LlmConfigurePane({
       setTotalBatches(0);
       setProgress(0);
       setTotal(0);
+      setProcessedComplete(0);
+      setProcessedPartial(0);
+      setProcessedEmpty(0);
       // Refresca o layout do projeto para o badge "LLM rodando" aparecer na aba.
       router.refresh();
       pollProgress(res.job_id);
@@ -268,6 +295,9 @@ export function LlmConfigurePane({
           error_line: number | null;
           error_column: number | null;
           pydantic_code: string | null;
+          processed_complete: number;
+          processed_partial: number;
+          processed_empty: number;
         }>(`/api/llm/status/${id}`);
         setProgress(res.progress);
         setTotal(res.total);
@@ -276,6 +306,9 @@ export function LlmConfigurePane({
         setEtaSeconds(res.eta_seconds);
         setCurrentBatch(res.current_batch);
         setTotalBatches(res.total_batches);
+        setProcessedComplete(res.processed_complete ?? 0);
+        setProcessedPartial(res.processed_partial ?? 0);
+        setProcessedEmpty(res.processed_empty ?? 0);
         if (res.status !== "running") {
           if (intervalRef.current) clearInterval(intervalRef.current);
           intervalRef.current = null;
@@ -873,6 +906,23 @@ export function LlmConfigurePane({
               {phase === "processing" && `${progress}/${total} documentos processados`}
               {phase === "saving" && "Salvando resultados..."}
             </p>
+            {/* Counters ao vivo: completas / parciais / vazias. Aparecem
+                durante a fase de saving (quando o backend comeca a inserir
+                em responses) e ate o fim da run para que o usuario tenha
+                feedback imediato de como esta saindo. */}
+            {(processedComplete > 0 || processedPartial > 0 || processedEmpty > 0) && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white">
+                  {processedComplete} completa{processedComplete !== 1 ? "s" : ""}
+                </Badge>
+                <Badge className="bg-amber-600 hover:bg-amber-600 text-white">
+                  {processedPartial} parcia{processedPartial !== 1 ? "is" : "l"}
+                </Badge>
+                <Badge variant="destructive">
+                  {processedEmpty} vazia{processedEmpty !== 1 ? "s" : ""}
+                </Badge>
+              </div>
+            )}
           </div>
         )}
 
