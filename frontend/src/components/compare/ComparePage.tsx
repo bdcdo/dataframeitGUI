@@ -94,6 +94,16 @@ export function ComparePage({
     documentsRef.current = documents;
   }, [documents]);
 
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (advanceTimerRef.current) {
+        clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // O parecer atual é derivado de `pinnedDocId` (última escolha explícita do
   // usuário). `documents` é reordenado pelo Server Component a cada
   // `revalidatePath` (sort por pendências); rastrear por índice numérico
@@ -107,6 +117,24 @@ export function ComparePage({
     }
     return 0;
   }, [documents, pinnedDocId]);
+
+  // Avisa quando o doc pinado some da lista (ex.: foi excluído). O
+  // `docIndex` memo já cai para `documents[0]` automaticamente; aqui só
+  // disparamos o toast uma vez, na transição "estava lá → sumiu".
+  const lastValidPinnedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pinnedDocId || documents.length === 0) {
+      lastValidPinnedRef.current = pinnedDocId;
+      return;
+    }
+    const exists = documents.some((d) => d.id === pinnedDocId);
+    if (exists) {
+      lastValidPinnedRef.current = pinnedDocId;
+    } else if (lastValidPinnedRef.current === pinnedDocId) {
+      toast.info("Documento removido da fila — voltando ao topo.");
+      lastValidPinnedRef.current = null;
+    }
+  }, [pinnedDocId, documents]);
 
   const currentDoc = documents[docIndex];
   const allDocDivergent = currentDoc ? (divergentFields[currentDoc.id] || []) : [];
@@ -190,16 +218,17 @@ export function ComparePage({
 
       const verdictComment = comment || undefined;
 
+      const nextDocReviews = {
+        ...localReviews[currentDoc.id],
+        [currentFieldName]: {
+          verdict,
+          chosenResponseId: chosenResponseId ?? null,
+          comment: verdictComment ?? null,
+        },
+      };
       setLocalReviews((prev) => ({
         ...prev,
-        [currentDoc.id]: {
-          ...prev[currentDoc.id],
-          [currentFieldName]: {
-            verdict,
-            chosenResponseId: chosenResponseId ?? null,
-            comment: verdictComment ?? null,
-          },
-        },
+        [currentDoc.id]: { ...prev[currentDoc.id], ...nextDocReviews },
       }));
 
       const snapshot: ResponseSnapshotEntry[] = fieldResponses
@@ -217,15 +246,16 @@ export function ComparePage({
       setComment("");
       toast.success("Veredito salvo!");
 
-      const allFieldsReviewed = allDocDivergent.every((fn) => {
-        if (fn === currentFieldName) return true;
-        return !!localReviews[currentDoc.id]?.[fn];
-      });
+      // Usa `nextDocReviews` (já contém o veredito recém-emitido) em vez de
+      // `localReviews`, que ainda reflete o estado pré-setState neste closure.
+      const allFieldsReviewed = allDocDivergent.every((fn) => !!nextDocReviews[fn]);
 
       if (allFieldsReviewed) {
         toast.success("Revisão do documento concluída!");
         const completedDocId = currentDoc.id;
-        setTimeout(() => {
+        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = setTimeout(() => {
+          advanceTimerRef.current = null;
           const docs = documentsRef.current;
           const idx = docs.findIndex((d) => d.id === completedDocId);
           if (idx >= 0 && idx < docs.length - 1) {
