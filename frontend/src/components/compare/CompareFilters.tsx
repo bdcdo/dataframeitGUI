@@ -46,7 +46,7 @@ export function CompareFilters({
   const update = useCallback(
     (patch: Partial<CompareFiltersValue>) => {
       const sp = new URLSearchParams(searchParams.toString());
-      const apply = { ...current, ...patch };
+      const apply = { ...readCompareFilters(searchParams), ...patch };
       const map: Record<keyof CompareFiltersValue, string> = {
         version: "version",
         minHumans: "min_humans",
@@ -69,7 +69,7 @@ export function CompareFilters({
         router.push(`${pathname}?${sp.toString()}`);
       });
     },
-    [current, pathname, router, searchParams],
+    [pathname, router, searchParams],
   );
 
   const reset = useCallback(() => {
