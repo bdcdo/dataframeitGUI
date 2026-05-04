@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
-import { AgreementGroup } from "./AgreementGroup";
+import { AgreementGroup, type FieldEquivalencePair } from "./AgreementGroup";
 import { MultiOptionReview } from "./MultiOptionReview";
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn, normalizeForComparison } from "@/lib/utils";
+import { buildResponseGroupKeys } from "@/lib/equivalence";
 import { CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
@@ -68,6 +69,16 @@ interface ComparisonPanelProps {
   onCommentChange: (value: string) => void;
   commentCount: number;
   suggestionCount: number;
+  allowEquivalence: boolean;
+  equivalences: FieldEquivalencePair[];
+  onConfirmEquivalent: (
+    responseIds: string[],
+    gabaritoId: string,
+    verdictDisplay: string,
+  ) => Promise<void>;
+  onUnmarkEquivalencePair: (pairId: string) => Promise<void>;
+  currentUserId: string;
+  canManageAnyPair: boolean;
 }
 
 export function ComparisonPanel({
@@ -92,18 +103,25 @@ export function ComparisonPanel({
   onCommentChange,
   commentCount,
   suggestionCount,
+  allowEquivalence,
+  equivalences,
+  onConfirmEquivalent,
+  onUnmarkEquivalencePair,
+  currentUserId,
+  canManageAnyPair,
 }: ComparisonPanelProps) {
   const [suggestOpen, setSuggestOpen] = useState(false);
 
   const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
   const groupCount = useMemo(() => {
-    const keys = new Set(
-      responses
-        .filter((r) => r.answer !== undefined)
-        .map((r) => normalizeForComparison(r.answer)),
+    const present = responses.filter((r) => r.answer !== undefined);
+    const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
+      normalizeForComparison(r.answer),
     );
+    const keys = new Set<string>();
+    for (const r of present) keys.add(groupKeys.get(r.id) ?? r.id);
     return keys.size;
-  }, [responses]);
+  }, [responses, equivalences]);
 
   const feedbackBadge = commentCount + suggestionCount;
 
@@ -155,6 +173,7 @@ export function ComparisonPanel({
           />
         ) : (
           <AgreementGroup
+            key={`${documentId}|${fieldName}`}
             responses={responses.map((r) => ({
               id: r.id,
               respondent_type: r.respondent_type,
@@ -169,6 +188,12 @@ export function ComparisonPanel({
             onVote={(displayAnswer, chosenResponseId) =>
               onVerdict(displayAnswer, chosenResponseId)
             }
+            allowEquivalence={allowEquivalence}
+            equivalences={equivalences}
+            onConfirmEquivalent={onConfirmEquivalent}
+            onUnmarkPair={onUnmarkEquivalencePair}
+            currentUserId={currentUserId}
+            canManageAnyPair={canManageAnyPair}
           />
         )}
 
