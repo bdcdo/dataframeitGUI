@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { DocumentReader } from "../coding/DocumentReader";
 import { FullscreenNav } from "../coding/FullscreenNav";
 import {
@@ -78,7 +78,7 @@ export function ComparePage({
   latestMajorLabel,
   currentProjectVersion,
 }: ComparePageProps) {
-  const [docIndex, setDocIndex] = useState(0);
+  const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
   const [fieldIndex, setFieldIndex] = useState(0);
   const [filter, setFilter] = useState("all");
   const [comment, setComment] = useState("");
@@ -88,6 +88,53 @@ export function ComparePage({
   const [localReviews, setLocalReviews] = useState<
     Record<string, Record<string, ExistingVerdictInfo>>
   >(existingReviews);
+
+  const documentsRef = useRef(documents);
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
+
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (advanceTimerRef.current) {
+        clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // O parecer atual é derivado de `pinnedDocId` (última escolha explícita do
+  // usuário). `documents` é reordenado pelo Server Component a cada
+  // `revalidatePath` (sort por pendências); rastrear por índice numérico
+  // faria o parecer mudar sob o usuário a cada veredito. Quando o ID atual
+  // some da lista (filtro mudou, etc.) caímos para `documents[0]`.
+  const docIndex = useMemo(() => {
+    if (documents.length === 0) return 0;
+    if (pinnedDocId) {
+      const i = documents.findIndex((d) => d.id === pinnedDocId);
+      if (i >= 0) return i;
+    }
+    return 0;
+  }, [documents, pinnedDocId]);
+
+  // Avisa quando o doc pinado some da lista (ex.: foi excluído). O
+  // `docIndex` memo já cai para `documents[0]` automaticamente; aqui só
+  // disparamos o toast uma vez, na transição "estava lá → sumiu".
+  const lastValidPinnedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pinnedDocId || documents.length === 0) {
+      lastValidPinnedRef.current = pinnedDocId;
+      return;
+    }
+    const exists = documents.some((d) => d.id === pinnedDocId);
+    if (exists) {
+      lastValidPinnedRef.current = pinnedDocId;
+    } else if (lastValidPinnedRef.current === pinnedDocId) {
+      toast.info("Documento removido da fila — voltando ao topo.");
+      lastValidPinnedRef.current = null;
+    }
+  }, [pinnedDocId, documents]);
 
   const currentDoc = documents[docIndex];
   const allDocDivergent = currentDoc ? (divergentFields[currentDoc.id] || []) : [];
@@ -171,16 +218,17 @@ export function ComparePage({
 
       const verdictComment = comment || undefined;
 
+      const nextDocReviews = {
+        ...localReviews[currentDoc.id],
+        [currentFieldName]: {
+          verdict,
+          chosenResponseId: chosenResponseId ?? null,
+          comment: verdictComment ?? null,
+        },
+      };
       setLocalReviews((prev) => ({
         ...prev,
-        [currentDoc.id]: {
-          ...prev[currentDoc.id],
-          [currentFieldName]: {
-            verdict,
-            chosenResponseId: chosenResponseId ?? null,
-            comment: verdictComment ?? null,
-          },
-        },
+        [currentDoc.id]: { ...prev[currentDoc.id], ...nextDocReviews },
       }));
 
       const snapshot: ResponseSnapshotEntry[] = fieldResponses
@@ -198,33 +246,38 @@ export function ComparePage({
       setComment("");
       toast.success("Veredito salvo!");
 
-      const allFieldsReviewed = allDocDivergent.every((fn) => {
-        if (fn === currentFieldName) return true;
-        return !!localReviews[currentDoc.id]?.[fn];
-      });
+      // Usa `nextDocReviews` (já contém o veredito recém-emitido) em vez de
+      // `localReviews`, que ainda reflete o estado pré-setState neste closure.
+      const allFieldsReviewed = allDocDivergent.every((fn) => !!nextDocReviews[fn]);
 
       if (allFieldsReviewed) {
         toast.success("Revisão do documento concluída!");
-        if (docIndex < documents.length - 1) {
-          setTimeout(() => {
-            setDocIndex(docIndex + 1);
+        const completedDocId = currentDoc.id;
+        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = setTimeout(() => {
+          advanceTimerRef.current = null;
+          const docs = documentsRef.current;
+          const idx = docs.findIndex((d) => d.id === completedDocId);
+          if (idx >= 0 && idx < docs.length - 1) {
+            setPinnedDocId(docs[idx + 1].id);
             setFieldIndex(0);
-          }, 1500);
-        }
+          }
+        }, 1500);
       } else if (fieldIndex < docFields.length - 1) {
         setFieldIndex(fieldIndex + 1);
       }
     },
-    [projectId, currentDoc, currentFieldName, isCurrentFieldDivergent, fieldIndex, docFields, allDocDivergent, docIndex, documents.length, localReviews, comment, fieldResponses]
+    [projectId, currentDoc, currentFieldName, isCurrentFieldDivergent, fieldIndex, docFields, allDocDivergent, localReviews, comment, fieldResponses]
   );
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
+      if (documents.length === 0) return;
       const clamped = Math.max(0, Math.min(newIndex, documents.length - 1));
-      setDocIndex(clamped);
+      setPinnedDocId(documents[clamped].id);
       setFieldIndex(0);
     },
-    [documents.length]
+    [documents]
   );
 
   const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
