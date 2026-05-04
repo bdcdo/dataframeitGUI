@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +18,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
-import { SlidersHorizontal, X } from "lucide-react";
+import { Loader2, SlidersHorizontal, X } from "lucide-react";
 import {
   DEFAULT_COMPARE_FILTERS,
   readCompareFilters,
@@ -39,6 +39,7 @@ export function CompareFilters({
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
 
   const current = readCompareFilters(searchParams);
 
@@ -64,13 +65,17 @@ export function CompareFilters({
           sp.set(urlKey, String(value));
         }
       }
-      router.push(`${pathname}?${sp.toString()}`);
+      startTransition(() => {
+        router.push(`${pathname}?${sp.toString()}`);
+      });
     },
     [current, pathname, router, searchParams],
   );
 
   const reset = useCallback(() => {
-    router.push(pathname);
+    startTransition(() => {
+      router.push(pathname);
+    });
   }, [pathname, router]);
 
   const activeCount = [
@@ -90,8 +95,13 @@ export function CompareFilters({
           size="sm"
           className="h-7 gap-1.5 text-xs"
           title="Filtros da fila de comparação"
+          aria-busy={isPending}
         >
-          <SlidersHorizontal className="h-3.5 w-3.5" />
+          {isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+          )}
           Filtros
           {activeCount > 0 && (
             <Badge variant="secondary" className="ml-0.5 h-4 px-1 text-[10px]">
@@ -110,6 +120,7 @@ export function CompareFilters({
                 size="sm"
                 className="h-6 gap-1 px-2 text-xs"
                 onClick={reset}
+                disabled={isPending}
               >
                 <X className="h-3 w-3" />
                 Limpar
@@ -117,11 +128,19 @@ export function CompareFilters({
             )}
           </div>
 
+          {isPending && (
+            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Aplicando filtros…
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label className="text-xs">Desde a versão</Label>
             <Select
               value={current.version}
               onValueChange={(v) => update({ version: v })}
+              disabled={isPending}
             >
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue />
@@ -153,6 +172,7 @@ export function CompareFilters({
                 onValueChange={(v) =>
                   update({ minHumans: Number.parseInt(v, 10) })
                 }
+                disabled={isPending}
               >
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
@@ -172,6 +192,7 @@ export function CompareFilters({
                 onValueChange={(v) =>
                   update({ minTotal: Number.parseInt(v, 10) })
                 }
+                disabled={isPending}
               >
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
@@ -193,6 +214,7 @@ export function CompareFilters({
               onValueChange={(v) =>
                 update({ minAssignedPct: Number.parseInt(v, 10) })
               }
+              disabled={isPending}
             >
               <SelectTrigger className="h-8 text-xs">
                 <SelectValue />
@@ -213,6 +235,7 @@ export function CompareFilters({
               value={current.since}
               onChange={(e) => update({ since: e.target.value })}
               className="h-8 text-xs"
+              disabled={isPending}
             />
           </div>
 
@@ -222,6 +245,7 @@ export function CompareFilters({
               <Select
                 value={current.respondent}
                 onValueChange={(v) => update({ respondent: v })}
+                disabled={isPending}
               >
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
