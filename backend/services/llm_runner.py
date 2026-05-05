@@ -137,11 +137,13 @@ def mark_stale_runs_as_error(sb, project_id: str) -> int:
     Retorna o número de runs marcadas como erro. Idempotente.
     """
     now = datetime.now(timezone.utc)
-    # 5 minutos sem heartbeat = morta. O save loop renova a cada ~2s, então
-    # 5min é folgado o suficiente para evitar falsos positivos em pausas
-    # legítimas (ex.: GC do Python, latência do Supabase). 30min para runs
-    # sem heartbeat (pré-migration) — conservador.
-    heartbeat_cutoff_iso = (now - timedelta(minutes=5)).isoformat()
+    # 10 minutos sem heartbeat = morta. O save loop renova a cada ~2s, mas
+    # o heartbeat na fase de processing só dispara após cada batch retornar
+    # — uma chamada single-batch a um provider lento (Claude com thinking,
+    # OpenAI sob throttling) pode passar de 5min sem update. 10min absorve
+    # esse caso sem deixar runs zumbis pendurarem por muito tempo. 30min
+    # para runs sem heartbeat (pré-migration) — conservador.
+    heartbeat_cutoff_iso = (now - timedelta(minutes=10)).isoformat()
     started_cutoff_iso = (now - timedelta(minutes=30)).isoformat()
 
     error_msg = (
@@ -562,7 +564,14 @@ def init_job(job_id: str, project_id: str, filter_mode: str) -> None:
         # Throttle do _persist_run_progress (atualiza a cada 2s).
         "last_progress_persist": 0.0,
     }
-    _persist_run_insert(sb, job_id, project_id, filter_mode)
+    try:
+        _persist_run_insert(sb, job_id, project_id, filter_mode)
+    except Exception:
+        # Mantém _jobs limpo se o INSERT falhar — sem isso, o dict acumula
+        # entradas órfãs até o próximo restart do processo (jobs nunca
+        # consultados, já que /run retornou 500 ao usuário).
+        _jobs.pop(job_id, None)
+        raise
 
 
 async def run_llm(

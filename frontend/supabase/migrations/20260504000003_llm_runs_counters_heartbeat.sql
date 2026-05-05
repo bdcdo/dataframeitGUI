@@ -1,12 +1,12 @@
 -- Persistir counters ao vivo e heartbeat em llm_runs.
 --
--- Motivacao: o PR anterior (20260504000002) introduziu contadores
--- processed_complete/partial/empty exibidos ao vivo no LlmConfigurePane,
--- mas eles viviam apenas no dict _jobs em memoria do backend
--- (backend/services/llm_runner.py). Como o deploy roda single-worker em
--- Fly.io com min_machines_running=0 (scale-to-zero), toda vez que a maquina
--- hiberna ou reinicia esses contadores somem -- exatamente a feature recem
--- adicionada.
+-- Motivacao: o conjunto de mudancas deste PR introduz contadores
+-- processed_complete/partial/empty exibidos ao vivo no LlmConfigurePane
+-- (backend/services/llm_runner.py). Esses contadores nasceram vivendo
+-- apenas no dict _jobs em memoria do backend; como o deploy roda
+-- single-worker em Fly.io com min_machines_running=0 (scale-to-zero), toda
+-- vez que a maquina hiberna ou reinicia esses contadores somem -- exatamente
+-- a feature recem adicionada.
 --
 -- Alem disso, runs cuja maquina morreu antes de completar ficavam com
 -- status='running' eternamente: o frontend nao tinha como distinguir uma

@@ -245,15 +245,18 @@ export async function cleanupStaleLlmRuns(
  * runs concorrentes — a coordenação de execuções é responsabilidade do frontend
  * (botão `Rodar` desabilita enquanto há run ativa).
  *
- * O filtro de heartbeat (5min) evita religar polling em runs cuja máquina
- * morreu sem marcar a row como erro. cleanupStaleLlmRuns deve ser chamado
- * antes para também atualizar a aba Execuções.
+ * O filtro de heartbeat (10min) evita religar polling em runs cuja máquina
+ * morreu sem marcar a row como erro. Mantido em paralelo ao cutoff do
+ * mark_stale_runs_as_error no backend — ambos devem ser iguais para evitar
+ * janela onde uma run marcada stale ainda apareceria como running aqui (ou
+ * vice-versa). cleanupStaleLlmRuns deve ser chamado antes para também
+ * atualizar a aba Execuções.
  */
 export async function getRunningLlmJob(
   projectId: string
 ): Promise<RunningLlmJob | null> {
   const supabase = await createSupabaseServer();
-  const heartbeatCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const heartbeatCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from("llm_runs")
     .select("job_id, started_at, heartbeat_at")
