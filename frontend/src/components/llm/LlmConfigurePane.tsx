@@ -30,7 +30,11 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { saveLlmConfig, savePrompt, toggleLlmField } from "@/actions/schema";
-import { getEligibleDocCount, getRunningLlmJob } from "@/actions/llm";
+import {
+  cleanupStaleLlmRuns,
+  getEligibleDocCount,
+  getRunningLlmJob,
+} from "@/actions/llm";
 import { fetchFastAPI } from "@/lib/api";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
 import {
@@ -168,11 +172,24 @@ export function LlmConfigurePane({
   // recarregou a pagina ou voltou para a aba). Sem isso, o card de execucao
   // some quando a aba fecha e o usuario nao tem feedback algum ate ir em
   // /llm/runs ou aguardar terminar.
+  //
+  // cleanupStaleLlmRuns roda primeiro para evitar religar polling em runs
+  // cuja maquina morreu antes de completar (scale-to-zero do Fly.io). Tambem
+  // resolve o sintoma cosmetico de runs eternamente "running" na aba
+  // Execucoes.
   useEffect(() => {
     let cancelled = false;
     async function check() {
+      await cleanupStaleLlmRuns(projectId);
+      if (cancelled) return;
       const running = await getRunningLlmJob(projectId);
       if (cancelled || !running) return;
+      // Reset counters antes de religar polling: sem isso, valores residuais
+      // de uma run anterior (encerrada nesta sessao) ficariam visiveis ate o
+      // primeiro tick do polling preencher os valores reais.
+      setProcessedComplete(0);
+      setProcessedPartial(0);
+      setProcessedEmpty(0);
       setJobId(running.job_id);
       setStatus("running");
       setPhase("loading");

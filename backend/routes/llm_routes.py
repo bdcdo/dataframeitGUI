@@ -3,7 +3,14 @@ from typing import Literal
 from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
-from services.llm_runner import init_job, run_llm, run_llm_fields, get_job_status
+from services.llm_runner import (
+    get_job_status,
+    init_job,
+    mark_stale_runs_as_error,
+    run_llm,
+    run_llm_fields,
+)
+from services.supabase_client import get_supabase
 
 router = APIRouter()
 
@@ -87,3 +94,24 @@ async def run_field(req: RunFieldRequest, background_tasks: BackgroundTasks):
 @router.get("/status/{job_id}", response_model=StatusResponse)
 async def status(job_id: str):
     return get_job_status(job_id)
+
+
+class CleanupRequest(BaseModel):
+    project_id: str
+
+
+class CleanupResponse(BaseModel):
+    cleaned: int
+
+
+@router.post("/cleanup-stale", response_model=CleanupResponse)
+async def cleanup_stale(req: CleanupRequest):
+    """Marca runs com status='running' sem heartbeat recente como 'error'.
+
+    Idempotente. Chamado pelo frontend antes de getRunningLlmJob para evitar
+    que polling órfão (de uma run cuja máquina morreu) seja religado. Sem
+    autenticação extra: backend está atrás do JWT do frontend e a função
+    filtra por project_id (RLS via service key na supabase_client).
+    """
+    n = mark_stale_runs_as_error(get_supabase(), req.project_id)
+    return CleanupResponse(cleaned=n)

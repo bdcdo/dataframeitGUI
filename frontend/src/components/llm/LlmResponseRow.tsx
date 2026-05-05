@@ -10,21 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import type { LlmResponseRecord } from "@/actions/llm";
 import { formatModelLabel } from "@/lib/model-registry";
+import { classifyResponse, type ResponseStatus } from "./classify";
 
-export type ResponseStatus = "complete" | "partial" | "empty";
-
-export function classifyResponse(r: LlmResponseRecord): ResponseStatus {
-  const entries = Object.entries(r.answers ?? {});
-  const hasValue = entries.some(([, v]) => {
-    if (v == null) return false;
-    if (typeof v === "string") return v.trim().length > 0;
-    if (Array.isArray(v)) return v.length > 0;
-    if (typeof v === "object") return Object.keys(v).length > 0;
-    return true;
-  });
-  if (!hasValue) return "empty";
-  return r.is_partial ? "partial" : "complete";
-}
+export { classifyResponse };
+export type { ResponseStatus };
 
 function StatusBadge({ status }: { status: ResponseStatus }) {
   if (status === "complete")
@@ -118,7 +107,7 @@ export function LlmResponseRow({
                 <p className="text-xs font-medium text-destructive">
                   Motivo {status === "empty" ? "da resposta vazia" : "do alerta"}
                 </p>
-                <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive/80 font-mono">
+                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs text-destructive/80 font-mono">
                   {r.llm_error}
                 </pre>
               </div>
