@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useTransition } from "react";
+import { useState, useRef, useEffect, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -168,6 +168,91 @@ export function LlmConfigurePane({
     };
   }, []);
 
+  // useCallback para referência estável — usado como dep do useEffect de
+  // retomada de polling abaixo. Sem isso, o lint warning forçava um
+  // eslint-disable e abria espaço para regressão se alguém adicionasse uma
+  // dependência reativa dentro de pollProgress.
+  const pollProgress = useCallback((id: string) => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetchFastAPI<{
+          status: string;
+          phase: string;
+          progress: number;
+          total: number;
+          errors: string[];
+          eta_seconds: number | null;
+          current_batch: number;
+          total_batches: number;
+          error_traceback: string | null;
+          error_type: string | null;
+          error_line: number | null;
+          error_column: number | null;
+          pydantic_code: string | null;
+          processed_complete: number;
+          processed_partial: number;
+          processed_empty: number;
+        }>(`/api/llm/status/${id}`);
+        setProgress(res.progress);
+        setTotal(res.total);
+        setStatus(res.status);
+        setPhase(res.phase);
+        setEtaSeconds(res.eta_seconds);
+        setCurrentBatch(res.current_batch);
+        setTotalBatches(res.total_batches);
+        setProcessedComplete(res.processed_complete ?? 0);
+        setProcessedPartial(res.processed_partial ?? 0);
+        setProcessedEmpty(res.processed_empty ?? 0);
+        if (res.status !== "running") {
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          // Refresca o layout para o badge de execução desaparecer.
+          router.refresh();
+          if (res.status === "completed") toast.success("LLM concluído!");
+          if (res.status === "error") {
+            const msg = res.errors[0] || "Erro na execução";
+            setErrorInfo({
+              message: msg,
+              type: res.error_type,
+              traceback: res.error_traceback,
+              line: res.error_line,
+              column: res.error_column,
+              // Prefer the snapshot stored with the run — the project's current
+              // pydanticCode may have been edited between run start and failure.
+              pydanticCode: res.pydantic_code ?? pydanticCode,
+            });
+            toast.error(msg, {
+              duration: 10000,
+              action: {
+                label: "Ver detalhes",
+                onClick: () =>
+                  document
+                    .getElementById("llm-error-card")
+                    ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+              },
+            });
+          }
+        }
+      } catch (e: any) {
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        intervalRef.current = null;
+        setStatus("error");
+        setPhase("error");
+        const msg = e?.message ?? "Não foi possível atualizar o progresso";
+        setErrorInfo({
+          message: msg,
+          type: "NetworkError",
+          traceback: null,
+          line: null,
+          column: null,
+          pydanticCode,
+        });
+        toast.error(msg);
+      }
+    }, 2000);
+  }, [router, pydanticCode]);
+
   // Retomar polling se houver uma run em execucao ao montar (ex.: usuario
   // recarregou a pagina ou voltou para a aba). Sem isso, o card de execucao
   // some quando a aba fecha e o usuario nao tem feedback algum ate ir em
@@ -199,8 +284,7 @@ export function LlmConfigurePane({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, pollProgress]);
 
   // Fetch eligible count when filter mode changes
   useEffect(() => {
@@ -292,87 +376,6 @@ export function LlmConfigurePane({
     } finally {
       setIsStartingRun(false);
     }
-  };
-
-  const pollProgress = (id: string) => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetchFastAPI<{
-          status: string;
-          phase: string;
-          progress: number;
-          total: number;
-          errors: string[];
-          eta_seconds: number | null;
-          current_batch: number;
-          total_batches: number;
-          error_traceback: string | null;
-          error_type: string | null;
-          error_line: number | null;
-          error_column: number | null;
-          pydantic_code: string | null;
-          processed_complete: number;
-          processed_partial: number;
-          processed_empty: number;
-        }>(`/api/llm/status/${id}`);
-        setProgress(res.progress);
-        setTotal(res.total);
-        setStatus(res.status);
-        setPhase(res.phase);
-        setEtaSeconds(res.eta_seconds);
-        setCurrentBatch(res.current_batch);
-        setTotalBatches(res.total_batches);
-        setProcessedComplete(res.processed_complete ?? 0);
-        setProcessedPartial(res.processed_partial ?? 0);
-        setProcessedEmpty(res.processed_empty ?? 0);
-        if (res.status !== "running") {
-          if (intervalRef.current) clearInterval(intervalRef.current);
-          intervalRef.current = null;
-          // Refresca o layout para o badge de execução desaparecer.
-          router.refresh();
-          if (res.status === "completed") toast.success("LLM concluído!");
-          if (res.status === "error") {
-            const msg = res.errors[0] || "Erro na execução";
-            setErrorInfo({
-              message: msg,
-              type: res.error_type,
-              traceback: res.error_traceback,
-              line: res.error_line,
-              column: res.error_column,
-              // Prefer the snapshot stored with the run — the project's current
-              // pydanticCode may have been edited between run start and failure.
-              pydanticCode: res.pydantic_code ?? pydanticCode,
-            });
-            toast.error(msg, {
-              duration: 10000,
-              action: {
-                label: "Ver detalhes",
-                onClick: () =>
-                  document
-                    .getElementById("llm-error-card")
-                    ?.scrollIntoView({ behavior: "smooth", block: "center" }),
-              },
-            });
-          }
-        }
-      } catch (e: any) {
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        intervalRef.current = null;
-        setStatus("error");
-        setPhase("error");
-        const msg = e?.message ?? "Não foi possível atualizar o progresso";
-        setErrorInfo({
-          message: msg,
-          type: "NetworkError",
-          traceback: null,
-          line: null,
-          column: null,
-          pydanticCode,
-        });
-        toast.error(msg);
-      }
-    }, 2000);
   };
 
   const handleToggleJustifications = (checked: boolean) => {
@@ -926,7 +929,14 @@ export function LlmConfigurePane({
             {/* Counters ao vivo: completas / parciais / vazias. Aparecem
                 durante a fase de saving (quando o backend comeca a inserir
                 em responses) e ate o fim da run para que o usuario tenha
-                feedback imediato de como esta saindo. */}
+                feedback imediato de como esta saindo.
+
+                Granularidade DIFERE de `progress` (na Progress acima):
+                  - progress = iter no result_df (incrementa antes do INSERT)
+                  - processed_* = INSERT em responses concluido
+                Durante a fase de saving as duas medidas podem divergir
+                transitoriamente (ate ~2s, throttle do _persist_run_progress).
+                Convergem ao final. Ver llm_runner.py:run_llm save loop. */}
             {(processedComplete > 0 || processedPartial > 0 || processedEmpty > 0) && (
               <div className="flex flex-wrap gap-2 pt-1">
                 <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white">
