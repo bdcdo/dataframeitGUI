@@ -26,15 +26,17 @@ export interface DuplicateMatch {
 
 export async function checkDuplicates(
   projectId: string,
-  documents: { external_id?: string; text: string }[]
+  documents: { external_id?: string; text_hash: string; csvIndex?: number }[]
 ): Promise<{
   duplicates: DuplicateMatch[];
   duplicatesWithResponses: number;
 }> {
   const supabase = await createSupabaseServer();
 
-  // Compute hashes for all incoming docs
-  const hashes = documents.map((d) => md5(d.text));
+  // Hash is computed client-side to keep payload small (Vercel ~4.5MB limit).
+  // csvIndex maps back to the full CSV array when caller chunks the check.
+  const hashes = documents.map((d) => d.text_hash);
+  const indexFor = (i: number) => documents[i].csvIndex ?? i;
 
   // Collect external_ids that are present
   const externalIds = documents
@@ -61,7 +63,7 @@ export async function checkDuplicates(
         const existingId = extIdMap.get(id!);
         if (existingId) {
           duplicates.push({
-            csvIndex: index,
+            csvIndex: indexFor(index),
             existingDocId: existingId,
             matchType: "external_id",
           });
@@ -90,7 +92,7 @@ export async function checkDuplicates(
         const existingId = hashMap.get(hash);
         if (existingId) {
           duplicates.push({
-            csvIndex: index,
+            csvIndex: indexFor(index),
             existingDocId: existingId,
             matchType: "text_hash",
           });

@@ -12,6 +12,7 @@ import {
 import { DuplicateAnalysis } from "./DuplicateAnalysis";
 import { toast } from "sonner";
 import Papa from "papaparse";
+import { md5 } from "@/lib/hash";
 
 interface DocumentUploadProps {
   projectId: string;
@@ -24,6 +25,44 @@ interface AnalysisResult {
   duplicates: DuplicateMatch[];
   duplicatesWithResponses: number;
   matchType: string;
+}
+
+// Vercel Server Actions reject payloads above ~4.5 MB (FUNCTION_PAYLOAD_TOO_LARGE).
+// Pack docs by aggregate text size to stay safely under that, with a count cap to avoid latency spikes.
+const MAX_CHUNK_BYTES = 3_500_000;
+const MAX_DOCS_PER_CHUNK = 500;
+const MAX_HASH_DOCS_PER_CHUNK = 5_000;
+
+interface UploadDoc {
+  text: string;
+  title?: string;
+  external_id?: string;
+}
+
+function chunkByBytes(
+  docs: UploadDoc[]
+): { items: UploadDoc[]; startIndex: number }[] {
+  const chunks: { items: UploadDoc[]; startIndex: number }[] = [];
+  let current: UploadDoc[] = [];
+  let currentBytes = 0;
+  let startIndex = 0;
+  for (let i = 0; i < docs.length; i++) {
+    const itemBytes = docs[i].text.length;
+    if (
+      current.length > 0 &&
+      (currentBytes + itemBytes > MAX_CHUNK_BYTES ||
+        current.length >= MAX_DOCS_PER_CHUNK)
+    ) {
+      chunks.push({ items: current, startIndex });
+      current = [];
+      currentBytes = 0;
+      startIndex = i;
+    }
+    current.push(docs[i]);
+    currentBytes += itemBytes;
+  }
+  if (current.length > 0) chunks.push({ items: current, startIndex });
+  return chunks;
 }
 
 export function DocumentUpload({ projectId }: DocumentUploadProps) {
@@ -73,25 +112,42 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       }));
   };
 
-  const doUpload = async (docs: { text: string; title?: string; external_id?: string }[], options?: UploadOptions) => {
+  const doUpload = async (docs: UploadDoc[], options?: UploadOptions) => {
     setStep("uploading");
     setLoading(true);
     setProgress({ current: 0, total: docs.length });
 
     try {
-      const chunkSize = 100;
-      for (let i = 0; i < docs.length; i += chunkSize) {
-        const chunk = docs.slice(i, i + chunkSize);
-        const isLast = i + chunkSize >= docs.length;
-        // Pass options only on first chunk (duplicateMap indices refer to full array)
+      const chunks = chunkByBytes(docs);
+      let processed = 0;
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const { items, startIndex } = chunks[ci];
+        const endIndex = startIndex + items.length;
+        const isLast = ci === chunks.length - 1;
+
+        // Localize duplicateMap indices to the chunk so uploadDocuments can index
+        // into `items` directly (csvIndex must be relative to the array sent).
+        const localOptions: UploadOptions | undefined = options
+          ? {
+              mode: options.mode,
+              deleteResponses: options.deleteResponses,
+              duplicateMap: options.duplicateMap
+                ?.filter(
+                  (d) => d.csvIndex >= startIndex && d.csvIndex < endIndex
+                )
+                .map((d) => ({ ...d, csvIndex: d.csvIndex - startIndex })),
+            }
+          : undefined;
+
         const result = await uploadDocuments(
           projectId,
-          chunk,
+          items,
           isLast,
-          i === 0 ? options : { mode: options?.mode ?? "add_all" }
+          localOptions
         );
         if (result.error) throw new Error(result.error);
-        setProgress({ current: Math.min(i + chunkSize, docs.length), total: docs.length });
+        processed += items.length;
+        setProgress({ current: processed, total: docs.length });
       }
       toast.success(`${docs.length} documentos importados!`);
       setParsedData(null);
@@ -99,8 +155,14 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       setAnalysis(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
-      if (msg.includes("Body exceeded") || msg.includes("413")) {
-        toast.error("Os documentos ultrapassam o limite de 10 MB por envio. Tente importar um arquivo com menos documentos ou documentos menores.");
+      if (
+        msg.includes("Body exceeded") ||
+        msg.includes("413") ||
+        msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
+      ) {
+        toast.error(
+          "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores."
+        );
       } else {
         toast.error(msg || "Erro ao importar documentos");
       }
@@ -122,23 +184,38 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
     setLoading(true);
 
     try {
-      const result = await checkDuplicates(
-        projectId,
-        docs.map((d) => ({ external_id: d.external_id, text: d.text }))
-      );
+      // Hash client-side so the request payload stays small (Vercel ~4.5MB limit).
+      const docsWithHash = docs.map((d, i) => ({
+        external_id: d.external_id,
+        text_hash: md5(d.text),
+        csvIndex: i,
+      }));
 
-      if (result.duplicates.length === 0) {
+      const allDuplicates: DuplicateMatch[] = [];
+      let duplicatesWithResponses = 0;
+      for (
+        let i = 0;
+        i < docsWithHash.length;
+        i += MAX_HASH_DOCS_PER_CHUNK
+      ) {
+        const chunk = docsWithHash.slice(i, i + MAX_HASH_DOCS_PER_CHUNK);
+        const r = await checkDuplicates(projectId, chunk);
+        allDuplicates.push(...r.duplicates);
+        duplicatesWithResponses += r.duplicatesWithResponses;
+      }
+
+      if (allDuplicates.length === 0) {
         // No duplicates — upload directly
         await doUpload(docs);
       } else {
         // Has duplicates — show analysis panel
-        const hasExternalIdMatch = result.duplicates.some(
+        const hasExternalIdMatch = allDuplicates.some(
           (d) => d.matchType === "external_id"
         );
         setAnalysis({
           docs,
-          duplicates: result.duplicates,
-          duplicatesWithResponses: result.duplicatesWithResponses,
+          duplicates: allDuplicates,
+          duplicatesWithResponses,
           matchType: hasExternalIdMatch ? "ID externo" : "conteúdo (hash)",
         });
         setStep("analysis");
@@ -146,8 +223,14 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
-      if (msg.includes("Body exceeded") || msg.includes("413")) {
-        toast.error("Os documentos ultrapassam o limite de 10 MB por envio. Tente importar um arquivo com menos documentos ou documentos menores.");
+      if (
+        msg.includes("Body exceeded") ||
+        msg.includes("413") ||
+        msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
+      ) {
+        toast.error(
+          "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores."
+        );
       } else {
         toast.error(msg || "Erro ao verificar duplicatas");
       }
