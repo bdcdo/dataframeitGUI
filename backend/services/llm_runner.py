@@ -12,7 +12,7 @@ import re
 import time
 import traceback
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
@@ -41,6 +41,13 @@ def _status_from_row(row: dict) -> dict:
         "error_line": row.get("error_line"),
         "error_column": row.get("error_column"),
         "pydantic_code": row.get("pydantic_code"),
+        # Counters persistidos em llm_runs pelo save loop (ver
+        # _persist_run_progress). No fallback de container reiniciado, ainda
+        # mostram o ultimo snapshot conhecido — antes desta migration ficavam
+        # zerados, o que mascarava o trabalho ja feito.
+        "processed_complete": row.get("processed_complete") or 0,
+        "processed_partial": row.get("processed_partial") or 0,
+        "processed_empty": row.get("processed_empty") or 0,
     }
 
 
@@ -53,7 +60,8 @@ def get_job_status(job_id: str) -> dict:
         row = (
             sb.table("llm_runs")
             .select("status, phase, progress, total, error_message, error_type, "
-                    "error_traceback, error_line, error_column, pydantic_code")
+                    "error_traceback, error_line, error_column, pydantic_code, "
+                    "processed_complete, processed_partial, processed_empty")
             .eq("job_id", job_id)
             .maybe_single()
             .execute()
@@ -65,7 +73,8 @@ def get_job_status(job_id: str) -> dict:
         logger.exception("Failed to fetch job status from llm_runs fallback")
     return {"status": "error", "phase": "error", "progress": 0, "total": 0,
             "errors": ["Job not found"], "eta_seconds": None,
-            "current_batch": 0, "total_batches": 0}
+            "current_batch": 0, "total_batches": 0,
+            "processed_complete": 0, "processed_partial": 0, "processed_empty": 0}
 
 
 def _extract_pydantic_location(exc: Exception, tb: str) -> tuple[int | None, int | None]:
@@ -79,37 +88,123 @@ def _extract_pydantic_location(exc: Exception, tb: str) -> tuple[int | None, int
 
 
 def _persist_run_insert(sb, job_id: str, project_id: str, filter_mode: str) -> None:
-    """Insert the initial 'running' row as soon as the job starts."""
+    """Insert the initial 'running' row as soon as the job starts.
+
+    Re-raise on failure: se o INSERT em llm_runs morrer silenciosamente, a run
+    fica órfã (executa em memória mas não aparece na aba Execuções), o que já
+    enganou o usuário no passado. Melhor falhar a request do /run e mostrar o
+    erro de cara em vez de seguir uma execução invisível.
+    """
+    sb.table("llm_runs").insert({
+        "job_id": job_id,
+        "project_id": project_id,
+        "filter_mode": filter_mode,
+        "status": "running",
+        "phase": "loading",
+        # heartbeat inicial. O save loop renova a cada ~2s (ver
+        # _persist_run_progress); cleanup ativo (mark_stale_runs_as_error)
+        # marca como erro runs cujo heartbeat ficou velho.
+        "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+    }).execute()
+
+
+def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
+    """Persistir snapshot de counters + heartbeat em llm_runs.
+
+    Chamado periodicamente pelo save loop (throttle 2s). Erros aqui são
+    logados, não re-lançados: a run principal não deve abortar só porque uma
+    atualização de progresso falhou. O próximo tick tenta de novo.
+    """
     try:
-        sb.table("llm_runs").insert({
-            "job_id": job_id,
-            "project_id": project_id,
-            "filter_mode": filter_mode,
-            "status": "running",
-            "phase": "loading",
-        }).execute()
+        sb.table("llm_runs").update({
+            "processed_complete": jobs_state.get("processed_complete", 0),
+            "processed_partial": jobs_state.get("processed_partial", 0),
+            "processed_empty": jobs_state.get("processed_empty", 0),
+            "progress": jobs_state.get("progress", 0),
+            "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("job_id", job_id).execute()
     except Exception:
-        logger.exception("Failed to INSERT llm_runs row for job %s", job_id)
+        logger.exception("Failed to UPDATE llm_runs progress for job %s", job_id)
+
+
+def mark_stale_runs_as_error(sb, project_id: str) -> int:
+    """Marcar como 'error' runs órfãs do projeto (sem heartbeat recente).
+
+    Critério: status='running' e (heartbeat antigo OR heartbeat null com
+    started_at antigo). O segundo caso cobre runs criadas antes desta
+    migration que nunca terão heartbeat.
+
+    Retorna o número de runs marcadas como erro. Idempotente.
+    """
+    now = datetime.now(timezone.utc)
+    # 10 minutos sem heartbeat = morta. O save loop renova a cada ~2s, mas
+    # o heartbeat na fase de processing só dispara após cada batch retornar
+    # — uma chamada single-batch a um provider lento (Claude com thinking,
+    # OpenAI sob throttling) pode passar de 5min sem update. 10min absorve
+    # esse caso sem deixar runs zumbis pendurarem por muito tempo. 30min
+    # para runs sem heartbeat (pré-migration) — conservador.
+    heartbeat_cutoff_iso = (now - timedelta(minutes=10)).isoformat()
+    started_cutoff_iso = (now - timedelta(minutes=30)).isoformat()
+
+    error_msg = (
+        "Execução abandonada (sem heartbeat — possivelmente o backend "
+        "reiniciou ou a máquina hibernou)."
+    )
+    # PostgREST .or_ syntax: separa termos por vírgula; agrupa com and(...).
+    or_clause = (
+        f"heartbeat_at.lt.{heartbeat_cutoff_iso},"
+        f"and(heartbeat_at.is.null,started_at.lt.{started_cutoff_iso})"
+    )
+    res = (
+        sb.table("llm_runs")
+        .update({
+            "status": "error",
+            "phase": "error",
+            "error_message": error_msg,
+            "completed_at": now.isoformat(),
+        })
+        .eq("project_id", project_id)
+        .eq("status", "running")
+        .or_(or_clause)
+        .execute()
+    )
+    return len(res.data or [])
 
 
 def _persist_run_snapshot(
     sb, job_id: str, project: dict, doc_count: int
 ) -> None:
-    """Backfill provider/model/pydantic snapshot after the project is loaded."""
-    try:
-        sb.table("llm_runs").update({
-            "llm_provider": project.get("llm_provider"),
-            "llm_model": project.get("llm_model"),
-            "document_count": doc_count,
-            "pydantic_code": project.get("pydantic_code"),
-        }).eq("job_id", job_id).execute()
-    except Exception:
-        logger.exception("Failed to UPDATE llm_runs snapshot for job %s", job_id)
+    """Backfill provider/model/pydantic snapshot after the project is loaded.
+
+    Não engolir erro: se essa atualização falhar, a aba Execuções fica sem
+    metadados da run e o usuário não consegue diagnosticar nada depois.
+    """
+    sb.table("llm_runs").update({
+        "llm_provider": project.get("llm_provider"),
+        "llm_model": project.get("llm_model"),
+        "document_count": doc_count,
+        "pydantic_code": project.get("pydantic_code"),
+    }).eq("job_id", job_id).execute()
 
 
 def _persist_run_completion(
-    sb, job_id: str, progress: int, total: int, warnings: list[str] | None = None
+    sb,
+    job_id: str,
+    progress: int,
+    total: int,
+    warnings: list[str] | None = None,
+    counters: dict | None = None,
 ) -> None:
+    """Mark the run as completed. Errors here are logged but do not re-raise.
+
+    Diferente de _persist_run_insert/_snapshot: aqui a execução já terminou e o
+    payload já está em responses. Ressuscitar a exception levaria a `_persist_run_error`
+    em cascata e duplicaria o registro de falha. Logar é suficiente.
+
+    `counters` recebe dict com processed_complete/partial/empty para fechar
+    o snapshot final consistente — sem isso, o último update via
+    _persist_run_progress poderia ter ficado desatualizado em até 2s.
+    """
     try:
         payload: dict = {
             "status": "completed",
@@ -118,6 +213,10 @@ def _persist_run_completion(
             "total": total,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if counters:
+            payload["processed_complete"] = counters.get("processed_complete", 0)
+            payload["processed_partial"] = counters.get("processed_partial", 0)
+            payload["processed_empty"] = counters.get("processed_empty", 0)
         # Persistir warnings de cobertura parcial reutilizando error_message
         # (evita migration). Motivo: llm_runs.error_message é o único campo
         # livre para texto diagnóstico pós-completion.
@@ -130,10 +229,12 @@ def _persist_run_completion(
         logger.exception("Failed to UPDATE llm_runs completion for job %s", job_id)
 
 
-def _persist_run_error(sb, job_id: str, exc: Exception, tb: str) -> tuple[int | None, int | None]:
+def _persist_run_error(
+    sb, job_id: str, exc: Exception, tb: str, counters: dict | None = None
+) -> tuple[int | None, int | None]:
     line, col = _extract_pydantic_location(exc, tb)
     try:
-        sb.table("llm_runs").update({
+        payload: dict = {
             "status": "error",
             "phase": "error",
             "error_message": str(exc),
@@ -142,10 +243,113 @@ def _persist_run_error(sb, job_id: str, exc: Exception, tb: str) -> tuple[int | 
             "error_line": line,
             "error_column": col,
             "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("job_id", job_id).execute()
+        }
+        if counters:
+            payload["processed_complete"] = counters.get("processed_complete", 0)
+            payload["processed_partial"] = counters.get("processed_partial", 0)
+            payload["processed_empty"] = counters.get("processed_empty", 0)
+        sb.table("llm_runs").update(payload).eq("job_id", job_id).execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs error for job %s", job_id)
     return line, col
+
+
+def _answers_have_content(answers: dict) -> bool:
+    """True se algum field tem valor significativo. Espelha
+    LlmResponseRow.classifyResponse no frontend para counters consistentes.
+    """
+    for v in answers.values():
+        if v is None:
+            continue
+        if isinstance(v, str):
+            if v.strip():
+                return True
+        elif isinstance(v, list):
+            if v:
+                return True
+        elif isinstance(v, dict):
+            if v:
+                return True
+        else:
+            return True
+    return False
+
+
+def _is_nan(val) -> bool:
+    """True se val for um float NaN. Outros tipos não são considerados NaN.
+
+    Necessário porque dataframeit deixa np.nan em rows com erro, e bool(NaN)
+    é True em Python — sem essa guarda, NaN passaria como "preenchido".
+    """
+    return isinstance(val, float) and pd.isna(val)
+
+
+def _extract_answers_from_row(row, model_class) -> tuple[dict, dict]:
+    """Extrai answers e justifications de uma row do result_df.
+
+    Itera sobre `model_class.model_fields` (não sobre as colunas da row) para
+    descartar colunas internas do dataframeit (`_dataframeit_status`,
+    `_error_details`) e qualquer extra que o provider tenha incluído.
+
+    Filtra NaN explicitamente — sem isso, rows que dataframeit marcou como
+    erro (que vêm com NaN nos campos) entrariam em `answers` como "preenchido".
+    """
+    answers: dict = {}
+    justifications: dict = {}
+
+    for field_name in model_class.model_fields:
+        val = row.get(field_name)
+        if val is not None and not _is_nan(val):
+            if isinstance(val, list):
+                answers[field_name] = val
+            else:
+                answers[field_name] = str(val)
+
+        just_col = f"{field_name}_justification"
+        # `just_col in row` aceita tanto dict quanto pandas.Series; truthy
+        # check em conjunto com _is_nan cobre None, "", e NaN.
+        if just_col in row:
+            jval = row[just_col]
+            if jval and not _is_nan(jval):
+                justifications[field_name] = str(jval)
+
+    return answers, justifications
+
+
+def _build_llm_error_message(
+    *,
+    dfi_error: str | None,
+    is_empty: bool,
+    is_partial: bool,
+    dfi_status,
+    pre_prune_keys: list[str],
+    post_prune_keys: list[str],
+    answered_count: int,
+    active_expected_count: int,
+) -> str | None:
+    """Monta a mensagem para responses.llm_error a partir do diagnóstico.
+
+    Hierarquia (ordem importa):
+    1. Erro cru do dataframeit (timeout, parse, structured-output null)
+    2. answers vazio após prune (LLM trouxe os campos mas evaluate_condition
+       zerou) ou LLM trouxe vazio direto
+    3. Cobertura baixa (LLM já chega com poucos campos)
+    Retorna None quando a resposta está saudável.
+    """
+    if dfi_error:
+        return f"dataframeit: {dfi_error}"
+    if is_empty:
+        return (
+            f"answers vazio após prune; pre_prune_keys={pre_prune_keys}; "
+            f"dfi_status={dfi_status}"
+        )
+    if is_partial:
+        return (
+            f"cobertura baixa ({answered_count}/{active_expected_count}); "
+            f"pre_prune_keys={pre_prune_keys}; "
+            f"post_prune_keys={post_prune_keys}"
+        )
+    return None
 
 
 def _extend_model_with_justifications(model_class):
@@ -334,15 +538,14 @@ def _filter_docs(
     return docs
 
 
-async def run_llm(
-    job_id: str,
-    project_id: str,
-    document_ids: list[str] | None = None,
-    filter_mode: str = "all",
-    max_response_count: int | None = None,
-    sample_size: int | None = None,
-):
-    """Run dataframeit on all (or filtered) documents."""
+def init_job(job_id: str, project_id: str, filter_mode: str) -> None:
+    """Inicializar estado do job + INSERT em llm_runs.
+
+    Chamado sincronamente pelo endpoint /run antes do background task. Se
+    o INSERT falhar (RLS, conexão, payload malformado), a exceção sobe pro
+    handler do FastAPI e o usuário vê 500 em vez de uma run fantasma que
+    nunca aparece em Execuções.
+    """
     sb = get_supabase()
     _jobs[job_id] = {
         "status": "running", "phase": "loading", "progress": 0, "total": 0,
@@ -351,8 +554,41 @@ async def run_llm(
         "error_traceback": None, "error_type": None,
         "error_line": None, "error_column": None,
         "pydantic_code": None,
+        # Counters atualizados durante a fase de saving para o frontend
+        # mostrar feedback ao vivo de quantos documentos saíram completos /
+        # parciais / vazios (ver LlmConfigurePane). Classificação espelha
+        # LlmResponseRow.classifyResponse no frontend.
+        "processed_complete": 0,
+        "processed_partial": 0,
+        "processed_empty": 0,
+        # Throttle do _persist_run_progress (atualiza a cada 2s).
+        "last_progress_persist": 0.0,
     }
-    _persist_run_insert(sb, job_id, project_id, filter_mode)
+    try:
+        _persist_run_insert(sb, job_id, project_id, filter_mode)
+    except Exception:
+        # Mantém _jobs limpo se o INSERT falhar — sem isso, o dict acumula
+        # entradas órfãs até o próximo restart do processo (jobs nunca
+        # consultados, já que /run retornou 500 ao usuário).
+        _jobs.pop(job_id, None)
+        raise
+
+
+async def run_llm(
+    job_id: str,
+    project_id: str,
+    document_ids: list[str] | None = None,
+    filter_mode: str = "all",
+    max_response_count: int | None = None,
+    sample_size: int | None = None,
+):
+    """Run dataframeit on all (or filtered) documents.
+
+    Pré-condição: init_job(job_id, project_id, filter_mode) já foi chamado
+    pelo handler do /run. Aqui já assumimos _jobs[job_id] populado e
+    llm_runs row existente.
+    """
+    sb = get_supabase()
 
     try:
         # Load project (only needed columns)
@@ -474,6 +710,11 @@ async def run_llm(
 
         result_frames = []
         proc_start = time.time()
+        # Throttle de heartbeat na fase de processing. Importante porque
+        # processar pode levar minutos antes do save loop começar; sem
+        # heartbeat aqui, mark_stale_runs_as_error marcaria a run como morta
+        # mesmo estando viva.
+        last_proc_heartbeat = 0.0
         for idx, batch_df in enumerate(batches):
             _jobs[job_id]["current_batch"] = idx + 1
             batch_result = dataframeit(
@@ -497,6 +738,10 @@ async def run_llm(
                 _jobs[job_id]["eta_seconds"] = round(
                     (elapsed / processed) * (len(df) - processed), 1
                 )
+            now_ts = time.time()
+            if now_ts - last_proc_heartbeat >= 2.0:
+                _persist_run_progress(sb, job_id, _jobs[job_id])
+                last_proc_heartbeat = now_ts
 
         result_df = pd.concat(result_frames, ignore_index=True)
 
@@ -529,24 +774,33 @@ async def run_llm(
                 expected_llm_fields.add(name)
 
         partial_warnings: list[str] = []
+        # Sample de _error_details reais por mensagem para incluir no
+        # RuntimeError quando a run for marcada como comprometida. Mais útil
+        # do que só "cobertura baixa" porque diz a causa. Chave: hash MD5 da
+        # mensagem completa, evita agrupar erros distintos com prefixo igual.
+        dfi_error_samples: dict[str, str] = {}
+
+        # Throttle do persist de progresso para llm_runs. Atualizar a cada row
+        # dobraria a load (já há 1 INSERT em responses por row); 2s mantém
+        # heartbeat fresco e counters próximos do real-time sem custo dobrado.
+        # last_progress_persist é inicializado em init_job.
+        progress_persist_interval_s = 2.0
 
         # Save responses — use row["id"] (not index correlation) for safety
         for _, row in result_df.iterrows():
             doc_id = row["id"]
-            answers = {}
-            justifications = {}
 
-            for field_name in model_class.model_fields:
-                val = row.get(field_name)
-                if val is not None:
-                    if isinstance(val, list):
-                        answers[field_name] = val
-                    else:
-                        answers[field_name] = str(val)
+            # Diagnóstico cru do dataframeit (ver dataframeit/core.py:451-452):
+            # _dataframeit_status é 'processed' ou 'error'; _error_details traz
+            # a mensagem da exceção quando a row falhou. Sem ler isso, qualquer
+            # falha de provider/parse/timeout vira "resposta vazia" sem motivo.
+            dfi_status = row.get("_dataframeit_status")
+            dfi_error_raw = row.get("_error_details")
+            dfi_error: str | None = (
+                str(dfi_error_raw) if dfi_error_raw is not None and pd.notna(dfi_error_raw) else None
+            )
 
-                just_col = f"{field_name}_justification"
-                if just_col in row and row[just_col]:
-                    justifications[field_name] = str(row[just_col])
+            answers, justifications = _extract_answers_from_row(row, model_class)
 
             # Reconstruir dicts aninhados a partir dos subfields flat (ver
             # _flatten_nested_basemodels). Deve rodar ANTES do prune de
@@ -569,6 +823,11 @@ async def run_llm(
                     justifications[original_name] = "\n".join(
                         f"{k}: {v}" for k, v in sub_justs.items()
                     )
+
+            # Snapshot pré-prune para diagnosticar quando o evaluate_condition
+            # zera campos. Se uma resposta sai com 1 campo só mas pre_prune
+            # tinha muitos, o problema está nas conditions — não no LLM.
+            answers_pre_prune_keys = sorted(answers.keys())
 
             # Post-process conditional fields: remove values for fields whose
             # visibility condition is not satisfied by the sibling answers.
@@ -593,6 +852,45 @@ async def run_llm(
             coverage = len(answered) / len(active_expected) if active_expected else 1.0
             is_partial = coverage < partial_coverage_threshold
 
+            # Classificação para counters ao vivo. Espelha
+            # LlmResponseRow.classifyResponse no frontend: vazia se nenhum
+            # field tem conteúdo significativo; senão complete ou partial.
+            is_empty = not _answers_have_content(answers)
+            if is_empty:
+                _jobs[job_id]["processed_empty"] += 1
+            elif is_partial:
+                _jobs[job_id]["processed_partial"] += 1
+            else:
+                _jobs[job_id]["processed_complete"] += 1
+
+            llm_error_msg = _build_llm_error_message(
+                dfi_error=dfi_error,
+                is_empty=is_empty,
+                is_partial=is_partial,
+                dfi_status=dfi_status,
+                pre_prune_keys=answers_pre_prune_keys,
+                post_prune_keys=sorted(answers.keys()),
+                answered_count=len(answered),
+                active_expected_count=len(active_expected),
+            )
+
+            if is_partial or is_empty or dfi_error:
+                logger.warning(
+                    "LLM row diag doc=%s status=%s error=%s pre_prune=%s post_prune=%s",
+                    doc_id, dfi_status, dfi_error,
+                    answers_pre_prune_keys, sorted(answers.keys()),
+                )
+
+            if dfi_error:
+                # Agrupa por hash da mensagem (não prefixo) para o RuntimeError
+                # final. Truncar 120 chars agrupava erros distintos com prefixo
+                # igual.
+                key = hashlib.md5(
+                    dfi_error.encode("utf-8", errors="replace")
+                ).hexdigest()[:16]
+                if key not in dfi_error_samples:
+                    dfi_error_samples[key] = f"doc={doc_id}: {dfi_error}"
+
             if is_partial:
                 missing = sorted(active_expected - answered)
                 warning_msg = (
@@ -600,9 +898,16 @@ async def run_llm(
                     f"({len(answered)}/{len(active_expected)}); "
                     f"faltaram: {missing[:8]}{'...' if len(missing) > 8 else ''}"
                 )
-                logger.warning("LLM partial response — %s", warning_msg)
                 partial_warnings.append(warning_msg)
                 _jobs[job_id].setdefault("warnings", []).append(warning_msg)
+
+            # Throttle: persiste counters + heartbeat a cada 2s. Garante que
+            # mesmo após scale-to-zero o llm_runs reflete o trabalho feito,
+            # e que a UI consegue distinguir run viva de zumbi.
+            now_ts = time.time()
+            if now_ts - _jobs[job_id]["last_progress_persist"] >= progress_persist_interval_s:
+                _persist_run_progress(sb, job_id, _jobs[job_id])
+                _jobs[job_id]["last_progress_persist"] = now_ts
 
             sb.table("responses").insert({
                 "project_id": project_id,
@@ -625,6 +930,10 @@ async def run_llm(
                 # Correlaciona a resposta com a execução que a produziu para a
                 # aba LLM > Respostas (ver migration 20260424000000).
                 "llm_job_id": job_id,
+                # Diagnóstico por documento (ver migration 20260504000002).
+                # Null quando a resposta é saudável; senão traz o motivo real
+                # (erro do dataframeit, prune zerou, ou cobertura baixa).
+                "llm_error": llm_error_msg,
             }).execute()
 
         # Update project hash
@@ -638,12 +947,23 @@ async def run_llm(
             len(partial_warnings) / total_processed if total_processed else 0.0
         )
         if partial_ratio >= run_failure_threshold:
-            raise RuntimeError(
+            # Inclui exemplos de _error_details reais (quando dataframeit
+            # falhou) além dos warnings de cobertura. Mais útil que só
+            # "cobertura baixa" porque diz a causa primária.
+            error_examples = list(dfi_error_samples.values())[:3]
+            sections = [
                 f"Run comprometida: {len(partial_warnings)}/{total_processed} "
                 f"docs ({int(partial_ratio * 100)}%) com resposta parcial. "
-                f"Respostas gravadas com is_current=false. "
-                f"Exemplos: {' || '.join(partial_warnings[:3])}"
+                f"Respostas gravadas com is_current=false."
+            ]
+            if error_examples:
+                sections.append(
+                    "Erros do provider: " + " || ".join(error_examples)
+                )
+            sections.append(
+                "Exemplos de cobertura baixa: " + " || ".join(partial_warnings[:3])
             )
+            raise RuntimeError(" ".join(sections))
 
         _jobs[job_id].update(status="completed", phase="completed", eta_seconds=0)
         _persist_run_completion(
@@ -652,11 +972,16 @@ async def run_llm(
             _jobs[job_id]["progress"],
             _jobs[job_id]["total"],
             warnings=partial_warnings or None,
+            counters=_jobs[job_id],
         )
 
     except Exception as e:
         tb = traceback.format_exc()
-        line, col = _persist_run_error(sb, job_id, e, tb)
+        # Passa counters do _jobs para fechar snapshot consistente em llm_runs
+        # mesmo quando a run falha mid-loop. Sem isso, o último _persist_run_progress
+        # poderia ter ficado até 2s atrás.
+        counters = _jobs.get(job_id) or {}
+        line, col = _persist_run_error(sb, job_id, e, tb, counters=counters)
         _jobs[job_id]["status"] = "error"
         _jobs[job_id]["phase"] = "error"
         _jobs[job_id]["errors"].append(str(e))

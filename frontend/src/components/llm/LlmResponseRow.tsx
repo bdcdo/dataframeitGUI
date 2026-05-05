@@ -10,21 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import type { LlmResponseRecord } from "@/actions/llm";
 import { formatModelLabel } from "@/lib/model-registry";
+import { classifyResponse, type ResponseStatus } from "./classify";
 
-export type ResponseStatus = "complete" | "partial" | "empty";
-
-export function classifyResponse(r: LlmResponseRecord): ResponseStatus {
-  const entries = Object.entries(r.answers ?? {});
-  const hasValue = entries.some(([, v]) => {
-    if (v == null) return false;
-    if (typeof v === "string") return v.trim().length > 0;
-    if (Array.isArray(v)) return v.length > 0;
-    if (typeof v === "object") return Object.keys(v).length > 0;
-    return true;
-  });
-  if (!hasValue) return "empty";
-  return r.is_partial ? "partial" : "complete";
-}
+export { classifyResponse };
+export type { ResponseStatus };
 
 function StatusBadge({ status }: { status: ResponseStatus }) {
   if (status === "complete")
@@ -109,11 +98,27 @@ export function LlmResponseRow({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="space-y-3 border-t px-4 py-3">
+            {/* Diagnostico do backend: aparece sempre que llm_error estiver
+                preenchido — pode ser erro real do dataframeit, prune de
+                condicionais zerou os campos, ou cobertura baixa. Substitui o
+                texto generico "Veja a aba Execucoes" anterior. */}
+            {r.llm_error && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2">
+                <p className="text-xs font-medium text-destructive">
+                  Motivo {status === "empty" ? "da resposta vazia" : "do alerta"}
+                </p>
+                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs text-destructive/80 font-mono">
+                  {r.llm_error}
+                </pre>
+              </div>
+            )}
             {entries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Resposta vazia — o LLM não retornou nenhum campo para este
-                documento. Veja a aba Execuções para o motivo.
-              </p>
+              !r.llm_error && (
+                <p className="text-sm text-muted-foreground">
+                  Resposta vazia — o LLM não retornou nenhum campo para este
+                  documento.
+                </p>
+              )
             ) : (
               <dl className="grid gap-2 text-sm">
                 {entries.map(([field, value]) => (

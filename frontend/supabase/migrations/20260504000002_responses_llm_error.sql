@@ -1,0 +1,22 @@
+-- Diagnostico por documento da execucao LLM.
+--
+-- Antes desta migration, quando uma resposta LLM saia vazia ou com poucos
+-- campos, nao havia jeito de saber por que: o save loop em
+-- backend/services/llm_runner.py iterava so sobre model_class.model_fields e
+-- descartava as colunas internas do dataframeit (_dataframeit_status e
+-- _error_details). Resultado: respostas marcadas como "Vazia" no frontend sem
+-- nenhum vinculo com a causa real (timeout, structured-output null, parse
+-- error, prune de condicionais, cobertura baixa).
+--
+-- Esta coluna armazena por documento, on-demand:
+--  - Erro cru do dataframeit (ex.: "dataframeit: Falha no parsing do
+--    structured output: ..."), ou
+--  - Diagnostico de prune ("answers vazio apos prune; pre_prune_keys=[...]"),
+--    quando o LLM trouxe campos mas evaluate_condition zerou, ou
+--  - Cobertura baixa ("cobertura baixa (1/12); pre_prune_keys=[...];
+--    post_prune_keys=[doenca]") quando o LLM ja chega com poucos campos.
+--
+-- Null quando a resposta foi salva integra. Sem index: leitura on-demand junto
+-- com a resposta; cardinalidade alta inviabiliza index util.
+ALTER TABLE responses
+  ADD COLUMN llm_error TEXT;
