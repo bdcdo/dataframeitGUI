@@ -28,10 +28,22 @@ interface AnalysisResult {
 }
 
 // Vercel Server Actions reject payloads above ~4.5 MB (FUNCTION_PAYLOAD_TOO_LARGE).
-// Pack docs by aggregate text size to stay safely under that, with a count cap to avoid latency spikes.
+// Pack docs by aggregate UTF-8 byte size to stay safely under that, with a count cap to avoid latency spikes.
 const MAX_CHUNK_BYTES = 3_500_000;
 const MAX_DOCS_PER_CHUNK = 500;
+// checkDuplicates payload is small (~50B/doc), but we still chunk to bound request size on huge CSVs.
 const MAX_HASH_DOCS_PER_CHUNK = 5_000;
+
+const textEncoder = new TextEncoder();
+const utf8Bytes = (s: string) => textEncoder.encode(s).length;
+
+function isPayloadTooLarge(msg: string): boolean {
+  return (
+    msg.includes("Body exceeded") ||
+    msg.includes("413") ||
+    msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
+  );
+}
 
 interface UploadDoc {
   text: string;
@@ -47,7 +59,7 @@ function chunkByBytes(
   let currentBytes = 0;
   let startIndex = 0;
   for (let i = 0; i < docs.length; i++) {
-    const itemBytes = docs[i].text.length;
+    const itemBytes = utf8Bytes(docs[i].text);
     if (
       current.length > 0 &&
       (currentBytes + itemBytes > MAX_CHUNK_BYTES ||
@@ -155,11 +167,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       setAnalysis(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
-      if (
-        msg.includes("Body exceeded") ||
-        msg.includes("413") ||
-        msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
-      ) {
+      if (isPayloadTooLarge(msg)) {
         toast.error(
           "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores."
         );
@@ -177,6 +185,17 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
     const docs = buildDocs();
     if (docs.length === 0) {
       toast.error("Nenhum documento válido encontrado");
+      return;
+    }
+
+    // Fail early if a single doc exceeds the per-chunk byte budget — chunking can't rescue it.
+    const oversizeIdx = docs.findIndex((d) => utf8Bytes(d.text) > MAX_CHUNK_BYTES);
+    if (oversizeIdx !== -1) {
+      const sizeMb = (utf8Bytes(docs[oversizeIdx].text) / 1_000_000).toFixed(2);
+      const limitMb = (MAX_CHUNK_BYTES / 1_000_000).toFixed(1);
+      toast.error(
+        `Documento na linha ${oversizeIdx + 1} tem ${sizeMb} MB, acima do limite de ${limitMb} MB por documento. Remova-o ou divida o texto antes de importar.`
+      );
       return;
     }
 
@@ -223,11 +242,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
-      if (
-        msg.includes("Body exceeded") ||
-        msg.includes("413") ||
-        msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
-      ) {
+      if (isPayloadTooLarge(msg)) {
         toast.error(
           "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores."
         );
