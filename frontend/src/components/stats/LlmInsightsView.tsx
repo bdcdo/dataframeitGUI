@@ -25,18 +25,20 @@ import {
 import { markLlmEquivalent } from "@/actions/equivalences";
 import { toast } from "sonner";
 import type { PydanticField } from "@/lib/types";
-import type { LlmError } from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
+import type {
+  LlmError,
+  ReviewedEntry,
+} from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
 
 interface LlmInsightsViewProps {
   projectId: string;
   errors: LlmError[];
+  reviewedEntries: ReviewedEntry[];
   fields: { name: string; description: string }[];
   allFields?: PydanticField[];
   isCoordinator?: boolean;
   summary: {
     totalLlmDocs: number;
-    totalErrors: number;
-    errorRate: number;
     unreviewedLlmDocs?: number;
   };
 }
@@ -65,6 +67,7 @@ function compareSemverDesc(a: string, b: string): number {
 export function LlmInsightsView({
   projectId,
   errors,
+  reviewedEntries,
   fields,
   allFields,
   isCoordinator,
@@ -92,11 +95,13 @@ export function LlmInsightsView({
     return () => clearInterval(id);
   }, []);
 
+  // Derived from the full reviewed population so a version with 0 errors is
+  // still selectable — useful for "0% rate" sanity checks.
   const availableVersions = useMemo(() => {
     const set = new Set<string>();
-    for (const e of errors) if (e.schemaVersion) set.add(e.schemaVersion);
+    for (const r of reviewedEntries) if (r.schemaVersion) set.add(r.schemaVersion);
     return [...set].sort(compareSemverDesc);
-  }, [errors]);
+  }, [reviewedEntries]);
 
   // Derive the effective version filter: if the selected version is no
   // longer present (status filter toggled, all errors of that version
@@ -110,9 +115,16 @@ export function LlmInsightsView({
   const sinceMs = errorSinceDate
     ? new Date(errorSinceDate + "T00:00:00").getTime()
     : presetCutoffMs(errorDateFilter, now);
-  const filteredErrors = errors.filter((e) => {
-    if (errorStatusFilter === "open" && e.resolvedAt) return false;
-    if (errorStatusFilter === "resolved" && !e.resolvedAt) return false;
+
+  // Scope filters affect both numerator and denominator (so the rate matches
+  // the population the user is looking at). Status only affects which errors
+  // the user wants to see in the list and in the card.
+  const matchesScopeFilters = (e: {
+    fieldName: string;
+    documentTitle: string;
+    reviewedAt: string;
+    schemaVersion: string | null;
+  }): boolean => {
     if (errorFieldFilter !== "all" && e.fieldName !== errorFieldFilter)
       return false;
     if (
@@ -129,7 +141,22 @@ export function LlmInsightsView({
     )
       return false;
     return true;
+  };
+
+  const filteredReviewed = reviewedEntries.filter(matchesScopeFilters);
+
+  const filteredErrors = errors.filter((e) => {
+    if (errorStatusFilter === "open" && e.resolvedAt) return false;
+    if (errorStatusFilter === "resolved" && !e.resolvedAt) return false;
+    return matchesScopeFilters(e);
   });
+
+  // Rate uses the same numerator shown in the card (so the two are always
+  // consistent) over the scope-filtered reviewed population.
+  const filteredErrorRate =
+    filteredReviewed.length > 0
+      ? Math.round((filteredErrors.length / filteredReviewed.length) * 100)
+      : 0;
 
   const sortedErrors = (() => {
     if (sortBy === "default") return filteredErrors;
@@ -150,7 +177,10 @@ export function LlmInsightsView({
     return arr;
   })();
 
-  const openErrorCount = errors.filter((e) => !e.resolvedAt).length;
+  // Counted within the current scope so the badge matches the cards.
+  const openErrorCount = errors.filter(
+    (e) => !e.resolvedAt && matchesScopeFilters(e),
+  ).length;
 
   // Error handlers
   const handleResolveError = (documentId: string, fieldName: string) => {
@@ -218,7 +248,7 @@ export function LlmInsightsView({
             <AlertTriangle className="h-5 w-5 text-red-500" />
             <div>
               <p className="text-2xl font-bold tabular-nums">
-                {summary.totalErrors}
+                {filteredErrors.length}
               </p>
               <p className="text-xs text-muted-foreground">
                 Campos incorretos
@@ -229,7 +259,7 @@ export function LlmInsightsView({
         <Card>
           <CardContent className="pt-6 text-center">
             <p className="text-2xl font-bold tabular-nums">
-              {summary.errorRate}%
+              {filteredErrorRate}%
             </p>
             <p className="text-xs text-muted-foreground">Taxa de erro</p>
           </CardContent>
