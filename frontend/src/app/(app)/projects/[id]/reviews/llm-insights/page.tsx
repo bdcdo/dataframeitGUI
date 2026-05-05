@@ -22,6 +22,18 @@ export interface LlmError {
   chosenResponseId: string | null;
 }
 
+// Every reviewed (doc, field) pair the LLM also answered, after applying the
+// same hidden/equivalent/same-content suppressions used to build `errors`.
+// Used client-side as the denominator so the error rate respects active filters.
+export interface ReviewedEntry {
+  documentId: string;
+  documentTitle: string;
+  fieldName: string;
+  schemaVersion: string | null;
+  reviewedAt: string;
+  isError: boolean;
+}
+
 export default async function LlmInsightsPage({
   params,
 }: {
@@ -133,9 +145,11 @@ export default async function LlmInsightsPage({
     equivPairSet.add(`${p.document_id}:${p.field_name}:${a}|${b}`);
   });
 
-  // Compute LLM errors
+  // Compute LLM errors and the parallel list of every reviewed (doc, field)
+  // entry that survived the same suppressions. The client uses
+  // `reviewedEntries` as the denominator so the rate matches the filtered card.
   const errors: LlmError[] = [];
-  let llmFieldsReviewed = 0;
+  const reviewedEntries: ReviewedEntry[] = [];
 
   reviews?.forEach((review) => {
     const llmResp = llmByDoc.get(review.document_id);
@@ -147,52 +161,57 @@ export default async function LlmInsightsPage({
     // them from the review surface — past reviews would otherwise leak.
     if (!field || field.target === "none" || field.target === "llm_only") return;
 
-    llmFieldsReviewed++;
+    let isError = false;
     if (review.chosen_response_id !== llmResp.id) {
       const llmAnswer = llmResp.answers?.[review.field_name];
-      // Skip if the LLM answer matches the chosen verdict (same content, different responder)
-      if (
+      const sameContent =
         normalizeForComparison(llmAnswer) ===
-        normalizeForComparison(review.verdict)
-      )
-        return;
+        normalizeForComparison(review.verdict);
 
-      // Suppress if LLM response and chosen response were already marked equivalent.
+      let markedEquivalent = false;
       if (review.chosen_response_id) {
         const [a, b] = canonicalPair(llmResp.id, review.chosen_response_id);
-        if (equivPairSet.has(`${review.document_id}:${review.field_name}:${a}|${b}`))
-          return;
+        markedEquivalent = equivPairSet.has(
+          `${review.document_id}:${review.field_name}:${a}|${b}`,
+        );
       }
 
-      errors.push({
-        documentId: review.document_id,
-        documentTitle: docMap.get(review.document_id) || review.document_id,
-        fieldName: review.field_name,
-        fieldDescription:
-          fieldDescMap.get(review.field_name) || review.field_name,
-        llmAnswer: formatAnswer(llmAnswer),
-        llmJustification:
-          llmResp.justifications?.[review.field_name] || null,
-        chosenVerdict: review.verdict,
-        reviewerComment: review.comment,
-        resolvedAt:
-          errorResolvedMap.get(
-            `${review.document_id}:${review.field_name}`,
-          ) || null,
-        reviewedAt: review.created_at,
-        schemaVersion: llmResp.schemaVersion,
-        llmResponseId: llmResp.id,
-        chosenResponseId: review.chosen_response_id,
-      });
+      if (!sameContent && !markedEquivalent) {
+        isError = true;
+        errors.push({
+          documentId: review.document_id,
+          documentTitle: docMap.get(review.document_id) || review.document_id,
+          fieldName: review.field_name,
+          fieldDescription:
+            fieldDescMap.get(review.field_name) || review.field_name,
+          llmAnswer: formatAnswer(llmAnswer),
+          llmJustification:
+            llmResp.justifications?.[review.field_name] || null,
+          chosenVerdict: review.verdict,
+          reviewerComment: review.comment,
+          resolvedAt:
+            errorResolvedMap.get(
+              `${review.document_id}:${review.field_name}`,
+            ) || null,
+          reviewedAt: review.created_at,
+          schemaVersion: llmResp.schemaVersion,
+          llmResponseId: llmResp.id,
+          chosenResponseId: review.chosen_response_id,
+        });
+      }
     }
+
+    reviewedEntries.push({
+      documentId: review.document_id,
+      documentTitle: docMap.get(review.document_id) || review.document_id,
+      fieldName: review.field_name,
+      schemaVersion: llmResp.schemaVersion,
+      reviewedAt: review.created_at,
+      isError,
+    });
   });
 
   const totalLlmDocs = llmByDoc.size;
-  const totalErrors = errors.length;
-  const errorRate =
-    llmFieldsReviewed > 0
-      ? Math.round((totalErrors / llmFieldsReviewed) * 100)
-      : 0;
 
   const reviewedDocIds = new Set(reviews?.map((r) => r.document_id) || []);
   const unreviewedLlmDocs = [...llmByDoc.keys()].filter((id) => !reviewedDocIds.has(id)).length;
@@ -207,10 +226,11 @@ export default async function LlmInsightsPage({
       <LlmInsightsView
         projectId={id}
         errors={errors}
+        reviewedEntries={reviewedEntries}
         fields={visibleFields}
         allFields={allFields}
         isCoordinator={isCoordinator}
-        summary={{ totalLlmDocs, totalErrors, errorRate, unreviewedLlmDocs }}
+        summary={{ totalLlmDocs, unreviewedLlmDocs }}
       />
     </div>
   );
