@@ -132,6 +132,7 @@ export async function markLlmEquivalent(
 
   revalidatePath(`/projects/${projectId}/reviews/llm-insights`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
+  revalidatePath(`/projects/${projectId}/analyze/assignments`);
 }
 
 // Removes a single equivalence pair. Also clears the current reviewer's

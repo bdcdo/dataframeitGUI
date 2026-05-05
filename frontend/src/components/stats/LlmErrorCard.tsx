@@ -12,22 +12,7 @@ import {
   Equal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-interface LlmError {
-  documentId: string;
-  documentTitle: string;
-  fieldName: string;
-  fieldDescription: string;
-  llmAnswer: string;
-  llmJustification: string | null;
-  chosenVerdict: string;
-  reviewerComment: string | null;
-  resolvedAt: string | null;
-  reviewedAt: string;
-  schemaVersion: string | null;
-  llmResponseId: string;
-  chosenResponseId: string | null;
-}
+import type { LlmError } from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
 
 interface LlmErrorCardProps {
   error: LlmError;
