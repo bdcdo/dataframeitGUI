@@ -13,11 +13,8 @@ import {
 } from "@/components/ui/select";
 import type { LlmResponseRecord, LlmRunRecord } from "@/actions/llm";
 import { formatModelLabel } from "@/lib/model-registry";
-import {
-  LlmResponseRow,
-  classifyResponse,
-  type ResponseStatus,
-} from "./LlmResponseRow";
+import { LlmResponseRow } from "./LlmResponseRow";
+import { classifyResponse, type ResponseStatus } from "./classify";
 
 type StatusFilter = "all" | ResponseStatus;
 

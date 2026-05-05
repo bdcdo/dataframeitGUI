@@ -151,6 +151,11 @@ def mark_stale_runs_as_error(sb, project_id: str) -> int:
         "reiniciou ou a máquina hibernou)."
     )
     # PostgREST .or_ syntax: separa termos por vírgula; agrupa com and(...).
+    # Assunção: timestamps de datetime.isoformat() não contêm vírgulas nem
+    # parênteses — caracteres reservados pela sintaxe da .or_(). Hoje verdade
+    # (ISO-8601 usa apenas dígitos, "-", "T", ":", "."), mas se algum dia for
+    # migrado para um formato que possa conter esses chars, será preciso usar
+    # .or_("...", reference_table=...) ou escapar adequadamente.
     or_clause = (
         f"heartbeat_at.lt.{heartbeat_cutoff_iso},"
         f"and(heartbeat_at.is.null,started_at.lt.{started_cutoff_iso})"
@@ -293,6 +298,14 @@ def _extract_answers_from_row(row, model_class) -> tuple[dict, dict]:
 
     Filtra NaN explicitamente — sem isso, rows que dataframeit marcou como
     erro (que vêm com NaN nos campos) entrariam em `answers` como "preenchido".
+
+    Tipos: listas são preservadas como listas (o JSONB da coluna `answers`
+    aceita arrays); todos os outros tipos primitivos (int, bool, float, etc.)
+    são convertidos para `str` via `str(val)`. Isso é intencional — o frontend
+    (`formatValue` em LlmResponseRow.tsx) e o pipeline de comparação tratam
+    answers como strings, então normalizar aqui evita ramos especiais
+    downstream. Se algum dia precisar do tipo original, será preciso revisitar
+    LlmResponseRow + classify.ts em conjunto.
     """
     answers: dict = {}
     justifications: dict = {}

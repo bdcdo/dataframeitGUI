@@ -1,0 +1,26 @@
+name: Deploy backend (Fly.io)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/fly-deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: fly-deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: flyctl deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pin a SHA (tag 1.5) por supply-chain safety — @master é floating ref.
+      - uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be
+      - run: flyctl deploy --remote-only -a gui-analise-sistematica-api
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

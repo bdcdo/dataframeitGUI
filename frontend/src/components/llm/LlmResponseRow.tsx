@@ -12,9 +12,6 @@ import type { LlmResponseRecord } from "@/actions/llm";
 import { formatModelLabel } from "@/lib/model-registry";
 import { classifyResponse, type ResponseStatus } from "./classify";
 
-export { classifyResponse };
-export type { ResponseStatus };
-
 function StatusBadge({ status }: { status: ResponseStatus }) {
   if (status === "complete")
     return (
