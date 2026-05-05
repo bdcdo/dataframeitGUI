@@ -95,7 +95,20 @@ export function isAnswerCorrect(
 export function formatAnswer(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
-  if (Array.isArray(val)) return val.join(", ");
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (Array.isArray(val)) {
+    return val
+      .map((v) => formatAnswer(v))
+      .filter((s) => s !== "")
+      .join(", ");
+  }
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    const parts = Object.entries(obj)
+      .filter(([, v]) => v != null && v !== "")
+      .map(([k, v]) => `${k}: ${formatAnswer(v)}`);
+    return parts.join("; ");
+  }
   return String(val);
 }
 
