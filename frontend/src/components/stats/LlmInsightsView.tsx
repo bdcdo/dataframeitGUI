@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useTransition } from "react";
+import { useState, useMemo, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,20 +22,10 @@ import {
   resolveError,
   reopenError,
 } from "@/actions/stats";
+import { markLlmEquivalent } from "@/actions/equivalences";
 import { toast } from "sonner";
 import type { PydanticField } from "@/lib/types";
-
-interface LlmError {
-  documentId: string;
-  documentTitle: string;
-  fieldName: string;
-  fieldDescription: string;
-  llmAnswer: string;
-  llmJustification: string | null;
-  chosenVerdict: string;
-  reviewerComment: string | null;
-  resolvedAt: string | null;
-}
+import type { LlmError } from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
 
 interface LlmInsightsViewProps {
   projectId: string;
@@ -49,6 +39,27 @@ interface LlmInsightsViewProps {
     errorRate: number;
     unreviewedLlmDocs?: number;
   };
+}
+
+type DatePreset = "all" | "24h" | "7d" | "30d";
+type SortBy = "default" | "field" | "document" | "recent";
+
+function presetCutoffMs(preset: DatePreset, now: number): number | null {
+  if (preset === "24h") return now - 24 * 3600_000;
+  if (preset === "7d") return now - 7 * 24 * 3600_000;
+  if (preset === "30d") return now - 30 * 24 * 3600_000;
+  return null;
+}
+
+function compareSemverDesc(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da !== db) return db - da;
+  }
+  return 0;
 }
 
 export function LlmInsightsView({
@@ -67,23 +78,77 @@ export function LlmInsightsView({
   const [errorFieldFilter, setErrorFieldFilter] = useState("all");
   const [errorSearchQuery, setErrorSearchQuery] = useState("");
   const [errorStatusFilter, setErrorStatusFilter] = useState("open");
+  const [errorDateFilter, setErrorDateFilter] = useState<DatePreset>("all");
+  const [errorSinceDate, setErrorSinceDate] = useState("");
+  const [errorVersionFilter, setErrorVersionFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<SortBy>("default");
 
-  const filteredErrors = useMemo(() => {
-    return errors.filter((e) => {
-      if (errorStatusFilter === "open" && e.resolvedAt) return false;
-      if (errorStatusFilter === "resolved" && !e.resolvedAt) return false;
-      if (errorFieldFilter !== "all" && e.fieldName !== errorFieldFilter)
-        return false;
-      if (
-        errorSearchQuery &&
-        !e.documentTitle
-          .toLowerCase()
-          .includes(errorSearchQuery.toLowerCase())
-      )
-        return false;
-      return true;
-    });
-  }, [errors, errorFieldFilter, errorSearchQuery, errorStatusFilter]);
+  // Tick the "now" reference once a minute so the "Últimas 24h/7d/30d"
+  // cutoff doesn't freeze on long-open pages. State (rather than a raw
+  // Date.now() in render) keeps the component pure per React rules.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const availableVersions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of errors) if (e.schemaVersion) set.add(e.schemaVersion);
+    return [...set].sort(compareSemverDesc);
+  }, [errors]);
+
+  // Derive the effective version filter: if the selected version is no
+  // longer present (status filter toggled, all errors of that version
+  // resolved, etc.) treat it as "all" instead of letting the stale value
+  // zero out the list with no UI to fix it. Derivation in render avoids
+  // a setState-in-effect cascade.
+  const effectiveVersionFilter = availableVersions.includes(errorVersionFilter)
+    ? errorVersionFilter
+    : "all";
+
+  const sinceMs = errorSinceDate
+    ? new Date(errorSinceDate + "T00:00:00").getTime()
+    : presetCutoffMs(errorDateFilter, now);
+  const filteredErrors = errors.filter((e) => {
+    if (errorStatusFilter === "open" && e.resolvedAt) return false;
+    if (errorStatusFilter === "resolved" && !e.resolvedAt) return false;
+    if (errorFieldFilter !== "all" && e.fieldName !== errorFieldFilter)
+      return false;
+    if (
+      errorSearchQuery &&
+      !e.documentTitle
+        .toLowerCase()
+        .includes(errorSearchQuery.toLowerCase())
+    )
+      return false;
+    if (sinceMs && new Date(e.reviewedAt).getTime() < sinceMs) return false;
+    if (
+      effectiveVersionFilter !== "all" &&
+      e.schemaVersion !== effectiveVersionFilter
+    )
+      return false;
+    return true;
+  });
+
+  const sortedErrors = (() => {
+    if (sortBy === "default") return filteredErrors;
+    const arr = [...filteredErrors];
+    if (sortBy === "field") {
+      arr.sort((a, b) => {
+        const fa = a.fieldDescription.localeCompare(b.fieldDescription, "pt-BR");
+        if (fa !== 0) return fa;
+        return a.documentTitle.localeCompare(b.documentTitle, "pt-BR");
+      });
+    } else if (sortBy === "document") {
+      arr.sort((a, b) =>
+        a.documentTitle.localeCompare(b.documentTitle, "pt-BR"),
+      );
+    } else if (sortBy === "recent") {
+      arr.sort((a, b) => b.reviewedAt.localeCompare(a.reviewedAt));
+    }
+    return arr;
+  })();
 
   const openErrorCount = errors.filter((e) => !e.resolvedAt).length;
 
@@ -108,6 +173,25 @@ export function LlmInsightsView({
       } else {
         toast.success("Erro reaberto");
         router.refresh();
+      }
+    });
+  };
+
+  const handleMarkEquivalent = (e: LlmError) => {
+    if (!e.chosenResponseId) return;
+    startTransition(async () => {
+      try {
+        await markLlmEquivalent(
+          projectId,
+          e.documentId,
+          e.fieldName,
+          e.llmResponseId,
+          e.chosenResponseId!,
+        );
+        toast.success("Respostas marcadas como equivalentes");
+        router.refresh();
+      } catch (err) {
+        toast.error((err as Error).message);
       }
     });
   };
@@ -189,8 +273,64 @@ export function LlmInsightsView({
             <SelectItem value="all">Todos</SelectItem>
           </SelectContent>
         </Select>
+        <Select
+          value={errorDateFilter}
+          onValueChange={(v) => {
+            setErrorDateFilter(v as DatePreset);
+            setErrorSinceDate("");
+          }}
+        >
+          <SelectTrigger className="w-36" title="Data de criação da revisão">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Qualquer data</SelectItem>
+            <SelectItem value="24h">Últimas 24h</SelectItem>
+            <SelectItem value="7d">Últimos 7 dias</SelectItem>
+            <SelectItem value="30d">Últimos 30 dias</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          type="date"
+          value={errorSinceDate}
+          onChange={(e) => {
+            setErrorSinceDate(e.target.value);
+            if (e.target.value) setErrorDateFilter("all");
+          }}
+          className="w-40"
+          title="Apenas revisões criadas a partir desta data"
+        />
+        {availableVersions.length > 0 && (
+          <Select
+            value={effectiveVersionFilter}
+            onValueChange={setErrorVersionFilter}
+          >
+            <SelectTrigger className="w-36" title="Versão do schema">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as versões</SelectItem>
+              {availableVersions.map((v) => (
+                <SelectItem key={v} value={v}>
+                  v{v}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortBy)}>
+          <SelectTrigger className="w-44" title="Ordenar por">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="default">Ordem padrão</SelectItem>
+            <SelectItem value="field">Por pergunta (A→Z)</SelectItem>
+            <SelectItem value="document">Por documento (A→Z)</SelectItem>
+            <SelectItem value="recent">Mais recentes primeiro</SelectItem>
+          </SelectContent>
+        </Select>
         <span className="ml-auto text-sm text-muted-foreground">
-          {filteredErrors.length} erro{filteredErrors.length !== 1 ? "s" : ""}
+          {sortedErrors.length} erro{sortedErrors.length !== 1 ? "s" : ""}
           {openErrorCount > 0 && (
             <Badge variant="destructive" className="ml-1.5">
               {openErrorCount} aberto{openErrorCount !== 1 ? "s" : ""}
@@ -199,7 +339,7 @@ export function LlmInsightsView({
         </span>
       </div>
 
-      {filteredErrors.length === 0 ? (
+      {sortedErrors.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
           {errors.length === 0
             ? "Nenhum erro do LLM encontrado."
@@ -207,7 +347,7 @@ export function LlmInsightsView({
         </p>
       ) : (
         <div className="space-y-3">
-          {filteredErrors.map((e, i) => (
+          {sortedErrors.map((e, i) => (
             <LlmErrorCard
               key={`${e.documentId}-${e.fieldName}-${i}`}
               error={e}
@@ -217,6 +357,7 @@ export function LlmInsightsView({
               onResolve={() => handleResolveError(e.documentId, e.fieldName)}
               onReopen={() => handleReopenError(e.documentId, e.fieldName)}
               onEditField={() => setEditingField(e.fieldName)}
+              onMarkEquivalent={() => handleMarkEquivalent(e)}
             />
           ))}
         </div>

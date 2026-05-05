@@ -91,6 +91,50 @@ export async function confirmEquivalentVerdict(
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
 }
 
+// Lightweight variant for the "Erros LLM" tab: registers that the LLM
+// response and the reviewer-chosen response are equivalent, without
+// touching the existing review row (the verdict already points to
+// `chosenResponseId` and remains valid). The page recomputes errors and
+// suppresses entries whose LLM↔chosen pair is in `response_equivalences`.
+export async function markLlmEquivalent(
+  projectId: string,
+  documentId: string,
+  fieldName: string,
+  llmResponseId: string,
+  chosenResponseId: string,
+) {
+  if (llmResponseId === chosenResponseId) {
+    throw new Error("Respostas já são as mesmas.");
+  }
+
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
+  const supabase = await createSupabaseServer();
+  const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
+
+  const { error } = await supabase.from("response_equivalences").upsert(
+    {
+      project_id: projectId,
+      document_id: documentId,
+      field_name: fieldName,
+      response_a_id: a,
+      response_b_id: b,
+      reviewer_id: user.id,
+    },
+    {
+      onConflict:
+        "project_id,document_id,field_name,response_a_id,response_b_id",
+      ignoreDuplicates: true,
+    },
+  );
+  if (error) throw new Error(error.message);
+
+  revalidatePath(`/projects/${projectId}/reviews/llm-insights`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
+  revalidatePath(`/projects/${projectId}/analyze/assignments`);
+}
+
 // Removes a single equivalence pair. Also clears the current reviewer's
 // verdict for the affected (doc, field), since the previously chosen
 // gabarito no longer represents a fused group — forcing a fresh vote.
