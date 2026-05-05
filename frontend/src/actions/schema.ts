@@ -30,13 +30,6 @@ export async function saveSchema(
   const supabase = await createSupabaseServer();
   const hash = crypto.createHash("sha256").update(code).digest("hex").slice(0, 16);
 
-  // Fetch previous schema (hash + fields with per-field hashes)
-  const { data: project } = await supabase
-    .from("projects")
-    .select("pydantic_hash, pydantic_fields")
-    .eq("id", projectId)
-    .single();
-
   const updatePayload: Record<string, unknown> = {
     pydantic_code: code,
     pydantic_hash: hash,
@@ -55,18 +48,10 @@ export async function saveSchema(
 
   if (error) throw new Error(error.message);
 
-  // Invalidate old LLM responses if hash changed
-  if (project?.pydantic_hash && project.pydantic_hash !== hash) {
-    await supabase
-      .from("responses")
-      .update({ is_current: false })
-      .eq("project_id", projectId)
-      .eq("respondent_type", "llm")
-      .neq("pydantic_hash", hash);
-  }
-
-  // Human answers are no longer deleted when fields change.
-  // Staleness is detected at display time via answer_field_hashes.
+  // is_current não é flipado para false aqui — staleness é detectada no
+  // display via answer_field_hashes (lib/reviews/queries.ts:isFieldStale).
+  // Caso contrário, ajustar schema durante uma revisão de erros LLM apaga as
+  // respostas antigas e perde o contexto da investigação. Ver #85.
 
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
