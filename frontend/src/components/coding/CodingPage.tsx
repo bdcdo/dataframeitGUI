@@ -17,11 +17,21 @@ import { FullscreenNav } from "./FullscreenNav";
 import { saveResponse } from "@/actions/responses";
 import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
 import type { BrowseDocument } from "@/actions/documents";
-import type { PydanticField, Document, Assignment } from "@/lib/types";
+import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
+import { RoundFilter } from "./RoundFilter";
 import { toast } from "sonner";
 import { CheckCircle2, FileQuestion, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+export interface RoundFilterData {
+  strategy: RoundStrategy;
+  currentRoundKey: string;
+  currentRoundLabel: string;
+  rounds: Round[];
+  previousVersions: string[];
+  selected: string;
+}
 
 interface CodingPageProps {
   projectId: string;
@@ -32,6 +42,7 @@ interface CodingPageProps {
   hasAssignments?: boolean;
   progress?: ProgressBannerData | null;
   readOnly?: boolean;
+  roundFilter?: RoundFilterData;
 }
 
 export function CodingPage({
@@ -43,6 +54,7 @@ export function CodingPage({
   hasAssignments = false,
   progress = null,
   readOnly = false,
+  roundFilter,
 }: CodingPageProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -412,6 +424,16 @@ export function CodingPage({
               </TabsList>
             </div>
           </Tabs>
+          {mode === "assigned" && roundFilter && (
+            <RoundFilter
+              strategy={roundFilter.strategy}
+              currentRoundKey={roundFilter.currentRoundKey}
+              currentRoundLabel={roundFilter.currentRoundLabel}
+              rounds={roundFilter.rounds}
+              previousVersions={roundFilter.previousVersions}
+              selected={roundFilter.selected}
+            />
+          )}
           {progress && mode === "assigned" && <ProgressBanner data={progress} />}
         </>
       )}
@@ -440,9 +462,25 @@ export function CodingPage({
           ) : !currentDoc ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
               <ClipboardList className="h-10 w-10 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">
-                Nenhum documento atribuído. Use a aba Explorar.
-              </p>
+              {hasAssignments && roundFilter ? (
+                roundFilter.selected === "all" ? (
+                  <p className="text-sm text-muted-foreground">
+                    Nenhum documento corresponde ao filtro.
+                  </p>
+                ) : roundFilter.selected === "" || roundFilter.selected === "current" ? (
+                  <p className="text-sm text-muted-foreground">
+                    Tudo em dia na rodada atual ({roundFilter.currentRoundLabel}).
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Nenhuma resposta sua nessa rodada.
+                  </p>
+                )
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Nenhum documento atribuído. Use a aba Explorar.
+                </p>
+              )}
             </div>
           ) : (
             <>

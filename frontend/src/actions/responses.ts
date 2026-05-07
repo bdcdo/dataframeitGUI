@@ -36,7 +36,7 @@ export async function saveResponse(
       supabase
         .from("projects")
         .select(
-          "pydantic_hash, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+          "pydantic_hash, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, round_strategy, current_round_id",
         )
         .eq("id", projectId)
         .single(),
@@ -67,6 +67,11 @@ export async function saveResponse(
       }
     }
 
+    const roundIdToPersist =
+      project?.round_strategy === "manual"
+        ? (project?.current_round_id ?? null)
+        : null;
+
     const responsePayload = {
       answers: sanitizedAnswers,
       justifications,
@@ -76,6 +81,7 @@ export async function saveResponse(
       schema_version_minor: project?.schema_version_minor ?? 1,
       schema_version_patch: project?.schema_version_patch ?? 0,
       version_inferred_from: "live_save",
+      round_id: roundIdToPersist,
     };
 
     if (existing) {

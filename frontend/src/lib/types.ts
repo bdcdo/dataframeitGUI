@@ -6,6 +6,15 @@ export interface Profile {
   created_at: string;
 }
 
+export type RoundStrategy = "schema_version" | "manual";
+
+export interface Round {
+  id: string;
+  project_id: string;
+  label: string;
+  created_at: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -22,6 +31,8 @@ export interface Project {
   resolution_rule: string;
   min_responses_for_comparison: number;
   allow_researcher_review: boolean;
+  round_strategy: RoundStrategy;
+  current_round_id: string | null;
 }
 
 export interface SubfieldDef {
