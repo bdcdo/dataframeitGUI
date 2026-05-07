@@ -186,6 +186,7 @@ function DateFieldRenderer({
               value={day}
               onChange={(e) => handlePart("day", e.target.value)}
               onBlur={() => handleBlur("day")}
+              onFocus={(e) => e.currentTarget.select()}
               maxLength={2}
               inputMode="numeric"
               aria-label="Dia"
@@ -199,6 +200,7 @@ function DateFieldRenderer({
               value={month}
               onChange={(e) => handlePart("month", e.target.value)}
               onBlur={() => handleBlur("month")}
+              onFocus={(e) => e.currentTarget.select()}
               onKeyDown={(e) => handleBackspaceJump(e, dayRef)}
               maxLength={2}
               inputMode="numeric"
@@ -212,6 +214,7 @@ function DateFieldRenderer({
               placeholder="AAAA"
               value={year}
               onChange={(e) => handlePart("year", e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
               onKeyDown={(e) => handleBackspaceJump(e, monthRef)}
               maxLength={4}
               inputMode="numeric"
