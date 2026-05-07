@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PydanticField } from "@/lib/types";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -78,6 +78,11 @@ function DateFieldRenderer({
   const dayRef = useRef<HTMLInputElement>(null);
   const monthRef = useRef<HTMLInputElement>(null);
   const yearRef = useRef<HTMLInputElement>(null);
+  // Defer focus() to a post-commit effect. If we focus()ed synchronously inside
+  // handlePart, the resulting onBlur would fire before our setParts had been
+  // applied — handleBlur would then read stale parts ("1" instead of "12"),
+  // pad to "01", and queue a setParts that overwrites our just-typed value.
+  const pendingFocusRef = useRef<"month" | "year" | null>(null);
 
   const handlePart = (part: DatePartName, raw: string) => {
     const maxLen = part === "year" ? 4 : 2;
@@ -94,10 +99,18 @@ function DateFieldRenderer({
     // border and can correct; once back in range, onChange resumes.
     if (arePartsValid(next)) {
       onChange(buildDateValue(...next));
-      if (part === "day" && v.length === 2) monthRef.current?.focus();
-      if (part === "month" && v.length === 2) yearRef.current?.focus();
+      if (part === "day" && v.length === 2) pendingFocusRef.current = "month";
+      else if (part === "month" && v.length === 2) pendingFocusRef.current = "year";
     }
   };
+
+  useEffect(() => {
+    const target = pendingFocusRef.current;
+    if (!target) return;
+    pendingFocusRef.current = null;
+    if (target === "month") monthRef.current?.focus();
+    else if (target === "year") yearRef.current?.focus();
+  }, [parts]);
 
   const handleBackspaceJump = (
     e: React.KeyboardEvent<HTMLInputElement>,
