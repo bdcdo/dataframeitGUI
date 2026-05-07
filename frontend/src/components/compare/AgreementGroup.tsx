@@ -5,6 +5,7 @@ import { AnswerCard, type EquivalentVariant } from "./AnswerCard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { normalizeForComparison } from "@/lib/utils";
+import { formatPartialDate } from "@/lib/date-parts";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
 import { Link2 } from "lucide-react";
 
@@ -58,7 +59,7 @@ interface AgreementGroupProps {
 
 function formatAnswer(answer: unknown): string {
   if (answer == null) return "";
-  if (typeof answer === "string") return answer.trim();
+  if (typeof answer === "string") return formatPartialDate(answer.trim());
   if (Array.isArray(answer))
     return answer.map((v) => (typeof v === "string" ? v.trim() : v)).join(", ");
   if (typeof answer === "object") {

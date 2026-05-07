@@ -13,6 +13,15 @@ import {
 } from "@/components/ui/tooltip";
 import { Check, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  arePartsValid,
+  buildDateValue,
+  type DateParts,
+  type DatePartName,
+  isPartOutOfRange,
+  padDatePart,
+  parseDatePartsForUI,
+} from "@/lib/date-parts";
 
 interface FieldRendererProps {
   field: PydanticField;
@@ -25,19 +34,6 @@ export const OTHER_PREFIX = "Outro: ";
 const isOtherValue = (v: unknown): v is string =>
   typeof v === "string" && v.startsWith(OTHER_PREFIX);
 const otherText = (v: string) => v.slice(OTHER_PREFIX.length);
-
-function parseDatePartsForUI(val: string): [string, string, string] {
-  if (!val || val === NOT_INFORMED) return ["", "", ""];
-  const parts = val.split("/");
-  if (parts.length !== 3) return ["", "", ""];
-  const normalize = (p: string) => (/^X+$/i.test(p) ? "" : p);
-  return [normalize(parts[0]), normalize(parts[1]), normalize(parts[2])];
-}
-
-function buildDateValue(day: string, month: string, year: string): string {
-  if (!day && !month && !year) return "";
-  return `${day || "XX"}/${month || "XX"}/${year || "XXXX"}`;
-}
 
 function DateFieldRenderer({
   value,
@@ -54,15 +50,23 @@ function DateFieldRenderer({
   const isSentinelActive = Boolean(activeSentinel) || isNotInformed;
 
   const externalForUI = isSentinelActive ? "" : value;
-  const [parts, setParts] = useState<[string, string, string]>(() =>
+  const [parts, setParts] = useState<DateParts>(() =>
     parseDatePartsForUI(externalForUI),
   );
   const [lastExternal, setLastExternal] = useState(externalForUI);
 
-  // Resync local state during render when `value` changes externally
-  // (switching responses, sentinel toggled). During local edits, onChange
-  // echoes back the same value, so externalForUI matches buildDateValue(parts)
-  // and we skip — otherwise we'd clobber an in-progress empty slot.
+  // React's official "Storing information from previous renders" pattern
+  // (https://react.dev/reference/react/useState#storing-information-from-previous-renders).
+  // We need local state for `parts` so the user's typed digits don't get
+  // clobbered before the parent's value prop catches up. But when the prop
+  // changes for an external reason (switching response, sentinel toggled,
+  // parent reset), we must resync. Two cases when `externalForUI` differs
+  // from the value we last saw:
+  //   (a) external change: parts no longer match externalForUI → reparse.
+  //   (b) echo of our own edit: parts already match externalForUI via
+  //       buildDateValue → only update lastExternal, leave parts alone
+  //       (otherwise we'd reparse "1/XX/XXXX" → ["1","",""] mid-typing
+  //       and lose any in-progress empty slot semantics).
   if (externalForUI !== lastExternal) {
     setLastExternal(externalForUI);
     if (externalForUI !== buildDateValue(...parts)) {
@@ -75,31 +79,44 @@ function DateFieldRenderer({
   const monthRef = useRef<HTMLInputElement>(null);
   const yearRef = useRef<HTMLInputElement>(null);
 
-  const handlePart = (part: "day" | "month" | "year", raw: string) => {
+  const handlePart = (part: DatePartName, raw: string) => {
     const maxLen = part === "year" ? 4 : 2;
     const v = raw.replace(/\D/g, "").slice(0, maxLen);
 
-    const next: [string, string, string] = [
+    const next: DateParts = [
       part === "day" ? v : day,
       part === "month" ? v : month,
       part === "year" ? v : year,
     ];
     setParts(next);
-    onChange(buildDateValue(...next));
 
-    if (part === "day" && v.length === 2) monthRef.current?.focus();
-    if (part === "month" && v.length === 2) yearRef.current?.focus();
+    // Don't persist invalid values (e.g. day=32). User sees aria-invalid red
+    // border and can correct; once back in range, onChange resumes.
+    if (arePartsValid(next)) {
+      onChange(buildDateValue(...next));
+      if (part === "day" && v.length === 2) monthRef.current?.focus();
+      if (part === "month" && v.length === 2) yearRef.current?.focus();
+    }
   };
 
   const handleBackspaceJump = (
     e: React.KeyboardEvent<HTMLInputElement>,
-    target: "day" | "month",
+    previousRef: React.RefObject<HTMLInputElement | null>,
   ) => {
     if (e.key === "Backspace" && e.currentTarget.value === "") {
       e.preventDefault();
-      if (target === "day") dayRef.current?.focus();
-      if (target === "month") monthRef.current?.focus();
+      previousRef.current?.focus();
     }
+  };
+
+  const handleBlur = (part: "day" | "month") => {
+    const idx = part === "day" ? 0 : 1;
+    const padded = padDatePart(parts[idx], part);
+    if (padded === parts[idx]) return;
+    const next: DateParts = [parts[0], parts[1], parts[2]];
+    next[idx] = padded;
+    setParts(next);
+    if (arePartsValid(next)) onChange(buildDateValue(...next));
   };
 
   const handleClear = () => {
@@ -160,59 +177,72 @@ function DateFieldRenderer({
         </TooltipProvider>
       </div>
       {!isSentinelActive && (
-        <div className="flex items-center gap-1">
-          <Input
-            ref={dayRef}
-            className="w-14 text-center text-sm font-mono"
-            placeholder="DD"
-            value={day}
-            onChange={(e) => handlePart("day", e.target.value)}
-            maxLength={2}
-            inputMode="numeric"
-          />
-          <span className="text-muted-foreground">/</span>
-          <Input
-            ref={monthRef}
-            className="w-14 text-center text-sm font-mono"
-            placeholder="MM"
-            value={month}
-            onChange={(e) => handlePart("month", e.target.value)}
-            onKeyDown={(e) => handleBackspaceJump(e, "day")}
-            maxLength={2}
-            inputMode="numeric"
-          />
-          <span className="text-muted-foreground">/</span>
-          <Input
-            ref={yearRef}
-            className="w-20 text-center text-sm font-mono"
-            placeholder="AAAA"
-            value={year}
-            onChange={(e) => handlePart("year", e.target.value)}
-            onKeyDown={(e) => handleBackspaceJump(e, "month")}
-            maxLength={4}
-            inputMode="numeric"
-          />
-          {hasContent && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                    onClick={handleClear}
-                    aria-label="Limpar data"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  Limpar data
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
+        <div className="space-y-1">
+          <div className="flex items-center gap-1">
+            <Input
+              ref={dayRef}
+              className="w-14 text-center text-sm font-mono"
+              placeholder="DD"
+              value={day}
+              onChange={(e) => handlePart("day", e.target.value)}
+              onBlur={() => handleBlur("day")}
+              maxLength={2}
+              inputMode="numeric"
+              aria-label="Dia"
+              aria-invalid={isPartOutOfRange(day, "day")}
+            />
+            <span className="text-muted-foreground">/</span>
+            <Input
+              ref={monthRef}
+              className="w-14 text-center text-sm font-mono"
+              placeholder="MM"
+              value={month}
+              onChange={(e) => handlePart("month", e.target.value)}
+              onBlur={() => handleBlur("month")}
+              onKeyDown={(e) => handleBackspaceJump(e, dayRef)}
+              maxLength={2}
+              inputMode="numeric"
+              aria-label="Mês"
+              aria-invalid={isPartOutOfRange(month, "month")}
+            />
+            <span className="text-muted-foreground">/</span>
+            <Input
+              ref={yearRef}
+              className="w-20 text-center text-sm font-mono"
+              placeholder="AAAA"
+              value={year}
+              onChange={(e) => handlePart("year", e.target.value)}
+              onKeyDown={(e) => handleBackspaceJump(e, monthRef)}
+              maxLength={4}
+              inputMode="numeric"
+              aria-label="Ano"
+              aria-invalid={isPartOutOfRange(year, "year")}
+            />
+            {hasContent && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={handleClear}
+                      aria-label="Limpar data"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Limpar data
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
+          <p className="text-[11px] leading-tight text-muted-foreground">
+            Deixe em branco partes que o documento não informa.
+          </p>
         </div>
       )}
     </div>
