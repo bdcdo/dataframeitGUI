@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { isCurrentFilter } from "@/lib/rounds";
 import type { Round, RoundStrategy } from "@/lib/types";
 
 interface RoundFilterProps {
@@ -36,9 +37,12 @@ export function RoundFilter({
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
 
+  // Default e "current" sao a mesma coisa: ausencia do param na URL.
+  const normalizedSelected = isCurrentFilter(selected) ? "current" : selected;
+
   const handleChange = (value: string) => {
     const params = new URLSearchParams(searchParams.toString());
-    if (value === "current") {
+    if (isCurrentFilter(value)) {
       params.delete("round");
     } else {
       params.set("round", value);
@@ -52,7 +56,7 @@ export function RoundFilter({
   return (
     <div className="flex items-center gap-2 px-4 py-1.5 border-b text-xs">
       <span className="text-muted-foreground">Rodada:</span>
-      <Select value={selected || "current"} onValueChange={handleChange} disabled={isPending}>
+      <Select value={normalizedSelected} onValueChange={handleChange} disabled={isPending}>
         <SelectTrigger size="sm" className="h-7 w-auto min-w-[180px] text-xs">
           <SelectValue />
         </SelectTrigger>

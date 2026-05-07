@@ -7,6 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Trash2, Plus, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -37,6 +47,7 @@ export function RoundsConfig({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [newLabel, setNewLabel] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<Round | null>(null);
 
   const handleStrategyChange = (next: string) => {
     if (next !== "schema_version" && next !== "manual") return;
@@ -75,10 +86,12 @@ export function RoundsConfig({
     });
   };
 
-  const handleDelete = (roundId: string) => {
-    if (!confirm("Excluir esta rodada? Respostas associadas ficarão sem rodada.")) return;
+  const handleConfirmDelete = () => {
+    const round = pendingDelete;
+    if (!round) return;
+    setPendingDelete(null);
     startTransition(async () => {
-      const r = await deleteRound(projectId, roundId);
+      const r = await deleteRound(projectId, round.id);
       if (r.error) toast.error(r.error);
       else {
         toast.success("Rodada excluída");
@@ -212,7 +225,7 @@ export function RoundsConfig({
                       <Button
                         size="icon"
                         variant="ghost"
-                        onClick={() => handleDelete(r.id)}
+                        onClick={() => setPendingDelete(r)}
                         disabled={disabled}
                         className="h-7 w-7"
                         aria-label="Excluir rodada"
@@ -233,6 +246,34 @@ export function RoundsConfig({
           Apenas coordenadores podem alterar essas configurações.
         </p>
       )}
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir rodada?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete && (
+                <>
+                  Excluir a rodada <strong>{pendingDelete.label}</strong>? As respostas
+                  associadas continuam preservadas, mas ficam sem rodada (aparecem como
+                  &quot;Sem rodada&quot; no filtro).
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} disabled={isPending}>
+              {isPending ? "Excluindo…" : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

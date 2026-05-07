@@ -11,6 +11,9 @@ async function assertCoordinator(
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado." };
 
+  // Master users tem acesso global (consistente com impersonacao em /analyze/code).
+  if (user.isMaster) return { userId: user.id };
+
   const supabase = await createSupabaseServer();
   const { data: project } = await supabase
     .from("projects")
@@ -51,6 +54,9 @@ export async function createRound(
   if (error) return { error: error.message };
 
   if (setAsCurrent && data?.id) {
+    // Nao-transacional: se este update falhar, a rodada ja foi criada e o
+    // coordenador precisa marca-la como atual manualmente em /config/rounds.
+    // Uma RPC com transacao seria overkill para a baixa frequencia da operacao.
     const { error: updErr } = await supabase
       .from("projects")
       .update({ current_round_id: data.id })
@@ -95,6 +101,20 @@ export async function setCurrentRound(
   if (auth.error) return { error: auth.error };
 
   const supabase = await createSupabaseServer();
+
+  // Validar cross-project: a FK garante que round_id existe em rounds, mas
+  // nao que pertence ao project_id correto. Sem essa checagem, um coordenador
+  // de dois projetos poderia apontar A.current_round_id para uma rodada de B.
+  if (roundId) {
+    const { data: round } = await supabase
+      .from("rounds")
+      .select("id")
+      .eq("id", roundId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    if (!round) return { error: "Rodada inválida para este projeto." };
+  }
+
   const { error } = await supabase
     .from("projects")
     .update({ current_round_id: roundId })
@@ -130,6 +150,12 @@ export async function setRoundStrategy(
   projectId: string,
   strategy: RoundStrategy,
 ): Promise<{ error?: string }> {
+  // Server actions recebem dados arbitrarios do cliente; o tipo TS protege so
+  // em compile-time. CHECK constraint do DB barra, mas mensagem fica feia.
+  if (strategy !== "schema_version" && strategy !== "manual") {
+    return { error: "Estratégia inválida." };
+  }
+
   const auth = await assertCoordinator(projectId);
   if (auth.error) return { error: auth.error };
 

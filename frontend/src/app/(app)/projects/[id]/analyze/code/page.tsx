@@ -14,6 +14,7 @@ import {
   classifyDocStatus,
   versionLabel,
   isCurrentFilter,
+  getCurrentRoundDescriptor,
   type RoundContext,
   type ResponseRoundFields,
   type SchemaVersion,
@@ -71,7 +72,7 @@ export default async function CodePage({
   const { data: responses } = await supabase
     .from("responses")
     .select(
-      "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch",
+      "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch, is_partial",
     )
     .eq("project_id", id)
     .eq("respondent_id", effectiveUserId)
@@ -92,6 +93,7 @@ export default async function CodePage({
       schema_version_major: r.schema_version_major,
       schema_version_minor: r.schema_version_minor,
       schema_version_patch: r.schema_version_patch,
+      is_partial: r.is_partial,
     });
   });
 
@@ -110,22 +112,26 @@ export default async function CodePage({
   };
   const roundsById = new Map(ctx.rounds.map((r) => [r.id, r]));
 
-  // Versoes anteriores presentes em responses (apenas estrategia schema_version)
-  const previousVersions = Array.from(
-    new Set(
-      (responses ?? [])
-        .map((r) => {
-          const m = r.schema_version_major;
-          const n = r.schema_version_minor;
-          const p = r.schema_version_patch;
-          if (m == null || n == null || p == null) return null;
-          const v = versionLabel({ major: m, minor: n, patch: p });
-          if (v === versionLabel(currentVersion)) return null;
-          return v;
-        })
-        .filter((v): v is string => v != null),
-    ),
-  ).sort();
+  // Versoes anteriores presentes em responses — so faz sentido em schema_version.
+  // Em manual, o select de rodadas anteriores vem da tabela `rounds`.
+  const previousVersions =
+    strategy === "schema_version"
+      ? Array.from(
+          new Set(
+            (responses ?? [])
+              .map((r) => {
+                const m = r.schema_version_major;
+                const n = r.schema_version_minor;
+                const p = r.schema_version_patch;
+                if (m == null || n == null || p == null) return null;
+                const v = versionLabel({ major: m, minor: n, patch: p });
+                if (v === versionLabel(currentVersion)) return null;
+                return v;
+              })
+              .filter((v): v is string => v != null),
+          ),
+        ).sort()
+      : [];
 
   // Filtro server-side conforme roundParam
   const filteredDocuments = allDocuments.filter((d) => {
@@ -194,17 +200,8 @@ export default async function CodePage({
   const isViewingPreviousRound =
     !isCurrentFilter(roundParam) && roundParam !== "all";
 
-  const currentRoundLabel =
-    strategy === "manual"
-      ? ctx.currentRoundId
-        ? roundsById.get(ctx.currentRoundId)?.label ?? "Sem rodada atual"
-        : "Sem rodada atual"
-      : versionLabel(currentVersion);
-
-  const currentRoundKey =
-    strategy === "manual"
-      ? ctx.currentRoundId ?? ""
-      : versionLabel(currentVersion);
+  const { key: currentRoundKey, label: currentRoundLabel } =
+    getCurrentRoundDescriptor(ctx, roundsById);
 
   return (
     <CodingPage

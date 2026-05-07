@@ -39,6 +39,7 @@ export default async function RoundsConfigPage({
     ]);
 
   const isCoordinator =
+    user.isMaster ||
     project?.created_by === user.id ||
     membership?.role === "coordenador";
 

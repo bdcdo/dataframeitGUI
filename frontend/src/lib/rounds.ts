@@ -18,6 +18,7 @@ export interface ResponseRoundFields {
   schema_version_major?: number | null;
   schema_version_minor?: number | null;
   schema_version_patch?: number | null;
+  is_partial?: boolean | null;
 }
 
 export function versionLabel(v: SchemaVersion): string {
@@ -58,6 +59,10 @@ export function classifyDocStatus(
 ): DocRoundStatus {
   if (!response) return { kind: "no_response" };
 
+  // Resposta parcial (autosave em andamento) ainda precisa ser concluida —
+  // tratar como pendente da rodada atual independente de schema/round_id.
+  if (response.is_partial === true) return { kind: "current_pending" };
+
   if (ctx.strategy === "manual") {
     if (!ctx.currentRoundId) {
       // Estrategia manual mas nao ha rodada atual definida.
@@ -67,6 +72,9 @@ export function classifyDocStatus(
     if (response.round_id === ctx.currentRoundId) {
       return { kind: "current_done" };
     }
+    // Guardrail: com FK responses.round_id ON DELETE SET NULL, round_id de uma
+    // rodada removida vira null (cai no branch "Sem rodada") — o lookup falhar
+    // com label "Rodada removida" so deve ocorrer em estado intermediario.
     const label = response.round_id
       ? roundsById.get(response.round_id)?.label ?? "Rodada removida"
       : "Sem rodada";
@@ -94,4 +102,26 @@ export type RoundFilterValue = "current" | "all" | string;
 
 export function isCurrentFilter(value: string | null | undefined): boolean {
   return !value || value === "current";
+}
+
+export interface CurrentRoundDescriptor {
+  /** Identificador estavel da rodada atual usado em URLs/comparacoes. */
+  key: string;
+  /** Texto apresentado ao usuario. */
+  label: string;
+}
+
+export function getCurrentRoundDescriptor(
+  ctx: RoundContext,
+  roundsById: Map<string, Round>,
+): CurrentRoundDescriptor {
+  if (ctx.strategy === "manual") {
+    if (!ctx.currentRoundId) {
+      return { key: "", label: "Sem rodada atual" };
+    }
+    const label = roundsById.get(ctx.currentRoundId)?.label ?? "Sem rodada atual";
+    return { key: ctx.currentRoundId, label };
+  }
+  const v = versionLabel(ctx.currentVersion);
+  return { key: v, label: v };
 }
