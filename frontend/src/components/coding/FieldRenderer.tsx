@@ -110,7 +110,7 @@ function DateFieldRenderer({
     pendingFocusRef.current = null;
     if (target === "month") monthRef.current?.focus();
     else if (target === "year") yearRef.current?.focus();
-  });
+  }, [parts]);
 
   const handleBackspaceJump = (
     e: React.KeyboardEvent<HTMLInputElement>,
