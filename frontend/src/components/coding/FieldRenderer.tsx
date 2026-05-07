@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { PydanticField } from "@/lib/types";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Check, Info } from "lucide-react";
+import { Check, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FieldRendererProps {
@@ -26,34 +26,17 @@ const isOtherValue = (v: unknown): v is string =>
   typeof v === "string" && v.startsWith(OTHER_PREFIX);
 const otherText = (v: string) => v.slice(OTHER_PREFIX.length);
 
-function parseDateParts(val: string): [string, string, string] {
+function parseDatePartsForUI(val: string): [string, string, string] {
   if (!val || val === NOT_INFORMED) return ["", "", ""];
   const parts = val.split("/");
   if (parts.length !== 3) return ["", "", ""];
-  return [parts[0], parts[1], parts[2]];
+  const normalize = (p: string) => (/^X+$/i.test(p) ? "" : p);
+  return [normalize(parts[0]), normalize(parts[1]), normalize(parts[2])];
 }
 
 function buildDateValue(day: string, month: string, year: string): string {
   if (!day && !month && !year) return "";
   return `${day || "XX"}/${month || "XX"}/${year || "XXXX"}`;
-}
-
-function isValidDatePart(
-  value: string,
-  part: "day" | "month" | "year",
-): boolean {
-  if (!value) return true;
-  const upper = value.toUpperCase();
-  if (part === "year") {
-    if (upper === "XXXX" || upper === "XX") return true;
-    return /^\d{1,4}$/.test(value);
-  }
-  if (upper === "XX") return true;
-  if (!/^\d{1,2}$/.test(value)) return false;
-  const n = parseInt(value, 10);
-  if (part === "day") return n >= 1 && n <= 31;
-  if (part === "month") return n >= 1 && n <= 12;
-  return true;
 }
 
 function DateFieldRenderer({
@@ -69,29 +52,62 @@ function DateFieldRenderer({
   const activeSentinel = sentinels.find((o) => value === o);
   const isNotInformed = value === NOT_INFORMED;
   const isSentinelActive = Boolean(activeSentinel) || isNotInformed;
-  const [day, month, year] = parseDateParts(
-    isSentinelActive ? "" : value,
+
+  const externalForUI = isSentinelActive ? "" : value;
+  const [parts, setParts] = useState<[string, string, string]>(() =>
+    parseDatePartsForUI(externalForUI),
   );
+  const [lastExternal, setLastExternal] = useState(externalForUI);
+
+  // Resync local state during render when `value` changes externally
+  // (switching responses, sentinel toggled). During local edits, onChange
+  // echoes back the same value, so externalForUI matches buildDateValue(parts)
+  // and we skip — otherwise we'd clobber an in-progress empty slot.
+  if (externalForUI !== lastExternal) {
+    setLastExternal(externalForUI);
+    if (externalForUI !== buildDateValue(...parts)) {
+      setParts(parseDatePartsForUI(externalForUI));
+    }
+  }
+
+  const [day, month, year] = parts;
+  const dayRef = useRef<HTMLInputElement>(null);
   const monthRef = useRef<HTMLInputElement>(null);
   const yearRef = useRef<HTMLInputElement>(null);
 
-  const handlePart = (
-    part: "day" | "month" | "year",
-    raw: string,
-  ) => {
-    let v = raw.toUpperCase().replace(/[^0-9X]/g, "");
+  const handlePart = (part: "day" | "month" | "year", raw: string) => {
     const maxLen = part === "year" ? 4 : 2;
-    v = v.slice(0, maxLen);
+    const v = raw.replace(/\D/g, "").slice(0, maxLen);
 
-    const newDay = part === "day" ? v : day;
-    const newMonth = part === "month" ? v : month;
-    const newYear = part === "year" ? v : year;
-    onChange(buildDateValue(newDay, newMonth, newYear));
+    const next: [string, string, string] = [
+      part === "day" ? v : day,
+      part === "month" ? v : month,
+      part === "year" ? v : year,
+    ];
+    setParts(next);
+    onChange(buildDateValue(...next));
 
-    // Auto-advance when part is complete
     if (part === "day" && v.length === 2) monthRef.current?.focus();
     if (part === "month" && v.length === 2) yearRef.current?.focus();
   };
+
+  const handleBackspaceJump = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    target: "day" | "month",
+  ) => {
+    if (e.key === "Backspace" && e.currentTarget.value === "") {
+      e.preventDefault();
+      if (target === "day") dayRef.current?.focus();
+      if (target === "month") monthRef.current?.focus();
+    }
+  };
+
+  const handleClear = () => {
+    setParts(["", "", ""]);
+    onChange("");
+  };
+
+  const hasContent = Boolean(day || month || year);
 
   return (
     <div className="space-y-2">
@@ -135,9 +151,9 @@ function DateFieldRenderer({
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs text-xs">
               <p>
-                Preencha no formato <strong>DD/MM/AAAA</strong>. Use{" "}
-                <strong>XX</strong> para indicar que o dia, mês ou ano não foi
-                informado no documento (ex: XX/03/2024).
+                Formato <strong>DD/MM/AAAA</strong>. Se o documento não informa
+                parte da data (ex: só o ano), deixe os campos correspondentes
+                em branco.
               </p>
             </TooltipContent>
           </Tooltip>
@@ -146,11 +162,13 @@ function DateFieldRenderer({
       {!isSentinelActive && (
         <div className="flex items-center gap-1">
           <Input
+            ref={dayRef}
             className="w-14 text-center text-sm font-mono"
             placeholder="DD"
             value={day}
             onChange={(e) => handlePart("day", e.target.value)}
             maxLength={2}
+            inputMode="numeric"
           />
           <span className="text-muted-foreground">/</span>
           <Input
@@ -159,7 +177,9 @@ function DateFieldRenderer({
             placeholder="MM"
             value={month}
             onChange={(e) => handlePart("month", e.target.value)}
+            onKeyDown={(e) => handleBackspaceJump(e, "day")}
             maxLength={2}
+            inputMode="numeric"
           />
           <span className="text-muted-foreground">/</span>
           <Input
@@ -168,8 +188,31 @@ function DateFieldRenderer({
             placeholder="AAAA"
             value={year}
             onChange={(e) => handlePart("year", e.target.value)}
+            onKeyDown={(e) => handleBackspaceJump(e, "month")}
             maxLength={4}
+            inputMode="numeric"
           />
+          {hasContent && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={handleClear}
+                    aria-label="Limpar data"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  Limpar data
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
       )}
     </div>
