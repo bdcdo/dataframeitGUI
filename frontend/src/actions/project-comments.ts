@@ -1,7 +1,8 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { excludeDocuments } from "@/actions/documents";
 import { revalidatePath } from "next/cache";
 
 export async function createProjectComment(
@@ -80,8 +81,8 @@ export async function requestDocumentExclusion(
   return { success: true };
 }
 
-// Coordenador aprova: faz soft delete no documento e marca o pedido como
-// resolvido (resolved_at).
+// Coordenador aprova: faz soft delete no documento (via excludeDocuments para
+// usar o mesmo flow do "Excluir" manual) e marca o pedido como resolvido.
 export async function approveExclusionRequest(
   commentId: string,
   projectId: string,
@@ -90,6 +91,10 @@ export async function approveExclusionRequest(
   if (!user) return { error: "Não autenticado" };
 
   const supabase = await createSupabaseServer();
+
+  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+    return { error: "Apenas coordenador pode aprovar sugestões de exclusão" };
+  }
 
   const { data: comment } = await supabase
     .from("project_comments")
@@ -109,18 +114,15 @@ export async function approveExclusionRequest(
     1000,
   );
 
-  // 1. soft delete documento
-  const { error: docError } = await supabase
-    .from("documents")
-    .update({
-      excluded_at: new Date().toISOString(),
-      excluded_reason: reason,
-      excluded_by: user.id,
-    })
-    .eq("id", comment.document_id)
-    .eq("project_id", projectId);
-
-  if (docError) return { error: docError.message };
+  // 1. soft delete via excludeDocuments — mantem fluxo unificado com o botao
+  //    "Excluir" da config de documentos (auditoria e revalidatePath de
+  //    config/documents ja saem dele).
+  const docResult = await excludeDocuments(
+    projectId,
+    [comment.document_id],
+    reason,
+  );
+  if ("error" in docResult) return { error: docResult.error };
 
   // 2. resolver comment
   const { error: commentError } = await supabase
@@ -135,7 +137,8 @@ export async function approveExclusionRequest(
   if (commentError) return { error: commentError.message };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
-  revalidatePath(`/projects/${projectId}/config/documents`);
+  // Pesquisador codificando esse doc precisa ver a atualizacao.
+  revalidatePath(`/projects/${projectId}/analyze/code`);
   return { success: true };
 }
 
@@ -150,6 +153,10 @@ export async function rejectExclusionRequest(
     return { error: "Informe o motivo da rejeição" };
 
   const supabase = await createSupabaseServer();
+
+  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+    return { error: "Apenas coordenador pode rejeitar sugestões de exclusão" };
+  }
 
   const { data, error } = await supabase
     .from("project_comments")

@@ -1,4 +1,5 @@
 import { currentUser } from "@clerk/nextjs/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -71,4 +72,33 @@ export async function getAuthUser(): Promise<AuthUser | null> {
     clerkId: user.id,
     isMaster: !!masterRow,
   };
+}
+
+// Centraliza o padrao de checagem de coordenador usado nos layouts de projeto
+// (criador OU role=coordenador OU master). Server actions devem usar isso para
+// falhar cedo com mensagem clara, em vez de deixar o RLS retornar erro generico.
+export async function isProjectCoordinator(
+  supabase: SupabaseClient,
+  projectId: string,
+  user: AuthUser,
+): Promise<boolean> {
+  if (user.isMaster) return true;
+
+  const [{ data: project }, { data: membership }] = await Promise.all([
+    supabase
+      .from("projects")
+      .select("created_by")
+      .eq("id", projectId)
+      .single(),
+    supabase
+      .from("project_members")
+      .select("role")
+      .eq("project_id", projectId)
+      .eq("user_id", user.id)
+      .maybeSingle(),
+  ]);
+
+  return (
+    project?.created_by === user.id || membership?.role === "coordenador"
+  );
 }
