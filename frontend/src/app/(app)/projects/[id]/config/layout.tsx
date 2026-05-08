@@ -8,6 +8,7 @@ const configTabs = [
   { label: "Geral", href: "general" },
   { label: "Documentos", href: "documents" },
   { label: "Schema", href: "schema" },
+  { label: "Rodadas", href: "rounds" },
   { label: "Histórico", href: "history" },
   { label: "Membros", href: "members" },
   { label: "Regras", href: "rules" },
