@@ -43,11 +43,23 @@ interface ReviewCommentsViewProps {
   llmDocsWithoutAmbiguities?: number;
 }
 
-function verdictType(verdict: string): "answer" | "ambiguo" | "pular" | "nota" | "sugestao" | "dificuldade" | "anotacao" | "duvida" {
+function verdictType(
+  verdict: string,
+):
+  | "answer"
+  | "ambiguo"
+  | "pular"
+  | "nota"
+  | "sugestao"
+  | "dificuldade"
+  | "anotacao"
+  | "duvida"
+  | "exclusao" {
   if (verdict === "nota") return "nota";
   if (verdict === "anotacao") return "anotacao";
   if (verdict === "dificuldade") return "dificuldade";
   if (verdict === "sugestao") return "sugestao";
+  if (verdict === "exclusao") return "exclusao";
   if (verdict === "duvida") return "duvida";
   if (verdict === "ambiguo") return "ambiguo";
   if (verdict === "pular") return "pular";
@@ -242,6 +254,7 @@ export function ReviewCommentsView({
             <SelectItem value="dificuldade">Dificuldade LLM</SelectItem>
             <SelectItem value="duvida">Dúvidas do gabarito</SelectItem>
             <SelectItem value="anotacao">Anotações</SelectItem>
+            <SelectItem value="exclusao">Sugestões de exclusão</SelectItem>
           </SelectContent>
         </Select>
         <span className="ml-auto text-sm text-muted-foreground">

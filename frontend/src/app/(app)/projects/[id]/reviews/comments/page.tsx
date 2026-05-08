@@ -74,7 +74,7 @@ export default async function CommentsPage({
       .eq("project_id", id),
     supabase
       .from("project_comments")
-      .select("id, document_id, field_name, author_id, body, parent_id, resolved_at, resolved_by, created_at, profiles!author_id(email)")
+      .select("id, document_id, field_name, author_id, body, parent_id, resolved_at, resolved_by, created_at, kind, rejected_at, rejected_reason, profiles!author_id(email)")
       .eq("project_id", id)
       .is("parent_id", null)
       .order("created_at", { ascending: false }),
@@ -287,13 +287,54 @@ export default async function CommentsPage({
     };
   });
 
-  // Map project_comments (anotações soltas) as ReviewComment
-  const annotationComments: ReviewComment[] = (projectComments || []).map((c) => {
-    const p = c.profiles as unknown as { email: string | null } | null;
+  // Map project_comments — separa entre anotacoes livres e sugestoes de exclusao.
+  // Para sugestoes aprovadas, o doc esta excluido — busca titulo separadamente.
+  type ProjectCommentRow = {
+    id: string;
+    document_id: string | null;
+    field_name: string | null;
+    body: string;
+    resolved_at: string | null;
+    created_at: string;
+    kind: "note" | "exclusion_request";
+    rejected_at: string | null;
+    rejected_reason: string | null;
+    profiles: { email: string | null } | null;
+  };
+  const typedProjectComments = (projectComments ||
+    []) as unknown as ProjectCommentRow[];
+
+  const exclusionRows = typedProjectComments.filter(
+    (c) => c.kind === "exclusion_request",
+  );
+  const noteRows = typedProjectComments.filter((c) => c.kind !== "exclusion_request");
+
+  // Buscar titulos de docs excluidos referenciados por exclusion_requests resolvidas
+  const excludedDocIds = exclusionRows
+    .filter((c) => !!c.document_id && !docMap.has(c.document_id!))
+    .map((c) => c.document_id!) as string[];
+  const excludedDocTitles = new Map<string, string>();
+  if (excludedDocIds.length > 0) {
+    const { data: excludedDocs } = await supabase
+      .from("documents")
+      .select("id, title, external_id")
+      .in("id", excludedDocIds);
+    for (const d of excludedDocs || []) {
+      excludedDocTitles.set(d.id, d.title || d.external_id || d.id);
+    }
+  }
+
+  function titleForDocId(docId: string | null): string {
+    if (!docId) return "";
+    return docMap.get(docId) || excludedDocTitles.get(docId) || docId;
+  }
+
+  const annotationComments: ReviewComment[] = noteRows.map((c) => {
+    const p = c.profiles;
     return {
       id: `anotacao-${c.id}`,
       documentId: c.document_id || "",
-      documentTitle: c.document_id ? docMap.get(c.document_id) || c.document_id : "",
+      documentTitle: titleForDocId(c.document_id),
       fieldName: c.field_name || "(geral)",
       fieldDescription: c.field_name
         ? fieldMap.get(c.field_name)?.description || c.field_name
@@ -309,9 +350,40 @@ export default async function CommentsPage({
     };
   });
 
-  // Pending suggestions first, then all others by date
+  const exclusionComments: ReviewComment[] = exclusionRows.map((c) => {
+    const p = c.profiles;
+    const status: "pending" | "approved" | "rejected" = c.rejected_at
+      ? "rejected"
+      : c.resolved_at
+        ? "approved"
+        : "pending";
+    return {
+      id: `exclusao-${c.id}`,
+      documentId: c.document_id || "",
+      documentTitle: titleForDocId(c.document_id),
+      fieldName: "(geral)",
+      fieldDescription: "Sugestão de exclusão",
+      verdict: "exclusao",
+      comment: c.body,
+      reviewerName: p?.email?.split("@")[0] || "Anônimo",
+      resolvedAt: c.resolved_at,
+      createdAt: c.created_at,
+      chosenResponseId: null,
+      source: "exclusao" as const,
+      responseSnapshot: null,
+      exclusionCommentId: c.id,
+      exclusionDocumentId: c.document_id || undefined,
+      exclusionStatus: status,
+      exclusionRejectedReason: c.rejected_reason,
+    };
+  });
+
+  // Pending suggestions e exclusoes primeiro, demais por data
   const pendingSuggestions = suggestionComments.filter(
     (s) => s.suggestionStatus === "pending",
+  );
+  const pendingExclusions = exclusionComments.filter(
+    (e) => e.exclusionStatus === "pending",
   );
   const restComments = [
     ...reviewComments,
@@ -320,10 +392,11 @@ export default async function CommentsPage({
     ...duvidaComments,
     ...annotationComments,
     ...suggestionComments.filter((s) => s.suggestionStatus !== "pending"),
+    ...exclusionComments.filter((e) => e.exclusionStatus !== "pending"),
   ].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
-  const comments = [...pendingSuggestions, ...restComments];
+  const comments = [...pendingExclusions, ...pendingSuggestions, ...restComments];
 
   const totalLlmDocs = llmResponses?.length ?? 0;
   const llmDocsWithoutAmbiguities = (llmResponses ?? []).filter((r) => {
