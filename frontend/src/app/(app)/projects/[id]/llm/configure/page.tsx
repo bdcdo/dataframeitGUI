@@ -22,7 +22,8 @@ export default async function LlmConfigurePage({
       supabase
         .from("documents")
         .select("id", { count: "exact", head: true })
-        .eq("project_id", id),
+        .eq("project_id", id)
+        .is("excluded_at", null),
       supabase
         .from("responses")
         .select("document_id")

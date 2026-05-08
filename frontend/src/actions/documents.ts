@@ -46,12 +46,14 @@ export async function checkDuplicates(
   const duplicates: DuplicateMatch[] = [];
   const matchedCsvIndices = new Set<number>();
 
-  // 1. Match by external_id
+  // 1. Match by external_id (excluidos sao ignorados — re-upload de doc
+  //    excluido por engano cria um novo registro normal)
   if (externalIds.length > 0) {
     const { data: byExtId } = await supabase
       .from("documents")
       .select("id, external_id")
       .eq("project_id", projectId)
+      .is("excluded_at", null)
       .in(
         "external_id",
         externalIds.map((e) => e.id!)
@@ -84,6 +86,7 @@ export async function checkDuplicates(
       .from("documents")
       .select("id, text_hash")
       .eq("project_id", projectId)
+      .is("excluded_at", null)
       .in("text_hash", uniqueHashes);
 
     if (byHash) {
@@ -272,6 +275,7 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
     .from("documents")
     .select("id, external_id, title, created_at")
     .eq("project_id", projectId)
+    .is("excluded_at", null)
     .order("created_at", { ascending: true });
 
   if (!docs || docs.length === 0) return [];
@@ -317,6 +321,7 @@ export async function getDocumentForCoding(
       .select("id, external_id, title, text")
       .eq("id", documentId)
       .eq("project_id", projectId)
+      .is("excluded_at", null)
       .single(),
     supabase
       .from("projects")
@@ -376,19 +381,62 @@ export async function getDocumentText(
   return { text: data.text, title: data.title || documentId };
 }
 
-export async function deleteDocument(projectId: string, documentId: string) {
+// Soft delete: marca documents.excluded_at. Reads default filtram excluidos.
+// Coordenador pode visualizar/restaurar via toggle "Mostrar excluidos".
+export async function excludeDocuments(
+  projectId: string,
+  documentIds: string[],
+  reason: string,
+) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Nao autenticado" };
+  if (!reason?.trim()) return { error: "Motivo da exclusao e obrigatorio" };
+
   const supabase = await createSupabaseServer();
   const { error } = await supabase
     .from("documents")
-    .delete()
-    .eq("id", documentId);
+    .update({
+      excluded_at: new Date().toISOString(),
+      excluded_reason: reason.trim(),
+      excluded_by: user.id,
+    })
+    .eq("project_id", projectId)
+    .in("id", documentIds);
 
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}/config/documents`);
   revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+  return { count: documentIds.length };
 }
 
-export async function deleteDocuments(projectId: string, documentIds: string[]) {
+export async function restoreDocuments(
+  projectId: string,
+  documentIds: string[],
+) {
+  const supabase = await createSupabaseServer();
+  const { error } = await supabase
+    .from("documents")
+    .update({
+      excluded_at: null,
+      excluded_reason: null,
+      excluded_by: null,
+    })
+    .eq("project_id", projectId)
+    .in("id", documentIds);
+
+  if (error) return { error: error.message };
+  revalidatePath(`/projects/${projectId}/config/documents`);
+  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+  return { count: documentIds.length };
+}
+
+// Hard delete: remove DB permanente (CASCADE em responses/reviews/assignments).
+// So usar quando coordenador confirma que o doc nao deve voltar nem manter
+// historico — tipicamente apos soft delete + revisao.
+export async function hardDeleteDocuments(
+  projectId: string,
+  documentIds: string[],
+) {
   const supabase = await createSupabaseServer();
   const { error } = await supabase
     .from("documents")
@@ -398,4 +446,5 @@ export async function deleteDocuments(projectId: string, documentIds: string[]) 
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}/config/documents`);
   revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+  return { count: documentIds.length };
 }

@@ -14,6 +14,7 @@ function getCachedDocuments(projectId: string) {
         .from("documents")
         .select("id, external_id, title")
         .eq("project_id", projectId)
+        .is("excluded_at", null)
         .order("created_at", { ascending: true });
       return data || [];
     },

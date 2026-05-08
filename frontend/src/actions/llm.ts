@@ -14,7 +14,8 @@ export async function getEligibleDocCount(
     supabase
       .from("documents")
       .select("id", { count: "exact", head: true })
-      .eq("project_id", projectId),
+      .eq("project_id", projectId)
+      .is("excluded_at", null),
     supabase
       .from("responses")
       .select("document_id")
@@ -280,6 +281,7 @@ export async function getDocumentsForSelection(
       .from("documents")
       .select("id, title, external_id")
       .eq("project_id", projectId)
+      .is("excluded_at", null)
       .order("external_id"),
     supabase
       .from("responses")
