@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Trash2, Loader2, RotateCcw, FlameKindling } from "lucide-react";
+import { Trash2, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 type DocSummary = DocumentSummary & {
@@ -213,7 +213,7 @@ export function DocumentsPageClient({
                 size="sm"
                 onClick={handleRequestHardDeleteSelected}
               >
-                <FlameKindling className="mr-1.5 h-3.5 w-3.5" />
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                 Apagar permanentemente
               </Button>
             </>
@@ -250,6 +250,7 @@ export function DocumentsPageClient({
         title={selectedDoc?.title ?? selectedDoc?.external_id ?? "Documento"}
         open={!!selectedDoc}
         onClose={() => setSelectedDocId(null)}
+        allowExcluded={showExcluded}
       />
 
       {/* Soft delete (excluir = reversivel) */}

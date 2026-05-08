@@ -349,7 +349,11 @@ export default async function ComparePageRoute({
   const [{ data: docTexts }, { data: reviews }, { data: commentCounts }, { data: suggestionCounts }] =
     await Promise.all([
       qualifiedDocIds.length > 0
-        ? supabase.from("documents").select("id, text").in("id", qualifiedDocIds)
+        ? supabase
+            .from("documents")
+            .select("id, text")
+            .in("id", qualifiedDocIds)
+            .is("excluded_at", null)
         : Promise.resolve({ data: [] as { id: string; text: string }[] }),
       supabase
         .from("reviews")
