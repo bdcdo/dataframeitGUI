@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = { expire: 300 };
@@ -389,10 +389,15 @@ export async function excludeDocuments(
   reason: string,
 ) {
   const user = await getAuthUser();
-  if (!user) return { error: "Nao autenticado" };
-  if (!reason?.trim()) return { error: "Motivo da exclusao e obrigatorio" };
+  if (!user) return { error: "Não autenticado" };
+  if (!reason?.trim()) return { error: "Motivo da exclusão é obrigatório" };
 
   const supabase = await createSupabaseServer();
+
+  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+    return { error: "Apenas coordenador pode excluir documentos" };
+  }
+
   const { error } = await supabase
     .from("documents")
     .update({
@@ -413,7 +418,15 @@ export async function restoreDocuments(
   projectId: string,
   documentIds: string[],
 ) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+
   const supabase = await createSupabaseServer();
+
+  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+    return { error: "Apenas coordenador pode restaurar documentos" };
+  }
+
   const { error } = await supabase
     .from("documents")
     .update({
@@ -437,10 +450,19 @@ export async function hardDeleteDocuments(
   projectId: string,
   documentIds: string[],
 ) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+
   const supabase = await createSupabaseServer();
+
+  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+    return { error: "Apenas coordenador pode apagar documentos permanentemente" };
+  }
+
   const { error } = await supabase
     .from("documents")
     .delete()
+    .eq("project_id", projectId)
     .in("id", documentIds);
 
   if (error) return { error: error.message };

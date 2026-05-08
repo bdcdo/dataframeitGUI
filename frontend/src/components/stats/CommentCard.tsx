@@ -29,6 +29,7 @@ import {
   rejectExclusionRequest,
 } from "@/actions/project-comments";
 import { SuggestionDiff } from "./SuggestionDiff";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -520,11 +521,12 @@ function ExclusionActions({
   if (showRejectInput) {
     return (
       <div className="flex flex-col gap-2">
-        <input
-          className="rounded-md border bg-background px-2 py-1 text-xs"
+        <Textarea
+          className="text-xs"
           placeholder="Motivo da rejeição"
           value={rejectReason}
           onChange={(e) => setRejectReason(e.target.value)}
+          rows={2}
           autoFocus
         />
         <div className="flex gap-2">

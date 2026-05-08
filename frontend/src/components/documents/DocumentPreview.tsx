@@ -10,9 +10,21 @@ interface DocumentPreviewProps {
   title: string;
   open: boolean;
   onClose: () => void;
+  /**
+   * Por padrao, preview nao carrega texto de doc soft-deleted — alinhado com
+   * o resto da UI que esconde excluidos. Setar true quando o caller estiver
+   * no modo "Mostrar excluidos" para permitir visualizacao do historico.
+   */
+  allowExcluded?: boolean;
 }
 
-export function DocumentPreview({ documentId, title, open, onClose }: DocumentPreviewProps) {
+export function DocumentPreview({
+  documentId,
+  title,
+  open,
+  onClose,
+  allowExcluded = false,
+}: DocumentPreviewProps) {
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const { getToken } = useAuth();
@@ -26,11 +38,14 @@ export function DocumentPreview({ documentId, title, open, onClose }: DocumentPr
     getToken({ template: "supabase" })
       .then((token) => {
         const supabase = createBrowserClient(token);
-        return supabase
+        let query = supabase
           .from("documents")
           .select("text")
-          .eq("id", documentId)
-          .single();
+          .eq("id", documentId);
+        if (!allowExcluded) {
+          query = query.is("excluded_at", null);
+        }
+        return query.maybeSingle();
       })
       .then(({ data }) => {
         setText(data?.text ?? null);
@@ -41,7 +56,7 @@ export function DocumentPreview({ documentId, title, open, onClose }: DocumentPr
       .finally(() => {
         setLoading(false);
       });
-  }, [documentId, open, getToken]);
+  }, [documentId, open, getToken, allowExcluded]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

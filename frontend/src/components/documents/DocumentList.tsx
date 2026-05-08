@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
-import { Trash2, RotateCcw, FlameKindling } from "lucide-react";
+import { Trash2, RotateCcw } from "lucide-react";
 import type { Document } from "@/lib/types";
 
 export type DocumentSummary = Pick<Document, "id" | "external_id" | "title"> & {
@@ -198,11 +198,11 @@ export function DocumentList({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      className="h-7 w-7 text-destructive hover:bg-destructive/10"
                       onClick={() => onRequestHardDelete?.(doc)}
                       title="Apagar permanentemente"
                     >
-                      <FlameKindling className="h-3.5 w-3.5" />
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </td>
                 )}
