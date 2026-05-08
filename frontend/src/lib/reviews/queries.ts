@@ -178,7 +178,8 @@ export async function fetchReviewBaseData(
     supabase
       .from("documents")
       .select("id, title, external_id")
-      .eq("project_id", projectId),
+      .eq("project_id", projectId)
+      .is("excluded_at", null),
   ]);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];

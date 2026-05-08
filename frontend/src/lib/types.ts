@@ -81,6 +81,9 @@ export interface Document {
   text: string;
   metadata: Record<string, unknown> | null;
   created_at: string;
+  excluded_at: string | null;
+  excluded_reason: string | null;
+  excluded_by: string | null;
 }
 
 export interface Assignment {

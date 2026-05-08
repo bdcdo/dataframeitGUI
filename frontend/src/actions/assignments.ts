@@ -141,11 +141,12 @@ async function computeLottery(
     .eq("project_id", params.projectId)
     .eq("role", "pesquisador");
 
-  // 2. Fetch documents
+  // 2. Fetch documents (excluidos sao ignorados na alocacao)
   const { data: docs } = await supabase
     .from("documents")
     .select("id")
-    .eq("project_id", params.projectId);
+    .eq("project_id", params.projectId)
+    .is("excluded_at", null);
 
   if (!docs?.length) {
     throw new Error("Necessário ter documentos.");

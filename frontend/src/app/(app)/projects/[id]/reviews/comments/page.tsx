@@ -42,7 +42,8 @@ export default async function CommentsPage({
     supabase
       .from("documents")
       .select("id, title, external_id")
-      .eq("project_id", id),
+      .eq("project_id", id)
+      .is("excluded_at", null),
     user
       ? supabase
           .from("project_members")
