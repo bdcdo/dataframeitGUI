@@ -17,6 +17,7 @@ import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
 import { CodingHeader } from "./CodingHeader";
+import { CURRENT_FILTER_VALUE } from "@/lib/rounds";
 import { toast } from "sonner";
 import { CheckCircle2, FileQuestion, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -468,7 +469,7 @@ export function CodingPage({
                   <p className="text-sm text-muted-foreground">
                     Nenhum documento corresponde ao filtro.
                   </p>
-                ) : roundFilter.selected === "" || roundFilter.selected === "current" ? (
+                ) : roundFilter.selected === "" || roundFilter.selected === CURRENT_FILTER_VALUE ? (
                   <p className="text-sm text-muted-foreground">
                     Tudo em dia na rodada atual ({roundFilter.currentRoundLabel}).
                   </p>

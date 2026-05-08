@@ -111,44 +111,44 @@ for (const r of toCreate) {
   console.log(`  + "${r.label}" <- batch ${r.source_batch_id.slice(0, 8)}`);
 }
 
-// Responses humanas sem round_id por batch (preview)
-let totalToUpdate = 0;
-const perBatchPlan = []; // {batchId, roundId|null, pairs:[{document_id,user_id}], count}
-for (const b of batches) {
-  const assigns = await rest(
-    `assignments?select=document_id,user_id&project_id=eq.${PROJECT_ID}&batch_id=eq.${b.id}&limit=1000`,
-  );
-  if (assigns.length === 0) {
-    perBatchPlan.push({ batchId: b.id, roundId: null, pairs: [], count: 0 });
-    continue;
-  }
-  // Conta responses humanas sem round_id que casam (document_id,user_id)
-  // Como nao da pra fazer IN tuple no PostgREST, conto via responses por
-  // documento limitado aos pares — aproximacao: filtra documents do batch
-  // e respondent_type=humano + round_id is null. Ainda pode incluir
-  // responses de quem nao foi assigned (e.g. browse mode), mas sera
-  // refinado no UPDATE (so atualiza pares de assignments).
-  const docIds = [...new Set(assigns.map((a) => a.document_id))];
-  const userIds = [...new Set(assigns.map((a) => a.user_id))];
-  const docFilter = `document_id=in.(${docIds.join(",")})`;
-  const userFilter = `respondent_id=in.(${userIds.join(",")})`;
-  const candidates = await rest(
-    `responses?select=document_id,respondent_id&project_id=eq.${PROJECT_ID}&respondent_type=eq.humano&round_id=is.null&${docFilter}&${userFilter}&limit=2000`,
-  );
-  // intersecta candidates com assigns (par exato)
-  const pairKey = (d, u) => `${d}|${u}`;
-  const validPairs = new Set(assigns.map((a) => pairKey(a.document_id, a.user_id)));
-  const matches = candidates.filter((r) => validPairs.has(pairKey(r.document_id, r.respondent_id)));
-  totalToUpdate += matches.length;
-
-  const existing = batchToExistingRound.get(b.id);
-  perBatchPlan.push({
-    batchId: b.id,
-    roundId: existing ? existing.id : null,
-    pairs: matches, // (document_id, respondent_id) pares a setar round_id
-    count: matches.length,
-  });
-}
+// Responses humanas sem round_id por batch (preview).
+// Paralelizado via Promise.all: cada batch faz 2 fetches independentes
+// (assignments + responses candidatas).
+const pairKey = (d, u) => `${d}|${u}`;
+const perBatchPlan = await Promise.all(
+  batches.map(async (b) => {
+    const assigns = await rest(
+      `assignments?select=document_id,user_id&project_id=eq.${PROJECT_ID}&batch_id=eq.${b.id}&limit=1000`,
+    );
+    const existing = batchToExistingRound.get(b.id);
+    if (assigns.length === 0) {
+      return { batchId: b.id, roundId: existing?.id ?? null, pairs: [], count: 0 };
+    }
+    // Conta responses humanas sem round_id que casam (document_id,user_id).
+    // Como nao da pra fazer IN tuple no PostgREST, busca por
+    // (document_id IN ...) AND (respondent_id IN ...) e refina depois
+    // intersectando com os pares exatos de assignments. Evita pegar
+    // responses de quem nao foi assigned (e.g. browse mode com mesmo doc).
+    const docIds = [...new Set(assigns.map((a) => a.document_id))];
+    const userIds = [...new Set(assigns.map((a) => a.user_id))];
+    const docFilter = `document_id=in.(${docIds.join(",")})`;
+    const userFilter = `respondent_id=in.(${userIds.join(",")})`;
+    const candidates = await rest(
+      `responses?select=document_id,respondent_id&project_id=eq.${PROJECT_ID}&respondent_type=eq.humano&round_id=is.null&${docFilter}&${userFilter}&limit=2000`,
+    );
+    const validPairs = new Set(assigns.map((a) => pairKey(a.document_id, a.user_id)));
+    const matches = candidates.filter((r) =>
+      validPairs.has(pairKey(r.document_id, r.respondent_id)),
+    );
+    return {
+      batchId: b.id,
+      roundId: existing?.id ?? null,
+      pairs: matches, // (document_id, respondent_id) pares a setar round_id
+      count: matches.length,
+    };
+  }),
+);
+const totalToUpdate = perBatchPlan.reduce((acc, p) => acc + p.count, 0);
 console.log(`\nResponses humanas sem round_id a atualizar: ${totalToUpdate}`);
 
 if (!APPLY) {
@@ -204,18 +204,29 @@ for (const plan of perBatchPlan) {
 }
 console.log(`  responses atualizadas: ${updated}`);
 
-// 4) marcar a rodada do lote mais recente como current_round_id
+// 4) marcar a rodada do lote mais recente como current_round_id —
+// SO se ainda nao houver um current_round_id setado. Evita pisar em
+// configuracao manual feita em /config/rounds.
 const lastBatch = batches.at(-1);
 if (lastBatch) {
   const target =
     batchToExistingRound.get(lastBatch.id)?.id ??
     newRoundsByBatch.get(lastBatch.id)?.id;
-  if (target && project[0].current_round_id !== target) {
-    await rest(`projects?id=eq.${PROJECT_ID}`, {
-      method: "PATCH",
-      body: JSON.stringify({ current_round_id: target }),
-    });
-    console.log(`  current_round_id = ${target} (lote mais recente)`);
+  if (target) {
+    if (project[0].current_round_id == null) {
+      await rest(`projects?id=eq.${PROJECT_ID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ current_round_id: target }),
+      });
+      console.log(`  current_round_id = ${target} (lote mais recente)`);
+    } else if (project[0].current_round_id !== target) {
+      console.log(
+        `  current_round_id ja setado (${project[0].current_round_id}) — preservado.`,
+      );
+      console.log(
+        `  Para apontar para a rodada do lote mais recente (${target}), atualize manualmente em /config/rounds.`,
+      );
+    }
   }
 }
 

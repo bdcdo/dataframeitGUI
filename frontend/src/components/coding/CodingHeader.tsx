@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
-import { isCurrentFilter } from "@/lib/rounds";
+import { CURRENT_FILTER_VALUE, isCurrentFilter } from "@/lib/rounds";
 import type { RoundFilterData } from "./CodingPage";
 
 type DocSection =
@@ -114,7 +114,7 @@ function RoundSelect({ data }: { data: RoundFilterData }) {
   const [isPending, startTransition] = useTransition();
 
   const normalizedSelected = isCurrentFilter(data.selected)
-    ? "current"
+    ? CURRENT_FILTER_VALUE
     : data.selected;
 
   const handleChange = (value: string) => {
@@ -142,7 +142,7 @@ function RoundSelect({ data }: { data: RoundFilterData }) {
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="current">
+          <SelectItem value={CURRENT_FILTER_VALUE}>
             Atual ({data.currentRoundLabel}) — pendentes
           </SelectItem>
           <SelectItem value="all">Todas as rodadas</SelectItem>
