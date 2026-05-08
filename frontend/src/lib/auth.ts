@@ -84,12 +84,15 @@ export async function isProjectCoordinator(
 ): Promise<boolean> {
   if (user.isMaster) return true;
 
-  const [{ data: project }, { data: membership }] = await Promise.all([
+  const [
+    { data: project, error: projectError },
+    { data: membership, error: membershipError },
+  ] = await Promise.all([
     supabase
       .from("projects")
       .select("created_by")
       .eq("id", projectId)
-      .single(),
+      .maybeSingle(),
     supabase
       .from("project_members")
       .select("role")
@@ -97,6 +100,24 @@ export async function isProjectCoordinator(
       .eq("user_id", user.id)
       .maybeSingle(),
   ]);
+
+  // Falhas de query (timeout, RLS rejeitando o que deveria ler, etc.) nao devem
+  // ser silenciosamente convertidas em "nao e coordenador" — logamos para nao
+  // mascarar lockout de coordenador legitimo como falta de permissao.
+  if (projectError) {
+    console.error("isProjectCoordinator: project query failed", {
+      projectId,
+      userId: user.id,
+      error: projectError.message,
+    });
+  }
+  if (membershipError) {
+    console.error("isProjectCoordinator: membership query failed", {
+      projectId,
+      userId: user.id,
+      error: membershipError.message,
+    });
+  }
 
   return (
     project?.created_by === user.id || membership?.role === "coordenador"

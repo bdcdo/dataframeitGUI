@@ -373,10 +373,15 @@ export default async function ComparePageRoute({
 
   const textMap = new Map((docTexts || []).map((d) => [d.id, d.text]));
 
-  const documentsForCompare: CompareDoc[] = qualifiedDocIds.map((docId) => {
-    const meta = docsMetaMap.get(docId)!;
-    return { ...meta, text: textMap.get(docId) || "" };
-  });
+  // textMap so contem docs com excluded_at IS NULL (filtro acima). Usar como
+  // gate final garante que docs soft-deletados saiam da comparacao por
+  // completo, nao apenas com texto vazio.
+  const documentsForCompare: CompareDoc[] = qualifiedDocIds
+    .filter((docId) => textMap.has(docId))
+    .map((docId) => {
+      const meta = docsMetaMap.get(docId)!;
+      return { ...meta, text: textMap.get(docId) || "" };
+    });
 
   const existingReviews: Record<
     string,
