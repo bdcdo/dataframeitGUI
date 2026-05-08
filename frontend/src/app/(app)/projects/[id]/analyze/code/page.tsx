@@ -13,8 +13,9 @@ import type {
 import {
   classifyDocStatus,
   versionLabel,
-  isCurrentFilter,
   getCurrentRoundDescriptor,
+  compareVersionLabels,
+  resolveRoundFilter,
   type RoundContext,
   type ResponseRoundFields,
   type SchemaVersion,
@@ -67,7 +68,9 @@ export default async function CodePage({
     assignment: { id: a.id, status: a.status } as Pick<Assignment, "id" | "status">,
   }));
 
-  // Responses incluem agora round_id e schema_version para classificacao por rodada
+  // Responses incluem agora round_id e schema_version para classificacao por rodada.
+  // Filtra respondent_type=humano: respostas LLM têm respondent_id distinto, mas o
+  // filtro explícito alinha com saveResponse e protege contra colisões futuras.
   const docIds = allDocuments.map((d) => d.id);
   const { data: responses } = await supabase
     .from("responses")
@@ -76,6 +79,7 @@ export default async function CodePage({
     )
     .eq("project_id", id)
     .eq("respondent_id", effectiveUserId)
+    .eq("respondent_type", "humano")
     .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
 
   const responseByDoc = new Map<
@@ -114,6 +118,7 @@ export default async function CodePage({
 
   // Versoes anteriores presentes em responses — so faz sentido em schema_version.
   // Em manual, o select de rodadas anteriores vem da tabela `rounds`.
+  // Sort numerico (compareVersionLabels) para ordenar 0.9.0 < 0.10.0 corretamente.
   const previousVersions =
     strategy === "schema_version"
       ? Array.from(
@@ -130,26 +135,38 @@ export default async function CodePage({
               })
               .filter((v): v is string => v != null),
           ),
-        ).sort()
+        ).sort(compareVersionLabels)
       : [];
 
-  // Filtro server-side conforme roundParam
+  const { key: currentRoundKey, label: currentRoundLabel } =
+    getCurrentRoundDescriptor(ctx, roundsById);
+
+  // Normaliza ?round= para evitar lista vazia silenciosa (URL manipulada,
+  // troca de estrategia com filtro stale, ou ?round=<currentRoundKey>).
+  const effectiveRound = resolveRoundFilter(
+    roundParam,
+    ctx,
+    currentRoundKey,
+    previousVersions,
+  );
+
+  // Filtro server-side conforme effectiveRound
   const filteredDocuments = allDocuments.filter((d) => {
     const resp = responseByDoc.get(d.id);
     const status = classifyDocStatus(ctx, resp ?? null, roundsById);
 
-    if (roundParam === "all") return true;
-    if (isCurrentFilter(roundParam)) {
+    if (effectiveRound === "all") return true;
+    if (effectiveRound === "current") {
       // Padrao: mostra docs que ainda precisam ser respondidos na rodada atual
       // (sem resposta OU resposta de rodada anterior). Concluidos da atual saem.
       return status.kind !== "current_done";
     }
     // Rodada especifica: id (manual) ou label (schema_version)
     if (strategy === "manual") {
-      return resp?.round_id === roundParam;
+      return resp?.round_id === effectiveRound;
     }
     return (
-      status.kind === "previous" && status.label === roundParam
+      status.kind === "previous" && status.label === effectiveRound
     );
   });
 
@@ -198,10 +215,7 @@ export default async function CodePage({
   // que pesquisador edite achando que ainda esta na rodada antiga.
   // (Salvar promove para a rodada atual de qualquer jeito.)
   const isViewingPreviousRound =
-    !isCurrentFilter(roundParam) && roundParam !== "all";
-
-  const { key: currentRoundKey, label: currentRoundLabel } =
-    getCurrentRoundDescriptor(ctx, roundsById);
+    effectiveRound !== "current" && effectiveRound !== "all";
 
   return (
     <CodingPage
@@ -219,7 +233,7 @@ export default async function CodePage({
         currentRoundLabel,
         rounds: ctx.rounds,
         previousVersions,
-        selected: roundParam,
+        selected: effectiveRound,
       }}
     />
   );

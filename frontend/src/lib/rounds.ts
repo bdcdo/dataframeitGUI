@@ -125,3 +125,36 @@ export function getCurrentRoundDescriptor(
   const v = versionLabel(ctx.currentVersion);
   return { key: v, label: v };
 }
+
+/**
+ * Compara duas versões "X.Y.Z" numericamente (não lexicograficamente).
+ * "0.10.0" deve vir DEPOIS de "0.9.0", mas o sort default trataria como antes.
+ */
+export function compareVersionLabels(a: string, b: string): number {
+  const [am = 0, an = 0, ap = 0] = a.split(".").map((n) => Number(n) || 0);
+  const [bm = 0, bn = 0, bp = 0] = b.split(".").map((n) => Number(n) || 0);
+  return am - bm || an - bn || ap - bp;
+}
+
+/**
+ * Normaliza o valor de `?round=` para um filtro válido.
+ *
+ * - Se não corresponde a nenhuma rodada/versão conhecida, faz fallback para "current"
+ *   (evita lista vazia silenciosa após troca de estratégia ou URL manipulada).
+ * - Se aponta para a rodada atual (mesma key), também vira "current" para que o
+ *   painel não fique read-only sobre o que ainda é a rodada vigente.
+ */
+export function resolveRoundFilter(
+  raw: string | null | undefined,
+  ctx: RoundContext,
+  currentRoundKey: string,
+  previousVersions: string[],
+): "current" | "all" | string {
+  if (isCurrentFilter(raw)) return "current";
+  if (raw === "all") return "all";
+  if (raw === currentRoundKey) return "current";
+  if (ctx.strategy === "manual") {
+    return ctx.rounds.some((r) => r.id === raw) ? (raw as string) : "current";
+  }
+  return previousVersions.includes(raw as string) ? (raw as string) : "current";
+}

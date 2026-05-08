@@ -6,6 +6,8 @@ import {
   responseRoundLabel,
   isCurrentFilter,
   getCurrentRoundDescriptor,
+  compareVersionLabels,
+  resolveRoundFilter,
   type RoundContext,
   type ResponseRoundFields,
   type SchemaVersion,
@@ -279,5 +281,90 @@ describe("responseRoundLabel", () => {
     };
     expect(responseRoundLabel(ctx, null, mapRounds([]))).toBeNull();
     expect(responseRoundLabel(ctx, undefined, mapRounds([]))).toBeNull();
+  });
+});
+
+describe("compareVersionLabels", () => {
+  it("ordena numericamente, nao lexicograficamente", () => {
+    const versions = ["0.10.0", "0.9.0", "1.0.0", "0.2.5"];
+    expect([...versions].sort(compareVersionLabels)).toEqual([
+      "0.2.5",
+      "0.9.0",
+      "0.10.0",
+      "1.0.0",
+    ]);
+  });
+
+  it("trata versoes iguais como 0", () => {
+    expect(compareVersionLabels("1.2.3", "1.2.3")).toBe(0);
+  });
+
+  it("compara major antes de minor antes de patch", () => {
+    expect(compareVersionLabels("2.0.0", "1.99.99")).toBeGreaterThan(0);
+    expect(compareVersionLabels("1.2.0", "1.1.99")).toBeGreaterThan(0);
+    expect(compareVersionLabels("1.1.2", "1.1.1")).toBeGreaterThan(0);
+  });
+});
+
+describe("resolveRoundFilter", () => {
+  const piloto = round("rp", "Piloto");
+  const r2 = round("r2", "Rodada 2");
+
+  describe("schema_version", () => {
+    const ctx: RoundContext = {
+      strategy: "schema_version",
+      currentRoundId: null,
+      currentVersion: v(1, 0, 0),
+      rounds: [],
+    };
+
+    it("undefined/null/'current' viram 'current'", () => {
+      expect(resolveRoundFilter(undefined, ctx, "1.0.0", ["0.9.0"])).toBe("current");
+      expect(resolveRoundFilter(null, ctx, "1.0.0", ["0.9.0"])).toBe("current");
+      expect(resolveRoundFilter("current", ctx, "1.0.0", ["0.9.0"])).toBe("current");
+    });
+
+    it("'all' permanece 'all'", () => {
+      expect(resolveRoundFilter("all", ctx, "1.0.0", ["0.9.0"])).toBe("all");
+    });
+
+    it("versao igual a current vira 'current'", () => {
+      expect(resolveRoundFilter("1.0.0", ctx, "1.0.0", ["0.9.0"])).toBe("current");
+    });
+
+    it("versao em previousVersions e mantida", () => {
+      expect(resolveRoundFilter("0.9.0", ctx, "1.0.0", ["0.9.0", "0.8.0"])).toBe(
+        "0.9.0",
+      );
+    });
+
+    it("versao desconhecida vira 'current' (URL stale apos troca)", () => {
+      expect(resolveRoundFilter("99.0.0", ctx, "1.0.0", ["0.9.0"])).toBe("current");
+    });
+  });
+
+  describe("manual", () => {
+    const ctx: RoundContext = {
+      strategy: "manual",
+      currentRoundId: "r2",
+      currentVersion: v(1, 0, 0),
+      rounds: [piloto, r2],
+    };
+
+    it("id de rodada conhecida e mantido", () => {
+      expect(resolveRoundFilter("rp", ctx, "r2", [])).toBe("rp");
+    });
+
+    it("id == currentRoundKey vira 'current'", () => {
+      expect(resolveRoundFilter("r2", ctx, "r2", [])).toBe("current");
+    });
+
+    it("id desconhecido vira 'current'", () => {
+      expect(resolveRoundFilter("fantasma", ctx, "r2", [])).toBe("current");
+    });
+
+    it("'all' permanece 'all'", () => {
+      expect(resolveRoundFilter("all", ctx, "r2", [])).toBe("all");
+    });
   });
 });

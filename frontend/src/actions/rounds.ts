@@ -5,6 +5,17 @@ import { getAuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { RoundStrategy } from "@/lib/types";
 
+// Postgres unique_violation. Tabela `rounds` tem UNIQUE(project_id, label) —
+// sem mapeamento, o usuario veria o erro cru "duplicate key value violates...".
+const PG_UNIQUE_VIOLATION = "23505";
+
+function mapRoundsError(err: { code?: string; message: string }): string {
+  if (err.code === PG_UNIQUE_VIOLATION) {
+    return "Já existe uma rodada com esse nome neste projeto.";
+  }
+  return err.message;
+}
+
 async function assertCoordinator(
   projectId: string,
 ): Promise<{ error?: string; userId?: string }> {
@@ -51,7 +62,7 @@ export async function createRound(
     .insert({ project_id: projectId, label: trimmed })
     .select("id")
     .single();
-  if (error) return { error: error.message };
+  if (error) return { error: mapRoundsError(error) };
 
   if (setAsCurrent && data?.id) {
     // Nao-transacional: se este update falhar, a rodada ja foi criada e o
@@ -86,7 +97,7 @@ export async function renameRound(
     .update({ label: trimmed })
     .eq("id", roundId)
     .eq("project_id", projectId);
-  if (error) return { error: error.message };
+  if (error) return { error: mapRoundsError(error) };
 
   revalidatePath(`/projects/${projectId}/config/rounds`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
@@ -155,6 +166,11 @@ export async function setRoundStrategy(
   if (strategy !== "schema_version" && strategy !== "manual") {
     return { error: "Estratégia inválida." };
   }
+
+  // Nota: nao limpamos current_round_id ao mudar para schema_version. Isso
+  // preserva a config caso o coordenador volte para manual depois. Leituras
+  // (page.tsx, saveResponse) ignoram current_round_id quando strategy nao e
+  // 'manual', entao manter o valor stale e seguro.
 
   const auth = await assertCoordinator(projectId);
   if (auth.error) return { error: auth.error };
