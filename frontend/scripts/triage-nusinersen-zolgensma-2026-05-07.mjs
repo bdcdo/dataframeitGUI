@@ -1,8 +1,8 @@
 // Triagem de pareceres de Nusinersena no projeto Zolgensma.
 //
-// Como pareceres do NATJUS sobre AME mencionam ambos os medicamentos,
-// regex em keyword nao basta — usa Haiku para classificar o medicamento
-// PRINCIPAL do caso analisado.
+// Como pareceres do NATJUS sobre AME mencionam multiplos medicamentos
+// (Zolgensma, Nusinersena, Risdiplam), regex em keyword nao basta — usa Haiku
+// via Claude Agent SDK para classificar o medicamento PRINCIPAL do caso.
 //
 // Fluxos:
 //   1) dry-run (gera CSV para revisao):
@@ -13,13 +13,13 @@
 //
 // Pre-requisitos:
 //   - .env.local com NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY
-//   - ANTHROPIC_API_KEY exportada (export ANTHROPIC_API_KEY=sk-ant-...)
+//   - Claude Code logado localmente (usa creditos da subscription via SDK)
 //   - Migration de soft delete aplicada (20260508030508_documents_soft_delete.sql)
-//     para o --apply funcionar.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -46,16 +46,16 @@ const env = Object.fromEntries(
 );
 const URL = env.NEXT_PUBLIC_SUPABASE_URL;
 const KEY = env.SUPABASE_SERVICE_ROLE_KEY;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 if (!URL || !KEY) throw new Error("URL/KEY nao encontrados em .env.local");
 
 // --- constantes -------------------------------------------------------------
 const PROJECT_ID = "0c6394da-dd2e-4ac0-af83-a107fae37ad4"; // Zolgensma
 const BRUNO_USER_ID = "234c08f3-b4eb-41fc-8b99-5b1419f4f7b0";
-const HAIKU_MODEL = "claude-haiku-4-5-20251001";
+const HAIKU_MODEL = "claude-haiku-4-5";
 const TEXT_TRUNCATE = 10_000;
-const CONCURRENCY = 5;
-const EXCLUDE_REASON = "Triagem 2026-05-07: parecer de Nusinersena fora do escopo do projeto Zolgensma";
+const CONCURRENCY = 3;
+const EXCLUDE_REASON =
+  "Triagem 2026-05-07: parecer fora do escopo do projeto Zolgensma (medicamento principal != onasemnogeno)";
 
 // --- supabase rest ----------------------------------------------------------
 async function rest(path, init = {}) {
@@ -77,43 +77,50 @@ async function rest(path, init = {}) {
   return r.json();
 }
 
-// --- anthropic --------------------------------------------------------------
+// --- classificacao via Claude Agent SDK -------------------------------------
+const SYSTEM_PROMPT = [
+  "Voce e especialista em direito sanitario brasileiro.",
+  "Pareceres do NATJUS sobre AME (atrofia muscular espinhal) frequentemente mencionam multiplos medicamentos (Zolgensma, Nusinersena, Risdiplam) porque sao alternativas terapeuticas.",
+  "Mas o caso clinico analisado tem UM medicamento pedido/prescrito.",
+  "Sua tarefa: identificar o medicamento PRINCIPAL do caso, ignorando mencoes apenas comparativas.",
+  "Responda SOMENTE com JSON valido (sem fencing, sem texto antes/depois).",
+].join(" ");
+
 async function classifyDocument(title, text) {
-  const truncated = text.length > TEXT_TRUNCATE
-    ? text.slice(0, TEXT_TRUNCATE) + "\n\n[... TEXTO TRUNCADO ...]"
-    : text;
+  const truncated =
+    text.length > TEXT_TRUNCATE
+      ? text.slice(0, TEXT_TRUNCATE) + "\n\n[... TEXTO TRUNCADO ...]"
+      : text;
 
-  const body = {
-    model: HAIKU_MODEL,
-    max_tokens: 400,
-    system:
-      "Voce e especialista em direito sanitario brasileiro. Pareceres do NATJUS sobre AME (atrofia muscular espinhal) frequentemente mencionam tanto Zolgensma (onasemnogene abeparvovec) quanto Nusinersena (Spinraza), porque sao alternativas terapeuticas. Mas o caso clinico analisado tem UM medicamento pedido/prescrito pelo paciente. Identifique o medicamento PRINCIPAL do caso, ignorando mencoes meramente comparativas ou contextuais. Responda SOMENTE com JSON valido, sem texto adicional, sem fencing.",
-    messages: [
-      {
-        role: "user",
-        content: `Titulo: ${title || "(sem titulo)"}\n\nTexto do parecer:\n${truncated}\n\nResponda em JSON:\n{\n  "drug": "zolgensma" | "nusinersena" | "ambos" | "outro",\n  "confidence": numero entre 0 e 1,\n  "justification": "uma frase em portugues explicando"\n}`,
-      },
-    ],
-  };
+  const prompt = `Titulo: ${title || "(sem titulo)"}\n\nTexto do parecer:\n${truncated}\n\nResponda em JSON:\n{\n  "drug": "zolgensma" | "nusinersena" | "risdiplam" | "ambos" | "outro",\n  "confidence": numero entre 0 e 1,\n  "justification": "uma frase em portugues explicando"\n}`;
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
+  let resultText = "";
+  for await (const message of query({
+    prompt,
+    options: {
+      model: HAIKU_MODEL,
+      systemPrompt: SYSTEM_PROMPT,
+      allowedTools: [],
+      permissionMode: "bypassPermissions",
+      settingSources: [],
+      maxTurns: 1,
+      includePartialMessages: false,
     },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const errText = await r.text();
-    throw new Error(`Anthropic ${r.status}: ${errText}`);
+  })) {
+    if (message.type === "result") {
+      if (message.subtype === "success") {
+        resultText = message.result;
+      } else {
+        throw new Error(
+          `SDK result subtype=${message.subtype}: ${JSON.stringify(message)}`,
+        );
+      }
+    }
   }
-  const json = await r.json();
-  const raw = json.content?.[0]?.text || "";
-  // tenta extrair JSON mesmo se tiver fencing
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error(`Resposta sem JSON: ${raw.slice(0, 200)}`);
+
+  if (!resultText) throw new Error("SDK nao retornou result");
+  const match = resultText.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error(`Resposta sem JSON: ${resultText.slice(0, 200)}`);
   return JSON.parse(match[0]);
 }
 
@@ -132,12 +139,13 @@ async function runWithConcurrency(items, fn, concurrency = CONCURRENCY) {
         results[i] = { error: e.message };
       }
       done++;
-      if (done % 10 === 0 || done === total) {
-        process.stderr.write(`\r  classificados: ${done}/${total}`);
-      }
+      process.stderr.write(`\r  classificados: ${done}/${total}`);
     }
   }
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, worker);
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    worker,
+  );
   await Promise.all(workers);
   process.stderr.write("\n");
   return results;
@@ -154,7 +162,6 @@ function csvEscape(value) {
 }
 
 function parseCsv(text) {
-  // parser simples (CSV com aspas duplas e escape "" por padrao)
   const rows = [];
   let row = [];
   let cell = "";
@@ -218,18 +225,18 @@ if (FROM_CSV) {
     .filter((r) => (r[colIdx.decision] || "").trim().toLowerCase() === "excluir")
     .map((r) => r[colIdx.id]);
 
-  console.log(`CSV: ${body.length} linhas; marcadas para exclusao: ${toExclude.length}`);
+  console.log(
+    `CSV: ${body.length} linhas; marcadas para exclusao: ${toExclude.length}`,
+  );
   if (toExclude.length === 0) {
     console.log("Nada a fazer.");
     process.exit(0);
   }
 
-  // Confirma
   console.log("\nIDs a excluir (soft delete):");
   for (const id of toExclude.slice(0, 10)) console.log(`  ${id}`);
   if (toExclude.length > 10) console.log(`  ... +${toExclude.length - 10}`);
 
-  // Bulk update via PATCH
   const CHUNK = 50;
   let updated = 0;
   for (let i = 0; i < toExclude.length; i += CHUNK) {
@@ -251,18 +258,18 @@ if (FROM_CSV) {
 
   console.log(`\nFeito: ${updated} documentos marcados como excluidos.`);
   console.log("\nRollback (se necessario):");
-  console.log(`  UPDATE documents SET excluded_at = NULL, excluded_reason = NULL, excluded_by = NULL`);
-  console.log(`  WHERE id IN (${toExclude.map((id) => `'${id}'`).join(", ")});`);
+  console.log(
+    `  UPDATE documents SET excluded_at = NULL, excluded_reason = NULL, excluded_by = NULL`,
+  );
+  console.log(
+    `  WHERE id IN (${toExclude.map((id) => `'${id}'`).join(", ")});`,
+  );
   process.exit(0);
 }
 
 // ============================================================================
 // MODO 2: dry-run (classifica e gera CSV)
 // ============================================================================
-if (!ANTHROPIC_KEY) {
-  console.error("ANTHROPIC_API_KEY nao definida. Exporte: export ANTHROPIC_API_KEY=sk-ant-...");
-  process.exit(1);
-}
 
 let queryParams = `select=id,external_id,title,text,created_at&project_id=eq.${PROJECT_ID}&excluded_at=is.null`;
 if (SINCE) queryParams += `&created_at=gte.${SINCE}`;
@@ -270,7 +277,9 @@ queryParams += `&order=created_at.desc`;
 if (LIMIT > 0) queryParams += `&limit=${LIMIT}`;
 
 console.log("Buscando documentos do projeto Zolgensma...");
-console.log(`  filtros: since=${SINCE || "(nenhum)"}  limit=${LIMIT || "(nenhum)"}`);
+console.log(
+  `  filtros: since=${SINCE || "(nenhum)"}  limit=${LIMIT || "(nenhum)"}`,
+);
 
 const docs = await rest(`documents?${queryParams}`);
 console.log(`  encontrados: ${docs.length}`);
@@ -280,53 +289,87 @@ if (docs.length === 0) {
   process.exit(0);
 }
 
-console.log(`\nClassificando com ${HAIKU_MODEL} (concorrencia ${CONCURRENCY})...`);
+console.log(
+  `\nClassificando com ${HAIKU_MODEL} via Claude Agent SDK (concorrencia ${CONCURRENCY})...`,
+);
+console.log(
+  "  (usa creditos da subscription Claude Code — sem ANTHROPIC_API_KEY)",
+);
+
 const classifications = await runWithConcurrency(docs, async (doc) => {
-  const result = await classifyDocument(doc.title, doc.text);
-  return result;
+  return await classifyDocument(doc.title, doc.text);
 });
 
-// resumo
-const summary = { zolgensma: 0, nusinersena: 0, ambos: 0, outro: 0, erro: 0 };
+const summary = {
+  zolgensma: 0,
+  nusinersena: 0,
+  risdiplam: 0,
+  ambos: 0,
+  outro: 0,
+  erro: 0,
+};
 for (const c of classifications) {
   if (c?.error) summary.erro++;
   else summary[c?.drug] = (summary[c?.drug] || 0) + 1;
 }
 console.log("\nResumo:");
 for (const [k, v] of Object.entries(summary)) {
-  if (v > 0) console.log(`  ${k.padEnd(11)} ${v}`);
+  if (v > 0) console.log(`  ${k.padEnd(12)} ${v}`);
 }
 
-// CSV de saida
 const today = new Date().toISOString().slice(0, 10);
 const outPath = resolve(process.cwd(), `triage-nusinersen-${today}.csv`);
-const header = ["id", "external_id", "title", "created_at", "drug", "confidence", "justification", "decision"];
+const header = [
+  "id",
+  "external_id",
+  "title",
+  "created_at",
+  "drug",
+  "confidence",
+  "justification",
+  "decision",
+];
 const lines = [header.map(csvEscape).join(",")];
 for (let i = 0; i < docs.length; i++) {
   const d = docs[i];
   const c = classifications[i] || {};
   const isError = !!c.error;
   const drug = isError ? "erro" : c.drug || "";
-  const conf = isError ? "" : c.confidence ?? "";
+  const conf = isError ? "" : (c.confidence ?? "");
   const just = isError ? c.error : c.justification || "";
-  // sugestao default: nusinersena com alta confianca = excluir
-  const suggestedDecision = drug === "nusinersena" && Number(conf) >= 0.8 ? "excluir" : "";
-  lines.push([
-    d.id,
-    d.external_id || "",
-    d.title || "",
-    d.created_at,
-    drug,
-    conf,
-    just,
-    suggestedDecision,
-  ].map(csvEscape).join(","));
+  // sugestao default: tudo que nao for zolgensma/ambos com alta confianca = excluir
+  const isOffScope =
+    !isError &&
+    drug !== "zolgensma" &&
+    drug !== "ambos" &&
+    Number(conf) >= 0.8;
+  const suggestedDecision = isOffScope ? "excluir" : "";
+  lines.push(
+    [
+      d.id,
+      d.external_id || "",
+      d.title || "",
+      d.created_at,
+      drug,
+      conf,
+      just,
+      suggestedDecision,
+    ]
+      .map(csvEscape)
+      .join(","),
+  );
 }
 writeFileSync(outPath, lines.join("\n") + "\n", "utf8");
 
 console.log(`\nCSV gerado: ${outPath}`);
 console.log("\nProximos passos:");
-console.log("  1. Revisar manualmente o CSV — preencha 'decision' com 'excluir' ou 'manter'");
-console.log("     (linhas com drug=nusinersena e confidence >= 0.8 ja vem sugeridas como 'excluir')");
-console.log("  2. Aplicar: node frontend/scripts/triage-nusinersen-zolgensma-2026-05-07.mjs \\");
+console.log(
+  "  1. Revisar manualmente o CSV — preencha 'decision' com 'excluir' ou 'manter'",
+);
+console.log(
+  "     (linhas com drug != zolgensma/ambos e confidence >= 0.8 ja vem sugeridas como 'excluir')",
+);
+console.log(
+  "  2. Aplicar: node frontend/scripts/triage-nusinersen-zolgensma-2026-05-07.mjs \\",
+);
 console.log(`     --from-csv=${outPath.split("/").pop()} --apply`);
