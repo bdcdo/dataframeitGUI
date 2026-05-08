@@ -2,8 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DocumentNav } from "./DocumentNav";
 import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel } from "./QuestionsPanel";
 import {
@@ -12,14 +10,14 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { DocumentPicker } from "./DocumentPicker";
-import { BrowseDocumentNav } from "./BrowseDocumentNav";
 import { FullscreenNav } from "./FullscreenNav";
 import { saveResponse } from "@/actions/responses";
 import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
-import { RoundFilter } from "./RoundFilter";
+import { CodingHeader } from "./CodingHeader";
+import { CURRENT_FILTER_VALUE } from "@/lib/rounds";
 import { toast } from "sonner";
 import { CheckCircle2, FileQuestion, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -408,32 +406,36 @@ export function CodingPage({
     >
       {!isFullscreen && (
         <>
-          <Tabs
-            value={mode}
-            onValueChange={(v) => setMode(v as "assigned" | "browse")}
-            className="shrink-0"
-          >
-            <div className="border-b px-4">
-              <TabsList className="h-9">
-                <TabsTrigger value="assigned" className="text-xs">
-                  Atribuídos ({documents.length})
-                </TabsTrigger>
-                <TabsTrigger value="browse" className="text-xs">
-                  Explorar
-                </TabsTrigger>
-              </TabsList>
-            </div>
-          </Tabs>
-          {mode === "assigned" && roundFilter && (
-            <RoundFilter
-              strategy={roundFilter.strategy}
-              currentRoundKey={roundFilter.currentRoundKey}
-              currentRoundLabel={roundFilter.currentRoundLabel}
-              rounds={roundFilter.rounds}
-              previousVersions={roundFilter.previousVersions}
-              selected={roundFilter.selected}
-            />
-          )}
+          <CodingHeader
+            mode={mode}
+            onModeChange={setMode}
+            assignedCount={documents.length}
+            roundFilter={roundFilter}
+            doc={
+              mode === "assigned" && currentDoc
+                ? {
+                    variant: "assigned",
+                    title: assignedTitle,
+                    index: docIndex,
+                    total: documents.length,
+                    onNavigate: handleDocNavigate,
+                    parecerUrl: assignedParecerUrl,
+                  }
+                : mode === "browse" && selectedBrowseDoc
+                ? {
+                    variant: "browse",
+                    title: browseTitle,
+                    responseCount: browseDocInfo?.responseCount ?? 0,
+                    onBack: handleBrowseBack,
+                    onRandom: handleBrowseRandom,
+                    parecerUrl: browseParecerUrl,
+                    projectId,
+                    documentId: selectedBrowseDoc.id,
+                  }
+                : undefined
+            }
+            onToggleFullscreen={toggleFullscreen}
+          />
           {progress && mode === "assigned" && <ProgressBanner data={progress} />}
         </>
       )}
@@ -467,7 +469,7 @@ export function CodingPage({
                   <p className="text-sm text-muted-foreground">
                     Nenhum documento corresponde ao filtro.
                   </p>
-                ) : roundFilter.selected === "" || roundFilter.selected === "current" ? (
+                ) : roundFilter.selected === "" || roundFilter.selected === CURRENT_FILTER_VALUE ? (
                   <p className="text-sm text-muted-foreground">
                     Tudo em dia na rodada atual ({roundFilter.currentRoundLabel}).
                   </p>
@@ -484,22 +486,13 @@ export function CodingPage({
             </div>
           ) : (
             <>
-              {isFullscreen ? (
+              {isFullscreen && (
                 <FullscreenNav
                   title={assignedTitle}
                   currentIndex={docIndex}
                   total={documents.length}
                   onNavigate={handleDocNavigate}
                   onExit={toggleFullscreen}
-                />
-              ) : (
-                <DocumentNav
-                  title={assignedTitle}
-                  currentIndex={docIndex}
-                  total={documents.length}
-                  onNavigate={handleDocNavigate}
-                  onToggleFullscreen={toggleFullscreen}
-                  parecerUrl={assignedParecerUrl}
                 />
               )}
               <ResizablePanelGroup
@@ -541,22 +534,11 @@ export function CodingPage({
             />
           ) : (
             <>
-              {isFullscreen ? (
+              {isFullscreen && (
                 <FullscreenNav
                   title={browseTitle}
                   responseCount={browseDocInfo?.responseCount ?? 0}
                   onExit={toggleFullscreen}
-                />
-              ) : (
-                <BrowseDocumentNav
-                  title={browseTitle}
-                  responseCount={browseDocInfo?.responseCount ?? 0}
-                  onBack={handleBrowseBack}
-                  onRandom={handleBrowseRandom}
-                  onToggleFullscreen={toggleFullscreen}
-                  parecerUrl={browseParecerUrl}
-                  projectId={projectId}
-                  documentId={selectedBrowseDoc?.id}
                 />
               )}
               <ResizablePanelGroup

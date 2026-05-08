@@ -100,8 +100,11 @@ export function classifyDocStatus(
  */
 export type RoundFilterValue = "current" | "all" | string;
 
+/** Valor do `?round=` que representa "rodada atual" — equivalente a omitir o param. */
+export const CURRENT_FILTER_VALUE = "current";
+
 export function isCurrentFilter(value: string | null | undefined): boolean {
-  return !value || value === "current";
+  return !value || value === CURRENT_FILTER_VALUE;
 }
 
 export interface CurrentRoundDescriptor {
@@ -150,11 +153,11 @@ export function resolveRoundFilter(
   currentRoundKey: string,
   previousVersions: string[],
 ): "current" | "all" | string {
-  if (isCurrentFilter(raw)) return "current";
+  if (isCurrentFilter(raw)) return CURRENT_FILTER_VALUE;
   if (raw === "all") return "all";
-  if (raw === currentRoundKey) return "current";
+  if (raw === currentRoundKey) return CURRENT_FILTER_VALUE;
   if (ctx.strategy === "manual") {
-    return ctx.rounds.some((r) => r.id === raw) ? (raw as string) : "current";
+    return ctx.rounds.some((r) => r.id === raw) ? (raw as string) : CURRENT_FILTER_VALUE;
   }
-  return previousVersions.includes(raw as string) ? (raw as string) : "current";
+  return previousVersions.includes(raw as string) ? (raw as string) : CURRENT_FILTER_VALUE;
 }

@@ -16,6 +16,7 @@ import {
   getCurrentRoundDescriptor,
   compareVersionLabels,
   resolveRoundFilter,
+  CURRENT_FILTER_VALUE,
   type RoundContext,
   type ResponseRoundFields,
   type SchemaVersion,
@@ -35,7 +36,7 @@ export default async function CodePage({
 
   const isImpersonating = !!(user.isMaster && sp.viewAsUser);
   const effectiveUserId = isImpersonating ? sp.viewAsUser! : user.id;
-  const roundParam = sp.round ?? "current";
+  const roundParam = sp.round ?? CURRENT_FILTER_VALUE;
 
   const supabase = await createSupabaseServer();
 
@@ -156,7 +157,7 @@ export default async function CodePage({
     const status = classifyDocStatus(ctx, resp ?? null, roundsById);
 
     if (effectiveRound === "all") return true;
-    if (effectiveRound === "current") {
+    if (effectiveRound === CURRENT_FILTER_VALUE) {
       // Padrao: mostra docs que ainda precisam ser respondidos na rodada atual
       // (sem resposta OU resposta de rodada anterior). Concluidos da atual saem.
       return status.kind !== "current_done";
@@ -215,7 +216,7 @@ export default async function CodePage({
   // que pesquisador edite achando que ainda esta na rodada antiga.
   // (Salvar promove para a rodada atual de qualquer jeito.)
   const isViewingPreviousRound =
-    effectiveRound !== "current" && effectiveRound !== "all";
+    effectiveRound !== CURRENT_FILTER_VALUE && effectiveRound !== "all";
 
   return (
     <CodingPage
