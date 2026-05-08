@@ -23,9 +23,149 @@ export async function createProjectComment(
     author_id: user.id,
     body: body.trim(),
     parent_id: parentId || null,
+    kind: "note",
   });
 
   if (error) return { error: error.message };
+
+  revalidatePath(`/projects/${projectId}/reviews/comments`);
+  return { success: true };
+}
+
+// Pesquisador sinaliza documento como fora de escopo. Coordenador resolve em
+// /reviews/comments aprovando (soft delete) ou rejeitando.
+export async function requestDocumentExclusion(
+  projectId: string,
+  documentId: string,
+  reason: string,
+) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+  if (!reason?.trim())
+    return { error: "Informe o motivo da sugestão de exclusão" };
+
+  const supabase = await createSupabaseServer();
+
+  // Evita duplicata: ja existe pedido pendente do mesmo autor para o mesmo doc?
+  const { data: existing } = await supabase
+    .from("project_comments")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("author_id", user.id)
+    .eq("kind", "exclusion_request")
+    .is("resolved_at", null)
+    .is("rejected_at", null)
+    .maybeSingle();
+
+  if (existing) {
+    return {
+      error: "Você já tem uma sugestão pendente para este documento",
+    };
+  }
+
+  const { error } = await supabase.from("project_comments").insert({
+    project_id: projectId,
+    document_id: documentId,
+    field_name: null,
+    author_id: user.id,
+    body: reason.trim(),
+    parent_id: null,
+    kind: "exclusion_request",
+  });
+
+  if (error) return { error: error.message };
+
+  revalidatePath(`/projects/${projectId}/reviews/comments`);
+  return { success: true };
+}
+
+// Coordenador aprova: faz soft delete no documento e marca o pedido como
+// resolvido (resolved_at).
+export async function approveExclusionRequest(
+  commentId: string,
+  projectId: string,
+) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+
+  const supabase = await createSupabaseServer();
+
+  const { data: comment } = await supabase
+    .from("project_comments")
+    .select("id, document_id, body, kind")
+    .eq("id", commentId)
+    .eq("project_id", projectId)
+    .single();
+
+  if (!comment) return { error: "Sugestão não encontrada" };
+  if (comment.kind !== "exclusion_request")
+    return { error: "Comentário não é uma sugestão de exclusão" };
+  if (!comment.document_id)
+    return { error: "Sugestão sem documento associado" };
+
+  const reason = `Aprovada sugestão do pesquisador: ${comment.body}`.slice(
+    0,
+    1000,
+  );
+
+  // 1. soft delete documento
+  const { error: docError } = await supabase
+    .from("documents")
+    .update({
+      excluded_at: new Date().toISOString(),
+      excluded_reason: reason,
+      excluded_by: user.id,
+    })
+    .eq("id", comment.document_id)
+    .eq("project_id", projectId);
+
+  if (docError) return { error: docError.message };
+
+  // 2. resolver comment
+  const { error: commentError } = await supabase
+    .from("project_comments")
+    .update({
+      resolved_at: new Date().toISOString(),
+      resolved_by: user.id,
+    })
+    .eq("id", commentId)
+    .eq("project_id", projectId);
+
+  if (commentError) return { error: commentError.message };
+
+  revalidatePath(`/projects/${projectId}/reviews/comments`);
+  revalidatePath(`/projects/${projectId}/config/documents`);
+  return { success: true };
+}
+
+export async function rejectExclusionRequest(
+  commentId: string,
+  projectId: string,
+  rejectionReason: string,
+) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+  if (!rejectionReason?.trim())
+    return { error: "Informe o motivo da rejeição" };
+
+  const supabase = await createSupabaseServer();
+
+  const { data, error } = await supabase
+    .from("project_comments")
+    .update({
+      rejected_at: new Date().toISOString(),
+      rejected_reason: rejectionReason.trim(),
+      resolved_by: user.id,
+    })
+    .eq("id", commentId)
+    .eq("project_id", projectId)
+    .eq("kind", "exclusion_request")
+    .select("id");
+
+  if (error) return { error: error.message };
+  if (!data || data.length === 0)
+    return { error: "Sem permissão para rejeitar esta sugestão" };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   return { success: true };

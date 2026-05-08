@@ -420,6 +420,8 @@ export function CodingPage({
                     total: documents.length,
                     onNavigate: handleDocNavigate,
                     parecerUrl: assignedParecerUrl,
+                    projectId,
+                    documentId: currentDoc.id,
                   }
                 : mode === "browse" && selectedBrowseDoc
                 ? {

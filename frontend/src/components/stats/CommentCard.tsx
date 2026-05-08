@@ -24,6 +24,10 @@ import {
   type GabaritoRespondentAnswer,
 } from "@/actions/stats";
 import { resolveSchemaSuggestion } from "@/actions/suggestions";
+import {
+  approveExclusionRequest,
+  rejectExclusionRequest,
+} from "@/actions/project-comments";
 import { SuggestionDiff } from "./SuggestionDiff";
 import { toast } from "sonner";
 
@@ -64,7 +68,14 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
-  source: "review" | "nota" | "sugestao" | "dificuldade" | "anotacao" | "duvida";
+  source:
+    | "review"
+    | "nota"
+    | "sugestao"
+    | "dificuldade"
+    | "anotacao"
+    | "duvida"
+    | "exclusao";
   responseSnapshot: ResponseSnapshotEntry[] | null;
   suggestionId?: string;
   suggestionStatus?: "pending" | "approved" | "rejected";
@@ -82,6 +93,11 @@ export interface ReviewComment {
   difficultyDocumentId?: string;
   duvidaReviewId?: string;
   duvidaRespondentId?: string;
+  /** Para exclusao_request — id do project_comment, status e document_id alvo. */
+  exclusionCommentId?: string;
+  exclusionDocumentId?: string;
+  exclusionStatus?: "pending" | "approved" | "rejected";
+  exclusionRejectedReason?: string | null;
 }
 
 interface CommentCardProps {
@@ -101,6 +117,7 @@ function formatVerdictLabel(verdict: string): string {
   if (verdict === "anotacao") return "Anotação";
   if (verdict === "dificuldade") return "Dificuldade do LLM";
   if (verdict === "sugestao") return "Sugestão";
+  if (verdict === "exclusao") return "Sugestão de exclusão";
   if (verdict === "duvida") return "Dúvida do gabarito";
   if (verdict === "ambiguo") return "Ambíguo";
   if (verdict === "pular") return "Pular";
@@ -125,6 +142,7 @@ function verdictVariant(
   if (verdict === "anotacao") return "secondary";
   if (verdict === "dificuldade") return "secondary";
   if (verdict === "sugestao") return "outline";
+  if (verdict === "exclusao") return "destructive";
   if (verdict === "duvida") return "secondary";
   if (verdict === "ambiguo") return "secondary";
   if (verdict === "pular") return "outline";
@@ -205,7 +223,7 @@ export function CommentCard({
               <code className="text-xs font-mono text-muted-foreground/70">
                 {comment.fieldName}
               </code>
-              {isCoordinator && onEditField && comment.source !== "nota" && comment.source !== "dificuldade" && (
+              {isCoordinator && onEditField && comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "exclusao" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -216,7 +234,7 @@ export function CommentCard({
                   <Pencil className="h-3 w-3" />
                 </Button>
               )}
-              {!isCoordinator && onSuggestField && comment.source !== "nota" && comment.source !== "dificuldade" && (
+              {!isCoordinator && onSuggestField && comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "exclusao" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -324,8 +342,19 @@ export function CommentCard({
           </div>
         )}
 
+        {/* Acoes de sugestao de exclusao */}
+        {comment.source === "exclusao" && comment.exclusionCommentId && (
+          <ExclusionActions
+            commentId={comment.exclusionCommentId}
+            projectId={projectId}
+            status={comment.exclusionStatus ?? "pending"}
+            rejectedReason={comment.exclusionRejectedReason}
+            isCoordinator={!!isCoordinator}
+          />
+        )}
+
         {/* Gabarito expansível (só para reviews, não para notas) */}
-        {comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "anotacao" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
+        {comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "anotacao" && comment.source !== "exclusao" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
           <CollapsibleTrigger asChild>
             <Button
               variant="ghost"
@@ -410,7 +439,9 @@ export function CommentCard({
             )}
           </p>
           <div className="flex gap-1">
-            {comment.source === "sugestao" ? null : isResolved ? (
+            {comment.source === "sugestao" || comment.source === "exclusao"
+              ? null
+              : isResolved ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -435,5 +466,136 @@ export function CommentCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ExclusionActions({
+  commentId,
+  projectId,
+  status,
+  rejectedReason,
+  isCoordinator,
+}: {
+  commentId: string;
+  projectId: string;
+  status: "pending" | "approved" | "rejected";
+  rejectedReason?: string | null;
+  isCoordinator: boolean;
+}) {
+  const router = useRouter();
+  const [isPending, startAction] = useTransition();
+  const [showRejectInput, setShowRejectInput] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+
+  if (status === "approved") {
+    return (
+      <Badge className="text-xs bg-red-500/10 text-red-700 w-fit">
+        Documento excluído
+      </Badge>
+    );
+  }
+  if (status === "rejected") {
+    return (
+      <div className="flex flex-col gap-1">
+        <Badge className="text-xs bg-muted text-muted-foreground w-fit">
+          Sugestão rejeitada
+        </Badge>
+        {rejectedReason && (
+          <p className="text-xs text-muted-foreground italic">
+            Motivo: {rejectedReason}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (!isCoordinator) {
+    return (
+      <Badge className="text-xs bg-amber-500/10 text-amber-700 w-fit">
+        Aguardando coordenador
+      </Badge>
+    );
+  }
+
+  if (showRejectInput) {
+    return (
+      <div className="flex flex-col gap-2">
+        <input
+          className="rounded-md border bg-background px-2 py-1 text-xs"
+          placeholder="Motivo da rejeição"
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          autoFocus
+        />
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 text-xs"
+            disabled={isPending}
+            onClick={() => {
+              setShowRejectInput(false);
+              setRejectReason("");
+            }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="h-6 text-xs"
+            disabled={isPending || !rejectReason.trim()}
+            onClick={() => {
+              startAction(async () => {
+                const result = await rejectExclusionRequest(
+                  commentId,
+                  projectId,
+                  rejectReason,
+                );
+                if (result.error) toast.error(result.error);
+                else {
+                  toast.success("Sugestão rejeitada");
+                  router.refresh();
+                }
+              });
+            }}
+          >
+            Confirmar rejeição
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="destructive"
+        size="sm"
+        className="h-6 text-xs"
+        disabled={isPending}
+        onClick={() => {
+          startAction(async () => {
+            const result = await approveExclusionRequest(commentId, projectId);
+            if (result.error) toast.error(result.error);
+            else {
+              toast.success("Documento excluído");
+              router.refresh();
+            }
+          });
+        }}
+      >
+        Aprovar e excluir
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-6 text-xs"
+        disabled={isPending}
+        onClick={() => setShowRejectInput(true)}
+      >
+        Rejeitar
+      </Button>
+    </div>
   );
 }
