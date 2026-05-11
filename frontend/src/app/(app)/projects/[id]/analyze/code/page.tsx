@@ -51,10 +51,11 @@ export default async function CodePage({
         .single(),
       supabase
         .from("assignments")
-        .select("id, status, document_id, documents(id, external_id, title, text)")
+        .select("id, status, document_id, documents!inner(id, external_id, title, text)")
         .eq("project_id", id)
         .eq("user_id", effectiveUserId)
         .eq("type", "codificacao")
+        .is("documents.excluded_at", null)
         .order("status", { ascending: true }),
       supabase
         .from("rounds")
