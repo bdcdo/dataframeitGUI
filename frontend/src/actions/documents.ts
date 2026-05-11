@@ -411,6 +411,7 @@ export async function excludeDocuments(
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}/config/documents`);
   revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
   return { count: documentIds.length };
 }
 
@@ -440,6 +441,7 @@ export async function restoreDocuments(
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}/config/documents`);
   revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
   return { count: documentIds.length };
 }
 
@@ -468,5 +470,6 @@ export async function hardDeleteDocuments(
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}/config/documents`);
   revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
   return { count: documentIds.length };
 }
