@@ -24,11 +24,15 @@ export async function getResearcherProgress(
     async () => {
       const supabase = createSupabaseAdmin();
 
+      // INNER JOIN com documents + filtro excluded_at IS NULL descarta
+      // assignments orfaos de docs soft-deletados. Sem isso, contagem inclui
+      // pendentes que o pesquisador nao consegue ver na lista (ver code/page).
       const { data: assignments } = await supabase
         .from("assignments")
-        .select("id, status, deadline, completed_at")
+        .select("id, status, deadline, completed_at, documents!inner(id)")
         .eq("project_id", projectId)
-        .eq("user_id", userId);
+        .eq("user_id", userId)
+        .is("documents.excluded_at", null);
 
       const all = assignments || [];
       const total = all.length;
