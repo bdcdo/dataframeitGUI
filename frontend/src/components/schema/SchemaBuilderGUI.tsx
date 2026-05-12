@@ -87,6 +87,7 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
             onRemove={() => removeField(i)}
             onMoveUp={() => moveField(i, i - 1)}
             onMoveDown={() => moveField(i, i + 1)}
+            onAllFieldsChange={onChange}
           />
         ))}
       </div>

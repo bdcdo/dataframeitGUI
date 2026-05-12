@@ -20,6 +20,12 @@ import {
   ConditionEditor,
   candidateTriggersFor,
 } from "@/components/schema/ConditionEditor";
+import { RemoveOptionDialog } from "@/components/schema/RemoveOptionDialog";
+import {
+  findConditionConflicts,
+  stripOptionFromConditions,
+  type ConditionConflict,
+} from "@/lib/schema-utils";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
@@ -91,6 +97,19 @@ export function EditFieldDialog({
   const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
   const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);
   const [isSaving, startSave] = useTransition();
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    option: string;
+    conflicts: ConditionConflict[];
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
+
+  const handleBeforeRemoveOption = async (opt: string): Promise<boolean> => {
+    const conflicts = findConditionConflicts(allFields, fieldName, opt);
+    if (conflicts.length === 0) return true;
+    return await new Promise<boolean>((resolve) => {
+      setPendingRemoval({ option: opt, conflicts, resolve });
+    });
+  };
 
   // Reset state when dialog opens with a different field or suggestion
   const resetKey = `${fieldName}::${pendingSuggestion?.id ?? ""}`;
@@ -115,7 +134,9 @@ export function EditFieldDialog({
 
   const handleSave = () => {
     startSave(async () => {
-      const updatedFields = allFields.map((f) =>
+      const originalOpts = field.options ?? [];
+      const removedOpts = originalOpts.filter((o) => !options.includes(o));
+      let updatedFields = allFields.map((f) =>
         f.name === fieldName
           ? {
               ...f,
@@ -132,6 +153,9 @@ export function EditFieldDialog({
             }
           : f,
       );
+      for (const removed of removedOpts) {
+        updatedFields = stripOptionFromConditions(updatedFields, fieldName, removed);
+      }
       try {
         if (pendingSuggestion) {
           const result = await approveSchemaSuggestionWithEdits(
@@ -156,6 +180,7 @@ export function EditFieldDialog({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -219,7 +244,11 @@ export function EditFieldDialog({
             <div className="space-y-3">
               <div className="space-y-1.5">
                 <Label className="text-xs">Opções</Label>
-                <OptionsEditor options={options} onChange={setOptions} />
+                <OptionsEditor
+                  options={options}
+                  onChange={setOptions}
+                  onBeforeRemove={handleBeforeRemoveOption}
+                />
               </div>
               <div className="flex items-center justify-between">
                 <div>
@@ -239,7 +268,11 @@ export function EditFieldDialog({
               <p className="text-xs text-muted-foreground">
                 Aparecem como botões ao lado do campo de data (ex: &quot;Não identificável&quot;).
               </p>
-              <OptionsEditor options={options} onChange={setOptions} />
+              <OptionsEditor
+                options={options}
+                onChange={setOptions}
+                onBeforeRemove={handleBeforeRemoveOption}
+              />
             </div>
           )}
 
@@ -362,7 +395,11 @@ export function EditFieldDialog({
                   <p className="text-xs text-muted-foreground">
                     Botões de atalho para consistência na comparação
                   </p>
-                  <OptionsEditor options={options} onChange={setOptions} />
+                  <OptionsEditor
+                    options={options}
+                    onChange={setOptions}
+                    onBeforeRemove={handleBeforeRemoveOption}
+                  />
                 </div>
               )}
             </div>
@@ -391,5 +428,24 @@ export function EditFieldDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {pendingRemoval && (
+      <RemoveOptionDialog
+        open
+        onOpenChange={(open) => {
+          if (!open && pendingRemoval) {
+            pendingRemoval.resolve(false);
+            setPendingRemoval(null);
+          }
+        }}
+        option={pendingRemoval.option}
+        conflicts={pendingRemoval.conflicts}
+        onConfirm={() => {
+          pendingRemoval.resolve(true);
+          setPendingRemoval(null);
+        }}
+      />
+    )}
+    </>
   );
 }

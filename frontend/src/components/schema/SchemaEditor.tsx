@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import { LayoutGrid, Code, Rocket, Info, X, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SchemaBuilderGUI } from "./SchemaBuilderGUI";
+import { ValidationErrorPanel } from "./ValidationErrorPanel";
 import type { PydanticField } from "@/lib/types";
 
 const MonacoEditor = dynamic(
@@ -63,6 +64,7 @@ export function SchemaEditor({
     "idle" | "valid" | "error"
   >("idle");
   const [errors, setErrors] = useState<string[]>([]);
+  const [guiErrors, setGuiErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
   const [majorDialogOpen, setMajorDialogOpen] = useState(false);
   const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
@@ -118,12 +120,14 @@ export function SchemaEditor({
     setCode(generated);
     setCodeFields(fields);
     setValidationStatus("idle");
+    setGuiErrors([]);
     setMode("code");
   };
 
   const switchToGUI = async () => {
     if (!code.trim()) {
       setFields([]);
+      setGuiErrors([]);
       setMode("gui");
       return;
     }
@@ -133,6 +137,7 @@ export function SchemaEditor({
         setFields(result.fields);
         setCodeFields(result.fields);
         setValidationStatus("valid");
+        setGuiErrors([]);
         setMode("gui");
       } else {
         toast.error(
@@ -173,11 +178,12 @@ export function SchemaEditor({
     startTransition(async () => {
       try {
         if (mode === "gui") {
-          const guiErrors = validateGUIFields(fields);
-          if (guiErrors.length > 0) {
-            toast.error(guiErrors[0]);
+          const errs = validateGUIFields(fields);
+          if (errs.length > 0) {
+            setGuiErrors(errs);
             return;
           }
+          setGuiErrors([]);
           await saveSchemaFromGUI(projectId, fields);
           toast.success("Schema salvo!");
         } else {
@@ -325,6 +331,15 @@ export function SchemaEditor({
           />
         )}
       </div>
+
+      {mode === "gui" && guiErrors.length > 0 && (
+        <div className="border-t px-4 py-3">
+          <ValidationErrorPanel
+            errors={guiErrors}
+            onDismiss={() => setGuiErrors([])}
+          />
+        </div>
+      )}
 
       {/* Footer */}
       <div className="flex items-center gap-2 border-t px-4 py-2">

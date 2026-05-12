@@ -286,3 +286,98 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
 
   return errors;
 }
+
+// ---------- Detecção de conflito de condition ao remover opção ----------
+
+export type ConditionConflict = {
+  fieldName: string;
+  fieldLabel: string;
+  conditionKey: "equals" | "not_equals" | "in" | "not_in";
+};
+
+// Retorna os campos que referenciam `removedOption` em suas condições, quando
+// a condition tem `field === triggerFieldName`. Usado para avisar o usuário
+// (e oferecer auto-correção) antes de remover uma opção em uso.
+export function findConditionConflicts(
+  fields: PydanticField[],
+  triggerFieldName: string,
+  removedOption: string,
+): ConditionConflict[] {
+  const conflicts: ConditionConflict[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i];
+    const c = f.condition;
+    if (!c || c.field !== triggerFieldName) continue;
+
+    let conditionKey: ConditionConflict["conditionKey"] | null = null;
+    if ("equals" in c && c.equals === removedOption) conditionKey = "equals";
+    else if ("not_equals" in c && c.not_equals === removedOption)
+      conditionKey = "not_equals";
+    else if ("in" in c && Array.isArray(c.in) && c.in.includes(removedOption))
+      conditionKey = "in";
+    else if (
+      "not_in" in c &&
+      Array.isArray(c.not_in) &&
+      c.not_in.includes(removedOption)
+    )
+      conditionKey = "not_in";
+
+    if (conditionKey) {
+      conflicts.push({
+        fieldName: f.name,
+        fieldLabel: `Campo ${i + 1}`,
+        conditionKey,
+      });
+    }
+  }
+  return conflicts;
+}
+
+// Remove `removedOption` das conditions afetadas. Se a condition usa equals/
+// not_equals com o valor removido, apaga a condition inteira (não há valor
+// alternativo); se usa in/not_in, filtra o array (e remove a condition se
+// ficar vazio).
+export function stripOptionFromConditions(
+  fields: PydanticField[],
+  triggerFieldName: string,
+  removedOption: string,
+): PydanticField[] {
+  return fields.map((f) => {
+    const c = f.condition;
+    if (!c || c.field !== triggerFieldName) return f;
+
+    if ("equals" in c && c.equals === removedOption) {
+      const next = { ...f };
+      delete next.condition;
+      return next;
+    }
+    if ("not_equals" in c && c.not_equals === removedOption) {
+      const next = { ...f };
+      delete next.condition;
+      return next;
+    }
+    if ("in" in c && Array.isArray(c.in) && c.in.includes(removedOption)) {
+      const filtered = c.in.filter((v) => v !== removedOption);
+      if (filtered.length === 0) {
+        const next = { ...f };
+        delete next.condition;
+        return next;
+      }
+      return { ...f, condition: { ...c, in: filtered } };
+    }
+    if (
+      "not_in" in c &&
+      Array.isArray(c.not_in) &&
+      c.not_in.includes(removedOption)
+    ) {
+      const filtered = c.not_in.filter((v) => v !== removedOption);
+      if (filtered.length === 0) {
+        const next = { ...f };
+        delete next.condition;
+        return next;
+      }
+      return { ...f, condition: { ...c, not_in: filtered } };
+    }
+    return f;
+  });
+}
