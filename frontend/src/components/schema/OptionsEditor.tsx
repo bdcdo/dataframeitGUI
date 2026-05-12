@@ -8,9 +8,16 @@ import { Plus, X } from "lucide-react";
 interface OptionsEditorProps {
   options: string[];
   onChange: (options: string[]) => void;
+  // Chamado antes de remover uma opção não-vazia. Retornar `false` cancela.
+  // Útil para verificar se a opção está em uso por `condition` de outro campo.
+  onBeforeRemove?: (option: string) => Promise<boolean> | boolean;
 }
 
-export function OptionsEditor({ options, onChange }: OptionsEditorProps) {
+export function OptionsEditor({
+  options,
+  onChange,
+  onBeforeRemove,
+}: OptionsEditorProps) {
   const lastInputRef = useRef<HTMLInputElement>(null);
   const shouldFocusLast = useRef(false);
 
@@ -27,7 +34,12 @@ export function OptionsEditor({ options, onChange }: OptionsEditorProps) {
     onChange(next);
   };
 
-  const removeOption = (index: number) => {
+  const removeOption = async (index: number) => {
+    const opt = options[index];
+    if (onBeforeRemove && opt.trim() !== "") {
+      const ok = await onBeforeRemove(opt);
+      if (!ok) return;
+    }
     onChange(options.filter((_, i) => i !== index));
   };
 

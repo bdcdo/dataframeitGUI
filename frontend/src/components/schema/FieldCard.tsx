@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,12 @@ import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
 import { ConditionEditor, candidateTriggersFor } from "./ConditionEditor";
+import { RemoveOptionDialog } from "./RemoveOptionDialog";
+import {
+  findConditionConflicts,
+  stripOptionFromConditions,
+  type ConditionConflict,
+} from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
 interface FieldCardProps {
@@ -28,6 +35,9 @@ interface FieldCardProps {
   onRemove: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  // Opcional: callback para substituir TODA a lista de campos. Usado quando
+  // remover uma opção exige também atualizar `condition` de outros campos.
+  onAllFieldsChange?: (fields: PydanticField[]) => void;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -61,9 +71,38 @@ export function FieldCard({
   onRemove,
   onMoveUp,
   onMoveDown,
+  onAllFieldsChange,
 }: FieldCardProps) {
   const updateField = (patch: Partial<PydanticField>) => {
     onChange({ ...field, ...patch });
+  };
+
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    option: string;
+    conflicts: ConditionConflict[];
+    resolve: (confirmed: boolean) => void;
+  } | null>(null);
+
+  const handleBeforeRemoveOption = async (opt: string): Promise<boolean> => {
+    if (!onAllFieldsChange) return true;
+    const conflicts = findConditionConflicts(allFields, field.name, opt);
+    if (conflicts.length === 0) return true;
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      setPendingRemoval({ option: opt, conflicts, resolve });
+    });
+
+    if (!confirmed) return false;
+
+    const stripped = stripOptionFromConditions(allFields, field.name, opt);
+    const filteredOpts = (field.options || []).filter((o) => o !== opt);
+    const final = stripped.map((f) =>
+      f.name === field.name
+        ? { ...f, options: filteredOpts.length > 0 ? filteredOpts : null }
+        : f,
+    );
+    onAllFieldsChange(final);
+    return false; // já aplicado pelo onAllFieldsChange
   };
 
   const handleTypeChange = (type: PydanticField["type"]) => {
@@ -273,6 +312,7 @@ export function FieldCard({
                 <OptionsEditor
                   options={field.options || []}
                   onChange={(opts) => updateField({ options: opts })}
+                  onBeforeRemove={handleBeforeRemoveOption}
                 />
               </div>
             )}
@@ -287,6 +327,7 @@ export function FieldCard({
                   onChange={(opts) =>
                     updateField({ options: opts.length > 0 ? opts : null })
                   }
+                  onBeforeRemove={handleBeforeRemoveOption}
                 />
               </div>
             )}
@@ -431,6 +472,7 @@ export function FieldCard({
                     <OptionsEditor
                       options={field.options || []}
                       onChange={(opts) => updateField({ options: opts.length > 0 ? opts : null })}
+                      onBeforeRemove={handleBeforeRemoveOption}
                     />
                   </div>
                 )}
@@ -446,6 +488,24 @@ export function FieldCard({
           </div>
         </CollapsibleContent>
       </div>
+
+      {pendingRemoval && (
+        <RemoveOptionDialog
+          open
+          onOpenChange={(open) => {
+            if (!open && pendingRemoval) {
+              pendingRemoval.resolve(false);
+              setPendingRemoval(null);
+            }
+          }}
+          option={pendingRemoval.option}
+          conflicts={pendingRemoval.conflicts}
+          onConfirm={() => {
+            pendingRemoval.resolve(true);
+            setPendingRemoval(null);
+          }}
+        />
+      )}
     </Collapsible>
   );
 }
