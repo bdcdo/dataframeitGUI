@@ -83,12 +83,34 @@ Para aplicar migrations pendentes: `npx supabase db push`
 
 Vercel faz deploy automatico a partir de merge no branch `main`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
 
-1. Criar branch descritiva (`feat/...`, `fix/...`) no inicio da tarefa
-2. Commitar nela
-3. Ao final, abrir PR contra `main` via `gh pr create`
-4. Deixar o usuario revisar o PR
+1. **Criar git worktree isolado** para a tarefa (ver secao "Workspace isolado" abaixo) — nao trabalhar no diretorio principal
+2. Criar branch descritiva (`feat/...`, `fix/...`, `perf/...`) na worktree
+3. Commitar nela
+4. Ao final, abrir PR contra `main` via `gh pr create`
+5. Deixar o usuario revisar o PR
+6. Remover a worktree apos o merge
 
 Nunca fazer push direto para `main`. Merge do PR pode ser feito pelo Claude quando o usuario pedir explicitamente.
+
+## Workspace isolado (worktree)
+
+**Sempre trabalhar em git worktree separado**, nunca no diretorio principal. Motivo: o usuario pode continuar trabalhando em outra branch no diretorio principal em paralelo. Se Claude usar `git checkout` para trocar de branch ali, sobrescreve o working tree do usuario; e se o usuario trocar a branch enquanto Claude edita, os arquivos editados ficam "perdidos" no historico de outra branch.
+
+Criar a worktree no inicio da tarefa:
+
+```bash
+git worktree add ../worktrees/<descricao-curta> -b <branch-name>
+cd ../worktrees/<descricao-curta>
+```
+
+Trabalhar la (todos os edits, commits, push, `gh pr create`). Apos o merge do PR:
+
+```bash
+cd /home/brunodcdo/Desktop/dev/2026/38_GUIAnaliseSistematica
+git worktree remove ../worktrees/<descricao-curta>
+```
+
+Excecao: tarefas read-only puras (responder duvida, ler codigo, explicar arquitetura) podem ser feitas no diretorio principal sem worktree.
 
 ## Como rodar
 
