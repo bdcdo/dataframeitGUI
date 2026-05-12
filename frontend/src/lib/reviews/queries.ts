@@ -140,6 +140,8 @@ function getRespondentDisplayName(
 
 /* ── Fetch base data ── */
 
+const REVIEW_BASE_DATA_LIMIT = 50000;
+
 export async function fetchReviewBaseData(
   supabase: SupabaseClient,
   projectId: string,
@@ -151,7 +153,8 @@ export async function fetchReviewBaseData(
       "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes, created_at",
     )
     .eq("project_id", projectId)
-    .eq("is_current", true);
+    .eq("is_current", true)
+    .limit(REVIEW_BASE_DATA_LIMIT);
 
   if (options?.since) {
     responsesQuery = responsesQuery.gte("created_at", options.since);
@@ -174,13 +177,27 @@ export async function fetchReviewBaseData(
       .select(
         "id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id",
       )
-      .eq("project_id", projectId),
+      .eq("project_id", projectId)
+      .limit(REVIEW_BASE_DATA_LIMIT),
     supabase
       .from("documents")
       .select("id, title, external_id")
       .eq("project_id", projectId)
-      .is("excluded_at", null),
+      .is("excluded_at", null)
+      .limit(REVIEW_BASE_DATA_LIMIT),
   ]);
+
+  for (const [name, rows] of [
+    ["responses", responses],
+    ["reviews", reviews],
+    ["documents", documents],
+  ] as const) {
+    if (rows && rows.length === REVIEW_BASE_DATA_LIMIT) {
+      console.warn(
+        `fetchReviewBaseData: ${name} atingiu o teto de ${REVIEW_BASE_DATA_LIMIT} linhas para o projeto ${projectId} — dados podem estar truncados, considere paginar.`,
+      );
+    }
+  }
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const projectPydanticHash = project?.pydantic_hash || null;

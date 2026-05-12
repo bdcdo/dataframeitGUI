@@ -11,7 +11,6 @@ import {
 } from "@/actions/documents";
 import { DuplicateAnalysis } from "./DuplicateAnalysis";
 import { toast } from "sonner";
-import Papa from "papaparse";
 import { md5 } from "@/lib/hash";
 
 interface DocumentUploadProps {
@@ -92,7 +91,8 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
 
   const preview = parsedData?.slice(0, 5) ?? null;
 
-  const handleFile = useCallback((file: File) => {
+  const handleFile = useCallback(async (file: File) => {
+    const Papa = (await import("papaparse")).default;
     Papa.parse(file, {
       header: true,
       complete: (results) => {
