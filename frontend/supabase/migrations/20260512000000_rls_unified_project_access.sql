@@ -135,43 +135,12 @@ CREATE POLICY "Coordinators manage question_meta" ON question_meta FOR ALL USING
   OR is_master()
 );
 
--- ========== 7. discussions ==========
--- (master_users.sql não tocou discussions; estado vem de 20260317150000_fix_discussions_rls_creator.sql
---  via 20260401100000_clerk_uid_rls.sql — mantemos a estrutura mas refatoramos para a função unificada.)
-DROP POLICY IF EXISTS "Members view discussions" ON discussions;
-DROP POLICY IF EXISTS "Members create discussions" ON discussions;
-DROP POLICY IF EXISTS "Coordinators update discussions" ON discussions;
+-- Seções 7 e 8 removidas: tabelas `discussions` e `discussion_comments` foram
+-- dropadas em 20260401120000_drop_discussions.sql. As policies originais em
+-- 20260401100000_clerk_uid_rls.sql e 20260317150000_fix_discussions_rls_creator.sql
+-- já não têm efeito desde então.
 
-CREATE POLICY "Members view discussions" ON discussions FOR SELECT USING (
-  project_id IN (SELECT auth_user_accessible_project_ids())
-);
-CREATE POLICY "Members create discussions" ON discussions FOR INSERT WITH CHECK (
-  project_id IN (SELECT auth_user_accessible_project_ids())
-  AND created_by = clerk_uid()
-);
-CREATE POLICY "Coordinators update discussions" ON discussions FOR UPDATE USING (
-  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
-);
-
--- ========== 8. discussion_comments ==========
-DROP POLICY IF EXISTS "Members view discussion_comments" ON discussion_comments;
-DROP POLICY IF EXISTS "Members create discussion_comments" ON discussion_comments;
-
-CREATE POLICY "Members view discussion_comments" ON discussion_comments FOR SELECT USING (
-  discussion_id IN (
-    SELECT id FROM discussions
-    WHERE project_id IN (SELECT auth_user_accessible_project_ids())
-  )
-);
-CREATE POLICY "Members create discussion_comments" ON discussion_comments FOR INSERT WITH CHECK (
-  discussion_id IN (
-    SELECT id FROM discussions
-    WHERE project_id IN (SELECT auth_user_accessible_project_ids())
-  )
-  AND created_by = clerk_uid()
-);
-
--- ========== 9. assignment_batches ==========
+-- ========== 7. assignment_batches ==========
 DROP POLICY IF EXISTS "Members view batches" ON assignment_batches;
 DROP POLICY IF EXISTS "Coordinators manage batches" ON assignment_batches;
 
@@ -184,7 +153,7 @@ CREATE POLICY "Coordinators manage batches" ON assignment_batches FOR ALL USING 
   OR is_master()
 );
 
--- ========== 10. difficulty_resolutions (SELECT permanece restrito a membros) ==========
+-- ========== 8. difficulty_resolutions (SELECT permanece restrito a membros) ==========
 DROP POLICY IF EXISTS "Coordinators insert difficulty_resolutions" ON difficulty_resolutions;
 DROP POLICY IF EXISTS "Coordinators delete difficulty_resolutions" ON difficulty_resolutions;
 
@@ -197,7 +166,7 @@ CREATE POLICY "Coordinators delete difficulty_resolutions" ON difficulty_resolut
   OR is_master()
 );
 
--- ========== 11. error_resolutions (SELECT permanece restrito a membros) ==========
+-- ========== 9. error_resolutions (SELECT permanece restrito a membros) ==========
 DROP POLICY IF EXISTS "Coordinators insert error_resolutions" ON error_resolutions;
 DROP POLICY IF EXISTS "Coordinators delete error_resolutions" ON error_resolutions;
 
@@ -210,7 +179,7 @@ CREATE POLICY "Coordinators delete error_resolutions" ON error_resolutions FOR D
   OR is_master()
 );
 
--- ========== 12. schema_change_log ==========
+-- ========== 10. schema_change_log ==========
 DROP POLICY IF EXISTS "Members view schema_change_log" ON schema_change_log;
 CREATE POLICY "Members view schema_change_log" ON schema_change_log FOR SELECT USING (
   project_id IN (SELECT auth_user_accessible_project_ids())
