@@ -10,8 +10,10 @@ export async function saveResponse(
   projectId: string,
   documentId: string,
   answers: Record<string, unknown>,
-  notes?: string
+  notes?: string,
+  options: { isAutoSave?: boolean } = {},
 ): Promise<{ success: boolean; error?: string }> {
+  const { isAutoSave = false } = options;
   try {
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
@@ -82,6 +84,11 @@ export async function saveResponse(
       schema_version_patch: project?.schema_version_patch ?? 0,
       version_inferred_from: "live_save",
       round_id: roundIdToPersist,
+      // Para humanos is_partial e mutavel: auto-save grava true (resposta ainda
+      // em andamento, segue como current_pending em classifyDocStatus) e submit
+      // explicito grava false. A imutabilidade descrita na migration
+      // 20260425000000 vale so para o fluxo LLM.
+      is_partial: isAutoSave,
     };
 
     if (existing) {
@@ -125,7 +132,11 @@ export async function saveResponse(
         return true;
       });
 
-      if (allAnswered) {
+      // Auto-save nunca promove para "concluido" — mesmo que todos os campos
+      // estejam preenchidos, o pesquisador ainda nao clicou em Enviar. Sem essa
+      // guarda, sair da pagina dispara visibilitychange -> saveResponse -> doc
+      // some da lista no filtro padrao por virar current_done.
+      if (allAnswered && !isAutoSave) {
         const { error: assignErr } = await supabase
           .from("assignments")
           .update({ status: "concluido", completed_at: new Date().toISOString() })

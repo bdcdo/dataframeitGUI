@@ -195,9 +195,9 @@ export function CodingPage({
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         if (mode === "assigned" && currentDoc && dirtyDocs.has(currentDoc.id)) {
-          saveResponse(projectId, currentDoc.id, docAnswers, docNotes);
+          saveResponse(projectId, currentDoc.id, docAnswers, docNotes, { isAutoSave: true });
         } else if (mode === "browse" && selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-          saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes);
+          saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes, { isAutoSave: true });
         }
       }
     };
@@ -245,7 +245,7 @@ export function CodingPage({
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
       if (currentDoc && dirtyDocs.has(currentDoc.id)) {
-        saveResponse(projectId, currentDoc.id, docAnswers, docNotes).then((result) => {
+        saveResponse(projectId, currentDoc.id, docAnswers, docNotes, { isAutoSave: true }).then((result) => {
           if (result.success) markClean(currentDoc.id);
           else toast.error(result.error || "Erro ao salvar respostas");
         });
@@ -335,7 +335,7 @@ export function CodingPage({
 
   const handleBrowseBack = useCallback(() => {
     if (selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes).then((result) => {
+      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes, { isAutoSave: true }).then((result) => {
         if (result.success) {
           markClean(selectedBrowseDoc.id);
           setBrowseDocuments((prev) =>
