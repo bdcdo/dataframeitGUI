@@ -169,10 +169,16 @@ export async function saveResponse(
       }
     }
 
-    revalidatePath(`/projects/${projectId}/analyze/code`);
-    revalidatePath(`/projects/${projectId}/analyze/compare`);
-    revalidatePath(`/projects/${projectId}/reviews`);
-    revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+    // Auto-save nao revalida o RSC tree — evita re-fetch do servidor a cada
+    // troca de aba / navegacao entre docs e qualquer flicker residual no
+    // formulario. Submit explicito (handleSubmit / handleBrowseSubmit) revalida
+    // normalmente, propagando o efeito para Compare, Reviews e o progresso.
+    if (!isAutoSave) {
+      revalidatePath(`/projects/${projectId}/analyze/code`);
+      revalidatePath(`/projects/${projectId}/analyze/compare`);
+      revalidatePath(`/projects/${projectId}/reviews`);
+      revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };

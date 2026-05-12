@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { revalidatePath, revalidateTag } from "next/cache";
 
 // Mocks precisam ser declarados antes do import dinamico do modulo sob teste.
 vi.mock("next/cache", () => ({
@@ -40,6 +41,8 @@ beforeEach(() => {
     ],
     schemaVersion: { major: 1, minor: 0, patch: 0 },
   };
+  vi.mocked(revalidatePath).mockClear();
+  vi.mocked(revalidateTag).mockClear();
 });
 
 // Builder generico awaitable: usado quando o resultado final eh `{ error: null }`
@@ -201,5 +204,23 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     });
     // Nao deve ter chamado update em assignments (status nao muda).
     expect(state.assignmentUpdatePayload).toBeNull();
+  });
+
+  it("auto-save NAO dispara revalidatePath nem revalidateTag", async () => {
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, undefined, {
+      isAutoSave: true,
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateTag).not.toHaveBeenCalled();
+  });
+
+  it("submit explicito dispara revalidatePath e revalidateTag das rotas relevantes", async () => {
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" });
+    expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/analyze/code");
+    expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/analyze/compare");
+    expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/reviews");
+    expect(revalidateTag).toHaveBeenCalledWith("project-proj-1-progress", { expire: 60 });
   });
 });
