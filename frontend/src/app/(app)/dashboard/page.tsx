@@ -15,43 +15,46 @@ export default async function DashboardPage() {
 
   const supabase = await createSupabaseServer();
 
-  const { data: profile, error: profileError } = await supabase
+  const profilePromise = supabase
     .from("profiles")
     .select("first_name")
     .eq("id", user.id)
     .single();
+
+  const projectsPromise = user.isMaster
+    ? createSupabaseAdmin()
+        .from("projects")
+        .select("id, name, description")
+        .order("created_at", { ascending: false })
+        .then(({ data, error }) => ({
+          projects: (data || []).map((p) => ({
+            ...(p as unknown as Project),
+            role: "master",
+          })) as (Project & { role: string })[],
+          error,
+        }))
+    : supabase
+        .from("project_members")
+        .select("project_id, role, projects(id, name, description)")
+        .eq("user_id", user.id)
+        .then(({ data, error }) => ({
+          projects: (data || []).map((m) => ({
+            ...(m.projects as unknown as Project),
+            role: m.role,
+          })) as (Project & { role: string })[],
+          error,
+        }));
+
+  const [
+    { data: profile, error: profileError },
+    { projects, error: membershipsError },
+  ] = await Promise.all([profilePromise, projectsPromise]);
 
   if (profileError) {
     console.error("Dashboard profile query failed", {
       userId: user.id,
       error: profileError.message,
     });
-  }
-
-  let projects: (Project & { role: string })[];
-  let membershipsError: { message: string } | null = null;
-
-  if (user.isMaster) {
-    const admin = createSupabaseAdmin();
-    const { data: allProjects, error } = await admin
-      .from("projects")
-      .select("id, name, description")
-      .order("created_at", { ascending: false });
-    membershipsError = error;
-    projects = (allProjects || []).map((p) => ({
-      ...(p as unknown as Project),
-      role: "master",
-    }));
-  } else {
-    const { data: memberships, error } = await supabase
-      .from("project_members")
-      .select("project_id, role, projects(id, name, description)")
-      .eq("user_id", user.id);
-    membershipsError = error;
-    projects = (memberships || []).map((m) => ({
-      ...(m.projects as unknown as Project),
-      role: m.role,
-    }));
   }
 
   if (membershipsError) {
