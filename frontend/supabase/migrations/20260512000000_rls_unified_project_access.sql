@@ -1,12 +1,19 @@
--- Unifica o padrão repetido em 22 RLS policies (definidas em 20260402000000_master_users.sql):
---   project_id IN (SELECT auth_user_project_ids())
---   OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
--- em uma única função SQL (inlineável pelo planner), reduzindo o custo de planejamento
--- e execução das policies em todas as tabelas que respeitam o conceito "tem acesso ao projeto".
+-- Unifica padrões repetidos em RLS policies (definidas em 20260402000000_master_users.sql):
+--
+--   (a) "Members view X"  →  IN (auth_user_project_ids()) OR IN (projects WHERE created_by = clerk_uid())
+--       Colapsado em auth_user_accessible_project_ids() (UNION inlineável).
+--
+--   (b) "Coordinators manage X"  →  IN (auth_user_coordinator_project_ids()) OR IN (projects WHERE created_by = clerk_uid())
+--       Colapsado em auth_user_coordinator_or_creator_project_ids() (UNION inlineável).
+--
 -- A cláusula `OR is_master()` é preservada fora da função para manter o curto-circuito
 -- do planner para usuários master.
+--
+-- Também migra auth_user_project_ids() e auth_user_coordinator_project_ids() de
+-- plpgsql para sql (LANGUAGE sql STABLE), tornando-as inlineáveis em todas as
+-- policies preservadas (projects, project_members, verdict_acknowledgments, etc.).
 
--- ========== 1. Nova função unificada ==========
+-- ========== 1. Funções unificadas (LANGUAGE sql, inlineáveis) ==========
 CREATE OR REPLACE FUNCTION auth_user_accessible_project_ids()
 RETURNS SETOF UUID
 LANGUAGE sql
@@ -21,6 +28,46 @@ $$;
 
 GRANT EXECUTE ON FUNCTION auth_user_accessible_project_ids() TO anon, authenticated, service_role;
 
+CREATE OR REPLACE FUNCTION auth_user_coordinator_or_creator_project_ids()
+RETURNS SETOF UUID
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = ''
+AS $$
+  SELECT project_id FROM public.project_members
+    WHERE user_id = public.clerk_uid() AND role = 'coordenador'
+  UNION
+  SELECT id FROM public.projects WHERE created_by = public.clerk_uid()
+$$;
+
+GRANT EXECUTE ON FUNCTION auth_user_coordinator_or_creator_project_ids() TO anon, authenticated, service_role;
+
+-- Reescrever as funções antigas como LANGUAGE sql (assinatura idêntica → sem
+-- impacto em database.types.ts). Inlineável pelo planner; suaviza o custo das
+-- policies que ainda as chamam diretamente (projects, project_members,
+-- verdict_acknowledgments, schema_suggestions).
+CREATE OR REPLACE FUNCTION auth_user_project_ids()
+RETURNS SETOF UUID
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = ''
+AS $$
+  SELECT project_id FROM public.project_members WHERE user_id = public.clerk_uid()
+$$;
+
+CREATE OR REPLACE FUNCTION auth_user_coordinator_project_ids()
+RETURNS SETOF UUID
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = ''
+AS $$
+  SELECT project_id FROM public.project_members
+    WHERE user_id = public.clerk_uid() AND role = 'coordenador'
+$$;
+
 -- ========== 2. documents ==========
 DROP POLICY IF EXISTS "Members view documents" ON documents;
 DROP POLICY IF EXISTS "Coordinators manage documents" ON documents;
@@ -30,8 +77,7 @@ CREATE POLICY "Members view documents" ON documents FOR SELECT USING (
   OR is_master()
 );
 CREATE POLICY "Coordinators manage documents" ON documents FOR ALL USING (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -44,8 +90,7 @@ CREATE POLICY "Members view assignments" ON assignments FOR SELECT USING (
   OR is_master()
 );
 CREATE POLICY "Coordinators manage assignments" ON assignments FOR ALL USING (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -59,8 +104,7 @@ CREATE POLICY "Members view responses" ON responses FOR SELECT USING (
 );
 CREATE POLICY "Users manage own responses" ON responses FOR ALL USING (
   respondent_id = clerk_uid()
-  OR project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  OR project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -74,8 +118,7 @@ CREATE POLICY "Members view reviews" ON reviews FOR SELECT USING (
 );
 CREATE POLICY "Reviewers manage reviews" ON reviews FOR ALL USING (
   reviewer_id = clerk_uid()
-  OR project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  OR project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -88,8 +131,7 @@ CREATE POLICY "Members view question_meta" ON question_meta FOR SELECT USING (
   OR is_master()
 );
 CREATE POLICY "Coordinators manage question_meta" ON question_meta FOR ALL USING (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -108,8 +150,7 @@ CREATE POLICY "Members create discussions" ON discussions FOR INSERT WITH CHECK 
   AND created_by = clerk_uid()
 );
 CREATE POLICY "Coordinators update discussions" ON discussions FOR UPDATE USING (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
 );
 
 -- ========== 8. discussion_comments ==========
@@ -139,8 +180,7 @@ CREATE POLICY "Members view batches" ON assignment_batches FOR SELECT USING (
   OR is_master()
 );
 CREATE POLICY "Coordinators manage batches" ON assignment_batches FOR ALL USING (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -149,13 +189,11 @@ DROP POLICY IF EXISTS "Coordinators insert difficulty_resolutions" ON difficulty
 DROP POLICY IF EXISTS "Coordinators delete difficulty_resolutions" ON difficulty_resolutions;
 
 CREATE POLICY "Coordinators insert difficulty_resolutions" ON difficulty_resolutions FOR INSERT WITH CHECK (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 CREATE POLICY "Coordinators delete difficulty_resolutions" ON difficulty_resolutions FOR DELETE USING (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -164,13 +202,11 @@ DROP POLICY IF EXISTS "Coordinators insert error_resolutions" ON error_resolutio
 DROP POLICY IF EXISTS "Coordinators delete error_resolutions" ON error_resolutions;
 
 CREATE POLICY "Coordinators insert error_resolutions" ON error_resolutions FOR INSERT WITH CHECK (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 CREATE POLICY "Coordinators delete error_resolutions" ON error_resolutions FOR DELETE USING (
-  project_id IN (SELECT auth_user_coordinator_project_ids())
-  OR project_id IN (SELECT id FROM projects WHERE created_by = clerk_uid())
+  project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR is_master()
 );
 
@@ -179,4 +215,11 @@ DROP POLICY IF EXISTS "Members view schema_change_log" ON schema_change_log;
 CREATE POLICY "Members view schema_change_log" ON schema_change_log FOR SELECT USING (
   project_id IN (SELECT auth_user_accessible_project_ids())
   OR is_master()
+);
+
+DROP POLICY IF EXISTS "Coordinators insert schema_change_log" ON schema_change_log;
+CREATE POLICY "Coordinators insert schema_change_log" ON schema_change_log FOR INSERT WITH CHECK (
+  (project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
+   OR is_master())
+  AND changed_by = clerk_uid()
 );
