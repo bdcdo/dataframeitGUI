@@ -6,12 +6,18 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { isFieldVisible } from "@/lib/conditional";
 import type { PydanticField } from "@/lib/types";
 
+export interface SaveResponseOpts {
+  notes?: string;
+  isAutoSave?: boolean;
+}
+
 export async function saveResponse(
   projectId: string,
   documentId: string,
   answers: Record<string, unknown>,
-  notes?: string
+  opts: SaveResponseOpts = {},
 ): Promise<{ success: boolean; error?: string }> {
+  const { notes, isAutoSave = false } = opts;
   try {
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
@@ -27,7 +33,7 @@ export async function saveResponse(
         .single(),
       supabase
         .from("responses")
-        .select("id")
+        .select("id, is_partial")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
         .eq("respondent_id", user.id)
@@ -72,6 +78,17 @@ export async function saveResponse(
         ? (project?.current_round_id ?? null)
         : null;
 
+    // Para humanos is_partial e mutavel: auto-save grava true (segue como
+    // current_pending em classifyDocStatus) e submit explicito grava false.
+    // Excecao: auto-save em response ja submetida (is_partial=false) NAO
+    // rebaixa o sinal — combinado com o guard que preserva assignment.status
+    // = "concluido", esse rebaixamento produziria contagem dupla em
+    // getResearcherProgress (doc completo no dashboard, pendente em
+    // classifyDocStatus). A imutabilidade descrita na migration
+    // 20260425000000 vale so para o fluxo LLM.
+    const isPartialToWrite =
+      isAutoSave && existing?.is_partial !== false;
+
     const responsePayload = {
       answers: sanitizedAnswers,
       justifications,
@@ -82,6 +99,7 @@ export async function saveResponse(
       schema_version_patch: project?.schema_version_patch ?? 0,
       version_inferred_from: "live_save",
       round_id: roundIdToPersist,
+      is_partial: isPartialToWrite,
     };
 
     if (existing) {
@@ -125,7 +143,11 @@ export async function saveResponse(
         return true;
       });
 
-      if (allAnswered) {
+      // Auto-save nunca promove para "concluido" — mesmo que todos os campos
+      // estejam preenchidos, o pesquisador ainda nao clicou em Enviar. Sem essa
+      // guarda, sair da pagina dispara visibilitychange -> saveResponse -> doc
+      // some da lista no filtro padrao por virar current_done.
+      if (allAnswered && !isAutoSave) {
         const { error: assignErr } = await supabase
           .from("assignments")
           .update({ status: "concluido", completed_at: new Date().toISOString() })
@@ -158,10 +180,16 @@ export async function saveResponse(
       }
     }
 
-    revalidatePath(`/projects/${projectId}/analyze/code`);
-    revalidatePath(`/projects/${projectId}/analyze/compare`);
-    revalidatePath(`/projects/${projectId}/reviews`);
-    revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+    // Auto-save nao revalida o RSC tree — evita re-fetch do servidor a cada
+    // troca de aba / navegacao entre docs e qualquer flicker residual no
+    // formulario. Submit explicito (handleSubmit / handleBrowseSubmit) revalida
+    // normalmente, propagando o efeito para Compare, Reviews e o progresso.
+    if (!isAutoSave) {
+      revalidatePath(`/projects/${projectId}/analyze/code`);
+      revalidatePath(`/projects/${projectId}/analyze/compare`);
+      revalidatePath(`/projects/${projectId}/reviews`);
+      revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };

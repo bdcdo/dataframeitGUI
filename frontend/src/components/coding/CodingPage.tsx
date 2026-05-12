@@ -190,14 +190,33 @@ export function CodingPage({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [mode, currentDoc?.id, selectedBrowseDoc?.id, dirtyDocs]);
 
-  // Auto-save when tab loses visibility (fallback for close without confirm)
+  // Auto-save when tab loses visibility (fallback for close without confirm).
+  // A aba ja esta hidden — nao da pra mostrar toast, entao logamos no console
+  // para que falhas silenciosas apareçam ao menos em devtools/error tracking.
   useEffect(() => {
+    const logAutoSaveResult = (
+      p: Promise<{ success: boolean; error?: string }>,
+    ) => {
+      p.then((r) => {
+        if (!r.success) console.error("[auto-save] falhou:", r.error);
+      }).catch((err) => console.error("[auto-save] exceção:", err));
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         if (mode === "assigned" && currentDoc && dirtyDocs.has(currentDoc.id)) {
-          saveResponse(projectId, currentDoc.id, docAnswers, docNotes);
+          logAutoSaveResult(
+            saveResponse(projectId, currentDoc.id, docAnswers, {
+              notes: docNotes,
+              isAutoSave: true,
+            }),
+          );
         } else if (mode === "browse" && selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-          saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes);
+          logAutoSaveResult(
+            saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, {
+              notes: browseNotes,
+              isAutoSave: true,
+            }),
+          );
         }
       }
     };
@@ -227,7 +246,7 @@ export function CodingPage({
   const handleSubmit = useCallback(async () => {
     if (!currentDoc || Object.keys(docAnswers).length === 0) return;
     setSubmitting(true);
-    const result = await saveResponse(projectId, currentDoc.id, docAnswers, docNotes);
+    const result = await saveResponse(projectId, currentDoc.id, docAnswers, { notes: docNotes });
     setSubmitting(false);
     if (result.success) {
       markClean(currentDoc.id);
@@ -245,7 +264,10 @@ export function CodingPage({
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
       if (currentDoc && dirtyDocs.has(currentDoc.id)) {
-        saveResponse(projectId, currentDoc.id, docAnswers, docNotes).then((result) => {
+        saveResponse(projectId, currentDoc.id, docAnswers, {
+          notes: docNotes,
+          isAutoSave: true,
+        }).then((result) => {
           if (result.success) markClean(currentDoc.id);
           else toast.error(result.error || "Erro ao salvar respostas");
         });
@@ -307,7 +329,7 @@ export function CodingPage({
   const handleBrowseSubmit = useCallback(async () => {
     if (!selectedBrowseDoc || Object.keys(browseAnswers).length === 0) return;
     setSubmitting(true);
-    const result = await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes);
+    const result = await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, { notes: browseNotes });
     setSubmitting(false);
     if (result.success) {
       markClean(selectedBrowseDoc.id);
@@ -335,7 +357,10 @@ export function CodingPage({
 
   const handleBrowseBack = useCallback(() => {
     if (selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, browseNotes).then((result) => {
+      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, {
+        notes: browseNotes,
+        isAutoSave: true,
+      }).then((result) => {
         if (result.success) {
           markClean(selectedBrowseDoc.id);
           setBrowseDocuments((prev) =>
@@ -345,6 +370,8 @@ export function CodingPage({
                 : d
             ) ?? null
           );
+        } else {
+          toast.error(result.error || "Erro ao salvar respostas");
         }
       });
     }
