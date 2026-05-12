@@ -15,7 +15,7 @@ interface State {
   responseInsertPayload: Record<string, unknown> | null;
   responseUpdatePayload: Record<string, unknown> | null;
   assignmentUpdatePayload: Record<string, unknown> | null;
-  existingResponse: { id: string } | null;
+  existingResponse: { id: string; is_partial: boolean } | null;
   currentAssignmentStatus: string | null;
   pydanticFields: Array<{
     name: string;
@@ -141,7 +141,6 @@ describe("saveResponse — auto-save vs submit explicito", () => {
       "proj-1",
       "doc-1",
       { q1: "a" },
-      undefined,
       { isAutoSave: true },
     );
     expect(r.success).toBe(true);
@@ -156,7 +155,6 @@ describe("saveResponse — auto-save vs submit explicito", () => {
       "proj-1",
       "doc-1",
       { q1: "a" },
-      undefined,
       // isAutoSave default = false
     );
     expect(r.success).toBe(true);
@@ -164,11 +162,9 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(typeof state.assignmentUpdatePayload?.completed_at).toBe("string");
   });
 
-  it("auto-save grava response com is_partial=true", async () => {
+  it("auto-save em response nova grava is_partial=true (INSERT)", async () => {
     const saveResponse = await loadSaveResponse();
-    await saveResponse("proj-1", "doc-1", { q1: "a" }, undefined, {
-      isAutoSave: true,
-    });
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
     expect(state.responseInsertPayload?.is_partial).toBe(true);
   });
 
@@ -178,10 +174,33 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.responseInsertPayload?.is_partial).toBe(false);
   });
 
+  it("auto-save em response existente parcial mantem is_partial=true (UPDATE)", async () => {
+    // Pesquisador ja salvou parcial antes; novo auto-save deve continuar parcial.
+    state.existingResponse = { id: "resp-1", is_partial: true };
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
+    expect(state.responseUpdatePayload?.is_partial).toBe(true);
+  });
+
+  it("auto-save em response ja submetida NAO rebaixa is_partial (UPDATE)", async () => {
+    // Cenario critico: response existe com is_partial=false (foi submetida) e
+    // assignment esta concluido. Pesquisador reabre e edita; auto-save NAO
+    // deve flipar is_partial para true, senao classifyDocStatus passa a tratar
+    // o doc como pendente enquanto getResearcherProgress segue contando como
+    // concluido (assignment.status preservado pelo guard) — contagem dupla.
+    state.existingResponse = { id: "resp-1", is_partial: false };
+    state.currentAssignmentStatus = "concluido";
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
+    expect(state.responseUpdatePayload?.is_partial).toBe(false);
+    // Assignment.status nao deve regredir (guard pre-existente).
+    expect(state.assignmentUpdatePayload).toBeNull();
+  });
+
   it("submit apos auto-save sobrescreve is_partial: true -> false (UPDATE)", async () => {
-    // Cenario: o pesquisador deu auto-save antes (response ja existe com is_partial=true)
+    // Cenario: o pesquisador deu auto-save antes (response existe com is_partial=true)
     // e agora clica Enviar — o submit deve fazer UPDATE com is_partial=false.
-    state.existingResponse = { id: "resp-1" };
+    state.existingResponse = { id: "resp-1", is_partial: true };
     const saveResponse = await loadSaveResponse();
     await saveResponse("proj-1", "doc-1", { q1: "a" });
     expect(state.responseUpdatePayload?.is_partial).toBe(false);
@@ -190,27 +209,21 @@ describe("saveResponse — auto-save vs submit explicito", () => {
 
   it("auto-save com campo obrigatorio vazio mantem pendente em em_andamento", async () => {
     const saveResponse = await loadSaveResponse();
-    await saveResponse("proj-1", "doc-1", { q1: "" }, undefined, {
-      isAutoSave: true,
-    });
+    await saveResponse("proj-1", "doc-1", { q1: "" }, { isAutoSave: true });
     expect(state.assignmentUpdatePayload?.status).toBe("em_andamento");
   });
 
   it("auto-save NAO regride um assignment ja concluido para em_andamento", async () => {
     state.currentAssignmentStatus = "concluido";
     const saveResponse = await loadSaveResponse();
-    await saveResponse("proj-1", "doc-1", { q1: "" }, undefined, {
-      isAutoSave: true,
-    });
+    await saveResponse("proj-1", "doc-1", { q1: "" }, { isAutoSave: true });
     // Nao deve ter chamado update em assignments (status nao muda).
     expect(state.assignmentUpdatePayload).toBeNull();
   });
 
   it("auto-save NAO dispara revalidatePath nem revalidateTag", async () => {
     const saveResponse = await loadSaveResponse();
-    await saveResponse("proj-1", "doc-1", { q1: "a" }, undefined, {
-      isAutoSave: true,
-    });
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
     expect(revalidatePath).not.toHaveBeenCalled();
     expect(revalidateTag).not.toHaveBeenCalled();
   });
@@ -222,5 +235,13 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/analyze/compare");
     expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/reviews");
     expect(revalidateTag).toHaveBeenCalledWith("project-proj-1-progress", { expire: 60 });
+  });
+
+  it("opts.notes serializa em justifications._notes", async () => {
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { notes: "comentario" });
+    expect(state.responseInsertPayload?.justifications).toEqual({
+      _notes: "comentario",
+    });
   });
 });

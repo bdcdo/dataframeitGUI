@@ -6,14 +6,18 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { isFieldVisible } from "@/lib/conditional";
 import type { PydanticField } from "@/lib/types";
 
+export interface SaveResponseOpts {
+  notes?: string;
+  isAutoSave?: boolean;
+}
+
 export async function saveResponse(
   projectId: string,
   documentId: string,
   answers: Record<string, unknown>,
-  notes?: string,
-  options: { isAutoSave?: boolean } = {},
+  opts: SaveResponseOpts = {},
 ): Promise<{ success: boolean; error?: string }> {
-  const { isAutoSave = false } = options;
+  const { notes, isAutoSave = false } = opts;
   try {
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
@@ -29,7 +33,7 @@ export async function saveResponse(
         .single(),
       supabase
         .from("responses")
-        .select("id")
+        .select("id, is_partial")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
         .eq("respondent_id", user.id)
@@ -74,6 +78,17 @@ export async function saveResponse(
         ? (project?.current_round_id ?? null)
         : null;
 
+    // Para humanos is_partial e mutavel: auto-save grava true (segue como
+    // current_pending em classifyDocStatus) e submit explicito grava false.
+    // Excecao: auto-save em response ja submetida (is_partial=false) NAO
+    // rebaixa o sinal — combinado com o guard que preserva assignment.status
+    // = "concluido", esse rebaixamento produziria contagem dupla em
+    // getResearcherProgress (doc completo no dashboard, pendente em
+    // classifyDocStatus). A imutabilidade descrita na migration
+    // 20260425000000 vale so para o fluxo LLM.
+    const isPartialToWrite =
+      isAutoSave && existing?.is_partial !== false;
+
     const responsePayload = {
       answers: sanitizedAnswers,
       justifications,
@@ -84,11 +99,7 @@ export async function saveResponse(
       schema_version_patch: project?.schema_version_patch ?? 0,
       version_inferred_from: "live_save",
       round_id: roundIdToPersist,
-      // Para humanos is_partial e mutavel: auto-save grava true (resposta ainda
-      // em andamento, segue como current_pending em classifyDocStatus) e submit
-      // explicito grava false. A imutabilidade descrita na migration
-      // 20260425000000 vale so para o fluxo LLM.
-      is_partial: isAutoSave,
+      is_partial: isPartialToWrite,
     };
 
     if (existing) {
