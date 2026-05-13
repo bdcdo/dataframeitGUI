@@ -21,25 +21,33 @@ export default async function AnalyzeLayout({
 
   if (user) {
     const supabase = await createSupabaseServer();
-    const [{ data: assignmentTypes }, isCoord] = await Promise.all([
-      supabase
-        .from("assignments")
-        .select("type")
-        .eq("project_id", id)
-        .eq("user_id", user.id)
-        .in("type", ["auto_revisao", "arbitragem"])
-        .limit(50),
-      isProjectCoordinator(supabase, id, user),
-    ]);
+    // Duas queries direcionadas com .limit(1) em vez de uma query genérica com
+    // .limit(50): se o usuario tiver muitos assignments de um tipo, o teto de
+    // 50 ainda poderia mascarar o outro tipo. .limit(1) é O(1) com o index
+    // (project_id, user_id, type).
+    const [{ data: autoReviewRow }, { data: arbitragemRow }, isCoord] =
+      await Promise.all([
+        supabase
+          .from("assignments")
+          .select("id")
+          .eq("project_id", id)
+          .eq("user_id", user.id)
+          .eq("type", "auto_revisao")
+          .limit(1)
+          .maybeSingle(),
+        supabase
+          .from("assignments")
+          .select("id")
+          .eq("project_id", id)
+          .eq("user_id", user.id)
+          .eq("type", "arbitragem")
+          .limit(1)
+          .maybeSingle(),
+        isProjectCoordinator(supabase, id, user),
+      ]);
 
-    const hasAutoReview = (assignmentTypes ?? []).some(
-      (a) => a.type === "auto_revisao",
-    );
-    const hasArbitragem = (assignmentTypes ?? []).some(
-      (a) => a.type === "arbitragem",
-    );
-    showAutoReview = isCoord || hasAutoReview;
-    showArbitragem = isCoord || hasArbitragem;
+    showAutoReview = isCoord || autoReviewRow !== null;
+    showArbitragem = isCoord || arbitragemRow !== null;
   }
 
   return (

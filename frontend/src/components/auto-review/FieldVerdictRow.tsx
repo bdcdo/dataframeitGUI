@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { formatAnswerDisplay } from "@/lib/format-answer";
 import type { SelfVerdict } from "@/lib/types";
 
 interface FieldVerdictRowProps {
@@ -13,13 +14,6 @@ interface FieldVerdictRowProps {
   llmJustification: string | null;
   choice: SelfVerdict | null;
   onChoose: (v: SelfVerdict) => void;
-}
-
-function formatAnswer(v: unknown): string {
-  if (v === null || v === undefined) return "(vazio)";
-  if (typeof v === "string") return v.length === 0 ? "(vazio)" : v;
-  if (Array.isArray(v)) return v.length === 0 ? "(vazio)" : v.join(", ");
-  return JSON.stringify(v);
 }
 
 export function FieldVerdictRow({
@@ -45,13 +39,13 @@ export function FieldVerdictRow({
             <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
               Sua resposta
             </div>
-            <div className="text-sm font-medium">{formatAnswer(humanAnswer)}</div>
+            <div className="text-sm font-medium">{formatAnswerDisplay(humanAnswer)}</div>
           </div>
           <div className="border rounded-md p-3 bg-muted/30">
             <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
               Resposta do LLM
             </div>
-            <div className="text-sm font-medium">{formatAnswer(llmAnswer)}</div>
+            <div className="text-sm font-medium">{formatAnswerDisplay(llmAnswer)}</div>
             {llmJustification ? (
               <details className="mt-2 text-xs">
                 <summary className="cursor-pointer text-muted-foreground">

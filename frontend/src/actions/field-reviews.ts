@@ -228,8 +228,9 @@ export interface BlindChoice {
 // nunca trafega para o navegador na fase cega, eliminando o vetor de
 // inspecao via DevTools.
 //
-// So aceita escrever onde arbitrator_id = current user e blind_verdict IS NULL
-// (idempotencia: re-submit no mesmo campo nao reabre a decisao).
+// So aceita escrever onde arbitrator_id = current user e blind_verdict IS NULL.
+// Retries com mesmo verdict sao tolerados como no-op (idempotente); retries
+// com verdict diferente retornam erro descritivo em vez de no-op silencioso.
 export async function submitBlindVerdicts(
   projectId: string,
   documentId: string,
@@ -252,12 +253,55 @@ export async function submitBlindVerdicts(
           .eq("document_id", documentId)
           .eq("id", c.fieldReviewId)
           .eq("arbitrator_id", user.id)
-          .is("blind_verdict", null);
+          .is("blind_verdict", null)
+          .select("id");
       }),
     );
 
-    for (const res of results) {
+    // Detecta UPDATE de 0 linhas: pode ser RLS, linha inexistente OU ja
+    // decidida. Re-fetch para diferenciar idempotente (mesmo verdict) de
+    // conflito real.
+    const failedIndices: number[] = [];
+    for (let i = 0; i < results.length; i++) {
+      const res = results[i];
       if (res.error) return { success: false, error: res.error.message };
+      if (!res.data || res.data.length === 0) {
+        failedIndices.push(i);
+      }
+    }
+
+    if (failedIndices.length > 0) {
+      const failedIds = failedIndices.map((i) => choices[i].fieldReviewId);
+      const { data: existing } = await supabase
+        .from("field_reviews")
+        .select("id, blind_verdict")
+        .in("id", failedIds)
+        .eq("arbitrator_id", user.id);
+      const existingById = new Map(
+        (existing ?? []).map((r) => [
+          r.id as string,
+          r.blind_verdict as ArbitrationVerdict | null,
+        ]),
+      );
+
+      for (const i of failedIndices) {
+        const c = choices[i];
+        const expected = resolveBlindVerdict(c.fieldReviewId, c.choice);
+        const current = existingById.get(c.fieldReviewId);
+        if (current === undefined) {
+          return {
+            success: false,
+            error: `Linha de revisão não encontrada ou sem permissão (${c.fieldReviewId}).`,
+          };
+        }
+        if (current === expected) {
+          continue; // idempotente OK
+        }
+        return {
+          success: false,
+          error: `Veredito cego já registrado com valor diferente para ${c.fieldReviewId}.`,
+        };
+      }
     }
 
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -312,13 +356,17 @@ export async function submitFinalVerdicts(
     //    restritiva) e INSERT em project_comments (autor != arbitro em alguns
     //    cenarios, evitar policy-shaped erros).
 
-    // 1) Carrega field_reviews (arbitro ja tem SELECT pela policy
-    // "Members view own field_reviews" introduzida em 020000).
+    // 1) Carrega field_reviews com estado atual (inclui blind/final_verdict).
+    // O estado pre-carregado permite que retries apos falha parcial em (4)
+    // detectem "ja gravado com mesmo verdict" como sucesso idempotente em vez
+    // de erro travante.
     // Duas FKs de field_reviews para responses (human_/llm_response_id) tornam
     // o nested select ambiguo no PostgREST — buscar respostas separadamente.
     const { data: frRows, error: frErr } = await supabase
       .from("field_reviews")
-      .select("id, field_name, human_response_id, llm_response_id")
+      .select(
+        "id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict",
+      )
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .in(
@@ -328,116 +376,172 @@ export async function submitFinalVerdicts(
       .eq("arbitrator_id", user.id);
     if (frErr) return { success: false, error: frErr.message };
 
-    // 2) Respostas: admin porque a RLS de responses restringe leitura cross-user
-    // (arbitro nao precisa ser membro do mesmo "scope" da resposta humana).
-    const responseIds = new Set<string>();
-    for (const r of frRows ?? []) {
-      responseIds.add(r.human_response_id);
-      responseIds.add(r.llm_response_id);
-    }
-    const { data: respRows } = await admin
-      .from("responses")
-      .select("id, answers")
-      .in("id", Array.from(responseIds));
-    const responseById = new Map(
-      (respRows ?? []).map((r) => [r.id as string, r]),
-    );
-
     const frByField = new Map(
       (frRows ?? []).map((r) => [r.field_name as string, r]),
     );
+
+    // Pre-validacao por linha + classificacao (skip idempotente vs erro vs update).
+    const choicesToUpdate: FinalChoice[] = [];
+    for (const c of choices) {
+      const fr = frByField.get(c.fieldName);
+      if (!fr) {
+        return {
+          success: false,
+          error: `Campo "${c.fieldName}": linha de revisão não encontrada ou sem permissão.`,
+        };
+      }
+      if (fr.blind_verdict == null) {
+        return {
+          success: false,
+          error: `Campo "${c.fieldName}": fase cega ainda não decidida.`,
+        };
+      }
+      if (fr.final_verdict != null) {
+        // Veredito ja gravado — retry idempotente apenas se for o MESMO verdict.
+        if (fr.final_verdict !== c.verdict) {
+          return {
+            success: false,
+            error: `Campo "${c.fieldName}": veredito final já registrado como "${fr.final_verdict}".`,
+          };
+        }
+        // mesmo verdict → segue para passos 4/5 sem re-UPDATE
+        continue;
+      }
+      choicesToUpdate.push(c);
+    }
+
+    // 2) Respostas: admin porque a RLS de responses restringe leitura cross-user
+    // (arbitro nao precisa ser membro do mesmo "scope" da resposta humana).
+    // So precisa carregar respostas se ha algum verdict='llm' (para o comment).
+    const needsResponseData = choices.some((c) => c.verdict === "llm");
+    const responseById = new Map<string, { id: string; answers: unknown }>();
+    if (needsResponseData) {
+      const responseIds = new Set<string>();
+      for (const r of frRows ?? []) {
+        responseIds.add(r.human_response_id);
+        responseIds.add(r.llm_response_id);
+      }
+      const { data: respRows } = await admin
+        .from("responses")
+        .select("id, answers")
+        .in("id", Array.from(responseIds));
+      for (const r of respRows ?? []) {
+        responseById.set(r.id as string, r);
+      }
+    }
 
     // 3) UPDATEs em paralelo via supabase (RLS cobre "Arbitrator updates own row").
     //
     //  - not("blind_verdict", "is", null): obriga sequência blind → final.
     //    Sem isto, um árbitro (ou chamada direta à Server Action) pulava a
     //    fase cega e gravava final_verdict diretamente.
-    //  - is("final_verdict", null): idempotência. Re-submit no mesmo campo
-    //    não sobrescreve veredicto já registrado.
-    //  - select("id"): permite detectar quando o UPDATE não tocou nenhuma
-    //    linha (constraint violada acima) e retornar erro descritivo.
-    const updateResults = await Promise.all(
-      choices.map((c) =>
-        supabase
-          .from("field_reviews")
-          .update({
-            final_verdict: c.verdict,
-            final_decided_at: now,
-            question_improvement_suggestion:
-              c.questionImprovementSuggestion ?? null,
-            arbitrator_comment: c.arbitratorComment ?? null,
-          })
-          .eq("project_id", projectId)
-          .eq("document_id", documentId)
-          .eq("field_name", c.fieldName)
-          .eq("arbitrator_id", user.id)
-          .not("blind_verdict", "is", null)
-          .is("final_verdict", null)
-          .select("id"),
-      ),
-    );
-    for (let i = 0; i < updateResults.length; i++) {
-      const res = updateResults[i];
-      if (res.error) return { success: false, error: res.error.message };
-      if (!res.data || res.data.length === 0) {
-        return {
-          success: false,
-          error: `Campo "${choices[i].fieldName}": fase cega não decidida ou veredicto final já registrado.`,
-        };
+    //  - is("final_verdict", null): proteção contra race entre o pre-fetch
+    //    acima e este UPDATE (outro submit concorrente do mesmo árbitro).
+    //  - select("id"): detecta UPDATE de 0 linhas (race), erro descritivo.
+    if (choicesToUpdate.length > 0) {
+      const updateResults = await Promise.all(
+        choicesToUpdate.map((c) =>
+          supabase
+            .from("field_reviews")
+            .update({
+              final_verdict: c.verdict,
+              final_decided_at: now,
+              question_improvement_suggestion:
+                c.questionImprovementSuggestion ?? null,
+              arbitrator_comment: c.arbitratorComment ?? null,
+            })
+            .eq("project_id", projectId)
+            .eq("document_id", documentId)
+            .eq("field_name", c.fieldName)
+            .eq("arbitrator_id", user.id)
+            .not("blind_verdict", "is", null)
+            .is("final_verdict", null)
+            .select("id"),
+        ),
+      );
+      for (let i = 0; i < updateResults.length; i++) {
+        const res = updateResults[i];
+        if (res.error) return { success: false, error: res.error.message };
+        if (!res.data || res.data.length === 0) {
+          return {
+            success: false,
+            error: `Campo "${choicesToUpdate[i].fieldName}": UPDATE rejeitado (concorrência ou RLS).`,
+          };
+        }
       }
     }
 
-    // 4) INSERTs em project_comments em batch via admin (RLS de
-    // project_comments pode exigir que author_id seja membro do projeto com
-    // role coordenador — admin evita atrito com policy desconhecida).
-    const commentRows = choices
-      .filter((c) => c.verdict === "llm")
-      .map((c) => {
-        const fr = frByField.get(c.fieldName);
-        const humanResp = fr ? responseById.get(fr.human_response_id) : null;
-        const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
-        const humanAnswer = formatAnswerTechnical(
-          (humanResp?.answers as Record<string, unknown> | undefined)?.[
-            c.fieldName
-          ],
-        );
-        const llmAnswer = formatAnswerTechnical(
-          (llmResp?.answers as Record<string, unknown> | undefined)?.[
-            c.fieldName
-          ],
-        );
-        const body = [
-          `Discordância em "${c.fieldName}".`,
-          `Humano respondeu: ${humanAnswer}`,
-          `LLM respondeu: ${llmAnswer}`,
-          `Árbitro manteve LLM.`,
-          `Sugestão de melhoria: ${c.questionImprovementSuggestion}`,
-          c.arbitratorComment ? `Comentário: ${c.arbitratorComment}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-
-        return {
-          project_id: projectId,
-          document_id: documentId,
-          field_name: c.fieldName,
-          author_id: user.id,
-          body,
-        };
-      });
-
-    if (commentRows.length > 0) {
-      // Falha aqui significa que o veredicto já foi gravado mas o comentário
-      // de divergência não — o coordenador perderia a sugestão de melhoria.
-      // Propaga o erro em vez de silenciar.
-      const { error: commentErr } = await admin
+    // 4) project_comments para verdict='llm': check-before-insert evita dupes
+    // em retry (sem precisar de UNIQUE constraint que limitaria o uso geral
+    // de comments). Race window minuscula entre SELECT e INSERT — aceitavel
+    // dado o custo de evitar.
+    const llmChoices = choices.filter((c) => c.verdict === "llm");
+    if (llmChoices.length > 0) {
+      const { data: existingComments } = await admin
         .from("project_comments")
-        .insert(commentRows);
-      if (commentErr) {
-        return {
-          success: false,
-          error: `Veredicto salvo mas comentário de divergência falhou: ${commentErr.message}`,
-        };
+        .select("field_name")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .in(
+          "field_name",
+          llmChoices.map((c) => c.fieldName),
+        )
+        .eq("author_id", user.id);
+      const alreadyCommented = new Set(
+        (existingComments ?? []).map((r) => r.field_name as string),
+      );
+
+      const commentRows = llmChoices
+        .filter((c) => !alreadyCommented.has(c.fieldName))
+        .map((c) => {
+          const fr = frByField.get(c.fieldName);
+          const humanResp = fr
+            ? responseById.get(fr.human_response_id)
+            : null;
+          const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
+          const humanAnswer = formatAnswerTechnical(
+            (humanResp?.answers as Record<string, unknown> | undefined)?.[
+              c.fieldName
+            ],
+          );
+          const llmAnswer = formatAnswerTechnical(
+            (llmResp?.answers as Record<string, unknown> | undefined)?.[
+              c.fieldName
+            ],
+          );
+          const body = [
+            `Discordância em "${c.fieldName}".`,
+            `Humano respondeu: ${humanAnswer}`,
+            `LLM respondeu: ${llmAnswer}`,
+            `Árbitro manteve LLM.`,
+            `Sugestão de melhoria: ${c.questionImprovementSuggestion}`,
+            c.arbitratorComment ? `Comentário: ${c.arbitratorComment}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+
+          return {
+            project_id: projectId,
+            document_id: documentId,
+            field_name: c.fieldName,
+            author_id: user.id,
+            body,
+          };
+        });
+
+      if (commentRows.length > 0) {
+        // Falha aqui significa que o veredito ja foi gravado mas o comentario
+        // nao — coordenador perderia a sugestao. Propaga o erro para que retry
+        // do usuario re-tente (e nao duplique, pelo check acima).
+        const { error: commentErr } = await admin
+          .from("project_comments")
+          .insert(commentRows);
+        if (commentErr) {
+          return {
+            success: false,
+            error: `Veredicto salvo mas comentário de divergência falhou: ${commentErr.message}`,
+          };
+        }
       }
     }
 
