@@ -120,11 +120,15 @@ export function AutoReviewPage({
       toast.error(result.error ?? "Falha ao enviar");
       return;
     }
-    toast.success(
-      result.arbitrated
-        ? `Enviado. ${result.arbitrated} campo(s) seguem para arbitragem.`
-        : "Enviado. Todos os campos resolvidos.",
-    );
+    if (result.warning) {
+      toast.warning(result.warning);
+    } else {
+      toast.success(
+        result.arbitrated
+          ? `Enviado. ${result.arbitrated} campo(s) seguem para arbitragem.`
+          : "Enviado. Todos os campos resolvidos.",
+      );
+    }
     setChoices({});
     if (docIndex < docs.length - 1) {
       setDocIndex(docIndex + 1);

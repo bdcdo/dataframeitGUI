@@ -28,7 +28,12 @@ export async function submitAutoReview(
   projectId: string,
   documentId: string,
   verdicts: SelfVerdictInput[],
-): Promise<{ success: boolean; error?: string; arbitrated?: number }> {
+): Promise<{
+  success: boolean;
+  error?: string;
+  warning?: string;
+  arbitrated?: number;
+}> {
   try {
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
@@ -80,18 +85,27 @@ export async function submitAutoReview(
       .map((v) => v.fieldName);
 
     let arbitrated = 0;
+    let warning: string | undefined;
     if (contested.length > 0) {
-      arbitrated = await assignArbitrator(
+      const result = await assignArbitrator(
         projectId,
         documentId,
         user.id,
         contested,
       );
+      arbitrated = result.count;
+      // Pool vazio: o submit completa (self_verdict gravado) mas os campos
+      // contestados ficam sem árbitro. Avisa o pesquisador para que o
+      // coordenador adicione mais membros ao projeto — sem este warning, os
+      // campos ficariam invisíveis em estado "aguarda_arbitragem" indefinidamente.
+      if (result.noPool) {
+        warning = `Não há outros membros no projeto disponíveis para arbitrar ${contested.length} campo(s) contestado(s). Peça ao coordenador para adicionar pesquisadores ao projeto.`;
+      }
     }
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
-    return { success: true, arbitrated };
+    return { success: true, arbitrated, warning };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro" };
   }
@@ -115,13 +129,17 @@ export async function submitAutoReview(
 // Idempotente: arbitrator_id so e gravado em field_reviews que ainda nao
 // tem arbitro definido (re-chamadas nao trocam um arbitro ja escolhido).
 //
-// Retorna a quantidade de field_reviews efetivamente atribuidos.
+// Retorna:
+//  - count: quantidade de field_reviews efetivamente atribuidos
+//  - noPool: true se o projeto não tem outros membros disponíveis (chamador
+//    usa para alertar o pesquisador; sem esse sinal, o submit completa
+//    silenciosamente e os campos ficam presos sem árbitro)
 async function assignArbitrator(
   projectId: string,
   documentId: string,
   excludeUserId: string,
   fieldNames: string[],
-): Promise<number> {
+): Promise<{ count: number; noPool: boolean }> {
   const admin = createSupabaseAdmin();
 
   // Pool: membros do projeto exceto o humano original
@@ -131,7 +149,7 @@ async function assignArbitrator(
     .eq("project_id", projectId)
     .neq("user_id", excludeUserId);
 
-  if (!members || members.length === 0) return 0;
+  if (!members || members.length === 0) return { count: 0, noPool: true };
 
   // Conta arbitragens abertas por candidato (balanceamento)
   const { data: openCounts } = await admin
@@ -181,7 +199,7 @@ async function assignArbitrator(
     .select("field_name");
   if (frErr) throw new Error(frErr.message);
 
-  if (!assigned || assigned.length === 0) return 0;
+  if (!assigned || assigned.length === 0) return { count: 0, noPool: false };
 
   // Cria assignment arbitragem (idempotente em doc+user+type)
   await admin.from("assignments").upsert(
@@ -195,7 +213,7 @@ async function assignArbitrator(
     { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
   );
 
-  return assigned.length;
+  return { count: assigned.length, noPool: false };
 }
 
 export interface BlindChoice {
