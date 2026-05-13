@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { updateProject } from "@/actions/projects";
 import { toast } from "sonner";
 
@@ -12,15 +13,20 @@ interface GeneralFormProps {
   projectId: string;
   name: string;
   description: string;
+  arbitrationBlind: boolean;
 }
 
 export function GeneralForm({
   projectId,
   name: initialName,
   description: initialDescription,
+  arbitrationBlind: initialArbitrationBlind,
 }: GeneralFormProps) {
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
+  const [arbitrationBlind, setArbitrationBlind] = useState(
+    initialArbitrationBlind,
+  );
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -31,10 +37,14 @@ export function GeneralForm({
     }
     setSaving(true);
     try {
-      await updateProject(projectId, { name: trimmedName, description });
+      await updateProject(projectId, {
+        name: trimmedName,
+        description,
+        arbitration_blind: arbitrationBlind,
+      });
       toast.success("Projeto atualizado!");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar");
     }
     setSaving(false);
   };
@@ -60,6 +70,29 @@ export function GeneralForm({
           placeholder="Ex: Esta revisão sistemática investiga os fatores associados à evasão escolar no ensino superior brasileiro..."
           className="min-h-[120px] resize-y"
         />
+      </div>
+
+      <div className="border-t pt-6 space-y-3">
+        <h3 className="text-sm font-medium">Arbitragem</h3>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <Label className="text-sm">
+              Manter rótulos A/B na fase de revelação
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Quando ativado, na fase 2 (revelação) o árbitro continua vendo
+              &quot;Resposta A&quot; e &quot;Resposta B&quot; em vez de
+              &quot;Humano&quot; e &quot;LLM&quot;. Atenção: a justificativa
+              do LLM, que é sempre revelada nesta fase, frequentemente
+              entrega qual é a fonte mesmo com os rótulos genéricos — este
+              toggle reduz, mas não elimina, o viés de revelação.
+            </p>
+          </div>
+          <Switch
+            checked={arbitrationBlind}
+            onCheckedChange={setArbitrationBlind}
+          />
+        </div>
       </div>
 
       <Button

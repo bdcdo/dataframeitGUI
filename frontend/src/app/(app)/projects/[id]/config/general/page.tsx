@@ -11,7 +11,7 @@ export default async function GeneralConfigPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("name, description")
+    .select("name, description, arbitration_blind")
     .eq("id", id)
     .single();
 
@@ -20,6 +20,7 @@ export default async function GeneralConfigPage({
       projectId={id}
       name={project?.name ?? ""}
       description={project?.description ?? ""}
+      arbitrationBlind={project?.arbitration_blind ?? true}
     />
   );
 }

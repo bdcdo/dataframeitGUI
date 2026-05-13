@@ -45,6 +45,7 @@ export async function updateProject(
     resolution_rule?: string;
     min_responses_for_comparison?: number;
     allow_researcher_review?: boolean;
+    arbitration_blind?: boolean;
   }
 ) {
   const supabase = await createSupabaseServer();

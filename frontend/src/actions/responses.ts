@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { isFieldVisible } from "@/lib/conditional";
+import { createAutoReviewIfDiverges } from "@/lib/auto-review";
 import type { PydanticField } from "@/lib/types";
 
 export interface SaveResponseOpts {
@@ -156,6 +157,25 @@ export async function saveResponse(
           .eq("user_id", user.id)
           .eq("type", "codificacao");
         if (assignErr) return { success: false, error: assignErr.message };
+
+        // Dispara auto-revisao humano vs LLM ao submeter. Falhas nao bloqueiam
+        // o submit do pesquisador — coordenador pode regenerar o backlog
+        // manualmente via regenerateAutoReviewBacklog().
+        try {
+          await createAutoReviewIfDiverges(projectId, documentId, user.id);
+        } catch (err) {
+          // Log estruturado JSON — mesmo formato dos demais eventos em
+          // lib/auto-review.ts, facilita grep "[auto-review]" nos logs.
+          console.error(
+            `[auto-review] ${JSON.stringify({
+              event: "inline_call_failed",
+              projectId,
+              documentId,
+              userId: user.id,
+              error: err instanceof Error ? err.message : String(err),
+            })}`,
+          );
+        }
       } else {
         // So regredir se NAO esta concluido (evita desfazer progresso por auto-save)
         const { data: currentAssignment } = await supabase
@@ -187,6 +207,8 @@ export async function saveResponse(
     if (!isAutoSave) {
       revalidatePath(`/projects/${projectId}/analyze/code`);
       revalidatePath(`/projects/${projectId}/analyze/compare`);
+      revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
+      revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
       revalidatePath(`/projects/${projectId}/reviews`);
       revalidateTag(`project-${projectId}-progress`, { expire: 60 });
     }
