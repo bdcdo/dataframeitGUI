@@ -109,12 +109,28 @@ export function CodingPage({
   useEffect(() => {
     let cancelled = false;
     getResearcherFieldOrder(projectId).then(({ order }) => {
-      if (!cancelled) setFieldOrder(order);
+      // Se o pesquisador ja arrastou antes da load resolver, o drag tem
+      // prioridade — descartamos o valor vindo do banco para nao sobrescrever
+      // a intencao recente do usuario.
+      if (cancelled || pendingOrderRef.current) return;
+      setFieldOrder(order);
     });
     return () => {
       cancelled = true;
     };
   }, [projectId]);
+
+  const doSave = useCallback(
+    (order: string[]) => {
+      saveResearcherFieldOrder(projectId, order).then((r) => {
+        if (!r.success) {
+          console.error("[field-order save]", r.error);
+          toast.error("Não foi possível salvar a ordem das perguntas");
+        }
+      });
+    },
+    [projectId],
+  );
 
   const flushOrderSave = useCallback(() => {
     if (reorderSaveTimer.current) {
@@ -124,10 +140,8 @@ export function CodingPage({
     const pending = pendingOrderRef.current;
     if (!pending) return;
     pendingOrderRef.current = null;
-    saveResearcherFieldOrder(projectId, pending).then((r) => {
-      if (!r.success) console.error("[field-order save]", r.error);
-    });
-  }, [projectId]);
+    doSave(pending);
+  }, [doSave]);
 
   const handleReorder = useCallback(
     (newOrder: string[]) => {
@@ -139,15 +153,10 @@ export function CodingPage({
         const pending = pendingOrderRef.current;
         if (!pending) return;
         pendingOrderRef.current = null;
-        saveResearcherFieldOrder(projectId, pending).then((r) => {
-          if (!r.success) {
-            console.error("[field-order save]", r.error);
-            toast.error("Não foi possível salvar a ordem das perguntas");
-          }
-        });
+        doSave(pending);
       }, 500);
     },
-    [projectId],
+    [doSave],
   );
 
   useEffect(() => {
