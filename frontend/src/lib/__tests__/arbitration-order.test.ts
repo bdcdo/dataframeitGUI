@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assignOrder } from "@/lib/arbitration-order";
+import { assignOrder, resolveBlindVerdict } from "@/lib/arbitration-order";
 
 describe("assignOrder", () => {
   it("é deterministico para o mesmo input", () => {
@@ -40,5 +40,45 @@ describe("assignOrder", () => {
     );
     expect(assignOrder("field-review-a")).toBe("llm_first");
     expect(assignOrder("field-review-b")).toBe("human_first");
+  });
+});
+
+describe("resolveBlindVerdict", () => {
+  it("human_first + a → humano (A esta na posicao do humano)", () => {
+    // 11111111... → human_first (do snapshot acima)
+    expect(resolveBlindVerdict("11111111-1111-1111-1111-111111111111", "a")).toBe(
+      "humano",
+    );
+    expect(resolveBlindVerdict("11111111-1111-1111-1111-111111111111", "b")).toBe(
+      "llm",
+    );
+  });
+
+  it("llm_first + a → llm (A esta na posicao do LLM)", () => {
+    // 00000000...001 → llm_first (do snapshot)
+    expect(resolveBlindVerdict("00000000-0000-0000-0000-000000000001", "a")).toBe(
+      "llm",
+    );
+    expect(resolveBlindVerdict("00000000-0000-0000-0000-000000000001", "b")).toBe(
+      "humano",
+    );
+  });
+
+  it("round-trip: escolher A sempre devolve o que assignOrder mapeia para A", () => {
+    for (let i = 0; i < 50; i++) {
+      const id = crypto.randomUUID();
+      const order = assignOrder(id);
+      const aVerdict = resolveBlindVerdict(id, "a");
+      const bVerdict = resolveBlindVerdict(id, "b");
+      if (order === "human_first") {
+        expect(aVerdict).toBe("humano");
+        expect(bVerdict).toBe("llm");
+      } else {
+        expect(aVerdict).toBe("llm");
+        expect(bVerdict).toBe("humano");
+      }
+      // a e b sempre devolvem veredictos diferentes
+      expect(aVerdict).not.toBe(bVerdict);
+    }
   });
 });

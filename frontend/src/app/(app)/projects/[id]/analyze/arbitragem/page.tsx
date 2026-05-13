@@ -2,7 +2,13 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ArbitrationPage } from "@/components/arbitration/ArbitrationPage";
-import type { PydanticField } from "@/lib/types";
+import { assignOrder } from "@/lib/arbitration-order";
+import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
+
+// Server-side A/B embaralhamento da fase cega — o navegador nunca recebe os
+// labels humano/llm enquanto blind_verdict IS NULL. Quando blind ja foi decidido,
+// montamos o payload `reveal` com aSide/bSide + nomes + justificativa para a
+// fase 2 trabalhar normalmente.
 
 export default async function ArbitrationRoute({
   params,
@@ -60,8 +66,6 @@ export default async function ArbitrationRoute({
       .is("final_verdict", null),
   ]);
 
-  // Buscar so as respostas referenciadas pelos field_reviews (evita puxar
-  // todas as versoes historicas das respostas dos docs).
   const responseIdSet = new Set<string>();
   for (const fr of fieldReviews ?? []) {
     responseIdSet.add(fr.human_response_id);
@@ -80,21 +84,29 @@ export default async function ArbitrationRoute({
 
   const responsesById = new Map((responses ?? []).map((r) => [r.id, r]));
 
+  type ArbitrationFieldPayload = {
+    fieldReviewId: string;
+    fieldName: string;
+    aAnswer: unknown;
+    bAnswer: unknown;
+    blindVerdict: ArbitrationVerdict | null;
+    // Populado apenas quando blind_verdict ja existe (fase 2). Na fase cega
+    // este campo e null — o navegador nao recebe a relacao A/B ↔ humano/llm.
+    reveal: {
+      aSide: ArbitrationVerdict;
+      bSide: ArbitrationVerdict;
+      humanName: string | null;
+      llmName: string | null;
+      llmJustification: string | null;
+    } | null;
+  };
+
   type DocPayload = {
     docId: string;
     title: string | null;
     externalId: string | null;
     text: string;
-    fields: Array<{
-      fieldReviewId: string;
-      fieldName: string;
-      humanAnswer: unknown;
-      humanName: string | null;
-      llmAnswer: unknown;
-      llmName: string | null;
-      llmJustification: string | null;
-      blindVerdict: "humano" | "llm" | null;
-    }>;
+    fields: ArbitrationFieldPayload[];
   };
 
   const docMap = new Map<string, DocPayload>();
@@ -113,20 +125,38 @@ export default async function ArbitrationRoute({
     if (!payload) continue;
     const human = responsesById.get(fr.human_response_id);
     const llm = responsesById.get(fr.llm_response_id);
+
+    const humanAnswer =
+      (human?.answers as Record<string, unknown>)?.[fr.field_name] ?? null;
+    const llmAnswer =
+      (llm?.answers as Record<string, unknown>)?.[fr.field_name] ?? null;
+
+    const order = assignOrder(fr.id);
+    const aSide: ArbitrationVerdict = order === "human_first" ? "humano" : "llm";
+    const bSide: ArbitrationVerdict = order === "human_first" ? "llm" : "humano";
+    const aAnswer = order === "human_first" ? humanAnswer : llmAnswer;
+    const bAnswer = order === "human_first" ? llmAnswer : humanAnswer;
+    const blindVerdict = (fr.blind_verdict as ArbitrationVerdict | null) ?? null;
+
     payload.fields.push({
       fieldReviewId: fr.id,
       fieldName: fr.field_name,
-      humanAnswer:
-        (human?.answers as Record<string, unknown>)?.[fr.field_name] ?? null,
-      humanName: human?.respondent_name ?? null,
-      llmAnswer:
-        (llm?.answers as Record<string, unknown>)?.[fr.field_name] ?? null,
-      llmName: llm?.respondent_name ?? null,
-      llmJustification:
-        (llm?.justifications as Record<string, string> | null)?.[
-          fr.field_name
-        ] ?? null,
-      blindVerdict: (fr.blind_verdict as "humano" | "llm" | null) ?? null,
+      aAnswer,
+      bAnswer,
+      blindVerdict,
+      reveal:
+        blindVerdict !== null
+          ? {
+              aSide,
+              bSide,
+              humanName: human?.respondent_name ?? null,
+              llmName: llm?.respondent_name ?? null,
+              llmJustification:
+                (llm?.justifications as Record<string, string> | null)?.[
+                  fr.field_name
+                ] ?? null,
+            }
+          : null,
     });
   }
 

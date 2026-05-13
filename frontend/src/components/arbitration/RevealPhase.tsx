@@ -10,12 +10,10 @@ import type { ArbitrationField } from "./ArbitrationPage";
 interface RevealPhaseProps {
   fields: ArbitrationField[];
   fieldMeta: Map<string, PydanticField>;
-  orderByField: Map<string, "human_first" | "llm_first">;
   arbitrationBlind: boolean;
   finalChoices: Record<string, ArbitrationVerdict>;
   suggestions: Record<string, string>;
   comments: Record<string, string>;
-  blindChoices: Record<string, ArbitrationVerdict>;
   onChooseFinal: (field: string, verdict: ArbitrationVerdict) => void;
   onSuggestion: (field: string, v: string) => void;
   onComment: (field: string, v: string) => void;
@@ -31,12 +29,10 @@ function formatAnswer(v: unknown): string {
 export function RevealPhase({
   fields,
   fieldMeta,
-  orderByField,
   arbitrationBlind,
   finalChoices,
   suggestions,
   comments,
-  blindChoices,
   onChooseFinal,
   onSuggestion,
   onComment,
@@ -44,32 +40,49 @@ export function RevealPhase({
   return (
     <div className="space-y-4">
       {fields.map((f) => {
-        const order = orderByField.get(f.fieldName) ?? "human_first";
+        const meta = fieldMeta.get(f.fieldName);
         const final = finalChoices[f.fieldName];
-        const blind = blindChoices[f.fieldName] ?? f.blindVerdict;
+        const blind = f.blindVerdict;
         const changed = blind && final && blind !== final;
 
+        // reveal e populado quando blindVerdict !== null. Sao os labels que
+        // o arbitro ja "conquistou" o direito de ver. Defensive: se reveal
+        // estiver null (estado inconsistente), nao quebrar — fallback para
+        // labels genericos.
+        const r = f.reveal;
+        const humanName = r?.humanName ?? null;
+        const llmName = r?.llmName ?? null;
+        const llmJustification = r?.llmJustification ?? null;
+
+        // Identifica qual lado (A/B) o arbitro escolheu na fase cega
+        const blindSideLetter: "A" | "B" | null = r
+          ? r.aSide === blind
+            ? "A"
+            : "B"
+          : null;
+
+        // Labels da fase 2: A/B se arbitration_blind=true, Humano/LLM se false
         const humanLabel = arbitrationBlind
-          ? `Resposta ${order === "human_first" ? "A" : "B"}`
-          : `Humano${f.humanName ? ` (${f.humanName})` : ""}`;
+          ? `Resposta ${r?.aSide === "humano" ? "A" : "B"}`
+          : `Humano${humanName ? ` (${humanName})` : ""}`;
         const llmLabel = arbitrationBlind
-          ? `Resposta ${order === "human_first" ? "B" : "A"}`
-          : `LLM${f.llmName ? ` (${f.llmName})` : ""}`;
+          ? `Resposta ${r?.aSide === "llm" ? "A" : "B"}`
+          : `LLM${llmName ? ` (${llmName})` : ""}`;
 
         return (
-          <Card key={f.fieldName}>
+          <Card key={f.fieldReviewId}>
             <CardHeader>
               <CardTitle className="text-sm font-mono flex items-center justify-between">
                 <span>{f.fieldName}</span>
-                {blind ? (
+                {blind && blindSideLetter ? (
                   <span className="text-xs font-normal text-muted-foreground">
-                    Fase cega: {blind === "humano" ? humanLabel : llmLabel}
+                    Fase cega: Resposta {blindSideLetter}
                   </span>
                 ) : null}
               </CardTitle>
-              {fieldMeta.get(f.fieldName)?.description ? (
+              {meta?.description ? (
                 <p className="text-sm text-muted-foreground">
-                  {fieldMeta.get(f.fieldName)?.description}
+                  {meta.description}
                 </p>
               ) : null}
             </CardHeader>
@@ -84,7 +97,9 @@ export function RevealPhase({
                     {humanLabel}
                   </div>
                   <div className="text-sm font-medium">
-                    {formatAnswer(f.humanAnswer)}
+                    {formatAnswer(
+                      r?.aSide === "humano" ? f.aAnswer : f.bAnswer,
+                    )}
                   </div>
                 </div>
                 <div
@@ -96,11 +111,11 @@ export function RevealPhase({
                     {llmLabel}
                   </div>
                   <div className="text-sm font-medium">
-                    {formatAnswer(f.llmAnswer)}
+                    {formatAnswer(r?.aSide === "llm" ? f.aAnswer : f.bAnswer)}
                   </div>
-                  {f.llmJustification ? (
+                  {llmJustification ? (
                     <div className="mt-2 text-xs text-muted-foreground border-l-2 border-muted pl-2 whitespace-pre-wrap">
-                      {f.llmJustification}
+                      {llmJustification}
                     </div>
                   ) : (
                     <p className="mt-2 text-xs text-muted-foreground italic">

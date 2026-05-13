@@ -14,18 +14,24 @@ import {
 } from "@/actions/field-reviews";
 import { BlindPhase } from "./BlindPhase";
 import { RevealPhase } from "./RevealPhase";
-import { assignOrder } from "@/lib/arbitration-order";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 
 export interface ArbitrationField {
   fieldReviewId: string;
   fieldName: string;
-  humanAnswer: unknown;
-  humanName: string | null;
-  llmAnswer: unknown;
-  llmName: string | null;
-  llmJustification: string | null;
+  // Sempre presente — embaralhamento A/B feito server-side via assignOrder
+  aAnswer: unknown;
+  bAnswer: unknown;
   blindVerdict: ArbitrationVerdict | null;
+  // Populado apenas quando blindVerdict !== null (fase 2). Na fase cega, o
+  // navegador nao recebe esta relacao — DevTools nao revela qual e humano.
+  reveal: {
+    aSide: ArbitrationVerdict;
+    bSide: ArbitrationVerdict;
+    humanName: string | null;
+    llmName: string | null;
+    llmJustification: string | null;
+  } | null;
 }
 
 export interface ArbitrationDoc {
@@ -61,9 +67,11 @@ export function ArbitrationPage({
     computePhaseForDoc(docs[0]),
   );
   const [submitting, setSubmitting] = useState(false);
-  const [blindChoices, setBlindChoices] = useState<
-    Record<string, ArbitrationVerdict>
-  >({});
+  // Blind: keyed por fieldReviewId, valores "a" | "b"
+  const [blindChoices, setBlindChoices] = useState<Record<string, "a" | "b">>(
+    {},
+  );
+  // Final: keyed por fieldName, valores humano/llm
   const [finalChoices, setFinalChoices] = useState<
     Record<string, ArbitrationVerdict>
   >({});
@@ -75,9 +83,6 @@ export function ArbitrationPage({
     [fields],
   );
 
-  // Ao trocar de doc (ou quando docs muda), recomputar a fase com base no
-  // estado real dos blind_verdicts daquele doc — evita ficar travado em
-  // "blind" depois de avançar para um doc cujos blind_verdicts ja existem.
   useEffect(() => {
     setPhase(computePhaseForDoc(docs[docIndex]));
   }, [docIndex, docs]);
@@ -95,12 +100,9 @@ export function ArbitrationPage({
   }
 
   const doc = docs[docIndex];
-  const orderByField = new Map(
-    doc.fields.map((f) => [f.fieldName, assignOrder(f.fieldReviewId)]),
-  );
 
   const allBlindChosen = doc.fields.every(
-    (f) => f.blindVerdict !== null || blindChoices[f.fieldName] != null,
+    (f) => f.blindVerdict !== null || blindChoices[f.fieldReviewId] != null,
   );
   const allFinalChosen = doc.fields.every(
     (f) => finalChoices[f.fieldName] != null,
@@ -111,8 +113,8 @@ export function ArbitrationPage({
     const choices: BlindChoice[] = doc.fields
       .filter((f) => f.blindVerdict === null)
       .map((f) => ({
-        fieldName: f.fieldName,
-        verdict: blindChoices[f.fieldName],
+        fieldReviewId: f.fieldReviewId,
+        choice: blindChoices[f.fieldReviewId],
       }));
     if (choices.length > 0) {
       const r = await submitBlindVerdicts(projectId, doc.docId, choices);
@@ -122,18 +124,34 @@ export function ArbitrationPage({
         return;
       }
     }
-    // Inicializa final com o que escolheu na cega (mais comum: manter)
-    const merged: Record<string, ArbitrationVerdict> = {};
-    for (const f of doc.fields) {
-      merged[f.fieldName] = f.blindVerdict ?? blindChoices[f.fieldName];
-    }
-    setFinalChoices(merged);
-    setPhase("reveal");
+    // router.refresh() repuxa o payload com `reveal` populado para esses
+    // campos. UI re-renderiza, useEffect detecta blindVerdict definido e
+    // muda phase para reveal automaticamente.
+    router.refresh();
     setSubmitting(false);
   }
 
+  // Quando entra na fase reveal, pre-popular finalChoices com o que foi
+  // decidido na cega (caso comum: manter). Roda quando doc/fase muda e
+  // finalChoices ainda nao esta populado para este doc.
+  useEffect(() => {
+    if (phase !== "reveal") return;
+    const currentDoc = docs[docIndex];
+    if (!currentDoc) return;
+    setFinalChoices((prev) => {
+      const merged = { ...prev };
+      let changed = false;
+      for (const f of currentDoc.fields) {
+        if (merged[f.fieldName] == null && f.blindVerdict != null) {
+          merged[f.fieldName] = f.blindVerdict;
+          changed = true;
+        }
+      }
+      return changed ? merged : prev;
+    });
+  }, [phase, docIndex, docs]);
+
   async function handleFinalSubmit() {
-    // Validar sugestoes para campos onde final='llm' (humano perdeu)
     for (const f of doc.fields) {
       if (finalChoices[f.fieldName] === "llm") {
         if (!suggestions[f.fieldName]?.trim()) {
@@ -167,7 +185,6 @@ export function ArbitrationPage({
     setSuggestions({});
     setComments({});
     if (docIndex < docs.length - 1) {
-      // setPhase via useEffect; aqui so avancamos o cursor.
       setDocIndex(docIndex + 1);
     } else {
       router.refresh();
@@ -217,17 +234,15 @@ export function ArbitrationPage({
         <BlindPhase
           fields={doc.fields}
           fieldMeta={fieldMeta}
-          orderByField={orderByField}
           choices={blindChoices}
-          onChoose={(field, verdict) =>
-            setBlindChoices((c) => ({ ...c, [field]: verdict }))
+          onChoose={(fieldReviewId, choice) =>
+            setBlindChoices((c) => ({ ...c, [fieldReviewId]: choice }))
           }
         />
       ) : (
         <RevealPhase
           fields={doc.fields}
           fieldMeta={fieldMeta}
-          orderByField={orderByField}
           arbitrationBlind={arbitrationBlind}
           finalChoices={finalChoices}
           suggestions={suggestions}
@@ -241,7 +256,6 @@ export function ArbitrationPage({
           onComment={(field, v) =>
             setComments((s) => ({ ...s, [field]: v }))
           }
-          blindChoices={blindChoices}
         />
       )}
 

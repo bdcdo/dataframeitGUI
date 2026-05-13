@@ -1,15 +1,16 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
+import type { PydanticField } from "@/lib/types";
 import type { ArbitrationField } from "./ArbitrationPage";
 
 interface BlindPhaseProps {
   fields: ArbitrationField[];
   fieldMeta: Map<string, PydanticField>;
-  orderByField: Map<string, "human_first" | "llm_first">;
-  choices: Record<string, ArbitrationVerdict>;
-  onChoose: (field: string, verdict: ArbitrationVerdict) => void;
+  // Choices indexadas por fieldReviewId (nao fieldName). A traducao A/B →
+  // humano/llm acontece no servidor via assignOrder(fieldReviewId).
+  choices: Record<string, "a" | "b">;
+  onChoose: (fieldReviewId: string, choice: "a" | "b") => void;
 }
 
 function formatAnswer(v: unknown): string {
@@ -22,32 +23,31 @@ function formatAnswer(v: unknown): string {
 export function BlindPhase({
   fields,
   fieldMeta,
-  orderByField,
   choices,
   onChoose,
 }: BlindPhaseProps) {
   return (
     <div className="space-y-4">
       {fields.map((f) => {
-        const order = orderByField.get(f.fieldName) ?? "human_first";
-        const a = order === "human_first" ? f.humanAnswer : f.llmAnswer;
-        const b = order === "human_first" ? f.llmAnswer : f.humanAnswer;
-        const aVerdict: ArbitrationVerdict =
-          order === "human_first" ? "humano" : "llm";
-        const bVerdict: ArbitrationVerdict =
-          order === "human_first" ? "llm" : "humano";
-
-        const chosen = choices[f.fieldName] ?? f.blindVerdict;
+        const meta = fieldMeta.get(f.fieldName);
+        // Re-entrada (voltar para a fase cega): derivar A/B do blindVerdict
+        // ja gravado, usando reveal.aSide para saber quem e quem.
+        const persistedChoice: "a" | "b" | null =
+          f.blindVerdict != null && f.reveal != null
+            ? f.reveal.aSide === f.blindVerdict
+              ? "a"
+              : "b"
+            : null;
+        const chosen = choices[f.fieldReviewId] ?? persistedChoice;
+        const locked = f.blindVerdict !== null;
 
         return (
-          <Card key={f.fieldName}>
+          <Card key={f.fieldReviewId}>
             <CardHeader>
-              <CardTitle className="text-sm font-mono">
-                {f.fieldName}
-              </CardTitle>
-              {fieldMeta.get(f.fieldName)?.description ? (
+              <CardTitle className="text-sm font-mono">{f.fieldName}</CardTitle>
+              {meta?.description ? (
                 <p className="text-sm text-muted-foreground">
-                  {fieldMeta.get(f.fieldName)?.description}
+                  {meta.description}
                 </p>
               ) : null}
             </CardHeader>
@@ -55,10 +55,10 @@ export function BlindPhase({
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => onChoose(f.fieldName, aVerdict)}
-                  disabled={f.blindVerdict !== null}
+                  onClick={() => onChoose(f.fieldReviewId, "a")}
+                  disabled={locked}
                   className={`border rounded-md p-3 text-left transition ${
-                    chosen === aVerdict
+                    chosen === "a"
                       ? "border-primary bg-primary/5"
                       : "hover:bg-muted/50"
                   } disabled:opacity-60`}
@@ -66,14 +66,16 @@ export function BlindPhase({
                   <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
                     Resposta A
                   </div>
-                  <div className="text-sm font-medium">{formatAnswer(a)}</div>
+                  <div className="text-sm font-medium">
+                    {formatAnswer(f.aAnswer)}
+                  </div>
                 </button>
                 <button
                   type="button"
-                  onClick={() => onChoose(f.fieldName, bVerdict)}
-                  disabled={f.blindVerdict !== null}
+                  onClick={() => onChoose(f.fieldReviewId, "b")}
+                  disabled={locked}
                   className={`border rounded-md p-3 text-left transition ${
-                    chosen === bVerdict
+                    chosen === "b"
                       ? "border-primary bg-primary/5"
                       : "hover:bg-muted/50"
                   } disabled:opacity-60`}
@@ -81,10 +83,12 @@ export function BlindPhase({
                   <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
                     Resposta B
                   </div>
-                  <div className="text-sm font-medium">{formatAnswer(b)}</div>
+                  <div className="text-sm font-medium">
+                    {formatAnswer(f.bAnswer)}
+                  </div>
                 </button>
               </div>
-              {f.blindVerdict !== null ? (
+              {locked ? (
                 <p className="text-xs text-muted-foreground">
                   Veredito cego já registrado. Avance para fase 2.
                 </p>

@@ -200,7 +200,7 @@ export async function saveResponse(
     if (!isAutoSave) {
       revalidatePath(`/projects/${projectId}/analyze/code`);
       revalidatePath(`/projects/${projectId}/analyze/compare`);
-      revalidatePath(`/projects/${projectId}/analyze/auto-review`);
+      revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
       revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
       revalidatePath(`/projects/${projectId}/reviews`);
       revalidateTag(`project-${projectId}-progress`, { expire: 60 });

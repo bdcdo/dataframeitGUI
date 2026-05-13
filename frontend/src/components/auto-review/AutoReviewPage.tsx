@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -94,7 +94,11 @@ export function AutoReviewPage({
   const pending = doc.fields.filter((f) => !f.alreadyAnswered);
   const allChosen = pending.every((f) => choices[f.fieldName] != null);
 
-  const fieldMeta = (name: string) => fields.find((f) => f.name === name);
+  const fieldMetaMap = useMemo(
+    () => new Map(fields.map((f) => [f.name, f])),
+    [fields],
+  );
+  const fieldMeta = (name: string) => fieldMetaMap.get(name);
 
   async function handleSubmit() {
     setSubmitting(true);

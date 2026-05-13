@@ -26,7 +26,7 @@ export function AnalyzeNav({
   const tabs = [
     ...baseTabs,
     ...(showAutoReview
-      ? [{ label: "Auto-revisão", href: "auto-review" }]
+      ? [{ label: "Auto-revisão", href: "auto-revisao" }]
       : []),
     ...(showArbitragem ? [{ label: "Arbitragem", href: "arbitragem" }] : []),
   ];

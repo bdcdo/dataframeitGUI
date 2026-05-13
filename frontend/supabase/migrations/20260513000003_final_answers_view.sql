@@ -8,6 +8,11 @@
 --   aguarda_arbitragem    → humano contestou LLM, arbitragem nao concluida
 --   arbitrado             → final_verdict definido pelo arbitro
 --
+-- Para gabarito FINAL (exports CSV, dashboards de gabarito), filtrar:
+--   WHERE provenance IN ('consenso', 'auto_corrigido', 'arbitrado')
+-- Linhas com provenance 'aguarda_*' tem answer = NULL e nao devem entrar no
+-- dataset final.
+--
 -- SECURITY INVOKER (default): respeita RLS de responses/field_reviews/projects.
 
 CREATE OR REPLACE VIEW final_answers AS
@@ -45,4 +50,7 @@ LEFT JOIN responses r_hum
 WHERE r_llm.respondent_type = 'llm'
   AND r_llm.is_current = true;
 
-GRANT SELECT ON final_answers TO anon, authenticated, service_role;
+-- App e autenticado via Clerk; nao expor a anon (defesa em profundidade:
+-- mesmo com SECURITY INVOKER + RLS, evita exposicao caso futura migration
+-- mude policies de responses/projects).
+GRANT SELECT ON final_answers TO authenticated, service_role;

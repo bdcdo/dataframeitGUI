@@ -3,9 +3,14 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
-import { createAutoReviewIfDiverges } from "@/lib/auto-review";
+import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { revalidatePath } from "next/cache";
-import type { SelfVerdict, ArbitrationVerdict } from "@/lib/types";
+import type {
+  PydanticField,
+  SelfVerdict,
+  ArbitrationVerdict,
+} from "@/lib/types";
 
 export interface SelfVerdictInput {
   fieldName: string;
@@ -84,7 +89,7 @@ export async function submitAutoReview(
       );
     }
 
-    revalidatePath(`/projects/${projectId}/analyze/auto-review`);
+    revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true, arbitrated };
   } catch (e) {
@@ -183,13 +188,18 @@ async function assignArbitrator(
 }
 
 export interface BlindChoice {
-  fieldName: string;
-  verdict: ArbitrationVerdict;
+  fieldReviewId: string;
+  choice: "a" | "b";
 }
 
 // Fase 1 da arbitragem: arbitro escolhe cegamente entre A/B (sem justificativa).
-// Persiste blind_verdict + blind_decided_at em paralelo. So aceita escrever
-// onde arbitrator_id = current user e blind_verdict IS NULL (idempotencia).
+// O cliente envia apenas A/B; o servidor traduz para humano/llm via assignOrder
+// (deterministico por fieldReviewId) — assim o mapeamento A/B → humano/llm
+// nunca trafega para o navegador na fase cega, eliminando o vetor de
+// inspecao via DevTools.
+//
+// So aceita escrever onde arbitrator_id = current user e blind_verdict IS NULL
+// (idempotencia: re-submit no mesmo campo nao reabre a decisao).
 export async function submitBlindVerdicts(
   projectId: string,
   documentId: string,
@@ -203,16 +213,17 @@ export async function submitBlindVerdicts(
     const now = new Date().toISOString();
 
     const results = await Promise.all(
-      choices.map((c) =>
-        supabase
+      choices.map((c) => {
+        const verdict = resolveBlindVerdict(c.fieldReviewId, c.choice);
+        return supabase
           .from("field_reviews")
-          .update({ blind_verdict: c.verdict, blind_decided_at: now })
+          .update({ blind_verdict: verdict, blind_decided_at: now })
           .eq("project_id", projectId)
           .eq("document_id", documentId)
-          .eq("field_name", c.fieldName)
+          .eq("id", c.fieldReviewId)
           .eq("arbitrator_id", user.id)
-          .is("blind_verdict", null),
-      ),
+          .is("blind_verdict", null);
+      }),
     );
 
     for (const res of results) {
@@ -385,12 +396,15 @@ export async function submitFinalVerdicts(
 }
 
 // Coordenador-only: varre todas as respostas humanas concluidas do projeto e
-// re-executa createAutoReviewIfDiverges. Usado quando uma chamada inline em
-// saveResponse falhou silenciosamente (ver log "[auto-review]") ou apos
-// importar respostas em lote.
+// materializa o backlog de auto-revisao + field_reviews. Usado quando a chamada
+// inline em saveResponse falhou silenciosamente (ver log "[auto-review]") ou
+// apos importar respostas em lote.
 //
-// Idempotente: createAutoReviewIfDiverges usa upsert com ignoreDuplicates,
-// entao chamar varias vezes nao duplica linhas em field_reviews/assignments.
+// Bulk-otimizado: 3 queries (project + humanos + LLMs) + 2 upserts em batch,
+// independente do numero de respostas. Antes era N+1 (3 queries por response).
+//
+// Idempotente: upserts usam ignoreDuplicates em chaves unicas
+// (assignments: doc+user+type; field_reviews: doc+field).
 export async function regenerateAutoReviewBacklog(
   projectId: string,
 ): Promise<{
@@ -414,42 +428,116 @@ export async function regenerateAutoReviewBacklog(
 
     const admin = createSupabaseAdmin();
 
-    // Lista todas as respostas humanas finalizadas (is_partial=false) do projeto
-    const { data: humanResponses, error: respErr } = await admin
-      .from("responses")
-      .select("document_id, respondent_id")
-      .eq("project_id", projectId)
-      .eq("respondent_type", "humano")
-      .eq("is_partial", false);
-    if (respErr) return { success: false, error: respErr.message };
+    const [
+      { data: project, error: projErr },
+      { data: humanResponses, error: humanErr },
+      { data: llmResponses, error: llmErr },
+    ] = await Promise.all([
+      admin
+        .from("projects")
+        .select("pydantic_fields")
+        .eq("id", projectId)
+        .single(),
+      admin
+        .from("responses")
+        .select("id, document_id, respondent_id, answers")
+        .eq("project_id", projectId)
+        .eq("respondent_type", "humano")
+        .eq("is_partial", false),
+      admin
+        .from("responses")
+        .select("id, document_id, answers")
+        .eq("project_id", projectId)
+        .eq("respondent_type", "llm")
+        .eq("is_current", true),
+    ]);
+
+    if (projErr) return { success: false, error: projErr.message };
+    if (humanErr) return { success: false, error: humanErr.message };
+    if (llmErr) return { success: false, error: llmErr.message };
+
+    const fields = (project?.pydantic_fields as PydanticField[]) ?? [];
+    if (fields.length === 0) {
+      return { success: true, scanned: 0, regenerated: 0 };
+    }
+
+    // Index LLM por document_id para lookup O(1) no loop in-memory
+    const llmByDocId = new Map(
+      (llmResponses ?? []).map((r) => [r.document_id as string, r]),
+    );
+
+    const assignmentRows: Array<{
+      project_id: string;
+      document_id: string;
+      user_id: string;
+      type: "auto_revisao";
+      status: "pendente";
+    }> = [];
+    const fieldReviewRows: Array<{
+      project_id: string;
+      document_id: string;
+      field_name: string;
+      human_response_id: string;
+      llm_response_id: string;
+      self_reviewer_id: string;
+    }> = [];
 
     let regenerated = 0;
-    // Limitar concorrencia para nao saturar conexoes (paralelismo modesto)
     const queue = humanResponses ?? [];
-    const concurrency = 5;
-    for (let i = 0; i < queue.length; i += concurrency) {
-      const batch = queue.slice(i, i + concurrency);
-      const results = await Promise.all(
-        batch.map((r) =>
-          createAutoReviewIfDiverges(
-            projectId,
-            r.document_id,
-            r.respondent_id,
-          ).catch((err) => {
-            console.error(
-              `[regenerateAutoReviewBacklog] doc=${r.document_id} user=${r.respondent_id}:`,
-              err,
-            );
-            return { divergentCount: 0 };
-          }),
-        ),
-      );
-      for (const res of results) {
-        if (res.divergentCount > 0) regenerated++;
+    for (const human of queue) {
+      const llm = llmByDocId.get(human.document_id);
+      if (!llm) continue;
+
+      const divergent = computeDivergentFieldNames(fields, [
+        {
+          id: human.id,
+          answers: (human.answers as Record<string, unknown>) ?? {},
+        },
+        {
+          id: llm.id,
+          answers: (llm.answers as Record<string, unknown>) ?? {},
+        },
+      ]);
+      if (divergent.length === 0) continue;
+
+      regenerated++;
+      assignmentRows.push({
+        project_id: projectId,
+        document_id: human.document_id,
+        user_id: human.respondent_id,
+        type: "auto_revisao",
+        status: "pendente",
+      });
+      for (const fieldName of divergent) {
+        fieldReviewRows.push({
+          project_id: projectId,
+          document_id: human.document_id,
+          field_name: fieldName,
+          human_response_id: human.id,
+          llm_response_id: llm.id,
+          self_reviewer_id: human.respondent_id,
+        });
       }
     }
 
-    revalidatePath(`/projects/${projectId}/analyze/auto-review`);
+    if (assignmentRows.length > 0) {
+      const { error } = await admin.from("assignments").upsert(assignmentRows, {
+        onConflict: "document_id,user_id,type",
+        ignoreDuplicates: true,
+      });
+      if (error) return { success: false, error: error.message };
+    }
+    if (fieldReviewRows.length > 0) {
+      const { error } = await admin
+        .from("field_reviews")
+        .upsert(fieldReviewRows, {
+          onConflict: "document_id,field_name",
+          ignoreDuplicates: true,
+        });
+      if (error) return { success: false, error: error.message };
+    }
+
+    revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return {
       success: true,

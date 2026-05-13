@@ -76,13 +76,16 @@ export function GeneralForm({
         <h3 className="text-sm font-medium">Arbitragem</h3>
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
-            <Label className="text-sm">Arbitragem cega na fase 2</Label>
+            <Label className="text-sm">
+              Manter rótulos A/B na fase de revelação
+            </Label>
             <p className="text-xs text-muted-foreground">
-              Quando ativado, mesmo após a fase cega o árbitro continua vendo
-              as respostas como &quot;A&quot; e &quot;B&quot; (apenas a
-              justificativa do LLM é revelada). Quando desativado, a fase 2
-              mostra os rótulos &quot;Humano&quot; e &quot;LLM&quot;
-              explicitamente.
+              Quando ativado, na fase 2 (revelação) o árbitro continua vendo
+              &quot;Resposta A&quot; e &quot;Resposta B&quot; em vez de
+              &quot;Humano&quot; e &quot;LLM&quot;. Atenção: a justificativa
+              do LLM, que é sempre revelada nesta fase, frequentemente
+              entrega qual é a fonte mesmo com os rótulos genéricos — este
+              toggle reduz, mas não elimina, o viés de revelação.
             </p>
           </div>
           <Switch
