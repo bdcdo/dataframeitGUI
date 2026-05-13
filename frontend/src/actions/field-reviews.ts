@@ -426,7 +426,18 @@ export async function submitFinalVerdicts(
       });
 
     if (commentRows.length > 0) {
-      await admin.from("project_comments").insert(commentRows);
+      // Falha aqui significa que o veredicto já foi gravado mas o comentário
+      // de divergência não — o coordenador perderia a sugestão de melhoria.
+      // Propaga o erro em vez de silenciar.
+      const { error: commentErr } = await admin
+        .from("project_comments")
+        .insert(commentRows);
+      if (commentErr) {
+        return {
+          success: false,
+          error: `Veredicto salvo mas comentário de divergência falhou: ${commentErr.message}`,
+        };
+      }
     }
 
     // 5) Pending check + assignment update via supabase: SELECT cabe na policy
