@@ -5,6 +5,7 @@ import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
+import { formatAnswerTechnical } from "@/lib/format-answer";
 import { revalidatePath } from "next/cache";
 import type {
   PydanticField,
@@ -395,12 +396,12 @@ export async function submitFinalVerdicts(
         const fr = frByField.get(c.fieldName);
         const humanResp = fr ? responseById.get(fr.human_response_id) : null;
         const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
-        const humanAnswer = formatAnswer(
+        const humanAnswer = formatAnswerTechnical(
           (humanResp?.answers as Record<string, unknown> | undefined)?.[
             c.fieldName
           ],
         );
-        const llmAnswer = formatAnswer(
+        const llmAnswer = formatAnswerTechnical(
           (llmResp?.answers as Record<string, unknown> | undefined)?.[
             c.fieldName
           ],
@@ -623,9 +624,3 @@ export async function regenerateAutoReviewBacklog(
   }
 }
 
-function formatAnswer(v: unknown): string {
-  if (v === null || v === undefined) return "(vazio)";
-  if (typeof v === "string") return `"${v}"`;
-  if (Array.isArray(v)) return `[${v.map((x) => formatAnswer(x)).join(", ")}]`;
-  return JSON.stringify(v);
-}

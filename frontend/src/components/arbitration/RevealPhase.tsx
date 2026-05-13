@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
+import { formatAnswerDisplay } from "@/lib/format-answer";
 import type { ArbitrationField } from "./ArbitrationPage";
 
 interface RevealPhaseProps {
@@ -19,13 +20,6 @@ interface RevealPhaseProps {
   onChooseFinal: (fieldReviewId: string, verdict: ArbitrationVerdict) => void;
   onSuggestion: (fieldReviewId: string, v: string) => void;
   onComment: (fieldReviewId: string, v: string) => void;
-}
-
-function formatAnswer(v: unknown): string {
-  if (v === null || v === undefined) return "(vazio)";
-  if (typeof v === "string") return v.length === 0 ? "(vazio)" : v;
-  if (Array.isArray(v)) return v.length === 0 ? "(vazio)" : v.join(", ");
-  return JSON.stringify(v);
 }
 
 export function RevealPhase({
@@ -99,7 +93,7 @@ export function RevealPhase({
                     {humanLabel}
                   </div>
                   <div className="text-sm font-medium">
-                    {formatAnswer(
+                    {formatAnswerDisplay(
                       r?.aSide === "humano" ? f.aAnswer : f.bAnswer,
                     )}
                   </div>
@@ -113,7 +107,7 @@ export function RevealPhase({
                     {llmLabel}
                   </div>
                   <div className="text-sm font-medium">
-                    {formatAnswer(r?.aSide === "llm" ? f.aAnswer : f.bAnswer)}
+                    {formatAnswerDisplay(r?.aSide === "llm" ? f.aAnswer : f.bAnswer)}
                   </div>
                   {llmJustification ? (
                     <div className="mt-2 text-xs text-muted-foreground border-l-2 border-muted pl-2 whitespace-pre-wrap">

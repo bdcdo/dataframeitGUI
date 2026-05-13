@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { PydanticField } from "@/lib/types";
+import { formatAnswerDisplay } from "@/lib/format-answer";
 import type { ArbitrationField } from "./ArbitrationPage";
 
 interface BlindPhaseProps {
@@ -11,13 +12,6 @@ interface BlindPhaseProps {
   // humano/llm acontece no servidor via assignOrder(fieldReviewId).
   choices: Record<string, "a" | "b">;
   onChoose: (fieldReviewId: string, choice: "a" | "b") => void;
-}
-
-function formatAnswer(v: unknown): string {
-  if (v === null || v === undefined) return "(vazio)";
-  if (typeof v === "string") return v.length === 0 ? "(vazio)" : v;
-  if (Array.isArray(v)) return v.length === 0 ? "(vazio)" : v.join(", ");
-  return JSON.stringify(v);
 }
 
 export function BlindPhase({
@@ -67,7 +61,7 @@ export function BlindPhase({
                     Resposta A
                   </div>
                   <div className="text-sm font-medium">
-                    {formatAnswer(f.aAnswer)}
+                    {formatAnswerDisplay(f.aAnswer)}
                   </div>
                 </button>
                 <button
@@ -84,7 +78,7 @@ export function BlindPhase({
                     Resposta B
                   </div>
                   <div className="text-sm font-medium">
-                    {formatAnswer(f.bAnswer)}
+                    {formatAnswerDisplay(f.bAnswer)}
                   </div>
                 </button>
               </div>
