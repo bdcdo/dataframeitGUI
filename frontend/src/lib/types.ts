@@ -33,6 +33,7 @@ export interface Project {
   allow_researcher_review: boolean;
   round_strategy: RoundStrategy;
   current_round_id: string | null;
+  arbitration_blind: boolean;
 }
 
 export interface SubfieldDef {
@@ -86,13 +87,19 @@ export interface Document {
   excluded_by: string | null;
 }
 
+export type AssignmentType =
+  | "codificacao"
+  | "comparacao"
+  | "auto_revisao"
+  | "arbitragem";
+
 export interface Assignment {
   id: string;
   project_id: string;
   document_id: string;
   user_id: string;
   status: "pendente" | "em_andamento" | "concluido";
-  type: "codificacao" | "comparacao";
+  type: AssignmentType;
   batch_id: string | null;
   deadline: string | null;
   completed_at: string | null;
@@ -148,6 +155,30 @@ export interface ResponseEquivalence {
   response_a_id: string;
   response_b_id: string;
   reviewer_id: string | null;
+  created_at: string;
+}
+
+export type SelfVerdict = "admite_erro" | "contesta_llm";
+export type ArbitrationVerdict = "humano" | "llm";
+
+export interface FieldReview {
+  id: string;
+  project_id: string;
+  document_id: string;
+  field_name: string;
+  human_response_id: string;
+  llm_response_id: string;
+  self_reviewer_id: string;
+  self_verdict: SelfVerdict | null;
+  self_reviewed_at: string | null;
+  arbitrator_id: string | null;
+  blind_verdict: ArbitrationVerdict | null;
+  blind_decided_at: string | null;
+  final_verdict: ArbitrationVerdict | null;
+  final_decided_at: string | null;
+  changed_after_justification: boolean | null;
+  question_improvement_suggestion: string | null;
+  arbitrator_comment: string | null;
   created_at: string;
 }
 

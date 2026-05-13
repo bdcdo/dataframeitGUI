@@ -8,6 +8,8 @@ const analyzeTabs = [
   { label: "Atribuições", href: "assignments" },
   { label: "Codificar", href: "code" },
   { label: "Comparar", href: "compare" },
+  { label: "Auto-revisão", href: "auto-review" },
+  { label: "Arbitragem", href: "arbitragem" },
 ];
 
 interface AnalyzeNavProps {
