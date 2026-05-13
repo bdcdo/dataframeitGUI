@@ -11,12 +11,14 @@ interface RevealPhaseProps {
   fields: ArbitrationField[];
   fieldMeta: Map<string, PydanticField>;
   arbitrationBlind: boolean;
+  // States vem keyed por fieldReviewId — UUID unico por (doc, campo). Evita
+  // que escolhas vazem entre documentos com mesmo fieldName.
   finalChoices: Record<string, ArbitrationVerdict>;
   suggestions: Record<string, string>;
   comments: Record<string, string>;
-  onChooseFinal: (field: string, verdict: ArbitrationVerdict) => void;
-  onSuggestion: (field: string, v: string) => void;
-  onComment: (field: string, v: string) => void;
+  onChooseFinal: (fieldReviewId: string, verdict: ArbitrationVerdict) => void;
+  onSuggestion: (fieldReviewId: string, v: string) => void;
+  onComment: (fieldReviewId: string, v: string) => void;
 }
 
 function formatAnswer(v: unknown): string {
@@ -41,7 +43,7 @@ export function RevealPhase({
     <div className="space-y-4">
       {fields.map((f) => {
         const meta = fieldMeta.get(f.fieldName);
-        const final = finalChoices[f.fieldName];
+        const final = finalChoices[f.fieldReviewId];
         const blind = f.blindVerdict;
         const changed = blind && final && blind !== final;
 
@@ -129,14 +131,14 @@ export function RevealPhase({
                 <Button
                   variant={final === "humano" ? "default" : "outline"}
                   className="flex-1"
-                  onClick={() => onChooseFinal(f.fieldName, "humano")}
+                  onClick={() => onChooseFinal(f.fieldReviewId, "humano")}
                 >
                   Humano acertou
                 </Button>
                 <Button
                   variant={final === "llm" ? "default" : "outline"}
                   className="flex-1"
-                  onClick={() => onChooseFinal(f.fieldName, "llm")}
+                  onClick={() => onChooseFinal(f.fieldReviewId, "llm")}
                 >
                   LLM acertou
                 </Button>
@@ -150,15 +152,17 @@ export function RevealPhase({
 
               {final === "llm" ? (
                 <div className="space-y-2">
-                  <Label htmlFor={`sug-${f.fieldName}`} className="text-sm">
+                  <Label htmlFor={`sug-${f.fieldReviewId}`} className="text-sm">
                     Sugestão de melhoria na redação da pergunta{" "}
                     <span className="text-destructive">*</span>
                   </Label>
                   <Textarea
-                    id={`sug-${f.fieldName}`}
+                    id={`sug-${f.fieldReviewId}`}
                     rows={3}
-                    value={suggestions[f.fieldName] ?? ""}
-                    onChange={(e) => onSuggestion(f.fieldName, e.target.value)}
+                    value={suggestions[f.fieldReviewId] ?? ""}
+                    onChange={(e) =>
+                      onSuggestion(f.fieldReviewId, e.target.value)
+                    }
                     placeholder="Como reformular a pergunta para evitar essa divergência no futuro?"
                   />
                 </div>
@@ -166,16 +170,16 @@ export function RevealPhase({
 
               <div className="space-y-2">
                 <Label
-                  htmlFor={`com-${f.fieldName}`}
+                  htmlFor={`com-${f.fieldReviewId}`}
                   className="text-sm text-muted-foreground"
                 >
                   Comentário (opcional)
                 </Label>
                 <Textarea
-                  id={`com-${f.fieldName}`}
+                  id={`com-${f.fieldReviewId}`}
                   rows={2}
-                  value={comments[f.fieldName] ?? ""}
-                  onChange={(e) => onComment(f.fieldName, e.target.value)}
+                  value={comments[f.fieldReviewId] ?? ""}
+                  onChange={(e) => onComment(f.fieldReviewId, e.target.value)}
                 />
               </div>
             </CardContent>

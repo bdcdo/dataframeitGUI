@@ -101,6 +101,17 @@ export async function submitAutoReview(
 // balanceamento por carga; em empate na menor carga, sorteia aleatoriamente
 // entre os candidatos para evitar viés estrutural em projetos pequenos.
 //
+// Granularidade: TODOS os campos contestados deste submit recebem o MESMO
+// arbitro (um por documento, nao um por campo). Intencional para coerencia —
+// o arbitro ve todos os campos do mesmo doc de uma vez. A tabela
+// field_reviews permite arbitros diferentes por campo, mas este caminho
+// (submit unico → 1 arbitro por doc) prefere coerencia sobre granularidade.
+//
+// Race condition (TOCTOU): se dois submitAutoReview rodam concorrentes para
+// docs diferentes, podem ler o mesmo `minLoad` e sortearem o mesmo arbitro
+// — degrada o balanceamento mas nao a correcao. Tolerado para evitar custo
+// de lock; em projetos com volume, a aleatoriedade entre empatados ja dilui.
+//
 // Idempotente: arbitrator_id so e gravado em field_reviews que ainda nao
 // tem arbitro definido (re-chamadas nao trocam um arbitro ja escolhido).
 //
@@ -272,10 +283,21 @@ export async function submitFinalVerdicts(
     const admin = createSupabaseAdmin();
     const now = new Date().toISOString();
 
-    // Carrega field_reviews + respostas para montar comentarios.
+    // Estrategia de clientes:
+    //  - supabase (RLS): qualquer operacao onde o proprio arbitro e o ator.
+    //    Policies de field_reviews ("Arbitrator updates own row", SELECT
+    //    arbitrator_id=clerk_uid()) e de assignments ("Researchers update
+    //    own assignments") ja cobrem o caso.
+    //  - admin (service key): apenas onde o arbitro pode nao ter visibilidade
+    //    por RLS — leitura de responses (cross-user, RLS de responses e mais
+    //    restritiva) e INSERT em project_comments (autor != arbitro em alguns
+    //    cenarios, evitar policy-shaped erros).
+
+    // 1) Carrega field_reviews (arbitro ja tem SELECT pela policy
+    // "Members view own field_reviews" introduzida em 020000).
     // Duas FKs de field_reviews para responses (human_/llm_response_id) tornam
     // o nested select ambiguo no PostgREST — buscar respostas separadamente.
-    const { data: frRows, error: frErr } = await admin
+    const { data: frRows, error: frErr } = await supabase
       .from("field_reviews")
       .select("id, field_name, human_response_id, llm_response_id")
       .eq("project_id", projectId)
@@ -287,6 +309,8 @@ export async function submitFinalVerdicts(
       .eq("arbitrator_id", user.id);
     if (frErr) return { success: false, error: frErr.message };
 
+    // 2) Respostas: admin porque a RLS de responses restringe leitura cross-user
+    // (arbitro nao precisa ser membro do mesmo "scope" da resposta humana).
     const responseIds = new Set<string>();
     for (const r of frRows ?? []) {
       responseIds.add(r.human_response_id);
@@ -304,7 +328,7 @@ export async function submitFinalVerdicts(
       (frRows ?? []).map((r) => [r.field_name as string, r]),
     );
 
-    // UPDATEs em paralelo
+    // 3) UPDATEs em paralelo via supabase (RLS cobre "Arbitrator updates own row")
     const updateResults = await Promise.all(
       choices.map((c) =>
         supabase
@@ -326,7 +350,9 @@ export async function submitFinalVerdicts(
       if (res.error) return { success: false, error: res.error.message };
     }
 
-    // INSERTs em project_comments em batch (1 round-trip)
+    // 4) INSERTs em project_comments em batch via admin (RLS de
+    // project_comments pode exigir que author_id seja membro do projeto com
+    // role coordenador — admin evita atrito com policy desconhecida).
     const commentRows = choices
       .filter((c) => c.verdict === "llm")
       .map((c) => {
@@ -367,9 +393,10 @@ export async function submitFinalVerdicts(
       await admin.from("project_comments").insert(commentRows);
     }
 
-    // Se TODOS os field_reviews deste doc para este arbitro tem final_verdict,
-    // marca assignment arbitragem como concluido
-    const { data: pending } = await admin
+    // 5) Pending check + assignment update via supabase: SELECT cabe na policy
+    // "Members view own field_reviews" e UPDATE cabe na "Researchers update
+    // own assignments". Sem admin aqui.
+    const { data: pending } = await supabase
       .from("field_reviews")
       .select("id")
       .eq("project_id", projectId)
@@ -379,7 +406,7 @@ export async function submitFinalVerdicts(
       .limit(1);
 
     if (!pending || pending.length === 0) {
-      await admin
+      await supabase
         .from("assignments")
         .update({ status: "concluido", completed_at: now })
         .eq("project_id", projectId)

@@ -67,11 +67,13 @@ export function ArbitrationPage({
     computePhaseForDoc(docs[0]),
   );
   const [submitting, setSubmitting] = useState(false);
-  // Blind: keyed por fieldReviewId, valores "a" | "b"
+  // Todos os states sao keyed por fieldReviewId (UUID unico globalmente), nao
+  // por fieldName. fieldName se repete entre documentos — chavear por ele
+  // fazia uma escolha em "q1" do doc A reaparecer pre-selecionada em "q1"
+  // do doc B. fieldReviewId garante isolamento natural por (doc, campo).
   const [blindChoices, setBlindChoices] = useState<Record<string, "a" | "b">>(
     {},
   );
-  // Final: keyed por fieldName, valores humano/llm
   const [finalChoices, setFinalChoices] = useState<
     Record<string, ArbitrationVerdict>
   >({});
@@ -86,6 +88,26 @@ export function ArbitrationPage({
   useEffect(() => {
     setPhase(computePhaseForDoc(docs[docIndex]));
   }, [docIndex, docs]);
+
+  // Pre-popular finalChoices quando entra na fase reveal (caso comum: manter
+  // o que foi decidido na cega). Hooks devem rodar incondicionalmente, antes
+  // do early return.
+  useEffect(() => {
+    if (phase !== "reveal") return;
+    const currentDoc = docs[docIndex];
+    if (!currentDoc) return;
+    setFinalChoices((prev) => {
+      const merged = { ...prev };
+      let changed = false;
+      for (const f of currentDoc.fields) {
+        if (merged[f.fieldReviewId] == null && f.blindVerdict != null) {
+          merged[f.fieldReviewId] = f.blindVerdict;
+          changed = true;
+        }
+      }
+      return changed ? merged : prev;
+    });
+  }, [phase, docIndex, docs]);
 
   if (docs.length === 0) {
     return (
@@ -105,7 +127,7 @@ export function ArbitrationPage({
     (f) => f.blindVerdict !== null || blindChoices[f.fieldReviewId] != null,
   );
   const allFinalChosen = doc.fields.every(
-    (f) => finalChoices[f.fieldName] != null,
+    (f) => finalChoices[f.fieldReviewId] != null,
   );
 
   async function handleBlindSubmit() {
@@ -131,30 +153,10 @@ export function ArbitrationPage({
     setSubmitting(false);
   }
 
-  // Quando entra na fase reveal, pre-popular finalChoices com o que foi
-  // decidido na cega (caso comum: manter). Roda quando doc/fase muda e
-  // finalChoices ainda nao esta populado para este doc.
-  useEffect(() => {
-    if (phase !== "reveal") return;
-    const currentDoc = docs[docIndex];
-    if (!currentDoc) return;
-    setFinalChoices((prev) => {
-      const merged = { ...prev };
-      let changed = false;
-      for (const f of currentDoc.fields) {
-        if (merged[f.fieldName] == null && f.blindVerdict != null) {
-          merged[f.fieldName] = f.blindVerdict;
-          changed = true;
-        }
-      }
-      return changed ? merged : prev;
-    });
-  }, [phase, docIndex, docs]);
-
   async function handleFinalSubmit() {
     for (const f of doc.fields) {
-      if (finalChoices[f.fieldName] === "llm") {
-        if (!suggestions[f.fieldName]?.trim()) {
+      if (finalChoices[f.fieldReviewId] === "llm") {
+        if (!suggestions[f.fieldReviewId]?.trim()) {
           toast.error(
             `Campo "${f.fieldName}": preencha a sugestão de melhoria.`,
           );
@@ -166,12 +168,12 @@ export function ArbitrationPage({
     setSubmitting(true);
     const payload: FinalChoice[] = doc.fields.map((f) => ({
       fieldName: f.fieldName,
-      verdict: finalChoices[f.fieldName],
+      verdict: finalChoices[f.fieldReviewId],
       questionImprovementSuggestion:
-        finalChoices[f.fieldName] === "llm"
-          ? suggestions[f.fieldName]
+        finalChoices[f.fieldReviewId] === "llm"
+          ? suggestions[f.fieldReviewId]
           : undefined,
-      arbitratorComment: comments[f.fieldName] || undefined,
+      arbitratorComment: comments[f.fieldReviewId] || undefined,
     }));
     const r = await submitFinalVerdicts(projectId, doc.docId, payload);
     setSubmitting(false);
@@ -247,14 +249,14 @@ export function ArbitrationPage({
           finalChoices={finalChoices}
           suggestions={suggestions}
           comments={comments}
-          onChooseFinal={(field, verdict) =>
-            setFinalChoices((c) => ({ ...c, [field]: verdict }))
+          onChooseFinal={(fieldReviewId, verdict) =>
+            setFinalChoices((c) => ({ ...c, [fieldReviewId]: verdict }))
           }
-          onSuggestion={(field, v) =>
-            setSuggestions((s) => ({ ...s, [field]: v }))
+          onSuggestion={(fieldReviewId, v) =>
+            setSuggestions((s) => ({ ...s, [fieldReviewId]: v }))
           }
-          onComment={(field, v) =>
-            setComments((s) => ({ ...s, [field]: v }))
+          onComment={(fieldReviewId, v) =>
+            setComments((s) => ({ ...s, [fieldReviewId]: v }))
           }
         />
       )}

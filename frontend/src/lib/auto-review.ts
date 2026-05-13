@@ -2,6 +2,21 @@ import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { PydanticField } from "@/lib/types";
 
+// Log estruturado JSON com prefixo "[auto-review]" — pesquisavel em logs
+// Vercel/Fly via `grep '[auto-review]'`. Campos minimos: event, projectId,
+// documentId, userId (sempre presentes); demais opcionais.
+function log(
+  event: string,
+  fields: Record<string, unknown>,
+  level: "info" | "warn" | "error" = "info",
+) {
+  const payload = JSON.stringify({ event, ...fields });
+  const line = `[auto-review] ${payload}`;
+  if (level === "error") console.error(line);
+  else if (level === "warn") console.warn(line);
+  else console.log(line);
+}
+
 // Detecta divergencia humano vs LLM e materializa:
 //   - 1 assignment auto_revisao para o humano (idempotente em doc+user+type)
 //   - N rows pending em field_reviews (1 por campo divergente, idempotente em doc+field)
@@ -42,6 +57,18 @@ export async function createAutoReviewIfDiverges(
     ]);
 
   if (!project?.pydantic_fields || !humanResponse || !llmResponse) {
+    log(
+      "skip_no_data",
+      {
+        projectId,
+        documentId,
+        userId: humanUserId,
+        hasProject: !!project?.pydantic_fields,
+        hasHuman: !!humanResponse,
+        hasLlm: !!llmResponse,
+      },
+      "warn",
+    );
     return { divergentCount: 0 };
   }
 
@@ -52,11 +79,17 @@ export async function createAutoReviewIfDiverges(
   ]);
 
   if (divergent.length === 0) {
+    log("consensus", {
+      projectId,
+      documentId,
+      userId: humanUserId,
+      totalFields: fields.length,
+    });
     return { divergentCount: 0 };
   }
 
   // Upsert assignment auto_revisao para o humano (idempotente via UNIQUE doc+user+type)
-  await admin.from("assignments").upsert(
+  const { error: asgErr } = await admin.from("assignments").upsert(
     {
       project_id: projectId,
       document_id: documentId,
@@ -66,6 +99,14 @@ export async function createAutoReviewIfDiverges(
     },
     { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
   );
+  if (asgErr) {
+    log(
+      "assignment_upsert_failed",
+      { projectId, documentId, userId: humanUserId, error: asgErr.message },
+      "error",
+    );
+    throw new Error(asgErr.message);
+  }
 
   // Upsert field_reviews stubs (1 por campo divergente)
   const rows = divergent.map((fieldName) => ({
@@ -77,9 +118,31 @@ export async function createAutoReviewIfDiverges(
     self_reviewer_id: humanUserId,
   }));
 
-  await admin.from("field_reviews").upsert(rows, {
+  const { error: frErr } = await admin.from("field_reviews").upsert(rows, {
     onConflict: "document_id,field_name",
     ignoreDuplicates: true,
+  });
+  if (frErr) {
+    log(
+      "field_reviews_upsert_failed",
+      {
+        projectId,
+        documentId,
+        userId: humanUserId,
+        divergentCount: divergent.length,
+        error: frErr.message,
+      },
+      "error",
+    );
+    throw new Error(frErr.message);
+  }
+
+  log("created", {
+    projectId,
+    documentId,
+    userId: humanUserId,
+    divergentCount: divergent.length,
+    divergentFields: divergent,
   });
 
   return { divergentCount: divergent.length };

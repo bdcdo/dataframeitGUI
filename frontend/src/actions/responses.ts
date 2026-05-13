@@ -164,9 +164,16 @@ export async function saveResponse(
         try {
           await createAutoReviewIfDiverges(projectId, documentId, user.id);
         } catch (err) {
+          // Log estruturado JSON — mesmo formato dos demais eventos em
+          // lib/auto-review.ts, facilita grep "[auto-review]" nos logs.
           console.error(
-            `[auto-review] createAutoReviewIfDiverges falhou para project=${projectId} document=${documentId} user=${user.id}:`,
-            err,
+            `[auto-review] ${JSON.stringify({
+              event: "inline_call_failed",
+              projectId,
+              documentId,
+              userId: user.id,
+              error: err instanceof Error ? err.message : String(err),
+            })}`,
           );
         }
       } else {

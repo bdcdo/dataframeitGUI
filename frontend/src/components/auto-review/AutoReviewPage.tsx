@@ -45,7 +45,19 @@ export function AutoReviewPage({
   const [docIndex, setDocIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  // Keyed por `${docId}::${fieldName}` — fieldName se repete entre documentos.
+  // Sem o prefixo, escolha de "q1" no doc A pre-selecionaria "q1" do doc B.
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
+
+  const choiceKey = (docId: string, fieldName: string) =>
+    `${docId}::${fieldName}`;
+
+  // useMemo precisa rodar incondicionalmente — antes do early return.
+  const fieldMetaMap = useMemo(
+    () => new Map(fields.map((f) => [f.name, f])),
+    [fields],
+  );
+  const fieldMeta = (name: string) => fieldMetaMap.get(name);
 
   async function handleRegenerate() {
     setRegenerating(true);
@@ -92,19 +104,15 @@ export function AutoReviewPage({
 
   const doc = docs[docIndex];
   const pending = doc.fields.filter((f) => !f.alreadyAnswered);
-  const allChosen = pending.every((f) => choices[f.fieldName] != null);
-
-  const fieldMetaMap = useMemo(
-    () => new Map(fields.map((f) => [f.name, f])),
-    [fields],
+  const allChosen = pending.every(
+    (f) => choices[choiceKey(doc.docId, f.fieldName)] != null,
   );
-  const fieldMeta = (name: string) => fieldMetaMap.get(name);
 
   async function handleSubmit() {
     setSubmitting(true);
     const payload = pending.map((f) => ({
       fieldName: f.fieldName,
-      verdict: choices[f.fieldName],
+      verdict: choices[choiceKey(doc.docId, f.fieldName)],
     }));
     const result = await submitAutoReview(projectId, doc.docId, payload);
     setSubmitting(false);
@@ -173,18 +181,21 @@ export function AutoReviewPage({
       </Card>
 
       <div className="space-y-4">
-        {pending.map((f) => (
-          <FieldVerdictRow
-            key={f.fieldName}
-            fieldName={f.fieldName}
-            fieldDescription={fieldMeta(f.fieldName)?.description ?? null}
-            humanAnswer={f.humanAnswer}
-            llmAnswer={f.llmAnswer}
-            llmJustification={f.llmJustification}
-            choice={choices[f.fieldName] ?? null}
-            onChoose={(v) => setChoices((c) => ({ ...c, [f.fieldName]: v }))}
-          />
-        ))}
+        {pending.map((f) => {
+          const key = choiceKey(doc.docId, f.fieldName);
+          return (
+            <FieldVerdictRow
+              key={key}
+              fieldName={f.fieldName}
+              fieldDescription={fieldMeta(f.fieldName)?.description ?? null}
+              humanAnswer={f.humanAnswer}
+              llmAnswer={f.llmAnswer}
+              llmJustification={f.llmJustification}
+              choice={choices[key] ?? null}
+              onChoose={(v) => setChoices((c) => ({ ...c, [key]: v }))}
+            />
+          );
+        })}
       </div>
 
       <div className="flex justify-between items-center pt-4">
