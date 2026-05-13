@@ -1,5 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { AutoReviewPage } from "@/components/auto-review/AutoReviewPage";
 import type { PydanticField } from "@/lib/types";
@@ -14,6 +14,7 @@ export default async function AutoReviewRoute({
   if (!user) redirect("/auth/login");
 
   const supabase = await createSupabaseServer();
+  const isCoordinator = await isProjectCoordinator(supabase, id, user);
 
   const [{ data: project }, { data: assignments }] = await Promise.all([
     supabase
@@ -38,11 +39,12 @@ export default async function AutoReviewRoute({
         projectName={project?.name ?? ""}
         fields={(project?.pydantic_fields as PydanticField[]) ?? []}
         docs={[]}
+        isCoordinator={isCoordinator}
       />
     );
   }
 
-  const [{ data: docs }, { data: fieldReviews }, { data: responses }] = await Promise.all([
+  const [{ data: docs }, { data: fieldReviews }] = await Promise.all([
     supabase
       .from("documents")
       .select("id, title, external_id, text")
@@ -55,12 +57,23 @@ export default async function AutoReviewRoute({
       )
       .in("document_id", docIds)
       .eq("self_reviewer_id", user.id),
-    supabase
-      .from("responses")
-      .select("id, document_id, respondent_type, answers, justifications")
-      .in("document_id", docIds)
-      .or(`respondent_id.eq.${user.id},respondent_type.eq.llm`),
   ]);
+
+  // Buscar so as respostas referenciadas (evita puxar todas as versoes
+  // historicas de humano/LLM dos docs).
+  const responseIdSet = new Set<string>();
+  for (const fr of fieldReviews ?? []) {
+    responseIdSet.add(fr.human_response_id);
+    responseIdSet.add(fr.llm_response_id);
+  }
+  const responseIds = Array.from(responseIdSet);
+  const { data: responses } =
+    responseIds.length > 0
+      ? await supabase
+          .from("responses")
+          .select("id, document_id, respondent_type, answers, justifications")
+          .in("id", responseIds)
+      : { data: [] };
 
   // Para cada doc, agrupar field_reviews pendentes + answers humana/LLM
   const responsesById = new Map((responses ?? []).map((r) => [r.id, r]));
@@ -120,6 +133,7 @@ export default async function AutoReviewRoute({
       projectName={project?.name ?? ""}
       fields={(project?.pydantic_fields as PydanticField[]) ?? []}
       docs={docsToReview}
+      isCoordinator={isCoordinator}
     />
   );
 }

@@ -43,7 +43,7 @@ export default async function ArbitrationRoute({
     );
   }
 
-  const [{ data: docs }, { data: fieldReviews }, { data: responses }] = await Promise.all([
+  const [{ data: docs }, { data: fieldReviews }] = await Promise.all([
     supabase
       .from("documents")
       .select("id, title, external_id, text")
@@ -58,11 +58,25 @@ export default async function ArbitrationRoute({
       .eq("arbitrator_id", user.id)
       .eq("self_verdict", "contesta_llm")
       .is("final_verdict", null),
-    supabase
-      .from("responses")
-      .select("id, document_id, respondent_type, respondent_name, answers, justifications")
-      .in("document_id", docIds),
   ]);
+
+  // Buscar so as respostas referenciadas pelos field_reviews (evita puxar
+  // todas as versoes historicas das respostas dos docs).
+  const responseIdSet = new Set<string>();
+  for (const fr of fieldReviews ?? []) {
+    responseIdSet.add(fr.human_response_id);
+    responseIdSet.add(fr.llm_response_id);
+  }
+  const responseIds = Array.from(responseIdSet);
+  const { data: responses } =
+    responseIds.length > 0
+      ? await supabase
+          .from("responses")
+          .select(
+            "id, document_id, respondent_type, respondent_name, answers, justifications",
+          )
+          .in("id", responseIds)
+      : { data: [] };
 
   const responsesById = new Map((responses ?? []).map((r) => [r.id, r]));
 

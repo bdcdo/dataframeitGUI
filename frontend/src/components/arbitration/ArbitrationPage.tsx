@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,7 @@ import {
 } from "@/actions/field-reviews";
 import { BlindPhase } from "./BlindPhase";
 import { RevealPhase } from "./RevealPhase";
+import { assignOrder } from "@/lib/arbitration-order";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 
 export interface ArbitrationField {
@@ -42,14 +44,9 @@ export interface ArbitrationPageProps {
   arbitrationBlind: boolean;
 }
 
-// Determina ordem A/B do par (humano, llm) por field_review.id de forma
-// deterministica — assim re-renders nao reordenam.
-function assignOrder(fieldReviewId: string): "human_first" | "llm_first" {
-  let h = 0;
-  for (let i = 0; i < fieldReviewId.length; i++) {
-    h = (h * 31 + fieldReviewId.charCodeAt(i)) >>> 0;
-  }
-  return h % 2 === 0 ? "human_first" : "llm_first";
+function computePhaseForDoc(doc: ArbitrationDoc | undefined): "blind" | "reveal" {
+  if (!doc || doc.fields.length === 0) return "blind";
+  return doc.fields.every((f) => f.blindVerdict !== null) ? "reveal" : "blind";
 }
 
 export function ArbitrationPage({
@@ -58,13 +55,11 @@ export function ArbitrationPage({
   docs,
   arbitrationBlind,
 }: ArbitrationPageProps) {
+  const router = useRouter();
   const [docIndex, setDocIndex] = useState(0);
-  // Inicia em reveal se TODOS os campos do primeiro doc ja tem blind_verdict
-  const initialPhase: "blind" | "reveal" =
-    docs.length > 0 && docs[0].fields.every((f) => f.blindVerdict !== null)
-      ? "reveal"
-      : "blind";
-  const [phase, setPhase] = useState<"blind" | "reveal">(initialPhase);
+  const [phase, setPhase] = useState<"blind" | "reveal">(() =>
+    computePhaseForDoc(docs[0]),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [blindChoices, setBlindChoices] = useState<
     Record<string, ArbitrationVerdict>
@@ -79,6 +74,13 @@ export function ArbitrationPage({
     () => new Map(fields.map((f) => [f.name, f])),
     [fields],
   );
+
+  // Ao trocar de doc (ou quando docs muda), recomputar a fase com base no
+  // estado real dos blind_verdicts daquele doc — evita ficar travado em
+  // "blind" depois de avançar para um doc cujos blind_verdicts ja existem.
+  useEffect(() => {
+    setPhase(computePhaseForDoc(docs[docIndex]));
+  }, [docIndex, docs]);
 
   if (docs.length === 0) {
     return (
@@ -165,10 +167,10 @@ export function ArbitrationPage({
     setSuggestions({});
     setComments({});
     if (docIndex < docs.length - 1) {
+      // setPhase via useEffect; aqui so avancamos o cursor.
       setDocIndex(docIndex + 1);
-      setPhase("blind");
     } else {
-      window.location.reload();
+      router.refresh();
     }
   }
 

@@ -2,7 +2,8 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { createAutoReviewIfDiverges } from "@/lib/auto-review";
 import { revalidatePath } from "next/cache";
 import type { SelfVerdict, ArbitrationVerdict } from "@/lib/types";
 
@@ -16,7 +17,8 @@ export interface SelfVerdictInput {
 //   - contesta_llm → cai na fila de arbitragem (sorteia arbitro neste mesmo call)
 //
 // Idempotente: regravar a auto-revisao apos enviada nao reinicia arbitragem
-// (UPDATE so toca campos com self_verdict IS NULL).
+// (UPDATE so toca campos com self_verdict IS NULL; assignArbitrator so olha
+// para campos cujo UPDATE retornou linha).
 export async function submitAutoReview(
   projectId: string,
   documentId: string,
@@ -29,16 +31,29 @@ export async function submitAutoReview(
     const admin = createSupabaseAdmin();
     const now = new Date().toISOString();
 
-    for (const v of verdicts) {
-      const { error } = await admin
-        .from("field_reviews")
-        .update({ self_verdict: v.verdict, self_reviewed_at: now })
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("field_name", v.fieldName)
-        .eq("self_reviewer_id", user.id)
-        .is("self_verdict", null);
-      if (error) return { success: false, error: error.message };
+    // UPDATE paralelo (em vez de N+1 sequencial). Cada UPDATE so toca o seu
+    // proprio par (doc, field) com self_verdict ainda NULL — RETURNING ajuda
+    // a saber quais campos foram efetivamente atualizados.
+    const updateResults = await Promise.all(
+      verdicts.map((v) =>
+        admin
+          .from("field_reviews")
+          .update({ self_verdict: v.verdict, self_reviewed_at: now })
+          .eq("project_id", projectId)
+          .eq("document_id", documentId)
+          .eq("field_name", v.fieldName)
+          .eq("self_reviewer_id", user.id)
+          .is("self_verdict", null)
+          .select("field_name"),
+      ),
+    );
+
+    const updatedFieldNames = new Set<string>();
+    for (const res of updateResults) {
+      if (res.error) return { success: false, error: res.error.message };
+      for (const r of res.data ?? []) {
+        if (r.field_name) updatedFieldNames.add(r.field_name);
+      }
     }
 
     // Marca assignment auto_revisao como concluido
@@ -50,14 +65,23 @@ export async function submitAutoReview(
       .eq("user_id", user.id)
       .eq("type", "auto_revisao");
 
-    // Para campos contestados, sorteia arbitro e cria assignment arbitragem
+    // Sorteia arbitro APENAS para campos cujo UPDATE acabou de gravar
+    // contesta_llm (re-submit nao reabre arbitragem).
     const contested = verdicts
-      .filter((v) => v.verdict === "contesta_llm")
+      .filter(
+        (v) =>
+          v.verdict === "contesta_llm" && updatedFieldNames.has(v.fieldName),
+      )
       .map((v) => v.fieldName);
 
     let arbitrated = 0;
     if (contested.length > 0) {
-      arbitrated = await assignArbitrator(projectId, documentId, user.id, contested);
+      arbitrated = await assignArbitrator(
+        projectId,
+        documentId,
+        user.id,
+        contested,
+      );
     }
 
     revalidatePath(`/projects/${projectId}/analyze/auto-review`);
@@ -68,11 +92,14 @@ export async function submitAutoReview(
   }
 }
 
-// Escolhe um arbitro (pesquisador do projeto != humano original) com balanceamento
-// simples (menos arbitragens pendentes). Atualiza field_reviews.arbitrator_id
-// dos campos contestados e cria 1 assignment arbitragem por documento.
+// Escolhe um arbitro (pesquisador do projeto != humano original) com
+// balanceamento por carga; em empate na menor carga, sorteia aleatoriamente
+// entre os candidatos para evitar viés estrutural em projetos pequenos.
 //
-// Retorna a quantidade de field_reviews atribuidos.
+// Idempotente: arbitrator_id so e gravado em field_reviews que ainda nao
+// tem arbitro definido (re-chamadas nao trocam um arbitro ja escolhido).
+//
+// Retorna a quantidade de field_reviews efetivamente atribuidos.
 async function assignArbitrator(
   projectId: string,
   documentId: string,
@@ -103,24 +130,42 @@ async function assignArbitrator(
     loadByUser.set(r.user_id, (loadByUser.get(r.user_id) ?? 0) + 1);
   }
 
-  // Ordena por carga ascendente; em empate, pesquisador antes de coordenador
-  const sorted = [...members].sort((a, b) => {
-    const la = loadByUser.get(a.user_id) ?? 0;
-    const lb = loadByUser.get(b.user_id) ?? 0;
-    if (la !== lb) return la - lb;
-    if (a.role !== b.role) return a.role === "pesquisador" ? -1 : 1;
-    return 0;
-  });
-  const arbitratorId = sorted[0].user_id;
+  // Carga minima entre candidatos
+  let minLoad = Infinity;
+  for (const m of members) {
+    const l = loadByUser.get(m.user_id) ?? 0;
+    if (l < minLoad) minLoad = l;
+  }
 
-  // Atualiza field_reviews dos campos contestados
-  const { error: frErr } = await admin
+  // Pesquisador tem prioridade sobre coordenador na menor carga
+  const candidatesAtMinLoad = members.filter(
+    (m) => (loadByUser.get(m.user_id) ?? 0) === minLoad,
+  );
+  const researchersAtMinLoad = candidatesAtMinLoad.filter(
+    (m) => m.role === "pesquisador",
+  );
+  const finalPool = researchersAtMinLoad.length > 0
+    ? researchersAtMinLoad
+    : candidatesAtMinLoad;
+
+  // Sorteio aleatorio entre os empatados
+  const arbitratorId =
+    finalPool[Math.floor(Math.random() * finalPool.length)].user_id;
+
+  // Atualiza arbitrator_id APENAS onde ainda nao foi definido (idempotente).
+  // O .select() devolve as linhas que de fato tocamos — usamos isso para
+  // decidir se criamos um assignment de arbitragem.
+  const { data: assigned, error: frErr } = await admin
     .from("field_reviews")
     .update({ arbitrator_id: arbitratorId })
     .eq("project_id", projectId)
     .eq("document_id", documentId)
-    .in("field_name", fieldNames);
+    .in("field_name", fieldNames)
+    .is("arbitrator_id", null)
+    .select("field_name");
   if (frErr) throw new Error(frErr.message);
+
+  if (!assigned || assigned.length === 0) return 0;
 
   // Cria assignment arbitragem (idempotente em doc+user+type)
   await admin.from("assignments").upsert(
@@ -134,7 +179,7 @@ async function assignArbitrator(
     { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
   );
 
-  return fieldNames.length;
+  return assigned.length;
 }
 
 export interface BlindChoice {
@@ -143,8 +188,8 @@ export interface BlindChoice {
 }
 
 // Fase 1 da arbitragem: arbitro escolhe cegamente entre A/B (sem justificativa).
-// Persiste blind_verdict + blind_decided_at. So aceita escrever onde
-// arbitrator_id = current user e blind_verdict IS NULL (idempotencia).
+// Persiste blind_verdict + blind_decided_at em paralelo. So aceita escrever
+// onde arbitrator_id = current user e blind_verdict IS NULL (idempotencia).
 export async function submitBlindVerdicts(
   projectId: string,
   documentId: string,
@@ -157,16 +202,21 @@ export async function submitBlindVerdicts(
     const supabase = await createSupabaseServer();
     const now = new Date().toISOString();
 
-    for (const c of choices) {
-      const { error } = await supabase
-        .from("field_reviews")
-        .update({ blind_verdict: c.verdict, blind_decided_at: now })
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("field_name", c.fieldName)
-        .eq("arbitrator_id", user.id)
-        .is("blind_verdict", null);
-      if (error) return { success: false, error: error.message };
+    const results = await Promise.all(
+      choices.map((c) =>
+        supabase
+          .from("field_reviews")
+          .update({ blind_verdict: c.verdict, blind_decided_at: now })
+          .eq("project_id", projectId)
+          .eq("document_id", documentId)
+          .eq("field_name", c.fieldName)
+          .eq("arbitrator_id", user.id)
+          .is("blind_verdict", null),
+      ),
+    );
+
+    for (const res of results) {
+      if (res.error) return { success: false, error: res.error.message };
     }
 
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -243,22 +293,32 @@ export async function submitFinalVerdicts(
       (frRows ?? []).map((r) => [r.field_name as string, r]),
     );
 
-    for (const c of choices) {
-      const { error } = await supabase
-        .from("field_reviews")
-        .update({
-          final_verdict: c.verdict,
-          final_decided_at: now,
-          question_improvement_suggestion: c.questionImprovementSuggestion ?? null,
-          arbitrator_comment: c.arbitratorComment ?? null,
-        })
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("field_name", c.fieldName)
-        .eq("arbitrator_id", user.id);
-      if (error) return { success: false, error: error.message };
+    // UPDATEs em paralelo
+    const updateResults = await Promise.all(
+      choices.map((c) =>
+        supabase
+          .from("field_reviews")
+          .update({
+            final_verdict: c.verdict,
+            final_decided_at: now,
+            question_improvement_suggestion:
+              c.questionImprovementSuggestion ?? null,
+            arbitrator_comment: c.arbitratorComment ?? null,
+          })
+          .eq("project_id", projectId)
+          .eq("document_id", documentId)
+          .eq("field_name", c.fieldName)
+          .eq("arbitrator_id", user.id),
+      ),
+    );
+    for (const res of updateResults) {
+      if (res.error) return { success: false, error: res.error.message };
+    }
 
-      if (c.verdict === "llm") {
+    // INSERTs em project_comments em batch (1 round-trip)
+    const commentRows = choices
+      .filter((c) => c.verdict === "llm")
+      .map((c) => {
         const fr = frByField.get(c.fieldName);
         const humanResp = fr ? responseById.get(fr.human_response_id) : null;
         const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
@@ -283,14 +343,17 @@ export async function submitFinalVerdicts(
           .filter(Boolean)
           .join("\n\n");
 
-        await admin.from("project_comments").insert({
+        return {
           project_id: projectId,
           document_id: documentId,
           field_name: c.fieldName,
           author_id: user.id,
           body,
-        });
-      }
+        };
+      });
+
+    if (commentRows.length > 0) {
+      await admin.from("project_comments").insert(commentRows);
     }
 
     // Se TODOS os field_reviews deste doc para este arbitro tem final_verdict,
@@ -316,6 +379,83 @@ export async function submitFinalVerdicts(
 
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+  }
+}
+
+// Coordenador-only: varre todas as respostas humanas concluidas do projeto e
+// re-executa createAutoReviewIfDiverges. Usado quando uma chamada inline em
+// saveResponse falhou silenciosamente (ver log "[auto-review]") ou apos
+// importar respostas em lote.
+//
+// Idempotente: createAutoReviewIfDiverges usa upsert com ignoreDuplicates,
+// entao chamar varias vezes nao duplica linhas em field_reviews/assignments.
+export async function regenerateAutoReviewBacklog(
+  projectId: string,
+): Promise<{
+  success: boolean;
+  error?: string;
+  scanned?: number;
+  regenerated?: number;
+}> {
+  try {
+    const user = await getAuthUser();
+    if (!user) return { success: false, error: "Não autenticado" };
+
+    const supabase = await createSupabaseServer();
+    const isCoord = await isProjectCoordinator(supabase, projectId, user);
+    if (!isCoord) {
+      return {
+        success: false,
+        error: "Apenas coordenadores podem regenerar o backlog.",
+      };
+    }
+
+    const admin = createSupabaseAdmin();
+
+    // Lista todas as respostas humanas finalizadas (is_partial=false) do projeto
+    const { data: humanResponses, error: respErr } = await admin
+      .from("responses")
+      .select("document_id, respondent_id")
+      .eq("project_id", projectId)
+      .eq("respondent_type", "humano")
+      .eq("is_partial", false);
+    if (respErr) return { success: false, error: respErr.message };
+
+    let regenerated = 0;
+    // Limitar concorrencia para nao saturar conexoes (paralelismo modesto)
+    const queue = humanResponses ?? [];
+    const concurrency = 5;
+    for (let i = 0; i < queue.length; i += concurrency) {
+      const batch = queue.slice(i, i + concurrency);
+      const results = await Promise.all(
+        batch.map((r) =>
+          createAutoReviewIfDiverges(
+            projectId,
+            r.document_id,
+            r.respondent_id,
+          ).catch((err) => {
+            console.error(
+              `[regenerateAutoReviewBacklog] doc=${r.document_id} user=${r.respondent_id}:`,
+              err,
+            );
+            return { divergentCount: 0 };
+          }),
+        ),
+      );
+      for (const res of results) {
+        if (res.divergentCount > 0) regenerated++;
+      }
+    }
+
+    revalidatePath(`/projects/${projectId}/analyze/auto-review`);
+    revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
+    return {
+      success: true,
+      scanned: queue.length,
+      regenerated,
+    };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro" };
   }

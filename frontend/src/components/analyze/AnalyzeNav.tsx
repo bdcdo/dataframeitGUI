@@ -4,24 +4,36 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-const analyzeTabs = [
+const baseTabs = [
   { label: "Atribuições", href: "assignments" },
   { label: "Codificar", href: "code" },
   { label: "Comparar", href: "compare" },
-  { label: "Auto-revisão", href: "auto-review" },
-  { label: "Arbitragem", href: "arbitragem" },
 ];
 
 interface AnalyzeNavProps {
   projectId: string;
+  showAutoReview?: boolean;
+  showArbitragem?: boolean;
 }
 
-export function AnalyzeNav({ projectId }: AnalyzeNavProps) {
+export function AnalyzeNav({
+  projectId,
+  showAutoReview = false,
+  showArbitragem = false,
+}: AnalyzeNavProps) {
   const pathname = usePathname();
+
+  const tabs = [
+    ...baseTabs,
+    ...(showAutoReview
+      ? [{ label: "Auto-revisão", href: "auto-review" }]
+      : []),
+    ...(showArbitragem ? [{ label: "Arbitragem", href: "arbitragem" }] : []),
+  ];
 
   return (
     <nav className="flex items-center gap-1 border-b px-4 py-1">
-      {analyzeTabs.map((tab) => {
+      {tabs.map((tab) => {
         const href = `/projects/${projectId}/analyze/${tab.href}`;
         const isActive = pathname.startsWith(href);
         return (

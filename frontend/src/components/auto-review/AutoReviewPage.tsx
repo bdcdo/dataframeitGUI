@@ -1,11 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { submitAutoReview } from "@/actions/field-reviews";
+import {
+  submitAutoReview,
+  regenerateAutoReviewBacklog,
+} from "@/actions/field-reviews";
 import { FieldVerdictRow } from "./FieldVerdictRow";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
 
@@ -28,25 +32,60 @@ export interface AutoReviewPageProps {
   projectName: string;
   fields: PydanticField[];
   docs: AutoReviewDoc[];
+  isCoordinator?: boolean;
 }
 
 export function AutoReviewPage({
   projectId,
   fields,
   docs,
+  isCoordinator = false,
 }: AutoReviewPageProps) {
+  const router = useRouter();
   const [docIndex, setDocIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    const result = await regenerateAutoReviewBacklog(projectId);
+    setRegenerating(false);
+    if (!result.success) {
+      toast.error(result.error ?? "Falha ao regenerar backlog");
+      return;
+    }
+    toast.success(
+      `Backlog regenerado. ${result.scanned ?? 0} resposta(s) escaneada(s), ${result.regenerated ?? 0} doc(s) com divergência.`,
+    );
+    router.refresh();
+  }
 
   if (docs.length === 0) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-10 text-center">
+      <div className="mx-auto max-w-3xl px-6 py-10 text-center space-y-4">
         <h1 className="text-2xl font-semibold mb-4">Auto-revisão</h1>
         <p className="text-muted-foreground">
           Nenhuma auto-revisão pendente. Quando você submeter uma codificação
           que diverge do LLM, ela aparecerá aqui.
         </p>
+        {isCoordinator ? (
+          <div className="pt-4 border-t mt-6 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Coordenador: se alguma codificação humana já submetida não gerou
+              backlog (por exemplo, por falha silenciosa em produção), você
+              pode forçar a varredura.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRegenerate}
+              disabled={regenerating}
+            >
+              {regenerating ? "Regenerando…" : "Regenerar backlog"}
+            </Button>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -78,8 +117,8 @@ export function AutoReviewPage({
     if (docIndex < docs.length - 1) {
       setDocIndex(docIndex + 1);
     } else {
-      // Acabou; recarrega para atualizar lista
-      window.location.reload();
+      // Acabou; revalidar a rota para atualizar a lista
+      router.refresh();
     }
   }
 
@@ -93,9 +132,22 @@ export function AutoReviewPage({
             LLM, o caso vai para arbitragem por outro pesquisador.
           </p>
         </div>
-        <Badge variant="secondary">
-          Documento {docIndex + 1} de {docs.length}
-        </Badge>
+        <div className="flex items-center gap-2">
+          {isCoordinator ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRegenerate}
+              disabled={regenerating}
+              title="Reexecutar varredura de divergências (coordenador)"
+            >
+              {regenerating ? "Regenerando…" : "Regenerar backlog"}
+            </Button>
+          ) : null}
+          <Badge variant="secondary">
+            Documento {docIndex + 1} de {docs.length}
+          </Badge>
+        </div>
       </header>
 
       <Card>

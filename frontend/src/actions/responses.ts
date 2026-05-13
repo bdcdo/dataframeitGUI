@@ -159,12 +159,15 @@ export async function saveResponse(
         if (assignErr) return { success: false, error: assignErr.message };
 
         // Dispara auto-revisao humano vs LLM ao submeter. Falhas nao bloqueiam
-        // o submit do pesquisador — log silencioso, coordenador pode regenerar
-        // o backlog manualmente se necessario.
+        // o submit do pesquisador — coordenador pode regenerar o backlog
+        // manualmente via regenerateAutoReviewBacklog().
         try {
           await createAutoReviewIfDiverges(projectId, documentId, user.id);
         } catch (err) {
-          console.error("createAutoReviewIfDiverges falhou:", err);
+          console.error(
+            `[auto-review] createAutoReviewIfDiverges falhou para project=${projectId} document=${documentId} user=${user.id}:`,
+            err,
+          );
         }
       } else {
         // So regredir se NAO esta concluido (evita desfazer progresso por auto-save)
