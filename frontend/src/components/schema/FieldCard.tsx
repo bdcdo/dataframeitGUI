@@ -12,7 +12,9 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
-import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { GripVertical, Trash2 } from "lucide-react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
 import { ConditionEditor, candidateTriggersFor } from "./ConditionEditor";
@@ -25,16 +27,13 @@ import {
 import type { PydanticField } from "@/lib/types";
 
 interface FieldCardProps {
+  id: string;
   field: PydanticField;
-  index: number;
-  total: number;
   allFields: PydanticField[];
   isExpanded: boolean;
   onToggle: () => void;
   onChange: (field: PydanticField) => void;
   onRemove: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
   // Opcional: callback para substituir TODA a lista de campos. Usado quando
   // remover uma opção exige também atualizar `condition` de outros campos.
   onAllFieldsChange?: (fields: PydanticField[]) => void;
@@ -61,20 +60,25 @@ const TARGET_LABELS: Record<string, string> = {
 };
 
 export function FieldCard({
+  id,
   field,
-  index,
-  total,
   allFields,
   isExpanded,
   onToggle,
   onChange,
   onRemove,
-  onMoveUp,
-  onMoveDown,
   onAllFieldsChange,
 }: FieldCardProps) {
   const updateField = (patch: Partial<PydanticField>) => {
     onChange({ ...field, ...patch });
+  };
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
   };
 
   const [pendingRemoval, setPendingRemoval] = useState<{
@@ -122,7 +126,8 @@ export function FieldCard({
   const nameIsValid = /^[a-z_][a-z0-9_]*$/.test(field.name);
 
   return (
-    <Collapsible open={isExpanded} onOpenChange={onToggle}>
+    <div ref={setNodeRef} style={sortableStyle}>
+      <Collapsible open={isExpanded} onOpenChange={onToggle}>
       <div
         className={cn(
           "rounded-lg border transition-colors",
@@ -131,27 +136,19 @@ export function FieldCard({
       >
         {/* Header */}
         <div className="flex items-center gap-2 px-3 py-2">
-          {/* Setas de reordenação */}
-          <div className="flex flex-col -space-y-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 disabled:opacity-50"
-              disabled={index === 0}
-              onClick={onMoveUp}
-            >
-              <ChevronUp className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 disabled:opacity-50"
-              disabled={index === total - 1}
-              onClick={onMoveDown}
-            >
-              <ChevronDown className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+          {/* Drag handle */}
+          <button
+            type="button"
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
+              isDragging ? "cursor-grabbing" : "cursor-grab"
+            )}
+            aria-label="Arrastar para reordenar"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
 
           {/* Nome + badges */}
           <CollapsibleTrigger asChild>
@@ -506,6 +503,7 @@ export function FieldCard({
           }}
         />
       )}
-    </Collapsible>
+      </Collapsible>
+    </div>
   );
 }

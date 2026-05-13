@@ -5,11 +5,28 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { FieldRenderer } from "./FieldRenderer";
-import { Check, Loader2, MessageSquare } from "lucide-react";
+import { Check, GripVertical, Loader2, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { isFieldVisible } from "@/lib/conditional";
+import { reorderFullList } from "@/lib/field-order";
 import type { PydanticField } from "@/lib/types";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const OTHER_PREFIX = "Outro: ";
 const isIncompleteOther = (v: unknown) =>
@@ -33,9 +50,95 @@ interface QuestionsPanelProps {
   notes?: string;
   onNotesChange?: (notes: string) => void;
   readOnly?: boolean;
+  onReorder?: (newOrder: string[]) => void;
 }
 
-export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false }: QuestionsPanelProps) {
+interface SortableQuestionProps {
+  field: PydanticField;
+  index: number;
+  isHighlighted: boolean;
+  isAnswered: boolean;
+  answerValue: unknown;
+  onAnswerChange: (val: unknown) => void;
+  setRef: (el: HTMLDivElement | null) => void;
+  draggable: boolean;
+}
+
+function SortableQuestion({
+  field,
+  index,
+  isHighlighted,
+  isAnswered,
+  answerValue,
+  onAnswerChange,
+  setRef,
+  draggable,
+}: SortableQuestionProps) {
+  const sortable = useSortable({ id: field.name, disabled: !draggable });
+  const style = draggable
+    ? {
+        transform: CSS.Transform.toString(sortable.transform),
+        transition: sortable.transition,
+        opacity: sortable.isDragging ? 0.5 : 1,
+      }
+    : undefined;
+
+  return (
+    <div
+      ref={(el) => {
+        setRef(el);
+        if (draggable) sortable.setNodeRef(el);
+      }}
+      style={style}
+      className={cn(
+        "border-l-2 pl-4 py-2 rounded-r-md transition-colors",
+        isHighlighted
+          ? "border-l-destructive bg-destructive/10"
+          : isAnswered
+            ? "border-brand"
+            : "border-muted",
+      )}
+    >
+      <div className="flex items-start gap-1.5">
+        {draggable && (
+          <button
+            type="button"
+            className={cn(
+              "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
+              sortable.isDragging ? "cursor-grabbing" : "cursor-grab",
+            )}
+            aria-label="Arrastar para reordenar pergunta"
+            {...sortable.attributes}
+            {...sortable.listeners}
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
+            <span className="text-muted-foreground">{index + 1}.</span> {field.description}
+            {field.required === false && (
+              <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
+            )}
+            {isAnswered && <Check className="h-3.5 w-3.5 text-brand shrink-0" />}
+          </p>
+          {field.help_text && (
+            <p className="text-xs text-muted-foreground mb-2 whitespace-pre-line">
+              {field.help_text}
+            </p>
+          )}
+          <FieldRenderer
+            field={field}
+            value={answerValue ?? null}
+            onChange={onAnswerChange}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
@@ -55,8 +158,6 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     [visibleFields],
   );
 
-  // When a trigger answer changes, fields that became invisible should not
-  // keep stale values; clear them so they don't end up in the saved payload.
   useEffect(() => {
     if (readOnly) return;
     for (const f of fields) {
@@ -67,8 +168,6 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         onAnswer(f.name, null);
       }
     }
-    // Only react when the set of visible fields changes — answers churn
-    // is handled by the visibility recomputation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleNames]);
 
@@ -113,48 +212,79 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     onSubmit();
   }, [visibleFields, isAnswered, onSubmit, submitting]);
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const dragEnabled = !!onReorder && !readOnly;
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (!onReorder) return;
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const visibleNamesArr = visibleFields.map((f) => f.name);
+      const from = visibleNamesArr.indexOf(String(active.id));
+      const to = visibleNamesArr.indexOf(String(over.id));
+      if (from < 0 || to < 0) return;
+      const newOrder = reorderFullList(
+        fields.map((f) => f.name),
+        visibleNamesArr,
+        from,
+        to,
+      );
+      onReorder(newOrder);
+    },
+    [fields, visibleFields, onReorder],
+  );
+
+  const questionItems = (
+    <>
+      {visibleFields.map((field, i) => (
+        <SortableQuestion
+          key={field.name}
+          field={field}
+          index={i}
+          isHighlighted={highlightedFields.has(field.name)}
+          isAnswered={isAnswered(field)}
+          answerValue={answers[field.name]}
+          onAnswerChange={(val) => handleAnswerWithClear(field.name, val)}
+          setRef={(el) => {
+            questionRefs.current[i] = el;
+          }}
+          draggable={dragEnabled}
+        />
+      ))}
+    </>
+  );
+
   return (
     <div className="flex h-full flex-col bg-card">
-      {/* Header */}
       <div className="border-b px-4 py-2.5 shrink-0">
         <p className="text-xs font-medium text-muted-foreground">
           Perguntas ({answeredRequiredCount}/{requiredFields.length} obrigatórias respondidas)
         </p>
       </div>
 
-      {/* Lista de perguntas scrollável */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
-        {visibleFields.map((field, i) => (
-          <div
-            key={field.name}
-            ref={(el) => { questionRefs.current[i] = el; }}
-            className={cn(
-              "border-l-2 pl-4 py-2 rounded-r-md transition-colors",
-              highlightedFields.has(field.name)
-                ? "border-l-destructive bg-destructive/10"
-                : isAnswered(field) ? "border-brand" : "border-muted"
-            )}
+        {dragEnabled ? (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
           >
-            <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
-              <span className="text-muted-foreground">{i + 1}.</span>{" "}
-              {field.description}
-              {field.required === false && (
-                <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
-              )}
-              {isAnswered(field) && <Check className="h-3.5 w-3.5 text-brand shrink-0" />}
-            </p>
-            {field.help_text && (
-              <p className="text-xs text-muted-foreground mb-2 whitespace-pre-line">{field.help_text}</p>
-            )}
-            <FieldRenderer
-              field={field}
-              value={answers[field.name] ?? null}
-              onChange={(val) => handleAnswerWithClear(field.name, val)}
-            />
-          </div>
-        ))}
+            <SortableContext
+              items={visibleFields.map((f) => f.name)}
+              strategy={verticalListSortingStrategy}
+            >
+              {questionItems}
+            </SortableContext>
+          </DndContext>
+        ) : (
+          questionItems
+        )}
 
-        {/* Notas e sugestões */}
         {onNotesChange && (
           <Collapsible defaultOpen={!!notes}>
             <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
@@ -174,7 +304,6 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         )}
       </div>
 
-      {/* Footer fixo com botão de enviar */}
       <div className="border-t px-4 py-3 shrink-0">
         <Button
           onClick={handleSubmitWithValidation}

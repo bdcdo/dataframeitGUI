@@ -219,6 +219,9 @@ export type Database = {
       documents: {
         Row: {
           created_at: string | null
+          excluded_at: string | null
+          excluded_by: string | null
+          excluded_reason: string | null
           external_id: string | null
           id: string
           metadata: Json | null
@@ -229,6 +232,9 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          excluded_at?: string | null
+          excluded_by?: string | null
+          excluded_reason?: string | null
           external_id?: string | null
           id?: string
           metadata?: Json | null
@@ -239,6 +245,9 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          excluded_at?: string | null
+          excluded_by?: string | null
+          excluded_reason?: string | null
           external_id?: string | null
           id?: string
           metadata?: Json | null
@@ -248,6 +257,13 @@ export type Database = {
           title?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "documents_excluded_by_fkey"
+            columns: ["excluded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "documents_project_id_fkey"
             columns: ["project_id"]
@@ -309,6 +325,92 @@ export type Database = {
           },
         ]
       }
+      llm_runs: {
+        Row: {
+          completed_at: string | null
+          document_count: number | null
+          error_column: number | null
+          error_line: number | null
+          error_message: string | null
+          error_traceback: string | null
+          error_type: string | null
+          filter_mode: string | null
+          heartbeat_at: string | null
+          id: string
+          job_id: string
+          llm_model: string | null
+          llm_provider: string | null
+          phase: string | null
+          processed_complete: number
+          processed_empty: number
+          processed_partial: number
+          progress: number | null
+          project_id: string
+          pydantic_code: string | null
+          started_at: string
+          status: string
+          total: number | null
+        }
+        Insert: {
+          completed_at?: string | null
+          document_count?: number | null
+          error_column?: number | null
+          error_line?: number | null
+          error_message?: string | null
+          error_traceback?: string | null
+          error_type?: string | null
+          filter_mode?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          job_id: string
+          llm_model?: string | null
+          llm_provider?: string | null
+          phase?: string | null
+          processed_complete?: number
+          processed_empty?: number
+          processed_partial?: number
+          progress?: number | null
+          project_id: string
+          pydantic_code?: string | null
+          started_at?: string
+          status: string
+          total?: number | null
+        }
+        Update: {
+          completed_at?: string | null
+          document_count?: number | null
+          error_column?: number | null
+          error_line?: number | null
+          error_message?: string | null
+          error_traceback?: string | null
+          error_type?: string | null
+          filter_mode?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          job_id?: string
+          llm_model?: string | null
+          llm_provider?: string | null
+          phase?: string | null
+          processed_complete?: number
+          processed_empty?: number
+          processed_partial?: number
+          progress?: number | null
+          project_id?: string
+          pydantic_code?: string | null
+          started_at?: string
+          status?: string
+          total?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "llm_runs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       master_users: {
         Row: {
           user_id: string
@@ -325,6 +427,55 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: true
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      note_resolutions: {
+        Row: {
+          id: string
+          note: string | null
+          project_id: string
+          resolved_at: string
+          resolved_by: string
+          response_id: string
+        }
+        Insert: {
+          id?: string
+          note?: string | null
+          project_id: string
+          resolved_at?: string
+          resolved_by: string
+          response_id: string
+        }
+        Update: {
+          id?: string
+          note?: string | null
+          project_id?: string
+          resolved_at?: string
+          resolved_by?: string
+          response_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "note_resolutions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "note_resolutions_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "note_resolutions_response_id_fkey"
+            columns: ["response_id"]
+            isOneToOne: false
+            referencedRelation: "responses"
             referencedColumns: ["id"]
           },
         ]
@@ -361,8 +512,11 @@ export type Database = {
           document_id: string | null
           field_name: string | null
           id: string
+          kind: string
           parent_id: string | null
           project_id: string
+          rejected_at: string | null
+          rejected_reason: string | null
           resolved_at: string | null
           resolved_by: string | null
         }
@@ -373,8 +527,11 @@ export type Database = {
           document_id?: string | null
           field_name?: string | null
           id?: string
+          kind?: string
           parent_id?: string | null
           project_id: string
+          rejected_at?: string | null
+          rejected_reason?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
         }
@@ -385,8 +542,11 @@ export type Database = {
           document_id?: string | null
           field_name?: string | null
           id?: string
+          kind?: string
           parent_id?: string | null
           project_id?: string
+          rejected_at?: string | null
+          rejected_reason?: string | null
           resolved_at?: string | null
           resolved_by?: string | null
         }
@@ -469,6 +629,7 @@ export type Database = {
           allow_researcher_review: boolean | null
           created_at: string | null
           created_by: string | null
+          current_round_id: string | null
           description: string | null
           id: string
           llm_kwargs: Json | null
@@ -481,6 +642,7 @@ export type Database = {
           pydantic_fields: Json | null
           pydantic_hash: string | null
           resolution_rule: string | null
+          round_strategy: string
           schema_version_major: number
           schema_version_minor: number
           schema_version_patch: number
@@ -489,6 +651,7 @@ export type Database = {
           allow_researcher_review?: boolean | null
           created_at?: string | null
           created_by?: string | null
+          current_round_id?: string | null
           description?: string | null
           id?: string
           llm_kwargs?: Json | null
@@ -501,6 +664,7 @@ export type Database = {
           pydantic_fields?: Json | null
           pydantic_hash?: string | null
           resolution_rule?: string | null
+          round_strategy?: string
           schema_version_major?: number
           schema_version_minor?: number
           schema_version_patch?: number
@@ -509,6 +673,7 @@ export type Database = {
           allow_researcher_review?: boolean | null
           created_at?: string | null
           created_by?: string | null
+          current_round_id?: string | null
           description?: string | null
           id?: string
           llm_kwargs?: Json | null
@@ -521,6 +686,7 @@ export type Database = {
           pydantic_fields?: Json | null
           pydantic_hash?: string | null
           resolution_rule?: string | null
+          round_strategy?: string
           schema_version_major?: number
           schema_version_minor?: number
           schema_version_patch?: number
@@ -531,6 +697,13 @@ export type Database = {
             columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_current_round_fk"
+            columns: ["current_round_id"]
+            isOneToOne: false
+            referencedRelation: "rounds"
             referencedColumns: ["id"]
           },
         ]
@@ -564,6 +737,111 @@ export type Database = {
           },
         ]
       }
+      researcher_field_orders: {
+        Row: {
+          field_order: Json
+          project_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          field_order?: Json
+          project_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          field_order?: Json
+          project_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "researcher_field_orders_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "researcher_field_orders_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      response_equivalences: {
+        Row: {
+          created_at: string
+          document_id: string
+          field_name: string
+          id: string
+          project_id: string
+          response_a_id: string
+          response_b_id: string
+          reviewer_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          document_id: string
+          field_name: string
+          id?: string
+          project_id: string
+          response_a_id: string
+          response_b_id: string
+          reviewer_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          document_id?: string
+          field_name?: string
+          id?: string
+          project_id?: string
+          response_a_id?: string
+          response_b_id?: string
+          reviewer_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "response_equivalences_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "response_equivalences_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "response_equivalences_response_a_id_fkey"
+            columns: ["response_a_id"]
+            isOneToOne: false
+            referencedRelation: "responses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "response_equivalences_response_b_id_fkey"
+            columns: ["response_b_id"]
+            isOneToOne: false
+            referencedRelation: "responses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "response_equivalences_reviewer_id_fkey"
+            columns: ["reviewer_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       responses: {
         Row: {
           answer_field_hashes: Json | null
@@ -574,12 +852,14 @@ export type Database = {
           is_current: boolean | null
           is_partial: boolean
           justifications: Json | null
+          llm_error: string | null
           llm_job_id: string | null
           project_id: string | null
           pydantic_hash: string | null
           respondent_id: string | null
           respondent_name: string | null
           respondent_type: string
+          round_id: string | null
           schema_version_major: number | null
           schema_version_minor: number | null
           schema_version_patch: number | null
@@ -594,12 +874,14 @@ export type Database = {
           is_current?: boolean | null
           is_partial?: boolean
           justifications?: Json | null
+          llm_error?: string | null
           llm_job_id?: string | null
           project_id?: string | null
           pydantic_hash?: string | null
           respondent_id?: string | null
           respondent_name?: string | null
           respondent_type: string
+          round_id?: string | null
           schema_version_major?: number | null
           schema_version_minor?: number | null
           schema_version_patch?: number | null
@@ -614,12 +896,14 @@ export type Database = {
           is_current?: boolean | null
           is_partial?: boolean
           justifications?: Json | null
+          llm_error?: string | null
           llm_job_id?: string | null
           project_id?: string | null
           pydantic_hash?: string | null
           respondent_id?: string | null
           respondent_name?: string | null
           respondent_type?: string
+          round_id?: string | null
           schema_version_major?: number | null
           schema_version_minor?: number | null
           schema_version_patch?: number | null
@@ -645,6 +929,13 @@ export type Database = {
             columns: ["respondent_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "responses_round_id_fkey"
+            columns: ["round_id"]
+            isOneToOne: false
+            referencedRelation: "rounds"
             referencedColumns: ["id"]
           },
         ]
@@ -726,6 +1017,45 @@ export type Database = {
             columns: ["reviewer_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rounds: {
+        Row: {
+          created_at: string
+          id: string
+          label: string
+          project_id: string
+          source_batch_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label: string
+          project_id: string
+          source_batch_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string
+          project_id?: string
+          source_batch_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rounds_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rounds_source_batch_id_fkey"
+            columns: ["source_batch_id"]
+            isOneToOne: false
+            referencedRelation: "assignment_batches"
             referencedColumns: ["id"]
           },
         ]
@@ -859,6 +1189,8 @@ export type Database = {
           comment: string | null
           created_at: string | null
           id: string
+          resolved_at: string | null
+          resolved_by: string | null
           respondent_id: string
           review_id: string
           status: string
@@ -867,6 +1199,8 @@ export type Database = {
           comment?: string | null
           created_at?: string | null
           id?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
           respondent_id: string
           review_id: string
           status?: string
@@ -875,11 +1209,20 @@ export type Database = {
           comment?: string | null
           created_at?: string | null
           id?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
           respondent_id?: string
           review_id?: string
           status?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "verdict_acknowledgments_resolved_by_fkey"
+            columns: ["resolved_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "verdict_acknowledgments_respondent_id_fkey"
             columns: ["respondent_id"]
@@ -901,6 +1244,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      auth_user_accessible_project_ids: { Args: never; Returns: string[] }
+      auth_user_coordinator_or_creator_project_ids: {
+        Args: never
+        Returns: string[]
+      }
       auth_user_coordinator_project_ids: { Args: never; Returns: string[] }
       auth_user_project_ids: { Args: never; Returns: string[] }
       clerk_uid: { Args: never; Returns: string }
