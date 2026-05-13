@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel } from "./QuestionsPanel";
@@ -13,6 +13,8 @@ import { DocumentPicker } from "./DocumentPicker";
 import { FullscreenNav } from "./FullscreenNav";
 import { saveResponse } from "@/actions/responses";
 import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
+import { getResearcherFieldOrder, saveResearcherFieldOrder } from "@/actions/field-order";
+import { applyFieldOrder } from "@/lib/field-order";
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
@@ -98,6 +100,75 @@ export function CodingPage({
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
+
+  // Ordem custom de perguntas do pesquisador (carregada uma vez por projeto)
+  const [fieldOrder, setFieldOrder] = useState<string[] | null>(null);
+  const reorderSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingOrderRef = useRef<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getResearcherFieldOrder(projectId).then(({ order }) => {
+      // Se o pesquisador ja arrastou antes da load resolver, o drag tem
+      // prioridade — descartamos o valor vindo do banco para nao sobrescrever
+      // a intencao recente do usuario.
+      if (cancelled || pendingOrderRef.current) return;
+      setFieldOrder(order);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const doSave = useCallback(
+    (order: string[]) => {
+      saveResearcherFieldOrder(projectId, order).then((r) => {
+        if (!r.success) {
+          console.error("[field-order save]", r.error);
+          toast.error("Não foi possível salvar a ordem das perguntas");
+        }
+      });
+    },
+    [projectId],
+  );
+
+  const flushOrderSave = useCallback(() => {
+    if (reorderSaveTimer.current) {
+      clearTimeout(reorderSaveTimer.current);
+      reorderSaveTimer.current = null;
+    }
+    const pending = pendingOrderRef.current;
+    if (!pending) return;
+    pendingOrderRef.current = null;
+    doSave(pending);
+  }, [doSave]);
+
+  const handleReorder = useCallback(
+    (newOrder: string[]) => {
+      setFieldOrder(newOrder);
+      pendingOrderRef.current = newOrder;
+      if (reorderSaveTimer.current) clearTimeout(reorderSaveTimer.current);
+      reorderSaveTimer.current = setTimeout(() => {
+        reorderSaveTimer.current = null;
+        const pending = pendingOrderRef.current;
+        if (!pending) return;
+        pendingOrderRef.current = null;
+        doSave(pending);
+      }, 500);
+    },
+    [doSave],
+  );
+
+  useEffect(() => {
+    return () => {
+      flushOrderSave();
+    };
+  }, [flushOrderSave]);
+
+  const orderedFields = useMemo(
+    () => applyFieldOrder(fields, fieldOrder),
+    [fields, fieldOrder],
+  );
 
   // Dirty tracking — marks docs that the user has actually edited
   const [dirtyDocs, setDirtyDocs] = useState<Set<string>>(new Set());
@@ -534,7 +605,7 @@ export function CodingPage({
                 <ResizablePanel defaultSize={45} minSize={25}>
                   <QuestionsPanel
                     key={currentDoc?.id}
-                    fields={fields}
+                    fields={orderedFields}
                     answers={docAnswers}
                     onAnswer={handleAnswer}
                     onSubmit={handleSubmit}
@@ -542,6 +613,7 @@ export function CodingPage({
                     notes={docNotes}
                     onNotesChange={handleNotesChange}
                     readOnly={readOnly}
+                    onReorder={handleReorder}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -580,7 +652,7 @@ export function CodingPage({
                 <ResizablePanel defaultSize={45} minSize={25}>
                   <QuestionsPanel
                     key={selectedBrowseDoc?.id}
-                    fields={fields}
+                    fields={orderedFields}
                     answers={browseAnswers}
                     onAnswer={handleBrowseAnswer}
                     onSubmit={handleBrowseSubmit}
@@ -588,6 +660,7 @@ export function CodingPage({
                     notes={browseNotes}
                     onNotesChange={setBrowseNotes}
                     readOnly={readOnly}
+                    onReorder={handleReorder}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>

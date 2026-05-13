@@ -158,6 +158,13 @@ export interface QuestionMeta {
   priority: "ALTA" | "MEDIA" | "BAIXA";
 }
 
+export interface ResearcherFieldOrder {
+  project_id: string;
+  user_id: string;
+  field_order: string[];
+  updated_at: string;
+}
+
 export type SchemaChangeType = "major" | "minor" | "patch" | "initial";
 
 export interface SchemaChangeEntry {

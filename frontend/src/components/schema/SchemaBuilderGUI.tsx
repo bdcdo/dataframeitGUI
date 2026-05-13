@@ -5,6 +5,20 @@ import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { FieldCard } from "./FieldCard";
 import type { PydanticField } from "@/lib/types";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 
 interface SchemaBuilderGUIProps {
   fields: PydanticField[];
@@ -13,6 +27,11 @@ interface SchemaBuilderGUIProps {
 
 export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const addField = () => {
     const newIndex = fields.length;
@@ -44,13 +63,29 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
   };
 
   const moveField = (from: number, to: number) => {
-    if (to < 0 || to >= fields.length) return;
+    if (from === to || to < 0 || to >= fields.length) return;
     const next = [...fields];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
     onChange(next);
     if (expandedIndex === from) setExpandedIndex(to);
-    else if (expandedIndex === to) setExpandedIndex(from);
+    else if (expandedIndex !== null) {
+      // Ajusta indice expandido para acompanhar o item que se moveu por cima dele
+      if (from < expandedIndex && to >= expandedIndex) {
+        setExpandedIndex(expandedIndex - 1);
+      } else if (from > expandedIndex && to <= expandedIndex) {
+        setExpandedIndex(expandedIndex + 1);
+      }
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = fields.findIndex((f) => f.name === active.id);
+    const to = fields.findIndex((f) => f.name === over.id);
+    if (from < 0 || to < 0) return;
+    moveField(from, to);
   };
 
   return (
@@ -72,24 +107,32 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
           </div>
         )}
 
-        {fields.map((field, i) => (
-          <FieldCard
-            key={i}
-            field={field}
-            index={i}
-            total={fields.length}
-            allFields={fields}
-            isExpanded={expandedIndex === i}
-            onToggle={() =>
-              setExpandedIndex(expandedIndex === i ? null : i)
-            }
-            onChange={(f) => updateField(i, f)}
-            onRemove={() => removeField(i)}
-            onMoveUp={() => moveField(i, i - 1)}
-            onMoveDown={() => moveField(i, i + 1)}
-            onAllFieldsChange={onChange}
-          />
-        ))}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={fields.map((f) => f.name)}
+            strategy={verticalListSortingStrategy}
+          >
+            {fields.map((field, i) => (
+              <FieldCard
+                key={field.name}
+                id={field.name}
+                field={field}
+                allFields={fields}
+                isExpanded={expandedIndex === i}
+                onToggle={() =>
+                  setExpandedIndex(expandedIndex === i ? null : i)
+                }
+                onChange={(f) => updateField(i, f)}
+                onRemove={() => removeField(i)}
+                onAllFieldsChange={onChange}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
       </div>
 
       <div className="border-t px-4 py-2">
