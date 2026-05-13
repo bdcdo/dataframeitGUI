@@ -328,7 +328,15 @@ export async function submitFinalVerdicts(
       (frRows ?? []).map((r) => [r.field_name as string, r]),
     );
 
-    // 3) UPDATEs em paralelo via supabase (RLS cobre "Arbitrator updates own row")
+    // 3) UPDATEs em paralelo via supabase (RLS cobre "Arbitrator updates own row").
+    //
+    //  - not("blind_verdict", "is", null): obriga sequência blind → final.
+    //    Sem isto, um árbitro (ou chamada direta à Server Action) pulava a
+    //    fase cega e gravava final_verdict diretamente.
+    //  - is("final_verdict", null): idempotência. Re-submit no mesmo campo
+    //    não sobrescreve veredicto já registrado.
+    //  - select("id"): permite detectar quando o UPDATE não tocou nenhuma
+    //    linha (constraint violada acima) e retornar erro descritivo.
     const updateResults = await Promise.all(
       choices.map((c) =>
         supabase
@@ -343,11 +351,21 @@ export async function submitFinalVerdicts(
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("field_name", c.fieldName)
-          .eq("arbitrator_id", user.id),
+          .eq("arbitrator_id", user.id)
+          .not("blind_verdict", "is", null)
+          .is("final_verdict", null)
+          .select("id"),
       ),
     );
-    for (const res of updateResults) {
+    for (let i = 0; i < updateResults.length; i++) {
+      const res = updateResults[i];
       if (res.error) return { success: false, error: res.error.message };
+      if (!res.data || res.data.length === 0) {
+        return {
+          success: false,
+          error: `Campo "${choices[i].fieldName}": fase cega não decidida ou veredicto final já registrado.`,
+        };
+      }
     }
 
     // 4) INSERTs em project_comments em batch via admin (RLS de
