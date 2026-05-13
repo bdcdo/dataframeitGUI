@@ -1,15 +1,40 @@
 app = "gui-analise-sistematica-api"
 primary_region = "gru"
 
+# Dar tempo (5min, maximo permitido pelo Fly) para BackgroundTasks LLM em
+# andamento terminarem antes do SIGKILL durante deploys ou restarts.
+# Default do Fly e 5s, o que matava jobs no meio.
+kill_timeout = "5m"
+
 [build]
   dockerfile = "Dockerfile"
+
+[deploy]
+  # Bluegreen: sobe uma VM nova, espera passar no health check, transfere
+  # trafego e so depois derruba a antiga. Elimina a janela de 502 durante
+  # o deploy automatico (fly-deploy.yml).
+  strategy = "bluegreen"
 
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = "stop"
-  auto_start_machines = true
-  min_machines_running = 0
+  # Manter ao menos 1 maquina rodando: o backend roda LLM em BackgroundTasks
+  # apos retornar o HTTP response. Com auto_stop + min=0 (config anterior), o
+  # Fly considerava a maquina ociosa entre requests e a adormecia no meio do
+  # processamento, matando o job. Alem disso, o cold start (imagem pesada com
+  # pandas + langchain) estourava o timeout do proxy do Fly e gerava 502
+  # [PU02] na primeira request apos a maquina dormir.
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+  # Health check: se o processo travar/sair (OOM, deadlock), o Fly reinicia
+  # automaticamente. O endpoint /health esta em main.py:23.
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
 
 [env]
   PORT = "8000"
