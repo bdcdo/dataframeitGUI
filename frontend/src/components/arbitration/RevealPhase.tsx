@@ -104,7 +104,7 @@ export function RevealPhase({
                     </div>
                   ) : (
                     <p className="mt-2 text-xs text-muted-foreground italic">
-                      Pesquisador não forneceu justificativa para este campo.
+                      Sem justificativa registrada para este campo.
                     </p>
                   )}
                 </div>

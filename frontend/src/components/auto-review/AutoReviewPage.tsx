@@ -29,6 +29,7 @@ import {
   type AutoReviewField,
 } from "./AutoReviewFieldPanel";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
+import { isAutoReviewFieldDecided } from "@/lib/auto-review-decided";
 
 export interface AutoReviewDoc {
   docId: string;
@@ -206,12 +207,12 @@ export function AutoReviewPage({
   // Campo "decidido" = já respondido OU com escolha local; se a escolha for
   // contesta_llm, a justificativa também precisa estar preenchida.
   const isFieldDecided = (f: AutoReviewField) => {
-    if (f.alreadyAnswered) return true;
     const key = choiceKey(doc.docId, f.fieldName);
-    const choice = choices[key];
-    if (choice == null) return false;
-    if (choice === "contesta_llm") return !!justifications[key]?.trim();
-    return true;
+    return isAutoReviewFieldDecided(
+      f.alreadyAnswered,
+      choices[key],
+      justifications[key],
+    );
   };
   const allChosen = doc.fields.every(isFieldDecided);
   const answeredFlags = doc.fields.map(isFieldDecided);

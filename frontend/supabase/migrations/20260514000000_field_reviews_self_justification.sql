@@ -8,4 +8,4 @@
 -- Nullable: field_reviews anteriores a esta migration ficam com NULL; a UI
 -- trata ausencia como "sem justificativa".
 
-ALTER TABLE field_reviews ADD COLUMN self_justification TEXT;
+ALTER TABLE field_reviews ADD COLUMN IF NOT EXISTS self_justification TEXT;

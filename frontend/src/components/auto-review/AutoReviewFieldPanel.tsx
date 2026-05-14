@@ -79,6 +79,15 @@ export function AutoReviewFieldPanel({
     setShowJustification(true);
   }, [field.fieldName]);
 
+  // Foca o textarea ao escolher contesta_llm — sem isto, teclar "1" abre o
+  // campo mas deixa o foco para tras. Keyed so em `choice`: navegar entre dois
+  // campos ambos contesta_llm nao rerroda o effect (mesmo valor), entao o foco
+  // so vai para o textarea no ato de escolher.
+  const justificationRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (choice === "contesta_llm") justificationRef.current?.focus();
+  }, [choice]);
+
   // Auto-advance pós-decisão: armazena handle do timeout num ref para poder
   // cancelar se o usuário trocar de doc/campo antes do disparo (evita pular
   // índice em contexto desatualizado).
@@ -250,6 +259,7 @@ export function AutoReviewFieldPanel({
             </Label>
             <Textarea
               id="self-justification"
+              ref={justificationRef}
               rows={3}
               value={justification}
               onChange={(e) => onJustificationChange(e.target.value)}
