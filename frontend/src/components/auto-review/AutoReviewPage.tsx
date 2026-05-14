@@ -59,6 +59,14 @@ export function AutoReviewPage({
   );
   const fieldMeta = (name: string) => fieldMetaMap.get(name);
 
+  // router.refresh() (após submeter o último doc) ou navegação abrupta
+  // entre rotas pode encolher `docs` enquanto `docIndex` ainda aponta para
+  // o tamanho antigo — `docs[docIndex]` viraria undefined. Clampar via
+  // valor derivado (sem useEffect) garante que a UI sempre lê um índice
+  // válido sem cascading renders.
+  const effectiveDocIndex =
+    docs.length > 0 ? Math.min(docIndex, docs.length - 1) : 0;
+
   async function handleRegenerate() {
     setRegenerating(true);
     const result = await regenerateAutoReviewBacklog(projectId);
@@ -102,7 +110,8 @@ export function AutoReviewPage({
     );
   }
 
-  const doc = docs[docIndex];
+  const doc = docs[effectiveDocIndex];
+  if (!doc) return null;
   const pending = doc.fields.filter((f) => !f.alreadyAnswered);
   const allChosen = pending.every(
     (f) => choices[choiceKey(doc.docId, f.fieldName)] != null,
@@ -130,8 +139,8 @@ export function AutoReviewPage({
       );
     }
     setChoices({});
-    if (docIndex < docs.length - 1) {
-      setDocIndex(docIndex + 1);
+    if (effectiveDocIndex < docs.length - 1) {
+      setDocIndex(effectiveDocIndex + 1);
     } else {
       // Acabou; revalidar a rota para atualizar a lista
       router.refresh();
@@ -161,7 +170,7 @@ export function AutoReviewPage({
             </Button>
           ) : null}
           <Badge variant="secondary">
-            Documento {docIndex + 1} de {docs.length}
+            Documento {effectiveDocIndex + 1} de {docs.length}
           </Badge>
         </div>
       </header>
@@ -205,8 +214,8 @@ export function AutoReviewPage({
       <div className="flex justify-between items-center pt-4">
         <Button
           variant="outline"
-          onClick={() => setDocIndex(Math.max(0, docIndex - 1))}
-          disabled={docIndex === 0}
+          onClick={() => setDocIndex(Math.max(0, effectiveDocIndex - 1))}
+          disabled={effectiveDocIndex === 0}
         >
           ← Anterior
         </Button>

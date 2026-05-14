@@ -47,7 +47,7 @@ export function FieldVerdictRow({
             </div>
             <div className="text-sm font-medium">{formatAnswerDisplay(llmAnswer)}</div>
             {llmJustification ? (
-              <details className="mt-2 text-xs">
+              <details open className="mt-2 text-xs">
                 <summary className="cursor-pointer text-muted-foreground">
                   Justificativa do LLM
                 </summary>

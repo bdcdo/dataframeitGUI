@@ -40,6 +40,11 @@ export function ProjectTabs({
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Auto-revisão é sempre da própria conta — impersonate (viewAsUser /
+  // viewAs=pesquisador) não tem efeito ali, então esconder os controles
+  // evita sugerir uma capacidade inexistente.
+  const isAutoRevisaoRoute = pathname.includes("/analyze/auto-revisao");
+
   const viewAsUserId = isMaster ? searchParams.get("viewAsUser") : null;
   const viewAsResearcher =
     isCoordinator &&
@@ -132,7 +137,7 @@ export function ProjectTabs({
         })}
 
         <div className="ml-auto flex items-center gap-2">
-          {isMaster && projectMembers.length > 0 && (
+          {isMaster && !isAutoRevisaoRoute && projectMembers.length > 0 && (
             <div className="relative flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5 text-muted-foreground" />
               <select
@@ -157,7 +162,7 @@ export function ProjectTabs({
             </div>
           )}
 
-          {isCoordinator && !isMaster && (
+          {isCoordinator && !isMaster && !isAutoRevisaoRoute && (
             <button
               onClick={toggleViewAs}
               className={cn(
