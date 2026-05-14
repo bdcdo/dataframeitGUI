@@ -40,6 +40,13 @@ export function ProjectTabs({
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Auto-revisão é sempre da própria conta — impersonate (viewAsUser /
+  // viewAs=pesquisador) não tem efeito ali, então esconder controles e
+  // banners de impersonate evita sugerir uma capacidade inexistente.
+  // `endsWith` em vez de `includes` para não casar acidentalmente com
+  // futuras subrotas tipo `/analyze/auto-revisao-historico`.
+  const isAutoRevisaoRoute = pathname.endsWith("/analyze/auto-revisao");
+
   const viewAsUserId = isMaster ? searchParams.get("viewAsUser") : null;
   const viewAsResearcher =
     isCoordinator &&
@@ -81,7 +88,7 @@ export function ProjectTabs({
 
   return (
     <div>
-      {viewAsUserId && impersonatedMember && (
+      {viewAsUserId && impersonatedMember && !isAutoRevisaoRoute && (
         <div className="bg-violet-50 text-violet-800 text-xs text-center py-1 dark:bg-violet-950/50 dark:text-violet-200">
           Visualizando como{" "}
           <span className="font-medium">{impersonatedMember.name}</span>
@@ -94,7 +101,7 @@ export function ProjectTabs({
           </button>
         </div>
       )}
-      {viewAsResearcher && !viewAsUserId && (
+      {viewAsResearcher && !viewAsUserId && !isAutoRevisaoRoute && (
         <div className="bg-amber-50 text-amber-800 text-xs text-center py-1 dark:bg-amber-950/50 dark:text-amber-200">
           Visualizando como pesquisador —{" "}
           <button
@@ -132,7 +139,7 @@ export function ProjectTabs({
         })}
 
         <div className="ml-auto flex items-center gap-2">
-          {isMaster && projectMembers.length > 0 && (
+          {isMaster && !isAutoRevisaoRoute && projectMembers.length > 0 && (
             <div className="relative flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5 text-muted-foreground" />
               <select
@@ -157,7 +164,7 @@ export function ProjectTabs({
             </div>
           )}
 
-          {isCoordinator && !isMaster && (
+          {isCoordinator && !isMaster && !isAutoRevisaoRoute && (
             <button
               onClick={toggleViewAs}
               className={cn(

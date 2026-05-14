@@ -40,7 +40,10 @@ export function AutoReviewFieldPanel({
   onChoose,
   onFieldNavigate,
 }: AutoReviewFieldPanelProps) {
-  const [showJustification, setShowJustification] = useState(false);
+  // Aberta por padrão: pesquisador precisa ler a justificativa para decidir
+  // entre "eu acertei" / "LLM acertou", então esconder por default era um
+  // clique extra desnecessário.
+  const [showJustification, setShowJustification] = useState(true);
   // Hints começam abertos até o usuário fechar uma vez (persistido em localStorage).
   // Lazy initializer roda só uma vez no mount, lê do localStorage sem flicker.
   const [hintsOpen, setHintsOpen] = useState(() => {
@@ -66,7 +69,7 @@ export function AutoReviewFieldPanel({
   }
 
   useEffect(() => {
-    setShowJustification(false);
+    setShowJustification(true);
   }, [field.fieldName]);
 
   // Auto-advance pós-decisão: armazena handle do timeout num ref para poder
