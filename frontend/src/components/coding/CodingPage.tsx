@@ -19,6 +19,7 @@ import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
 import { CodingHeader } from "./CodingHeader";
+import { sortByRecent } from "@/lib/coding-sort";
 import { CURRENT_FILTER_VALUE } from "@/lib/rounds";
 import { toast } from "sonner";
 import { CheckCircle2, FileQuestion, ClipboardList } from "lucide-react";
@@ -33,9 +34,12 @@ export interface RoundFilterData {
   selected: string;
 }
 
+export type CodingSortMode = "default" | "recent";
+
 interface CodingPageProps {
   projectId: string;
   documents: (Document & { assignment?: Pick<Assignment, "id" | "status"> })[];
+  codedAtByDoc?: Record<string, string>;
   fields: PydanticField[];
   existingAnswers: Record<string, Record<string, any>>;
   existingJustifications?: Record<string, Record<string, unknown>>;
@@ -48,6 +52,7 @@ interface CodingPageProps {
 export function CodingPage({
   projectId,
   documents,
+  codedAtByDoc = {},
   fields,
   existingAnswers,
   existingJustifications = {},
@@ -61,10 +66,24 @@ export function CodingPage({
   const pathname = usePathname();
   const docParam = searchParams.get("doc");
 
+  // Ordenacao da navegacao de documentos atribuidos (issue #108). Padrao e
+  // "recent" — ordena pelo responses.updated_at do proprio pesquisador, para o
+  // pesquisador cair direto no ultimo documento que mexeu. "default" (opt-in
+  // via ?sort=default) mantem a ordem do servidor (status do assignment).
+  const sortMode: CodingSortMode =
+    searchParams.get("sort") === "default" ? "default" : "recent";
+  const sortedDocuments = useMemo(
+    () =>
+      sortMode === "recent"
+        ? sortByRecent(documents, codedAtByDoc)
+        : documents,
+    [documents, sortMode, codedAtByDoc],
+  );
+
   // Compute initial state from URL param
   const getInitialState = useCallback(() => {
     if (docParam) {
-      const assignedIdx = documents.findIndex((d) => d.id === docParam);
+      const assignedIdx = sortedDocuments.findIndex((d) => d.id === docParam);
       if (assignedIdx >= 0) {
         return { mode: "assigned" as const, docIndex: assignedIdx };
       }
@@ -244,7 +263,7 @@ export function CodingPage({
   }, [isFullscreen]);
 
   // --- Assigned mode handlers ---
-  const currentDoc = documents[docIndex];
+  const currentDoc = sortedDocuments[docIndex];
   const docAnswers = allAnswers[currentDoc?.id] || {};
   const docNotes = allNotes[currentDoc?.id] ?? "";
 
@@ -322,15 +341,20 @@ export function CodingPage({
     if (result.success) {
       markClean(currentDoc.id);
       toast.success("Respostas salvas!");
-      if (docIndex < documents.length - 1) {
-        setDocIndex(docIndex + 1);
+      if (docIndex < sortedDocuments.length - 1) {
+        const nextIndex = docIndex + 1;
+        setDocIndex(nextIndex);
+        // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
+        // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
+        // o topo da lista), nao no proximo.
+        updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
       } else {
         setAllDone(true);
       }
     } else {
       toast.error(result.error || "Erro ao salvar respostas");
     }
-  }, [currentDoc, docAnswers, docNotes, projectId, docIndex, documents.length, markClean]);
+  }, [currentDoc, docAnswers, docNotes, projectId, docIndex, sortedDocuments, updateDocParam, markClean]);
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
@@ -343,11 +367,59 @@ export function CodingPage({
           else toast.error(result.error || "Erro ao salvar respostas");
         });
       }
-      const clampedIndex = Math.max(0, Math.min(newIndex, documents.length - 1));
+      const clampedIndex = Math.max(0, Math.min(newIndex, sortedDocuments.length - 1));
       setDocIndex(clampedIndex);
-      updateDocParam(documents[clampedIndex]?.id ?? null);
+      updateDocParam(sortedDocuments[clampedIndex]?.id ?? null);
     },
-    [currentDoc, docAnswers, docNotes, projectId, documents, updateDocParam, dirtyDocs, markClean]
+    [currentDoc, docAnswers, docNotes, projectId, sortedDocuments, updateDocParam, dirtyDocs, markClean]
+  );
+
+  // Troca o criterio de ordenacao da navegacao de atribuidos. Ao mudar para
+  // "recent", salta direto para o documento codificado mais recentemente — o
+  // objetivo da issue #108 e achar em 1 clique o ultimo que o pesquisador
+  // mexeu. Ao voltar para "default", mantem o documento atual selecionado.
+  const handleSortChange = useCallback(
+    (nextSort: CodingSortMode) => {
+      if (currentDoc && dirtyDocs.has(currentDoc.id)) {
+        saveResponse(projectId, currentDoc.id, docAnswers, {
+          notes: docNotes,
+          isAutoSave: true,
+        }).then((result) => {
+          if (result.success) markClean(currentDoc.id);
+          else toast.error(result.error || "Erro ao salvar respostas");
+        });
+      }
+      const nextDocs =
+        nextSort === "recent"
+          ? sortByRecent(documents, codedAtByDoc)
+          : documents;
+      const targetId =
+        nextSort === "recent" ? nextDocs[0]?.id : currentDoc?.id;
+      const targetIndex = targetId
+        ? nextDocs.findIndex((d) => d.id === targetId)
+        : 0;
+      setDocIndex(Math.max(0, targetIndex));
+
+      const params = new URLSearchParams(searchParams.toString());
+      if (nextSort === "default") params.set("sort", "default");
+      else params.delete("sort");
+      if (targetId) params.set("doc", targetId);
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+    },
+    [
+      currentDoc,
+      docAnswers,
+      docNotes,
+      projectId,
+      documents,
+      codedAtByDoc,
+      dirtyDocs,
+      markClean,
+      searchParams,
+      router,
+      pathname,
+    ]
   );
 
   // --- Browse mode handlers ---
@@ -508,6 +580,8 @@ export function CodingPage({
             mode={mode}
             onModeChange={setMode}
             assignedCount={documents.length}
+            sortMode={sortMode}
+            onSortChange={handleSortChange}
             roundFilter={roundFilter}
             doc={
               mode === "assigned" && currentDoc
