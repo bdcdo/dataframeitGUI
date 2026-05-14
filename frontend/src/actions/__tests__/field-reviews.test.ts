@@ -175,7 +175,28 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
     ]);
   });
 
-  it("ambiguo → insere project_comments com o contraste humano vs LLM", async () => {
+  it("ambiguo sem justificativa → erro e nenhum UPDATE", async () => {
+    const submitAutoReview = await loadSubmit();
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "ambiguo" },
+    ]);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("justificativa obrigatória");
+    expect(r.error).toContain("ambíguo");
+    expect(updateCallsOf()).toHaveLength(0);
+  });
+
+  it("ambiguo com justificativa só de espaços → erro e nenhum UPDATE", async () => {
+    const submitAutoReview = await loadSubmit();
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "ambiguo", justification: "   \n\t" },
+    ]);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("justificativa obrigatória");
+    expect(updateCallsOf()).toHaveLength(0);
+  });
+
+  it("ambiguo → grava self_justification trimada e insere project_comments com o contraste e a justificativa", async () => {
     const submitAutoReview = await loadSubmit();
     tableData.field_reviews = [
       {
@@ -186,12 +207,19 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
       },
     ];
     const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "ambiguo" },
+      {
+        fieldName: "q1",
+        verdict: "ambiguo",
+        justification: "  o enunciado não define a unidade  ",
+      },
     ]);
     expect(r.success).toBe(true);
 
     const frUpdate = updateCallsOf("field_reviews")[0];
-    expect(frUpdate?.payload).toMatchObject({ self_verdict: "ambiguo" });
+    expect(frUpdate?.payload).toMatchObject({
+      self_verdict: "ambiguo",
+      self_justification: "o enunciado não define a unidade",
+    });
 
     const commentInsert = writeCalls.find(
       (c) => c.op === "insert" && c.table === "project_comments",
@@ -207,6 +235,9 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
     });
     expect(String(rows[0].body)).toContain("ambíguo");
     expect(String(rows[0].body)).toContain("Adalimumabe");
+    expect(String(rows[0].body)).toContain(
+      "Justificativa do pesquisador: o enunciado não define a unidade",
+    );
   });
 
   it("equivalente em retry (UPDATE casa 0 linhas) ainda registra a equivalencia", async () => {

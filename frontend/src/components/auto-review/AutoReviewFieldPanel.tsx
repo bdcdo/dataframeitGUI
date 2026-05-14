@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Keyboard, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatAnswerDisplay } from "@/lib/format-answer";
+import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import type { SelfVerdict } from "@/lib/types";
 
 export interface AutoReviewField {
@@ -79,13 +80,13 @@ export function AutoReviewFieldPanel({
     setShowJustification(true);
   }, [field.fieldName]);
 
-  // Foca o textarea ao escolher contesta_llm — sem isto, teclar "1" abre o
-  // campo mas deixa o foco para tras. Keyed so em `choice`: navegar entre dois
-  // campos ambos contesta_llm nao rerroda o effect (mesmo valor), entao o foco
-  // so vai para o textarea no ato de escolher.
+  // Foca o textarea ao escolher um verdict que exige justificativa — sem isto,
+  // teclar o atalho abre o campo mas deixa o foco para tras. Keyed so em
+  // `choice`: navegar entre dois campos com o mesmo verdict nao rerroda o effect
+  // (mesmo valor), entao o foco so vai para o textarea no ato de escolher.
   const justificationRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (choice === "contesta_llm") justificationRef.current?.focus();
+    if (verdictRequiresJustification(choice)) justificationRef.current?.focus();
   }, [choice]);
 
   // Auto-advance pós-decisão: armazena handle do timeout num ref para poder
@@ -135,9 +136,9 @@ export function AutoReviewFieldPanel({
 
   function handleChoose(v: SelfVerdict) {
     onChoose(v);
-    // contesta_llm exige justificativa: não auto-avança, senão o pesquisador
-    // perderia o campo de texto que acabou de abrir.
-    if (v === "contesta_llm") return;
+    // contesta_llm e ambiguo exigem justificativa: não auto-avança, senão o
+    // pesquisador perderia o campo de texto que acabou de abrir.
+    if (verdictRequiresJustification(v)) return;
     // Pula campos já respondidos no auto-advance pós-clique (P/N manuais
     // continuam navegando livremente para permitir re-conferência).
     const nextUnanswered = answered.findIndex((a, i) => i > fieldIndex && !a);
@@ -286,7 +287,9 @@ export function AutoReviewFieldPanel({
           </div>
         )}
 
-        {!readOnly && !field.alreadyAnswered && choice === "contesta_llm" ? (
+        {!readOnly &&
+        !field.alreadyAnswered &&
+        verdictRequiresJustification(choice) ? (
           <div className="space-y-1.5">
             <Label htmlFor="self-justification" className="text-sm">
               Justificativa <span className="text-destructive">*</span>
@@ -297,7 +300,11 @@ export function AutoReviewFieldPanel({
               rows={3}
               value={justification}
               onChange={(e) => onJustificationChange(e.target.value)}
-              placeholder="Por que você acha que sua resposta está correta? O árbitro verá isto."
+              placeholder={
+                choice === "ambiguo"
+                  ? "Por que este campo é ambíguo? Isto será incluído no comentário de discussão."
+                  : "Por que você acha que sua resposta está correta? O árbitro verá isto."
+              }
             />
           </div>
         ) : null}
