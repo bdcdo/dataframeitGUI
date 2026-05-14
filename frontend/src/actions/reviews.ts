@@ -45,6 +45,43 @@ export async function submitVerdict(
 
   if (error) throw new Error(error.message);
 
+  // Veredito "ambiguo" vira comentário automático na aba Comentários.
+  // Idempotente: um único comentário por (projeto, documento, campo) — o
+  // índice único parcial idx_pc_ambiguity_unique é o backstop contra corrida.
+  if (verdict === "ambiguo") {
+    const { data: existingAmbiguity } = await supabase
+      .from("project_comments")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("field_name", fieldName)
+      .eq("kind", "ambiguity")
+      .maybeSingle();
+
+    if (!existingAmbiguity) {
+      const { error: commentError } = await supabase
+        .from("project_comments")
+        .insert({
+          project_id: projectId,
+          document_id: documentId,
+          field_name: fieldName,
+          author_id: user.id,
+          body: comment?.trim()
+            ? `Campo marcado como ambíguo na revisão (aba Comparar): ${comment.trim()}`
+            : "Campo marcado como ambíguo na revisão (aba Comparar).",
+          kind: "ambiguity",
+        });
+
+      // Ignora violação do índice único (revisor concorrente marcou o mesmo
+      // campo+doc) — o comentário já existe, que é o estado desejado.
+      if (commentError && commentError.code !== "23505") {
+        throw new Error(commentError.message);
+      }
+    }
+
+    revalidatePath(`/projects/${projectId}/reviews/comments`);
+  }
+
   await syncCompareAssignment(supabase, projectId, documentId, user.id);
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);

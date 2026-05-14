@@ -297,7 +297,7 @@ export default async function CommentsPage({
     body: string;
     resolved_at: string | null;
     created_at: string;
-    kind: "note" | "exclusion_request";
+    kind: "note" | "exclusion_request" | "ambiguity";
     rejected_at: string | null;
     rejected_reason: string | null;
     profiles: { email: string | null } | null;
