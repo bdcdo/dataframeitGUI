@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewedDocument } from "@/lib/reviews/types";
 
@@ -256,7 +257,13 @@ function DocumentCard({
 
         <div className="space-y-2">
           {doc.fields.map((field) => (
-            <FieldRow key={field.fieldName} field={field} />
+            <FieldRow
+              key={field.fieldName}
+              field={field}
+              projectId={projectId}
+              documentId={doc.documentId}
+              documentTitle={doc.documentTitle}
+            />
           ))}
         </div>
       </CardContent>
@@ -266,7 +273,17 @@ function DocumentCard({
 
 /* ── Field Row ── */
 
-function FieldRow({ field }: { field: ReviewedDocument["fields"][number] }) {
+function FieldRow({
+  field,
+  projectId,
+  documentId,
+  documentTitle,
+}: {
+  field: ReviewedDocument["fields"][number];
+  projectId: string;
+  documentId: string;
+  documentTitle: string;
+}) {
   const isSpecialVerdict =
     field.verdict === "ambiguo" || field.verdict === "pular";
 
@@ -278,9 +295,17 @@ function FieldRow({ field }: { field: ReviewedDocument["fields"][number] }) {
 
   return (
     <div className="rounded-md border p-3 space-y-1.5">
-      <p className="text-xs font-medium text-muted-foreground">
-        {field.fieldDescription}
-      </p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          {field.fieldDescription}
+        </p>
+        <AddNoteButton
+          projectId={projectId}
+          documentId={documentId}
+          documentTitle={documentTitle}
+          fieldName={field.fieldName}
+        />
+      </div>
 
       <div
         className={cn(
