@@ -36,6 +36,7 @@ import {
   getRunningLlmJob,
 } from "@/actions/llm";
 import { fetchFastAPI } from "@/lib/api";
+import { getScrollBehavior } from "@/lib/scroll";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
 import {
   getModelsForProvider,
@@ -229,7 +230,7 @@ export function LlmConfigurePane({
                 onClick: () =>
                   document
                     .getElementById("llm-error-card")
-                    ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+                    ?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" }),
               },
             });
           }

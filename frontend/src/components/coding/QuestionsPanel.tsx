@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { isFieldVisible } from "@/lib/conditional";
 import { reorderFullList } from "@/lib/field-order";
+import { getScrollBehavior } from "@/lib/scroll";
 import type { PydanticField } from "@/lib/types";
 import {
   DndContext,
@@ -142,8 +143,8 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
   // Rastreia quais campos estavam visíveis no render anterior para detectar
-  // condicionais que acabaram de aparecer. `null` = ainda não hidratado.
-  const prevVisibleNamesRef = useRef<Set<string> | null>(null);
+  // condicionais que acabaram de aparecer.
+  const prevVisibleNamesRef = useRef<Set<string>>(new Set());
   // Mudança de schema (prop `fields`) também muda `visibleNames`; este flag
   // evita scrollar nesse caso — só queremos scrollar em resposta do usuário.
   const skipScrollRef = useRef(false);
@@ -190,7 +191,6 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
       skipScrollRef.current = false;
       return;
     }
-    if (prev === null) return; // hidratação inicial
     if (readOnly) return;
 
     const newIdx = visibleFields.findIndex(
@@ -199,7 +199,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     if (newIdx < 0) return;
 
     questionRefs.current[newIdx]?.scrollIntoView({
-      behavior: "smooth",
+      behavior: getScrollBehavior(),
       block: "center",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -238,7 +238,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     if (unanswered.length > 0) {
       setHighlightedFields(new Set(unanswered));
       const firstIdx = visibleFields.findIndex((f) => unanswered.includes(f.name));
-      questionRefs.current[firstIdx]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      questionRefs.current[firstIdx]?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
       toast.warning("Preencha todas as perguntas obrigatórias");
       return;
     }

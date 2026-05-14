@@ -35,11 +35,14 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
     scrolledInto.push(this);
   });
+  // jsdom não implementa matchMedia; getScrollBehavior() depende dele.
+  window.matchMedia = vi.fn().mockReturnValue({ matches: false }) as never;
 });
 
 function renderPanel(props: {
   fields?: PydanticField[];
   answers: Record<string, unknown>;
+  readOnly?: boolean;
 }) {
   return render(
     <QuestionsPanel
@@ -47,6 +50,7 @@ function renderPanel(props: {
       answers={props.answers}
       onAnswer={vi.fn()}
       onSubmit={vi.fn()}
+      readOnly={props.readOnly}
     />,
   );
 }
@@ -138,5 +142,22 @@ describe("QuestionsPanel — scroll automático em condicional (issue #71)", () 
 
     expect(scrolledInto).toHaveLength(1);
     expect(scrolledInto[0].textContent).toContain("Pergunta condicional");
+  });
+
+  it("não scrolla em readOnly mesmo quando uma condicional é liberada", () => {
+    const { rerender } = renderPanel({ answers: {}, readOnly: true });
+    expect(scrolledInto).toHaveLength(0);
+
+    rerender(
+      <QuestionsPanel
+        fields={baseFields}
+        answers={{ q1: "sim" }}
+        onAnswer={vi.fn()}
+        onSubmit={vi.fn()}
+        readOnly
+      />,
+    );
+
+    expect(scrolledInto).toHaveLength(0);
   });
 });
