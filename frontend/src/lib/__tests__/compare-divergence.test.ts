@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   computeDivergentFieldNames,
   isFreeTextField,
+  isDocComplete,
+  findNextPendingDocIndex,
 } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
@@ -141,5 +143,59 @@ describe("computeDivergentFieldNames", () => {
       { id: "2", answers: { tags: ["y", "x"] } },
     ];
     expect(computeDivergentFieldNames(fields, responses)).toEqual([]);
+  });
+});
+
+describe("isDocComplete", () => {
+  it("false when there are no divergent fields", () => {
+    expect(isDocComplete([], { a: {} })).toBe(false);
+    expect(isDocComplete(undefined, { a: {} })).toBe(false);
+  });
+
+  it("false when there are no reviews for the doc", () => {
+    expect(isDocComplete(["a", "b"], undefined)).toBe(false);
+  });
+
+  it("false when some divergent field is still unreviewed", () => {
+    expect(isDocComplete(["a", "b"], { a: {} })).toBe(false);
+  });
+
+  it("true when every divergent field has a verdict", () => {
+    expect(isDocComplete(["a", "b"], { a: {}, b: {} })).toBe(true);
+  });
+});
+
+describe("findNextPendingDocIndex", () => {
+  const divergentFields = { d1: ["a"], d2: ["a"], d3: ["a"] };
+
+  it("returns the first pending doc, skipping the current one", () => {
+    const reviews = {};
+    expect(
+      findNextPendingDocIndex(["d1", "d2", "d3"], divergentFields, reviews, "d1"),
+    ).toBe(1);
+  });
+
+  it("finds a pending doc at the top after the queue was re-sorted", () => {
+    // Server re-sorts completed docs to the bottom: the just-finished doc (d1)
+    // is now last, pending docs are at the top. `currentIndex + 1` would point
+    // past the end — the helper must still find d2 at index 0.
+    const reviews = { d1: { a: {} } };
+    expect(
+      findNextPendingDocIndex(["d2", "d3", "d1"], divergentFields, reviews, "d1"),
+    ).toBe(0);
+  });
+
+  it("skips docs that are already complete", () => {
+    const reviews = { d1: { a: {} }, d2: { a: {} } };
+    expect(
+      findNextPendingDocIndex(["d2", "d3", "d1"], divergentFields, reviews, "d1"),
+    ).toBe(1);
+  });
+
+  it("returns -1 when every other doc is complete", () => {
+    const reviews = { d1: { a: {} }, d2: { a: {} }, d3: { a: {} } };
+    expect(
+      findNextPendingDocIndex(["d2", "d3", "d1"], divergentFields, reviews, "d1"),
+    ).toBe(-1);
   });
 });

@@ -18,7 +18,11 @@ import {
 } from "@/actions/equivalences";
 import { toast } from "sonner";
 import { normalizeForComparison } from "@/lib/utils";
-import { isFreeTextField } from "@/lib/compare-divergence";
+import {
+  isFreeTextField,
+  isDocComplete,
+  findNextPendingDocIndex,
+} from "@/lib/compare-divergence";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
@@ -160,32 +164,46 @@ export function ComparePage({
 
   const reviewed = docFields.map((fn) => !!localReviews[currentDoc?.id]?.[fn]);
 
-  const reviewedDocsCount = useMemo(() => {
-    return documents.filter((doc) => {
-      const fieldsForDoc = divergentFields[doc.id] || [];
-      if (fieldsForDoc.length === 0) return false;
-      return fieldsForDoc.every((fn) => !!localReviews[doc.id]?.[fn]);
-    }).length;
-  }, [documents, divergentFields, localReviews]);
+  const reviewedDocsCount = useMemo(
+    () =>
+      documents.filter((doc) =>
+        isDocComplete(divergentFields[doc.id], localReviews[doc.id]),
+      ).length,
+    [documents, divergentFields, localReviews],
+  );
 
   // Documento "concluído" = todos os campos divergentes têm veredito. Quando
   // verdadeiro, a UI mostra o botão "Próximo parecer" (com foco automático)
   // em vez de avançar por timer cego.
-  const isCurrentDocComplete = useMemo(() => {
-    if (!currentDoc || allDocDivergent.length === 0) return false;
-    const docReviews = localReviews[currentDoc.id];
-    if (!docReviews) return false;
-    return allDocDivergent.every((fn) => !!docReviews[fn]);
-  }, [currentDoc, allDocDivergent, localReviews]);
+  const isCurrentDocComplete = useMemo(
+    () =>
+      !!currentDoc && isDocComplete(allDocDivergent, localReviews[currentDoc.id]),
+    [currentDoc, allDocDivergent, localReviews],
+  );
 
-  const hasNextDoc = docIndex < documents.length - 1;
+  // `documents` é reordenado pelo servidor a cada revalidate (docs concluídos
+  // afundam para o fim da fila), então o "próximo parecer" precisa ser o
+  // próximo doc com pendências — não `docIndex + 1`, que apontaria para fora
+  // da fila assim que o doc atual fosse concluído.
+  const nextPendingDocIndex = useMemo(
+    () =>
+      findNextPendingDocIndex(
+        documents.map((d) => d.id),
+        divergentFields,
+        localReviews,
+        currentDoc?.id,
+      ),
+    [documents, divergentFields, localReviews, currentDoc],
+  );
+
+  const hasNextDoc = nextPendingDocIndex >= 0;
 
   const handleNextDoc = useCallback(() => {
-    if (docIndex < documents.length - 1) {
-      setPinnedDocId(documents[docIndex + 1].id);
+    if (nextPendingDocIndex >= 0) {
+      setPinnedDocId(documents[nextPendingDocIndex].id);
       setFieldIndex(0);
     }
-  }, [docIndex, documents]);
+  }, [nextPendingDocIndex, documents]);
 
   const currentVerdict = currentDoc && currentFieldName
     ? localReviews[currentDoc.id]?.[currentFieldName] ?? null
@@ -432,6 +450,11 @@ export function ComparePage({
       if (e.key === "n" && fieldIndex < docFields.length - 1) { setFieldIndex(fieldIndex + 1); return; }
       if (e.key === "p" && fieldIndex > 0) { setFieldIndex(fieldIndex - 1); return; }
 
+      // Doc concluído: o avanço é por ação explícita (botão "Próximo parecer"
+      // recebe foco; Enter nele é nativo). Não deixar 1-9/a/s re-disparar
+      // veredito sobre um documento já fechado.
+      if (isCurrentDocComplete) return;
+
       if (!isCurrentFieldDivergent) return;
 
       const isMultiField = currentField?.type === "multi" && currentField.options?.length;
@@ -455,7 +478,7 @@ export function ComparePage({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [answerGroups, handleVerdict, fieldIndex, docFields.length, isFullscreen, isCurrentFieldDivergent, currentField]);
+  }, [answerGroups, handleVerdict, fieldIndex, docFields.length, isFullscreen, isCurrentFieldDivergent, isCurrentDocComplete, currentField]);
 
   const docListEntries: DocListEntry[] = documents.map((d) => {
     const c = coverageByDoc[d.id];
