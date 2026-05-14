@@ -43,7 +43,7 @@ export default async function AnalyzeLayout({
           .eq("type", "arbitragem")
           .limit(1)
           .maybeSingle(),
-        isProjectCoordinator(supabase, id, user),
+        isProjectCoordinator(id, user),
       ]);
 
     showAutoReview = isCoord || autoReviewRow !== null;

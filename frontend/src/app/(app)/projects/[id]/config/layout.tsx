@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
-import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { ConfigNav } from "./ConfigNav";
 
 // Guard server-side centralizado para todas as rotas `config/*`. As abas
@@ -18,9 +17,17 @@ export default async function ConfigLayout({
   const user = await getAuthUser();
   if (!user) redirect("/auth/login");
 
-  const supabase = await createSupabaseServer();
-  const isCoordinator = await isProjectCoordinator(supabase, id, user);
-  if (!isCoordinator) redirect(`/projects/${id}/my-progress`);
+  const { isCoordinator, queryFailed } = await getProjectAccessContext(
+    id,
+    user.id,
+    user.isMaster,
+  );
+  // Fail-open quando a verificação não pôde ser feita (timeout, RLS): nao
+  // derrubamos um coordenador legitimo por erro transiente — o RLS continua
+  // sendo o backstop real dos dados de config.
+  if (!isCoordinator && !queryFailed) {
+    redirect(`/projects/${id}/my-progress`);
+  }
 
   return (
     <div className="flex flex-col">

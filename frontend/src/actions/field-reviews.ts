@@ -617,8 +617,7 @@ export async function regenerateAutoReviewBacklog(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
-    const supabase = await createSupabaseServer();
-    const isCoord = await isProjectCoordinator(supabase, projectId, user);
+    const isCoord = await isProjectCoordinator(projectId, user);
     if (!isCoord) {
       return {
         success: false,

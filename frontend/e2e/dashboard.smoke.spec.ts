@@ -46,11 +46,14 @@ for (const { role, emailEnv, passwordEnv } of roles) {
       },
     });
 
-    await page.goto("/dashboard");
-    await expect(
-      page.getByRole("heading", { name: "Meus Projetos" }),
-    ).toBeVisible();
-
-    await clerk.signOut({ page });
+    try {
+      await page.goto("/dashboard");
+      await expect(
+        page.getByRole("heading", { name: "Meus Projetos" }),
+      ).toBeVisible();
+    } finally {
+      // Garante que a sessão é encerrada mesmo se a asserção falhar.
+      await clerk.signOut({ page });
+    }
   });
 }
