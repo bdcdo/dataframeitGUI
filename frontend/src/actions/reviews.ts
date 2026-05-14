@@ -45,10 +45,14 @@ export async function submitVerdict(
 
   if (error) throw new Error(error.message);
 
-  // Veredito "ambiguo" vira comentário automático na aba Comentários.
-  // Idempotente: um único comentário por (projeto, documento, campo) — o
-  // índice único parcial idx_pc_ambiguity_unique é o backstop contra corrida.
+  // Veredito "ambiguo" vira comentário automático na aba Comentários. O
+  // invariante mantido aqui: existe um project_comments kind='ambiguity' por
+  // (projeto, documento, campo) se e somente se há ao menos um review com
+  // verdict='ambiguo' para esse campo. O upsert acima já gravou o veredito
+  // atual, então as queries abaixo enxergam o estado pós-mudança.
   if (verdict === "ambiguo") {
+    // Idempotente: um único comentário por (projeto, documento, campo) — o
+    // índice único parcial idx_pc_ambiguity_unique é o backstop contra corrida.
     const { data: existingAmbiguity } = await supabase
       .from("project_comments")
       .select("id")
@@ -78,9 +82,33 @@ export async function submitVerdict(
         throw new Error(commentError.message);
       }
     }
+  } else {
+    // Veredito deixou de ser ambíguo. Se nenhum outro revisor ainda marca
+    // este campo como ambíguo, remove o comentário automático para não deixar
+    // pendência órfã na aba Comentários.
+    const { data: stillAmbiguous } = await supabase
+      .from("reviews")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("field_name", fieldName)
+      .eq("verdict", "ambiguo")
+      .limit(1);
 
-    revalidatePath(`/projects/${projectId}/reviews/comments`);
+    if (!stillAmbiguous || stillAmbiguous.length === 0) {
+      const { error: deleteError } = await supabase
+        .from("project_comments")
+        .delete()
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("field_name", fieldName)
+        .eq("kind", "ambiguity");
+
+      if (deleteError) throw new Error(deleteError.message);
+    }
   }
+
+  revalidatePath(`/projects/${projectId}/reviews/comments`);
 
   await syncCompareAssignment(supabase, projectId, documentId, user.id);
 
