@@ -16,6 +16,20 @@ export function isFreeTextField(field: PydanticField): boolean {
 interface ResponseLike {
   id: string;
   answers: Record<string, unknown> | null | undefined;
+  // Snapshot per-campo do schema contra o qual a response foi codificada
+  // (1 chave por campo existente na época). Quando presente e a chave do campo
+  // não está nele, aquele campo não existia quando a response foi codificada —
+  // comparar geraria um falso "(vazio)" divergente. Ausente/null = legacy
+  // (antes do mecanismo de hashes): não dá para inferir, mantém comportamento
+  // antigo de incluir a response.
+  answerFieldHashes?: Record<string, string> | null;
+}
+
+// True a menos que a response comprovadamente não tivesse o campo no schema
+// contra o qual foi codificada (answer_field_hashes presente e sem a chave).
+function responseHadField(r: ResponseLike, fieldName: string): boolean {
+  if (!r.answerFieldHashes) return true;
+  return Object.prototype.hasOwnProperty.call(r.answerFieldHashes, fieldName);
 }
 
 // Returns the names of fields whose responses diverge.
@@ -37,11 +51,15 @@ export function computeDivergentFieldNames(
     )
       continue;
 
-    const applicable = field.condition
-      ? responses.filter((r) =>
-          isFieldVisible(field, (r.answers as Record<string, unknown>) ?? {}),
-        )
-      : responses;
+    const applicable = responses.filter((r) => {
+      if (!responseHadField(r, field.name)) return false;
+      if (
+        field.condition &&
+        !isFieldVisible(field, (r.answers as Record<string, unknown>) ?? {})
+      )
+        return false;
+      return true;
+    });
     if (applicable.length < 2) continue;
 
     if (field.type === "multi" && field.options?.length) {

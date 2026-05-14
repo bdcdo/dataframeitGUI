@@ -771,15 +771,21 @@ export async function submitFinalVerdicts(
 }
 
 // Coordenador-only: varre todas as respostas humanas concluidas do projeto e
-// materializa o backlog de auto-revisao + field_reviews. Usado quando a chamada
-// inline em saveResponse falhou silenciosamente (ver log "[auto-review]") ou
-// apos importar respostas em lote.
+// reconcilia o backlog de auto-revisao + field_reviews. Usado quando a chamada
+// inline em saveResponse falhou silenciosamente (ver log "[auto-review]"), apos
+// importar respostas em lote, ou apos uma edicao de schema que tornou campos
+// antigos "stale" (campos adicionados depois de uma codificacao geravam
+// field_reviews espurios com a resposta humana aparecendo como "(vazio)").
 //
-// Bulk-otimizado: 3 queries (project + humanos + LLMs) + 2 upserts em batch,
-// independente do numero de respostas. Antes era N+1 (3 queries por response).
+// Reconcile (nao so insert): alem de inserir o conjunto correto, remove
+// field_reviews que nao deveriam mais existir — mas SO os ainda pendentes
+// (self_verdict IS NULL). Linhas que o pesquisador ja resolveu nunca sao
+// apagadas (apagar perderia trabalho); sao apenas contadas em `keptResolved`.
+// Assignments auto_revisao que ficam sem nenhum field_review e ainda estao
+// `pendente` sao removidos.
 //
-// Idempotente: upserts usam ignoreDuplicates em chaves unicas
-// (assignments: doc+user+type; field_reviews: doc+field).
+// Bulk-otimizado: queries em batch + upserts/deletes em batch, independente do
+// numero de respostas.
 export async function regenerateAutoReviewBacklog(
   projectId: string,
 ): Promise<{
@@ -787,6 +793,8 @@ export async function regenerateAutoReviewBacklog(
   error?: string;
   scanned?: number;
   regenerated?: number;
+  removed?: number;
+  keptResolved?: number;
 }> {
   try {
     const user = await getAuthUser();
@@ -815,13 +823,13 @@ export async function regenerateAutoReviewBacklog(
         .single(),
       admin
         .from("responses")
-        .select("id, document_id, respondent_id, answers")
+        .select("id, document_id, respondent_id, answers, answer_field_hashes")
         .eq("project_id", projectId)
         .eq("respondent_type", "humano")
         .eq("is_partial", false),
       admin
         .from("responses")
-        .select("id, document_id, answers")
+        .select("id, document_id, answers, answer_field_hashes")
         .eq("project_id", projectId)
         .eq("respondent_type", "llm")
         .eq("is_latest", true),
@@ -889,10 +897,16 @@ export async function regenerateAutoReviewBacklog(
           {
             id: human.id,
             answers: (human.answers as Record<string, unknown>) ?? {},
+            answerFieldHashes: human.answer_field_hashes as
+              | Record<string, string>
+              | null,
           },
           {
             id: llm.id,
             answers: (llm.answers as Record<string, unknown>) ?? {},
+            answerFieldHashes: llm.answer_field_hashes as
+              | Record<string, string>
+              | null,
           },
         ],
         equivByDoc.get(human.document_id),
@@ -919,6 +933,40 @@ export async function regenerateAutoReviewBacklog(
       }
     }
 
+    // --- Reconcile: remove field_reviews que nao deveriam mais existir ---
+    // O conjunto correto e o que acabou de ser computado em fieldReviewRows.
+    // Linhas pendentes (self_verdict IS NULL) fora desse conjunto sao espurias
+    // — tipicamente campos que ficaram "stale" apos edicao de schema — e podem
+    // ser apagadas. Linhas ja resolvidas pelo pesquisador sao preservadas.
+    const correctKeys = new Set(
+      fieldReviewRows.map((r) => `${r.document_id}|${r.field_name}`),
+    );
+
+    const { data: existingReviews, error: existingErr } = await admin
+      .from("field_reviews")
+      .select("id, document_id, field_name, self_verdict")
+      .eq("project_id", projectId);
+    if (existingErr) return { success: false, error: existingErr.message };
+
+    const idsToDelete: string[] = [];
+    let keptResolved = 0;
+    for (const fr of existingReviews ?? []) {
+      if (correctKeys.has(`${fr.document_id}|${fr.field_name}`)) continue;
+      if (fr.self_verdict == null) {
+        idsToDelete.push(fr.id);
+      } else {
+        keptResolved++;
+      }
+    }
+
+    if (idsToDelete.length > 0) {
+      const { error } = await admin
+        .from("field_reviews")
+        .delete()
+        .in("id", idsToDelete);
+      if (error) return { success: false, error: error.message };
+    }
+
     if (assignmentRows.length > 0) {
       const { error } = await admin.from("assignments").upsert(assignmentRows, {
         onConflict: "document_id,user_id,type",
@@ -936,12 +984,46 @@ export async function regenerateAutoReviewBacklog(
       if (error) return { success: false, error: error.message };
     }
 
+    // Remove assignments auto_revisao orfaos: sem nenhum field_review restante
+    // para o doc+pesquisador e ainda `pendente`. Assignments ja iniciados ou
+    // concluidos sao preservados.
+    const { data: remainingReviews, error: remainingErr } = await admin
+      .from("field_reviews")
+      .select("document_id, self_reviewer_id")
+      .eq("project_id", projectId);
+    if (remainingErr) return { success: false, error: remainingErr.message };
+    const docUserWithReviews = new Set(
+      (remainingReviews ?? []).map(
+        (r) => `${r.document_id}|${r.self_reviewer_id}`,
+      ),
+    );
+
+    const { data: autoAssignments, error: autoErr } = await admin
+      .from("assignments")
+      .select("id, document_id, user_id")
+      .eq("project_id", projectId)
+      .eq("type", "auto_revisao")
+      .eq("status", "pendente");
+    if (autoErr) return { success: false, error: autoErr.message };
+    const orphanAssignmentIds = (autoAssignments ?? [])
+      .filter((a) => !docUserWithReviews.has(`${a.document_id}|${a.user_id}`))
+      .map((a) => a.id);
+    if (orphanAssignmentIds.length > 0) {
+      const { error } = await admin
+        .from("assignments")
+        .delete()
+        .in("id", orphanAssignmentIds);
+      if (error) return { success: false, error: error.message };
+    }
+
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return {
       success: true,
       scanned: queue.length,
       regenerated,
+      removed: idsToDelete.length,
+      keptResolved,
     };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro" };
