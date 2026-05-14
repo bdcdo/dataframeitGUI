@@ -29,6 +29,7 @@ interface AddNoteButtonProps {
   documentId?: string | null;
   documentTitle?: string | null;
   fieldName?: string | null;
+  fieldLabel?: string | null;
   fields?: PydanticField[];
   variant?: "default" | "ghost" | "outline";
   size?: "default" | "sm" | "icon";
@@ -40,6 +41,7 @@ export function AddNoteButton({
   documentId,
   documentTitle,
   fieldName: fixedFieldName,
+  fieldLabel,
   fields,
   variant = "ghost",
   size = "sm",
@@ -56,7 +58,7 @@ export function AddNoteButton({
   // Build contextual subtitle
   const contextParts: string[] = [];
   if (documentTitle) contextParts.push(documentTitle);
-  if (fixedFieldName) contextParts.push(fixedFieldName);
+  if (fixedFieldName) contextParts.push(fieldLabel || fixedFieldName);
   const contextLabel = contextParts.length > 0 ? contextParts.join(" → ") : null;
 
   const handleSubmit = () => {
