@@ -276,7 +276,16 @@ export function FieldCard({
                       (field.target || "all") === value &&
                         "bg-brand/10 text-brand border-brand/40"
                     )}
-                    onClick={() => updateField({ target: value })}
+                    onClick={() =>
+                      // Sair do escopo LLM (human_only/none) limpa o prompt de
+                      // justificativa junto — o input some e o valor não ficaria
+                      // editável nem visível. Mesmo padrão de handleTypeChange.
+                      updateField(
+                        value === "human_only" || value === "none"
+                          ? { target: value, justification_prompt: undefined }
+                          : { target: value },
+                      )
+                    }
                   >
                     {label}
                   </Button>
@@ -482,6 +491,41 @@ export function FieldCard({
               candidateTriggers={candidateTriggersFor(allFields, field.name)}
               onChange={(condition) => updateField({ condition })}
             />
+
+            {/* Prompt de justificativa do LLM — só faz sentido quando o campo
+                é enviado ao LLM. Vazio = backend usa o default exigente. */}
+            {(field.target || "all") !== "human_only" &&
+              field.target !== "none" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    Prompt de justificativa do LLM (opcional)
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Texto-base que o LLM recebe ao justificar este campo. Em
+                    branco, usa o default que exige citação textual do trecho
+                    do documento. <code>{"{name}"}</code> é a única chave
+                    substituída (vira o nome do campo); qualquer outra chave
+                    entre chaves faz o texto ser usado literalmente, sem
+                    substituição.
+                  </p>
+                  <Textarea
+                    value={field.justification_prompt || ""}
+                    onChange={(e) =>
+                      updateField({
+                        justification_prompt: e.target.value || undefined,
+                      })
+                    }
+                    onBlur={(e) =>
+                      updateField({
+                        justification_prompt:
+                          e.target.value.trim() || undefined,
+                      })
+                    }
+                    placeholder="Ex.: Cite o trecho do parecer e explique como ele leva à resposta."
+                    className="text-sm min-h-[60px] resize-y"
+                  />
+                </div>
+              )}
           </div>
         </CollapsibleContent>
       </div>

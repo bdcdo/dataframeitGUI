@@ -74,6 +74,14 @@ def compile_pydantic(code: str) -> dict:
         condition = _sanitize_condition(
             extra.get("condition") if is_dict_extra else None
         )
+        justification_prompt_raw = (
+            extra.get("justification_prompt") if is_dict_extra else None
+        )
+        justification_prompt = (
+            justification_prompt_raw.strip()
+            if isinstance(justification_prompt_raw, str)
+            else None
+        ) or None
 
         # If help_text was carried structurally, strip the ". Instrucoes: ..."
         # suffix from description so the returned description is the pure form.
@@ -123,6 +131,9 @@ def compile_pydantic(code: str) -> dict:
 
         if condition is not None:
             field_dict["condition"] = condition
+
+        if justification_prompt:
+            field_dict["justification_prompt"] = justification_prompt
 
         fields.append(field_dict)
 

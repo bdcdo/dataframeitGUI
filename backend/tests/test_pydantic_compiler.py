@@ -409,6 +409,36 @@ class Analysis(BaseModel):
     assert visible["target"] == "all"
 
 
+def test_justification_prompt_round_trips():
+    """justification_prompt (texto-base do prompt da justificativa do LLM, #88)
+    é lido de volta de json_schema_extra."""
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    verdict: Literal["sim", "nao"] = Field(
+        description="Houve provimento?",
+        json_schema_extra={"justification_prompt": "Cite o dispositivo do acórdão."},
+    )
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    f = _field(result, "verdict")
+    assert f["justification_prompt"] == "Cite o dispositivo do acórdão."
+
+
+def test_justification_prompt_absent_when_not_set():
+    code = '''from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    verdict: Literal["sim", "nao"] = Field(description="Houve provimento?")
+'''
+    result = compile_pydantic(code)
+    f = _field(result, "verdict")
+    assert "justification_prompt" not in f
+
+
 def test_date_field_with_sentinel_options_round_trips():
     """Date fields carry sentinel options (ex: 'Não identificável') via
     json_schema_extra because the annotation itself is `str`, not Literal."""

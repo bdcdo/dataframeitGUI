@@ -174,7 +174,10 @@ function PropertyDiff({ diff }: { diff: FieldPropertyDiff }) {
       </DiffSection>
     );
   }
-  if (diff.property === "help_text") {
+  if (
+    diff.property === "help_text" ||
+    diff.property === "justification_prompt"
+  ) {
     return (
       <DiffSection label={label}>
         <HelpTextDiff
@@ -446,6 +449,11 @@ function FieldSnapshot({
     rows.push({
       label: "condição",
       value: formatCondition(data.condition as FieldCondition),
+    });
+  if (data.justification_prompt)
+    rows.push({
+      label: "prompt de justificativa",
+      value: String(data.justification_prompt),
     });
 
   if (rows.length === 0) return null;
