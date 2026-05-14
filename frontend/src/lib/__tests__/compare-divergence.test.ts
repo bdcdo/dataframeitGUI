@@ -184,6 +184,18 @@ describe("computeDivergentFieldNames", () => {
     ];
     expect(computeDivergentFieldNames(fields, responses)).toEqual(["a"]);
   });
+
+  it("staleness: empty answerFieldHashes {} is treated as legacy, not 'no fields'", () => {
+    // Um objeto vazio (ex: PydanticFields sem `.hash` populado) não pode
+    // excluir todos os campos silenciosamente — deve cair no comportamento
+    // legacy de comparar tudo.
+    const fields = [field({ name: "a" })];
+    const responses = [
+      { id: "1", answers: { a: "alpha" }, answerFieldHashes: {} },
+      { id: "2", answers: { a: "beta" }, answerFieldHashes: {} },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["a"]);
+  });
 });
 
 describe("isDocComplete", () => {

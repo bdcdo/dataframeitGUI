@@ -17,18 +17,23 @@ interface ResponseLike {
   id: string;
   answers: Record<string, unknown> | null | undefined;
   // Snapshot per-campo do schema contra o qual a response foi codificada
-  // (1 chave por campo existente na época). Quando presente e a chave do campo
-  // não está nele, aquele campo não existia quando a response foi codificada —
-  // comparar geraria um falso "(vazio)" divergente. Ausente/null = legacy
-  // (antes do mecanismo de hashes): não dá para inferir, mantém comportamento
-  // antigo de incluir a response.
+  // (1 chave por campo existente na época). Quando presente, não-vazio e a
+  // chave do campo não está nele, aquele campo não existia quando a response
+  // foi codificada — comparar geraria um falso "(vazio)" divergente.
+  // Ausente/null/{} = legacy: não dá para inferir, mantém comportamento antigo
+  // de incluir a response.
   answerFieldHashes?: Record<string, string> | null;
 }
 
 // True a menos que a response comprovadamente não tivesse o campo no schema
-// contra o qual foi codificada (answer_field_hashes presente e sem a chave).
+// contra o qual foi codificada (answer_field_hashes presente, não-vazio e sem
+// a chave). Um objeto vazio é tratado como legacy: ou o projeto não tinha
+// campos, ou os PydanticFields não tinham `.hash` populado — em ambos os casos
+// não dá para inferir staleness, então a response permanece na comparação (não
+// excluir todos os campos silenciosamente).
 function responseHadField(r: ResponseLike, fieldName: string): boolean {
   if (!r.answerFieldHashes) return true;
+  if (Object.keys(r.answerFieldHashes).length === 0) return true;
   return Object.prototype.hasOwnProperty.call(r.answerFieldHashes, fieldName);
 }
 

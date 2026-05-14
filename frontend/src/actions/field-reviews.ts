@@ -815,6 +815,7 @@ export async function regenerateAutoReviewBacklog(
       { data: humanResponses, error: humanErr },
       { data: llmResponses, error: llmErr },
       { data: equivalences, error: equivErr },
+      { data: existingReviews, error: existingErr },
     ] = await Promise.all([
       admin
         .from("projects")
@@ -837,12 +838,19 @@ export async function regenerateAutoReviewBacklog(
         .from("response_equivalences")
         .select("document_id, field_name, response_a_id, response_b_id")
         .eq("project_id", projectId),
+      // Estado atual de field_reviews — usado no reconcile abaixo. Independe
+      // do conjunto recem-computado, entao buscamos junto do batch inicial.
+      admin
+        .from("field_reviews")
+        .select("id, document_id, field_name, self_verdict")
+        .eq("project_id", projectId),
     ]);
 
     if (projErr) return { success: false, error: projErr.message };
     if (humanErr) return { success: false, error: humanErr.message };
     if (llmErr) return { success: false, error: llmErr.message };
     if (equivErr) return { success: false, error: equivErr.message };
+    if (existingErr) return { success: false, error: existingErr.message };
 
     const fields = (project?.pydantic_fields as PydanticField[]) ?? [];
     if (fields.length === 0) {
@@ -942,12 +950,6 @@ export async function regenerateAutoReviewBacklog(
       fieldReviewRows.map((r) => `${r.document_id}|${r.field_name}`),
     );
 
-    const { data: existingReviews, error: existingErr } = await admin
-      .from("field_reviews")
-      .select("id, document_id, field_name, self_verdict")
-      .eq("project_id", projectId);
-    if (existingErr) return { success: false, error: existingErr.message };
-
     const idsToDelete: string[] = [];
     let keptResolved = 0;
     for (const fr of existingReviews ?? []) {
@@ -975,6 +977,10 @@ export async function regenerateAutoReviewBacklog(
       if (error) return { success: false, error: error.message };
     }
     if (fieldReviewRows.length > 0) {
+      // NB: ignoreDuplicates reconcilia o *conjunto* de field_reviews
+      // (doc+field), nao os ponteiros. Uma linha ja existente mantem seus
+      // human_response_id/llm_response_id antigos mesmo que o LLM tenha
+      // re-rodado desde entao — atualizar FKs stale fica fora deste reconcile.
       const { error } = await admin
         .from("field_reviews")
         .upsert(fieldReviewRows, {
@@ -986,25 +992,31 @@ export async function regenerateAutoReviewBacklog(
 
     // Remove assignments auto_revisao orfaos: sem nenhum field_review restante
     // para o doc+pesquisador e ainda `pendente`. Assignments ja iniciados ou
-    // concluidos sao preservados.
-    const { data: remainingReviews, error: remainingErr } = await admin
-      .from("field_reviews")
-      .select("document_id, self_reviewer_id")
-      .eq("project_id", projectId);
+    // concluidos sao preservados. As duas leituras refletem o estado pos-
+    // delete/upsert e sao independentes entre si — buscadas em paralelo.
+    const [
+      { data: remainingReviews, error: remainingErr },
+      { data: autoAssignments, error: autoErr },
+    ] = await Promise.all([
+      admin
+        .from("field_reviews")
+        .select("document_id, self_reviewer_id")
+        .eq("project_id", projectId),
+      admin
+        .from("assignments")
+        .select("id, document_id, user_id")
+        .eq("project_id", projectId)
+        .eq("type", "auto_revisao")
+        .eq("status", "pendente"),
+    ]);
     if (remainingErr) return { success: false, error: remainingErr.message };
+    if (autoErr) return { success: false, error: autoErr.message };
     const docUserWithReviews = new Set(
       (remainingReviews ?? []).map(
         (r) => `${r.document_id}|${r.self_reviewer_id}`,
       ),
     );
 
-    const { data: autoAssignments, error: autoErr } = await admin
-      .from("assignments")
-      .select("id, document_id, user_id")
-      .eq("project_id", projectId)
-      .eq("type", "auto_revisao")
-      .eq("status", "pendente");
-    if (autoErr) return { success: false, error: autoErr.message };
     const orphanAssignmentIds = (autoAssignments ?? [])
       .filter((a) => !docUserWithReviews.has(`${a.document_id}|${a.user_id}`))
       .map((a) => a.id);
