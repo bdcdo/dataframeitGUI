@@ -158,7 +158,14 @@ export interface ResponseEquivalence {
   created_at: string;
 }
 
-export type SelfVerdict = "admite_erro" | "contesta_llm";
+// Vereditos da auto-revisao. Todos resolvem o campo; só `contesta_llm` abre
+// arbitragem. `equivalente` registra o par humano↔LLM em response_equivalences;
+// `ambiguo` gera um project_comments para discussão.
+export type SelfVerdict =
+  | "admite_erro"
+  | "contesta_llm"
+  | "equivalente"
+  | "ambiguo";
 export type ArbitrationVerdict = "humano" | "llm";
 
 export interface FieldReview {

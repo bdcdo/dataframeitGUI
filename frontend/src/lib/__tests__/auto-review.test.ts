@@ -12,6 +12,11 @@ interface MockState {
   project: { pydantic_fields: unknown } | null;
   humanResponse: { id: string; answers: Record<string, unknown> } | null;
   llmResponse: { id: string; answers: Record<string, unknown> } | null;
+  equivalences: Array<{
+    field_name: string;
+    response_a_id: string;
+    response_b_id: string;
+  }>;
   upserts: UpsertCall[];
 }
 
@@ -22,6 +27,7 @@ beforeEach(() => {
     project: null,
     humanResponse: null,
     llmResponse: null,
+    equivalences: [],
     upserts: [],
   };
 });
@@ -54,6 +60,14 @@ vi.mock("@/lib/supabase/admin", () => {
               data: respCalls === 1 ? state.humanResponse : state.llmResponse,
             };
           };
+          return chain;
+        }
+        if (table === "response_equivalences") {
+          const chain: Record<string, unknown> = {};
+          chain.select = () => chain;
+          chain.eq = () => chain;
+          chain.then = (resolve: (v: unknown) => unknown) =>
+            resolve({ data: state.equivalences, error: null });
           return chain;
         }
         if (table === "assignments" || table === "field_reviews") {
@@ -135,6 +149,23 @@ describe("createAutoReviewIfDiverges", () => {
       llm_response_id: "l1",
       self_reviewer_id: "user1",
     });
+  });
+
+  it("equivalencia marcada → campo nao conta como divergente", async () => {
+    const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
+    state.project = {
+      pydantic_fields: [{ name: "q1", type: "text", options: null, target: "all" }],
+    };
+    state.humanResponse = { id: "h1", answers: { q1: "Adalimumabe 40mg" } };
+    state.llmResponse = { id: "l1", answers: { q1: "adalimumabe" } };
+    // par humano↔LLM marcado como equivalente para q1
+    state.equivalences = [
+      { field_name: "q1", response_a_id: "h1", response_b_id: "l1" },
+    ];
+
+    const r = await createAutoReviewIfDiverges("p1", "doc1", "user1");
+    expect(r.divergentCount).toBe(0);
+    expect(state.upserts).toHaveLength(0);
   });
 
   it("upserts usam ignoreDuplicates (idempotencia)", async () => {

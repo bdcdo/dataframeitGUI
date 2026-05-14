@@ -115,6 +115,12 @@ export function AutoReviewFieldPanel({
       } else if (e.key === "2") {
         e.preventDefault();
         onChoose("admite_erro");
+      } else if (e.key === "3") {
+        e.preventDefault();
+        onChoose("equivalente");
+      } else if (e.key === "4") {
+        e.preventDefault();
+        onChoose("ambiguo");
       } else if (e.key.toLowerCase() === "p") {
         e.preventDefault();
         if (fieldIndex > 0) onFieldNavigate(fieldIndex - 1);
@@ -249,6 +255,34 @@ export function AutoReviewFieldPanel({
               </kbd>
               LLM acertou (eu errei)
             </Button>
+            <Button
+              variant={choice === "equivalente" ? "default" : "outline"}
+              className={cn(
+                "flex-1 min-w-[180px]",
+                choice === "equivalente" && "ring-2 ring-brand/40",
+              )}
+              onClick={() => handleChoose("equivalente")}
+              title="As duas respostas dizem a mesma coisa de formas diferentes"
+            >
+              <kbd className="mr-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                3
+              </kbd>
+              Respostas equivalentes
+            </Button>
+            <Button
+              variant={choice === "ambiguo" ? "default" : "outline"}
+              className={cn(
+                "flex-1 min-w-[180px]",
+                choice === "ambiguo" && "ring-2 ring-brand/40",
+              )}
+              onClick={() => handleChoose("ambiguo")}
+              title="Campo ambíguo — gera um comentário para discussão"
+            >
+              <kbd className="mr-2 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                4
+              </kbd>
+              Ambíguo (discutir)
+            </Button>
           </div>
         )}
 
@@ -303,6 +337,18 @@ export function AutoReviewFieldPanel({
                 2
               </kbd>{" "}
               LLM acertou
+            </span>
+            <span>
+              <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                3
+              </kbd>{" "}
+              Equivalentes
+            </span>
+            <span>
+              <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                4
+              </kbd>{" "}
+              Ambíguo
             </span>
             <span>
               <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
