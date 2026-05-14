@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Keyboard, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatAnswerDisplay } from "@/lib/format-answer";
@@ -15,6 +17,7 @@ export interface AutoReviewField {
   llmAnswer: unknown;
   llmJustification: string | null;
   alreadyAnswered: boolean;
+  selfJustification: string | null;
 }
 
 interface AutoReviewFieldPanelProps {
@@ -23,8 +26,10 @@ interface AutoReviewFieldPanelProps {
   totalFields: number;
   answered: boolean[];
   choice: SelfVerdict | null;
+  justification: string;
   readOnly: boolean;
   onChoose: (verdict: SelfVerdict) => void;
+  onJustificationChange: (value: string) => void;
   onFieldNavigate: (index: number) => void;
 }
 
@@ -36,8 +41,10 @@ export function AutoReviewFieldPanel({
   totalFields,
   answered,
   choice,
+  justification,
   readOnly,
   onChoose,
+  onJustificationChange,
   onFieldNavigate,
 }: AutoReviewFieldPanelProps) {
   // Aberta por padrão: pesquisador precisa ler a justificativa para decidir
@@ -113,6 +120,9 @@ export function AutoReviewFieldPanel({
 
   function handleChoose(v: SelfVerdict) {
     onChoose(v);
+    // contesta_llm exige justificativa: não auto-avança, senão o pesquisador
+    // perderia o campo de texto que acabou de abrir.
+    if (v === "contesta_llm") return;
     // Pula campos já respondidos no auto-advance pós-clique (P/N manuais
     // continuam navegando livremente para permitir re-conferência).
     const nextUnanswered = answered.findIndex((a, i) => i > fieldIndex && !a);
@@ -232,6 +242,32 @@ export function AutoReviewFieldPanel({
             </Button>
           </div>
         )}
+
+        {!readOnly && !field.alreadyAnswered && choice === "contesta_llm" ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="self-justification" className="text-sm">
+              Justificativa <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              id="self-justification"
+              rows={3}
+              value={justification}
+              onChange={(e) => onJustificationChange(e.target.value)}
+              placeholder="Por que você acha que sua resposta está correta? O árbitro verá isto."
+            />
+          </div>
+        ) : null}
+
+        {(readOnly || field.alreadyAnswered) && field.selfJustification ? (
+          <div className="space-y-1">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">
+              Sua justificativa
+            </div>
+            <p className="whitespace-pre-wrap border-l-2 border-muted pl-2 text-xs text-muted-foreground">
+              {field.selfJustification}
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <div className="border-t px-4 py-2">

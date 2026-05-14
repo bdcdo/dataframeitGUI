@@ -49,6 +49,7 @@ export function RevealPhase({
         const humanName = r?.humanName ?? null;
         const llmName = r?.llmName ?? null;
         const llmJustification = r?.llmJustification ?? null;
+        const selfJustification = r?.selfJustification ?? null;
 
         // Identifica qual lado (A/B) o arbitro escolheu na fase cega
         const blindSideLetter: "A" | "B" | null = r
@@ -97,6 +98,15 @@ export function RevealPhase({
                       r?.aSide === "humano" ? f.aAnswer : f.bAnswer,
                     )}
                   </div>
+                  {selfJustification ? (
+                    <div className="mt-2 text-xs text-muted-foreground border-l-2 border-muted pl-2 whitespace-pre-wrap">
+                      {selfJustification}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-muted-foreground italic">
+                      Pesquisador não forneceu justificativa para este campo.
+                    </p>
+                  )}
                 </div>
                 <div
                   className={`border rounded-md p-3 ${

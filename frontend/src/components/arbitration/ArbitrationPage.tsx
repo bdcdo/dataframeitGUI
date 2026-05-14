@@ -38,6 +38,7 @@ export interface ArbitrationField {
     humanName: string | null;
     llmName: string | null;
     llmJustification: string | null;
+    selfJustification: string | null;
   } | null;
 }
 

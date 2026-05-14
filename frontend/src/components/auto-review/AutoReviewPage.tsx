@@ -99,6 +99,10 @@ export function AutoReviewPage({
   // Sem o prefixo do docId, escolher "q1" no doc A pre-selecionaria "q1" do
   // doc B na navegação. O composto garante isolamento por (doc, campo).
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
+  // Justificativa por (doc, campo) — só usada quando a escolha é contesta_llm.
+  const [justifications, setJustifications] = useState<Record<string, string>>(
+    {},
+  );
 
   const choiceKey = (docId: string, fieldName: string) =>
     `${docId}::${fieldName}`;
@@ -199,22 +203,32 @@ export function AutoReviewPage({
 
   const doc = docs[docIndex];
   const currentField = doc.fields[fieldIndex];
-  const allChosen = doc.fields.every(
-    (f) => f.alreadyAnswered || choices[choiceKey(doc.docId, f.fieldName)] != null,
-  );
-  const answeredFlags = doc.fields.map(
-    (f) => f.alreadyAnswered || choices[choiceKey(doc.docId, f.fieldName)] != null,
-  );
+  // Campo "decidido" = já respondido OU com escolha local; se a escolha for
+  // contesta_llm, a justificativa também precisa estar preenchida.
+  const isFieldDecided = (f: AutoReviewField) => {
+    if (f.alreadyAnswered) return true;
+    const key = choiceKey(doc.docId, f.fieldName);
+    const choice = choices[key];
+    if (choice == null) return false;
+    if (choice === "contesta_llm") return !!justifications[key]?.trim();
+    return true;
+  };
+  const allChosen = doc.fields.every(isFieldDecided);
+  const answeredFlags = doc.fields.map(isFieldDecided);
 
   async function handleSubmit() {
     if (readOnly) return;
     setSubmitting(true);
     const payload = doc.fields
       .filter((f) => !f.alreadyAnswered)
-      .map((f) => ({
-        fieldName: f.fieldName,
-        verdict: choices[choiceKey(doc.docId, f.fieldName)],
-      }));
+      .map((f) => {
+        const key = choiceKey(doc.docId, f.fieldName);
+        return {
+          fieldName: f.fieldName,
+          verdict: choices[key],
+          justification: justifications[key],
+        };
+      });
     const result = await submitAutoReview(projectId, doc.docId, payload);
     setSubmitting(false);
     if (!result.success) {
@@ -232,6 +246,12 @@ export function AutoReviewPage({
     }
     setChoices((c) => {
       const next = { ...c };
+      for (const f of doc.fields)
+        delete next[choiceKey(doc.docId, f.fieldName)];
+      return next;
+    });
+    setJustifications((j) => {
+      const next = { ...j };
       for (const f of doc.fields)
         delete next[choiceKey(doc.docId, f.fieldName)];
       return next;
@@ -347,11 +367,22 @@ export function AutoReviewPage({
               choice={
                 choices[choiceKey(doc.docId, currentField.fieldName)] ?? null
               }
+              justification={
+                justifications[
+                  choiceKey(doc.docId, currentField.fieldName)
+                ] ?? ""
+              }
               readOnly={readOnly}
               onChoose={(v) =>
                 setChoices((c) => ({
                   ...c,
                   [choiceKey(doc.docId, currentField.fieldName)]: v,
+                }))
+              }
+              onJustificationChange={(value) =>
+                setJustifications((j) => ({
+                  ...j,
+                  [choiceKey(doc.docId, currentField.fieldName)]: value,
                 }))
               }
               onFieldNavigate={setFieldIndex}
