@@ -24,7 +24,7 @@ export async function getEligibleDocCount(
       .select("document_id")
       .eq("project_id", projectId)
       .eq("respondent_type", "llm")
-      .eq("is_current", true),
+      .eq("is_latest", true),
   ]);
 
   if (totalError) throw new Error(totalError.message);
@@ -124,8 +124,8 @@ export async function getLlmRunStats(
   jobId: string
 ): Promise<{ current: number; partial: number }> {
   const supabase = await createSupabaseServer();
-  // Usa is_partial (imutável) em vez de is_current para distinguir complete vs
-  // partial. is_current muda quando uma run posterior roda nos mesmos docs, o
+  // Usa is_partial (imutável) em vez de is_latest para distinguir complete vs
+  // partial. is_latest muda quando uma run posterior roda nos mesmos docs, o
   // que inflaria artificialmente a contagem de parciais de runs antigas.
   const [
     { count: complete, error: completeError },
@@ -151,7 +151,7 @@ export interface LlmResponseRecord {
   id: string;
   document_id: string;
   llm_job_id: string | null;
-  is_current: boolean;
+  is_latest: boolean;
   is_partial: boolean;
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
@@ -179,7 +179,7 @@ export async function getLlmResponsesForProject(
   let query = supabase
     .from("responses")
     .select(
-      "id, document_id, llm_job_id, is_current, is_partial, answers, " +
+      "id, document_id, llm_job_id, is_latest, is_partial, answers, " +
         "justifications, respondent_name, created_at, llm_error, " +
         "documents(id, title, external_id)"
     )
@@ -198,7 +198,7 @@ export async function getLlmResponsesForProject(
     id: string;
     document_id: string;
     llm_job_id: string | null;
-    is_current: boolean;
+    is_latest: boolean;
     is_partial: boolean;
     answers: Record<string, unknown> | null;
     justifications: Record<string, string> | null;
@@ -212,7 +212,7 @@ export async function getLlmResponsesForProject(
     id: r.id,
     document_id: r.document_id,
     llm_job_id: r.llm_job_id,
-    is_current: r.is_current,
+    is_latest: r.is_latest,
     is_partial: r.is_partial,
     answers: r.answers ?? {},
     justifications: r.justifications,
@@ -307,7 +307,7 @@ export async function getDocumentsForSelection(
       .from("responses")
       .select("document_id, respondent_type")
       .eq("project_id", projectId)
-      .eq("is_current", true),
+      .eq("is_latest", true),
   ]);
 
   if (docsError) throw new Error(docsError.message);

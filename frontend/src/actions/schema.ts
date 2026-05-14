@@ -57,7 +57,7 @@ export async function saveSchema(
 
   if (error) throw new Error(error.message);
 
-  // is_current não é flipado para false aqui — staleness é detectada no
+  // is_latest não é flipado para false aqui — staleness é detectada no
   // display via answer_field_hashes (lib/reviews/queries.ts:isFieldStale).
   // Caso contrário, ajustar schema durante uma revisão de erros LLM apaga as
   // respostas antigas e perde o contexto da investigação. Ver #85.

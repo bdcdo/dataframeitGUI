@@ -64,7 +64,7 @@ export default async function LlmInsightsPage({
       )
       .eq("project_id", id)
       .eq("respondent_type", "llm")
-      .eq("is_current", true),
+      .eq("is_latest", true),
     supabase
       .from("reviews")
       .select(

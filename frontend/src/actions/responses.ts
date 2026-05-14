@@ -119,7 +119,7 @@ export async function saveResponse(
         respondent_id: user.id,
         respondent_type: "humano",
         respondent_name: respondentName,
-        is_current: true,
+        is_latest: true,
         ...responsePayload,
       });
       if (insertErr) return { success: false, error: insertErr.message };

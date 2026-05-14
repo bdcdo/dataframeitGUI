@@ -41,7 +41,7 @@ export async function syncCompareAssignment(
       .single(),
     supabase
       .from("responses")
-      .select("id, respondent_type, is_current, answers")
+      .select("id, respondent_type, is_latest, answers")
       .eq("project_id", projectId)
       .eq("document_id", documentId),
     supabase
@@ -75,7 +75,7 @@ export async function syncCompareAssignment(
     answers: Record<string, unknown>;
   };
   const activeResponses: ActiveResponse[] = (responses ?? [])
-    .filter((r) => r.is_current || r.respondent_type === "humano")
+    .filter((r) => r.is_latest || r.respondent_type === "humano")
     .map((r) => ({
       id: r.id,
       answers: (r.answers ?? {}) as Record<string, unknown>,

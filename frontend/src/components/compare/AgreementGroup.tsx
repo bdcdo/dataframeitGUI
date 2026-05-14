@@ -15,7 +15,7 @@ interface AgreementResponse {
   respondent_name: string;
   answer: unknown;
   justification?: string;
-  is_current: boolean;
+  is_latest: boolean;
   isFieldStale: boolean;
   schemaVersion?: string | null;
 }

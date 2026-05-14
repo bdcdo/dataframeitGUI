@@ -177,10 +177,10 @@ export async function fetchReviewBaseData(
   let responsesQuery = supabase
     .from("responses")
     .select(
-      "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_current, pydantic_hash, answer_field_hashes, created_at",
+      "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, created_at",
     )
     .eq("project_id", projectId)
-    .eq("is_current", true)
+    .eq("is_latest", true)
     .limit(REVIEW_BASE_DATA_LIMIT);
 
   if (options?.since) {

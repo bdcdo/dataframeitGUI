@@ -180,7 +180,7 @@ async function computeLottery(
         .from("responses")
         .select("document_id")
         .eq("project_id", params.projectId)
-        .eq("is_current", true),
+        .eq("is_latest", true),
     ]);
 
     const minResponses = project?.min_responses_for_comparison || 2;

@@ -68,7 +68,7 @@ export default async function MyVerdictsPage({
     .eq("project_id", id)
     .eq("respondent_id", effectiveUserId)
     .eq("respondent_type", "humano")
-    .eq("is_current", true);
+    .eq("is_latest", true);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const fieldDescMap = new Map(fields.map((f) => [f.name, f.description]));
@@ -113,7 +113,7 @@ export default async function MyVerdictsPage({
           .select("respondent_id, respondent_name")
           .eq("project_id", id)
           .eq("respondent_type", "humano")
-          .eq("is_current", true)
+          .eq("is_latest", true)
       : Promise.resolve({ data: null }),
   ]);
 

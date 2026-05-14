@@ -36,7 +36,7 @@ interface ComparisonResponse {
   respondent_name: string;
   answer: unknown;
   justification?: string;
-  is_current: boolean;
+  is_latest: boolean;
   isFieldStale: boolean;
   schemaVersion?: string | null;
 }
@@ -195,7 +195,7 @@ export function ComparisonPanel({
               respondent_name: r.respondent_name,
               answer: r.answer,
               justification: r.justification,
-              is_current: r.is_current,
+              is_latest: r.is_latest,
               isFieldStale: r.isFieldStale,
               schemaVersion: r.schemaVersion,
             }))}
