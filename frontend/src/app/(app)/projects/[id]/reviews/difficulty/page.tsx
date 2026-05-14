@@ -7,6 +7,7 @@ import {
 } from "@/lib/reviews/queries";
 import { HardestDocuments } from "@/components/reviews/HardestDocuments";
 import { DateSinceFilter } from "@/components/reviews/DateSinceFilter";
+import { TruncationBanner } from "@/components/reviews/TruncationBanner";
 
 export default async function DifficultyPage({
   params,
@@ -49,6 +50,7 @@ export default async function DifficultyPage({
 
   return (
     <div className="mx-auto max-w-5xl p-6 space-y-4">
+      <TruncationBanner truncated={ctx.truncated} />
       <DateSinceFilter />
       {hardestDocuments.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
