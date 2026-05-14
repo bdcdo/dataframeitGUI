@@ -29,7 +29,9 @@ export default async function ProjectLayout({
         .select("first_name")
         .eq("id", user.id)
         .single(),
-      getRunningLlmCount(id),
+      // Best-effort: o badge "LLM rodando" e cosmetico. Uma falha aqui (RLS,
+      // rede) nao deve derrubar o layout inteiro do projeto — degrada para 0.
+      getRunningLlmCount(id).catch(() => 0),
     ]);
 
   if (!project) notFound();
