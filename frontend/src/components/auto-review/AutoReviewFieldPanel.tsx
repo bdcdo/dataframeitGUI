@@ -67,6 +67,7 @@ export function AutoReviewFieldPanel({
   // entre "eu acertei" / "LLM acertou", então esconder por default era um
   // clique extra desnecessário.
   const [showJustification, setShowJustification] = useState(true);
+  const justificationMissing = !justification.trim();
   // Hints começam abertos até o usuário fechar uma vez (persistido em localStorage).
   // Lazy initializer roda só uma vez no mount, lê do localStorage sem flicker.
   const [hintsOpen, setHintsOpen] = useState(() => {
@@ -305,37 +306,32 @@ export function AutoReviewFieldPanel({
         {!readOnly &&
         !field.alreadyAnswered &&
         verdictRequiresJustification(choice) ? (
-          (() => {
-            const missing = !justification.trim();
-            return (
-              <div className="space-y-1.5">
-                <Label htmlFor="self-justification" className="text-sm">
-                  Justificativa <span className="text-destructive">*</span>
-                </Label>
-                <Textarea
-                  id="self-justification"
-                  ref={justificationRef}
-                  rows={3}
-                  value={justification}
-                  onChange={(e) => onJustificationChange(e.target.value)}
-                  placeholder={
-                    choice === "ambiguo"
-                      ? "Por que este campo é ambíguo? Isto será incluído no comentário de discussão."
-                      : "Por que você acha que sua resposta está correta? O árbitro verá isto."
-                  }
-                  className={cn(
-                    missing &&
-                      "border-destructive focus-visible:border-destructive focus-visible:ring-destructive/20",
-                  )}
-                />
-                {missing ? (
-                  <p className="text-xs text-destructive">
-                    Obrigatória — sem ela este campo não é enviado.
-                  </p>
-                ) : null}
-              </div>
-            );
-          })()
+          <div className="space-y-1.5">
+            <Label htmlFor="self-justification" className="text-sm">
+              Justificativa <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              id="self-justification"
+              ref={justificationRef}
+              rows={3}
+              value={justification}
+              onChange={(e) => onJustificationChange(e.target.value)}
+              placeholder={
+                choice === "ambiguo"
+                  ? "Por que este campo é ambíguo? Isto será incluído no comentário de discussão."
+                  : "Por que você acha que sua resposta está correta? O árbitro verá isto."
+              }
+              className={cn(
+                justificationMissing &&
+                  "border-destructive focus-visible:border-destructive focus-visible:ring-destructive/20",
+              )}
+            />
+            {justificationMissing ? (
+              <p className="text-xs text-destructive">
+                Obrigatória — sem ela este campo não é enviado.
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         {(readOnly || field.alreadyAnswered) && field.selfJustification ? (
@@ -366,11 +362,9 @@ export function AutoReviewFieldPanel({
               <span
                 className={cn(
                   "text-xs",
-                  readyCount > 0
-                    ? "text-muted-foreground"
-                    : incompleteCount > 0
-                      ? "text-destructive"
-                      : "text-muted-foreground",
+                  readyCount === 0 && incompleteCount > 0
+                    ? "text-destructive"
+                    : "text-muted-foreground",
                 )}
               >
                 {readyCount > 0
@@ -384,9 +378,11 @@ export function AutoReviewFieldPanel({
                 onClick={onSubmit}
                 disabled={!canSubmit}
                 title={
-                  canSubmit
-                    ? "Enviar os campos decididos"
-                    : "Decida ao menos um campo para enviar"
+                  submitting
+                    ? "Enviando…"
+                    : readyCount > 0
+                      ? "Enviar os campos decididos"
+                      : "Decida ao menos um campo para enviar"
                 }
               >
                 {submitting ? "Enviando…" : "Enviar"}

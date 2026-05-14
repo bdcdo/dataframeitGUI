@@ -87,6 +87,17 @@ export function AutoReviewPage({
     if (v) setPinnedDocId(v);
   }, [storageKey]);
 
+  // Após router.refresh(), um doc totalmente resolvido sai da fila — o
+  // pinnedDocId em sessionStorage fica órfão. Limpa o storage para não
+  // restaurar um id inexistente numa sessão futura; o state em memória pode
+  // seguir intocado porque o docIndex já cai para 0 quando o id não bate.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (pinnedDocId && !docs.some((d) => d.docId === pinnedDocId)) {
+      window.sessionStorage.removeItem(storageKey);
+    }
+  }, [docs, pinnedDocId, storageKey]);
+
   const docIndex = useMemo(() => {
     if (docs.length === 0) return 0;
     if (pinnedDocId) {
