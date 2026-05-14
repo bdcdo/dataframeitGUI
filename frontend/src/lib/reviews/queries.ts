@@ -37,6 +37,12 @@ interface ReviewRow {
 
 /* ── Context shared across computations ── */
 
+export interface ReviewDataTruncation {
+  responses: boolean;
+  reviews: boolean;
+  documents: boolean;
+}
+
 export interface ReviewComputationContext {
   fields: PydanticField[];
   comparableFields: PydanticField[];
@@ -47,6 +53,10 @@ export interface ReviewComputationContext {
   responsesByDoc: Map<string, ResponseRow[]>;
   uniqueReviews: ReviewRow[];
   profileMap: Map<string, string>;
+  // true para cada tabela cuja query atingiu REVIEW_BASE_DATA_LIMIT — os
+  // dados agregados podem estar silenciosamente errados. As paginas de
+  // reviews renderizam um TruncationBanner quando alguma flag e true.
+  truncated: ReviewDataTruncation;
 }
 
 /* ── Pure helpers ── */
@@ -140,7 +150,7 @@ function getRespondentDisplayName(
 
 /* ── Fetch base data ── */
 
-const REVIEW_BASE_DATA_LIMIT = 50000;
+export const REVIEW_BASE_DATA_LIMIT = 50000;
 
 export async function fetchReviewBaseData(
   supabase: SupabaseClient,
@@ -187,12 +197,13 @@ export async function fetchReviewBaseData(
       .limit(REVIEW_BASE_DATA_LIMIT),
   ]);
 
-  for (const [name, rows] of [
-    ["responses", responses],
-    ["reviews", reviews],
-    ["documents", documents],
-  ] as const) {
-    if (rows && rows.length === REVIEW_BASE_DATA_LIMIT) {
+  const truncated: ReviewDataTruncation = {
+    responses: responses?.length === REVIEW_BASE_DATA_LIMIT,
+    reviews: reviews?.length === REVIEW_BASE_DATA_LIMIT,
+    documents: documents?.length === REVIEW_BASE_DATA_LIMIT,
+  };
+  for (const [name, isTruncated] of Object.entries(truncated)) {
+    if (isTruncated) {
       console.warn(
         `fetchReviewBaseData: ${name} atingiu o teto de ${REVIEW_BASE_DATA_LIMIT} linhas para o projeto ${projectId} — dados podem estar truncados, considere paginar.`,
       );
@@ -278,6 +289,7 @@ export async function fetchReviewBaseData(
     responsesByDoc,
     uniqueReviews,
     profileMap,
+    truncated,
   };
 }
 
