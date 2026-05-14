@@ -6,6 +6,7 @@ import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
+import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
 import { revalidatePath } from "next/cache";
 import type {
@@ -17,8 +18,10 @@ import type {
 export interface SelfVerdictInput {
   fieldName: string;
   verdict: SelfVerdict;
-  // Obrigatoria quando verdict='contesta_llm': o pesquisador registra por que
-  // acha que sua resposta esta correta. Exibida ao arbitro na fase de revelacao.
+  // Obrigatoria quando verdict='contesta_llm' ou 'ambiguo'. Em contesta_llm o
+  // pesquisador registra por que acha que sua resposta esta correta (exibida ao
+  // arbitro na revelacao); em ambiguo registra por que o campo e ambiguo
+  // (anexada ao project_comments de discussao).
   justification?: string;
 }
 
@@ -47,13 +50,16 @@ export async function submitAutoReview(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
-    // Contestar o LLM exige justificativa — o arbitro precisa do contraponto
-    // humano na fase de revelacao.
+    // contesta_llm e ambiguo exigem justificativa — o arbitro precisa do
+    // contraponto humano na revelacao; ambiguo leva o porque para a discussao.
     for (const v of verdicts) {
-      if (v.verdict === "contesta_llm" && !v.justification?.trim()) {
+      if (verdictRequiresJustification(v.verdict) && !v.justification?.trim()) {
         return {
           success: false,
-          error: `Campo "${v.fieldName}": justificativa obrigatória quando você contesta o LLM.`,
+          error:
+            v.verdict === "ambiguo"
+              ? `Campo "${v.fieldName}": justificativa obrigatória quando você marca como ambíguo.`
+              : `Campo "${v.fieldName}": justificativa obrigatória quando você contesta o LLM.`,
         };
       }
     }
@@ -71,10 +77,9 @@ export async function submitAutoReview(
           .update({
             self_verdict: v.verdict,
             self_reviewed_at: now,
-            self_justification:
-              v.verdict === "contesta_llm"
-                ? (v.justification?.trim() ?? null)
-                : null,
+            self_justification: verdictRequiresJustification(v.verdict)
+              ? (v.justification?.trim() ?? null)
+              : null,
           })
           .eq("project_id", projectId)
           .eq("document_id", documentId)
@@ -233,6 +238,8 @@ export async function submitAutoReview(
             `Campo "${v.fieldName}" marcado como ambíguo na auto-revisão.`,
             `Humano respondeu: ${humanAnswer}`,
             `LLM respondeu: ${llmAnswer}`,
+            // Justificativa garantida nao-vazia pela validacao no topo da funcao.
+            `Justificativa do pesquisador: ${v.justification!.trim()}`,
             `Precisa de discussão para decidir o gabarito.`,
           ].join("\n\n");
           return {

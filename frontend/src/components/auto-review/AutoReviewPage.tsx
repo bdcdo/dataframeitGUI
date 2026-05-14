@@ -100,7 +100,8 @@ export function AutoReviewPage({
   // Sem o prefixo do docId, escolher "q1" no doc A pre-selecionaria "q1" do
   // doc B na navegação. O composto garante isolamento por (doc, campo).
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
-  // Justificativa por (doc, campo) — só usada quando a escolha é contesta_llm.
+  // Justificativa por (doc, campo) — obrigatória quando a escolha é
+  // contesta_llm ou ambiguo.
   const [justifications, setJustifications] = useState<Record<string, string>>(
     {},
   );
@@ -205,7 +206,7 @@ export function AutoReviewPage({
   const doc = docs[docIndex];
   const currentField = doc.fields[fieldIndex];
   // Campo "decidido" = já respondido OU com escolha local; se a escolha for
-  // contesta_llm, a justificativa também precisa estar preenchida.
+  // contesta_llm ou ambiguo, a justificativa também precisa estar preenchida.
   const isFieldDecided = (f: AutoReviewField) => {
     const key = choiceKey(doc.docId, f.fieldName);
     return isAutoReviewFieldDecided(
