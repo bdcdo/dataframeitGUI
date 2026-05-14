@@ -224,7 +224,7 @@ export function CommentCard({
               <code className="text-xs font-mono text-muted-foreground/70">
                 {comment.fieldName}
               </code>
-              {isCoordinator && onEditField && comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "exclusao" && (
+              {isCoordinator && onEditField && comment.source !== "nota" && comment.source !== "exclusao" && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -235,7 +235,7 @@ export function CommentCard({
                   <Pencil className="h-3 w-3" />
                 </Button>
               )}
-              {!isCoordinator && onSuggestField && comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "exclusao" && (
+              {!isCoordinator && onSuggestField && comment.source !== "nota" && comment.source !== "exclusao" && (
                 <Button
                   variant="ghost"
                   size="sm"
