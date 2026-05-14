@@ -204,6 +204,9 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
       document_id: "doc1",
       field_name: "q1",
       author_id: "user1",
+      // kind='ambiguity' (nao o default 'note') — a aba Comentarios filtra por
+      // kind e o indice unico parcial idx_pc_ambiguity_unique so cobre este kind
+      kind: "ambiguity",
     });
     expect(String(rows[0].body)).toContain("ambíguo");
     expect(String(rows[0].body)).toContain("Adalimumabe");
@@ -236,5 +239,31 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
     expect(equivUpsert?.payload).toMatchObject([
       { field_name: "q1", response_a_id: "hr1", response_b_id: "lr1" },
     ]);
+  });
+
+  it("ambiguo nao duplica quando ja existe comentario kind='ambiguity'", async () => {
+    const submitAutoReview = await loadSubmit();
+    tableData.field_reviews = [
+      {
+        field_name: "q1",
+        human_response_id: "hr1",
+        llm_response_id: "lr1",
+        self_verdict: "ambiguo",
+      },
+    ];
+    // comentario de ambiguidade ja existe para (doc1, q1) — pode ter sido
+    // criado na aba Comparar por outro revisor; o check-before-insert filtra
+    // por kind='ambiguity', nao por author_id, entao suprime o INSERT.
+    tableData.project_comments = [{ field_name: "q1" }];
+
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "ambiguo" },
+    ]);
+    expect(r.success).toBe(true);
+
+    const commentInsert = writeCalls.find(
+      (c) => c.op === "insert" && c.table === "project_comments",
+    );
+    expect(commentInsert).toBeUndefined();
   });
 });

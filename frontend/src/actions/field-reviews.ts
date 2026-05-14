@@ -179,9 +179,13 @@ export async function submitAutoReview(
     }
 
     // ambiguo: o campo e genuinamente ambiguo → registra um project_comments
-    // com o contraste humano vs LLM para discussao posterior. Check-before-insert
-    // evita duplicar em retry. So age em campos cujo self_verdict gravado e
-    // 'ambiguo' (cobre este call e retry de falha parcial).
+    // kind='ambiguity' com o contraste humano vs LLM para discussao posterior.
+    // Mesmo invariante de submitVerdict (aba Comparar): um unico comentario de
+    // ambiguidade por (projeto, documento, campo), garantido pelo indice unico
+    // parcial idx_pc_ambiguity_unique. O check-before-insert evita o INSERT
+    // redundante no caso comum; o 23505 e o backstop real contra corrida.
+    // So age em campos cujo self_verdict gravado e 'ambiguo' (cobre este call e
+    // retry de falha parcial).
     const ambiguousFields = verdicts.filter(
       (v) =>
         v.verdict === "ambiguo" &&
@@ -214,7 +218,7 @@ export async function submitAutoReview(
           "field_name",
           ambiguousFields.map((v) => v.fieldName),
         )
-        .eq("author_id", user.id);
+        .eq("kind", "ambiguity");
       const alreadyCommented = new Set(
         (existingComments ?? []).map((r) => r.field_name as string),
       );
@@ -241,14 +245,23 @@ export async function submitAutoReview(
             field_name: v.fieldName,
             author_id: user.id,
             body,
+            kind: "ambiguity",
           };
         });
 
-      if (commentRows.length > 0) {
-        const { error: commentErr } = await admin
-          .from("project_comments")
-          .insert(commentRows);
-        if (commentErr) return { success: false, error: commentErr.message };
+      // Insert linha a linha: o indice unico parcial cobre um campo de cada
+      // vez, entao um INSERT em lote falharia inteiro se um unico campo
+      // colidisse com um revisor concorrente. 23505 (unique_violation) e
+      // tolerado — o comentario ja existe, que e o estado desejado.
+      const commentInserts = await Promise.all(
+        commentRows.map((row) =>
+          admin.from("project_comments").insert([row]),
+        ),
+      );
+      for (const { error: commentErr } of commentInserts) {
+        if (commentErr && commentErr.code !== "23505") {
+          return { success: false, error: commentErr.message };
+        }
       }
     }
 
