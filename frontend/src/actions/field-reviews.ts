@@ -81,28 +81,21 @@ export async function submitAutoReview(
           .eq("field_name", v.fieldName)
           .eq("self_reviewer_id", user.id)
           .is("self_verdict", null)
-          .select("field_name, human_response_id, llm_response_id"),
+          .select("field_name"),
       ),
     );
 
-    // Campos efetivamente atualizados neste call, indexados por nome — os
-    // efeitos colaterais de equivalente/ambiguo precisam dos response ids.
-    const updatedByField = new Map<
-      string,
-      { human_response_id: string; llm_response_id: string }
-    >();
+    // Campos efetivamente atualizados neste call (UPDATE casou linha). Fonte
+    // para a logica de arbitragem de contesta_llm — re-submit nao reabre
+    // arbitragem. Os efeitos de equivalente/ambiguo usam outra fonte (estado
+    // real de field_reviews) para tolerar retry apos falha parcial.
+    const updatedFieldNames = new Set<string>();
     for (const res of updateResults) {
       if (res.error) return { success: false, error: res.error.message };
       for (const r of res.data ?? []) {
-        if (r.field_name) {
-          updatedByField.set(r.field_name, {
-            human_response_id: r.human_response_id,
-            llm_response_id: r.llm_response_id,
-          });
-        }
+        if (r.field_name) updatedFieldNames.add(r.field_name);
       }
     }
-    const updatedFieldNames = new Set(updatedByField.keys());
 
     // Marca assignment auto_revisao como concluido
     await admin
@@ -113,16 +106,55 @@ export async function submitAutoReview(
       .eq("user_id", user.id)
       .eq("type", "auto_revisao");
 
+    // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
+    // campos recem-atualizados quanto para os que JA estavam com o verdict
+    // gravado — retry apos falha parcial (o UPDATE acima casa 0 linhas porque
+    // self_verdict ja nao e NULL). Por isso a fonte de verdade aqui e o estado
+    // real de field_reviews, nao `updatedByField`. Os efeitos sao idempotentes
+    // (upsert ignoreDuplicates / check-before-insert), entao re-executar e
+    // seguro.
+    const sideEffectFieldNames = verdicts
+      .filter((v) => v.verdict === "equivalente" || v.verdict === "ambiguo")
+      .map((v) => v.fieldName);
+    const effectByField = new Map<
+      string,
+      {
+        self_verdict: SelfVerdict | null;
+        human_response_id: string;
+        llm_response_id: string;
+      }
+    >();
+    if (sideEffectFieldNames.length > 0) {
+      const { data: stateRows, error: stateErr } = await admin
+        .from("field_reviews")
+        .select("field_name, self_verdict, human_response_id, llm_response_id")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("self_reviewer_id", user.id)
+        .in("field_name", sideEffectFieldNames);
+      if (stateErr) return { success: false, error: stateErr.message };
+      for (const r of stateRows ?? []) {
+        effectByField.set(r.field_name, {
+          self_verdict: r.self_verdict,
+          human_response_id: r.human_response_id,
+          llm_response_id: r.llm_response_id,
+        });
+      }
+    }
+
     // equivalente: registra o par humano↔LLM em response_equivalences. O campo
     // fica resolvido (sem arbitragem) e a divergencia nao reaparece, pois
     // createAutoReviewIfDiverges/regenerateAutoReviewBacklog passam a consultar
-    // response_equivalences. So age nos campos atualizados neste call.
+    // response_equivalences. So age em campos cujo self_verdict gravado e
+    // 'equivalente' (cobre este call e retry de falha parcial).
     const equivalentFields = verdicts.filter(
-      (v) => v.verdict === "equivalente" && updatedFieldNames.has(v.fieldName),
+      (v) =>
+        v.verdict === "equivalente" &&
+        effectByField.get(v.fieldName)?.self_verdict === "equivalente",
     );
     if (equivalentFields.length > 0) {
       const equivRows = equivalentFields.map((v) => {
-        const ids = updatedByField.get(v.fieldName)!;
+        const ids = effectByField.get(v.fieldName)!;
         const [a, b] = canonicalPair(
           ids.human_response_id,
           ids.llm_response_id,
@@ -148,14 +180,17 @@ export async function submitAutoReview(
 
     // ambiguo: o campo e genuinamente ambiguo → registra um project_comments
     // com o contraste humano vs LLM para discussao posterior. Check-before-insert
-    // evita duplicar em retry. So age nos campos atualizados neste call.
+    // evita duplicar em retry. So age em campos cujo self_verdict gravado e
+    // 'ambiguo' (cobre este call e retry de falha parcial).
     const ambiguousFields = verdicts.filter(
-      (v) => v.verdict === "ambiguo" && updatedFieldNames.has(v.fieldName),
+      (v) =>
+        v.verdict === "ambiguo" &&
+        effectByField.get(v.fieldName)?.self_verdict === "ambiguo",
     );
     if (ambiguousFields.length > 0) {
       const responseIds = new Set<string>();
       for (const v of ambiguousFields) {
-        const ids = updatedByField.get(v.fieldName)!;
+        const ids = effectByField.get(v.fieldName)!;
         responseIds.add(ids.human_response_id);
         responseIds.add(ids.llm_response_id);
       }
@@ -187,7 +222,7 @@ export async function submitAutoReview(
       const commentRows = ambiguousFields
         .filter((v) => !alreadyCommented.has(v.fieldName))
         .map((v) => {
-          const ids = updatedByField.get(v.fieldName)!;
+          const ids = effectByField.get(v.fieldName)!;
           const humanAnswer = formatAnswerTechnical(
             answersById.get(ids.human_response_id)?.[v.fieldName],
           );

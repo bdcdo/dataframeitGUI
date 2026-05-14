@@ -15,23 +15,33 @@ function makeClient() {
   return {
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
+      let op = "select";
       for (const m of ["select", "eq", "is", "in", "neq"]) {
         builder[m] = () => builder;
       }
       builder.update = (payload: unknown) => {
         writeCalls.push({ table, op: "update", payload });
+        op = "update";
         return builder;
       };
       builder.upsert = (payload: unknown) => {
         writeCalls.push({ table, op: "upsert", payload });
+        op = "upsert";
         return builder;
       };
       builder.insert = (payload: unknown) => {
         writeCalls.push({ table, op: "insert", payload });
+        op = "insert";
         return builder;
       };
+      // Resolve por operacao quando ha override `${table}:${op}` — permite um
+      // teste fazer o UPDATE casar 0 linhas mas o SELECT de estado ver a linha
+      // (cenario de retry apos falha parcial). Senao cai no dado generico.
       builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({ data: tableData[table] ?? null, error: null });
+        resolve({
+          data: tableData[`${table}:${op}`] ?? tableData[table] ?? null,
+          error: null,
+        });
       return builder;
     },
   };
@@ -52,8 +62,9 @@ vi.mock("@/lib/supabase/admin", () => ({
 beforeEach(() => {
   writeCalls = [];
   tableData = {
-    // UPDATE de field_reviews retorna a linha tocada (via .select), incluindo
-    // os response ids usados pelos efeitos de equivalente/ambiguo.
+    // UPDATE de field_reviews retorna a linha tocada (via .select). O SELECT de
+    // estado real (efeitos de equivalente/ambiguo) le esta mesma linha — testes
+    // desses vereditos sobrescrevem `self_verdict` conforme o caso.
     field_reviews: [
       {
         field_name: "q1",
@@ -128,6 +139,14 @@ describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", ()
 describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
   it("equivalente → faz upsert do par canonico em response_equivalences", async () => {
     const submitAutoReview = await loadSubmit();
+    tableData.field_reviews = [
+      {
+        field_name: "q1",
+        human_response_id: "hr1",
+        llm_response_id: "lr1",
+        self_verdict: "equivalente",
+      },
+    ];
     const r = await submitAutoReview("p1", "doc1", [
       { fieldName: "q1", verdict: "equivalente" },
     ]);
@@ -158,6 +177,14 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
 
   it("ambiguo → insere project_comments com o contraste humano vs LLM", async () => {
     const submitAutoReview = await loadSubmit();
+    tableData.field_reviews = [
+      {
+        field_name: "q1",
+        human_response_id: "hr1",
+        llm_response_id: "lr1",
+        self_verdict: "ambiguo",
+      },
+    ];
     const r = await submitAutoReview("p1", "doc1", [
       { fieldName: "q1", verdict: "ambiguo" },
     ]);
@@ -180,5 +207,34 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
     });
     expect(String(rows[0].body)).toContain("ambíguo");
     expect(String(rows[0].body)).toContain("Adalimumabe");
+  });
+
+  it("equivalente em retry (UPDATE casa 0 linhas) ainda registra a equivalencia", async () => {
+    const submitAutoReview = await loadSubmit();
+    // Cenario de retry: um call anterior gravou self_verdict='equivalente' mas
+    // falhou no upsert de response_equivalences. Agora o UPDATE casa 0 linhas
+    // (self_verdict ja nao e NULL), mas o estado real mostra o campo resolvido.
+    tableData["field_reviews:update"] = [];
+    tableData.field_reviews = [
+      {
+        field_name: "q1",
+        human_response_id: "hr1",
+        llm_response_id: "lr1",
+        self_verdict: "equivalente",
+      },
+    ];
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "equivalente" },
+    ]);
+    expect(r.success).toBe(true);
+
+    // Apesar do UPDATE nao ter casado, o efeito colateral roda (idempotente).
+    const equivUpsert = writeCalls.find(
+      (c) => c.op === "upsert" && c.table === "response_equivalences",
+    );
+    expect(equivUpsert).toBeDefined();
+    expect(equivUpsert?.payload).toMatchObject([
+      { field_name: "q1", response_a_id: "hr1", response_b_id: "lr1" },
+    ]);
   });
 });
