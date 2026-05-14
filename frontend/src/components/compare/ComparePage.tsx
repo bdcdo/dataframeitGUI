@@ -111,21 +111,6 @@ export function ComparePage({
     Record<string, Record<string, ExistingVerdictInfo>>
   >(existingReviews);
 
-  const documentsRef = useRef(documents);
-  useEffect(() => {
-    documentsRef.current = documents;
-  }, [documents]);
-
-  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (advanceTimerRef.current) {
-        clearTimeout(advanceTimerRef.current);
-        advanceTimerRef.current = null;
-      }
-    };
-  }, []);
-
   // O parecer atual é derivado de `pinnedDocId` (última escolha explícita do
   // usuário). `documents` é reordenado pelo Server Component a cada
   // `revalidatePath` (sort por pendências); rastrear por índice numérico
@@ -159,7 +144,10 @@ export function ComparePage({
   }, [pinnedDocId, documents]);
 
   const currentDoc = documents[docIndex];
-  const allDocDivergent = currentDoc ? (divergentFields[currentDoc.id] || []) : [];
+  const allDocDivergent = useMemo(
+    () => (currentDoc ? divergentFields[currentDoc.id] || [] : []),
+    [currentDoc, divergentFields],
+  );
   const divergentSet = useMemo(() => new Set(allDocDivergent), [allDocDivergent]);
 
   const docFields = filter === "all"
@@ -179,6 +167,25 @@ export function ComparePage({
       return fieldsForDoc.every((fn) => !!localReviews[doc.id]?.[fn]);
     }).length;
   }, [documents, divergentFields, localReviews]);
+
+  // Documento "concluído" = todos os campos divergentes têm veredito. Quando
+  // verdadeiro, a UI mostra o botão "Próximo parecer" (com foco automático)
+  // em vez de avançar por timer cego.
+  const isCurrentDocComplete = useMemo(() => {
+    if (!currentDoc || allDocDivergent.length === 0) return false;
+    const docReviews = localReviews[currentDoc.id];
+    if (!docReviews) return false;
+    return allDocDivergent.every((fn) => !!docReviews[fn]);
+  }, [currentDoc, allDocDivergent, localReviews]);
+
+  const hasNextDoc = docIndex < documents.length - 1;
+
+  const handleNextDoc = useCallback(() => {
+    if (docIndex < documents.length - 1) {
+      setPinnedDocId(documents[docIndex + 1].id);
+      setFieldIndex(0);
+    }
+  }, [docIndex, documents]);
 
   const currentVerdict = currentDoc && currentFieldName
     ? localReviews[currentDoc.id]?.[currentFieldName] ?? null
@@ -288,17 +295,6 @@ export function ComparePage({
 
       if (allFieldsReviewed) {
         toast.success("Revisão do documento concluída!");
-        const completedDocId = currentDoc.id;
-        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-        advanceTimerRef.current = setTimeout(() => {
-          advanceTimerRef.current = null;
-          const docs = documentsRef.current;
-          const idx = docs.findIndex((d) => d.id === completedDocId);
-          if (idx >= 0 && idx < docs.length - 1) {
-            setPinnedDocId(docs[idx + 1].id);
-            setFieldIndex(0);
-          }
-        }, 1500);
       } else if (fieldIndex < docFields.length - 1) {
         setFieldIndex(fieldIndex + 1);
       }
@@ -382,16 +378,6 @@ export function ComparePage({
         );
         if (allFieldsReviewed) {
           toast.success("Revisão do documento concluída!");
-          if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-          advanceTimerRef.current = setTimeout(() => {
-            advanceTimerRef.current = null;
-            const docs = documentsRef.current;
-            const idx = docs.findIndex((d) => d.id === docId);
-            if (idx >= 0 && idx < docs.length - 1) {
-              setPinnedDocId(docs[idx + 1].id);
-              setFieldIndex(0);
-            }
-          }, 1500);
         } else if (fieldIndex < docFields.length - 1) {
           setFieldIndex(fieldIndex + 1);
         }
@@ -585,6 +571,9 @@ export function ComparePage({
               existingVerdict={currentVerdict}
               reviewed={reviewed}
               isDivergent={isCurrentFieldDivergent}
+              isDocComplete={isCurrentDocComplete}
+              hasNextDoc={hasNextDoc}
+              onNextDoc={handleNextDoc}
               onFieldNavigate={setFieldIndex}
               onVerdict={handleVerdict}
               onMarkReviewed={handleMarkReviewed}
