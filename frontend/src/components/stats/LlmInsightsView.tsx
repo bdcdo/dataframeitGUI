@@ -22,8 +22,10 @@ import {
   resolveError,
   reopenError,
 } from "@/actions/stats";
+import { regenerateAutoReviewBacklog } from "@/actions/field-reviews";
 import { markLlmEquivalent } from "@/actions/equivalences";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import type { PydanticField } from "@/lib/types";
 import type {
   LlmError,
@@ -76,6 +78,21 @@ export function LlmInsightsView({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editingField, setEditingField] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+
+  async function handleRegenerateBacklog() {
+    setRegenerating(true);
+    const result = await regenerateAutoReviewBacklog(projectId);
+    setRegenerating(false);
+    if (!result.success) {
+      toast.error(result.error ?? "Falha ao regenerar backlog");
+      return;
+    }
+    toast.success(
+      `Backlog regenerado. ${result.scanned ?? 0} resposta(s) escaneada(s), ${result.regenerated ?? 0} doc(s) com divergência.`,
+    );
+    router.refresh();
+  }
 
   // Error filters
   const [errorFieldFilter, setErrorFieldFilter] = useState("all");
@@ -229,6 +246,26 @@ export function LlmInsightsView({
   return (
     <>
     <div className="space-y-4">
+      {isCoordinator ? (
+        <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
+          <div>
+            <p className="text-sm font-medium">Backlog de auto-revisão</p>
+            <p className="text-xs text-muted-foreground">
+              Varre todas as codificações humanas concluídas e cria entradas de
+              auto-revisão para divergências com o LLM. Idempotente.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRegenerateBacklog}
+            disabled={regenerating}
+          >
+            {regenerating ? "Regenerando…" : "Regenerar backlog"}
+          </Button>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="flex items-center gap-3 pt-6">
