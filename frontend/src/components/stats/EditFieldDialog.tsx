@@ -427,8 +427,9 @@ export function EditFieldDialog({
                 </Label>
                 <p className="text-xs text-muted-foreground">
                   Em branco, usa o default que exige citação textual do trecho
-                  do documento. Use <code>{"{name}"}</code> para o nome do
-                  campo.
+                  do documento. <code>{"{name}"}</code> é a única chave
+                  substituída (vira o nome do campo); qualquer outra chave entre
+                  chaves faz o texto ser usado literalmente, sem substituição.
                 </p>
                 <Textarea
                   value={justificationPrompt}
