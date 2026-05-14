@@ -19,6 +19,7 @@ import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
 import { CodingHeader } from "./CodingHeader";
+import { sortByRecent } from "@/lib/coding-sort";
 import { CURRENT_FILTER_VALUE } from "@/lib/rounds";
 import { toast } from "sonner";
 import { CheckCircle2, FileQuestion, ClipboardList } from "lucide-react";
@@ -34,26 +35,6 @@ export interface RoundFilterData {
 }
 
 export type CodingSortMode = "default" | "recent";
-
-// Ordena documentos pelo timestamp de codificacao do proprio pesquisador
-// (responses.updated_at), do mais recente para o mais antigo. Documentos ainda
-// nao codificados vao para o fim, preservando a ordem original entre si.
-function sortByRecent<T extends { id: string }>(
-  docs: T[],
-  codedAtByDoc: Record<string, string>,
-): T[] {
-  return docs
-    .map((doc, index) => ({ doc, index }))
-    .sort((a, b) => {
-      const ta = codedAtByDoc[a.doc.id];
-      const tb = codedAtByDoc[b.doc.id];
-      if (ta && tb) return tb.localeCompare(ta);
-      if (ta) return -1;
-      if (tb) return 1;
-      return a.index - b.index;
-    })
-    .map((entry) => entry.doc);
-}
 
 interface CodingPageProps {
   projectId: string;
@@ -361,14 +342,19 @@ export function CodingPage({
       markClean(currentDoc.id);
       toast.success("Respostas salvas!");
       if (docIndex < sortedDocuments.length - 1) {
-        setDocIndex(docIndex + 1);
+        const nextIndex = docIndex + 1;
+        setDocIndex(nextIndex);
+        // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
+        // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
+        // o topo da lista), nao no proximo.
+        updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
       } else {
         setAllDone(true);
       }
     } else {
       toast.error(result.error || "Erro ao salvar respostas");
     }
-  }, [currentDoc, docAnswers, docNotes, projectId, docIndex, sortedDocuments.length, markClean]);
+  }, [currentDoc, docAnswers, docNotes, projectId, docIndex, sortedDocuments, updateDocParam, markClean]);
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
