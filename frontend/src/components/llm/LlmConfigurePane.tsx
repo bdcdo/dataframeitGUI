@@ -310,20 +310,27 @@ export function LlmConfigurePane({
   useEffect(() => {
     let cancelled = false;
     async function check() {
-      await cleanupStaleLlmRuns(projectId);
-      if (cancelled) return;
-      const running = await getRunningLlmJob(projectId);
-      if (cancelled || !running) return;
-      // Reset counters antes de religar polling: sem isso, valores residuais
-      // de uma run anterior (encerrada nesta sessao) ficariam visiveis ate o
-      // primeiro tick do polling preencher os valores reais.
-      setProcessedComplete(0);
-      setProcessedPartial(0);
-      setProcessedEmpty(0);
-      setJobId(running.job_id);
-      setStatus("running");
-      setPhase("loading");
-      pollProgress(running.job_id);
+      // Best-effort: retomar o card de polling e cosmetico. Se getRunningLlmJob
+      // falhar (RLS, rede), apenas nao religa o polling — mesmo resultado de
+      // antes, sem unhandled rejection.
+      try {
+        await cleanupStaleLlmRuns(projectId);
+        if (cancelled) return;
+        const running = await getRunningLlmJob(projectId);
+        if (cancelled || !running) return;
+        // Reset counters antes de religar polling: sem isso, valores residuais
+        // de uma run anterior (encerrada nesta sessao) ficariam visiveis ate o
+        // primeiro tick do polling preencher os valores reais.
+        setProcessedComplete(0);
+        setProcessedPartial(0);
+        setProcessedEmpty(0);
+        setJobId(running.job_id);
+        setStatus("running");
+        setPhase("loading");
+        pollProgress(running.job_id);
+      } catch (e) {
+        console.error("Falha ao retomar run em andamento:", e);
+      }
     }
     check();
     return () => {
@@ -336,12 +343,18 @@ export function LlmConfigurePane({
     if (filterMode === "specific") return;
     let cancelled = false;
     async function fetch() {
-      const result = await getEligibleDocCount(
-        projectId,
-        filterMode as "all" | "pending" | "max_responses" | "random_sample",
-        filterMode === "max_responses" ? maxResponseCount : undefined
-      );
-      if (!cancelled) setEligibleCount(result.eligible);
+      // Best-effort: se a contagem falhar, mantem o valor anterior (o display
+      // cai no fallback totalDocs) em vez de gerar unhandled rejection.
+      try {
+        const result = await getEligibleDocCount(
+          projectId,
+          filterMode as "all" | "pending" | "max_responses" | "random_sample",
+          filterMode === "max_responses" ? maxResponseCount : undefined
+        );
+        if (!cancelled) setEligibleCount(result.eligible);
+      } catch (e) {
+        console.error("Falha ao calcular documentos elegiveis:", e);
+      }
     }
     fetch();
     return () => { cancelled = true; };
