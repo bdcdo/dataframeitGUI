@@ -1,45 +1,85 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { AutoReviewPage } from "@/components/auto-review/AutoReviewPage";
+import {
+  AutoReviewPage,
+  type AutoReviewDoc,
+  type AutoReviewQueueOwner,
+} from "@/components/auto-review/AutoReviewPage";
 import type { PydanticField } from "@/lib/types";
 
 export default async function AutoReviewRoute({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ viewAs?: string }>;
 }) {
   const { id } = await params;
+  const { viewAs } = await searchParams;
   const user = await getAuthUser();
   if (!user) redirect("/auth/login");
 
   const supabase = await createSupabaseServer();
   const isCoordinator = await isProjectCoordinator(supabase, id, user);
 
-  const [{ data: project }, { data: assignments }] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("pydantic_fields, name")
-      .eq("id", id)
-      .single(),
-    supabase
-      .from("assignments")
-      .select("document_id, status")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .eq("type", "auto_revisao")
-      .neq("status", "concluido"),
-  ]);
+  // viewAs só é honrado para coordenadores; pesquisador sempre vê a própria fila.
+  const targetUserId = isCoordinator && viewAs ? viewAs : user.id;
+
+  const [{ data: project }, { data: assignments }, { data: memberRows }] =
+    await Promise.all([
+      supabase
+        .from("projects")
+        .select("pydantic_fields, name")
+        .eq("id", id)
+        .single(),
+      supabase
+        .from("assignments")
+        .select("document_id, status")
+        .eq("project_id", id)
+        .eq("user_id", targetUserId)
+        .eq("type", "auto_revisao")
+        .neq("status", "concluido"),
+      isCoordinator
+        ? supabase
+            .from("project_members")
+            .select("user_id, profiles!inner(id, email, first_name, last_name)")
+            .eq("project_id", id)
+        : Promise.resolve({ data: [] as Array<unknown> }),
+    ]);
+
+  const reviewers: AutoReviewQueueOwner[] = isCoordinator
+    ? ((memberRows ?? []) as Array<{
+        user_id: string;
+        profiles: {
+          id: string;
+          email: string | null;
+          first_name: string | null;
+          last_name: string | null;
+        };
+      }>).map((m) => {
+        const fullName = [m.profiles?.first_name, m.profiles?.last_name]
+          .filter(Boolean)
+          .join(" ");
+        return {
+          userId: m.user_id,
+          email: m.profiles?.email ?? null,
+          name: fullName || null,
+        };
+      })
+    : [];
 
   const docIds = (assignments ?? []).map((a) => a.document_id);
   if (docIds.length === 0) {
     return (
       <AutoReviewPage
         projectId={id}
-        projectName={project?.name ?? ""}
         fields={(project?.pydantic_fields as PydanticField[]) ?? []}
         docs={[]}
         isCoordinator={isCoordinator}
+        viewAsUserId={targetUserId}
+        reviewers={reviewers}
+        currentUserId={user.id}
       />
     );
   }
@@ -56,11 +96,11 @@ export default async function AutoReviewRoute({
         "id, document_id, field_name, human_response_id, llm_response_id, self_verdict",
       )
       .in("document_id", docIds)
-      .eq("self_reviewer_id", user.id),
+      .eq("self_reviewer_id", targetUserId),
   ]);
 
-  // Buscar so as respostas referenciadas (evita puxar todas as versoes
-  // historicas de humano/LLM dos docs).
+  // Buscar só as respostas referenciadas (evita puxar todas as versões
+  // históricas de humano/LLM dos docs).
   const responseIdSet = new Set<string>();
   for (const fr of fieldReviews ?? []) {
     responseIdSet.add(fr.human_response_id);
@@ -75,24 +115,12 @@ export default async function AutoReviewRoute({
           .in("id", responseIds)
       : { data: [] };
 
-  // Para cada doc, agrupar field_reviews pendentes + answers humana/LLM
   const responsesById = new Map((responses ?? []).map((r) => [r.id, r]));
 
-  type DocPayload = {
-    docId: string;
-    title: string | null;
-    externalId: string | null;
-    text: string;
-    fields: Array<{
-      fieldName: string;
-      humanAnswer: unknown;
-      llmAnswer: unknown;
-      llmJustification: string | null;
-      alreadyAnswered: boolean;
-    }>;
-  };
+  const fieldsMeta = (project?.pydantic_fields as PydanticField[]) ?? [];
+  const fieldDescById = new Map(fieldsMeta.map((f) => [f.name, f.description]));
 
-  const docMap = new Map<string, DocPayload>();
+  const docMap = new Map<string, AutoReviewDoc>();
   for (const d of docs ?? []) {
     docMap.set(d.id, {
       docId: d.id,
@@ -110,6 +138,7 @@ export default async function AutoReviewRoute({
     const llm = responsesById.get(fr.llm_response_id);
     payload.fields.push({
       fieldName: fr.field_name,
+      fieldDescription: fieldDescById.get(fr.field_name) ?? null,
       humanAnswer:
         (human?.answers as Record<string, unknown>)?.[fr.field_name] ?? null,
       llmAnswer:
@@ -122,7 +151,7 @@ export default async function AutoReviewRoute({
     });
   }
 
-  // So mostra docs com pelo menos um campo divergente nao revisado
+  // Só mostra docs com pelo menos um campo divergente não revisado.
   const docsToReview = Array.from(docMap.values()).filter((d) =>
     d.fields.some((f) => !f.alreadyAnswered),
   );
@@ -130,10 +159,12 @@ export default async function AutoReviewRoute({
   return (
     <AutoReviewPage
       projectId={id}
-      projectName={project?.name ?? ""}
-      fields={(project?.pydantic_fields as PydanticField[]) ?? []}
+      fields={fieldsMeta}
       docs={docsToReview}
       isCoordinator={isCoordinator}
+      viewAsUserId={targetUserId}
+      reviewers={reviewers}
+      currentUserId={user.id}
     />
   );
 }
