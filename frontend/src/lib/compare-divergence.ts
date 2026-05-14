@@ -95,3 +95,31 @@ export function computeDivergentFieldNames(
 
   return divergent;
 }
+
+// A document is "complete" in the Compare queue when it has at least one
+// divergent field and every divergent field already has a verdict.
+export function isDocComplete(
+  divergentForDoc: string[] | undefined,
+  reviewsForDoc: Record<string, unknown> | undefined,
+): boolean {
+  if (!divergentForDoc || divergentForDoc.length === 0) return false;
+  if (!reviewsForDoc) return false;
+  return divergentForDoc.every((fn) => !!reviewsForDoc[fn]);
+}
+
+// Index of the next document that still has unreviewed divergences, scanning
+// the queue in its current order and skipping `currentDocId`. Returns -1 when
+// every other document is complete. The server re-sorts the queue on each
+// revalidate (completed docs sink to the bottom), so "next parecer" must be
+// found by completion state — never by `currentIndex + 1`.
+export function findNextPendingDocIndex(
+  docIds: string[],
+  divergentFields: Record<string, string[]>,
+  reviews: Record<string, Record<string, unknown>>,
+  currentDocId: string | undefined,
+): number {
+  return docIds.findIndex(
+    (id) =>
+      id !== currentDocId && !isDocComplete(divergentFields[id], reviews[id]),
+  );
+}

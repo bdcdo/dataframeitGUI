@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup, type FieldEquivalencePair } from "./AgreementGroup";
 import { MultiOptionReview } from "./MultiOptionReview";
@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn, normalizeForComparison } from "@/lib/utils";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
-import { CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
+import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
 import type { PydanticField } from "@/lib/types";
@@ -62,6 +62,9 @@ interface ComparisonPanelProps {
   existingVerdict: ExistingVerdict | null;
   reviewed: boolean[];
   isDivergent: boolean;
+  isDocComplete: boolean;
+  hasNextDoc: boolean;
+  onNextDoc: () => void;
   onFieldNavigate: (index: number) => void;
   onVerdict: (verdict: string, chosenResponseId?: string) => void;
   onMarkReviewed: () => void;
@@ -96,6 +99,9 @@ export function ComparisonPanel({
   existingVerdict,
   reviewed,
   isDivergent,
+  isDocComplete,
+  hasNextDoc,
+  onNextDoc,
   onFieldNavigate,
   onVerdict,
   onMarkReviewed,
@@ -111,6 +117,15 @@ export function ComparisonPanel({
   canManageAnyPair,
 }: ComparisonPanelProps) {
   const [suggestOpen, setSuggestOpen] = useState(false);
+
+  // Quando o documento é concluído, o botão "Próximo parecer" recebe foco
+  // automático para que um único Enter avance — sem timer cego.
+  const nextDocButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (isDocComplete && hasNextDoc) {
+      nextDocButtonRef.current?.focus({ preventScroll: true });
+    }
+  }, [isDocComplete, hasNextDoc, documentId]);
 
   const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
   const groupCount = useMemo(() => {
@@ -282,6 +297,30 @@ export function ComparisonPanel({
           </div>
         )}
       </div>
+
+      {isDocComplete && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-green-500/20 bg-green-500/5 px-4 py-2">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+            Revisão do documento concluída.
+          </span>
+          {hasNextDoc ? (
+            <Button
+              ref={nextDocButtonRef}
+              size="sm"
+              className="gap-1"
+              onClick={onNextDoc}
+            >
+              Próximo parecer
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          ) : (
+            <span className="text-xs font-medium text-green-700">
+              Fila concluída.
+            </span>
+          )}
+        </div>
+      )}
 
       {isDivergent && (
         <KeyboardHints
