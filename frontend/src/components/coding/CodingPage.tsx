@@ -281,33 +281,51 @@ export function CodingPage({
   }, [mode, currentDoc?.id, selectedBrowseDoc?.id, dirtyDocs]);
 
   // Auto-save when tab loses visibility (fallback for close without confirm).
-  // A aba ja esta hidden — nao da pra mostrar toast, entao logamos no console
-  // para que falhas silenciosas apareçam ao menos em devtools/error tracking.
+  // Usa navigator.sendBeacon -> /api/autosave (#28): Server Actions sao POSTs
+  // normais que o browser pode abortar ao fechar a tab, perdendo o save.
+  // sendBeacon/keepalive sao projetados para entregar dados durante o unload.
+  // A aba ja esta hidden — nao da pra mostrar toast, e o envio e
+  // fire-and-forget, entao falhas so aparecem no console / logs do server.
   useEffect(() => {
-    const logAutoSaveResult = (
-      p: Promise<{ success: boolean; error?: string }>,
+    const beaconSave = (
+      documentId: string,
+      answers: Record<string, unknown>,
+      notes: string,
     ) => {
-      p.then((r) => {
-        if (!r.success) console.error("[auto-save] falhou:", r.error);
-      }).catch((err) => console.error("[auto-save] exceção:", err));
+      const body = JSON.stringify({ projectId, documentId, answers, notes });
+      const blob = new Blob([body], { type: "application/json" });
+      // sendBeacon pode lancar sincronamente em alguns browsers (ex.: payload
+      // acima do limite da fila). Tratamos como "nao enfileirado" para cair no
+      // fallback fetch keepalive em vez de estourar o handler de evento.
+      let queued = false;
+      try {
+        queued =
+          typeof navigator.sendBeacon === "function" &&
+          navigator.sendBeacon("/api/autosave", blob);
+      } catch (err) {
+        console.error("[auto-save] sendBeacon falhou:", err);
+      }
+      if (!queued) {
+        // Fallback: sendBeacon indisponivel ou fila cheia. keepalive tem o
+        // mesmo efeito (sobrevive ao unload) mas permite headers.
+        fetch("/api/autosave", {
+          method: "POST",
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+          body,
+        }).catch((err) => console.error("[auto-save] exceção:", err));
+      }
     };
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        if (mode === "assigned" && currentDoc && dirtyDocs.has(currentDoc.id)) {
-          logAutoSaveResult(
-            saveResponse(projectId, currentDoc.id, docAnswers, {
-              notes: docNotes,
-              isAutoSave: true,
-            }),
-          );
-        } else if (mode === "browse" && selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-          logAutoSaveResult(
-            saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, {
-              notes: browseNotes,
-              isAutoSave: true,
-            }),
-          );
-        }
+      if (document.visibilityState !== "hidden") return;
+      if (mode === "assigned" && currentDoc && dirtyDocs.has(currentDoc.id)) {
+        beaconSave(currentDoc.id, docAnswers, docNotes);
+      } else if (
+        mode === "browse" &&
+        selectedBrowseDoc &&
+        dirtyDocs.has(selectedBrowseDoc.id)
+      ) {
+        beaconSave(selectedBrowseDoc.id, browseAnswers, browseNotes);
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
