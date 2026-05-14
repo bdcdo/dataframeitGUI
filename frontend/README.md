@@ -18,6 +18,36 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Testes
+
+- Unitários (Vitest): `npm test`
+- E2E autenticados (Playwright + Clerk Testing Tokens): `npm run test:e2e`
+
+### Smoke test E2E autenticado
+
+Os testes em `e2e/` autenticam via [Clerk Testing Tokens](https://clerk.com/docs/testing/playwright/overview),
+que dispensam a UI hospedada do Clerk — nenhuma credencial precisa ser colada
+na linha de comando.
+
+Setup único:
+
+1. `npx playwright install chromium` (baixa o browser).
+2. Copie `.env.e2e.example` para `.env.e2e` e preencha com e-mail/senha de
+   usuários reais do tenant Clerk de **desenvolvimento**, um por papel
+   (coordenador, membro, master). `CLERK_SECRET_KEY` e
+   `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` são lidos de `.env.local`.
+
+Rodar:
+
+```bash
+npm run test:e2e        # headless
+npm run test:e2e:ui     # modo interativo
+```
+
+O Playwright sobe o dev server automaticamente. Cada papel cuja credencial
+não estiver definida em `.env.e2e` tem o teste **pulado** (não falha), então
+CI sem o tenant de teste configurado continua verde.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More

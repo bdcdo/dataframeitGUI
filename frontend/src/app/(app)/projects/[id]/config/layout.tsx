@@ -1,50 +1,30 @@
-"use client";
+import { redirect } from "next/navigation";
+import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { ConfigNav } from "./ConfigNav";
 
-import Link from "next/link";
-import { usePathname, useParams } from "next/navigation";
-import { cn } from "@/lib/utils";
-
-const configTabs = [
-  { label: "Geral", href: "general" },
-  { label: "Documentos", href: "documents" },
-  { label: "Schema", href: "schema" },
-  { label: "Rodadas", href: "rounds" },
-  { label: "Histórico", href: "history" },
-  { label: "Membros", href: "members" },
-  { label: "Regras", href: "rules" },
-];
-
-export default function ConfigLayout({
+// Guard server-side centralizado para todas as rotas `config/*`. As abas
+// coordinator-only são escondidas no client (ProjectTabs), mas um pesquisador
+// que conheça a URL ainda chegaria aqui — por isso o redirect acontece no
+// layout, cobrindo cada page filha de uma vez. Ver issue #27.
+export default async function ConfigLayout({
   children,
+  params,
 }: {
   children: React.ReactNode;
+  params: Promise<{ id: string }>;
 }) {
-  const pathname = usePathname();
-  const params = useParams();
-  const projectId = params.id as string;
+  const { id } = await params;
+  const user = await getAuthUser();
+  if (!user) redirect("/auth/login");
+
+  const supabase = await createSupabaseServer();
+  const isCoordinator = await isProjectCoordinator(supabase, id, user);
+  if (!isCoordinator) redirect(`/projects/${id}/my-progress`);
 
   return (
     <div className="flex flex-col">
-      <nav className="flex items-center gap-1 border-b px-4 py-1">
-        {configTabs.map((tab) => {
-          const href = `/projects/${projectId}/config/${tab.href}`;
-          const isActive = pathname.startsWith(href);
-          return (
-            <Link
-              key={tab.href}
-              href={href}
-              className={cn(
-                "rounded-md px-3 py-1 text-sm transition-colors",
-                isActive
-                  ? "bg-muted font-medium"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {tab.label}
-            </Link>
-          );
-        })}
-      </nav>
+      <ConfigNav projectId={id} />
       <div className="flex-1">{children}</div>
     </div>
   );
