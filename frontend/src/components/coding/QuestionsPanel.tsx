@@ -91,7 +91,7 @@ function SortableQuestion({
       }}
       style={style}
       className={cn(
-        "border-l-2 pl-4 py-2 rounded-r-md transition-colors",
+        "border-l-2 pl-4 py-1.5 rounded-r-md transition-colors",
         isHighlighted
           ? "border-l-destructive bg-destructive/10"
           : isAnswered
@@ -115,7 +115,7 @@ function SortableQuestion({
           </button>
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
+          <p className="text-sm font-medium mb-1.5 flex items-center gap-1.5">
             <span className="text-muted-foreground">{index + 1}.</span> {field.description}
             {field.required === false && (
               <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
@@ -123,7 +123,7 @@ function SortableQuestion({
             {isAnswered && <Check className="h-3.5 w-3.5 text-brand shrink-0" />}
           </p>
           {field.help_text && (
-            <p className="text-xs text-muted-foreground mb-2 whitespace-pre-line">
+            <p className="text-xs text-muted-foreground mb-1.5 whitespace-pre-line">
               {field.help_text}
             </p>
           )}

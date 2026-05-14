@@ -37,6 +37,7 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
 ## Convencoes
 
 - **Portugues** para UI (labels, mensagens), **ingles** para codigo (vars, funcs, types)
+- **Alvo e desktop/mouse, nao toque**: a plataforma e acessada via computador. Otimizar densidade e alvos de clique para mouse — nao aplicar o minimo de 44px de toque. Em caso de tradeoff, priorizar densidade de informacao.
 - **shadcn/ui** para todos os componentes de UI
 - **Server Actions** para mutations, **RSC** para reads
 - Auth: Clerk (`lib/auth.ts` para `getAuthUser()`, `lib/clerk-sync.ts` para sync Clerk↔Supabase)
