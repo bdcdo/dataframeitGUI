@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { formatAnswerTechnical } from "@/lib/format-answer";
 import { revalidatePath } from "next/cache";
@@ -24,10 +25,14 @@ export interface SelfVerdictInput {
 // Humano original conclui sua fase de auto-revisao. Para cada campo:
 //   - admite_erro  → gabarito do campo = LLM, fica resolvido
 //   - contesta_llm → cai na fila de arbitragem (sorteia arbitro neste mesmo call)
+//   - equivalente  → registra o par humano↔LLM em response_equivalences; campo
+//                    fica resolvido, sem arbitragem
+//   - ambiguo      → gera um project_comments para discussao; campo fica
+//                    resolvido, sem arbitragem
 //
 // Idempotente: regravar a auto-revisao apos enviada nao reinicia arbitragem
-// (UPDATE so toca campos com self_verdict IS NULL; assignArbitrator so olha
-// para campos cujo UPDATE retornou linha).
+// (UPDATE so toca campos com self_verdict IS NULL; os efeitos colaterais de
+// equivalente/ambiguo so agem nos campos cujo UPDATE retornou linha).
 export async function submitAutoReview(
   projectId: string,
   documentId: string,
@@ -80,6 +85,10 @@ export async function submitAutoReview(
       ),
     );
 
+    // Campos efetivamente atualizados neste call (UPDATE casou linha). Fonte
+    // para a logica de arbitragem de contesta_llm — re-submit nao reabre
+    // arbitragem. Os efeitos de equivalente/ambiguo usam outra fonte (estado
+    // real de field_reviews) para tolerar retry apos falha parcial.
     const updatedFieldNames = new Set<string>();
     for (const res of updateResults) {
       if (res.error) return { success: false, error: res.error.message };
@@ -96,6 +105,152 @@ export async function submitAutoReview(
       .eq("document_id", documentId)
       .eq("user_id", user.id)
       .eq("type", "auto_revisao");
+
+    // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
+    // campos recem-atualizados quanto para os que JA estavam com o verdict
+    // gravado — retry apos falha parcial (o UPDATE acima casa 0 linhas porque
+    // self_verdict ja nao e NULL). Por isso a fonte de verdade aqui e o estado
+    // real de field_reviews, nao `updatedByField`. Os efeitos sao idempotentes
+    // (upsert ignoreDuplicates / check-before-insert), entao re-executar e
+    // seguro.
+    const sideEffectFieldNames = verdicts
+      .filter((v) => v.verdict === "equivalente" || v.verdict === "ambiguo")
+      .map((v) => v.fieldName);
+    const effectByField = new Map<
+      string,
+      {
+        self_verdict: SelfVerdict | null;
+        human_response_id: string;
+        llm_response_id: string;
+      }
+    >();
+    if (sideEffectFieldNames.length > 0) {
+      const { data: stateRows, error: stateErr } = await admin
+        .from("field_reviews")
+        .select("field_name, self_verdict, human_response_id, llm_response_id")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("self_reviewer_id", user.id)
+        .in("field_name", sideEffectFieldNames);
+      if (stateErr) return { success: false, error: stateErr.message };
+      for (const r of stateRows ?? []) {
+        effectByField.set(r.field_name, {
+          self_verdict: r.self_verdict,
+          human_response_id: r.human_response_id,
+          llm_response_id: r.llm_response_id,
+        });
+      }
+    }
+
+    // equivalente: registra o par humano↔LLM em response_equivalences. O campo
+    // fica resolvido (sem arbitragem) e a divergencia nao reaparece, pois
+    // createAutoReviewIfDiverges/regenerateAutoReviewBacklog passam a consultar
+    // response_equivalences. So age em campos cujo self_verdict gravado e
+    // 'equivalente' (cobre este call e retry de falha parcial).
+    const equivalentFields = verdicts.filter(
+      (v) =>
+        v.verdict === "equivalente" &&
+        effectByField.get(v.fieldName)?.self_verdict === "equivalente",
+    );
+    if (equivalentFields.length > 0) {
+      const equivRows = equivalentFields.map((v) => {
+        const ids = effectByField.get(v.fieldName)!;
+        const [a, b] = canonicalPair(
+          ids.human_response_id,
+          ids.llm_response_id,
+        );
+        return {
+          project_id: projectId,
+          document_id: documentId,
+          field_name: v.fieldName,
+          response_a_id: a,
+          response_b_id: b,
+          reviewer_id: user.id,
+        };
+      });
+      const { error: equivErr } = await admin
+        .from("response_equivalences")
+        .upsert(equivRows, {
+          onConflict:
+            "project_id,document_id,field_name,response_a_id,response_b_id",
+          ignoreDuplicates: true,
+        });
+      if (equivErr) return { success: false, error: equivErr.message };
+    }
+
+    // ambiguo: o campo e genuinamente ambiguo → registra um project_comments
+    // com o contraste humano vs LLM para discussao posterior. Check-before-insert
+    // evita duplicar em retry. So age em campos cujo self_verdict gravado e
+    // 'ambiguo' (cobre este call e retry de falha parcial).
+    const ambiguousFields = verdicts.filter(
+      (v) =>
+        v.verdict === "ambiguo" &&
+        effectByField.get(v.fieldName)?.self_verdict === "ambiguo",
+    );
+    if (ambiguousFields.length > 0) {
+      const responseIds = new Set<string>();
+      for (const v of ambiguousFields) {
+        const ids = effectByField.get(v.fieldName)!;
+        responseIds.add(ids.human_response_id);
+        responseIds.add(ids.llm_response_id);
+      }
+      const { data: respRows } = await admin
+        .from("responses")
+        .select("id, answers")
+        .in("id", Array.from(responseIds));
+      const answersById = new Map(
+        (respRows ?? []).map((r) => [
+          r.id as string,
+          r.answers as Record<string, unknown> | null,
+        ]),
+      );
+
+      const { data: existingComments } = await admin
+        .from("project_comments")
+        .select("field_name")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .in(
+          "field_name",
+          ambiguousFields.map((v) => v.fieldName),
+        )
+        .eq("author_id", user.id);
+      const alreadyCommented = new Set(
+        (existingComments ?? []).map((r) => r.field_name as string),
+      );
+
+      const commentRows = ambiguousFields
+        .filter((v) => !alreadyCommented.has(v.fieldName))
+        .map((v) => {
+          const ids = effectByField.get(v.fieldName)!;
+          const humanAnswer = formatAnswerTechnical(
+            answersById.get(ids.human_response_id)?.[v.fieldName],
+          );
+          const llmAnswer = formatAnswerTechnical(
+            answersById.get(ids.llm_response_id)?.[v.fieldName],
+          );
+          const body = [
+            `Campo "${v.fieldName}" marcado como ambíguo na auto-revisão.`,
+            `Humano respondeu: ${humanAnswer}`,
+            `LLM respondeu: ${llmAnswer}`,
+            `Precisa de discussão para decidir o gabarito.`,
+          ].join("\n\n");
+          return {
+            project_id: projectId,
+            document_id: documentId,
+            field_name: v.fieldName,
+            author_id: user.id,
+            body,
+          };
+        });
+
+      if (commentRows.length > 0) {
+        const { error: commentErr } = await admin
+          .from("project_comments")
+          .insert(commentRows);
+        if (commentErr) return { success: false, error: commentErr.message };
+      }
+    }
 
     // Sorteia arbitro APENAS para campos cujo UPDATE acabou de gravar
     // contesta_llm (re-submit nao reabre arbitragem).
@@ -631,6 +786,7 @@ export async function regenerateAutoReviewBacklog(
       { data: project, error: projErr },
       { data: humanResponses, error: humanErr },
       { data: llmResponses, error: llmErr },
+      { data: equivalences, error: equivErr },
     ] = await Promise.all([
       admin
         .from("projects")
@@ -649,11 +805,16 @@ export async function regenerateAutoReviewBacklog(
         .eq("project_id", projectId)
         .eq("respondent_type", "llm")
         .eq("is_current", true),
+      admin
+        .from("response_equivalences")
+        .select("document_id, field_name, response_a_id, response_b_id")
+        .eq("project_id", projectId),
     ]);
 
     if (projErr) return { success: false, error: projErr.message };
     if (humanErr) return { success: false, error: humanErr.message };
     if (llmErr) return { success: false, error: llmErr.message };
+    if (equivErr) return { success: false, error: equivErr.message };
 
     const fields = (project?.pydantic_fields as PydanticField[]) ?? [];
     if (fields.length === 0) {
@@ -664,6 +825,21 @@ export async function regenerateAutoReviewBacklog(
     const llmByDocId = new Map(
       (llmResponses ?? []).map((r) => [r.document_id as string, r]),
     );
+
+    // Index equivalencias por document_id → (field_name → pares). Respeitar
+    // equivalencias ja marcadas evita recriar divergencias resolvidas.
+    const equivByDoc = new Map<string, Map<string, EquivalencePair[]>>();
+    for (const eq of equivalences ?? []) {
+      const byField =
+        equivByDoc.get(eq.document_id) ?? new Map<string, EquivalencePair[]>();
+      const list = byField.get(eq.field_name) ?? [];
+      list.push({
+        response_a_id: eq.response_a_id,
+        response_b_id: eq.response_b_id,
+      });
+      byField.set(eq.field_name, list);
+      equivByDoc.set(eq.document_id, byField);
+    }
 
     const assignmentRows: Array<{
       project_id: string;
@@ -687,16 +863,20 @@ export async function regenerateAutoReviewBacklog(
       const llm = llmByDocId.get(human.document_id);
       if (!llm) continue;
 
-      const divergent = computeDivergentFieldNames(fields, [
-        {
-          id: human.id,
-          answers: (human.answers as Record<string, unknown>) ?? {},
-        },
-        {
-          id: llm.id,
-          answers: (llm.answers as Record<string, unknown>) ?? {},
-        },
-      ]);
+      const divergent = computeDivergentFieldNames(
+        fields,
+        [
+          {
+            id: human.id,
+            answers: (human.answers as Record<string, unknown>) ?? {},
+          },
+          {
+            id: llm.id,
+            answers: (llm.answers as Record<string, unknown>) ?? {},
+          },
+        ],
+        equivByDoc.get(human.document_id),
+      );
       if (divergent.length === 0) continue;
 
       regenerated++;

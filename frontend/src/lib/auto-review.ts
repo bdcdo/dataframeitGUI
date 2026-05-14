@@ -1,5 +1,6 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import type { EquivalencePair } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 
 // Log estruturado JSON com prefixo "[auto-review]" — pesquisavel em logs
@@ -31,30 +32,39 @@ export async function createAutoReviewIfDiverges(
 ): Promise<{ divergentCount: number }> {
   const admin = createSupabaseAdmin();
 
-  const [{ data: project }, { data: humanResponse }, { data: llmResponse }] =
-    await Promise.all([
-      admin
-        .from("projects")
-        .select("pydantic_fields")
-        .eq("id", projectId)
-        .single(),
-      admin
-        .from("responses")
-        .select("id, answers")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("respondent_id", humanUserId)
-        .eq("respondent_type", "humano")
-        .maybeSingle(),
-      admin
-        .from("responses")
-        .select("id, answers")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("respondent_type", "llm")
-        .eq("is_current", true)
-        .maybeSingle(),
-    ]);
+  const [
+    { data: project },
+    { data: humanResponse },
+    { data: llmResponse },
+    { data: equivalences },
+  ] = await Promise.all([
+    admin
+      .from("projects")
+      .select("pydantic_fields")
+      .eq("id", projectId)
+      .single(),
+    admin
+      .from("responses")
+      .select("id, answers")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("respondent_id", humanUserId)
+      .eq("respondent_type", "humano")
+      .maybeSingle(),
+    admin
+      .from("responses")
+      .select("id, answers")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("respondent_type", "llm")
+      .eq("is_current", true)
+      .maybeSingle(),
+    admin
+      .from("response_equivalences")
+      .select("field_name, response_a_id, response_b_id")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId),
+  ]);
 
   if (!project?.pydantic_fields || !humanResponse || !llmResponse) {
     log(
@@ -73,10 +83,28 @@ export async function createAutoReviewIfDiverges(
   }
 
   const fields = project.pydantic_fields as PydanticField[];
-  const divergent = computeDivergentFieldNames(fields, [
-    { id: humanResponse.id, answers: humanResponse.answers ?? {} },
-    { id: llmResponse.id, answers: llmResponse.answers ?? {} },
-  ]);
+
+  // Respeita equivalencias ja marcadas (aba Comparar ou veredito "equivalente"
+  // da propria auto-revisao) — sem isto, um par marcado como equivalente
+  // reapareceria como divergente.
+  const equivalencesByField = new Map<string, EquivalencePair[]>();
+  for (const eq of equivalences ?? []) {
+    const list = equivalencesByField.get(eq.field_name) ?? [];
+    list.push({
+      response_a_id: eq.response_a_id,
+      response_b_id: eq.response_b_id,
+    });
+    equivalencesByField.set(eq.field_name, list);
+  }
+
+  const divergent = computeDivergentFieldNames(
+    fields,
+    [
+      { id: humanResponse.id, answers: humanResponse.answers ?? {} },
+      { id: llmResponse.id, answers: llmResponse.answers ?? {} },
+    ],
+    equivalencesByField,
+  );
 
   if (divergent.length === 0) {
     log("consensus", {
