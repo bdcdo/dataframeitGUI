@@ -26,9 +26,18 @@ interface AutoReviewFieldPanelProps {
   fieldIndex: number;
   totalFields: number;
   answered: boolean[];
+  /** campos contesta_llm sem justificativa — destacados como incompletos */
+  incomplete: boolean[];
   choice: SelfVerdict | null;
   justification: string;
   readOnly: boolean;
+  /** quantos campos estão prontos para o próximo envio parcial */
+  readyCount: number;
+  /** quantos campos foram iniciados mas estão sem justificativa */
+  incompleteCount: number;
+  submitting: boolean;
+  canSubmit: boolean;
+  onSubmit: () => void;
   onChoose: (verdict: SelfVerdict) => void;
   onJustificationChange: (value: string) => void;
   onFieldNavigate: (index: number) => void;
@@ -41,9 +50,15 @@ export function AutoReviewFieldPanel({
   fieldIndex,
   totalFields,
   answered,
+  incomplete,
   choice,
   justification,
   readOnly,
+  readyCount,
+  incompleteCount,
+  submitting,
+  canSubmit,
+  onSubmit,
   onChoose,
   onJustificationChange,
   onFieldNavigate,
@@ -52,6 +67,7 @@ export function AutoReviewFieldPanel({
   // entre "eu acertei" / "LLM acertou", então esconder por default era um
   // clique extra desnecessário.
   const [showJustification, setShowJustification] = useState(true);
+  const justificationMissing = !justification.trim();
   // Hints começam abertos até o usuário fechar uma vez (persistido em localStorage).
   // Lazy initializer roda só uma vez no mount, lê do localStorage sem flicker.
   const [hintsOpen, setHintsOpen] = useState(() => {
@@ -159,6 +175,7 @@ export function AutoReviewFieldPanel({
           total={totalFields}
           currentIndex={fieldIndex}
           answered={answered}
+          incomplete={incomplete}
           onNavigate={onFieldNavigate}
         />
         <div className="mt-1.5 flex items-center gap-2">
@@ -218,8 +235,7 @@ export function AutoReviewFieldPanel({
 
         {field.alreadyAnswered ? (
           <div className="rounded-md border border-green-500/30 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
-            Você já decidiu este campo nesta sessão. Ele será enviado quando você
-            terminar todos os campos pendentes do documento.
+            Decisão já enviada para este campo.
           </div>
         ) : null}
 
@@ -305,7 +321,16 @@ export function AutoReviewFieldPanel({
                   ? "Por que este campo é ambíguo? Isto será incluído no comentário de discussão."
                   : "Por que você acha que sua resposta está correta? O árbitro verá isto."
               }
+              className={cn(
+                justificationMissing &&
+                  "border-destructive focus-visible:border-destructive focus-visible:ring-destructive/20",
+              )}
             />
+            {justificationMissing ? (
+              <p className="text-xs text-destructive">
+                Obrigatória — sem ela este campo não é enviado.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -322,15 +347,49 @@ export function AutoReviewFieldPanel({
       </div>
 
       <div className="border-t px-4 py-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 gap-1.5 px-2 text-xs text-muted-foreground"
-          onClick={toggleHints}
-        >
-          <Keyboard className="h-3 w-3" />
-          Atalhos
-        </Button>
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1.5 px-2 text-xs text-muted-foreground"
+            onClick={toggleHints}
+          >
+            <Keyboard className="h-3 w-3" />
+            Atalhos
+          </Button>
+          {!readOnly ? (
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "text-xs",
+                  readyCount === 0 && incompleteCount > 0
+                    ? "text-destructive"
+                    : "text-muted-foreground",
+                )}
+              >
+                {readyCount > 0
+                  ? `${readyCount} campo${readyCount === 1 ? "" : "s"} pronto${readyCount === 1 ? "" : "s"} para enviar`
+                  : incompleteCount > 0
+                    ? "Preencha a justificativa para enviar"
+                    : "Decida um campo para enviar"}
+              </span>
+              <Button
+                size="sm"
+                onClick={onSubmit}
+                disabled={!canSubmit}
+                title={
+                  submitting
+                    ? "Enviando…"
+                    : readyCount > 0
+                      ? "Enviar os campos decididos"
+                      : "Decida ao menos um campo para enviar"
+                }
+              >
+                {submitting ? "Enviando…" : "Enviar"}
+              </Button>
+            </div>
+          ) : null}
+        </div>
         {hintsOpen ? (
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>

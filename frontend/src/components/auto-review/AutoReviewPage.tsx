@@ -29,7 +29,10 @@ import {
   type AutoReviewField,
 } from "./AutoReviewFieldPanel";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
-import { isAutoReviewFieldDecided } from "@/lib/auto-review-decided";
+import {
+  isAutoReviewFieldDecided,
+  verdictRequiresJustification,
+} from "@/lib/auto-review-decided";
 
 export interface AutoReviewDoc {
   docId: string;
@@ -83,6 +86,17 @@ export function AutoReviewPage({
     const v = window.sessionStorage.getItem(storageKey);
     if (v) setPinnedDocId(v);
   }, [storageKey]);
+
+  // Após router.refresh(), um doc totalmente resolvido sai da fila — o
+  // pinnedDocId em sessionStorage fica órfão. Limpa o storage para não
+  // restaurar um id inexistente numa sessão futura; o state em memória pode
+  // seguir intocado porque o docIndex já cai para 0 quando o id não bate.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (pinnedDocId && !docs.some((d) => d.docId === pinnedDocId)) {
+      window.sessionStorage.removeItem(storageKey);
+    }
+  }, [docs, pinnedDocId, storageKey]);
 
   const docIndex = useMemo(() => {
     if (docs.length === 0) return 0;
@@ -138,10 +152,16 @@ export function AutoReviewPage({
     () =>
       docs.map((d) => {
         const total = d.fields.length;
+        // Pendente = ainda não enviado e ainda não pronto pra enviar (um
+        // contesta_llm sem justificativa conta como pendente).
         const pending = d.fields.filter((f) => {
           if (f.alreadyAnswered) return false;
           const k = choiceKey(d.docId, f.fieldName);
-          return choices[k] == null;
+          return !isAutoReviewFieldDecided(
+            false,
+            choices[k],
+            justifications[k],
+          );
         }).length;
         return {
           id: d.docId,
@@ -151,7 +171,7 @@ export function AutoReviewPage({
           pendingFields: pending,
         };
       }),
-    [docs, choices],
+    [docs, choices, justifications],
   );
 
   if (docs.length === 0) {
@@ -205,32 +225,44 @@ export function AutoReviewPage({
 
   const doc = docs[docIndex];
   const currentField = doc.fields[fieldIndex];
-  // Campo "decidido" = já respondido OU com escolha local; se a escolha for
-  // contesta_llm ou ambiguo, a justificativa também precisa estar preenchida.
-  const isFieldDecided = (f: AutoReviewField) => {
+  // Classifica cada campo do doc na sessão atual:
+  //   ready      = decidido nesta sessão e completo → entra no próximo envio
+  //   incomplete = verdict que exige justificativa escolhido mas sem ela → falta algo
+  //   answered   = já enviado (alreadyAnswered) OU pronto pra enviar
+  const fieldStatus = doc.fields.map((f) => {
     const key = choiceKey(doc.docId, f.fieldName);
-    return isAutoReviewFieldDecided(
-      f.alreadyAnswered,
-      choices[key],
-      justifications[key],
-    );
-  };
-  const allChosen = doc.fields.every(isFieldDecided);
-  const answeredFlags = doc.fields.map(isFieldDecided);
+    const choice = choices[key];
+    const justification = justifications[key];
+    const incomplete =
+      !f.alreadyAnswered &&
+      verdictRequiresJustification(choice) &&
+      !justification?.trim();
+    const ready =
+      !f.alreadyAnswered &&
+      isAutoReviewFieldDecided(false, choice, justification);
+    return { answered: f.alreadyAnswered || ready, incomplete, ready };
+  });
+  const answeredFlags = fieldStatus.map((s) => s.answered);
+  const incompleteFlags = fieldStatus.map((s) => s.incomplete);
+  const readyCount = fieldStatus.filter((s) => s.ready).length;
+  const incompleteCount = fieldStatus.filter((s) => s.incomplete).length;
+  const canSubmit = readyCount > 0 && !submitting;
 
   async function handleSubmit() {
     if (readOnly) return;
+    const readyFieldNames = doc.fields
+      .filter((_, i) => fieldStatus[i].ready)
+      .map((f) => f.fieldName);
+    if (readyFieldNames.length === 0) return;
     setSubmitting(true);
-    const payload = doc.fields
-      .filter((f) => !f.alreadyAnswered)
-      .map((f) => {
-        const key = choiceKey(doc.docId, f.fieldName);
-        return {
-          fieldName: f.fieldName,
-          verdict: choices[key],
-          justification: justifications[key],
-        };
-      });
+    const payload = readyFieldNames.map((fieldName) => {
+      const key = choiceKey(doc.docId, fieldName);
+      return {
+        fieldName,
+        verdict: choices[key],
+        justification: justifications[key],
+      };
+    });
     const result = await submitAutoReview(projectId, doc.docId, payload);
     setSubmitting(false);
     if (!result.success) {
@@ -243,26 +275,26 @@ export function AutoReviewPage({
       toast.success(
         result.arbitrated
           ? `Enviado. ${result.arbitrated} campo(s) seguem para arbitragem.`
-          : "Enviado. Todos os campos resolvidos.",
+          : `Enviado. ${readyFieldNames.length} campo(s) resolvido(s).`,
       );
     }
+    // Limpa só os campos enviados — escolhas incompletas (contesta_llm sem
+    // justificativa) permanecem para o usuário continuar de onde parou.
     setChoices((c) => {
       const next = { ...c };
-      for (const f of doc.fields)
-        delete next[choiceKey(doc.docId, f.fieldName)];
+      for (const fieldName of readyFieldNames)
+        delete next[choiceKey(doc.docId, fieldName)];
       return next;
     });
     setJustifications((j) => {
       const next = { ...j };
-      for (const f of doc.fields)
-        delete next[choiceKey(doc.docId, f.fieldName)];
+      for (const fieldName of readyFieldNames)
+        delete next[choiceKey(doc.docId, fieldName)];
       return next;
     });
-    if (docIndex < docs.length - 1) {
-      handleDocNavigate(docIndex + 1);
-    } else {
-      router.refresh();
-    }
+    // Recarrega o estado do servidor: os campos enviados voltam como
+    // alreadyAnswered e o doc sai da fila se todos foram resolvidos.
+    router.refresh();
   }
 
   const currentReviewer = reviewers.find((r) => r.userId === viewAsUserId);
@@ -330,20 +362,6 @@ export function AutoReviewPage({
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-          {!readOnly ? (
-            <Button
-              size="sm"
-              onClick={handleSubmit}
-              disabled={!allChosen || submitting}
-              title={
-                allChosen
-                  ? "Enviar auto-revisão do documento"
-                  : "Decida todos os campos pendentes"
-              }
-            >
-              {submitting ? "Enviando…" : "Enviar"}
-            </Button>
-          ) : null}
         </div>
       </div>
 
@@ -366,6 +384,7 @@ export function AutoReviewPage({
               fieldIndex={fieldIndex}
               totalFields={doc.fields.length}
               answered={answeredFlags}
+              incomplete={incompleteFlags}
               choice={
                 choices[choiceKey(doc.docId, currentField.fieldName)] ?? null
               }
@@ -375,6 +394,11 @@ export function AutoReviewPage({
                 ] ?? ""
               }
               readOnly={readOnly}
+              readyCount={readyCount}
+              incompleteCount={incompleteCount}
+              submitting={submitting}
+              canSubmit={canSubmit}
+              onSubmit={handleSubmit}
               onChoose={(v) =>
                 setChoices((c) => ({
                   ...c,
