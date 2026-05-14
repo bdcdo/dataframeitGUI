@@ -275,9 +275,17 @@ export function CodingPage({
     ) => {
       const body = JSON.stringify({ projectId, documentId, answers, notes });
       const blob = new Blob([body], { type: "application/json" });
-      const queued =
-        typeof navigator.sendBeacon === "function" &&
-        navigator.sendBeacon("/api/autosave", blob);
+      // sendBeacon pode lancar sincronamente em alguns browsers (ex.: payload
+      // acima do limite da fila). Tratamos como "nao enfileirado" para cair no
+      // fallback fetch keepalive em vez de estourar o handler de evento.
+      let queued = false;
+      try {
+        queued =
+          typeof navigator.sendBeacon === "function" &&
+          navigator.sendBeacon("/api/autosave", blob);
+      } catch (err) {
+        console.error("[auto-save] sendBeacon falhou:", err);
+      }
       if (!queued) {
         // Fallback: sendBeacon indisponivel ou fila cheia. keepalive tem o
         // mesmo efeito (sobrevive ao unload) mas permite headers.
