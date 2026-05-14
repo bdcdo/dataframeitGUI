@@ -14,11 +14,18 @@ const updateCallsOf = (table?: string) =>
 function makeClient() {
   return {
     from: (table: string) => {
+      // `limited` distingue a query de "ainda há campo pendente?" (usa .limit)
+      // do UPDATE de field_reviews (usa .select) — ambos batem na mesma tabela.
+      let limited = false;
       const builder: Record<string, unknown> = {};
       let op = "select";
       for (const m of ["select", "eq", "is", "in", "neq"]) {
         builder[m] = () => builder;
       }
+      builder.limit = () => {
+        limited = true;
+        return builder;
+      };
       builder.update = (payload: unknown) => {
         writeCalls.push({ table, op: "update", payload });
         op = "update";
@@ -34,14 +41,23 @@ function makeClient() {
         op = "insert";
         return builder;
       };
-      // Resolve por operacao quando ha override `${table}:${op}` — permite um
-      // teste fazer o UPDATE casar 0 linhas mas o SELECT de estado ver a linha
-      // (cenario de retry apos falha parcial). Senao cai no dado generico.
-      builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({
+      builder.then = (resolve: (v: unknown) => unknown) => {
+        // A query "ainda ha field_review pendente?" usa .limit em
+        // field_reviews — resolve para a fixture dedicada.
+        if (table === "field_reviews" && limited) {
+          return resolve({
+            data: tableData.field_reviews_pending ?? null,
+            error: null,
+          });
+        }
+        // Resolve por operacao quando ha override `${table}:${op}` — permite um
+        // teste fazer o UPDATE casar 0 linhas mas o SELECT de estado ver a linha
+        // (cenario de retry apos falha parcial). Senao cai no dado generico.
+        return resolve({
           data: tableData[`${table}:${op}`] ?? tableData[table] ?? null,
           error: null,
         });
+      };
       return builder;
     },
   };
@@ -72,6 +88,8 @@ beforeEach(() => {
         llm_response_id: "lr1",
       },
     ],
+    // por padrão não sobra campo pendente → assignment é concluído
+    field_reviews_pending: [],
     // respostas para o contexto do comentario de "ambiguo"
     responses: [
       { id: "hr1", answers: { q1: "Adalimumabe" } },
@@ -267,5 +285,32 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
     expect(equivUpsert?.payload).toMatchObject([
       { field_name: "q1", response_a_id: "hr1", response_b_id: "lr1" },
     ]);
+  });
+});
+
+describe("submitAutoReview — envio parcial e conclusão do assignment", () => {
+  const assignmentConcluido = () =>
+    updateCallsOf("assignments").find(
+      (u) => (u.payload as Record<string, unknown>).status === "concluido",
+    );
+
+  it("ainda há campo pendente → assignment NÃO é concluído", async () => {
+    tableData.field_reviews_pending = [{ id: "fr2" }];
+    const submitAutoReview = await loadSubmit();
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "admite_erro" },
+    ]);
+    expect(r.success).toBe(true);
+    expect(assignmentConcluido()).toBeUndefined();
+  });
+
+  it("nenhum campo pendente restante → assignment é concluído", async () => {
+    tableData.field_reviews_pending = [];
+    const submitAutoReview = await loadSubmit();
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "admite_erro" },
+    ]);
+    expect(r.success).toBe(true);
+    expect(assignmentConcluido()).toBeDefined();
   });
 });

@@ -102,14 +102,27 @@ export async function submitAutoReview(
       }
     }
 
-    // Marca assignment auto_revisao como concluido
-    await admin
-      .from("assignments")
-      .update({ status: "concluido", completed_at: now })
+    // Marca o assignment auto_revisao como concluido APENAS quando nao sobra
+    // nenhum field_review pendente do doc — o envio e parcial, entao um submit
+    // de subconjunto nao pode tirar o doc da fila.
+    const { data: stillPending } = await admin
+      .from("field_reviews")
+      .select("id")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
-      .eq("user_id", user.id)
-      .eq("type", "auto_revisao");
+      .eq("self_reviewer_id", user.id)
+      .is("self_verdict", null)
+      .limit(1);
+
+    if (!stillPending || stillPending.length === 0) {
+      await admin
+        .from("assignments")
+        .update({ status: "concluido", completed_at: now })
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("user_id", user.id)
+        .eq("type", "auto_revisao");
+    }
 
     // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
     // campos recem-atualizados quanto para os que JA estavam com o verdict
