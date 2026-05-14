@@ -57,17 +57,6 @@ const TARGET_LABELS: Record<string, string> = {
   llm_only: "Apenas LLM",
   human_only: "Apenas humano",
   none: "Oculto",
-  regex: "Regex",
-};
-
-// Cores distintas por target para o coordenador diferenciar na aba Schema um
-// campo "oculto / descontinuado" (none) de um "extraído por regex depois"
-// (regex). Ver #70.
-const TARGET_BADGE_COLORS: Record<string, string> = {
-  llm_only: "bg-amber-500/10 text-amber-700",
-  human_only: "bg-amber-500/10 text-amber-700",
-  none: "bg-muted text-muted-foreground",
-  regex: "bg-cyan-500/10 text-cyan-700",
 };
 
 export function FieldCard({
@@ -169,13 +158,7 @@ export function FieldCard({
                 {TYPE_LABELS[field.type]}
               </Badge>
               {field.target && field.target !== "all" && (
-                <Badge
-                  className={cn(
-                    "text-xs shrink-0",
-                    TARGET_BADGE_COLORS[field.target] ??
-                      "bg-amber-500/10 text-amber-700",
-                  )}
-                >
+                <Badge className="text-xs shrink-0 bg-amber-500/10 text-amber-700">
                   {TARGET_LABELS[field.target]}
                 </Badge>
               )}
@@ -282,7 +265,6 @@ export function FieldCard({
                     ["llm_only", "Apenas LLM"],
                     ["human_only", "Apenas humano"],
                     ["none", "Oculto (ninguém vê)"],
-                    ["regex", "Regex (extraído depois)"],
                   ] as const
                 ).map(([value, label]) => (
                   <Button
@@ -300,19 +282,10 @@ export function FieldCard({
                   </Button>
                 ))}
               </div>
-              {field.target === "regex" && (
-                <p className="text-xs text-muted-foreground">
-                  Não aparece na codificação humana nem é enviado ao LLM — será
-                  preenchido por extração programática (regex) em
-                  pós-processamento.
-                </p>
-              )}
             </div>
 
-            {/* Obrigatório (não faz sentido para llm_only, oculto nem regex) */}
-            {(field.target || "all") !== "llm_only" &&
-              field.target !== "none" &&
-              field.target !== "regex" && (
+            {/* Obrigatório (não faz sentido para llm_only nem oculto) */}
+            {(field.target || "all") !== "llm_only" && field.target !== "none" && (
               <div className="flex items-center justify-between">
                 <div>
                   <Label className="text-xs">Obrigatório</Label>
@@ -513,8 +486,7 @@ export function FieldCard({
             {/* Prompt de justificativa do LLM — só faz sentido quando o campo
                 é enviado ao LLM. Vazio = backend usa o default exigente. */}
             {(field.target || "all") !== "human_only" &&
-              field.target !== "none" &&
-              field.target !== "regex" && (
+              field.target !== "none" && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">
                     Prompt de justificativa do LLM (opcional)

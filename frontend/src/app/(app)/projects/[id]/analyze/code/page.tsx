@@ -173,7 +173,7 @@ export default async function CodePage({
   });
 
   const fields = ((project?.pydantic_fields || []) as PydanticField[]).filter(
-    (f) => f.target !== "llm_only" && f.target !== "none" && f.target !== "regex",
+    (f) => f.target !== "llm_only" && f.target !== "none",
   );
   const existingAnswers: Record<string, Record<string, unknown>> = {};
   const existingJustifications: Record<string, Record<string, unknown>> = {};

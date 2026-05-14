@@ -470,9 +470,8 @@ def _flatten_nested_basemodels(model_class):
 def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
     """Return a model class excluding fields that should not be sent to the LLM.
 
-    A field is excluded when its ``target`` in ``pydantic_fields`` is
-    ``"none"`` (hidden from everyone), ``"regex"`` (filled by programmatic
-    extraction in post-processing) or ``"human_only"``. Returns the original
+    A field is excluded when its ``target`` in ``pydantic_fields`` is either
+    ``"none"`` (hidden from everyone) or ``"human_only"``. Returns the original
     ``model_class`` unchanged when no fields need to be excluded.
 
     Note: the filtered model is created with ``__base__=BaseModel``, so any
@@ -486,7 +485,7 @@ def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
     excluded_names = {
         f["name"]
         for f in (pydantic_fields or [])
-        if f.get("target") in ("none", "regex", "human_only")
+        if f.get("target") in ("none", "human_only")
     }
     if not excluded_names:
         return model_class
@@ -687,8 +686,7 @@ async def run_llm(
             raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
 
         # Filter out fields that should not be sent to the LLM
-        # (target="none"/"regex" hide from everyone; target="human_only"
-        # hides from LLM)
+        # (target="none" hides from everyone; target="human_only" hides from LLM)
         model_class = _filter_model_for_llm(
             model_class, project.get("pydantic_fields") or []
         )

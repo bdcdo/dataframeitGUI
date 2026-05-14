@@ -439,24 +439,6 @@ class Analysis(BaseModel):
     assert "justification_prompt" not in f
 
 
-def test_target_regex_round_trips():
-    """target="regex" (#70) é preservado pelo compilador como qualquer outro
-    valor de target."""
-    code = '''from pydantic import BaseModel, Field
-from typing import Literal
-
-class Analysis(BaseModel):
-    extracted: str = Field(
-        description="Registro em outras agências",
-        json_schema_extra={"target": "regex"},
-    )
-'''
-    result = compile_pydantic(code)
-    assert result["valid"], result["errors"]
-    f = _field(result, "extracted")
-    assert f["target"] == "regex"
-
-
 def test_date_field_with_sentinel_options_round_trips():
     """Date fields carry sentinel options (ex: 'Não identificável') via
     json_schema_extra because the annotation itself is `str`, not Literal."""

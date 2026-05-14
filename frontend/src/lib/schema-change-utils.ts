@@ -278,7 +278,6 @@ const TARGET_LABELS: Record<string, string> = {
   llm_only: "Só LLM",
   human_only: "Só humano",
   none: "Nenhum",
-  regex: "Regex",
 };
 
 export function formatTarget(t: unknown): string {

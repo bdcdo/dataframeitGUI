@@ -51,28 +51,13 @@ export type FieldCondition =
   | { field: string; not_in: ConditionScalar[] }
   | { field: string; exists: boolean };
 
-// target controla quem responde / vê o campo:
-// - all: humanos e LLM
-// - llm_only: só o LLM
-// - human_only: só humanos
-// - none: ninguém (campo oculto / descontinuado, mantido no schema)
-// - regex: ninguém pela GUI — preenchido por extração programática
-//   (regex em pós-processamento). Distinto de "none" para o coordenador
-//   saber que o campo *será* preenchido fora do fluxo, não que foi descartado.
-export type FieldTarget =
-  | "all"
-  | "llm_only"
-  | "human_only"
-  | "none"
-  | "regex";
-
 export interface PydanticField {
   name: string;
   type: "single" | "multi" | "text" | "date";
   options: string[] | null;
   description: string;
   help_text?: string;
-  target?: FieldTarget;
+  target?: "all" | "llm_only" | "human_only" | "none";
   required?: boolean;
   hash?: string;
   subfields?: SubfieldDef[];

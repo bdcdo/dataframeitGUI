@@ -1,14 +1,12 @@
-"""Tests for justification prompt handling and target filtering in llm_runner.
+"""Tests for justification prompt handling in llm_runner.
 
-Cobre #88 (prompt de justificativa exigente e parametrizável) e #70
-(target="regex" escondido do LLM como "none").
+Cobre #88 — prompt de justificativa exigente e parametrizável.
 """
 from pydantic import BaseModel, Field
 
 from services.llm_runner import (
     DEFAULT_JUSTIFICATION_PROMPT,
     _extend_model_with_justifications,
-    _filter_model_for_llm,
 )
 
 
@@ -59,23 +57,3 @@ def test_justification_fields_added_for_every_field():
         assert f"{name}_justification" in extended.model_fields
         # campos originais preservados
         assert name in extended.model_fields
-
-
-def test_filter_model_excludes_regex_target():
-    """target="regex" deve ser excluído do modelo enviado ao LLM, igual a
-    "none" e "human_only"."""
-
-    class _M(BaseModel):
-        keep: str = Field(description="enviado")
-        hidden: str = Field(description="oculto")
-        by_regex: str = Field(description="extraído por regex")
-        human: str = Field(description="só humano")
-
-    pydantic_fields = [
-        {"name": "keep", "target": "all"},
-        {"name": "hidden", "target": "none"},
-        {"name": "by_regex", "target": "regex"},
-        {"name": "human", "target": "human_only"},
-    ]
-    filtered = _filter_model_for_llm(_M, pydantic_fields)
-    assert set(filtered.model_fields) == {"keep"}

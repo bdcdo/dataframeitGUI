@@ -85,9 +85,9 @@ describe("classifyChange", () => {
     expect(classifyChange(oldF, newF)).toBe("minor");
   });
 
-  it("returns minor on target change (incl. regex)", () => {
+  it("returns minor on target change", () => {
     const oldF = [baseField({ name: "q1", options: ["A"] })];
-    const newF = [baseField({ name: "q1", options: ["A"], target: "regex" })];
+    const newF = [baseField({ name: "q1", options: ["A"], target: "llm_only" })];
     expect(classifyChange(oldF, newF)).toBe("minor");
   });
 
@@ -133,11 +133,11 @@ describe("snapshotOf", () => {
         name: "q1",
         options: ["A"],
         justification_prompt: "cite o trecho",
-        target: "regex",
+        target: "llm_only",
       }),
     );
     expect(snap.justification_prompt).toBe("cite o trecho");
-    expect(snap.target).toBe("regex");
+    expect(snap.target).toBe("llm_only");
     expect(snap).toHaveProperty("condition");
     expect(snap).toHaveProperty("subfields");
   });
@@ -168,7 +168,7 @@ describe("diffFields", () => {
 describe("fieldDiffIsStructural", () => {
   it("treats target change as structural", () => {
     expect(
-      fieldDiffIsStructural({ target: "all" }, { target: "regex" }),
+      fieldDiffIsStructural({ target: "all" }, { target: "llm_only" }),
     ).toBe(true);
   });
 
@@ -183,16 +183,14 @@ describe("fieldDiffIsStructural", () => {
 });
 
 describe("generatePydanticCode round-trip surface", () => {
-  it("emits regex target and justification_prompt in json_schema_extra", () => {
+  it("emits justification_prompt in json_schema_extra", () => {
     const code = generatePydanticCode([
       baseField({
         name: "q1",
         options: ["A", "B"],
-        target: "regex",
-        justification_prompt: 'Cite o trecho do parecer.',
+        justification_prompt: "Cite o trecho do parecer.",
       }),
     ]);
-    expect(code).toContain('"target": "regex"');
     expect(code).toContain(
       '"justification_prompt": "Cite o trecho do parecer."',
     );

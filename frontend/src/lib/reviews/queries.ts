@@ -482,7 +482,7 @@ export function computeRespondentProfiles(
       if (review.verdict === "ambiguo" || review.verdict === "pular") continue;
       const field = ctx.fieldMap.get(review.field_name);
       if (!field) continue;
-      if (field.target === "none" || field.target === "regex") continue;
+      if (field.target === "none") continue;
       if (field.target === "llm_only" && info.type === "humano") continue;
       if (field.target === "human_only" && info.type === "llm") continue;
 
@@ -562,7 +562,7 @@ export function computeHardestDocuments(
       if (review.verdict === "ambiguo" || review.verdict === "pular") continue;
       const field = ctx.fieldMap.get(review.field_name);
       if (!field) continue;
-      if (field.target === "none" || field.target === "regex") continue;
+      if (field.target === "none") continue;
 
       for (const resp of docResps) {
         if (field.target === "llm_only" && resp.respondent_type === "humano")

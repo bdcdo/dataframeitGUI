@@ -420,8 +420,7 @@ export function EditFieldDialog({
           {/* Prompt de justificativa do LLM — só faz sentido quando o campo
               é enviado ao LLM. Vazio = backend usa o default exigente. */}
           {(field.target || "all") !== "human_only" &&
-            field.target !== "none" &&
-            field.target !== "regex" && (
+            field.target !== "none" && (
               <div className="space-y-1.5">
                 <Label className="text-xs">
                   Prompt de justificativa do LLM (opcional)

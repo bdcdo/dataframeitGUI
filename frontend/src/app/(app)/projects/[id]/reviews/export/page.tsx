@@ -48,7 +48,7 @@ export default async function ExportPage({
   const minResponses = project?.min_responses_for_comparison || 2;
 
   const exportableFields = fields.filter(
-    (f) => f.target !== "llm_only" && f.target !== "none" && f.target !== "regex",
+    (f) => f.target !== "llm_only" && f.target !== "none",
   );
 
   // --- Dataset 1: Individual responses ---
