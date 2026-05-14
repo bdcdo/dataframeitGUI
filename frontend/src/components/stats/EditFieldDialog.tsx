@@ -96,6 +96,9 @@ export function EditFieldDialog({
   const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
   const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
   const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);
+  const [justificationPrompt, setJustificationPrompt] = useState<string>(
+    field?.justification_prompt ?? "",
+  );
   const [isSaving, startSave] = useTransition();
   const [pendingRemoval, setPendingRemoval] = useState<{
     option: string;
@@ -125,6 +128,7 @@ export function EditFieldDialog({
     setSubfields(f?.subfields);
     setSubfieldRule(f?.subfield_rule ?? "all");
     setCondition(f?.condition);
+    setJustificationPrompt(f?.justification_prompt ?? "");
   }
 
   if (!field) return null;
@@ -150,6 +154,7 @@ export function EditFieldDialog({
                   ? true
                   : undefined,
               condition,
+              justification_prompt: justificationPrompt.trim() || undefined,
             }
           : f,
       );
@@ -411,6 +416,29 @@ export function EditFieldDialog({
             candidateTriggers={candidateTriggersFor(allFields, fieldName)}
             onChange={setCondition}
           />
+
+          {/* Prompt de justificativa do LLM — só faz sentido quando o campo
+              é enviado ao LLM. Vazio = backend usa o default exigente. */}
+          {(field.target || "all") !== "human_only" &&
+            field.target !== "none" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">
+                  Prompt de justificativa do LLM (opcional)
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Em branco, usa o default que exige citação textual do trecho
+                  do documento. <code>{"{name}"}</code> é a única chave
+                  substituída (vira o nome do campo); qualquer outra chave entre
+                  chaves faz o texto ser usado literalmente, sem substituição.
+                </p>
+                <Textarea
+                  value={justificationPrompt}
+                  onChange={(e) => setJustificationPrompt(e.target.value)}
+                  placeholder="Ex.: Cite o trecho do parecer e explique como ele leva à resposta."
+                  className="text-sm min-h-[60px] resize-y"
+                />
+              </div>
+            )}
         </div>
 
         <DialogFooter>

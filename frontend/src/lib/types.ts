@@ -64,6 +64,10 @@ export interface PydanticField {
   subfield_rule?: "all" | "at_least_one";
   allow_other?: boolean;
   condition?: FieldCondition;
+  // Texto-base do prompt da justificativa do LLM para este campo. Quando
+  // ausente, o backend usa um default exigente (cita trecho do documento).
+  // Ver _extend_model_with_justifications em backend/services/llm_runner.py.
+  justification_prompt?: string;
 }
 
 export interface ProjectMember {

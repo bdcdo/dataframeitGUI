@@ -1,5 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { getRunningLlmCount } from "@/actions/llm";
 import { Header } from "@/components/shell/Header";
 import { ProjectTabs } from "@/components/shell/ProjectTabs";
@@ -19,37 +19,22 @@ export default async function ProjectLayout({
 
   const supabase = await createSupabaseServer();
 
-  const [
-    { data: project },
-    { data: membership },
-    { data: profile },
-    runningLlmCount,
-  ] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("id, name, created_by")
-      .eq("id", id)
-      .single(),
-    supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .single(),
-    supabase
-      .from("profiles")
-      .select("first_name")
-      .eq("id", user.id)
-      .single(),
-    getRunningLlmCount(id),
-  ]);
+  // project + membership vem de getProjectAccessContext (request-scoped via
+  // cache()) — mesma leitura reaproveitada pelos layouts filhos config/llm.
+  const [{ project, isCoordinator }, { data: profile }, runningLlmCount] =
+    await Promise.all([
+      getProjectAccessContext(id, user.id, user.isMaster),
+      supabase
+        .from("profiles")
+        .select("first_name")
+        .eq("id", user.id)
+        .single(),
+      // Best-effort: o badge "LLM rodando" e cosmetico. Uma falha aqui (RLS,
+      // rede) nao deve derrubar o layout inteiro do projeto — degrada para 0.
+      getRunningLlmCount(id).catch(() => 0),
+    ]);
 
   if (!project) notFound();
-
-  const isCoordinator =
-    membership?.role === "coordenador" ||
-    project.created_by === user.id ||
-    user.isMaster;
 
   // Fetch project members for master impersonation dropdown
   let projectMembers: {

@@ -277,20 +277,27 @@ export function ReviewCommentsView({
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map((c) => (
-            <CommentCard
-              key={c.id}
-              comment={c}
-              projectId={projectId}
-              isPending={isPending}
-              isCoordinator={isCoordinator}
-              onResolve={() => handleResolve(c)}
-              onReopen={() => handleReopen(c)}
-              onEditField={() => setEditingField(c.fieldName)}
-              onSuggestField={() => setSuggestingField(c.fieldName)}
-              onOpenDocument={c.documentId ? (docId) => setSplitDocId(docId) : undefined}
-            />
-          ))}
+          {filtered.map((c) => {
+            const fieldExists = fields.some((f) => f.name === c.fieldName);
+            return (
+              <CommentCard
+                key={c.id}
+                comment={c}
+                projectId={projectId}
+                isPending={isPending}
+                isCoordinator={isCoordinator}
+                onResolve={() => handleResolve(c)}
+                onReopen={() => handleReopen(c)}
+                onEditField={
+                  fieldExists ? () => setEditingField(c.fieldName) : undefined
+                }
+                onSuggestField={
+                  fieldExists ? () => setSuggestingField(c.fieldName) : undefined
+                }
+                onOpenDocument={c.documentId ? (docId) => setSplitDocId(docId) : undefined}
+              />
+            );
+          })}
         </div>
       )}
 

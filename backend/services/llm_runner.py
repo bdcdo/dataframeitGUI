@@ -365,17 +365,49 @@ def _build_llm_error_message(
     return None
 
 
+# Prompt-base exigente usado quando o campo não traz um
+# `justification_prompt` próprio no schema. Obriga o LLM a ancorar a
+# justificativa em um trecho textual do documento, em vez de produzir uma
+# explicação vaga. {name} é substituído pelo nome do campo.
+DEFAULT_JUSTIFICATION_PROMPT = (
+    "Justificativa para a resposta de '{name}'. OBRIGATÓRIO: (1) cite "
+    "textualmente, entre aspas, o trecho do documento que embasa a "
+    "resposta; (2) explique em uma ou duas frases como esse trecho leva à "
+    "resposta escolhida. Se nenhum trecho específico embasar a resposta, "
+    "declare isso explicitamente e explique o raciocínio com base na "
+    "ausência."
+)
+
+
 def _extend_model_with_justifications(model_class):
-    """Add a justification field for each existing field in the model."""
-    from pydantic import BaseModel, Field, create_model
+    """Add a justification field for each existing field in the model.
+
+    O texto-base do prompt da justificativa vem de
+    ``json_schema_extra['justification_prompt']`` quando o coordenador o
+    configurou no schema (ver #88); caso contrário usa
+    ``DEFAULT_JUSTIFICATION_PROMPT``, que exige citação textual do trecho do
+    documento. O placeholder ``{name}`` é substituído pelo nome do campo.
+    """
+    from pydantic import Field, create_model
 
     extra_fields = {}
-    for name in model_class.model_fields:
+    for name, info in model_class.model_fields.items():
+        extra = info.json_schema_extra
+        if not isinstance(extra, dict):
+            extra = {}
+        custom = extra.get("justification_prompt")
+        if isinstance(custom, str) and custom.strip():
+            base = custom.strip()
+            # Permite {name} no texto custom; se o coordenador usou outras
+            # chaves (ou chaves não intencionais), cai no texto literal.
+            try:
+                desc = base.format(name=name)
+            except (KeyError, IndexError, ValueError):
+                desc = base
+        else:
+            desc = DEFAULT_JUSTIFICATION_PROMPT.format(name=name)
         just_name = f"{name}_justification"
-        extra_fields[just_name] = (
-            str,
-            Field(description=f"Justificativa detalhada para a resposta de '{name}'"),
-        )
+        extra_fields[just_name] = (str, Field(description=desc))
     return create_model(
         f"{model_class.__name__}WithJustifications",
         __base__=model_class,

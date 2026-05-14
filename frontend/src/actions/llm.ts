@@ -10,7 +10,10 @@ export async function getEligibleDocCount(
 ): Promise<{ total: number; eligible: number }> {
   const supabase = await createSupabaseServer();
 
-  const [{ count: total }, { data: llmResponses }] = await Promise.all([
+  const [
+    { count: total, error: totalError },
+    { data: llmResponses, error: llmError },
+  ] = await Promise.all([
     supabase
       .from("documents")
       .select("id", { count: "exact", head: true })
@@ -23,6 +26,9 @@ export async function getEligibleDocCount(
       .eq("respondent_type", "llm")
       .eq("is_current", true),
   ]);
+
+  if (totalError) throw new Error(totalError.message);
+  if (llmError) throw new Error(llmError.message);
 
   const totalDocs = total ?? 0;
 
@@ -87,7 +93,7 @@ export async function getLlmRuns(
 ): Promise<LlmRunRecord[]> {
   const supabase = await createSupabaseServer();
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("llm_runs")
     .select(
       "id, job_id, status, phase, llm_provider, llm_model, filter_mode, " +
@@ -98,16 +104,19 @@ export async function getLlmRuns(
     .order("started_at", { ascending: false })
     .limit(limit);
 
+  if (error) throw new Error(error.message);
+
   return (data ?? []) as unknown as LlmRunRecord[];
 }
 
 export async function getRunningLlmCount(projectId: string): Promise<number> {
   const supabase = await createSupabaseServer();
-  const { count } = await supabase
+  const { count, error } = await supabase
     .from("llm_runs")
     .select("id", { count: "exact", head: true })
     .eq("project_id", projectId)
     .eq("status", "running");
+  if (error) throw new Error(error.message);
   return count ?? 0;
 }
 
@@ -118,7 +127,10 @@ export async function getLlmRunStats(
   // Usa is_partial (imutável) em vez de is_current para distinguir complete vs
   // partial. is_current muda quando uma run posterior roda nos mesmos docs, o
   // que inflaria artificialmente a contagem de parciais de runs antigas.
-  const [{ count: complete }, { count: partial }] = await Promise.all([
+  const [
+    { count: complete, error: completeError },
+    { count: partial, error: partialError },
+  ] = await Promise.all([
     supabase
       .from("responses")
       .select("id", { count: "exact", head: true })
@@ -130,6 +142,8 @@ export async function getLlmRunStats(
       .eq("llm_job_id", jobId)
       .eq("is_partial", true),
   ]);
+  if (completeError) throw new Error(completeError.message);
+  if (partialError) throw new Error(partialError.message);
   return { current: complete ?? 0, partial: partial ?? 0 };
 }
 
@@ -176,7 +190,9 @@ export async function getLlmResponsesForProject(
 
   if (options.jobId) query = query.eq("llm_job_id", options.jobId);
 
-  const { data } = await query;
+  const { data, error } = await query;
+
+  if (error) throw new Error(error.message);
 
   return ((data ?? []) as unknown as Array<{
     id: string;
@@ -258,7 +274,7 @@ export async function getRunningLlmJob(
 ): Promise<RunningLlmJob | null> {
   const supabase = await createSupabaseServer();
   const heartbeatCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("llm_runs")
     .select("job_id, started_at, heartbeat_at")
     .eq("project_id", projectId)
@@ -267,6 +283,7 @@ export async function getRunningLlmJob(
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (error) throw new Error(error.message);
   if (!data) return null;
   return { job_id: data.job_id, started_at: data.started_at };
 }
@@ -276,7 +293,10 @@ export async function getDocumentsForSelection(
 ): Promise<DocSelectionItem[]> {
   const supabase = await createSupabaseServer();
 
-  const [{ data: docs }, { data: responses }] = await Promise.all([
+  const [
+    { data: docs, error: docsError },
+    { data: responses, error: responsesError },
+  ] = await Promise.all([
     supabase
       .from("documents")
       .select("id, title, external_id")
@@ -289,6 +309,9 @@ export async function getDocumentsForSelection(
       .eq("project_id", projectId)
       .eq("is_current", true),
   ]);
+
+  if (docsError) throw new Error(docsError.message);
+  if (responsesError) throw new Error(responsesError.message);
 
   const humanDocs = new Set<string>();
   const llmCounts = new Map<string, number>();

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { isFieldVisible } from "@/lib/conditional";
 import { reorderFullList } from "@/lib/field-order";
+import { getScrollBehavior } from "@/lib/scroll";
 import type { PydanticField } from "@/lib/types";
 import {
   DndContext,
@@ -91,7 +92,7 @@ function SortableQuestion({
       }}
       style={style}
       className={cn(
-        "border-l-2 pl-4 py-2 rounded-r-md transition-colors",
+        "border-l-2 pl-4 py-1.5 rounded-r-md transition-colors",
         isHighlighted
           ? "border-l-destructive bg-destructive/10"
           : isAnswered
@@ -115,7 +116,7 @@ function SortableQuestion({
           </button>
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
+          <p className="text-sm font-medium mb-1.5 flex items-center gap-1.5">
             <span className="text-muted-foreground">{index + 1}.</span> {field.description}
             {field.required === false && (
               <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
@@ -123,7 +124,7 @@ function SortableQuestion({
             {isAnswered && <Check className="h-3.5 w-3.5 text-brand shrink-0" />}
           </p>
           {field.help_text && (
-            <p className="text-xs text-muted-foreground mb-2 whitespace-pre-line">
+            <p className="text-xs text-muted-foreground mb-1.5 whitespace-pre-line">
               {field.help_text}
             </p>
           )}
@@ -141,9 +142,16 @@ function SortableQuestion({
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
+  // Rastreia quais campos estavam visíveis no render anterior para detectar
+  // condicionais que acabaram de aparecer.
+  const prevVisibleNamesRef = useRef<Set<string>>(new Set());
+  // Mudança de schema (prop `fields`) também muda `visibleNames`; este flag
+  // evita scrollar nesse caso — só queremos scrollar em resposta do usuário.
+  const skipScrollRef = useRef(false);
 
   useEffect(() => {
     setHighlightedFields(new Set());
+    skipScrollRef.current = true;
   }, [fields]);
 
   const visibleFields = useMemo(
@@ -168,6 +176,32 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         onAnswer(f.name, null);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleNames]);
+
+  // Quando uma resposta libera uma pergunta condicional, o DOM atualiza
+  // in-place e o scroll fica parado — o pesquisador pode não perceber a nova
+  // pergunta fora da viewport. Detecta o campo condicional que passou de
+  // invisível para visível e rola suavemente até ele.
+  useEffect(() => {
+    const prev = prevVisibleNamesRef.current;
+    prevVisibleNamesRef.current = visibleNames;
+
+    if (skipScrollRef.current) {
+      skipScrollRef.current = false;
+      return;
+    }
+    if (readOnly) return;
+
+    const newIdx = visibleFields.findIndex(
+      (f) => f.condition && !prev.has(f.name),
+    );
+    if (newIdx < 0) return;
+
+    questionRefs.current[newIdx]?.scrollIntoView({
+      behavior: getScrollBehavior(),
+      block: "center",
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleNames]);
 
@@ -204,7 +238,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     if (unanswered.length > 0) {
       setHighlightedFields(new Set(unanswered));
       const firstIdx = visibleFields.findIndex((f) => unanswered.includes(f.name));
-      questionRefs.current[firstIdx]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      questionRefs.current[firstIdx]?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
       toast.warning("Preencha todas as perguntas obrigatórias");
       return;
     }
@@ -267,7 +301,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2.5">
         {dragEnabled ? (
           <DndContext
             sensors={sensors}

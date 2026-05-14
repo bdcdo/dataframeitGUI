@@ -5,6 +5,15 @@ import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { fetchFastAPI } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
+import {
+  generatePydanticCode,
+  computeFieldHash,
+  classifyChange,
+  bumpVersion,
+  diffFields,
+  fieldDiffIsStructural,
+  type ChangeType,
+} from "@/lib/schema-utils";
 import crypto from "crypto";
 
 interface ValidateResponse {
@@ -72,153 +81,12 @@ export async function savePrompt(projectId: string, promptTemplate: string) {
   revalidatePath(`/projects/${projectId}/llm/configure`);
 }
 
-// ---------- Hash por campo (reproduz backend _field_hash) ----------
-
-function pythonListRepr(arr: string[]): string {
-  return "[" + arr.map((s) => `'${s}'`).join(", ") + "]";
-}
-
-function computeFieldHash(
-  name: string,
-  type: string,
-  options: string[] | null,
-  description: string
-): string {
-  const optionsPart = options ? pythonListRepr([...options].sort()) : "";
-  const content = `${name}|${type}|${optionsPart}|${description}`;
-  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 12);
-}
-
-// ---------- Versionamento semver ----------
-
-type ChangeType = "major" | "minor" | "patch";
-
-// Classifica uma edição de schema:
-// - PATCH: mudanças apenas em description/help_text ou reordenação (sem mudança estrutural)
-// - MINOR: adicionar/remover campo, adicionar/remover opção, mudar type/target/required
-// - Retorna null quando não há mudança alguma.
-function classifyChange(
-  oldFields: PydanticField[],
-  newFields: PydanticField[],
-): ChangeType | null {
-  const oldNames = new Set(oldFields.map((f) => f.name));
-  const newNames = new Set(newFields.map((f) => f.name));
-
-  const addedOrRemoved =
-    newFields.some((f) => !oldNames.has(f.name)) ||
-    oldFields.some((f) => !newNames.has(f.name));
-
-  if (addedOrRemoved) return "minor";
-
-  let hasStructural = false;
-  let hasTextual = false;
-
-  const oldMap = new Map(oldFields.map((f) => [f.name, f]));
-  for (const n of newFields) {
-    const o = oldMap.get(n.name);
-    if (!o) continue;
-
-    if (o.type !== n.type) hasStructural = true;
-    if ((o.target ?? "all") !== (n.target ?? "all")) hasStructural = true;
-    if ((o.required ?? true) !== (n.required ?? true)) hasStructural = true;
-    if ((o.subfield_rule ?? null) !== (n.subfield_rule ?? null)) hasStructural = true;
-    if ((o.allow_other ?? false) !== (n.allow_other ?? false)) hasStructural = true;
-    if (JSON.stringify(o.subfields ?? null) !== JSON.stringify(n.subfields ?? null)) {
-      hasStructural = true;
-    }
-    if (JSON.stringify(o.condition ?? null) !== JSON.stringify(n.condition ?? null)) {
-      hasStructural = true;
-    }
-
-    const optsOld = o.options ?? [];
-    const optsNew = n.options ?? [];
-    const setOld = new Set(optsOld);
-    const setNew = new Set(optsNew);
-    const sameSet =
-      setOld.size === setNew.size && [...setOld].every((x) => setNew.has(x));
-    if (!sameSet) {
-      hasStructural = true;
-    } else if (optsOld.length !== optsNew.length) {
-      hasStructural = true;
-    } else {
-      for (let i = 0; i < optsOld.length; i++) {
-        if (optsOld[i] !== optsNew[i]) {
-          hasTextual = true;
-          break;
-        }
-      }
-    }
-
-    if (o.description !== n.description) hasTextual = true;
-    if ((o.help_text || "") !== (n.help_text || "")) hasTextual = true;
-  }
-
-  // Reordenação da lista de campos conta como PATCH
-  if (!hasStructural && !hasTextual) {
-    for (let i = 0; i < newFields.length; i++) {
-      if (newFields[i].name !== oldFields[i]?.name) {
-        hasTextual = true;
-        break;
-      }
-    }
-  }
-
-  if (hasStructural) return "minor";
-  if (hasTextual) return "patch";
-  return null;
-}
-
-function bumpVersion(
-  current: { major: number; minor: number; patch: number },
-  type: ChangeType,
-): { major: number; minor: number; patch: number } {
-  if (type === "major") {
-    return { major: current.major + 1, minor: 0, patch: 0 };
-  }
-  if (type === "minor") {
-    return { major: current.major, minor: current.minor + 1, patch: 0 };
-  }
-  return { major: current.major, minor: current.minor, patch: current.patch + 1 };
-}
-
-// Classifica um diff de schema_change_log (before/after por campo) como estrutural (minor)
-// ou textual (patch). Add/remove são sempre estruturais.
-function fieldDiffIsStructural(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-): boolean {
-  if (Object.keys(before).length === 0 || Object.keys(after).length === 0) return true;
-
-  for (const k of ["type", "target", "required", "subfield_rule", "allow_other"]) {
-    if (before[k] !== undefined || after[k] !== undefined) return true;
-  }
-
-  if (before.subfields !== undefined || after.subfields !== undefined) {
-    if (JSON.stringify(before.subfields ?? null) !== JSON.stringify(after.subfields ?? null)) {
-      return true;
-    }
-  }
-
-  if (before.condition !== undefined || after.condition !== undefined) {
-    if (JSON.stringify(before.condition ?? null) !== JSON.stringify(after.condition ?? null)) {
-      return true;
-    }
-  }
-
-  const bOpts = before.options;
-  const aOpts = after.options;
-  if (bOpts !== undefined || aOpts !== undefined) {
-    const bArr = Array.isArray(bOpts) ? (bOpts as unknown[]) : [];
-    const aArr = Array.isArray(aOpts) ? (aOpts as unknown[]) : [];
-    const bSet = new Set(bArr);
-    const aSet = new Set(aArr);
-    const sameSet = bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
-    if (!sameSet) return true;
-  }
-  return false;
-}
-
 // ---------- Save from GUI ----------
+//
+// Orquestrador fino: lê o estado antigo, delega a classificação/diff às
+// primitivas puras de lib/schema-utils.ts e faz os writes. As primitivas
+// (classifyChange, bumpVersion, diffFields, computeFieldHash) são compartilhadas
+// com scripts fora do Next runtime para eliminar drift — ver #63.
 
 export async function saveSchemaFromGUI(
   projectId: string,
@@ -237,7 +105,6 @@ export async function saveSchemaFromGUI(
     .single();
 
   const oldFields = (project?.pydantic_fields as PydanticField[]) || [];
-  const oldMap = new Map(oldFields.map((f) => [f.name, f]));
 
   const current = {
     major: project?.schema_version_major ?? 0,
@@ -249,130 +116,9 @@ export async function saveSchemaFromGUI(
   const bumped = changeType ? bumpVersion(current, changeType) : current;
 
   // Detect per-field changes and build log entries
-  const logEntries: {
-    field_name: string;
-    change_summary: string;
-    before_value: Record<string, unknown>;
-    after_value: Record<string, unknown>;
-  }[] = [];
-
-  const newMap = new Map(fields.map((f) => [f.name, f]));
-
-  function snapshotOf(field: PydanticField): Record<string, unknown> {
-    return {
-      name: field.name,
-      type: field.type,
-      description: field.description,
-      help_text: field.help_text ?? null,
-      options: field.options ?? null,
-      target: field.target ?? null,
-      required: field.required ?? null,
-      subfields: field.subfields ?? null,
-      subfield_rule: field.subfield_rule ?? null,
-      allow_other: field.allow_other ?? null,
-      condition: field.condition ?? null,
-    };
-  }
-
-  // Campos adicionados: sem entry anterior
-  for (const f of fields) {
-    if (oldMap.has(f.name)) continue;
-    logEntries.push({
-      field_name: f.name,
-      change_summary: "campo adicionado",
-      before_value: {},
-      after_value: snapshotOf(f),
-    });
-  }
-
-  // Campos removidos: sem entry atual
-  for (const o of oldFields) {
-    if (newMap.has(o.name)) continue;
-    logEntries.push({
-      field_name: o.name,
-      change_summary: "campo removido",
-      before_value: snapshotOf(o),
-      after_value: {},
-    });
-  }
-
-  // Campos modificados: compara atributo por atributo
-  for (const f of fields) {
-    const old = oldMap.get(f.name);
-    if (!old) continue;
-    const diffs: string[] = [];
-    const before: Record<string, unknown> = {};
-    const after: Record<string, unknown> = {};
-
-    if (old.description !== f.description) {
-      diffs.push("descrição");
-      before.description = old.description;
-      after.description = f.description;
-    }
-    if ((old.help_text || "") !== (f.help_text || "")) {
-      diffs.push("instruções");
-      before.help_text = old.help_text || null;
-      after.help_text = f.help_text || null;
-    }
-    const oldOpts = JSON.stringify(old.options ?? null);
-    const newOpts = JSON.stringify(f.options ?? null);
-    if (oldOpts !== newOpts) {
-      diffs.push(f.type === "text" ? "respostas padronizadas" : "opções");
-      before.options = old.options;
-      after.options = f.options;
-    }
-    if (old.type !== f.type) {
-      diffs.push("tipo");
-      before.type = old.type;
-      after.type = f.type;
-    }
-    if ((old.target ?? "all") !== (f.target ?? "all")) {
-      diffs.push("alvo");
-      before.target = old.target ?? null;
-      after.target = f.target ?? null;
-    }
-    if ((old.required ?? true) !== (f.required ?? true)) {
-      diffs.push("obrigatório");
-      before.required = old.required ?? null;
-      after.required = f.required ?? null;
-    }
-    if ((old.subfield_rule ?? null) !== (f.subfield_rule ?? null)) {
-      diffs.push("regra de subcampos");
-      before.subfield_rule = old.subfield_rule ?? null;
-      after.subfield_rule = f.subfield_rule ?? null;
-    }
-    if ((old.allow_other ?? false) !== (f.allow_other ?? false)) {
-      diffs.push("permite outro");
-      before.allow_other = old.allow_other ?? false;
-      after.allow_other = f.allow_other ?? false;
-    }
-    const oldSubs = JSON.stringify(old.subfields ?? null);
-    const newSubs = JSON.stringify(f.subfields ?? null);
-    if (oldSubs !== newSubs) {
-      diffs.push("subcampos");
-      before.subfields = old.subfields ?? null;
-      after.subfields = f.subfields ?? null;
-    }
-    const oldCond = JSON.stringify(old.condition ?? null);
-    const newCond = JSON.stringify(f.condition ?? null);
-    if (oldCond !== newCond) {
-      diffs.push("condição");
-      before.condition = old.condition ?? null;
-      after.condition = f.condition ?? null;
-    }
-
-    if (diffs.length > 0) {
-      logEntries.push({
-        field_name: f.name,
-        change_summary: diffs.join(", "),
-        before_value: before,
-        after_value: after,
-      });
-    }
-  }
+  const logEntries = diffFields(oldFields, fields);
 
   // Save schema com versão bumpada (ou mantida se não houve mudança)
-  const { generatePydanticCode } = await import("@/lib/schema-utils");
   const code = generatePydanticCode(fields);
   const fieldsWithHash = fields.map((f) => ({
     ...f,

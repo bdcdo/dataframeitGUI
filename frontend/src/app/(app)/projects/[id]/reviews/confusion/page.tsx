@@ -6,6 +6,7 @@ import {
   computeConfusionData,
 } from "@/lib/reviews/queries";
 import { ConfusionMatrix } from "@/components/reviews/ConfusionMatrix";
+import { TruncationBanner } from "@/components/reviews/TruncationBanner";
 
 export default async function ConfusionPage({
   params,
@@ -23,15 +24,19 @@ export default async function ConfusionPage({
 
   if (confusionDataList.length === 0) {
     return (
-      <p className="py-12 text-center text-sm text-muted-foreground">
-        Nenhum dado de confusão disponível. Revise documentos na aba Comparar
-        para gerar dados.
-      </p>
+      <div className="mx-auto max-w-5xl p-6 space-y-4">
+        <TruncationBanner truncated={ctx.truncated} />
+        <p className="py-12 text-center text-sm text-muted-foreground">
+          Nenhum dado de confusão disponível. Revise documentos na aba Comparar
+          para gerar dados.
+        </p>
+      </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-5xl p-6 space-y-4">
+      <TruncationBanner truncated={ctx.truncated} />
       <ConfusionMatrix confusionDataList={confusionDataList} />
     </div>
   );

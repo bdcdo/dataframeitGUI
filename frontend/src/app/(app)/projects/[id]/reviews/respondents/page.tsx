@@ -7,6 +7,7 @@ import {
 } from "@/lib/reviews/queries";
 import { RespondentProfile } from "@/components/reviews/RespondentProfile";
 import { DateSinceFilter } from "@/components/reviews/DateSinceFilter";
+import { TruncationBanner } from "@/components/reviews/TruncationBanner";
 
 export default async function RespondentsPage({
   params,
@@ -49,6 +50,7 @@ export default async function RespondentsPage({
 
   return (
     <div className="mx-auto max-w-5xl p-6 space-y-4">
+      <TruncationBanner truncated={ctx.truncated} />
       <DateSinceFilter />
       {respondentProfiles.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
