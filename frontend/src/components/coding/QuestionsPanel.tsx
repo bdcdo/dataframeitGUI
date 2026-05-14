@@ -267,7 +267,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2.5">
         {dragEnabled ? (
           <DndContext
             sensors={sensors}

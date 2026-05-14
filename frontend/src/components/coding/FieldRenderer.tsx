@@ -270,9 +270,9 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
     const otherChecked = isOtherValue(value);
     const otherValue = otherChecked ? otherText(value as string) : "";
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-0.5">
         {field.options.map((option) => (
-          <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 hover:bg-muted">
+          <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1 hover:bg-muted">
             <input
               type="radio"
               name={field.name}
@@ -286,7 +286,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         ))}
         {field.allow_other && (
           <div className="space-y-1.5">
-            <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 hover:bg-muted">
+            <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1 hover:bg-muted">
               <input
                 type="radio"
                 name={field.name}
@@ -326,9 +326,9 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
       next !== undefined ? [...selectedFixed, next] : [...selectedFixed];
 
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-0.5">
         {field.options.map((option) => (
-          <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 hover:bg-muted">
+          <label key={option} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1 hover:bg-muted">
             <input
               type="checkbox"
               value={option}
@@ -348,7 +348,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         ))}
         {field.allow_other && (
           <div className="space-y-1.5">
-            <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 hover:bg-muted">
+            <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1 hover:bg-muted">
               <input
                 type="checkbox"
                 checked={otherChecked}
