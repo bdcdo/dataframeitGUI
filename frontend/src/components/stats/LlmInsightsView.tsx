@@ -88,9 +88,17 @@ export function LlmInsightsView({
       toast.error(result.error ?? "Falha ao regenerar backlog");
       return;
     }
-    toast.success(
-      `Backlog regenerado. ${result.scanned ?? 0} resposta(s) escaneada(s), ${result.regenerated ?? 0} doc(s) com divergência.`,
-    );
+    const parts = [
+      `${result.scanned ?? 0} resposta(s) escaneada(s)`,
+      `${result.regenerated ?? 0} doc(s) com divergência`,
+    ];
+    if (result.removed) {
+      parts.push(`${result.removed} revisão(ões) obsoleta(s) removida(s)`);
+    }
+    if (result.keptResolved) {
+      parts.push(`${result.keptResolved} já resolvida(s) mantida(s)`);
+    }
+    toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
     router.refresh();
   }
 

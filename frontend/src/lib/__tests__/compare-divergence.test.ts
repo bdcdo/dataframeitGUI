@@ -144,6 +144,58 @@ describe("computeDivergentFieldNames", () => {
     ];
     expect(computeDivergentFieldNames(fields, responses)).toEqual([]);
   });
+
+  it("staleness: a field absent from a response's answerFieldHashes is excluded from comparison", () => {
+    // `b` foi adicionado ao schema depois que a response 1 foi codificada:
+    // o answerFieldHashes dela não tem a chave `b`. Sem a resposta 1, sobra
+    // só 1 response aplicável para `b` → não pode divergir (não vira "(vazio)").
+    const fields = [field({ name: "a" }), field({ name: "b" })];
+    const responses = [
+      {
+        id: "1",
+        answers: { a: "same" },
+        answerFieldHashes: { a: "ha" } as Record<string, string>,
+      },
+      {
+        id: "2",
+        answers: { a: "same", b: "novo" },
+        answerFieldHashes: { a: "ha", b: "hb" } as Record<string, string>,
+      },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual([]);
+  });
+
+  it("staleness: field present in both responses' hashes still diverges normally", () => {
+    const fields = [field({ name: "a" })];
+    const responses = [
+      { id: "1", answers: { a: "alpha" }, answerFieldHashes: { a: "ha" } },
+      { id: "2", answers: { a: "beta" }, answerFieldHashes: { a: "ha" } },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["a"]);
+  });
+
+  it("staleness: null/absent answerFieldHashes (legacy) preserves old behavior", () => {
+    // Sem o snapshot de hashes não dá para inferir staleness — mantém o
+    // comportamento antigo de comparar tudo (undefined vs valor = divergente).
+    const fields = [field({ name: "a" })];
+    const responses = [
+      { id: "1", answers: {}, answerFieldHashes: null },
+      { id: "2", answers: { a: "valor" } },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["a"]);
+  });
+
+  it("staleness: empty answerFieldHashes {} is treated as legacy, not 'no fields'", () => {
+    // Um objeto vazio (ex: PydanticFields sem `.hash` populado) não pode
+    // excluir todos os campos silenciosamente — deve cair no comportamento
+    // legacy de comparar tudo.
+    const fields = [field({ name: "a" })];
+    const responses = [
+      { id: "1", answers: { a: "alpha" }, answerFieldHashes: {} },
+      { id: "2", answers: { a: "beta" }, answerFieldHashes: {} },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["a"]);
+  });
 });
 
 describe("isDocComplete", () => {

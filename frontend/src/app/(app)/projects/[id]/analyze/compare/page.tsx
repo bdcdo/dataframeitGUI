@@ -322,9 +322,15 @@ export default async function ComparePageRoute({
 
     // Equivalence-aware divergence detection (free-text fields can have
     // responses fused via the reviewer's "marcar como equivalentes" action).
+    // `answerFieldHashes` torna a comparação consciente de staleness: campos
+    // adicionados ao schema depois de uma codificação não geram falso "(vazio)".
     const divergent = computeDivergentFieldNames(
       fields,
-      qualifiedResponses,
+      qualifiedResponses.map((r) => ({
+        id: r.id,
+        answers: r.answers,
+        answerFieldHashes: r.answer_field_hashes,
+      })),
       equivByDocField.get(docId),
     );
 
