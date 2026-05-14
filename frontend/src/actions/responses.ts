@@ -101,6 +101,9 @@ export async function saveResponse(
       version_inferred_from: "live_save",
       round_id: roundIdToPersist,
       is_partial: isPartialToWrite,
+      // Marca a codificacao do pesquisador no tempo — alimenta a ordenacao
+      // "codificados recentemente" da navegacao da aba Codificar (issue #108).
+      updated_at: new Date().toISOString(),
     };
 
     if (existing) {

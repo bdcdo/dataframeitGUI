@@ -33,9 +33,32 @@ export interface RoundFilterData {
   selected: string;
 }
 
+export type CodingSortMode = "default" | "recent";
+
+// Ordena documentos pelo timestamp de codificacao do proprio pesquisador
+// (responses.updated_at), do mais recente para o mais antigo. Documentos ainda
+// nao codificados vao para o fim, preservando a ordem original entre si.
+function sortByRecent<T extends { id: string }>(
+  docs: T[],
+  codedAtByDoc: Record<string, string>,
+): T[] {
+  return docs
+    .map((doc, index) => ({ doc, index }))
+    .sort((a, b) => {
+      const ta = codedAtByDoc[a.doc.id];
+      const tb = codedAtByDoc[b.doc.id];
+      if (ta && tb) return tb.localeCompare(ta);
+      if (ta) return -1;
+      if (tb) return 1;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.doc);
+}
+
 interface CodingPageProps {
   projectId: string;
   documents: (Document & { assignment?: Pick<Assignment, "id" | "status"> })[];
+  codedAtByDoc?: Record<string, string>;
   fields: PydanticField[];
   existingAnswers: Record<string, Record<string, any>>;
   existingJustifications?: Record<string, Record<string, unknown>>;
@@ -48,6 +71,7 @@ interface CodingPageProps {
 export function CodingPage({
   projectId,
   documents,
+  codedAtByDoc = {},
   fields,
   existingAnswers,
   existingJustifications = {},
@@ -61,10 +85,23 @@ export function CodingPage({
   const pathname = usePathname();
   const docParam = searchParams.get("doc");
 
+  // Ordenacao da navegacao de documentos atribuidos (issue #108). "recent"
+  // ordena pelo responses.updated_at do proprio pesquisador; "default" mantem
+  // a ordem do servidor (status do assignment).
+  const sortMode: CodingSortMode =
+    searchParams.get("sort") === "recent" ? "recent" : "default";
+  const sortedDocuments = useMemo(
+    () =>
+      sortMode === "recent"
+        ? sortByRecent(documents, codedAtByDoc)
+        : documents,
+    [documents, sortMode, codedAtByDoc],
+  );
+
   // Compute initial state from URL param
   const getInitialState = useCallback(() => {
     if (docParam) {
-      const assignedIdx = documents.findIndex((d) => d.id === docParam);
+      const assignedIdx = sortedDocuments.findIndex((d) => d.id === docParam);
       if (assignedIdx >= 0) {
         return { mode: "assigned" as const, docIndex: assignedIdx };
       }
@@ -244,7 +281,7 @@ export function CodingPage({
   }, [isFullscreen]);
 
   // --- Assigned mode handlers ---
-  const currentDoc = documents[docIndex];
+  const currentDoc = sortedDocuments[docIndex];
   const docAnswers = allAnswers[currentDoc?.id] || {};
   const docNotes = allNotes[currentDoc?.id] ?? "";
 
@@ -322,7 +359,7 @@ export function CodingPage({
     if (result.success) {
       markClean(currentDoc.id);
       toast.success("Respostas salvas!");
-      if (docIndex < documents.length - 1) {
+      if (docIndex < sortedDocuments.length - 1) {
         setDocIndex(docIndex + 1);
       } else {
         setAllDone(true);
@@ -330,7 +367,7 @@ export function CodingPage({
     } else {
       toast.error(result.error || "Erro ao salvar respostas");
     }
-  }, [currentDoc, docAnswers, docNotes, projectId, docIndex, documents.length, markClean]);
+  }, [currentDoc, docAnswers, docNotes, projectId, docIndex, sortedDocuments.length, markClean]);
 
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
@@ -343,11 +380,59 @@ export function CodingPage({
           else toast.error(result.error || "Erro ao salvar respostas");
         });
       }
-      const clampedIndex = Math.max(0, Math.min(newIndex, documents.length - 1));
+      const clampedIndex = Math.max(0, Math.min(newIndex, sortedDocuments.length - 1));
       setDocIndex(clampedIndex);
-      updateDocParam(documents[clampedIndex]?.id ?? null);
+      updateDocParam(sortedDocuments[clampedIndex]?.id ?? null);
     },
-    [currentDoc, docAnswers, docNotes, projectId, documents, updateDocParam, dirtyDocs, markClean]
+    [currentDoc, docAnswers, docNotes, projectId, sortedDocuments, updateDocParam, dirtyDocs, markClean]
+  );
+
+  // Troca o criterio de ordenacao da navegacao de atribuidos. Ao mudar para
+  // "recent", salta direto para o documento codificado mais recentemente — o
+  // objetivo da issue #108 e achar em 1 clique o ultimo que o pesquisador
+  // mexeu. Ao voltar para "default", mantem o documento atual selecionado.
+  const handleSortChange = useCallback(
+    (nextSort: CodingSortMode) => {
+      if (currentDoc && dirtyDocs.has(currentDoc.id)) {
+        saveResponse(projectId, currentDoc.id, docAnswers, {
+          notes: docNotes,
+          isAutoSave: true,
+        }).then((result) => {
+          if (result.success) markClean(currentDoc.id);
+          else toast.error(result.error || "Erro ao salvar respostas");
+        });
+      }
+      const nextDocs =
+        nextSort === "recent"
+          ? sortByRecent(documents, codedAtByDoc)
+          : documents;
+      const targetId =
+        nextSort === "recent" ? nextDocs[0]?.id : currentDoc?.id;
+      const targetIndex = targetId
+        ? nextDocs.findIndex((d) => d.id === targetId)
+        : 0;
+      setDocIndex(Math.max(0, targetIndex));
+
+      const params = new URLSearchParams(searchParams.toString());
+      if (nextSort === "recent") params.set("sort", "recent");
+      else params.delete("sort");
+      if (targetId) params.set("doc", targetId);
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+    },
+    [
+      currentDoc,
+      docAnswers,
+      docNotes,
+      projectId,
+      documents,
+      codedAtByDoc,
+      dirtyDocs,
+      markClean,
+      searchParams,
+      router,
+      pathname,
+    ]
   );
 
   // --- Browse mode handlers ---
@@ -508,6 +593,8 @@ export function CodingPage({
             mode={mode}
             onModeChange={setMode}
             assignedCount={documents.length}
+            sortMode={sortMode}
+            onSortChange={handleSortChange}
             roundFilter={roundFilter}
             doc={
               mode === "assigned" && currentDoc

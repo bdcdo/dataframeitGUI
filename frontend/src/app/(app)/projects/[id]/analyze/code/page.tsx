@@ -77,7 +77,7 @@ export default async function CodePage({
   const { data: responses } = await supabase
     .from("responses")
     .select(
-      "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch, is_partial",
+      "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch, is_partial, updated_at",
     )
     .eq("project_id", id)
     .eq("respondent_id", effectiveUserId)
@@ -101,6 +101,13 @@ export default async function CodePage({
       schema_version_patch: r.schema_version_patch,
       is_partial: r.is_partial,
     });
+  });
+
+  // Quando o pesquisador codificou cada documento (responses.updated_at) —
+  // alimenta a ordenacao "codificados recentemente" da navegacao (issue #108).
+  const codedAtByDoc: Record<string, string> = {};
+  responses?.forEach((r) => {
+    if (r.updated_at) codedAtByDoc[r.document_id] = r.updated_at;
   });
 
   const currentVersion: SchemaVersion = {
@@ -223,6 +230,7 @@ export default async function CodePage({
     <CodingPage
       projectId={id}
       documents={filteredDocuments}
+      codedAtByDoc={codedAtByDoc}
       fields={fields}
       existingAnswers={existingAnswers}
       existingJustifications={existingJustifications}

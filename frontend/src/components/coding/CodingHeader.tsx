@@ -24,7 +24,7 @@ import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
 import { SuggestExclusionDialog } from "./SuggestExclusionDialog";
 import { CURRENT_FILTER_VALUE, isCurrentFilter } from "@/lib/rounds";
-import type { RoundFilterData } from "./CodingPage";
+import type { RoundFilterData, CodingSortMode } from "./CodingPage";
 
 type DocSection =
   | {
@@ -52,6 +52,8 @@ interface CodingHeaderProps {
   mode: "assigned" | "browse";
   onModeChange: (mode: "assigned" | "browse") => void;
   assignedCount: number;
+  sortMode: CodingSortMode;
+  onSortChange: (mode: CodingSortMode) => void;
   roundFilter?: RoundFilterData;
   doc?: DocSection;
   onToggleFullscreen: () => void;
@@ -61,6 +63,8 @@ export function CodingHeader({
   mode,
   onModeChange,
   assignedCount,
+  sortMode,
+  onSortChange,
   roundFilter,
   doc,
   onToggleFullscreen,
@@ -82,6 +86,13 @@ export function CodingHeader({
           </TabsTrigger>
         </TabsList>
       </Tabs>
+
+      {mode === "assigned" && (
+        <>
+          <Separator orientation="vertical" className="h-4" />
+          <SortSelect value={sortMode} onChange={onSortChange} />
+        </>
+      )}
 
       {showRound && (
         <>
@@ -106,6 +117,32 @@ export function CodingHeader({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function SortSelect({
+  value,
+  onChange,
+}: {
+  value: CodingSortMode;
+  onChange: (mode: CodingSortMode) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <span className="text-xs text-muted-foreground">Ordenar:</span>
+      <Select
+        value={value}
+        onValueChange={(v) => onChange(v as CodingSortMode)}
+      >
+        <SelectTrigger size="sm" className="h-6 w-auto min-w-[150px] text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="default">Padrão</SelectItem>
+          <SelectItem value="recent">Codificados recentemente</SelectItem>
+        </SelectContent>
+      </Select>
     </div>
   );
 }
