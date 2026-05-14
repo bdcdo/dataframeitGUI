@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatModelLabel } from "@/lib/model-registry";
+import { formatModelLabel, isLlmRespondent } from "@/lib/model-registry";
 
 interface RespondentFilterProps {
   value: string;
@@ -22,8 +22,8 @@ export function RespondentFilter({
   onChange,
   respondentNames,
 }: RespondentFilterProps) {
-  const humans = respondentNames.filter((n) => !n.includes("/"));
-  const llms = respondentNames.filter((n) => n.includes("/"));
+  const llms = respondentNames.filter(isLlmRespondent);
+  const humans = respondentNames.filter((n) => !isLlmRespondent(n));
 
   if (respondentNames.length <= 1) return null;
 
