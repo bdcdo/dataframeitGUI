@@ -1,16 +1,33 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import {
-  submitAutoReview,
-  regenerateAutoReviewBacklog,
-} from "@/actions/field-reviews";
-import { FieldVerdictRow } from "./FieldVerdictRow";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
+import { DocumentReader } from "@/components/coding/DocumentReader";
+import { submitAutoReview } from "@/actions/field-reviews";
+import {
+  AutoReviewDocList,
+  type AutoReviewDocListEntry,
+} from "./AutoReviewDocList";
+import {
+  AutoReviewFieldPanel,
+  type AutoReviewField,
+} from "./AutoReviewFieldPanel";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
 
 export interface AutoReviewDoc {
@@ -18,84 +35,162 @@ export interface AutoReviewDoc {
   title: string | null;
   externalId: string | null;
   text: string;
-  fields: Array<{
-    fieldName: string;
-    humanAnswer: unknown;
-    llmAnswer: unknown;
-    llmJustification: string | null;
-    alreadyAnswered: boolean;
-  }>;
+  fields: AutoReviewField[];
+}
+
+export interface AutoReviewQueueOwner {
+  userId: string;
+  email: string | null;
+  name: string | null;
 }
 
 export interface AutoReviewPageProps {
   projectId: string;
-  projectName: string;
   fields: PydanticField[];
   docs: AutoReviewDoc[];
   isCoordinator?: boolean;
+  /** quando coordenador, vê a fila deste pesquisador (default = ele mesmo) */
+  viewAsUserId: string;
+  /** lista de pesquisadores do projeto, para o seletor do coordenador */
+  reviewers: AutoReviewQueueOwner[];
+  /** id do usuário logado (não muda quando coord visualiza outra fila) */
+  currentUserId: string;
 }
+
+const STORAGE_KEY_PREFIX = "autoReview:docId:";
 
 export function AutoReviewPage({
   projectId,
-  fields,
   docs,
   isCoordinator = false,
+  viewAsUserId,
+  reviewers,
+  currentUserId,
 }: AutoReviewPageProps) {
   const router = useRouter();
-  const [docIndex, setDocIndex] = useState(0);
+  const searchParams = useSearchParams();
+
+  const isOwnQueue = viewAsUserId === currentUserId;
+  const readOnly = !isOwnQueue;
+
+  const storageKey = `${STORAGE_KEY_PREFIX}${projectId}:${viewAsUserId}`;
+  const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
+
+  // Restore último doc visto (por projeto+fila) — espelha o padrão da Compare.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const v = window.sessionStorage.getItem(storageKey);
+    if (v) setPinnedDocId(v);
+  }, [storageKey]);
+
+  const docIndex = useMemo(() => {
+    if (docs.length === 0) return 0;
+    if (pinnedDocId) {
+      const i = docs.findIndex((d) => d.docId === pinnedDocId);
+      if (i >= 0) return i;
+    }
+    return 0;
+  }, [docs, pinnedDocId]);
+
+  const [fieldIndex, setFieldIndex] = useState(0);
+  const [listCollapsed, setListCollapsed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
   // Keyed por `${docId}::${fieldName}` — fieldName se repete entre documentos.
-  // Sem o prefixo, escolha de "q1" no doc A pre-selecionaria "q1" do doc B.
+  // Sem o prefixo do docId, escolher "q1" no doc A pre-selecionaria "q1" do
+  // doc B na navegação. O composto garante isolamento por (doc, campo).
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
 
   const choiceKey = (docId: string, fieldName: string) =>
     `${docId}::${fieldName}`;
 
-  // useMemo precisa rodar incondicionalmente — antes do early return.
-  const fieldMetaMap = useMemo(
-    () => new Map(fields.map((f) => [f.name, f])),
-    [fields],
-  );
-  const fieldMeta = (name: string) => fieldMetaMap.get(name);
+  useEffect(() => {
+    setFieldIndex(0);
+  }, [docIndex]);
 
-  async function handleRegenerate() {
-    setRegenerating(true);
-    const result = await regenerateAutoReviewBacklog(projectId);
-    setRegenerating(false);
-    if (!result.success) {
-      toast.error(result.error ?? "Falha ao regenerar backlog");
-      return;
+  function handleDocNavigate(newIndex: number) {
+    const clamped = Math.max(0, Math.min(newIndex, docs.length - 1));
+    const target = docs[clamped];
+    if (target) {
+      setPinnedDocId(target.docId);
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(storageKey, target.docId);
+      }
     }
-    toast.success(
-      `Backlog regenerado. ${result.scanned ?? 0} resposta(s) escaneada(s), ${result.regenerated ?? 0} doc(s) com divergência.`,
-    );
-    router.refresh();
   }
+
+  function handleViewAsChange(newUserId: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (newUserId === currentUserId) {
+      params.delete("viewAs");
+    } else {
+      params.set("viewAs", newUserId);
+    }
+    router.push(`?${params.toString()}`);
+  }
+
+  const docListEntries: AutoReviewDocListEntry[] = useMemo(
+    () =>
+      docs.map((d) => {
+        const total = d.fields.length;
+        const pending = d.fields.filter((f) => {
+          if (f.alreadyAnswered) return false;
+          const k = choiceKey(d.docId, f.fieldName);
+          return choices[k] == null;
+        }).length;
+        return {
+          id: d.docId,
+          title: d.title,
+          externalId: d.externalId,
+          totalFields: total,
+          pendingFields: pending,
+        };
+      }),
+    [docs, choices],
+  );
 
   if (docs.length === 0) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-10 text-center space-y-4">
-        <h1 className="text-2xl font-semibold mb-4">Auto-revisão</h1>
-        <p className="text-muted-foreground">
-          Nenhuma auto-revisão pendente. Quando você submeter uma codificação
-          que diverge do LLM, ela aparecerá aqui.
-        </p>
+      <div className="mx-auto max-w-3xl space-y-4 px-6 py-10 text-center">
+        <h1 className="mb-4 text-2xl font-semibold">Auto-revisão</h1>
+        {readOnly ? (
+          <p className="text-muted-foreground">
+            Este pesquisador não tem auto-revisão pendente no momento.
+          </p>
+        ) : (
+          <p className="text-muted-foreground">
+            Nenhuma auto-revisão pendente. Quando você submeter uma codificação
+            que diverge do LLM, ela aparecerá aqui.
+          </p>
+        )}
         {isCoordinator ? (
-          <div className="pt-4 border-t mt-6 space-y-2">
+          <div className="mt-6 space-y-3 border-t pt-4 text-left">
+            {reviewers.length > 1 ? (
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">
+                  Ver fila de outro pesquisador
+                </p>
+                <Select
+                  value={viewAsUserId}
+                  onValueChange={handleViewAsChange}
+                >
+                  <SelectTrigger className="w-full max-w-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {reviewers.map((r) => (
+                      <SelectItem key={r.userId} value={r.userId}>
+                        {r.name || r.email || r.userId.slice(0, 8)}
+                        {r.userId === currentUserId ? " (você)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <p className="text-xs text-muted-foreground">
-              Coordenador: se alguma codificação humana já submetida não gerou
-              backlog (por exemplo, por falha silenciosa em produção), você
-              pode forçar a varredura.
+              Coordenador: o backlog pode ser reexecutado em{" "}
+              <span className="font-medium">Reviews → Erros LLM</span>.
             </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRegenerate}
-              disabled={regenerating}
-            >
-              {regenerating ? "Regenerando…" : "Regenerar backlog"}
-            </Button>
           </div>
         ) : null}
       </div>
@@ -103,17 +198,23 @@ export function AutoReviewPage({
   }
 
   const doc = docs[docIndex];
-  const pending = doc.fields.filter((f) => !f.alreadyAnswered);
-  const allChosen = pending.every(
-    (f) => choices[choiceKey(doc.docId, f.fieldName)] != null,
+  const currentField = doc.fields[fieldIndex];
+  const allChosen = doc.fields.every(
+    (f) => f.alreadyAnswered || choices[choiceKey(doc.docId, f.fieldName)] != null,
+  );
+  const answeredFlags = doc.fields.map(
+    (f) => f.alreadyAnswered || choices[choiceKey(doc.docId, f.fieldName)] != null,
   );
 
   async function handleSubmit() {
+    if (readOnly) return;
     setSubmitting(true);
-    const payload = pending.map((f) => ({
-      fieldName: f.fieldName,
-      verdict: choices[choiceKey(doc.docId, f.fieldName)],
-    }));
+    const payload = doc.fields
+      .filter((f) => !f.alreadyAnswered)
+      .map((f) => ({
+        fieldName: f.fieldName,
+        verdict: choices[choiceKey(doc.docId, f.fieldName)],
+      }));
     const result = await submitAutoReview(projectId, doc.docId, payload);
     setSubmitting(false);
     if (!result.success) {
@@ -129,93 +230,134 @@ export function AutoReviewPage({
           : "Enviado. Todos os campos resolvidos.",
       );
     }
-    setChoices({});
+    setChoices((c) => {
+      const next = { ...c };
+      for (const f of doc.fields)
+        delete next[choiceKey(doc.docId, f.fieldName)];
+      return next;
+    });
     if (docIndex < docs.length - 1) {
-      setDocIndex(docIndex + 1);
+      handleDocNavigate(docIndex + 1);
     } else {
-      // Acabou; revalidar a rota para atualizar a lista
       router.refresh();
     }
   }
 
+  const currentReviewer = reviewers.find((r) => r.userId === viewAsUserId);
+  const reviewerLabel =
+    currentReviewer?.name ?? currentReviewer?.email ?? viewAsUserId.slice(0, 8);
+
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8 space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Auto-revisão humano vs LLM</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Para cada campo divergente, decida quem acertou. Se contestar o
-            LLM, o caso vai para arbitragem por outro pesquisador.
-          </p>
+    <div className="flex h-[calc(100vh-96px)] flex-col">
+      <div className="flex h-10 shrink-0 items-center justify-between border-b px-4 text-sm">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-medium">
+            Auto-revisão humano vs LLM
+          </span>
+          {readOnly ? (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+              visualizando {reviewerLabel}
+            </Badge>
+          ) : null}
         </div>
-        <div className="flex items-center gap-2">
-          {isCoordinator ? (
+        <div className="flex shrink-0 items-center gap-2">
+          {isCoordinator && reviewers.length > 1 ? (
+            <Select value={viewAsUserId} onValueChange={handleViewAsChange}>
+              <SelectTrigger className="h-7 w-[200px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {reviewers.map((r) => (
+                  <SelectItem
+                    key={r.userId}
+                    value={r.userId}
+                    className="text-xs"
+                  >
+                    {r.name || r.email || r.userId.slice(0, 8)}
+                    {r.userId === currentUserId ? " (você)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+          <Badge variant="secondary" className="text-xs">
+            {docs.length} doc{docs.length === 1 ? "" : "s"}
+          </Badge>
+          <div className="flex items-center gap-0.5">
             <Button
               variant="ghost"
-              size="sm"
-              onClick={handleRegenerate}
-              disabled={regenerating}
-              title="Reexecutar varredura de divergências (coordenador)"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => handleDocNavigate(docIndex - 1)}
+              disabled={docIndex === 0}
+              title="Documento anterior"
             >
-              {regenerating ? "Regenerando…" : "Regenerar backlog"}
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {docIndex + 1}/{docs.length}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={() => handleDocNavigate(docIndex + 1)}
+              disabled={docIndex === docs.length - 1}
+              title="Próximo documento"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          {!readOnly ? (
+            <Button
+              size="sm"
+              onClick={handleSubmit}
+              disabled={!allChosen || submitting}
+              title={
+                allChosen
+                  ? "Enviar auto-revisão do documento"
+                  : "Decida todos os campos pendentes"
+              }
+            >
+              {submitting ? "Enviando…" : "Enviar"}
             </Button>
           ) : null}
-          <Badge variant="secondary">
-            Documento {docIndex + 1} de {docs.length}
-          </Badge>
         </div>
-      </header>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            {doc.title ?? doc.externalId ?? doc.docId.slice(0, 8)}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <details>
-            <summary className="cursor-pointer text-sm text-muted-foreground">
-              Ver texto do documento
-            </summary>
-            <pre className="mt-3 whitespace-pre-wrap text-sm bg-muted p-3 rounded max-h-80 overflow-auto">
-              {doc.text}
-            </pre>
-          </details>
-        </CardContent>
-      </Card>
-
-      <div className="space-y-4">
-        {pending.map((f) => {
-          const key = choiceKey(doc.docId, f.fieldName);
-          return (
-            <FieldVerdictRow
-              key={key}
-              fieldName={f.fieldName}
-              fieldDescription={fieldMeta(f.fieldName)?.description ?? null}
-              humanAnswer={f.humanAnswer}
-              llmAnswer={f.llmAnswer}
-              llmJustification={f.llmJustification}
-              choice={choices[key] ?? null}
-              onChoose={(v) => setChoices((c) => ({ ...c, [key]: v }))}
-            />
-          );
-        })}
       </div>
 
-      <div className="flex justify-between items-center pt-4">
-        <Button
-          variant="outline"
-          onClick={() => setDocIndex(Math.max(0, docIndex - 1))}
-          disabled={docIndex === 0}
-        >
-          ← Anterior
-        </Button>
-        <Button
-          onClick={handleSubmit}
-          disabled={!allChosen || submitting}
-        >
-          {submitting ? "Enviando…" : "Enviar auto-revisão"}
-        </Button>
+      <div className="flex flex-1 overflow-hidden">
+        <AutoReviewDocList
+          docs={docListEntries}
+          currentIndex={docIndex}
+          onSelect={handleDocNavigate}
+          collapsed={listCollapsed}
+          onToggle={() => setListCollapsed((v) => !v)}
+        />
+        <ResizablePanelGroup className="flex-1">
+          <ResizablePanel defaultSize={50} minSize={25}>
+            <DocumentReader text={doc.text} />
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={50} minSize={25}>
+            <AutoReviewFieldPanel
+              field={currentField}
+              fieldIndex={fieldIndex}
+              totalFields={doc.fields.length}
+              answered={answeredFlags}
+              choice={
+                choices[choiceKey(doc.docId, currentField.fieldName)] ?? null
+              }
+              readOnly={readOnly}
+              onChoose={(v) =>
+                setChoices((c) => ({
+                  ...c,
+                  [choiceKey(doc.docId, currentField.fieldName)]: v,
+                }))
+              }
+              onFieldNavigate={setFieldIndex}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   );
