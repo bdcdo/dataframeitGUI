@@ -29,7 +29,8 @@ export interface FieldPropertyDiff {
     | "allow_other"
     | "subfield_rule"
     | "subfields"
-    | "condition";
+    | "condition"
+    | "justification_prompt";
   before: unknown;
   after: unknown;
 }
@@ -174,6 +175,21 @@ export function diffPydanticField(
       diffs.push({ property: "condition", before: b, after: a });
     }
   }
+  if (
+    has(before, "justification_prompt") ||
+    has(after, "justification_prompt")
+  ) {
+    if (
+      (before.justification_prompt ?? null) !==
+      (after.justification_prompt ?? null)
+    ) {
+      diffs.push({
+        property: "justification_prompt",
+        before: before.justification_prompt ?? null,
+        after: after.justification_prompt ?? null,
+      });
+    }
+  }
 
   return diffs;
 }
@@ -262,6 +278,7 @@ const TARGET_LABELS: Record<string, string> = {
   llm_only: "Só LLM",
   human_only: "Só humano",
   none: "Nenhum",
+  regex: "Regex",
 };
 
 export function formatTarget(t: unknown): string {
@@ -293,6 +310,7 @@ const PROPERTY_LABELS: Record<FieldPropertyDiff["property"], string> = {
   subfield_rule: "regra de subcampos",
   subfields: "subcampos",
   condition: "condição",
+  justification_prompt: "prompt de justificativa",
 };
 
 export function propertyLabel(p: FieldPropertyDiff["property"]): string {

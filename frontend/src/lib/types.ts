@@ -51,19 +51,38 @@ export type FieldCondition =
   | { field: string; not_in: ConditionScalar[] }
   | { field: string; exists: boolean };
 
+// target controla quem responde / vê o campo:
+// - all: humanos e LLM
+// - llm_only: só o LLM
+// - human_only: só humanos
+// - none: ninguém (campo oculto / descontinuado, mantido no schema)
+// - regex: ninguém pela GUI — preenchido por extração programática
+//   (regex em pós-processamento). Distinto de "none" para o coordenador
+//   saber que o campo *será* preenchido fora do fluxo, não que foi descartado.
+export type FieldTarget =
+  | "all"
+  | "llm_only"
+  | "human_only"
+  | "none"
+  | "regex";
+
 export interface PydanticField {
   name: string;
   type: "single" | "multi" | "text" | "date";
   options: string[] | null;
   description: string;
   help_text?: string;
-  target?: "all" | "llm_only" | "human_only" | "none";
+  target?: FieldTarget;
   required?: boolean;
   hash?: string;
   subfields?: SubfieldDef[];
   subfield_rule?: "all" | "at_least_one";
   allow_other?: boolean;
   condition?: FieldCondition;
+  // Texto-base do prompt da justificativa do LLM para este campo. Quando
+  // ausente, o backend usa um default exigente (cita trecho do documento).
+  // Ver _extend_model_with_justifications em backend/services/llm_runner.py.
+  justification_prompt?: string;
 }
 
 export interface ProjectMember {

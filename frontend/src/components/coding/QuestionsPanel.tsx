@@ -149,7 +149,10 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   const visibleFields = useMemo(
     () =>
       fields.filter(
-        (f) => f.target !== "none" && isFieldVisible(f, answers),
+        (f) =>
+          f.target !== "none" &&
+          f.target !== "regex" &&
+          isFieldVisible(f, answers),
       ),
     [fields, answers],
   );

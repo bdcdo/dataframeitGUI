@@ -157,10 +157,16 @@ export default async function LlmInsightsPage({
     if (!llmResp) return;
 
     const field = fieldMap.get(review.field_name);
-    // Skip fields that are hidden from humans (target=none) or LLM-only.
+    // Skip fields that are hidden from humans (target=none/regex) or LLM-only.
     // These shouldn't show up as "errors" since coordenador chose to remove
     // them from the review surface — past reviews would otherwise leak.
-    if (!field || field.target === "none" || field.target === "llm_only") return;
+    if (
+      !field ||
+      field.target === "none" ||
+      field.target === "regex" ||
+      field.target === "llm_only"
+    )
+      return;
 
     let isError = false;
     if (review.chosen_response_id !== llmResp.id) {
@@ -219,7 +225,7 @@ export default async function LlmInsightsPage({
 
   // Visible fields for the dropdown filter (same criteria as the error suppression).
   const visibleFields = allFields.filter(
-    (f) => f.target !== "llm_only" && f.target !== "none",
+    (f) => f.target !== "llm_only" && f.target !== "none" && f.target !== "regex",
   );
 
   return (

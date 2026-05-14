@@ -33,7 +33,8 @@ export function computeDivergentFieldNames(
     if (
       field.target === "llm_only" ||
       field.target === "human_only" ||
-      field.target === "none"
+      field.target === "none" ||
+      field.target === "regex"
     )
       continue;
 

@@ -127,6 +127,7 @@ export async function saveResponse(
         (f) =>
           (f.target || "all") !== "llm_only" &&
           f.target !== "none" &&
+          f.target !== "regex" &&
           f.required !== false &&
           isFieldVisible(f, sanitizedAnswers),
       );
