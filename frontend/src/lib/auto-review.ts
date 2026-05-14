@@ -57,7 +57,7 @@ export async function createAutoReviewIfDiverges(
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("respondent_type", "llm")
-      .eq("is_current", true)
+      .eq("is_latest", true)
       .maybeSingle(),
     admin
       .from("response_equivalences")

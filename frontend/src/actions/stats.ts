@@ -252,7 +252,7 @@ export async function fetchGabaritoForComment(
       .select("id, respondent_name, respondent_type, answers")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
-      .or("is_current.eq.true,respondent_type.eq.humano");
+      .or("is_latest.eq.true,respondent_type.eq.humano");
 
     if (!responses) return { answers: [] };
 

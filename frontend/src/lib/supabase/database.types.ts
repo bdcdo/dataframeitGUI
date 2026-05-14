@@ -849,7 +849,7 @@ export type Database = {
           created_at: string | null
           document_id: string | null
           id: string
-          is_current: boolean | null
+          is_latest: boolean | null
           is_partial: boolean
           justifications: Json | null
           llm_error: string | null
@@ -871,7 +871,7 @@ export type Database = {
           created_at?: string | null
           document_id?: string | null
           id?: string
-          is_current?: boolean | null
+          is_latest?: boolean | null
           is_partial?: boolean
           justifications?: Json | null
           llm_error?: string | null
@@ -893,7 +893,7 @@ export type Database = {
           created_at?: string | null
           document_id?: string | null
           id?: string
-          is_current?: boolean | null
+          is_latest?: boolean | null
           is_partial?: boolean
           justifications?: Json | null
           llm_error?: string | null

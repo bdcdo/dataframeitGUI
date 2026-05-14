@@ -63,7 +63,7 @@ FastAPI (Fly.io)  ---------------> |
 ### Invalidacao LLM
 1. Coordenador altera Pydantic e salva
 2. Novo hash calculado: sha256(code)[:16]
-3. Respostas LLM com hash antigo: is_current = false
+3. Respostas LLM com hash antigo: is_latest = false
 4. UI mostra badge "Desatualizada"
 5. Coordenador pode re-rodar campos afetados
 

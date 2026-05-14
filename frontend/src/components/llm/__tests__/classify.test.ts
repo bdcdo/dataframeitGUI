@@ -13,7 +13,7 @@ function record(
     id: "r1",
     document_id: "d1",
     llm_job_id: null,
-    is_current: true,
+    is_latest: true,
     justifications: null,
     respondent_name: null,
     created_at: "2026-05-04T00:00:00Z",

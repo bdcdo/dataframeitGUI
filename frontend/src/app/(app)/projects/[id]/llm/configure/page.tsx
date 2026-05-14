@@ -29,7 +29,7 @@ export default async function LlmConfigurePage({
         .select("document_id")
         .eq("project_id", id)
         .eq("respondent_type", "llm")
-        .eq("is_current", true),
+        .eq("is_latest", true),
     ]);
 
   const docsWithLlm = new Set(llmResponses?.map((r) => r.document_id)).size;

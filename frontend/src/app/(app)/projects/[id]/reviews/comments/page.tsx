@@ -68,7 +68,7 @@ export default async function CommentsPage({
       .select("id, document_id, answers, respondent_name, created_at")
       .eq("project_id", id)
       .eq("respondent_type", "llm")
-      .eq("is_current", true),
+      .eq("is_latest", true),
     supabase
       .from("difficulty_resolutions")
       .select("response_id, resolved_at")

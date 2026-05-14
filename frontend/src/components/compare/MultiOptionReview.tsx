@@ -16,7 +16,7 @@ interface MultiOptionResponse {
   respondent_type: "humano" | "llm";
   respondent_name: string;
   answer: unknown;
-  is_current: boolean;
+  is_latest: boolean;
   isFieldStale: boolean;
 }
 

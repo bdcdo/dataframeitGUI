@@ -92,7 +92,7 @@ CREATE TABLE responses (
   respondent_name TEXT,
   answers         JSONB NOT NULL,
   justifications  JSONB,
-  is_current      BOOLEAN DEFAULT true,
+  is_latest      BOOLEAN DEFAULT true,
   pydantic_hash   TEXT,
   created_at      TIMESTAMPTZ DEFAULT now()
 );
@@ -163,14 +163,14 @@ CREATE POLICY "Coordinators manage members" ON project_members FOR ALL USING (
 ```sql
 WITH response_answers AS (
   SELECT r.document_id, r.respondent_name, r.respondent_type, r.id as response_id,
-    r.is_current, r.justifications, key as field_name, value as answer
+    r.is_latest, r.justifications, key as field_name, value as answer
   FROM responses r, jsonb_each_text(r.answers)
   WHERE r.project_id = $1 AND r.document_id = $2
 ),
 field_stats AS (
   SELECT field_name, COUNT(DISTINCT answer) as distinct_answers, COUNT(*) as total_responses
   FROM response_answers
-  WHERE is_current = true OR respondent_type = 'humano'
+  WHERE is_latest = true OR respondent_type = 'humano'
   GROUP BY field_name
 )
 SELECT field_name FROM field_stats

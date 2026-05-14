@@ -824,7 +824,7 @@ export async function regenerateAutoReviewBacklog(
         .select("id, document_id, answers")
         .eq("project_id", projectId)
         .eq("respondent_type", "llm")
-        .eq("is_current", true),
+        .eq("is_latest", true),
       admin
         .from("response_equivalences")
         .select("document_id, field_name, response_a_id, response_b_id")

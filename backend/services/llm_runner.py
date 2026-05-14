@@ -565,7 +565,7 @@ def _filter_docs(
             .select("document_id")
             .eq("project_id", project_id)
             .eq("respondent_type", "llm")
-            .eq("is_current", True)
+            .eq("is_latest", True)
             .execute()
             .data
         )
@@ -795,7 +795,7 @@ async def run_llm(
 
         # Mark all old LLM responses as not current in one batch
         doc_ids = [d["id"] for d in docs]
-        sb.table("responses").update({"is_current": False}).eq(
+        sb.table("responses").update({"is_latest": False}).eq(
             "project_id", project_id
         ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
 
@@ -961,11 +961,11 @@ async def run_llm(
                 "respondent_name": f"{llm_provider}/{llm_model}",
                 "answers": answers,
                 "justifications": justifications if justifications else None,
-                # is_current: respostas parciais já nascem como False para não
+                # is_latest: respostas parciais já nascem como False para não
                 # poluírem Comparar (ver PR #65). Uma run posterior sobre os
                 # mesmos docs também vai marcar esta resposta como False via
                 # bulk update logo acima.
-                "is_current": not is_partial,
+                "is_latest": not is_partial,
                 # is_partial: imutável após o insert. Preserva o classificador
                 # "cobertura baixa" mesmo depois que uma run posterior supersede
                 # esta resposta (ver migration 20260425000000).
@@ -999,7 +999,7 @@ async def run_llm(
             sections = [
                 f"Run comprometida: {len(partial_warnings)}/{total_processed} "
                 f"docs ({int(partial_ratio * 100)}%) com resposta parcial. "
-                f"Respostas gravadas com is_current=false."
+                f"Respostas gravadas com is_latest=false."
             ]
             if error_examples:
                 sections.append(

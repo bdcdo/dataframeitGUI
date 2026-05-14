@@ -25,7 +25,7 @@ interface CompareResponse {
   respondent_id: string | null;
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
-  is_current: boolean;
+  is_latest: boolean;
   pydantic_hash: string | null;
   answer_field_hashes: Record<string, string> | null;
   schema_version_major: number | null;
@@ -118,7 +118,7 @@ export default async function ComparePageRoute({
     supabase
       .from("responses")
       .select(
-        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_current, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents(id, title, external_id)",
+        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents(id, title, external_id)",
       )
       .eq("project_id", id)
       .limit(5000),
@@ -276,8 +276,8 @@ export default async function ComparePageRoute({
 
     // Apply version + since + respondent filters per response
     const qualifiedResponses = docResponses.filter((r) => {
-      // Keep only active (is_current) OR human responses — antigos (is_current=false) do LLM ficam fora
-      if (!r.is_current && r.respondent_type !== "humano") return false;
+      // Keep only active (is_latest) OR human responses — antigos (is_latest=false) do LLM ficam fora
+      if (!r.is_latest && r.respondent_type !== "humano") return false;
 
       // Respostas pré-versionamento (pydantic_hash NULL) foram gravadas antes
       // da migration 20260420 que introduziu schema_version_*. Elas têm

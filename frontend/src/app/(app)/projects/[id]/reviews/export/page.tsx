@@ -37,7 +37,7 @@ export default async function ExportPage({
           "id, document_id, respondent_name, respondent_type, answers, documents(external_id, title)",
         )
         .eq("project_id", id)
-        .eq("is_current", true),
+        .eq("is_latest", true),
       supabase
         .from("reviews")
         .select("document_id, field_name, verdict, comment")

@@ -40,7 +40,7 @@ interface CompareResponse {
   respondent_name: string;
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
-  is_current: boolean;
+  is_latest: boolean;
   pydantic_hash: string | null;
   answer_field_hashes: Record<string, string> | null;
   schema_version_major: number | null;
@@ -242,7 +242,7 @@ export function ComparePage({
         ? r.answers[currentFieldName]
         : undefined,
       justification: r.justifications?.[currentFieldName],
-      is_current: r.is_current,
+      is_latest: r.is_latest,
       isFieldStale,
       schemaVersion: version,
     };

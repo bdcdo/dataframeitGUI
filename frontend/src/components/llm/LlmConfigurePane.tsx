@@ -783,7 +783,7 @@ export function LlmConfigurePane({
                   }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Abaixo disso, a resposta entra como <code>is_current=false</code> e aparece marcada como parcial na aba Respostas.
+                  Abaixo disso, a resposta entra como <code>is_latest=false</code> e aparece marcada como parcial na aba Respostas.
                 </p>
               </div>
               <div className="space-y-1.5">

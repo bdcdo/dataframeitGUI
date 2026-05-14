@@ -133,7 +133,7 @@ export interface Response {
   respondent_name: string | null;
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
-  is_current: boolean;
+  is_latest: boolean;
   pydantic_hash: string | null;
   answer_field_hashes: Record<string, string> | null;
   created_at: string;
