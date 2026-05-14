@@ -114,6 +114,13 @@ export function LlmConfigurePane({
   const [prompt, setPrompt] = useState(initialPrompt);
   const [savingPrompt, setSavingPrompt] = useState(false);
 
+  // Preview do prompt final — montado pelo backend (/api/llm/preview-prompt)
+  // para não duplicar a lógica de _build_prompt no frontend.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewPrompt, setPreviewPrompt] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
   // Config state
   const [config, setConfig] = useState(initialConfig);
 
@@ -167,6 +174,43 @@ export function LlmConfigurePane({
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);
+
+  // Busca o preview do prompt no backend enquanto o collapsible está aberto.
+  // Debounce de 300ms porque `prompt` muda a cada tecla na textarea.
+  useEffect(() => {
+    if (!previewOpen) return;
+    let cancelled = false;
+    setPreviewError(null);
+    const timer = setTimeout(async () => {
+      // Loading só dentro do debounce: durante a digitação o preview
+      // anterior continua visível em vez de piscar "Carregando…" a cada tecla.
+      if (!cancelled) setPreviewLoading(true);
+      try {
+        const res = await fetchFastAPI<{ prompt: string }>(
+          "/api/llm/preview-prompt",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              project_description: projectDescription,
+              prompt_template: prompt,
+            }),
+          }
+        );
+        if (!cancelled) setPreviewPrompt(res.prompt);
+      } catch (e) {
+        if (!cancelled)
+          setPreviewError(
+            e instanceof Error ? e.message : "Erro ao carregar preview"
+          );
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [previewOpen, prompt, projectDescription]);
 
   // useCallback para referência estável — usado como dep do useEffect de
   // retomada de polling abaixo. Sem isso, o lint warning forçava um
@@ -423,35 +467,29 @@ export function LlmConfigurePane({
             para adicionar instruções complementares.
           </p>
 
-          <Collapsible>
+          <Collapsible open={previewOpen} onOpenChange={setPreviewOpen}>
             <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors group">
               <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
               Ver preview do prompt final
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="mt-2 rounded-md border bg-muted/50 p-4 text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
-                <p>Voce e um assistente de pesquisa especializado em analise de conteudo.</p>
-                <p>Analise o documento fornecido e responda as perguntas de classificacao.</p>
-                <p className="mt-2 font-medium">## Instrucoes gerais</p>
-                <p>- Leia o documento completo antes de classificar.</p>
-                <p>- Baseie suas respostas exclusivamente no conteudo do documento.</p>
-                <p>- Se houver ambiguidade, escolha a opcao mais conservadora.</p>
-                <p>- Para campos de texto, seja conciso e objetivo.</p>
-                {projectDescription.trim() && (
-                  <>
-                    <p className="mt-2 font-medium">## Contexto do estudo</p>
-                    <p>{projectDescription}</p>
-                  </>
-                )}
-                {!projectDescription.trim() && (
-                  <p className="mt-2 text-muted-foreground italic">
-                    (Sem descrição do projeto — configure em Config → Geral)
+                {(previewLoading || (previewPrompt === null && !previewError)) && (
+                  <p className="text-muted-foreground italic">
+                    Carregando preview…
                   </p>
                 )}
-                {prompt.trim() && (
+                {!previewLoading && previewError && (
+                  <p className="text-destructive">{previewError}</p>
+                )}
+                {!previewLoading && !previewError && previewPrompt !== null && (
                   <>
-                    <p className="mt-2 font-medium">## Instrucoes adicionais</p>
-                    <p>{prompt}</p>
+                    {previewPrompt}
+                    {!projectDescription.trim() && (
+                      <p className="mt-2 text-muted-foreground italic">
+                        (Sem descrição do projeto — configure em Config → Geral)
+                      </p>
+                    )}
                   </>
                 )}
               </div>
