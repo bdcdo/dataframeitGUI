@@ -223,6 +223,12 @@ export default async function CommentsPage({
     difficultyResolutions?.map((d) => [d.response_id, d.resolved_at]) || [],
   );
 
+  // Dificuldades do LLM vêm do campo llm_ambiguidades — conecta o comentário
+  // a esse campo para que o EditFieldDialog inline funcione. Se o campo foi
+  // removido do schema, cai no "(geral)" e o editor inline não é exposto.
+  const ambiguitiesField = fieldMap.get("llm_ambiguidades");
+  const difficultyFieldName = ambiguitiesField ? "llm_ambiguidades" : "(geral)";
+
   const difficultyComments: ReviewComment[] = [];
   llmResponses?.forEach((r) => {
     const ambiguidades = (r.answers as Record<string, unknown>)?.llm_ambiguidades;
@@ -235,8 +241,8 @@ export default async function CommentsPage({
       id: `dificuldade-${r.id}`,
       documentId: r.document_id,
       documentTitle: docMap.get(r.document_id) || r.document_id,
-      fieldName: "(geral)",
-      fieldDescription: "Dificuldade do LLM",
+      fieldName: difficultyFieldName,
+      fieldDescription: ambiguitiesField?.description || "Dificuldade do LLM",
       verdict: "dificuldade",
       comment: String(ambiguidades),
       reviewerName: r.respondent_name || "LLM",
