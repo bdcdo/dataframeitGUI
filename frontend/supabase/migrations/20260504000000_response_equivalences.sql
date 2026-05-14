@@ -1,3 +1,9 @@
+-- NOTE: no registro de migrations do Supabase remoto, a versao 20260504000000
+-- aparece com o nome "schema_change_log_composite_index" (mesmo nome da
+-- 20260504000001), e nao "response_equivalences". E so o campo `name` do
+-- registro; o `db push` casa por versao, entao nao ha risco de reaplicacao.
+-- Divergencia cosmetica conhecida — ver PR #139.
+
 -- Response equivalence groups (per-field, project-shared).
 -- Lets reviewers mark two free-text responses as equivalent so the
 -- comparison view fuses them into a single answer card and divergence
