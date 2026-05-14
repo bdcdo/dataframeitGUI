@@ -169,19 +169,6 @@ export function getProviderLabel(provider: Provider): string {
   return PROVIDER_LABELS[provider] ?? provider;
 }
 
-const KNOWN_PROVIDERS = new Set<string>(Object.keys(PROVIDER_LABELS));
-
-/**
- * Checks whether a respondent name belongs to an LLM by looking at the
- * "provider/model" prefix instead of merely testing for "/". A human name
- * that happens to contain "/" (e.g. "Ana/Bruno") is not misclassified.
- */
-export function isLlmRespondent(respondentName: string): boolean {
-  const slash = respondentName.indexOf("/");
-  if (slash <= 0) return false;
-  return KNOWN_PROVIDERS.has(respondentName.slice(0, slash));
-}
-
 /**
  * Converts "google_genai/gemini-2.5-flash" → "Gemini 2.5 Flash"
  * Falls back to the raw model name if not found in registry.
