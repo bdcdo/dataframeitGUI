@@ -304,6 +304,7 @@ function FieldRow({
           documentId={documentId}
           documentTitle={documentTitle}
           fieldName={field.fieldName}
+          fieldLabel={field.fieldDescription}
         />
       </div>
 

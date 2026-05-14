@@ -253,6 +253,7 @@ export function ComparisonPanel({
                 documentId={documentId}
                 documentTitle={documentTitle}
                 fieldName={fieldName}
+                fieldLabel={fieldDescription}
                 variant="outline"
                 size="sm"
                 label="Anotar"
