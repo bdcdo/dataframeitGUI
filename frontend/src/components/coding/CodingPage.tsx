@@ -85,11 +85,12 @@ export function CodingPage({
   const pathname = usePathname();
   const docParam = searchParams.get("doc");
 
-  // Ordenacao da navegacao de documentos atribuidos (issue #108). "recent"
-  // ordena pelo responses.updated_at do proprio pesquisador; "default" mantem
-  // a ordem do servidor (status do assignment).
+  // Ordenacao da navegacao de documentos atribuidos (issue #108). Padrao e
+  // "recent" — ordena pelo responses.updated_at do proprio pesquisador, para o
+  // pesquisador cair direto no ultimo documento que mexeu. "default" (opt-in
+  // via ?sort=default) mantem a ordem do servidor (status do assignment).
   const sortMode: CodingSortMode =
-    searchParams.get("sort") === "recent" ? "recent" : "default";
+    searchParams.get("sort") === "default" ? "default" : "recent";
   const sortedDocuments = useMemo(
     () =>
       sortMode === "recent"
@@ -414,7 +415,7 @@ export function CodingPage({
       setDocIndex(Math.max(0, targetIndex));
 
       const params = new URLSearchParams(searchParams.toString());
-      if (nextSort === "recent") params.set("sort", "recent");
+      if (nextSort === "default") params.set("sort", "default");
       else params.delete("sort");
       if (targetId) params.set("doc", targetId);
       const qs = params.toString();

@@ -139,8 +139,8 @@ function SortSelect({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="default">Padrão</SelectItem>
           <SelectItem value="recent">Codificados recentemente</SelectItem>
+          <SelectItem value="default">Ordem de atribuição</SelectItem>
         </SelectContent>
       </Select>
     </div>
