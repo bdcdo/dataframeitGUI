@@ -141,9 +141,16 @@ function SortableQuestion({
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
+  // Rastreia quais campos estavam visíveis no render anterior para detectar
+  // condicionais que acabaram de aparecer. `null` = ainda não hidratado.
+  const prevVisibleNamesRef = useRef<Set<string> | null>(null);
+  // Mudança de schema (prop `fields`) também muda `visibleNames`; este flag
+  // evita scrollar nesse caso — só queremos scrollar em resposta do usuário.
+  const skipScrollRef = useRef(false);
 
   useEffect(() => {
     setHighlightedFields(new Set());
+    skipScrollRef.current = true;
   }, [fields]);
 
   const visibleFields = useMemo(
@@ -168,6 +175,33 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         onAnswer(f.name, null);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleNames]);
+
+  // Quando uma resposta libera uma pergunta condicional, o DOM atualiza
+  // in-place e o scroll fica parado — o pesquisador pode não perceber a nova
+  // pergunta fora da viewport. Detecta o campo condicional que passou de
+  // invisível para visível e rola suavemente até ele.
+  useEffect(() => {
+    const prev = prevVisibleNamesRef.current;
+    prevVisibleNamesRef.current = visibleNames;
+
+    if (skipScrollRef.current) {
+      skipScrollRef.current = false;
+      return;
+    }
+    if (prev === null) return; // hidratação inicial
+    if (readOnly) return;
+
+    const newIdx = visibleFields.findIndex(
+      (f) => f.condition && !prev.has(f.name),
+    );
+    if (newIdx < 0) return;
+
+    questionRefs.current[newIdx]?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleNames]);
 
