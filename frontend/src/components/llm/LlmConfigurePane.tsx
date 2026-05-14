@@ -180,9 +180,11 @@ export function LlmConfigurePane({
   useEffect(() => {
     if (!previewOpen) return;
     let cancelled = false;
-    setPreviewLoading(true);
     setPreviewError(null);
     const timer = setTimeout(async () => {
+      // Loading só dentro do debounce: durante a digitação o preview
+      // anterior continua visível em vez de piscar "Carregando…" a cada tecla.
+      if (!cancelled) setPreviewLoading(true);
       try {
         const res = await fetchFastAPI<{ prompt: string }>(
           "/api/llm/preview-prompt",
@@ -472,7 +474,7 @@ export function LlmConfigurePane({
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="mt-2 rounded-md border bg-muted/50 p-4 text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
-                {previewLoading && (
+                {(previewLoading || (previewPrompt === null && !previewError)) && (
                   <p className="text-muted-foreground italic">
                     Carregando preview…
                   </p>
