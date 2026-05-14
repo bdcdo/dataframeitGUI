@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
 from services.llm_runner import (
+    _build_prompt,
     get_job_status,
     init_job,
     mark_stale_runs_as_error,
@@ -102,6 +103,28 @@ class CleanupRequest(BaseModel):
 
 class CleanupResponse(BaseModel):
     cleaned: int
+
+
+class PreviewPromptRequest(BaseModel):
+    project_description: str | None = None
+    prompt_template: str | None = None
+
+
+class PreviewPromptResponse(BaseModel):
+    prompt: str
+
+
+@router.post("/preview-prompt", response_model=PreviewPromptResponse)
+async def preview_prompt(req: PreviewPromptRequest):
+    """Monta o prompt final igual ao usado na execução real.
+
+    Single source of truth: o frontend (LlmConfigurePane) consome este
+    endpoint em vez de duplicar a lógica de _build_prompt. Se a montagem
+    do prompt mudar no backend, o preview acompanha sem ficar defasado.
+    """
+    return PreviewPromptResponse(
+        prompt=_build_prompt(req.project_description, req.prompt_template)
+    )
 
 
 @router.post("/cleanup-stale", response_model=CleanupResponse)
