@@ -123,7 +123,7 @@ export function ComparisonPanel({
   const nextDocButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (isDocComplete && hasNextDoc) {
-      nextDocButtonRef.current?.focus();
+      nextDocButtonRef.current?.focus({ preventScroll: true });
     }
   }, [isDocComplete, hasNextDoc, documentId]);
 
