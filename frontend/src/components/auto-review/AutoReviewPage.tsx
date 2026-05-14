@@ -96,6 +96,8 @@ export function AutoReviewPage({
   const [listCollapsed, setListCollapsed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // Keyed por `${docId}::${fieldName}` — fieldName se repete entre documentos.
+  // Sem o prefixo do docId, escolher "q1" no doc A pre-selecionaria "q1" do
+  // doc B na navegação. O composto garante isolamento por (doc, campo).
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
 
   const choiceKey = (docId: string, fieldName: string) =>

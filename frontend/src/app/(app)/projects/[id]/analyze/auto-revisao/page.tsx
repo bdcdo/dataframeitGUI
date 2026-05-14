@@ -30,7 +30,7 @@ export default async function AutoReviewRoute({
     await Promise.all([
       supabase
         .from("projects")
-        .select("pydantic_fields, name")
+        .select("pydantic_fields")
         .eq("id", id)
         .single(),
       supabase

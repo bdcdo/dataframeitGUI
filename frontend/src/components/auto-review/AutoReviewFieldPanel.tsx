@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { Button } from "@/components/ui/button";
 import { Keyboard, ChevronDown, ChevronRight } from "lucide-react";
@@ -28,6 +28,8 @@ interface AutoReviewFieldPanelProps {
   onFieldNavigate: (index: number) => void;
 }
 
+const HINTS_DISMISSED_KEY = "autoReview:hintsDismissed";
+
 export function AutoReviewFieldPanel({
   field,
   fieldIndex,
@@ -39,11 +41,46 @@ export function AutoReviewFieldPanel({
   onFieldNavigate,
 }: AutoReviewFieldPanelProps) {
   const [showJustification, setShowJustification] = useState(false);
-  const [hintsOpen, setHintsOpen] = useState(false);
+  // Hints começam abertos até o usuário fechar uma vez (persistido em localStorage).
+  // Lazy initializer roda só uma vez no mount, lê do localStorage sem flicker.
+  const [hintsOpen, setHintsOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(HINTS_DISMISSED_KEY) === null;
+  });
+
+  // Listener de teclado registra uma vez (por readOnly); callbacks frescos
+  // chegam via ref para evitar reregistro a cada keystroke.
+  const handlerRef = useRef({ onChoose, onFieldNavigate, fieldIndex, totalFields });
+  useEffect(() => {
+    handlerRef.current = { onChoose, onFieldNavigate, fieldIndex, totalFields };
+  });
+
+  function toggleHints() {
+    setHintsOpen((v) => {
+      const next = !v;
+      if (typeof window !== "undefined" && !next) {
+        window.localStorage.setItem(HINTS_DISMISSED_KEY, "1");
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     setShowJustification(false);
   }, [field.fieldName]);
+
+  // Auto-advance pós-decisão: armazena handle do timeout num ref para poder
+  // cancelar se o usuário trocar de doc/campo antes do disparo (evita pular
+  // índice em contexto desatualizado).
+  const advanceTimeoutRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (advanceTimeoutRef.current !== null) {
+        window.clearTimeout(advanceTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (readOnly) return;
@@ -51,6 +88,8 @@ export function AutoReviewFieldPanel({
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA"))
         return;
+      const { onChoose, onFieldNavigate, fieldIndex, totalFields } =
+        handlerRef.current;
       if (e.key === "1") {
         e.preventDefault();
         onChoose("contesta_llm");
@@ -67,13 +106,21 @@ export function AutoReviewFieldPanel({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [readOnly, onChoose, fieldIndex, totalFields, onFieldNavigate]);
+  }, [readOnly]);
 
   function handleChoose(v: SelfVerdict) {
     onChoose(v);
-    if (fieldIndex < totalFields - 1) {
-      setTimeout(() => onFieldNavigate(fieldIndex + 1), 250);
+    // Pula campos já respondidos no auto-advance pós-clique (P/N manuais
+    // continuam navegando livremente para permitir re-conferência).
+    const nextUnanswered = answered.findIndex((a, i) => i > fieldIndex && !a);
+    if (nextUnanswered === -1) return;
+    if (advanceTimeoutRef.current !== null) {
+      window.clearTimeout(advanceTimeoutRef.current);
     }
+    advanceTimeoutRef.current = window.setTimeout(() => {
+      advanceTimeoutRef.current = null;
+      onFieldNavigate(nextUnanswered);
+    }, 250);
   }
 
   return (
@@ -189,7 +236,7 @@ export function AutoReviewFieldPanel({
           variant="ghost"
           size="sm"
           className="h-6 gap-1.5 px-2 text-xs text-muted-foreground"
-          onClick={() => setHintsOpen((v) => !v)}
+          onClick={toggleHints}
         >
           <Keyboard className="h-3 w-3" />
           Atalhos

@@ -94,6 +94,10 @@ export function ArbitrationPage({
   );
   const [listCollapsed, setListCollapsed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Todos os states são keyed por fieldReviewId (UUID único globalmente), nunca
+  // por fieldName — fieldName se repete entre documentos, e chavear por ele
+  // faria uma escolha em "q1" do doc A reaparecer pre-selecionada em "q1" do
+  // doc B. fieldReviewId garante isolamento natural por (doc, campo).
   const [blindChoices, setBlindChoices] = useState<Record<string, "a" | "b">>(
     {},
   );
@@ -195,6 +199,9 @@ export function ArbitrationPage({
         return;
       }
     }
+    // router.refresh() repuxa o payload com `reveal` populado para esses
+    // campos. O useEffect acima detecta blindVerdict definido e muda phase
+    // para "reveal" automaticamente.
     router.refresh();
     setSubmitting(false);
   }
