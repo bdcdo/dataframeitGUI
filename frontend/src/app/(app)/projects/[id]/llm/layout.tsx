@@ -1,5 +1,4 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import LlmNav from "@/components/llm/LlmNav";
 
@@ -14,27 +13,14 @@ export default async function LlmLayout({
   const user = await getAuthUser();
   if (!user) notFound();
 
-  const supabase = await createSupabaseServer();
-  const [{ data: project }, { data: membership }] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("created_by")
-      .eq("id", id)
-      .single(),
-    supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .single(),
-  ]);
-
-  const isCoordinator =
-    membership?.role === "coordenador" ||
-    project?.created_by === user.id ||
-    user.isMaster;
-
-  if (!isCoordinator) notFound();
+  const { isCoordinator, queryFailed } = await getProjectAccessContext(
+    id,
+    user.id,
+    user.isMaster,
+  );
+  // Fail-open em erro transiente de query (ver getProjectAccessContext): o RLS
+  // continua bloqueando os dados se o usuario realmente nao for coordenador.
+  if (!isCoordinator && !queryFailed) notFound();
 
   return (
     <div className="flex flex-col">

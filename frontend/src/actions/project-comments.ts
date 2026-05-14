@@ -92,7 +92,7 @@ export async function approveExclusionRequest(
 
   const supabase = await createSupabaseServer();
 
-  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+  if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode aprovar sugestões de exclusão" };
   }
 
@@ -154,7 +154,7 @@ export async function rejectExclusionRequest(
 
   const supabase = await createSupabaseServer();
 
-  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+  if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode rejeitar sugestões de exclusão" };
   }
 

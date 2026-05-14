@@ -394,7 +394,7 @@ export async function excludeDocuments(
 
   const supabase = await createSupabaseServer();
 
-  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+  if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode excluir documentos" };
   }
 
@@ -424,7 +424,7 @@ export async function restoreDocuments(
 
   const supabase = await createSupabaseServer();
 
-  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+  if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode restaurar documentos" };
   }
 
@@ -457,7 +457,7 @@ export async function hardDeleteDocuments(
 
   const supabase = await createSupabaseServer();
 
-  if (!(await isProjectCoordinator(supabase, projectId, user))) {
+  if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode apagar documentos permanentemente" };
   }
 
