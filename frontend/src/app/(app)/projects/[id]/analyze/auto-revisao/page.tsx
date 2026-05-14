@@ -93,7 +93,7 @@ export default async function AutoReviewRoute({
     supabase
       .from("field_reviews")
       .select(
-        "id, document_id, field_name, human_response_id, llm_response_id, self_verdict",
+        "id, document_id, field_name, human_response_id, llm_response_id, self_verdict, self_justification",
       )
       .in("document_id", docIds)
       .eq("self_reviewer_id", targetUserId),
@@ -148,6 +148,7 @@ export default async function AutoReviewRoute({
           fr.field_name
         ] ?? null,
       alreadyAnswered: fr.self_verdict !== null,
+      selfJustification: fr.self_justification ?? null,
     });
   }
 

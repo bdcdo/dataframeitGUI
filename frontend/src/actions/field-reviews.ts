@@ -16,6 +16,9 @@ import type {
 export interface SelfVerdictInput {
   fieldName: string;
   verdict: SelfVerdict;
+  // Obrigatoria quando verdict='contesta_llm': o pesquisador registra por que
+  // acha que sua resposta esta correta. Exibida ao arbitro na fase de revelacao.
+  justification?: string;
 }
 
 // Humano original conclui sua fase de auto-revisao. Para cada campo:
@@ -39,6 +42,17 @@ export async function submitAutoReview(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
+    // Contestar o LLM exige justificativa — o arbitro precisa do contraponto
+    // humano na fase de revelacao.
+    for (const v of verdicts) {
+      if (v.verdict === "contesta_llm" && !v.justification?.trim()) {
+        return {
+          success: false,
+          error: `Campo "${v.fieldName}": justificativa obrigatória quando você contesta o LLM.`,
+        };
+      }
+    }
+
     const admin = createSupabaseAdmin();
     const now = new Date().toISOString();
 
@@ -49,7 +63,14 @@ export async function submitAutoReview(
       verdicts.map((v) =>
         admin
           .from("field_reviews")
-          .update({ self_verdict: v.verdict, self_reviewed_at: now })
+          .update({
+            self_verdict: v.verdict,
+            self_reviewed_at: now,
+            self_justification:
+              v.verdict === "contesta_llm"
+                ? (v.justification?.trim() ?? null)
+                : null,
+          })
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("field_name", v.fieldName)

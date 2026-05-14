@@ -170,6 +170,7 @@ export interface FieldReview {
   llm_response_id: string;
   self_reviewer_id: string;
   self_verdict: SelfVerdict | null;
+  self_justification: string | null;
   self_reviewed_at: string | null;
   arbitrator_id: string | null;
   blind_verdict: ArbitrationVerdict | null;

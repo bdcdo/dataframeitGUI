@@ -58,7 +58,7 @@ export default async function ArbitrationRoute({
     supabase
       .from("field_reviews")
       .select(
-        "id, document_id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict",
+        "id, document_id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict, self_justification",
       )
       .in("document_id", docIds)
       .eq("arbitrator_id", user.id)
@@ -98,6 +98,7 @@ export default async function ArbitrationRoute({
       humanName: string | null;
       llmName: string | null;
       llmJustification: string | null;
+      selfJustification: string | null;
     } | null;
   };
 
@@ -155,6 +156,7 @@ export default async function ArbitrationRoute({
                 (llm?.justifications as Record<string, string> | null)?.[
                   fr.field_name
                 ] ?? null,
+              selfJustification: fr.self_justification ?? null,
             }
           : null,
     });
