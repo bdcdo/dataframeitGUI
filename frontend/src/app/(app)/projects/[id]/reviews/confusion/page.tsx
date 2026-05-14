@@ -24,7 +24,7 @@ export default async function ConfusionPage({
 
   if (confusionDataList.length === 0) {
     return (
-      <div className="mx-auto max-w-5xl space-y-4 p-6">
+      <div className="mx-auto max-w-5xl p-6 space-y-4">
         <TruncationBanner truncated={ctx.truncated} />
         <p className="py-12 text-center text-sm text-muted-foreground">
           Nenhum dado de confusão disponível. Revise documentos na aba Comparar

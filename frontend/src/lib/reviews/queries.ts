@@ -152,6 +152,23 @@ function getRespondentDisplayName(
 
 export const REVIEW_BASE_DATA_LIMIT = 50000;
 
+/**
+ * Marca como `true` cada tabela cuja query atingiu o teto de
+ * REVIEW_BASE_DATA_LIMIT linhas. Query que falhou (`null`) nao conta como
+ * truncada — `null?.length` e `undefined`, nunca igual ao teto.
+ */
+export function computeTruncation(
+  responses: unknown[] | null,
+  reviews: unknown[] | null,
+  documents: unknown[] | null,
+): ReviewDataTruncation {
+  return {
+    responses: responses?.length === REVIEW_BASE_DATA_LIMIT,
+    reviews: reviews?.length === REVIEW_BASE_DATA_LIMIT,
+    documents: documents?.length === REVIEW_BASE_DATA_LIMIT,
+  };
+}
+
 export async function fetchReviewBaseData(
   supabase: SupabaseClient,
   projectId: string,
@@ -197,11 +214,7 @@ export async function fetchReviewBaseData(
       .limit(REVIEW_BASE_DATA_LIMIT),
   ]);
 
-  const truncated: ReviewDataTruncation = {
-    responses: responses?.length === REVIEW_BASE_DATA_LIMIT,
-    reviews: reviews?.length === REVIEW_BASE_DATA_LIMIT,
-    documents: documents?.length === REVIEW_BASE_DATA_LIMIT,
-  };
+  const truncated = computeTruncation(responses, reviews, documents);
   for (const [name, isTruncated] of Object.entries(truncated)) {
     if (isTruncated) {
       console.warn(

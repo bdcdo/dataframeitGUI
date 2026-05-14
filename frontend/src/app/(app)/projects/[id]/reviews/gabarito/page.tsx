@@ -24,7 +24,7 @@ export default async function GabaritoPage({
 
   if (reviewedDocuments.length === 0) {
     return (
-      <div className="mx-auto max-w-5xl space-y-4 p-6">
+      <div className="mx-auto max-w-5xl p-6 space-y-4">
         <TruncationBanner truncated={ctx.truncated} />
         <p className="py-12 text-center text-sm text-muted-foreground">
           Nenhuma revisão encontrada. Comece revisando documentos na aba
@@ -35,7 +35,7 @@ export default async function GabaritoPage({
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-6">
+    <div className="mx-auto max-w-5xl p-6 space-y-4">
       <TruncationBanner truncated={ctx.truncated} />
       <GabaritoByDocument
         reviewedDocuments={reviewedDocuments}
