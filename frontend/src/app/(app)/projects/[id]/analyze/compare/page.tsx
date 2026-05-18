@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -460,24 +461,26 @@ export default async function ComparePageRoute({
   }
 
   return (
-    <ComparePage
-      projectId={id}
-      documents={documentsForCompare}
-      responses={responsesMap}
-      divergentFields={divergentFields}
-      fields={fields}
-      existingReviews={existingReviews}
-      projectPydanticHash={project?.pydantic_hash ?? null}
-      respondentNames={respondentNames}
-      coverageByDoc={coverageByDoc}
-      commentCountsByKey={commentCountsByKey}
-      suggestionCountsByField={suggestionCountsByField}
-      availableVersions={availableVersions}
-      latestMajorLabel={latestMajorLabel}
-      currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
-      equivalencesByDocField={equivalencesByDocField}
-      currentUserId={user.id}
-      canManageAnyPair={isCoordinator}
-    />
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>
+      <ComparePage
+        projectId={id}
+        documents={documentsForCompare}
+        responses={responsesMap}
+        divergentFields={divergentFields}
+        fields={fields}
+        existingReviews={existingReviews}
+        projectPydanticHash={project?.pydantic_hash ?? null}
+        respondentNames={respondentNames}
+        coverageByDoc={coverageByDoc}
+        commentCountsByKey={commentCountsByKey}
+        suggestionCountsByField={suggestionCountsByField}
+        availableVersions={availableVersions}
+        latestMajorLabel={latestMajorLabel}
+        currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
+        equivalencesByDocField={equivalencesByDocField}
+        currentUserId={user.id}
+        canManageAnyPair={isCoordinator}
+      />
+    </Suspense>
   );
 }

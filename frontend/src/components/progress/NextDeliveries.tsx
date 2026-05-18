@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -8,6 +9,15 @@ interface NextDeliveriesProps {
 }
 
 export function NextDeliveries({ deadlines }: NextDeliveriesProps) {
+  // Hidratado client-only: comparar com `today` no server (timezone do server)
+  // vs no client (timezone do navegador) causa mismatch no badge "Atrasado".
+  const [today, setToday] = useState<Date | null>(null);
+  useEffect(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    setToday(t);
+  }, []);
+
   if (deadlines.length === 0) {
     return (
       <div className="space-y-2">
@@ -17,16 +27,13 @@ export function NextDeliveries({ deadlines }: NextDeliveriesProps) {
     );
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   return (
     <div className="space-y-2">
       <h3 className="text-sm font-semibold">Próximas Entregas</h3>
       <div className="space-y-2">
         {deadlines.map((dl) => {
           const d = new Date(dl.date + "T00:00:00");
-          const isOverdue = d < today && dl.pending > 0;
+          const isOverdue = today != null && d < today && dl.pending > 0;
           const formatted = d.toLocaleDateString("pt-BR", {
             day: "numeric",
             month: "short",

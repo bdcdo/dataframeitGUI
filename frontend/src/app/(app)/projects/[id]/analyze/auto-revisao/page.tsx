@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -158,14 +159,16 @@ export default async function AutoReviewRoute({
   );
 
   return (
-    <AutoReviewPage
-      projectId={id}
-      fields={fieldsMeta}
-      docs={docsToReview}
-      isCoordinator={isCoordinator}
-      viewAsUserId={targetUserId}
-      reviewers={reviewers}
-      currentUserId={user.id}
-    />
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>
+      <AutoReviewPage
+        projectId={id}
+        fields={fieldsMeta}
+        docs={docsToReview}
+        isCoordinator={isCoordinator}
+        viewAsUserId={targetUserId}
+        reviewers={reviewers}
+        currentUserId={user.id}
+      />
+    </Suspense>
   );
 }

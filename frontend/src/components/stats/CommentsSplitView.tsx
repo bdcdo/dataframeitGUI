@@ -197,7 +197,7 @@ export function CommentsSplitView({
             size="icon"
             className="h-7 w-7"
             disabled={docIndex === 0}
-            onClick={() => setDocIndex(docIndex - 1)}
+            onClick={() => setDocIndex((i) => i - 1)}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -209,7 +209,7 @@ export function CommentsSplitView({
             size="icon"
             className="h-7 w-7"
             disabled={docIndex === docGroups.length - 1}
-            onClick={() => setDocIndex(docIndex + 1)}
+            onClick={() => setDocIndex((i) => i + 1)}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -354,7 +354,7 @@ export function CommentsSplitView({
 
                   {/* Footer */}
                   <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground" suppressHydrationWarning>
                       {comment.reviewerName} &middot;{" "}
                       {new Date(comment.createdAt).toLocaleDateString("pt-BR")}
                       {isResolved && (

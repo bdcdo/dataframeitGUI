@@ -58,7 +58,7 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
     onChange(fields.filter((_, i) => i !== index));
     if (expandedIndex === index) setExpandedIndex(null);
     else if (expandedIndex !== null && expandedIndex > index) {
-      setExpandedIndex(expandedIndex - 1);
+      setExpandedIndex((idx) => (idx === null ? null : idx - 1));
     }
   };
 
@@ -72,9 +72,9 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
     else if (expandedIndex !== null) {
       // Ajusta indice expandido para acompanhar o item que se moveu por cima dele
       if (from < expandedIndex && to >= expandedIndex) {
-        setExpandedIndex(expandedIndex - 1);
+        setExpandedIndex((idx) => (idx === null ? null : idx - 1));
       } else if (from > expandedIndex && to <= expandedIndex) {
-        setExpandedIndex(expandedIndex + 1);
+        setExpandedIndex((idx) => (idx === null ? null : idx + 1));
       }
     }
   };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -149,8 +149,6 @@ function SortSelect({
 
 function RoundSelect({ data }: { data: RoundFilterData }) {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
 
   const normalizedSelected = isCurrentFilter(data.selected)
@@ -158,15 +156,14 @@ function RoundSelect({ data }: { data: RoundFilterData }) {
     : data.selected;
 
   const handleChange = (value: string) => {
-    const params = new URLSearchParams(searchParams.toString());
+    const url = new URL(window.location.href);
     if (isCurrentFilter(value)) {
-      params.delete("round");
+      url.searchParams.delete("round");
     } else {
-      params.set("round", value);
+      url.searchParams.set("round", value);
     }
-    const qs = params.toString();
     startTransition(() => {
-      router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+      router.replace(`${url.pathname}${url.search}`, { scroll: false });
     });
   };
 
