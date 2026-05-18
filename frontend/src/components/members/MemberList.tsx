@@ -1,8 +1,8 @@
 "use client";
 
-import { removeMember, changeRole } from "@/actions/members";
+import { useTransition } from "react";
+import { removeMember, changeRole, setCanArbitrate } from "@/actions/members";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import type { ProjectMember, Profile } from "@/lib/types";
 
@@ -20,6 +21,8 @@ interface MemberListProps {
 }
 
 export function MemberList({ projectId, members, currentUserId }: MemberListProps) {
+  const [isPending, startTransition] = useTransition();
+
   const handleRemove = async (memberId: string) => {
     const result = await removeMember(projectId, memberId);
     if (result?.error) {
@@ -38,6 +41,25 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
     }
   };
 
+  const handleToggleArbitrate = (memberId: string, value: boolean) => {
+    startTransition(async () => {
+      const result = await setCanArbitrate(memberId, value, projectId);
+      if (result?.error) {
+        toast.error(result.error);
+        return;
+      }
+      if (value && result.retried && result.retried.assigned > 0) {
+        toast.success(
+          `Arbitragem habilitada. ${result.retried.assigned} caso(s) pendente(s) alocados.`,
+        );
+      } else if (value) {
+        toast.success("Arbitragem habilitada.");
+      } else {
+        toast.success("Arbitragem desabilitada.");
+      }
+    });
+  };
+
   return (
     <div className="space-y-2">
       {members.map((m) => (
@@ -48,7 +70,19 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
             </p>
             <p className="text-xs text-muted-foreground">{m.profiles?.email}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <label
+              className="flex items-center gap-2 text-xs text-muted-foreground"
+              title="Recebe casos contestados para arbitrar"
+            >
+              <Switch
+                checked={m.can_arbitrate}
+                onCheckedChange={(v) => handleToggleArbitrate(m.id, v)}
+                disabled={isPending}
+                aria-label="Elegível para arbitrar"
+              />
+              Arbitra
+            </label>
             <Select
               value={m.role}
               onValueChange={(v) => handleChangeRole(m.id, v as "coordenador" | "pesquisador")}

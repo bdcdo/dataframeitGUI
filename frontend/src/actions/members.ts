@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
+import { retryPendingArbitrations } from "@/actions/field-reviews";
 import { clerkClient } from "@clerk/nextjs/server";
 import { revalidatePath, revalidateTag } from "next/cache";
 
@@ -120,4 +121,36 @@ export async function changeRole(
   if (error) return { error: error.message };
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
+}
+
+// Define se um membro entra no sorteio de árbitros para casos contestados.
+// Quando habilita (canArbitrate=true), dispara retryPendingArbitrations para
+// alocar imediatamente os field_reviews que estavam sem árbitro elegível —
+// se o coordenador habilitou alguém em resposta ao banner de pool vazio,
+// o backlog não precisa esperar o próximo submitAutoReview para ser drenado.
+export async function setCanArbitrate(
+  memberId: string,
+  canArbitrate: boolean,
+  projectId: string,
+): Promise<{ error?: string; retried?: { assigned: number; stillNoPool: number } }> {
+  const supabase = await createSupabaseServer();
+  const { error } = await supabase
+    .from("project_members")
+    .update({ can_arbitrate: canArbitrate })
+    .eq("id", memberId);
+
+  if (error) return { error: error.message };
+
+  let retried: { assigned: number; stillNoPool: number } | undefined;
+  if (canArbitrate) {
+    const result = await retryPendingArbitrations(projectId);
+    if (result.success) {
+      retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/config/members`);
+  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
+  return { retried };
 }
