@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import { removeMember, changeRole, setCanArbitrate } from "@/actions/members";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,8 +20,26 @@ interface MemberListProps {
   currentUserId: string;
 }
 
+type MemberRow = ProjectMember & { profiles: Profile | null };
+
 export function MemberList({ projectId, members, currentUserId }: MemberListProps) {
-  const [isPending, startTransition] = useTransition();
+  // Per-row pending: o Switch tocado fica disabled até o server action retornar,
+  // mas outros Switches da página continuam interativos. Coordenador habilitando
+  // 4 membros em sequência não precisa esperar serializar.
+  const [pendingMemberId, setPendingMemberId] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+
+  // useOptimistic: o Switch reflete imediatamente o valor escolhido enquanto o
+  // server action roda. Sem isso, o `checked` permanece no valor antigo até o
+  // revalidatePath devolver — em conexão lenta parece que o clique não pegou.
+  const [optimisticMembers, applyOptimistic] = useOptimistic<
+    MemberRow[],
+    { memberId: string; canArbitrate: boolean }
+  >(members, (current, update) =>
+    current.map((m) =>
+      m.id === update.memberId ? { ...m, can_arbitrate: update.canArbitrate } : m,
+    ),
+  );
 
   const handleRemove = async (memberId: string) => {
     const result = await removeMember(projectId, memberId);
@@ -42,27 +60,40 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
   };
 
   const handleToggleArbitrate = (memberId: string, value: boolean) => {
+    setPendingMemberId(memberId);
     startTransition(async () => {
-      const result = await setCanArbitrate(memberId, value, projectId);
-      if (result?.error) {
-        toast.error(result.error);
-        return;
-      }
-      if (value && result.retried && result.retried.assigned > 0) {
-        toast.success(
-          `Arbitragem habilitada. ${result.retried.assigned} caso(s) pendente(s) alocados.`,
-        );
-      } else if (value) {
-        toast.success("Arbitragem habilitada.");
-      } else {
-        toast.success("Arbitragem desabilitada.");
+      applyOptimistic({ memberId, canArbitrate: value });
+      try {
+        const result = await setCanArbitrate(memberId, value, projectId);
+        if (result?.error) {
+          toast.error(result.error);
+          return;
+        }
+        if (!value) {
+          toast.success("Arbitragem desabilitada.");
+          return;
+        }
+        const retried = result.retried;
+        if (retried && retried.assigned > 0 && retried.stillNoPool > 0) {
+          toast.success(
+            `Arbitragem habilitada. ${retried.assigned} caso(s) alocado(s); ${retried.stillNoPool} ainda sem árbitro elegível.`,
+          );
+        } else if (retried && retried.assigned > 0) {
+          toast.success(
+            `Arbitragem habilitada. ${retried.assigned} caso(s) pendente(s) alocado(s).`,
+          );
+        } else {
+          toast.success("Arbitragem habilitada.");
+        }
+      } finally {
+        setPendingMemberId(null);
       }
     });
   };
 
   return (
     <div className="space-y-2">
-      {members.map((m) => (
+      {optimisticMembers.map((m) => (
         <div key={m.id} className="flex items-center justify-between rounded-lg border p-3">
           <div>
             <p className="text-sm font-medium">
@@ -78,7 +109,7 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
               <Switch
                 checked={m.can_arbitrate}
                 onCheckedChange={(v) => handleToggleArbitrate(m.id, v)}
-                disabled={isPending}
+                disabled={pendingMemberId === m.id}
                 aria-label="Elegível para arbitrar"
               />
               Arbitra

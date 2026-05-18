@@ -1117,6 +1117,12 @@ export async function retryPendingArbitrations(
       groups.set(key, g);
     }
 
+    // Sequencial intencionalmente: cada assignArbitrator lê openCounts
+    // recalculado, preservando o balanceamento entre grupos. Paralelizar com
+    // Promise.all faria todos os groups verem o mesmo minLoad e sortearem
+    // dentro do mesmo pool — degrada a distribuição (mesma race tolerada em
+    // submitAutoReview concorrente para docs diferentes, mas aqui evitável
+    // a custo zero porque o loop está dentro de uma única chamada).
     let assigned = 0;
     let stillNoPool = 0;
     for (const g of groups.values()) {
