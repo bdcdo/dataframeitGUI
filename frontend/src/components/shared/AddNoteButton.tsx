@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Dialog,
@@ -52,8 +52,21 @@ export function AddNoteButton({
   const [body, setBody] = useState("");
   const [selectedField, setSelectedField] = useState<string>(fixedFieldName || "_none");
   const [isPending, startTransition] = useTransition();
+  const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const showFieldSelect = !fixedFieldName && fields && fields.length > 0;
+
+  // Mantem o foco inicial na textarea quando o dialog abre. Sem isso, o
+  // Radix Dialog foca o primeiro tabbable do FocusScope, que vira o
+  // SelectTrigger quando `showFieldSelect=true`.
+  useEffect(() => {
+    if (open) {
+      const id = window.requestAnimationFrame(() => {
+        bodyTextareaRef.current?.focus();
+      });
+      return () => window.cancelAnimationFrame(id);
+    }
+  }, [open]);
 
   // Build contextual subtitle
   const contextParts: string[] = [];
@@ -124,6 +137,7 @@ export function AddNoteButton({
             </Select>
           )}
           <Textarea
+            ref={bodyTextareaRef}
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="Escreva sua nota..."
