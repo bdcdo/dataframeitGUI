@@ -124,6 +124,15 @@ export interface AssignmentBatch {
   label: string | null;
 }
 
+// Snapshot por-campo do schema contra o qual a response foi codificada
+// (1 chave por campo existente na época, valor = field.hash). Gravado em
+// saveResponse iterando o schema completo (não os campos respondidos), então
+// "chave ausente" significa "campo não existia no schema na época" — base
+// para a heurística de staleness em compare-divergence e reviews/queries.
+// `null`/`{}` significam legacy (response pré-coluna ou schema sem hashes):
+// não dá para inferir staleness.
+export type AnswerFieldHashes = Record<string, string> | null;
+
 export interface Response {
   id: string;
   project_id: string;
@@ -135,7 +144,7 @@ export interface Response {
   justifications: Record<string, string> | null;
   is_latest: boolean;
   pydantic_hash: string | null;
-  answer_field_hashes: Record<string, string> | null;
+  answer_field_hashes: AnswerFieldHashes;
   created_at: string;
 }
 

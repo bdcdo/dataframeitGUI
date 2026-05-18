@@ -1,7 +1,7 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 // Log estruturado JSON com prefixo "[auto-review]" — pesquisavel em logs
 // Vercel/Fly via `grep '[auto-review]'`. Campos minimos: event, projectId,
@@ -45,7 +45,7 @@ export async function createAutoReviewIfDiverges(
       .single(),
     admin
       .from("responses")
-      .select("id, answers")
+      .select("id, answers, answer_field_hashes")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("respondent_id", humanUserId)
@@ -53,7 +53,7 @@ export async function createAutoReviewIfDiverges(
       .maybeSingle(),
     admin
       .from("responses")
-      .select("id, answers")
+      .select("id, answers, answer_field_hashes")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("respondent_type", "llm")
@@ -100,8 +100,16 @@ export async function createAutoReviewIfDiverges(
   const divergent = computeDivergentFieldNames(
     fields,
     [
-      { id: humanResponse.id, answers: humanResponse.answers ?? {} },
-      { id: llmResponse.id, answers: llmResponse.answers ?? {} },
+      {
+        id: humanResponse.id,
+        answers: humanResponse.answers ?? {},
+        answerFieldHashes: humanResponse.answer_field_hashes as AnswerFieldHashes,
+      },
+      {
+        id: llmResponse.id,
+        answers: llmResponse.answers ?? {},
+        answerFieldHashes: llmResponse.answer_field_hashes as AnswerFieldHashes,
+      },
     ],
     equivalencesByField,
   );

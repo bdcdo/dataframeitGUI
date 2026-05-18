@@ -8,7 +8,7 @@ import {
   readCompareFilters,
   type CompareFiltersValue,
 } from "@/lib/compare-filters";
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 interface CompareDoc {
   id: string;
@@ -27,7 +27,7 @@ interface CompareResponse {
   justifications: Record<string, string> | null;
   is_latest: boolean;
   pydantic_hash: string | null;
-  answer_field_hashes: Record<string, string> | null;
+  answer_field_hashes: AnswerFieldHashes;
   schema_version_major: number | null;
   schema_version_minor: number | null;
   schema_version_patch: number | null;
@@ -322,9 +322,15 @@ export default async function ComparePageRoute({
 
     // Equivalence-aware divergence detection (free-text fields can have
     // responses fused via the reviewer's "marcar como equivalentes" action).
+    // `answerFieldHashes` torna a comparação consciente de staleness: campos
+    // adicionados ao schema depois de uma codificação não geram falso "(vazio)".
     const divergent = computeDivergentFieldNames(
       fields,
-      qualifiedResponses,
+      qualifiedResponses.map((r) => ({
+        id: r.id,
+        answers: r.answers,
+        answerFieldHashes: r.answer_field_hashes,
+      })),
       equivByDocField.get(docId),
     );
 
