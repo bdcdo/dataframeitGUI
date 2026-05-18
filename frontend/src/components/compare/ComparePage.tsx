@@ -314,7 +314,7 @@ export function ComparePage({
       if (allFieldsReviewed) {
         toast.success("Revisão do documento concluída!");
       } else if (fieldIndex < docFields.length - 1) {
-        setFieldIndex(fieldIndex + 1);
+        setFieldIndex((idx) => idx + 1);
       }
     },
     [projectId, currentDoc, currentFieldName, isCurrentFieldDivergent, fieldIndex, docFields, allDocDivergent, localReviews, comment, fieldResponses]
@@ -397,7 +397,7 @@ export function ComparePage({
         if (allFieldsReviewed) {
           toast.success("Revisão do documento concluída!");
         } else if (fieldIndex < docFields.length - 1) {
-          setFieldIndex(fieldIndex + 1);
+          setFieldIndex((idx) => idx + 1);
         }
       } catch (err) {
         toast.error(
@@ -447,8 +447,8 @@ export function ComparePage({
         return;
       }
 
-      if (e.key === "n" && fieldIndex < docFields.length - 1) { setFieldIndex(fieldIndex + 1); return; }
-      if (e.key === "p" && fieldIndex > 0) { setFieldIndex(fieldIndex - 1); return; }
+      if (e.key === "n" && fieldIndex < docFields.length - 1) { setFieldIndex((idx) => idx + 1); return; }
+      if (e.key === "p" && fieldIndex > 0) { setFieldIndex((idx) => idx - 1); return; }
 
       // Doc concluído: o avanço é por ação explícita (botão "Próximo parecer"
       // recebe foco; Enter nele é nativo). Não deixar 1-9/a/s re-disparar

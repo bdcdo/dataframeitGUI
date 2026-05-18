@@ -101,7 +101,6 @@ export function SuggestExclusionDialog({
             onChange={(e) => setReason(e.target.value)}
             placeholder="Ex: parecer trata de medicamento diferente do estudado"
             rows={4}
-            autoFocus
           />
         </div>
         <DialogFooter>

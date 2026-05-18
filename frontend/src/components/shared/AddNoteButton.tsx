@@ -128,7 +128,6 @@ export function AddNoteButton({
             onChange={(e) => setBody(e.target.value)}
             placeholder="Escreva sua nota..."
             className="min-h-28 text-sm"
-            autoFocus
           />
           <div className="flex justify-end gap-2">
             <Button

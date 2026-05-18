@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useTransition, useCallback } from "react";
+import { useId, useState, useRef, useEffect, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -110,6 +110,7 @@ export function LlmConfigurePane({
   docsWithLlm,
 }: LlmConfigurePaneProps) {
   const router = useRouter();
+  const modelListboxId = useId();
 
   // Prompt state
   const [prompt, setPrompt] = useState(initialPrompt);
@@ -558,6 +559,7 @@ export function LlmConfigurePane({
                   variant="outline"
                   role="combobox"
                   aria-expanded={modelOpen}
+                  aria-controls={modelListboxId}
                   className="w-full justify-between font-normal"
                 >
                   {capabilities.label || config.llm_model || "Selecionar modelo..."}
@@ -567,7 +569,7 @@ export function LlmConfigurePane({
               <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
                   <CommandInput placeholder="Buscar modelo..." value={modelSearch} onValueChange={setModelSearch} />
-                  <CommandList>
+                  <CommandList id={modelListboxId}>
                     <CommandEmpty>
                       <button
                         className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm"

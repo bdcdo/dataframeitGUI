@@ -303,7 +303,6 @@ export function DocumentsPageClient({
               onChange={(e) => setExcludeReason(e.target.value)}
               placeholder="Ex: parecer fora do escopo do projeto"
               rows={3}
-              autoFocus
             />
           </div>
 

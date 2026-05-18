@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
@@ -169,15 +170,17 @@ export default async function MyVerdictsPage({
 
   return (
     <div className="mx-auto max-w-6xl p-6">
-      <MyVerdictsView
-        projectId={id}
-        items={verdictItems}
-        fields={fields}
-        userName={[user.firstName, user.lastName].filter(Boolean).join(" ") || "Você"}
-        isCoordinator={isCoordinator}
-        respondents={respondentsList}
-        currentViewUserId={effectiveUserId !== user.id ? effectiveUserId : undefined}
-      />
+      <Suspense fallback={<div className="text-sm text-muted-foreground">Carregando…</div>}>
+        <MyVerdictsView
+          projectId={id}
+          items={verdictItems}
+          fields={fields}
+          userName={[user.firstName, user.lastName].filter(Boolean).join(" ") || "Você"}
+          isCoordinator={isCoordinator}
+          respondents={respondentsList}
+          currentViewUserId={effectiveUserId !== user.id ? effectiveUserId : undefined}
+        />
+      </Suspense>
     </div>
   );
 }

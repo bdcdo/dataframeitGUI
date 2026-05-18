@@ -305,7 +305,7 @@ export function MyVerdictsView({
                   size="icon"
                   className="h-7 w-7"
                   disabled={docIndex === 0}
-                  onClick={() => setDocIndex(docIndex - 1)}
+                  onClick={() => setDocIndex((i) => i - 1)}
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
@@ -317,7 +317,7 @@ export function MyVerdictsView({
                   size="icon"
                   className="h-7 w-7"
                   disabled={docIndex === docGroups.length - 1}
-                  onClick={() => setDocIndex(docIndex + 1)}
+                  onClick={() => setDocIndex((i) => i + 1)}
                 >
                   <ChevronRight className="h-4 w-4" />
                 </Button>

@@ -96,7 +96,7 @@ export function ActivityCalendar({ activityMap }: ActivityCalendarProps) {
                         )}
                       />
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="text-xs">
+                    <TooltipContent side="top" className="text-xs" suppressHydrationWarning>
                       {entry.count} documento{entry.count !== 1 ? "s" : ""} em{" "}
                       {formatted}
                     </TooltipContent>

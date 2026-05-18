@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -54,6 +54,14 @@ export function LotteryDialog({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  // Hidratado client-only para o "disabled date in past" do Calendar não
+  // produzir mismatch entre server e cliente.
+  const [todayMidnight, setTodayMidnight] = useState<Date | null>(null);
+  useEffect(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    setTodayMidnight(t);
+  }, []);
 
   // Tipo do sorteio (codificação ou comparação)
   const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
@@ -370,7 +378,7 @@ export function LotteryDialog({
                       selected={deadlineDate}
                       onSelect={setDeadlineDate}
                       locale={ptBR}
-                      disabled={(date) => date < new Date()}
+                      disabled={todayMidnight ? (date) => date < todayMidnight : undefined}
                     />
                   </PopoverContent>
                 </Popover>

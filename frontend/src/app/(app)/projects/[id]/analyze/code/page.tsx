@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -227,24 +228,26 @@ export default async function CodePage({
     effectiveRound !== CURRENT_FILTER_VALUE && effectiveRound !== "all";
 
   return (
-    <CodingPage
-      projectId={id}
-      documents={filteredDocuments}
-      codedAtByDoc={codedAtByDoc}
-      fields={fields}
-      existingAnswers={existingAnswers}
-      existingJustifications={existingJustifications}
-      hasAssignments={allDocuments.length > 0}
-      progress={progress}
-      readOnly={isImpersonating || isViewingPreviousRound}
-      roundFilter={{
-        strategy,
-        currentRoundKey,
-        currentRoundLabel,
-        rounds: ctx.rounds,
-        previousVersions,
-        selected: effectiveRound,
-      }}
-    />
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>
+      <CodingPage
+        projectId={id}
+        documents={filteredDocuments}
+        codedAtByDoc={codedAtByDoc}
+        fields={fields}
+        existingAnswers={existingAnswers}
+        existingJustifications={existingJustifications}
+        hasAssignments={allDocuments.length > 0}
+        progress={progress}
+        readOnly={isImpersonating || isViewingPreviousRound}
+        roundFilter={{
+          strategy,
+          currentRoundKey,
+          currentRoundLabel,
+          rounds: ctx.rounds,
+          previousVersions,
+          selected: effectiveRound,
+        }}
+      />
+    </Suspense>
   );
 }
