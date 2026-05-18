@@ -10,6 +10,7 @@ import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
 import { revalidatePath } from "next/cache";
 import type {
+  AnswerFieldHashes,
   PydanticField,
   SelfVerdict,
   ArbitrationVerdict,
@@ -905,16 +906,12 @@ export async function regenerateAutoReviewBacklog(
           {
             id: human.id,
             answers: (human.answers as Record<string, unknown>) ?? {},
-            answerFieldHashes: human.answer_field_hashes as
-              | Record<string, string>
-              | null,
+            answerFieldHashes: human.answer_field_hashes as AnswerFieldHashes,
           },
           {
             id: llm.id,
             answers: (llm.answers as Record<string, unknown>) ?? {},
-            answerFieldHashes: llm.answer_field_hashes as
-              | Record<string, string>
-              | null,
+            answerFieldHashes: llm.answer_field_hashes as AnswerFieldHashes,
           },
         ],
         equivByDoc.get(human.document_id),
@@ -961,12 +958,21 @@ export async function regenerateAutoReviewBacklog(
       }
     }
 
+    // Defesa em profundidade: `.is("self_verdict", null)` fecha a janela TOCTOU
+    // entre a leitura de `existingReviews` (Promise.all inicial) e este DELETE.
+    // Se um pesquisador resolver um campo nesse intervalo, o DB recusa a linha
+    // mesmo que o id esteja em `idsToDelete`. `.select("id")` devolve as linhas
+    // efetivamente apagadas, fonte da contagem `removed` retornada.
+    let actuallyRemoved = 0;
     if (idsToDelete.length > 0) {
-      const { error } = await admin
+      const { data: deleted, error } = await admin
         .from("field_reviews")
         .delete()
-        .in("id", idsToDelete);
+        .in("id", idsToDelete)
+        .is("self_verdict", null)
+        .select("id");
       if (error) return { success: false, error: error.message };
+      actuallyRemoved = deleted?.length ?? 0;
     }
 
     if (assignmentRows.length > 0) {
@@ -1034,7 +1040,7 @@ export async function regenerateAutoReviewBacklog(
       success: true,
       scanned: queue.length,
       regenerated,
-      removed: idsToDelete.length,
+      removed: actuallyRemoved,
       keptResolved,
     };
   } catch (e) {

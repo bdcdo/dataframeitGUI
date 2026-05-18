@@ -1,7 +1,7 @@
 import { normalizeForComparison } from "@/lib/utils";
 import { isFieldVisible } from "@/lib/conditional";
 import { buildResponseGroupKeys, type EquivalencePair } from "@/lib/equivalence";
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 // A field is free-text when there is no fixed option set —
 // equivalence makes sense only here. Multi/single-with-options have
@@ -22,7 +22,7 @@ interface ResponseLike {
   // foi codificada — comparar geraria um falso "(vazio)" divergente.
   // Ausente/null/{} = legacy: não dá para inferir, mantém comportamento antigo
   // de incluir a response.
-  answerFieldHashes?: Record<string, string> | null;
+  answerFieldHashes?: AnswerFieldHashes;
 }
 
 // True a menos que a response comprovadamente não tivesse o campo no schema

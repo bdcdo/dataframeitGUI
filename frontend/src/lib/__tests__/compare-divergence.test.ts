@@ -196,6 +196,24 @@ describe("computeDivergentFieldNames", () => {
     ];
     expect(computeDivergentFieldNames(fields, responses)).toEqual(["a"]);
   });
+
+  it("staleness: asymmetric legacy human + modern LLM without the field — does not diverge", () => {
+    // Cenário real de migração: humano codificou antes da coluna
+    // `answer_field_hashes` existir (hashes=null, legacy → considera-se que
+    // tinha o campo); LLM re-rodou depois com hashes modernos mas o campo
+    // não está nos hashes dele (campo foi removido do schema antes do LLM
+    // re-rodar). Só 1 response aplicável → não diverge.
+    const fields = [field({ name: "removido" })];
+    const responses = [
+      { id: "1", answers: { removido: "humano" }, answerFieldHashes: null },
+      {
+        id: "2",
+        answers: { removido: "llm" },
+        answerFieldHashes: { outro: "h" } as Record<string, string>,
+      },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual([]);
+  });
 });
 
 describe("isDocComplete", () => {

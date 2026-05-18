@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { createSupabaseServer } from "@/lib/supabase/server";
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import {
   computeDivergentFieldNames,
   isFreeTextField,
@@ -73,14 +73,14 @@ export async function syncCompareAssignment(
   type ActiveResponse = {
     id: string;
     answers: Record<string, unknown>;
-    answerFieldHashes: Record<string, string> | null;
+    answerFieldHashes: AnswerFieldHashes;
   };
   const activeResponses: ActiveResponse[] = (responses ?? [])
     .filter((r) => r.is_latest || r.respondent_type === "humano")
     .map((r) => ({
       id: r.id,
       answers: (r.answers ?? {}) as Record<string, unknown>,
-      answerFieldHashes: r.answer_field_hashes as Record<string, string> | null,
+      answerFieldHashes: r.answer_field_hashes as AnswerFieldHashes,
     }));
 
   const equivalencesByField = new Map<string, EquivalencePair[]>();
