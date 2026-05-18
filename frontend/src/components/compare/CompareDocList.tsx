@@ -28,12 +28,12 @@ interface CompareDocListProps {
 
 function StatusDot({ status }: { status: DocListEntry["assignmentStatus"] }) {
   if (status === "concluido") {
-    return <CheckCircle2 className="h-3 w-3 text-green-600" />;
+    return <CheckCircle2 className="size-3 text-green-600" />;
   }
   if (status === "em_andamento") {
-    return <Circle className="h-3 w-3 fill-amber-500/30 text-amber-600" />;
+    return <Circle className="size-3 fill-amber-500/30 text-amber-600" />;
   }
-  return <Circle className="h-3 w-3 text-muted-foreground/50" />;
+  return <Circle className="size-3 text-muted-foreground/50" />;
 }
 
 export function CompareDocList({
@@ -49,11 +49,11 @@ export function CompareDocList({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7"
+          className="size-7"
           onClick={onToggle}
           title="Mostrar lista de documentos"
         >
-          <PanelLeftOpen className="h-3.5 w-3.5" />
+          <PanelLeftOpen className="size-3.5" />
         </Button>
       </div>
     );
@@ -68,11 +68,11 @@ export function CompareDocList({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="size-6"
           onClick={onToggle}
           title="Recolher lista"
         >
-          <PanelLeftClose className="h-3.5 w-3.5" />
+          <PanelLeftClose className="size-3.5" />
         </Button>
       </div>
 

@@ -91,7 +91,7 @@ export function HardestDocuments({
               <td className="px-2 py-2">
                 <Button variant="ghost" size="sm" asChild title="Ver comparação">
                   <Link href={`/projects/${projectId}/analyze/compare?doc=${doc.documentId}`}>
-                    <FileText className="h-3.5 w-3.5" />
+                    <FileText className="size-3.5" />
                   </Link>
                 </Button>
               </td>

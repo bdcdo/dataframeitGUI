@@ -205,7 +205,7 @@ export default async function ComparePageRoute({
       );
     }
   }
-  const availableVersions = [...versionSet].sort((a, b) => {
+  const availableVersions = Array.from(versionSet).toSorted((a, b) => {
     const pa = parseVersionStr(a)!;
     const pb = parseVersionStr(b)!;
     if (pa.major !== pb.major) return pb.major - pa.major;

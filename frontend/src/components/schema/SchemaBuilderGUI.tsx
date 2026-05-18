@@ -101,7 +101,7 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
               onClick={addField}
               className="bg-brand hover:bg-brand/90 text-brand-foreground"
             >
-              <Plus className="h-4 w-4 mr-1.5" />
+              <Plus className="size-4 mr-1.5" />
               Adicionar primeiro campo
             </Button>
           </div>
@@ -137,7 +137,7 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
 
       <div className="border-t px-4 py-2">
         <Button variant="outline" size="sm" onClick={addField}>
-          <Plus className="h-3.5 w-3.5 mr-1" />
+          <Plus className="size-3.5 mr-1" />
           Adicionar campo
         </Button>
       </div>

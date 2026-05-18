@@ -172,11 +172,11 @@ export function DocumentList({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      className="size-7 text-muted-foreground hover:text-destructive"
                       onClick={() => onRequestDelete?.(doc)}
                       title="Excluir"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="size-3.5" />
                     </Button>
                   </td>
                 )}
@@ -185,11 +185,11 @@ export function DocumentList({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      className="size-7 text-muted-foreground hover:text-foreground"
                       onClick={() => onRequestRestore?.(doc)}
                       title="Restaurar"
                     >
-                      <RotateCcw className="h-3.5 w-3.5" />
+                      <RotateCcw className="size-3.5" />
                     </Button>
                   </td>
                 )}
@@ -198,11 +198,11 @@ export function DocumentList({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                      className="size-7 text-destructive hover:bg-destructive/10"
                       onClick={() => onRequestHardDelete?.(doc)}
                       title="Apagar permanentemente"
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="size-3.5" />
                     </Button>
                   </td>
                 )}

@@ -30,9 +30,11 @@ export default async function CodePage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ viewAsUser?: string; round?: string }>;
 }) {
-  const { id } = await params;
-  const sp = await searchParams;
-  const user = await getAuthUser();
+  const [{ id }, sp, user] = await Promise.all([
+    params,
+    searchParams,
+    getAuthUser(),
+  ]);
   if (!user) redirect("/auth/login");
 
   const isImpersonating = !!(user.isMaster && sp.viewAsUser);

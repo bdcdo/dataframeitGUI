@@ -198,7 +198,7 @@ export function EditFieldDialog({
         </DialogHeader>
         {pendingSuggestion && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             <span>
               Os campos abaixo vêm da sugestão original. Ajuste o que for
               necessário e clique em Salvar para aprovar.
@@ -226,7 +226,7 @@ export function EditFieldDialog({
             />
             {descriptionChanged && (
               <p className="flex items-center gap-1 text-xs text-amber-600">
-                <AlertTriangle className="h-3 w-3" />
+                <AlertTriangle className="size-3" />
                 Alterar a descrição marcará respostas existentes como
                 desatualizadas
               </p>
@@ -368,14 +368,14 @@ export function EditFieldDialog({
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-6 w-6 p-0"
+                        className="size-6 p-0"
                         onClick={() => {
                           const sfs = subfields!.filter((_, j) => j !== si);
                           setSubfields(sfs.length > 0 ? sfs : undefined);
                           if (sfs.length === 0) setSubfieldRule("all");
                         }}
                       >
-                        <Trash2 className="h-3 w-3" />
+                        <Trash2 className="size-3" />
                       </Button>
                     </div>
                   ))}
@@ -450,7 +450,7 @@ export function EditFieldDialog({
             Cancelar
           </Button>
           <Button size="sm" disabled={isSaving || !description.trim()} onClick={handleSave}>
-            {isSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {isSaving && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
             Salvar
           </Button>
         </DialogFooter>

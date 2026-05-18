@@ -219,11 +219,11 @@ function AssignedDocSection({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 disabled:opacity-50"
+          className="size-6 disabled:opacity-50"
           onClick={() => doc.onNavigate(doc.index - 1)}
           disabled={doc.index === 0}
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft className="size-4" />
         </Button>
         <span className="tabular-nums text-muted-foreground text-xs">
           {doc.index + 1}/{doc.total}
@@ -231,11 +231,11 @@ function AssignedDocSection({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 disabled:opacity-50"
+          className="size-6 disabled:opacity-50"
           onClick={() => doc.onNavigate(doc.index + 1)}
           disabled={doc.index === doc.total - 1}
         >
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight className="size-4" />
         </Button>
         <SuggestExclusionDialog
           projectId={doc.projectId}
@@ -246,10 +246,10 @@ function AssignedDocSection({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 ml-1"
+          className="size-6 ml-1"
           onClick={onToggleFullscreen}
         >
-          <Maximize2 className="h-3.5 w-3.5" />
+          <Maximize2 className="size-3.5" />
         </Button>
       </div>
     </>
@@ -268,10 +268,10 @@ function BrowseDocSection({
       <Button
         variant="ghost"
         size="icon"
-        className="h-6 w-6 shrink-0"
+        className="size-6 shrink-0"
         onClick={doc.onBack}
       >
-        <ArrowLeft className="h-4 w-4" />
+        <ArrowLeft className="size-4" />
       </Button>
       <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="truncate font-medium">{doc.title}</span>
@@ -289,10 +289,10 @@ function BrowseDocSection({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="size-6"
           onClick={doc.onRandom}
         >
-          <Shuffle className="h-4 w-4" />
+          <Shuffle className="size-4" />
         </Button>
         <SuggestExclusionDialog
           projectId={doc.projectId}
@@ -303,10 +303,10 @@ function BrowseDocSection({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="size-6"
           onClick={onToggleFullscreen}
         >
-          <Maximize2 className="h-3.5 w-3.5" />
+          <Maximize2 className="size-3.5" />
         </Button>
       </div>
     </>

@@ -228,22 +228,22 @@ export function CommentCard({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-5 w-5 p-0"
+                  className="size-5 p-0"
                   onClick={onEditField}
                   title="Editar campo"
                 >
-                  <Pencil className="h-3 w-3" />
+                  <Pencil className="size-3" />
                 </Button>
               )}
               {!isCoordinator && onSuggestField && comment.source !== "nota" && comment.source !== "exclusao" && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-5 w-5 p-0"
+                  className="size-5 p-0"
                   onClick={onSuggestField}
                   title="Sugerir alteração"
                 >
-                  <Pencil className="h-3 w-3 text-amber-500" />
+                  <Pencil className="size-3 text-amber-500" />
                 </Button>
               )}
             </div>
@@ -364,11 +364,11 @@ export function CommentCard({
             >
               Ver gabarito
               {loadingGabarito ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Loader2 className="size-3 animate-spin" />
               ) : (
                 <ChevronDown
                   className={cn(
-                    "h-3 w-3 transition-transform",
+                    "size-3 transition-transform",
                     gabaritoOpen && "rotate-180",
                   )}
                 />
@@ -400,7 +400,7 @@ export function CommentCard({
                       )}
                     >
                       {a.isChosen && (
-                        <Check className="mt-0.5 h-3 w-3 shrink-0 text-brand" />
+                        <Check className="mt-0.5 size-3 shrink-0 text-brand" />
                       )}
                       <div className="min-w-0">
                         <span className="font-medium">
@@ -450,7 +450,7 @@ export function CommentCard({
                 onClick={onReopen}
                 title="Reabrir"
               >
-                <RotateCcw className="h-3.5 w-3.5" />
+                <RotateCcw className="size-3.5" />
               </Button>
             ) : (
               <Button
@@ -460,7 +460,7 @@ export function CommentCard({
                 onClick={onResolve}
                 title="Resolver"
               >
-                <CheckCircle2 className="h-3.5 w-3.5" />
+                <CheckCircle2 className="size-3.5" />
               </Button>
             )}
           </div>

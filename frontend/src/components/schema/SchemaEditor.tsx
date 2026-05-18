@@ -222,7 +222,7 @@ export function SchemaEditor({
               )}
               onClick={() => (mode === "code" ? switchToGUI() : undefined)}
             >
-              <LayoutGrid className="h-3.5 w-3.5" />
+              <LayoutGrid className="size-3.5" />
               Visual
             </Button>
             <Button
@@ -234,7 +234,7 @@ export function SchemaEditor({
               )}
               onClick={() => (mode === "gui" ? switchToCode() : undefined)}
             >
-              <Code className="h-3.5 w-3.5" />
+              <Code className="size-3.5" />
               Código
             </Button>
           </div>
@@ -266,7 +266,7 @@ export function SchemaEditor({
             disabled={isPending}
             title="Reconstruir versão a partir do histórico de mudanças"
           >
-            <History className="h-3.5 w-3.5" />
+            <History className="size-3.5" />
             Reconstruir histórico
           </Button>
           <Button
@@ -277,7 +277,7 @@ export function SchemaEditor({
             disabled={isPending}
             title="Consolidar baseline e bumpar MAJOR"
           >
-            <Rocket className="h-3.5 w-3.5" />
+            <Rocket className="size-3.5" />
             Publicar MAJOR
           </Button>
         </div>
@@ -285,7 +285,7 @@ export function SchemaEditor({
 
       {!helpDismissed && (
         <div className="flex items-start gap-2 border-b bg-blue-500/5 px-4 py-2 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" />
+          <Info className="mt-0.5 size-3.5 shrink-0 text-blue-600" />
           <div className="flex-1">
             <strong className="text-foreground">Sobre versões do schema.</strong>{" "}
             Toda edição bumpa a versão automaticamente (MINOR para mudanças
@@ -300,11 +300,11 @@ export function SchemaEditor({
           <Button
             variant="ghost"
             size="icon"
-            className="h-5 w-5 shrink-0"
+            className="size-5 shrink-0"
             onClick={dismissHelp}
             title="Dispensar"
           >
-            <X className="h-3 w-3" />
+            <X className="size-3" />
           </Button>
         </div>
       )}

@@ -218,9 +218,9 @@ export function AutoReviewFieldPanel({
                 className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
               >
                 {showJustification ? (
-                  <ChevronDown className="h-3 w-3" />
+                  <ChevronDown className="size-3" />
                 ) : (
-                  <ChevronRight className="h-3 w-3" />
+                  <ChevronRight className="size-3" />
                 )}
                 Justificativa
               </button>
@@ -354,7 +354,7 @@ export function AutoReviewFieldPanel({
             className="h-6 gap-1.5 px-2 text-xs text-muted-foreground"
             onClick={toggleHints}
           >
-            <Keyboard className="h-3 w-3" />
+            <Keyboard className="size-3" />
             Atalhos
           </Button>
           {!readOnly ? (

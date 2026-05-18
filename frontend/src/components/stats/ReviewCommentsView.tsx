@@ -205,7 +205,7 @@ export function ReviewCommentsView({
               if (first) setSplitDocId(first.documentId);
             }}
           >
-            <PanelLeftClose className="h-3.5 w-3.5" />
+            <PanelLeftClose className="size-3.5" />
             Revisar por documento
           </Button>
         )}

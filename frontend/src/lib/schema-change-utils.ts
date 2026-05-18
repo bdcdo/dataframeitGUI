@@ -195,7 +195,7 @@ export function diffPydanticField(
 }
 
 export function groupChangesByCommit(entries: SchemaChangeEntry[]): ChangeGroup[] {
-  const sorted = [...entries].sort(
+  const sorted = entries.toSorted(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
   const groups: ChangeGroup[] = [];

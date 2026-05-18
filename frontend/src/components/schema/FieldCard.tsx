@@ -140,14 +140,14 @@ export function FieldCard({
           <button
             type="button"
             className={cn(
-              "flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
+              "flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
               isDragging ? "cursor-grabbing" : "cursor-grab"
             )}
             aria-label="Arrastar para reordenar"
             {...attributes}
             {...listeners}
           >
-            <GripVertical className="h-4 w-4" />
+            <GripVertical className="size-4" />
           </button>
 
           {/* Nome + badges */}
@@ -177,10 +177,10 @@ export function FieldCard({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+            className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
             onClick={onRemove}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="size-3.5" />
           </Button>
         </div>
 
@@ -442,13 +442,13 @@ export function FieldCard({
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-6 w-6 p-0"
+                          className="size-6 p-0"
                           onClick={() => {
                             const sfs = field.subfields!.filter((_, j) => j !== si);
                             updateField({ subfields: sfs.length > 0 ? sfs : undefined, subfield_rule: sfs.length > 0 ? field.subfield_rule : undefined });
                           }}
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="size-3" />
                         </Button>
                       </div>
                     ))}

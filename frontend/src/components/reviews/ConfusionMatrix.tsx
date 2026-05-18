@@ -149,7 +149,7 @@ function SingleConfusionGrid({ data }: { data: ConfusionDataSingle }) {
                     <td key={colLabel} className="p-0.5">
                       <div
                         className={cn(
-                          "flex h-9 w-9 items-center justify-center rounded text-xs font-medium tabular-nums",
+                          "flex size-9 items-center justify-center rounded text-xs font-medium tabular-nums",
                           isDiagonal && val > 0 &&
                             "bg-brand/15 text-brand font-bold",
                           isDiagonal && val === 0 && "bg-muted/50 text-muted-foreground",

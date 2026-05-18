@@ -77,11 +77,11 @@ export function LlmErrorCard({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-5 w-5 p-0"
+                  className="size-5 p-0"
                   onClick={onEditField}
                   title="Editar campo"
                 >
-                  <Pencil className="h-3 w-3" />
+                  <Pencil className="size-3" />
                 </Button>
               )}
             </div>
@@ -136,7 +136,7 @@ export function LlmErrorCard({
         <div className="flex justify-end gap-1">
           <Button variant="ghost" size="sm" asChild title="Ver documento">
             <Link href={`/projects/${projectId}/analyze/code?doc=${error.documentId}`}>
-              <FileText className="h-3.5 w-3.5" />
+              <FileText className="size-3.5" />
             </Link>
           </Button>
           {!error.resolvedAt && onMarkEquivalent && error.chosenResponseId && (
@@ -147,7 +147,7 @@ export function LlmErrorCard({
               onClick={onMarkEquivalent}
               title="Marcar respostas como equivalentes"
             >
-              <Equal className="h-3.5 w-3.5" />
+              <Equal className="size-3.5" />
             </Button>
           )}
           {error.resolvedAt ? (
@@ -158,7 +158,7 @@ export function LlmErrorCard({
               onClick={onReopen}
               title="Reabrir"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
+              <RotateCcw className="size-3.5" />
             </Button>
           ) : (
             <Button
@@ -168,7 +168,7 @@ export function LlmErrorCard({
               onClick={onResolve}
               title="Resolver"
             >
-              <CheckCircle2 className="h-3.5 w-3.5" />
+              <CheckCircle2 className="size-3.5" />
             </Button>
           )}
         </div>

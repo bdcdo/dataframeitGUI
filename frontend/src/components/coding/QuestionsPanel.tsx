@@ -105,14 +105,14 @@ function SortableQuestion({
           <button
             type="button"
             className={cn(
-              "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
+              "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
               sortable.isDragging ? "cursor-grabbing" : "cursor-grab",
             )}
             aria-label="Arrastar para reordenar pergunta"
             {...sortable.attributes}
             {...sortable.listeners}
           >
-            <GripVertical className="h-3.5 w-3.5" />
+            <GripVertical className="size-3.5" />
           </button>
         )}
         <div className="flex-1 min-w-0">
@@ -121,7 +121,7 @@ function SortableQuestion({
             {field.required === false && (
               <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
             )}
-            {isAnswered && <Check className="h-3.5 w-3.5 text-brand shrink-0" />}
+            {isAnswered && <Check className="size-3.5 text-brand shrink-0" />}
           </p>
           {field.help_text && (
             <p className="text-xs text-muted-foreground mb-1.5 whitespace-pre-line">
@@ -322,9 +322,9 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         {onNotesChange && (
           <Collapsible defaultOpen={!!notes}>
             <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-              <MessageSquare className="h-3.5 w-3.5" />
+              <MessageSquare className="size-3.5" />
               Notas e sugestões (opcional)
-              {notes && <span className="h-1.5 w-1.5 rounded-full bg-brand" />}
+              {notes && <span className="size-1.5 rounded-full bg-brand" />}
             </CollapsibleTrigger>
             <CollapsibleContent>
               <Textarea
@@ -348,7 +348,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
             "Somente leitura"
           ) : submitting ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="size-4 animate-spin" />
               Salvando…
             </>
           ) : (

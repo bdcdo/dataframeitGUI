@@ -185,7 +185,7 @@ export function SuggestFieldDialog({
             disabled={isSaving || !hasChanges || !reason.trim()}
             onClick={handleSubmit}
           >
-            {isSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {isSaving && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
             Enviar sugestão
           </Button>
         </DialogFooter>

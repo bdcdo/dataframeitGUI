@@ -372,7 +372,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
 
       {step === "checking" && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+          <div className="size-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
           Verificando duplicatas…
         </div>
       )}
@@ -394,7 +394,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
 
       {step === "uploading" && progress && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+          <div className="size-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
           Importando {progress.current}/{progress.total}...
         </div>
       )}

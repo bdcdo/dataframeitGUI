@@ -89,7 +89,7 @@ export function LlmErrorCard({ id, error, onDismiss }: LlmErrorCardProps) {
     >
       <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
         <div className="flex items-start gap-2">
-          <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
+          <AlertCircle className="size-5 shrink-0 text-destructive" />
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <Badge variant="destructive">{error.type ?? "Erro"}</Badge>
@@ -108,11 +108,11 @@ export function LlmErrorCard({ id, error, onDismiss }: LlmErrorCardProps) {
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7"
+          className="size-7"
           onClick={onDismiss}
           aria-label="Fechar"
         >
-          <X className="h-4 w-4" />
+          <X className="size-4" />
         </Button>
       </CardHeader>
 
@@ -161,7 +161,7 @@ export function LlmErrorCard({ id, error, onDismiss }: LlmErrorCardProps) {
         {error.traceback && (
           <Collapsible>
             <CollapsibleTrigger className="group flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
-              <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+              <ChevronRight className="size-3 transition-transform group-data-[state=open]:rotate-90" />
               Stack trace completo
             </CollapsibleTrigger>
             <CollapsibleContent>
@@ -176,11 +176,11 @@ export function LlmErrorCard({ id, error, onDismiss }: LlmErrorCardProps) {
           <Button size="sm" variant="outline" onClick={handleCopy}>
             {copied ? (
               <>
-                <Check className="mr-1.5 h-3.5 w-3.5" /> Copiado
+                <Check className="mr-1.5 size-3.5" /> Copiado
               </>
             ) : (
               <>
-                <Copy className="mr-1.5 h-3.5 w-3.5" /> Copiar diagnóstico
+                <Copy className="mr-1.5 size-3.5" /> Copiar diagnóstico
               </>
             )}
           </Button>

@@ -82,6 +82,8 @@ export interface RespondentOption {
   name: string;
 }
 
+const EMPTY_RESPONDENTS: RespondentOption[] = [];
+
 interface MyVerdictsViewProps {
   projectId: string;
   items: VerdictItem[];
@@ -100,7 +102,7 @@ export function MyVerdictsView({
   fields,
   userName,
   isCoordinator,
-  respondents = [],
+  respondents = EMPTY_RESPONDENTS,
   currentViewUserId,
 }: MyVerdictsViewProps) {
   const router = useRouter();
@@ -303,11 +305,11 @@ export function MyVerdictsView({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="size-7"
                   disabled={docIndex === 0}
                   onClick={() => setDocIndex((i) => i - 1)}
                 >
-                  <ChevronLeft className="h-4 w-4" />
+                  <ChevronLeft className="size-4" />
                 </Button>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {docIndex + 1}/{docGroups.length}
@@ -315,11 +317,11 @@ export function MyVerdictsView({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="size-7"
                   disabled={docIndex === docGroups.length - 1}
                   onClick={() => setDocIndex((i) => i + 1)}
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="size-4" />
                 </Button>
               </>
             )}
@@ -336,7 +338,7 @@ export function MyVerdictsView({
           <ResizablePanel defaultSize={55} minSize={25}>
             {loadingText || !currentText ? (
               <div className="flex h-full items-center justify-center">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
               </div>
             ) : (
               <DocumentReader text={currentText} />
@@ -441,11 +443,11 @@ function VerdictCard({
         </p>
         {item.isCorrect ? (
           <Badge className="shrink-0 bg-green-500/10 text-green-700 text-xs">
-            <Check className="mr-1 h-3 w-3" /> Correta
+            <Check className="mr-1 size-3" /> Correta
           </Badge>
         ) : (
           <Badge className="shrink-0 bg-red-500/10 text-red-700 text-xs">
-            <X className="mr-1 h-3 w-3" /> Incorreta
+            <X className="mr-1 size-3" /> Incorreta
           </Badge>
         )}
       </div>
@@ -527,7 +529,7 @@ function VerdictCard({
                   disabled={isPending}
                   onClick={() => onAcknowledge(item.reviewId, "accepted")}
                 >
-                  <Check className="mr-1 h-3 w-3" />
+                  <Check className="mr-1 size-3" />
                   Aceitar correção
                 </Button>
               )}
@@ -542,7 +544,7 @@ function VerdictCard({
                   )
                 }
               >
-                <MessageSquare className="mr-1 h-3 w-3" />
+                <MessageSquare className="mr-1 size-3" />
                 Comentar dúvida
               </Button>
             </>
@@ -610,9 +612,9 @@ function RespondentRow({
         {/* Correctness icon */}
         {!isSpecialVerdict && (
           correct ? (
-            <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+            <Check className="size-3.5 shrink-0 text-emerald-600" />
           ) : (
-            <X className="h-3.5 w-3.5 shrink-0 text-red-500" />
+            <X className="size-3.5 shrink-0 text-red-500" />
           )
         )}
 
@@ -631,7 +633,7 @@ function RespondentRow({
         {/* Respondent info */}
         <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
           {respondent.respondent_type === "llm" && (
-            <Bot className="h-3 w-3" />
+            <Bot className="size-3" />
           )}
           {isMe ? (
             <>
@@ -650,9 +652,9 @@ function RespondentRow({
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >
             {showJustification ? (
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronDown className="size-3.5" />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="size-3.5" />
             )}
           </button>
         )}

@@ -70,18 +70,18 @@ function StatusBadge({ status }: { status: LlmRunRecord["status"] }) {
   if (status === "completed")
     return (
       <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white gap-1">
-        <CheckCircle2 className="h-3 w-3" /> Concluído
+        <CheckCircle2 className="size-3" /> Concluído
       </Badge>
     );
   if (status === "error")
     return (
       <Badge variant="destructive" className="gap-1">
-        <XCircle className="h-3 w-3" /> Erro
+        <XCircle className="size-3" /> Erro
       </Badge>
     );
   return (
     <Badge variant="secondary" className="gap-1">
-      <Loader2 className="h-3 w-3 animate-spin" /> Em execução
+      <Loader2 className="size-3 animate-spin" /> Em execução
     </Badge>
   );
 }
@@ -126,7 +126,7 @@ export function LlmRunsPane({ projectId, runs, stats }: LlmRunsPaneProps) {
           <Collapsible key={run.id}>
             <div className="rounded-md border">
               <CollapsibleTrigger className="group flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50">
-                <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90 text-muted-foreground" />
+                <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90 text-muted-foreground" />
                 <StatusBadge status={run.status} />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium truncate">{modelLabel}</div>
@@ -161,7 +161,7 @@ export function LlmRunsPane({ projectId, runs, stats }: LlmRunsPaneProps) {
                       href={`/projects/${projectId}/llm/responses?job=${run.job_id}`}
                       className="inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-muted"
                     >
-                      <FileText className="h-3 w-3" /> Ver respostas desta run
+                      <FileText className="size-3" /> Ver respostas desta run
                     </Link>
                     {run.status === "error" && (
                       <button

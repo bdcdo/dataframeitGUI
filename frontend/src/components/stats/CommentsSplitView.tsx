@@ -184,7 +184,7 @@ export function CommentsSplitView({
       <div className="flex items-center justify-between border-b px-4 py-2">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onBack} className="gap-1">
-            <ArrowLeft className="h-3.5 w-3.5" />
+            <ArrowLeft className="size-3.5" />
             Voltar à lista
           </Button>
           <span className="text-sm text-muted-foreground">
@@ -195,11 +195,11 @@ export function CommentsSplitView({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="size-7"
             disabled={docIndex === 0}
             onClick={() => setDocIndex((i) => i - 1)}
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="size-4" />
           </Button>
           <span className="text-xs text-muted-foreground">
             {docIndex + 1}/{docGroups.length}
@@ -207,11 +207,11 @@ export function CommentsSplitView({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="size-7"
             disabled={docIndex === docGroups.length - 1}
             onClick={() => setDocIndex((i) => i + 1)}
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="size-4" />
           </Button>
         </div>
       </div>
@@ -221,7 +221,7 @@ export function CommentsSplitView({
         <ResizablePanel defaultSize={55} minSize={25}>
           {loadingText || !currentText ? (
             <div className="flex h-full items-center justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
             </div>
           ) : (
             <DocumentReader text={currentText} />
@@ -326,7 +326,7 @@ export function CommentsSplitView({
                           )}
                         >
                           {r.id === comment.chosenResponseId && (
-                            <Check className="mt-0.5 h-3 w-3 shrink-0 text-brand" />
+                            <Check className="mt-0.5 size-3 shrink-0 text-brand" />
                           )}
                           <div className="min-w-0">
                             <span className="font-medium">
@@ -375,7 +375,7 @@ export function CommentsSplitView({
                         onClick={() => handleReopen(comment)}
                         title="Reabrir"
                       >
-                        <RotateCcw className="h-3.5 w-3.5" />
+                        <RotateCcw className="size-3.5" />
                       </Button>
                     ) : (
                       <Button
@@ -385,7 +385,7 @@ export function CommentsSplitView({
                         onClick={() => handleResolve(comment)}
                         title="Resolver"
                       >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <CheckCircle2 className="size-3.5" />
                       </Button>
                     )}
                   </div>

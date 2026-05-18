@@ -29,13 +29,13 @@ export function CopyLinkButton({ url, className }: CopyLinkButtonProps) {
     <Button
       variant="ghost"
       size="icon"
-      className={`h-6 w-6 ${className ?? ""}`}
+      className={`size-6 ${className ?? ""}`}
       onClick={handleCopy}
     >
       {copied ? (
-        <Check className="h-3.5 w-3.5 text-green-600" />
+        <Check className="size-3.5 text-green-600" />
       ) : (
-        <Link2 className="h-3.5 w-3.5" />
+        <Link2 className="size-3.5" />
       )}
     </Button>
   );

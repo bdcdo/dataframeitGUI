@@ -341,12 +341,12 @@ export function AutoReviewPage({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className="size-6"
               onClick={() => handleDocNavigate(docIndex - 1)}
               disabled={docIndex === 0}
               title="Documento anterior"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="size-4" />
             </Button>
             <span className="text-xs text-muted-foreground">
               {docIndex + 1}/{docs.length}
@@ -354,12 +354,12 @@ export function AutoReviewPage({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className="size-6"
               onClick={() => handleDocNavigate(docIndex + 1)}
               disabled={docIndex === docs.length - 1}
               title="Próximo documento"
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="size-4" />
             </Button>
           </div>
         </div>

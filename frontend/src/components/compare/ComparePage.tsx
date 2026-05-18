@@ -270,7 +270,7 @@ export function ComparePage({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
-    return [...map.values()].sort((a, b) => b.length - a.length);
+    return Array.from(map.values()).toSorted((a, b) => b.length - a.length);
   }, [fieldResponses, currentFieldEquivalences]);
 
   const handleVerdict = useCallback(

@@ -70,19 +70,19 @@ export function CompareNav({
         />
         <CompareFieldFilter value={filter} onChange={onFilterChange} fields={fields} />
         <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onDocNavigate(docIndex - 1)} disabled={docIndex === 0}>
-            <ChevronLeft className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="size-6" onClick={() => onDocNavigate(docIndex - 1)} disabled={docIndex === 0}>
+            <ChevronLeft className="size-4" />
           </Button>
           <span className="text-xs text-muted-foreground">{docIndex + 1}/{totalDocs}</span>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onDocNavigate(docIndex + 1)} disabled={docIndex === totalDocs - 1}>
-            <ChevronRight className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="size-6" onClick={() => onDocNavigate(docIndex + 1)} disabled={docIndex === totalDocs - 1}>
+            <ChevronRight className="size-4" />
           </Button>
         </div>
         {projectId && documentId && (
           <RunLlmButton projectId={projectId} documentId={documentId} />
         )}
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onToggleFullscreen} title="Tela cheia">
-          <Maximize2 className="h-3.5 w-3.5" />
+        <Button variant="ghost" size="icon" className="size-6" onClick={onToggleFullscreen} title="Tela cheia">
+          <Maximize2 className="size-3.5" />
         </Button>
       </div>
     </div>

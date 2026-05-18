@@ -13,7 +13,7 @@ export function Header({ projectName, user }: HeaderProps) {
     <header className="flex h-14 items-center justify-between border-b px-4">
       <div className="flex items-center gap-3">
         <Link href="/dashboard" className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-brand">
+          <div className="flex size-8 items-center justify-center rounded-md bg-brand">
             <span className="text-sm font-bold text-brand-foreground">AC</span>
           </div>
         </Link>

@@ -98,9 +98,9 @@ export function CompareFilters({
           aria-busy={isPending}
         >
           {isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Loader2 className="size-3.5 animate-spin" />
           ) : (
-            <SlidersHorizontal className="h-3.5 w-3.5" />
+            <SlidersHorizontal className="size-3.5" />
           )}
           Filtros
           {activeCount > 0 && (
@@ -122,7 +122,7 @@ export function CompareFilters({
                 onClick={reset}
                 disabled={isPending}
               >
-                <X className="h-3 w-3" />
+                <X className="size-3" />
                 Limpar
               </Button>
             )}
@@ -130,7 +130,7 @@ export function CompareFilters({
 
           {isPending && (
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
+              <Loader2 className="size-3 animate-spin" />
               Aplicando filtros…
             </div>
           )}

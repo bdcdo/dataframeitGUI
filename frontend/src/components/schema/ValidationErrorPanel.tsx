@@ -33,7 +33,7 @@ export function ValidationErrorPanel({
     <Card className="border-destructive/40 bg-destructive/5">
       <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
         <div className="flex items-center gap-2">
-          <OctagonX className="h-5 w-5 shrink-0 text-destructive" />
+          <OctagonX className="size-5 shrink-0 text-destructive" />
           <p className="text-sm font-medium leading-snug">
             {errors.length === 1
               ? "1 erro impede o save"
@@ -49,12 +49,12 @@ export function ValidationErrorPanel({
           >
             {copied ? (
               <>
-                <Check className="h-3.5 w-3.5" />
+                <Check className="size-3.5" />
                 Copiado
               </>
             ) : (
               <>
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="size-3.5" />
                 Copiar
               </>
             )}
@@ -62,11 +62,11 @@ export function ValidationErrorPanel({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="size-7"
             onClick={onDismiss}
             aria-label="Fechar"
           >
-            <X className="h-4 w-4" />
+            <X className="size-4" />
           </Button>
         </div>
       </CardHeader>

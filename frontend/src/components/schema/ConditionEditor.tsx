@@ -250,7 +250,7 @@ function ValueControl({
                       : { field: condition.field, not_in: nextValues },
                   );
                 }}
-                className="h-3 w-3"
+                className="size-3"
               />
               <span>{opt}</span>
             </label>

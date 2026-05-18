@@ -507,7 +507,7 @@ export function computeFieldHash(
   options: string[] | null,
   description: string,
 ): string {
-  const optionsPart = options ? pythonListRepr([...options].sort()) : "";
+  const optionsPart = options ? pythonListRepr(options.toSorted()) : "";
   const content = `${name}|${type}|${optionsPart}|${description}`;
   return sha256Hex(content).slice(0, 12);
 }

@@ -45,11 +45,13 @@ interface LotteryDialogProps {
   coordinators?: CoordinatorOption[];
 }
 
+const EMPTY_COORDINATORS: CoordinatorOption[] = [];
+
 export function LotteryDialog({
   projectId,
   totalDocs,
   totalResearchers,
-  coordinators = [],
+  coordinators = EMPTY_COORDINATORS,
 }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -72,7 +74,7 @@ export function LotteryDialog({
     useState(false);
   const [docsPerResearcher, setDocsPerResearcher] = useState(10);
   const [docSubsetEnabled, setDocSubsetEnabled] = useState(false);
-  const [docSubsetSize, setDocSubsetSize] = useState(
+  const [docSubsetSize, setDocSubsetSize] = useState(() =>
     Math.min(50, totalDocs)
   );
 
@@ -332,7 +334,7 @@ export function LotteryDialog({
               Prazo
               <ChevronDown
                 className={cn(
-                  "h-4 w-4 transition-transform",
+                  "size-4 transition-transform",
                   deadlineOpen && "rotate-180"
                 )}
               />
@@ -368,7 +370,7 @@ export function LotteryDialog({
                         !deadlineDate && "text-muted-foreground"
                       )}
                     >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      <CalendarIcon className="mr-2 size-4" />
                       {formatDate(deadlineDate)}
                     </Button>
                   </PopoverTrigger>
@@ -409,7 +411,7 @@ export function LotteryDialog({
                             !recurringStart && "text-muted-foreground"
                           )}
                         >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          <CalendarIcon className="mr-2 size-4" />
                           {formatDate(recurringStart)}
                         </Button>
                       </PopoverTrigger>

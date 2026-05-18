@@ -65,14 +65,14 @@ export function SuggestExclusionDialog({
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="size-6"
             title="Sinalizar fora de escopo"
           >
-            <Flag className="h-3.5 w-3.5" />
+            <Flag className="size-3.5" />
           </Button>
         ) : (
           <Button variant="outline" size="sm">
-            <Flag className="mr-1.5 h-3.5 w-3.5" />
+            <Flag className="mr-1.5 size-3.5" />
             Sinalizar fora de escopo
           </Button>
         )}
@@ -117,7 +117,7 @@ export function SuggestExclusionDialog({
           >
             {isPending ? (
               <>
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                 Enviando…
               </>
             ) : (

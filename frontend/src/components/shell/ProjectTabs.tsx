@@ -21,6 +21,8 @@ interface ProjectTabsProps {
   isLlmRunning?: boolean;
 }
 
+const EMPTY_MEMBERS: ProjectMember[] = [];
+
 const tabs = [
   { label: "Meu Progresso", href: "my-progress" },
   { label: "Analisar", href: "analyze" },
@@ -33,7 +35,7 @@ export function ProjectTabs({
   projectId,
   isCoordinator,
   isMaster = false,
-  projectMembers = [],
+  projectMembers = EMPTY_MEMBERS,
   isLlmRunning = false,
 }: ProjectTabsProps) {
   const pathname = usePathname();
@@ -141,7 +143,7 @@ export function ProjectTabs({
         <div className="ml-auto flex items-center gap-2">
           {isMaster && !isAutoRevisaoRoute && projectMembers.length > 0 && (
             <div className="relative flex items-center gap-1.5">
-              <Users className="h-3.5 w-3.5 text-muted-foreground" />
+              <Users className="size-3.5 text-muted-foreground" />
               <select
                 value={viewAsUserId || ""}
                 onChange={(e) =>
@@ -175,9 +177,9 @@ export function ProjectTabs({
               )}
             >
               {viewAsResearcher ? (
-                <EyeOff className="h-3.5 w-3.5" />
+                <EyeOff className="size-3.5" />
               ) : (
-                <Eye className="h-3.5 w-3.5" />
+                <Eye className="size-3.5" />
               )}
               {viewAsResearcher ? "Visão Coordenador" : "Ver como Pesquisador"}
             </button>

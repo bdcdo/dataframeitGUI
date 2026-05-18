@@ -152,7 +152,7 @@ function DateFieldRenderer({
           )}
           onClick={() => onChange(isNotInformed ? "" : NOT_INFORMED)}
         >
-          {isNotInformed && <Check className="mr-1 h-3 w-3" />}
+          {isNotInformed && <Check className="mr-1 size-3" />}
           Não informada
         </Button>
         {sentinels.map((opt) => {
@@ -169,7 +169,7 @@ function DateFieldRenderer({
               )}
               onClick={() => onChange(active ? "" : opt)}
             >
-              {active && <Check className="mr-1 h-3 w-3" />}
+              {active && <Check className="mr-1 size-3" />}
               {opt}
             </Button>
           );
@@ -177,7 +177,7 @@ function DateFieldRenderer({
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+              <Info className="size-3.5 text-muted-foreground cursor-help" />
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs text-xs">
               <p>
@@ -242,11 +242,11 @@ function DateFieldRenderer({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      className="size-7 text-muted-foreground hover:text-foreground"
                       onClick={handleClear}
                       aria-label="Limpar data"
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <X className="size-3.5" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="text-xs">
@@ -404,7 +404,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             )}
             onClick={() => onChange(isNotInformed ? {} : "Não informada")}
           >
-            {isNotInformed && <Check className="mr-1 h-3 w-3" />}
+            {isNotInformed && <Check className="mr-1 size-3" />}
             Não informada
           </Button>
           {field.subfield_rule === "at_least_one" && (
@@ -412,7 +412,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Info className="h-3.5 w-3.5" />
+                    <Info className="size-3.5" />
                     Preencha pelo menos um
                   </span>
                 </TooltipTrigger>
@@ -472,7 +472,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
                 )}
                 onClick={() => onChange(active ? "" : preset)}
               >
-                {active && <Check className="mr-1 h-3 w-3" />}
+                {active && <Check className="mr-1 size-3" />}
                 {preset}
               </Button>
             );

@@ -35,7 +35,7 @@ export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDi
     kind === "renamed" ? (
       <span className="font-mono text-xs">
         <span className="text-muted-foreground line-through">{beforeName}</span>
-        <ArrowRight className="mx-1 inline h-3 w-3 text-muted-foreground" />
+        <ArrowRight className="mx-1 inline size-3 text-muted-foreground" />
         <span className="font-medium text-foreground">{afterName}</span>
       </span>
     ) : (
@@ -78,7 +78,7 @@ export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDi
         </div>
         <ChevronDown
           className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            "size-3.5 shrink-0 text-muted-foreground transition-transform",
             expanded && "rotate-180",
           )}
         />
@@ -106,12 +106,12 @@ function KindIcon({ kind }: { kind: FieldChangeKind }) {
     return (
       <span
         className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
+          "flex size-4 shrink-0 items-center justify-center rounded-full",
           "bg-green-500/15 text-green-700",
         )}
         aria-label="Campo novo"
       >
-        <Plus className="h-3 w-3" />
+        <Plus className="size-3" />
       </span>
     );
   }
@@ -119,12 +119,12 @@ function KindIcon({ kind }: { kind: FieldChangeKind }) {
     return (
       <span
         className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
+          "flex size-4 shrink-0 items-center justify-center rounded-full",
           "bg-red-500/15 text-red-700",
         )}
         aria-label="Campo removido"
       >
-        <Minus className="h-3 w-3" />
+        <Minus className="size-3" />
       </span>
     );
   }
@@ -132,18 +132,18 @@ function KindIcon({ kind }: { kind: FieldChangeKind }) {
     return (
       <span
         className={cn(
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
+          "flex size-4 shrink-0 items-center justify-center rounded-full",
           "bg-blue-500/15 text-blue-700",
         )}
         aria-label="Campo renomeado"
       >
-        <ArrowRight className="h-3 w-3" />
+        <ArrowRight className="size-3" />
       </span>
     );
   }
   return (
     <span
-      className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground"
+      className="flex size-4 shrink-0 items-center justify-center text-muted-foreground"
       aria-label="Campo modificado"
     >
       •
@@ -301,7 +301,7 @@ function PillDiff({ before, after }: { before: string; after: string }) {
       >
         <del className="no-underline">{before}</del>
       </Badge>
-      <ArrowRight className="h-3 w-3 text-muted-foreground" />
+      <ArrowRight className="size-3 text-muted-foreground" />
       <Badge className="h-5 bg-brand/10 px-1.5 py-0 text-[10px] font-medium text-brand hover:bg-brand/10">
         {after}
       </Badge>

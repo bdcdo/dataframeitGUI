@@ -160,7 +160,7 @@ export function SchemaHistoryView({
         </div>
         {truncated && (
           <div className="flex items-center gap-1.5 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
-            <Info className="h-3.5 w-3.5 shrink-0" />
+            <Info className="size-3.5 shrink-0" />
             <span>
               Mostrando as últimas {limit} mudanças. Use os filtros (campo, autor, tipo) para
               localizar entradas mais antigas.
@@ -187,8 +187,8 @@ export function SchemaHistoryView({
 function EmptyState({ reason }: { reason: "empty" | "filtered" }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-        <History className="h-6 w-6 text-muted-foreground" />
+      <div className="flex size-12 items-center justify-center rounded-full bg-muted">
+        <History className="size-6 text-muted-foreground" />
       </div>
       {reason === "empty" ? (
         <div className="space-y-1">
