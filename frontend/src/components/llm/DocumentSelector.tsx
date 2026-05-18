@@ -145,19 +145,19 @@ export function DocumentSelector({
                 checked={localSelected.has(doc.id)}
                 onCheckedChange={() => toggle(doc.id)}
               />
-              <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <FileText className="size-3.5 text-muted-foreground shrink-0" />
               <span className="truncate flex-1">
                 {doc.title || doc.external_id || doc.id.slice(0, 8)}
               </span>
               <div className="flex items-center gap-1.5 shrink-0">
                 {doc.hasHumanResponse && (
                   <Badge variant="secondary" className="text-[10px] h-5 gap-0.5">
-                    <User className="h-2.5 w-2.5" />
+                    <User className="size-2.5" />
                   </Badge>
                 )}
                 {doc.llmResponseCount > 0 && (
                   <Badge variant="secondary" className="text-[10px] h-5 gap-0.5">
-                    <Bot className="h-2.5 w-2.5" />
+                    <Bot className="size-2.5" />
                     {doc.llmResponseCount}
                   </Badge>
                 )}

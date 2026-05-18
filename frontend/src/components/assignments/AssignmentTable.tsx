@@ -163,7 +163,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                       onClick={() => handleCycle(doc.id, r.user_id)}
                       disabled={isNonRemovable || isPending}
                       className={cn(
-                        "relative h-6 w-6 rounded border transition-colors",
+                        "relative size-6 rounded border transition-colors",
                         baseColor,
                         isOverdue && "ring-2 ring-destructive ring-offset-1",
                         (isNonRemovable || isPending) && "cursor-default",

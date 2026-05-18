@@ -4,8 +4,7 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
-    const { getToken, userId } = await auth();
-    const user = await currentUser();
+    const [{ getToken, userId }, user] = await Promise.all([auth(), currentUser()]);
 
     const token = await getToken({ template: "supabase" });
 

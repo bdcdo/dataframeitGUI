@@ -60,7 +60,7 @@ export function DateSinceFilter() {
     <div className="flex items-center gap-2 text-xs" aria-busy={isPending}>
       <span className="flex items-center gap-1.5 text-muted-foreground">
         Desde:
-        {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+        {isPending && <Loader2 className="size-3 animate-spin" />}
       </span>
       <div className="flex items-center gap-1">
         {PRESETS.map((p) => {

@@ -183,7 +183,7 @@ export function RoundsConfig({
               size="sm"
               className="shrink-0"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="size-4" />
               Criar
             </Button>
           </div>
@@ -218,7 +218,7 @@ export function RoundsConfig({
                           disabled={disabled}
                           className="h-7 text-xs"
                         >
-                          <Check className="h-3.5 w-3.5" />
+                          <Check className="size-3.5" />
                           Tornar atual
                         </Button>
                       )}
@@ -227,10 +227,10 @@ export function RoundsConfig({
                         variant="ghost"
                         onClick={() => setPendingDelete(r)}
                         disabled={disabled}
-                        className="h-7 w-7"
+                        className="size-7"
                         aria-label="Excluir rodada"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="size-3.5" />
                       </Button>
                     </div>
                   </li>

@@ -30,7 +30,7 @@ export function UserMenu({ email, firstName }: UserMenuProps) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-medium text-brand-foreground">
+          <div className="flex size-6 items-center justify-center rounded-full bg-brand text-xs font-medium text-brand-foreground">
             {initials}
           </div>
           <span className="text-sm">{firstName || email}</span>

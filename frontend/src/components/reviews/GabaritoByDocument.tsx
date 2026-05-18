@@ -215,7 +215,7 @@ export function GabaritoByDocument({
             disabled={page === 0}
             onClick={() => setPage((p) => p - 1)}
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="size-4" />
           </Button>
           <span className="text-sm text-muted-foreground">
             {page + 1} / {totalPages}
@@ -226,7 +226,7 @@ export function GabaritoByDocument({
             disabled={page >= totalPages - 1}
             onClick={() => setPage((p) => p + 1)}
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="size-4" />
           </Button>
         </div>
       )}
@@ -250,7 +250,7 @@ function DocumentCard({
           <h3 className="text-sm font-medium">{doc.documentTitle}</h3>
           <Button variant="ghost" size="sm" asChild title="Ver documento">
             <Link href={`/projects/${projectId}/analyze/compare?doc=${doc.documentId}`}>
-              <FileText className="h-3.5 w-3.5" />
+              <FileText className="size-3.5" />
             </Link>
           </Button>
         </div>
@@ -344,9 +344,9 @@ function RespondentRow({
       <div className="flex items-center gap-2 text-sm">
         {!isSpecialVerdict && (
           ra.isCorrect ? (
-            <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+            <Check className="size-3.5 shrink-0 text-emerald-600" />
           ) : (
-            <X className="h-3.5 w-3.5 shrink-0 text-red-500" />
+            <X className="size-3.5 shrink-0 text-red-500" />
           )
         )}
         <span
@@ -359,12 +359,12 @@ function RespondentRow({
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
           {ra.respondentType === "llm" && (
-            <Bot className="h-3 w-3" />
+            <Bot className="size-3" />
           )}
           {ra.respondentName}
           {ra.isStale && (
             <span className="inline-flex items-center gap-0.5 text-amber-600">
-              <AlertTriangle className="h-3 w-3" />
+              <AlertTriangle className="size-3" />
             </span>
           )}
         </span>
@@ -374,9 +374,9 @@ function RespondentRow({
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >
             {showJustification ? (
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronDown className="size-3.5" />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="size-3.5" />
             )}
           </button>
         )}

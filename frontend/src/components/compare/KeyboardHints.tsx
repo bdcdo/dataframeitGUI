@@ -21,7 +21,7 @@ export function KeyboardHints({ groupCount, isMulti, optionCount }: KeyboardHint
         className="h-6 gap-1.5 px-2 text-xs text-muted-foreground"
         onClick={() => setOpen(!open)}
       >
-        <Keyboard className="h-3 w-3" />
+        <Keyboard className="size-3" />
         Atalhos
         <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">?</kbd>
       </Button>

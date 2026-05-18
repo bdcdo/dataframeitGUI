@@ -163,11 +163,11 @@ export function ComparisonPanel({
                 className="h-5 gap-1 px-1.5 text-[10px]"
                 title={`${commentCount} nota(s), ${suggestionCount} sugestão(ões) de schema`}
               >
-                <MessageSquare className="h-3 w-3" />
+                <MessageSquare className="size-3" />
                 {commentCount}
                 {suggestionCount > 0 && (
                   <>
-                    <Lightbulb className="ml-1 h-3 w-3" />
+                    <Lightbulb className="ml-1 size-3" />
                     {suggestionCount}
                   </>
                 )}
@@ -280,7 +280,7 @@ export function ComparisonPanel({
                 onClick={() => setSuggestOpen(true)}
                 title="Sugerir alteração ao codebook neste campo"
               >
-                <Lightbulb className="h-3.5 w-3.5" />
+                <Lightbulb className="size-3.5" />
                 Sugerir
               </Button>
             </div>
@@ -288,7 +288,7 @@ export function ComparisonPanel({
         ) : (
           <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
-              <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+              <CheckCircle2 className="size-3.5 text-green-600" />
               Concordante — todos os respondentes concordam.
             </div>
             <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onMarkReviewed}>
@@ -301,7 +301,7 @@ export function ComparisonPanel({
       {isDocComplete && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-green-500/20 bg-green-500/5 px-4 py-2">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+            <CheckCircle2 className="size-3.5 text-green-600" />
             Revisão do documento concluída.
           </span>
           {hasNextDoc ? (
@@ -312,7 +312,7 @@ export function ComparisonPanel({
               onClick={onNextDoc}
             >
               Próximo parecer
-              <ArrowRight className="h-3.5 w-3.5" />
+              <ArrowRight className="size-3.5" />
             </Button>
           ) : (
             <span className="text-xs font-medium text-green-700">

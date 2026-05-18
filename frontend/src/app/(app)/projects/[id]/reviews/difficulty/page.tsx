@@ -16,9 +16,11 @@ export default async function DifficultyPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ since?: string }>;
 }) {
-  const { id } = await params;
-  const { since } = await searchParams;
-  const user = await getAuthUser();
+  const [{ id }, { since }, user] = await Promise.all([
+    params,
+    searchParams,
+    getAuthUser(),
+  ]);
   if (!user) redirect("/auth/login");
 
   const supabase = await createSupabaseServer();

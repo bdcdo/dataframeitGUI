@@ -136,7 +136,7 @@ export function AgreementGroup({
       }
     }
 
-    return [...map.values()].sort(
+    return Array.from(map.values()).toSorted(
       (a, b) => b.responses.length - a.responses.length,
     );
   }, [responses, equivalences]);
@@ -210,7 +210,7 @@ export function AgreementGroup({
         {allowEquivalence && groups.length > 1 && (
           <div className="rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2.5 py-1.5 text-[11px] leading-tight text-muted-foreground">
             <p>
-              <Link2 className="mr-1 inline h-3 w-3" />
+              <Link2 className="mr-1 inline size-3" />
               Texto livre: marque os cards equivalentes e indique qual fica
               como <strong>gabarito</strong> (a resposta que será registrada).
             </p>
@@ -230,13 +230,13 @@ export function AgreementGroup({
           const isChosen = group.responses.some(
             (r) => r.id === existingVerdict?.chosenResponseId,
           );
-          const versions = [
-            ...new Set(
+          const versions = Array.from(
+            new Set(
               group.responses
                 .map((r) => r.schemaVersion)
                 .filter((v): v is string => !!v),
             ),
-          ].sort(compareVersionsDesc);
+          ).toSorted(compareVersionsDesc);
 
           const isSelected = selectionOrder.includes(group.groupKey);
 
@@ -284,7 +284,7 @@ export function AgreementGroup({
               disabled={isSubmitting || !effectiveGabarito}
               onClick={handleConfirm}
             >
-              <Link2 className="h-3.5 w-3.5" />
+              <Link2 className="size-3.5" />
               Confirmar {selectedResponseCount} respostas como equivalentes
             </Button>
           </div>

@@ -33,9 +33,11 @@ export default async function MyVerdictsPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ viewAsUser?: string }>;
 }) {
-  const { id } = await params;
-  const sp = await searchParams;
-  const user = await getAuthUser();
+  const [{ id }, sp, user] = await Promise.all([
+    params,
+    searchParams,
+    getAuthUser(),
+  ]);
   if (!user) return <p className="p-6 text-sm text-muted-foreground">Não autenticado</p>;
 
   const supabase = await createSupabaseServer();

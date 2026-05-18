@@ -34,11 +34,11 @@ export function AutoReviewDocList({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7"
+          className="size-7"
           onClick={onToggle}
           title="Mostrar lista de documentos"
         >
-          <PanelLeftOpen className="h-3.5 w-3.5" />
+          <PanelLeftOpen className="size-3.5" />
         </Button>
       </div>
     );
@@ -53,11 +53,11 @@ export function AutoReviewDocList({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          className="size-6"
           onClick={onToggle}
           title="Recolher lista"
         >
-          <PanelLeftClose className="h-3.5 w-3.5" />
+          <PanelLeftClose className="size-3.5" />
         </Button>
       </div>
       <div className="flex-1 overflow-y-auto">
@@ -84,9 +84,9 @@ export function AutoReviewDocList({
                   >
                     <div className="flex items-center gap-1.5">
                       {isDone ? (
-                        <CheckCircle2 className="h-3 w-3 text-green-600" />
+                        <CheckCircle2 className="size-3 text-green-600" />
                       ) : (
-                        <Circle className="h-3 w-3 text-muted-foreground/50" />
+                        <Circle className="size-3 text-muted-foreground/50" />
                       )}
                       <span
                         className={cn(

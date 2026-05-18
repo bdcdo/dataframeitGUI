@@ -79,7 +79,7 @@ export function ActivityCalendar({ activityMap }: ActivityCalendarProps) {
               {Array.from({ length: 7 }, (_, di) => {
                 const entry = week[di];
                 if (!entry || entry.count === -1) {
-                  return <div key={`pad-${wi}-${di}`} className="h-3 w-3" />;
+                  return <div key={`pad-${wi}-${di}`} className="size-3" />;
                 }
                 const d = new Date(entry.date + "T00:00:00");
                 const formatted = d.toLocaleDateString("pt-BR", {
@@ -91,7 +91,7 @@ export function ActivityCalendar({ activityMap }: ActivityCalendarProps) {
                     <TooltipTrigger asChild>
                       <div
                         className={cn(
-                          "h-3 w-3 rounded-[2px]",
+                          "size-3 rounded-[2px]",
                           getIntensity(entry.count)
                         )}
                       />
@@ -110,11 +110,11 @@ export function ActivityCalendar({ activityMap }: ActivityCalendarProps) {
       {/* Legend */}
       <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
         <span>Menos</span>
-        <div className="h-3 w-3 rounded-[2px] bg-muted" />
-        <div className="h-3 w-3 rounded-[2px] bg-brand/25" />
-        <div className="h-3 w-3 rounded-[2px] bg-brand/50" />
-        <div className="h-3 w-3 rounded-[2px] bg-brand/75" />
-        <div className="h-3 w-3 rounded-[2px] bg-brand" />
+        <div className="size-3 rounded-[2px] bg-muted" />
+        <div className="size-3 rounded-[2px] bg-brand/25" />
+        <div className="size-3 rounded-[2px] bg-brand/50" />
+        <div className="size-3 rounded-[2px] bg-brand/75" />
+        <div className="size-3 rounded-[2px] bg-brand" />
         <span>Mais</span>
       </div>
     </div>

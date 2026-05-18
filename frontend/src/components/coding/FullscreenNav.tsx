@@ -29,10 +29,10 @@ export function FullscreenNav({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 shrink-0"
+          className="size-7 shrink-0"
           onClick={onExit}
         >
-          <X className="h-4 w-4" />
+          <X className="size-4" />
         </Button>
         <span className="truncate font-medium">{title}</span>
         {responseCount !== undefined && (
@@ -46,11 +46,11 @@ export function FullscreenNav({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="size-7"
             onClick={() => onNavigate(currentIndex - 1)}
             disabled={currentIndex === 0}
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="size-4" />
           </Button>
           <span className="text-muted-foreground">
             {currentIndex + 1}/{total}
@@ -58,11 +58,11 @@ export function FullscreenNav({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="size-7"
             onClick={() => onNavigate(currentIndex + 1)}
             disabled={currentIndex === total - 1}
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="size-4" />
           </Button>
         </div>
       )}

@@ -198,7 +198,7 @@ export function ExportPanel({
           onClick={handleDownload}
           className="bg-brand text-brand-foreground hover:bg-brand/90"
         >
-          <Download className="mr-1.5 h-4 w-4" />
+          <Download className="mr-1.5 size-4" />
           Download
         </Button>
       </div>

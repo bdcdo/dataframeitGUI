@@ -24,7 +24,7 @@ export function ProgressDots({ total, currentIndex, answered, concordant, incomp
             onClick={() => onNavigate(i)}
             className={cn(
               "rounded-full transition-all",
-              i === currentIndex ? "h-3 w-3" : "h-2 w-2",
+              i === currentIndex ? "size-3" : "size-2",
               isConcordant
                 ? "bg-muted-foreground/30"
                 : answered[i]

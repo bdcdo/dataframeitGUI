@@ -51,7 +51,7 @@ export function ClearPendingButton({ projectId, pendingByType }: ClearPendingBut
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size="sm" disabled={isPending}>
-            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            <Trash2 className="mr-1.5 size-3.5" />
             Limpar pendentes ({totalPending})
           </Button>
         </DropdownMenuTrigger>

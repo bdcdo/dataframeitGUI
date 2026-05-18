@@ -51,7 +51,7 @@ export function SchemaChangeGroup({ group }: SchemaChangeGroupProps) {
       />
       <span
         className={cn(
-          "absolute left-0 top-[6px] h-3.5 w-3.5 rounded-full ring-4 ring-background",
+          "absolute left-0 top-[6px] size-3.5 rounded-full ring-4 ring-background",
           changeType ? DOT_COLOR[changeType] : "bg-muted-foreground/30",
         )}
         aria-hidden

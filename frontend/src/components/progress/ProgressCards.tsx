@@ -59,7 +59,7 @@ export function ProgressCards({
             <CardTitle className="text-sm font-medium text-muted-foreground">
               {card.title}
             </CardTitle>
-            <card.icon className={`h-4 w-4 ${card.color}`} />
+            <card.icon className={`size-4 ${card.color}`} />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{card.value}</div>

@@ -115,7 +115,7 @@ export function AnswerCard({
             />
           </div>
         )}
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-medium">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-medium">
           {index + 1}
         </span>
         <div className="min-w-0 flex-1">
@@ -138,14 +138,14 @@ export function AnswerCard({
 
             {hasLlm && (
               <span className="inline-flex items-center gap-1 text-brand">
-                <Bot className="h-3 w-3" />
+                <Bot className="size-3" />
                 LLM
               </span>
             )}
 
             {staleCount > 0 && (
               <span className="inline-flex items-center gap-1 text-amber-600">
-                <AlertTriangle className="h-3 w-3" />
+                <AlertTriangle className="size-3" />
                 {allStale
                   ? "desatualizada"
                   : `${staleCount} de ${respondentCount} desatualizadas`}
@@ -160,7 +160,7 @@ export function AnswerCard({
                     className="inline-flex items-center gap-1 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/15"
                     title="Variantes marcadas como equivalentes"
                   >
-                    <Link2 className="h-3 w-3" />
+                    <Link2 className="size-3" />
                     {fusedCount} variante{fusedCount === 1 ? "" : "s"}
                   </button>
                 </PopoverTrigger>
@@ -197,7 +197,7 @@ export function AnswerCard({
                               title="Desfazer equivalência"
                               aria-label="Desfazer equivalência"
                             >
-                              <X className="h-3 w-3" />
+                              <X className="size-3" />
                             </button>
                           )}
                         </li>
@@ -241,7 +241,7 @@ export function AnswerCard({
                 }}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
-                {showJustification ? <ChevronDown className="inline h-3 w-3" /> : <ChevronRight className="inline h-3 w-3" />}{" "}Justificativa
+                {showJustification ? <ChevronDown className="inline size-3" /> : <ChevronRight className="inline size-3" />}{" "}Justificativa
               </button>
               {showJustification && (
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -262,7 +262,7 @@ export function AnswerCard({
               type="radio"
               checked={isGabarito}
               onChange={() => onSetGabarito?.()}
-              className="h-3 w-3 accent-brand"
+              className="size-3 accent-brand"
             />
             <span className={cn(isGabarito && "font-medium text-brand")}>
               Gabarito

@@ -76,7 +76,7 @@ export default async function AssignmentsPage({
   const assignedDocIds = new Set(
     (assignments || []).map((a) => a.document_id),
   );
-  const sortedDocuments = [...(documents || [])].sort((a, b) => {
+  const sortedDocuments = (documents || []).toSorted((a, b) => {
     const aHas = assignedDocIds.has(a.id) ? 0 : 1;
     const bHas = assignedDocIds.has(b.id) ? 0 : 1;
     return aHas - bHas;

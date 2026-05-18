@@ -117,7 +117,7 @@ export function LlmInsightsView({
   const availableVersions = useMemo(() => {
     const set = new Set<string>();
     for (const r of reviewedEntries) if (r.schemaVersion) set.add(r.schemaVersion);
-    return [...set].sort(compareSemverDesc);
+    return Array.from(set).toSorted(compareSemverDesc);
   }, [reviewedEntries]);
 
   // Derive the effective version filter: if the selected version is no
@@ -269,7 +269,7 @@ export function LlmInsightsView({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="flex items-center gap-3 pt-6">
-            <Bot className="h-5 w-5 text-brand" />
+            <Bot className="size-5 text-brand" />
             <div>
               <p className="text-2xl font-bold tabular-nums">
                 {summary.totalLlmDocs}
@@ -282,7 +282,7 @@ export function LlmInsightsView({
         </Card>
         <Card>
           <CardContent className="flex items-center gap-3 pt-6">
-            <AlertTriangle className="h-5 w-5 text-red-500" />
+            <AlertTriangle className="size-5 text-red-500" />
             <div>
               <p className="text-2xl font-bold tabular-nums">
                 {filteredErrors.length}

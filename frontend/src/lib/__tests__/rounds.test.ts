@@ -287,7 +287,7 @@ describe("responseRoundLabel", () => {
 describe("compareVersionLabels", () => {
   it("ordena numericamente, nao lexicograficamente", () => {
     const versions = ["0.10.0", "0.9.0", "1.0.0", "0.2.5"];
-    expect([...versions].sort(compareVersionLabels)).toEqual([
+    expect(versions.toSorted(compareVersionLabels)).toEqual([
       "0.2.5",
       "0.9.0",
       "0.10.0",

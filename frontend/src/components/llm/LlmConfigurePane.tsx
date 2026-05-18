@@ -483,7 +483,7 @@ export function LlmConfigurePane({
 
           <Collapsible open={previewOpen} onOpenChange={setPreviewOpen}>
             <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors group">
-              <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+              <ChevronRight className="size-3 transition-transform group-data-[state=open]:rotate-90" />
               Ver preview do prompt final
             </CollapsibleTrigger>
             <CollapsibleContent>
@@ -561,7 +561,7 @@ export function LlmConfigurePane({
                   className="w-full justify-between font-normal"
                 >
                   {capabilities.label || config.llm_model || "Selecionar modelo..."}
-                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
@@ -596,7 +596,7 @@ export function LlmConfigurePane({
                               setModelOpen(false);
                             }}
                           >
-                            <Check className={cn("mr-2 h-4 w-4", config.llm_model === m.model ? "opacity-100" : "opacity-0")} />
+                            <Check className={cn("mr-2 size-4", config.llm_model === m.model ? "opacity-100" : "opacity-0")} />
                             {m.label}
                           </CommandItem>
                         ))}
@@ -614,7 +614,7 @@ export function LlmConfigurePane({
                               setModelOpen(false);
                             }}
                           >
-                            <Check className={cn("mr-2 h-4 w-4", config.llm_model === m.model ? "opacity-100" : "opacity-0")} />
+                            <Check className={cn("mr-2 size-4", config.llm_model === m.model ? "opacity-100" : "opacity-0")} />
                             {m.label}
                           </CommandItem>
                         ))}
@@ -670,7 +670,7 @@ export function LlmConfigurePane({
           )}
           {!capabilities.supportsTemperature && !capabilities.supportsThinkingLevel && (
             <div className="col-span-2 flex items-center gap-2 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-              <Info className="h-4 w-4 shrink-0" />
+              <Info className="size-4 shrink-0" />
               Este modelo não possui parâmetros configuráveis adicionais.
             </div>
           )}
@@ -714,7 +714,7 @@ export function LlmConfigurePane({
         {/* Advanced parameters */}
         <Collapsible>
           <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors group">
-            <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+            <ChevronRight className="size-3 transition-transform group-data-[state=open]:rotate-90" />
             Parâmetros avançados
           </CollapsibleTrigger>
           <CollapsibleContent>

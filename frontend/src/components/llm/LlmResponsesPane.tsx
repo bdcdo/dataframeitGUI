@@ -107,7 +107,7 @@ export function LlmResponsesPane({
         <div className="flex items-center gap-2" aria-busy={isPending}>
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             Execução
-            {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+            {isPending && <Loader2 className="size-3 animate-spin" />}
           </label>
           <Select
             value={activeJobId ?? "all"}

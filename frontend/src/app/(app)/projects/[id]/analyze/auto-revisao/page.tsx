@@ -15,9 +15,11 @@ export default async function AutoReviewRoute({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ viewAs?: string }>;
 }) {
-  const { id } = await params;
-  const { viewAs } = await searchParams;
-  const user = await getAuthUser();
+  const [{ id }, { viewAs }, user] = await Promise.all([
+    params,
+    searchParams,
+    getAuthUser(),
+  ]);
   if (!user) redirect("/auth/login");
 
   const supabase = await createSupabaseServer();

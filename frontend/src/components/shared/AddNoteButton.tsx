@@ -87,7 +87,7 @@ export function AddNoteButton({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button variant={variant} size={size} className="gap-1.5 text-xs">
-          <MessageSquarePlus className="h-3.5 w-3.5" />
+          <MessageSquarePlus className="size-3.5" />
           {label ?? "Nota"}
         </Button>
       </DialogTrigger>
@@ -144,7 +144,7 @@ export function AddNoteButton({
               disabled={isPending || !body.trim()}
               onClick={handleSubmit}
             >
-              {isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              {isPending && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
               Salvar nota
             </Button>
           </div>

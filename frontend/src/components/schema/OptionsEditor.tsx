@@ -65,10 +65,10 @@ export function OptionsEditor({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+            className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
             onClick={() => removeOption(i)}
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="size-3.5" />
           </Button>
         </div>
       ))}
@@ -78,7 +78,7 @@ export function OptionsEditor({
         className="text-muted-foreground"
         onClick={addOption}
       >
-        <Plus className="h-3.5 w-3.5 mr-1" />
+        <Plus className="size-3.5 mr-1" />
         Adicionar opção
       </Button>
     </div>

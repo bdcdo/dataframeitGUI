@@ -205,7 +205,7 @@ export function DocumentsPageClient({
                 size="sm"
                 onClick={handleRequestRestoreSelected}
               >
-                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                <RotateCcw className="mr-1.5 size-3.5" />
                 Restaurar selecionados
               </Button>
               <Button
@@ -213,7 +213,7 @@ export function DocumentsPageClient({
                 size="sm"
                 onClick={handleRequestHardDeleteSelected}
               >
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                <Trash2 className="mr-1.5 size-3.5" />
                 Apagar permanentemente
               </Button>
             </>
@@ -223,7 +223,7 @@ export function DocumentsPageClient({
               size="sm"
               onClick={handleRequestExcludeSelected}
             >
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              <Trash2 className="mr-1.5 size-3.5" />
               Excluir selecionados
             </Button>
           )}
@@ -316,7 +316,7 @@ export function DocumentsPageClient({
             >
               {isPending ? (
                 <>
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                   Excluindo…
                 </>
               ) : (
@@ -355,7 +355,7 @@ export function DocumentsPageClient({
             >
               {isPending ? (
                 <>
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                   Restaurando…
                 </>
               ) : (
@@ -395,7 +395,7 @@ export function DocumentsPageClient({
             >
               {isPending ? (
                 <>
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                   Apagando…
                 </>
               ) : (

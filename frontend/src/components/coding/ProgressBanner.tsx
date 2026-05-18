@@ -49,7 +49,7 @@ export function ProgressBanner({ data }: { data: ProgressBannerData }) {
             isUrgent && "text-orange-600 dark:text-orange-400"
           )}
         >
-          <CalendarClock className="h-3.5 w-3.5" />
+          <CalendarClock className="size-3.5" />
           <span>
             {formatDeadline(data.nextDeadline)}
             {data.daysUntilDeadline !== null && (
@@ -64,7 +64,7 @@ export function ProgressBanner({ data }: { data: ProgressBannerData }) {
       {/* Required pace */}
       {data.requiredPace !== null && data.requiredPace > 0 && (
         <div className="flex items-center gap-1 text-muted-foreground whitespace-nowrap">
-          <TrendingUp className="h-3.5 w-3.5" />
+          <TrendingUp className="size-3.5" />
           <span>{data.requiredPace}/dia</span>
         </div>
       )}
@@ -72,7 +72,7 @@ export function ProgressBanner({ data }: { data: ProgressBannerData }) {
       {/* Streak */}
       {data.streak > 0 && (
         <Badge variant="secondary" className="gap-1 shrink-0">
-          <Flame className="h-3 w-3 text-orange-500" />
+          <Flame className="size-3 text-orange-500" />
           {data.streak}d
         </Badge>
       )}

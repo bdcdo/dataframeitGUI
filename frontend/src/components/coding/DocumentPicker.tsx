@@ -45,7 +45,7 @@ export function DocumentPicker({ documents, onSelect }: DocumentPickerProps) {
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b px-4 py-3">
         <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por titulo ou ID..."
             value={search}
@@ -54,7 +54,7 @@ export function DocumentPicker({ documents, onSelect }: DocumentPickerProps) {
           />
         </div>
         <Button variant="outline" size="sm" onClick={handleRandom}>
-          <Shuffle className="mr-1.5 h-4 w-4" />
+          <Shuffle className="mr-1.5 size-4" />
           Aleatorio
         </Button>
       </div>
@@ -85,7 +85,7 @@ export function DocumentPicker({ documents, onSelect }: DocumentPickerProps) {
                   {doc.responseCount} {doc.responseCount === 1 ? "resposta" : "respostas"}
                 </Badge>
                 {doc.userAlreadyResponded && (
-                  <Check className="h-4 w-4 shrink-0 text-brand" />
+                  <Check className="size-4 shrink-0 text-brand" />
                 )}
               </button>
             ))}

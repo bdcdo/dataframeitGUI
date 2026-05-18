@@ -81,7 +81,7 @@ export function LlmResponseRow({
     <Collapsible>
       <div className="rounded-md border">
         <CollapsibleTrigger className="group flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50">
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+          <ChevronRight className="size-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
           <StatusBadge status={status} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium">{docTitle}</div>
@@ -163,7 +163,7 @@ export function LlmResponseRow({
                   href={`/projects/${projectId}/analyze/code?doc=${r.document_id}`}
                   className="inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-muted"
                 >
-                  <ExternalLink className="h-3 w-3" /> Abrir documento
+                  <ExternalLink className="size-3" /> Abrir documento
                 </Link>
               )}
               {r.llm_job_id && (

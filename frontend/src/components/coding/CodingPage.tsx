@@ -36,6 +36,9 @@ export interface RoundFilterData {
 
 export type CodingSortMode = "default" | "recent";
 
+const EMPTY_CODED_AT: Record<string, string> = {};
+const EMPTY_JUSTIFICATIONS: Record<string, Record<string, unknown>> = {};
+
 interface CodingPageProps {
   projectId: string;
   documents: (Document & { assignment?: Pick<Assignment, "id" | "status"> })[];
@@ -52,10 +55,10 @@ interface CodingPageProps {
 export function CodingPage({
   projectId,
   documents,
-  codedAtByDoc = {},
+  codedAtByDoc = EMPTY_CODED_AT,
   fields,
   existingAnswers,
-  existingJustifications = {},
+  existingJustifications = EMPTY_JUSTIFICATIONS,
   hasAssignments = false,
   progress = null,
   readOnly = false,
@@ -560,7 +563,7 @@ export function CodingPage({
   if (fields.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <FileQuestion className="h-10 w-10 text-muted-foreground/50" />
+        <FileQuestion className="size-10 text-muted-foreground/50" />
         <p className="text-sm text-muted-foreground">
           Schema não definido. Configure os campos em Configurações → Schema.
         </p>
@@ -636,7 +639,7 @@ export function CodingPage({
         <>
           {allDone ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-              <CheckCircle2 className="h-16 w-16 text-brand" />
+              <CheckCircle2 className="size-16 text-brand" />
               <h2 className="text-xl font-semibold">Parabéns!</h2>
               <p className="text-muted-foreground">
                 Você completou todos os {documents.length} documento{documents.length !== 1 ? "s" : ""} atribuído{documents.length !== 1 ? "s" : ""}.
@@ -655,7 +658,7 @@ export function CodingPage({
             </div>
           ) : !currentDoc ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-              <ClipboardList className="h-10 w-10 text-muted-foreground/50" />
+              <ClipboardList className="size-10 text-muted-foreground/50" />
               {hasAssignments && roundFilter ? (
                 roundFilter.selected === "all" ? (
                   <p className="text-sm text-muted-foreground">

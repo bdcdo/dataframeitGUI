@@ -73,7 +73,7 @@ export function RespondentProfile({
                   onClick={() => toggleSort("name")}
                 >
                   Respondente
-                  <ArrowUpDown className="ml-1 h-3 w-3" />
+                  <ArrowUpDown className="ml-1 size-3" />
                 </Button>
               </th>
               <th className="px-2 py-2 text-center text-xs font-medium">
@@ -87,7 +87,7 @@ export function RespondentProfile({
                   onClick={() => toggleSort("accuracy")}
                 >
                   Acurácia
-                  <ArrowUpDown className="ml-1 h-3 w-3" />
+                  <ArrowUpDown className="ml-1 size-3" />
                 </Button>
               </th>
               {displayFields.map((f) => (
@@ -113,12 +113,12 @@ export function RespondentProfile({
                 <td className="px-2 py-2 text-center">
                   {rp.respondentType === "llm" ? (
                     <Badge variant="secondary" className="gap-1">
-                      <Bot className="h-3 w-3" />
+                      <Bot className="size-3" />
                       LLM
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="gap-1">
-                      <User className="h-3 w-3" />
+                      <User className="size-3" />
                       Humano
                     </Badge>
                   )}

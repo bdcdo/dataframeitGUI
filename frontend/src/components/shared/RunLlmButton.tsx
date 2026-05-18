@@ -98,15 +98,15 @@ export function RunLlmButton({
       <Button
         variant={variant}
         size="icon"
-        className="h-6 w-6"
+        className="size-6"
         onClick={handleRun}
         disabled={running}
         title="Rodar LLM neste documento"
       >
         {running ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <Loader2 className="size-3.5 animate-spin" />
         ) : (
-          <Bot className="h-3.5 w-3.5" />
+          <Bot className="size-3.5" />
         )}
       </Button>
     );
@@ -121,9 +121,9 @@ export function RunLlmButton({
       className="gap-1.5"
     >
       {running ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        <Loader2 className="size-3.5 animate-spin" />
       ) : (
-        <Bot className="h-3.5 w-3.5" />
+        <Bot className="size-3.5" />
       )}
       Rodar LLM
     </Button>
