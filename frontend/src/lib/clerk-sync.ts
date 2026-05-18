@@ -13,14 +13,14 @@ export async function syncClerkUserToSupabase(
   lastName?: string | null
 ): Promise<string> {
   const admin = createSupabaseAdmin();
-  const clerk = await clerkClient();
-
-  // Check if mapping already exists
-  const { data: existing } = await admin
-    .from("clerk_user_mapping")
-    .select("supabase_user_id")
-    .eq("clerk_user_id", clerkUserId)
-    .single();
+  const [clerk, { data: existing }] = await Promise.all([
+    clerkClient(),
+    admin
+      .from("clerk_user_mapping")
+      .select("supabase_user_id")
+      .eq("clerk_user_id", clerkUserId)
+      .single(),
+  ]);
 
   if (existing) return existing.supabase_user_id;
 

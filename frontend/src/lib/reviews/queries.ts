@@ -86,9 +86,7 @@ export function isAnswerCorrect(
     try {
       const verdictMap = JSON.parse(verdict) as Record<string, boolean>;
       const verdictSet = new Set(
-        Object.entries(verdictMap)
-          .filter(([, v]) => v)
-          .map(([k]) => k),
+        Object.entries(verdictMap).flatMap(([k, v]) => (v ? [k] : [])),
       );
       const answerArr = Array.isArray(answer) ? answer : [];
       const answerSet = new Set(answerArr.map(String));
@@ -108,15 +106,17 @@ export function formatAnswer(val: unknown): string {
   if (typeof val === "number" || typeof val === "boolean") return String(val);
   if (Array.isArray(val)) {
     return val
-      .map((v) => formatAnswer(v))
-      .filter((s) => s !== "")
+      .flatMap((v) => {
+        const s = formatAnswer(v);
+        return s !== "" ? [s] : [];
+      })
       .join(", ");
   }
   if (typeof val === "object") {
     const obj = val as Record<string, unknown>;
-    const parts = Object.entries(obj)
-      .filter(([, v]) => v != null && v !== "")
-      .map(([k, v]) => `${k}: ${formatAnswer(v)}`);
+    const parts = Object.entries(obj).flatMap(([k, v]) =>
+      v != null && v !== "" ? [`${k}: ${formatAnswer(v)}`] : [],
+    );
     return parts.join("; ");
   }
   return String(val);
@@ -389,6 +389,7 @@ export function computeConfusionData(
     if (field.type === "single" && field.options) {
       const matrix: Record<string, Record<string, number>> = {};
       const allLabels = [...field.options];
+      const allLabelSet = new Set(allLabels);
       for (const opt of allLabels) {
         matrix[opt] = {};
         for (const opt2 of allLabels) matrix[opt][opt2] = 0;
@@ -396,8 +397,9 @@ export function computeConfusionData(
       let total = 0;
       for (const review of fieldReviews) {
         const correctAnswer = review.verdict;
-        if (!allLabels.includes(correctAnswer)) {
+        if (!allLabelSet.has(correctAnswer)) {
           allLabels.push(correctAnswer);
+          allLabelSet.add(correctAnswer);
           matrix[correctAnswer] = {};
           for (const opt of allLabels) matrix[correctAnswer][opt] = 0;
           for (const opt of allLabels) {
@@ -532,13 +534,16 @@ export function computeRespondentProfiles(
     }
 
     const mostErroredFields = Object.entries(perField)
-      .filter(([, v]) => v.total > 0 && v.accuracy < 100)
-      .map(([fn, v]) => ({
-        fieldName: fn,
-        fieldDescription: ctx.fieldMap.get(fn)?.description || fn,
-        errorRate: 100 - v.accuracy,
-      }))
-      .sort((a, b) => b.errorRate - a.errorRate)
+      .flatMap(([fn, v]) =>
+        v.total > 0 && v.accuracy < 100
+          ? [{
+              fieldName: fn,
+              fieldDescription: ctx.fieldMap.get(fn)?.description || fn,
+              errorRate: 100 - v.accuracy,
+            }]
+          : [],
+      )
+      .toSorted((a, b) => b.errorRate - a.errorRate)
       .slice(0, 3);
 
     if (overallTotal > 0) {

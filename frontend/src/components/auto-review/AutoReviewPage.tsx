@@ -71,7 +71,7 @@ export function AutoReviewPage({
   reviewers,
   currentUserId,
 }: AutoReviewPageProps) {
-  const router = useRouter();
+  const { push, refresh } = useRouter();
   const searchParams = useSearchParams();
 
   const isOwnQueue = viewAsUserId === currentUserId;
@@ -87,7 +87,7 @@ export function AutoReviewPage({
     if (v) setPinnedDocId(v);
   }, [storageKey]);
 
-  // Após router.refresh(), um doc totalmente resolvido sai da fila — o
+  // Após refresh(), um doc totalmente resolvido sai da fila — o
   // pinnedDocId em sessionStorage fica órfão. Limpa o storage para não
   // restaurar um id inexistente numa sessão futura; o state em memória pode
   // seguir intocado porque o docIndex já cai para 0 quando o id não bate.
@@ -145,7 +145,7 @@ export function AutoReviewPage({
     } else {
       params.set("viewAs", newUserId);
     }
-    router.push(`?${params.toString()}`);
+    push(`?${params.toString()}`);
   }
 
   const docListEntries: AutoReviewDocListEntry[] = useMemo(
@@ -294,7 +294,7 @@ export function AutoReviewPage({
     });
     // Recarrega o estado do servidor: os campos enviados voltam como
     // alreadyAnswered e o doc sai da fila se todos foram resolvidos.
-    router.refresh();
+    refresh();
   }
 
   const currentReviewer = reviewers.find((r) => r.userId === viewAsUserId);

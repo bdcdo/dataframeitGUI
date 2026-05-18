@@ -9,13 +9,11 @@ export default async function AnalyzeLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-
   // Esconde abas Auto-revisão / Arbitragem para quem nao tem assignments
   // correspondentes. Coordenador sempre ve. Pesquisador ve enquanto tiver
   // pelo menos um assignment do tipo (pendente, em_andamento OU concluido) —
   // preserva acesso ao historico mesmo apos a fila zerar.
-  const user = await getAuthUser();
+  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
   let showAutoReview = false;
   let showArbitragem = false;
 

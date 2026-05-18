@@ -45,7 +45,7 @@ export function DocumentsPageClient({
   projectId,
   showExcluded = false,
 }: DocumentsPageClientProps) {
-  const router = useRouter();
+  const { push } = useRouter();
   const pathname = usePathname();
 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export function DocumentsPageClient({
     if (!pathname) return;
     const url = checked ? `${pathname}?show=excluded` : pathname;
     setSelectedIds(new Set());
-    router.push(url);
+    push(url);
   }
 
   function handleToggleSelect(docId: string) {

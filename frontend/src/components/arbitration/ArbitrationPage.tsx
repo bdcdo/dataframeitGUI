@@ -71,7 +71,7 @@ export function ArbitrationPage({
   docs,
   arbitrationBlind,
 }: ArbitrationPageProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const storageKey = `${STORAGE_KEY_PREFIX}${projectId}`;
   const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
 
@@ -200,10 +200,10 @@ export function ArbitrationPage({
         return;
       }
     }
-    // router.refresh() repuxa o payload com `reveal` populado para esses
+    // refresh() repuxa o payload com `reveal` populado para esses
     // campos. O useEffect acima detecta blindVerdict definido e muda phase
     // para "reveal" automaticamente.
-    router.refresh();
+    refresh();
     setSubmitting(false);
   }
 
@@ -242,7 +242,7 @@ export function ArbitrationPage({
     if (docIndex < docs.length - 1) {
       handleDocNavigate(docIndex + 1);
     } else {
-      router.refresh();
+      refresh();
     }
   }
 

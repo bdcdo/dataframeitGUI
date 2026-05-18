@@ -75,7 +75,7 @@ export function LlmInsightsView({
   isCoordinator,
   summary,
 }: LlmInsightsViewProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editingField, setEditingField] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
@@ -99,7 +99,7 @@ export function LlmInsightsView({
       parts.push(`${result.keptResolved} já resolvida(s) mantida(s)`);
     }
     toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
-    router.refresh();
+    refresh();
   }
 
   // Error filters
@@ -215,7 +215,7 @@ export function LlmInsightsView({
         toast.error(result.error);
       } else {
         toast.success("Erro resolvido");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -227,7 +227,7 @@ export function LlmInsightsView({
         toast.error(result.error);
       } else {
         toast.success("Erro reaberto");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -244,7 +244,7 @@ export function LlmInsightsView({
           e.chosenResponseId!,
         );
         toast.success("Respostas marcadas como equivalentes");
-        router.refresh();
+        refresh();
       } catch (err) {
         toast.error((err as Error).message);
       }

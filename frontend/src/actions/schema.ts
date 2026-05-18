@@ -92,8 +92,10 @@ export async function saveSchemaFromGUI(
   projectId: string,
   fields: PydanticField[]
 ) {
-  const supabase = await createSupabaseServer();
-  const user = await getAuthUser();
+  const [supabase, user] = await Promise.all([
+    createSupabaseServer(),
+    getAuthUser(),
+  ]);
 
   // Fetch old fields + current version
   const { data: project } = await supabase
@@ -454,12 +456,14 @@ export async function backfillSchemaVersionHistory(projectId: string) {
 
   const updatePromises = [];
   for (const bucket of updates.values()) {
-    if (bucket.method === "hashes") countHashes += bucket.ids.length;
-    else if (bucket.method === "created_at") countCreatedAt += bucket.ids.length;
-    else if (bucket.method === "fallback_created_at") countFallback += bucket.ids.length;
+    const { ids, method } = bucket;
+    const idsLength = ids.length;
+    if (method === "hashes") countHashes += idsLength;
+    else if (method === "created_at") countCreatedAt += idsLength;
+    else if (method === "fallback_created_at") countFallback += idsLength;
 
-    for (let i = 0; i < bucket.ids.length; i += 100) {
-      const chunk = bucket.ids.slice(i, i + 100);
+    for (let i = 0; i < idsLength; i += 100) {
+      const chunk = ids.slice(i, i + 100);
       updatePromises.push(
         supabase
           .from("responses")
@@ -495,8 +499,10 @@ export async function backfillSchemaVersionHistory(projectId: string) {
 // ---------- MAJOR version bump (manual) ----------
 
 export async function publishMajorVersion(projectId: string) {
-  const supabase = await createSupabaseServer();
-  const user = await getAuthUser();
+  const [supabase, user] = await Promise.all([
+    createSupabaseServer(),
+    getAuthUser(),
+  ]);
   if (!user) throw new Error("Não autenticado");
 
   const { data: project } = await supabase

@@ -9,9 +9,11 @@ export default async function MembersPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const user = await getAuthUser();
-  const supabase = await createSupabaseServer();
+  const [{ id }, user, supabase] = await Promise.all([
+    params,
+    getAuthUser(),
+    createSupabaseServer(),
+  ]);
 
   const [{ data: members }, { count: orphanedReviews }] = await Promise.all([
     supabase

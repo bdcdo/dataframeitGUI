@@ -7,8 +7,7 @@ export default async function LlmConfigurePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const supabase = await createSupabaseServer();
+  const [{ id }, supabase] = await Promise.all([params, createSupabaseServer()]);
 
   const [{ data: project }, { count: totalDocs }, { data: llmResponses }] =
     await Promise.all([

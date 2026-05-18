@@ -13,8 +13,7 @@ export default async function ConfigLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const user = await getAuthUser();
+  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
   if (!user) redirect("/auth/login");
 
   const { isCoordinator, queryFailed } = await getProjectAccessContext(

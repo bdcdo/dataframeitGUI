@@ -10,11 +10,12 @@ export default async function RoundsConfigPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const user = await getAuthUser();
+  const [{ id }, user, supabase] = await Promise.all([
+    params,
+    getAuthUser(),
+    createSupabaseServer(),
+  ]);
   if (!user) redirect("/auth/login");
-
-  const supabase = await createSupabaseServer();
 
   const [{ data: project }, { data: rounds }, { data: membership }] =
     await Promise.all([

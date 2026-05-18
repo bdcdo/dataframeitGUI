@@ -23,8 +23,10 @@ export default async function AutoReviewRoute({
   ]);
   if (!user) redirect("/auth/login");
 
-  const supabase = await createSupabaseServer();
-  const isCoordinator = await isProjectCoordinator(id, user);
+  const [supabase, isCoordinator] = await Promise.all([
+    createSupabaseServer(),
+    isProjectCoordinator(id, user),
+  ]);
 
   // viewAs só é honrado para coordenadores; pesquisador sempre vê a própria fila.
   const targetUserId = isCoordinator && viewAs ? viewAs : user.id;

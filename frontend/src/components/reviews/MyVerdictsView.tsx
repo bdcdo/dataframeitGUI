@@ -43,8 +43,9 @@ function formatAnswer(answer: unknown): string {
   if (Array.isArray(answer)) return answer.join(", ");
   if (typeof answer === "object") {
     return Object.entries(answer as Record<string, unknown>)
-      .filter(([, v]) => v != null && String(v).trim() !== "")
-      .map(([k, v]) => `${k}: ${v}`)
+      .flatMap(([k, v]) =>
+        v != null && String(v).trim() !== "" ? [`${k}: ${v}`] : [],
+      )
       .join(", ");
   }
   return String(answer);
@@ -56,9 +57,9 @@ function formatVerdictDisplay(verdict: string, fieldType?: string): string {
   if (fieldType === "multi" || verdict.startsWith("{")) {
     try {
       const parsed = JSON.parse(verdict) as Record<string, boolean>;
-      const selected = Object.entries(parsed)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
+      const selected = Object.entries(parsed).flatMap(([k, v]) =>
+        v ? [k] : [],
+      );
       return selected.length > 0 ? selected.join("; ") : "(nenhuma)";
     } catch {
       // fallback
@@ -105,7 +106,7 @@ export function MyVerdictsView({
   respondents = EMPTY_RESPONDENTS,
   currentViewUserId,
 }: MyVerdictsViewProps) {
-  const router = useRouter();
+  const { push, refresh } = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -228,7 +229,7 @@ export function MyVerdictsView({
         toast.success(status === "accepted" ? "Correção aceita" : "Dúvida enviada");
         setCommentingReviewId(null);
         setQuestionComment("");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -242,7 +243,7 @@ export function MyVerdictsView({
     }
     const qs = params.toString();
     startTransition(() => {
-      router.push(`${pathname}${qs ? `?${qs}` : ""}`);
+      push(`${pathname}${qs ? `?${qs}` : ""}`);
     });
   };
 
@@ -346,7 +347,7 @@ export function MyVerdictsView({
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={45} minSize={25}>
-            <div ref={scrollRef} className="h-full overflow-y-auto px-4 py-4 space-y-4">
+            <div ref={scrollRef} className="h-full overflow-y-auto p-4 space-y-4">
               <div className="flex items-center justify-between gap-2">
                 <p className="min-w-0 truncate text-xs font-medium text-muted-foreground">
                   {currentGroup.title}

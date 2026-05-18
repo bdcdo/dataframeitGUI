@@ -109,7 +109,7 @@ export function LlmConfigurePane({
   totalDocs,
   docsWithLlm,
 }: LlmConfigurePaneProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const modelListboxId = useId();
 
   // Prompt state
@@ -254,7 +254,7 @@ export function LlmConfigurePane({
           if (intervalRef.current) clearInterval(intervalRef.current);
           intervalRef.current = null;
           // Refresca o layout para o badge de execução desaparecer.
-          router.refresh();
+          refresh();
           if (res.status === "completed") toast.success("LLM concluído!");
           if (res.status === "error") {
             const msg = res.errors[0] || "Erro na execução";
@@ -297,7 +297,7 @@ export function LlmConfigurePane({
         toast.error(msg);
       }
     }, 2000);
-  }, [router, pydanticCode]);
+  }, [refresh, pydanticCode]);
 
   // Retomar polling se houver uma run em execucao ao montar (ex.: usuario
   // recarregou a pagina ou voltou para a aba). Sem isso, o card de execucao
@@ -428,7 +428,7 @@ export function LlmConfigurePane({
       setProcessedPartial(0);
       setProcessedEmpty(0);
       // Refresca o layout do projeto para o badge "LLM rodando" aparecer na aba.
-      router.refresh();
+      refresh();
       pollProgress(res.job_id);
     } catch (e: any) {
       toast.error(e.message);
@@ -502,7 +502,7 @@ export function LlmConfigurePane({
                     {previewPrompt}
                     {!projectDescription.trim() && (
                       <p className="mt-2 text-muted-foreground italic">
-                        (Sem descrição do projeto — configure em Config → Geral)
+                        (Sem descrição do projeto, configure em Config → Geral)
                       </p>
                     )}
                   </>

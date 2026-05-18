@@ -43,7 +43,7 @@ export function DocumentReader({ text }: DocumentReaderProps) {
   const normalized = useMemo(() => normalizeExtractedText(text), [text]);
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-6">
+    <div className="h-full overflow-y-auto p-6">
       <div className="prose prose-sm dark:prose-invert max-w-3xl break-words">
         <ReactMarkdown>{normalized}</ReactMarkdown>
       </div>

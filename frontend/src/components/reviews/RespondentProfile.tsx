@@ -65,7 +65,7 @@ export function RespondentProfile({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b">
-              <th className="px-2 py-2 text-left">
+              <th className="p-2 text-left">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -76,10 +76,10 @@ export function RespondentProfile({
                   <ArrowUpDown className="ml-1 size-3" />
                 </Button>
               </th>
-              <th className="px-2 py-2 text-center text-xs font-medium">
+              <th className="p-2 text-center text-xs font-medium">
                 Tipo
               </th>
-              <th className="px-2 py-2 text-center">
+              <th className="p-2 text-center">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -93,7 +93,7 @@ export function RespondentProfile({
               {displayFields.map((f) => (
                 <th
                   key={f.name}
-                  className="max-w-[80px] truncate px-2 py-2 text-center text-xs font-medium"
+                  className="max-w-[80px] truncate p-2 text-center text-xs font-medium"
                   title={f.description}
                 >
                   {f.description.length > 12
@@ -101,7 +101,7 @@ export function RespondentProfile({
                     : f.description}
                 </th>
               ))}
-              <th className="px-2 py-2 text-left text-xs font-medium">
+              <th className="p-2 text-left text-xs font-medium">
                 Mais erros
               </th>
             </tr>
@@ -109,8 +109,8 @@ export function RespondentProfile({
           <tbody>
             {sorted.map((rp) => (
               <tr key={rp.respondentKey} className="border-b last:border-0">
-                <td className="px-2 py-2 font-medium">{rp.respondentName}</td>
-                <td className="px-2 py-2 text-center">
+                <td className="p-2 font-medium">{rp.respondentName}</td>
+                <td className="p-2 text-center">
                   {rp.respondentType === "llm" ? (
                     <Badge variant="secondary" className="gap-1">
                       <Bot className="size-3" />
@@ -123,7 +123,7 @@ export function RespondentProfile({
                     </Badge>
                   )}
                 </td>
-                <td className="px-2 py-2 text-center">
+                <td className="p-2 text-center">
                   <div className="flex flex-col items-center gap-1">
                     <span
                       className={cn(
@@ -148,14 +148,14 @@ export function RespondentProfile({
                     return (
                       <td
                         key={f.name}
-                        className="px-2 py-2 text-center text-xs text-muted-foreground"
+                        className="p-2 text-center text-xs text-muted-foreground"
                       >
                         –
                       </td>
                     );
                   }
                   return (
-                    <td key={f.name} className="px-2 py-2">
+                    <td key={f.name} className="p-2">
                       <div className="flex flex-col items-center gap-0.5">
                         <div className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
                           <div
@@ -177,7 +177,7 @@ export function RespondentProfile({
                     </td>
                   );
                 })}
-                <td className="px-2 py-2">
+                <td className="p-2">
                   <div className="flex flex-wrap gap-1">
                     {rp.mostErroredFields.map((mf) => (
                       <span

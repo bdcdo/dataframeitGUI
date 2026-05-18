@@ -41,7 +41,7 @@ export function LlmResponsesPane({
   fieldLabels,
   activeJobId,
 }: LlmResponsesPaneProps) {
-  const router = useRouter();
+  const { replace } = useRouter();
   const statusFilterId = useId();
   const [isPending, startTransition] = useTransition();
 
@@ -78,7 +78,7 @@ export function LlmResponsesPane({
     if (jobId === "all") url.searchParams.delete("job");
     else url.searchParams.set("job", jobId);
     startTransition(() => {
-      router.replace(`${url.pathname}${url.search}`);
+      replace(`${url.pathname}${url.search}`);
     });
   };
 

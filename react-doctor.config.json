@@ -1,0 +1,12 @@
+{
+  "ignore": {
+    "overrides": [
+      {
+        "files": ["src/actions/**", "frontend/src/actions/**"],
+        "rules": [
+          "react-doctor/server-auth-actions"
+        ]
+      }
+    ]
+  }
+}

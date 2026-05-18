@@ -50,7 +50,7 @@ export function SchemaEditor({
   initialFields,
   currentVersion,
 }: SchemaEditorProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const defaultMode =
     !initialFields?.length && initialCode ? "code" : "gui";
 
@@ -86,7 +86,7 @@ export function SchemaEditor({
         const bumped = await publishMajorVersion(projectId);
         toast.success(`Nova versão MAJOR publicada: ${bumped.major}.${bumped.minor}.${bumped.patch}`);
         setMajorDialogOpen(false);
-        router.refresh();
+        refresh();
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Erro ao publicar MAJOR";
         toast.error(msg);
@@ -105,7 +105,7 @@ export function SchemaEditor({
           { duration: 10000 },
         );
         setBackfillDialogOpen(false);
-        router.refresh();
+        refresh();
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Erro ao reconstruir";
         toast.error(msg);

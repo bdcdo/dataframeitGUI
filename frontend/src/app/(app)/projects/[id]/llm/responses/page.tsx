@@ -13,10 +13,11 @@ export default async function LlmResponsesPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ job?: string }>;
 }) {
-  const { id } = await params;
-  const { job } = await searchParams;
-
-  const supabase = await createSupabaseServer();
+  const [{ id }, { job }, supabase] = await Promise.all([
+    params,
+    searchParams,
+    createSupabaseServer(),
+  ]);
 
   const [{ data: project }, responses, runs] = await Promise.all([
     supabase

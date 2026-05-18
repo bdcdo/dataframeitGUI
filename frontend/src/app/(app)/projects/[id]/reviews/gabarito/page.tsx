@@ -13,11 +13,12 @@ export default async function GabaritoPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const user = await getAuthUser();
+  const [{ id }, user, supabase] = await Promise.all([
+    params,
+    getAuthUser(),
+    createSupabaseServer(),
+  ]);
   if (!user) redirect("/auth/login");
-
-  const supabase = await createSupabaseServer();
 
   const ctx = await fetchReviewBaseData(supabase, id);
   const reviewedDocuments = computeReviewedDocuments(ctx);

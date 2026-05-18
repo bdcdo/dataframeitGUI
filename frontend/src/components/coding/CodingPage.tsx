@@ -65,7 +65,7 @@ export function CodingPage({
   roundFilter,
 }: CodingPageProps) {
   const searchParams = useSearchParams();
-  const router = useRouter();
+  const { replace } = useRouter();
   const pathname = usePathname();
   const docParam = searchParams.get("doc");
 
@@ -233,9 +233,9 @@ export function CodingPage({
       } else {
         params.delete("doc");
       }
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+      replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
-    [searchParams, router, pathname]
+    [searchParams, replace, pathname]
   );
 
   // Lazy-load browse documents
@@ -426,7 +426,7 @@ export function CodingPage({
       else params.delete("sort");
       if (targetId) params.set("doc", targetId);
       const qs = params.toString();
-      router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+      replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
     },
     [
       currentDoc,
@@ -438,7 +438,7 @@ export function CodingPage({
       dirtyDocs,
       markClean,
       searchParams,
-      router,
+      replace,
       pathname,
     ]
   );

@@ -51,7 +51,7 @@ export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDi
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-muted/40"
+        className="flex w-full items-center gap-2 rounded-md p-1 text-left hover:bg-muted/40"
       >
         <KindIcon kind={kind} />
         {displayName}
