@@ -79,9 +79,9 @@ export async function getResearcherProgress(
         .filter((a) => a.completed_at)
         .map((a) => a.completed_at!.split("T")[0]);
 
-      const uniqueDates = Array.from(new Set(completionDates))
-        .toSorted()
-        .toReversed();
+      const uniqueDates = Array.from(new Set(completionDates)).toSorted(
+        (a, b) => b.localeCompare(a),
+      );
 
       let streak = 0;
       const checkDate = new Date(today);
