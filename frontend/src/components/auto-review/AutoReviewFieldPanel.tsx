@@ -186,8 +186,8 @@ export function AutoReviewFieldPanel({
             <span className="font-mono text-xs">{field.fieldName}</span>
             {field.fieldDescription ? (
               <span className="text-muted-foreground">
-                {" "}
-                — {field.fieldDescription}
+                {": "}
+                {field.fieldDescription}
               </span>
             ) : null}
           </p>
@@ -328,7 +328,7 @@ export function AutoReviewFieldPanel({
             />
             {justificationMissing ? (
               <p className="text-xs text-destructive">
-                Obrigatória — sem ela este campo não é enviado.
+                Obrigatória: sem ela este campo não é enviado.
               </p>
             ) : null}
           </div>

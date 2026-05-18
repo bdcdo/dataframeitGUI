@@ -1,6 +1,6 @@
 "use client";
 
-import { useOptimistic, useTransition } from "react";
+import { useEffect, useOptimistic, useState, useTransition } from "react";
 import { cycleAssignment } from "@/actions/assignments";
 import { cn } from "@/lib/utils";
 import {
@@ -93,8 +93,14 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
     });
   };
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Hidratado client-only para evitar mismatch entre server (timezone do server)
+  // e client (timezone do navegador) no cálculo de `isOverdue`.
+  const [today, setToday] = useState<Date | null>(null);
+  useEffect(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    setToday(t);
+  }, []);
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -132,6 +138,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const deadlines = [cod?.deadline, comp?.deadline].filter(Boolean) as string[];
                   const nearestDeadline = deadlines.sort()[0];
                   const isOverdue =
+                    today &&
                     nearestDeadline &&
                     status !== "concluido" &&
                     new Date(nearestDeadline + "T00:00:00") < today;

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { getRunningLlmCount } from "@/actions/llm";
@@ -69,13 +70,15 @@ export default async function ProjectLayout({
         projectName={project.name}
         user={{ email: user.email, firstName: profile?.first_name }}
       />
-      <ProjectTabs
-        projectId={id}
-        isCoordinator={isCoordinator}
-        isMaster={user.isMaster}
-        projectMembers={projectMembers}
-        isLlmRunning={runningLlmCount > 0}
-      />
+      <Suspense fallback={<div className="h-12 border-b" />}>
+        <ProjectTabs
+          projectId={id}
+          isCoordinator={isCoordinator}
+          isMaster={user.isMaster}
+          projectMembers={projectMembers}
+          isLlmRunning={runningLlmCount > 0}
+        />
+      </Suspense>
       <main className="flex-1">{children}</main>
     </div>
   );

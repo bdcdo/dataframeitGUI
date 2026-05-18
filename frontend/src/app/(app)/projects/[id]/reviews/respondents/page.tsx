@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -53,7 +54,9 @@ export default async function RespondentsPage({
   return (
     <div className="mx-auto max-w-5xl p-6 space-y-4">
       <TruncationBanner truncated={ctx.truncated} />
-      <DateSinceFilter />
+      <Suspense fallback={<div className="h-9" />}>
+        <DateSinceFilter />
+      </Suspense>
       {respondentProfiles.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
           {since

@@ -1,6 +1,6 @@
 import { normalizeForComparison } from "@/lib/utils";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import type {
   ReviewedDocument,
   ReviewedField,
@@ -21,7 +21,7 @@ interface ResponseRow {
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
   pydantic_hash: string | null;
-  answer_field_hashes: Record<string, string> | null;
+  answer_field_hashes: AnswerFieldHashes;
   created_at: string;
 }
 
@@ -62,7 +62,7 @@ export interface ReviewComputationContext {
 /* ── Pure helpers ── */
 
 function isFieldStale(
-  answerFieldHashes: Record<string, string> | null,
+  answerFieldHashes: AnswerFieldHashes,
   pydanticHash: string | null,
   fieldName: string,
   currentFieldHashes: Record<string, string>,
@@ -268,10 +268,7 @@ export async function fetchReviewBaseData(
       answers: r.answers as Record<string, unknown>,
       justifications: r.justifications as Record<string, string> | null,
       pydantic_hash: r.pydantic_hash,
-      answer_field_hashes: r.answer_field_hashes as Record<
-        string,
-        string
-      > | null,
+      answer_field_hashes: r.answer_field_hashes as AnswerFieldHashes,
       created_at: r.created_at,
     });
     responsesByDoc.set(r.document_id, list);

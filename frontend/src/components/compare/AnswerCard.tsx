@@ -103,13 +103,11 @@ export function AnswerCard({
     >
       <div className="flex items-start gap-2">
         {selectable && (
-          <div
-            className="flex h-5 shrink-0 items-center"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="flex h-5 shrink-0 items-center">
             <Checkbox
               checked={selected}
               onCheckedChange={() => onSelectionToggle?.()}
+              onClick={(e) => e.stopPropagation()}
               aria-label="Selecionar para marcar como equivalente"
               title="Selecionar como equivalente"
             />
@@ -255,13 +253,14 @@ export function AnswerCard({
         {showGabarito && (
           <label
             className="flex shrink-0 cursor-pointer items-center gap-1 rounded border border-brand/30 bg-background px-1.5 py-0.5 text-[10px] hover:bg-brand/5"
-            onClick={(e) => e.stopPropagation()}
             title="Esta é a resposta que será registrada como gabarito"
+            onClick={(e) => e.stopPropagation()}
           >
             <input
               type="radio"
               checked={isGabarito}
               onChange={() => onSetGabarito?.()}
+              onClick={(e) => e.stopPropagation()}
               className="size-3 accent-brand"
             />
             <span className={cn(isGabarito && "font-medium text-brand")}>

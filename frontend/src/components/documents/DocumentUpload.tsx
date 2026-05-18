@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useId, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -77,6 +77,9 @@ function chunkByBytes(
 }
 
 export function DocumentUpload({ projectId }: DocumentUploadProps) {
+  const textColumnId = useId();
+  const titleColumnId = useId();
+  const externalIdColumnId = useId();
   const [step, setStep] = useState<UploadStep>("idle");
   const [loading, setLoading] = useState(false);
   const [parsedData, setParsedData] = useState<Record<string, string>[] | null>(null);
@@ -300,21 +303,23 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="text-sm font-medium">Coluna de texto *</label>
+              <label htmlFor={textColumnId} className="text-sm font-medium">Coluna de texto *</label>
               <p className="text-xs text-muted-foreground">Conteúdo principal do documento que será analisado pelos pesquisadores</p>
               <select
+                id={textColumnId}
                 value={mapping.text}
                 onChange={(e) => setMapping((m) => ({ ...m, text: e.target.value }))}
                 className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
               >
-                <option value="">Selecione...</option>
+                <option value="">Selecione…</option>
                 {columns.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-sm font-medium">Coluna de título</label>
+              <label htmlFor={titleColumnId} className="text-sm font-medium">Coluna de título</label>
               <p className="text-xs text-muted-foreground">Nome curto para identificar o documento na interface (opcional)</p>
               <select
+                id={titleColumnId}
                 value={mapping.title}
                 onChange={(e) => setMapping((m) => ({ ...m, title: e.target.value }))}
                 className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
@@ -324,9 +329,10 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
               </select>
             </div>
             <div>
-              <label className="text-sm font-medium">Coluna de ID externo</label>
+              <label htmlFor={externalIdColumnId} className="text-sm font-medium">Coluna de ID externo</label>
               <p className="text-xs text-muted-foreground">Identificador do dataset original, ex: número do processo, DOI (opcional)</p>
               <select
+                id={externalIdColumnId}
                 value={mapping.external_id}
                 onChange={(e) => setMapping((m) => ({ ...m, external_id: e.target.value }))}
                 className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
@@ -367,7 +373,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       {step === "checking" && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <div className="size-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-          Verificando duplicatas...
+          Verificando duplicatas…
         </div>
       )}
 

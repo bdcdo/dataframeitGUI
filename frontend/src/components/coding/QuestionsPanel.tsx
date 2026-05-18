@@ -349,7 +349,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
           ) : submitting ? (
             <>
               <Loader2 className="size-4 animate-spin" />
-              Salvando...
+              Salvando…
             </>
           ) : (
             "Enviar respostas"

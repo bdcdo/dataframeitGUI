@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useId, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -42,8 +42,7 @@ export function LlmResponsesPane({
   activeJobId,
 }: LlmResponsesPaneProps) {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const statusFilterId = useId();
   const [isPending, startTransition] = useTransition();
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -75,12 +74,11 @@ export function LlmResponsesPane({
   }, [responses, statusFilter, search]);
 
   const setJobFilter = (jobId: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (jobId === "all") params.delete("job");
-    else params.set("job", jobId);
-    const qs = params.toString();
+    const url = new URL(window.location.href);
+    if (jobId === "all") url.searchParams.delete("job");
+    else url.searchParams.set("job", jobId);
     startTransition(() => {
-      router.replace(`${pathname}${qs ? `?${qs}` : ""}`);
+      router.replace(`${url.pathname}${url.search}`);
     });
   };
 
@@ -135,12 +133,12 @@ export function LlmResponsesPane({
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="text-xs text-muted-foreground">Status</label>
+          <label htmlFor={statusFilterId} className="text-xs text-muted-foreground">Status</label>
           <Select
             value={statusFilter}
             onValueChange={(v) => setStatusFilter(v as StatusFilter)}
           >
-            <SelectTrigger className="h-8 w-36 text-xs">
+            <SelectTrigger id={statusFilterId} className="h-8 w-36 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -429,7 +429,7 @@ export function CommentCard({
         </Collapsible>}
 
         <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground" suppressHydrationWarning>
             {comment.reviewerName} &middot;{" "}
             {new Date(comment.createdAt).toLocaleDateString("pt-BR")}
             {isResolved && (
@@ -487,6 +487,13 @@ function ExclusionActions({
   const [isPending, startAction] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const rejectTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (showRejectInput) {
+      rejectTextareaRef.current?.focus();
+    }
+  }, [showRejectInput]);
 
   if (status === "approved") {
     return (
@@ -522,12 +529,12 @@ function ExclusionActions({
     return (
       <div className="flex flex-col gap-2">
         <Textarea
+          ref={rejectTextareaRef}
           className="text-xs"
           placeholder="Motivo da rejeição"
           value={rejectReason}
           onChange={(e) => setRejectReason(e.target.value)}
           rows={2}
-          autoFocus
         />
         <div className="flex gap-2">
           <Button

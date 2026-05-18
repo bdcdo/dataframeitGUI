@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
 import { getAuthUser } from "@/lib/auth";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export const metadata: Metadata = {
+  title: "Concluindo acesso · GUI Análise Sistemática",
+  description: "Conferindo vínculo entre Clerk e Supabase após login",
+};
 
 export default async function PostLoginPage() {
   const { userId } = await auth();

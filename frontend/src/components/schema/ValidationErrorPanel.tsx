@@ -31,7 +31,7 @@ export function ValidationErrorPanel({
 
   return (
     <Card className="border-destructive/40 bg-destructive/5">
-      <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pb-3">
+      <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
         <div className="flex items-center gap-2">
           <OctagonX className="size-5 shrink-0 text-destructive" />
           <p className="text-sm font-medium leading-snug">

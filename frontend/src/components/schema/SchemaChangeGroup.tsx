@@ -82,7 +82,10 @@ export function SchemaChangeGroup({ group }: SchemaChangeGroupProps) {
         <span className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{group.changedBy}</span>
           <span className="mx-1.5">·</span>
-          <span title={new Date(group.createdAt).toLocaleString("pt-BR")}>
+          <span
+            suppressHydrationWarning
+            title={new Date(group.createdAt).toLocaleString("pt-BR")}
+          >
             {formatRelativeDate(group.createdAt)}
           </span>
         </span>

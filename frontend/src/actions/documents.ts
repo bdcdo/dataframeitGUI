@@ -4,7 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
-const TAG_PROFILE = { expire: 300 };
+const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
 
 interface DocumentRow {

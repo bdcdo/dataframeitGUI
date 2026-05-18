@@ -87,7 +87,7 @@ export function LlmErrorCard({ id, error, onDismiss }: LlmErrorCardProps) {
       id={id}
       className="border-destructive/40 bg-destructive/5"
     >
-      <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pb-3">
+      <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
         <div className="flex items-start gap-2">
           <AlertCircle className="size-5 shrink-0 text-destructive" />
           <div className="space-y-1">
