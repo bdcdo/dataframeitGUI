@@ -84,7 +84,7 @@ export function GeneralForm({
               &quot;Resposta A&quot; e &quot;Resposta B&quot; em vez de
               &quot;Humano&quot; e &quot;LLM&quot;. Atenção: a justificativa
               do LLM, que é sempre revelada nesta fase, frequentemente
-              entrega qual é a fonte mesmo com os rótulos genéricos — este
+              entrega qual é a fonte mesmo com os rótulos genéricos. Este
               toggle reduz, mas não elimina, o viés de revelação.
             </p>
           </div>

@@ -74,7 +74,7 @@ export default async function DashboardPage() {
       />
       <main className="mx-auto max-w-4xl p-6">
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Meus Projetos</h1>
+          <h1 className="text-2xl font-semibold">Meus Projetos</h1>
           <Link href="/projects/new">
             <Button className="bg-brand hover:bg-brand/90 text-brand-foreground">
               Novo Projeto

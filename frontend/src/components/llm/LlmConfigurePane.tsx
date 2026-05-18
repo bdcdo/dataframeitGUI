@@ -501,7 +501,7 @@ export function LlmConfigurePane({
                     {previewPrompt}
                     {!projectDescription.trim() && (
                       <p className="mt-2 text-muted-foreground italic">
-                        (Sem descrição do projeto — configure em Config → Geral)
+                        (Sem descrição do projeto, configure em Config → Geral)
                       </p>
                     )}
                   </>

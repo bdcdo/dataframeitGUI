@@ -92,7 +92,7 @@ export function ProjectTabs({
         <div className="bg-violet-50 text-violet-800 text-xs text-center py-1 dark:bg-violet-950/50 dark:text-violet-200">
           Visualizando como{" "}
           <span className="font-medium">{impersonatedMember.name}</span>
-          {" "}({impersonatedMember.role}) —{" "}
+          {" "}({impersonatedMember.role}),{" "}
           <button
             onClick={() => selectImpersonation(null)}
             className="underline hover:no-underline font-medium"
@@ -103,7 +103,7 @@ export function ProjectTabs({
       )}
       {viewAsResearcher && !viewAsUserId && !isAutoRevisaoRoute && (
         <div className="bg-amber-50 text-amber-800 text-xs text-center py-1 dark:bg-amber-950/50 dark:text-amber-200">
-          Visualizando como pesquisador —{" "}
+          Visualizando como pesquisador,{" "}
           <button
             onClick={toggleViewAs}
             className="underline hover:no-underline font-medium"
@@ -154,7 +154,7 @@ export function ProjectTabs({
                     : "border-input text-muted-foreground"
                 )}
               >
-                <option value="">Ver como...</option>
+                <option value="">Ver como…</option>
                 {projectMembers.map((m) => (
                   <option key={m.userId} value={m.userId}>
                     {m.name} ({m.role})

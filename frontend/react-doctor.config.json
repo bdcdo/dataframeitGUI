@@ -1,0 +1,13 @@
+{
+  "ignore": {
+    "overrides": [
+      {
+        "files": ["src/actions/**"],
+        "rules": [
+          "react-doctor/server-auth-actions",
+          "react-doctor/server-no-mutable-module-state"
+        ]
+      }
+    ]
+  }
+}

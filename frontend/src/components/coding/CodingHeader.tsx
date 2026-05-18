@@ -183,7 +183,7 @@ function RoundSelect({ data }: { data: RoundFilterData }) {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={CURRENT_FILTER_VALUE}>
-            Atual ({data.currentRoundLabel}) — pendentes
+            Atual ({data.currentRoundLabel}): pendentes
           </SelectItem>
           <SelectItem value="all">Todas as rodadas</SelectItem>
           {data.strategy === "manual"

@@ -1,4 +1,10 @@
+import type { Metadata } from "next";
 import { SignIn } from "@clerk/nextjs";
+
+export const metadata: Metadata = {
+  title: "Entrar · GUI Análise Sistemática",
+  description: "Acessar a plataforma de análise sistemática",
+};
 
 export default function LoginPage() {
   return (

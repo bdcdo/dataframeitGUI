@@ -128,7 +128,7 @@ export function DocumentSelector({
         <div className="flex-1 min-h-0 overflow-y-auto border rounded-md divide-y">
           {loading && (
             <p className="p-4 text-sm text-muted-foreground text-center">
-              Carregando...
+              Carregando…
             </p>
           )}
           {!loading && filtered.length === 0 && (

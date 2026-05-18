@@ -112,7 +112,7 @@ export function LlmResponseRow({
             {entries.length === 0 ? (
               !r.llm_error && (
                 <p className="text-sm text-muted-foreground">
-                  Resposta vazia — o LLM não retornou nenhum campo para este
+                  Resposta vazia: o LLM não retornou nenhum campo para este
                   documento.
                 </p>
               )

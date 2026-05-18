@@ -150,7 +150,7 @@ export function RespondentProfile({
                         key={f.name}
                         className="px-2 py-2 text-center text-xs text-muted-foreground"
                       >
-                        —
+                        –
                       </td>
                     );
                   }

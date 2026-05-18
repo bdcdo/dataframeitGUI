@@ -91,7 +91,7 @@ export interface Document {
   excluded_by: string | null;
 }
 
-export type AssignmentType =
+type AssignmentType =
   | "codificacao"
   | "comparacao"
   | "auto_revisao"

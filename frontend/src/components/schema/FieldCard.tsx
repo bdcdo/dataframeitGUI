@@ -473,7 +473,7 @@ export function FieldCard({
                   <div className="space-y-1.5">
                     <Label className="text-xs">Respostas padronizadas (opcional)</Label>
                     <p className="text-xs text-muted-foreground">
-                      Botões de atalho para respostas comuns — garante consistência na comparação
+                      Botões de atalho para respostas comuns, garante consistência na comparação
                     </p>
                     <OptionsEditor
                       options={field.options || []}

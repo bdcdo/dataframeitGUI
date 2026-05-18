@@ -307,7 +307,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
                 onChange={(e) => setMapping((m) => ({ ...m, text: e.target.value }))}
                 className="mt-1 w-full rounded-md border bg-background px-2 py-1.5 text-sm"
               >
-                <option value="">Selecione...</option>
+                <option value="">Selecione…</option>
                 {columns.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
@@ -367,7 +367,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
       {step === "checking" && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-          Verificando duplicatas...
+          Verificando duplicatas…
         </div>
       )}
 
