@@ -293,11 +293,13 @@ export async function submitAutoReview(
       );
       arbitrated = result.count;
       // Pool vazio: o submit completa (self_verdict gravado) mas os campos
-      // contestados ficam sem árbitro. Avisa o pesquisador para que o
-      // coordenador adicione mais membros ao projeto — sem este warning, os
-      // campos ficariam invisíveis em estado "aguarda_arbitragem" indefinidamente.
+      // contestados ficam sem árbitro. Pode ser falta de outros membros ou
+      // que nenhum dos demais foi marcado como elegível (can_arbitrate). Sem
+      // este warning, os campos ficariam invisíveis em estado
+      // "aguarda_arbitragem" indefinidamente. O retryPendingArbitrations
+      // do setCanArbitrate cobre o caso de o coordenador habilitar alguém depois.
       if (result.noPool) {
-        warning = `Não há outros membros no projeto disponíveis para arbitrar ${contested.length} campo(s) contestado(s). Peça ao coordenador para adicionar pesquisadores ao projeto.`;
+        warning = `Não há árbitros elegíveis para ${contested.length} campo(s) contestado(s). Peça ao coordenador para marcar membros como elegíveis em Configuração → Equipe.`;
       }
     }
 
@@ -340,11 +342,15 @@ async function assignArbitrator(
 ): Promise<{ count: number; noPool: boolean }> {
   const admin = createSupabaseAdmin();
 
-  // Pool: membros do projeto exceto o humano original
+  // Pool: membros do projeto exceto o humano original, restrito a quem o
+  // coordenador marcou como elegível para arbitrar (can_arbitrate). Quando
+  // ninguém está marcado, noPool=true → o chamador alerta o usuário e o
+  // banner em /config/members orienta o coordenador a habilitar alguém.
   const { data: members } = await admin
     .from("project_members")
     .select("user_id, role")
     .eq("project_id", projectId)
+    .eq("can_arbitrate", true)
     .neq("user_id", excludeUserId);
 
   if (!members || members.length === 0) return { count: 0, noPool: true };
@@ -1045,6 +1051,101 @@ export async function regenerateAutoReviewBacklog(
     };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro" };
+  }
+}
+
+// Re-tenta alocar árbitro para todo field_review do projeto que está pendente
+// (self_verdict='contesta_llm' AND arbitrator_id IS NULL). Disparada quando o
+// coordenador habilita um novo membro como elegível em setCanArbitrate, para
+// drenar o backlog acumulado enquanto não havia ninguém.
+//
+// Agrupa por (document_id, self_reviewer_id) e chama assignArbitrator para
+// cada grupo — preserva a regra "todos os campos contestados do mesmo doc
+// recebem o MESMO árbitro" e a exclusão do auto-revisor original do pool.
+export async function retryPendingArbitrations(
+  projectId: string,
+): Promise<{
+  success: boolean;
+  error?: string;
+  assigned: number;
+  stillNoPool: number;
+}> {
+  try {
+    const user = await getAuthUser();
+    if (!user)
+      return {
+        success: false,
+        error: "Não autenticado",
+        assigned: 0,
+        stillNoPool: 0,
+      };
+    const isCoord = await isProjectCoordinator(projectId, user);
+    if (!isCoord)
+      return {
+        success: false,
+        error: "Apenas coordenadores podem reprocessar arbitragens.",
+        assigned: 0,
+        stillNoPool: 0,
+      };
+
+    const admin = createSupabaseAdmin();
+    const { data: pending, error } = await admin
+      .from("field_reviews")
+      .select("document_id, field_name, self_reviewer_id")
+      .eq("project_id", projectId)
+      .eq("self_verdict", "contesta_llm")
+      .is("arbitrator_id", null);
+    if (error)
+      return { success: false, error: error.message, assigned: 0, stillNoPool: 0 };
+    if (!pending || pending.length === 0)
+      return { success: true, assigned: 0, stillNoPool: 0 };
+
+    const groups = new Map<
+      string,
+      { documentId: string; selfReviewerId: string; fieldNames: string[] }
+    >();
+    for (const p of pending) {
+      const key = `${p.document_id}|${p.self_reviewer_id}`;
+      const g =
+        groups.get(key) ??
+        {
+          documentId: p.document_id as string,
+          selfReviewerId: p.self_reviewer_id as string,
+          fieldNames: [] as string[],
+        };
+      g.fieldNames.push(p.field_name as string);
+      groups.set(key, g);
+    }
+
+    // Sequencial intencionalmente: cada assignArbitrator lê openCounts
+    // recalculado, preservando o balanceamento entre grupos. Paralelizar com
+    // Promise.all faria todos os groups verem o mesmo minLoad e sortearem
+    // dentro do mesmo pool — degrada a distribuição (mesma race tolerada em
+    // submitAutoReview concorrente para docs diferentes, mas aqui evitável
+    // a custo zero porque o loop está dentro de uma única chamada).
+    let assigned = 0;
+    let stillNoPool = 0;
+    for (const g of groups.values()) {
+      const result = await assignArbitrator(
+        projectId,
+        g.documentId,
+        g.selfReviewerId,
+        g.fieldNames,
+      );
+      assigned += result.count;
+      if (result.noPool) stillNoPool++;
+    }
+
+    revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
+    revalidatePath(`/projects/${projectId}/config/members`);
+    return { success: true, assigned, stillNoPool };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "Erro",
+      assigned: 0,
+      stillNoPool: 0,
+    };
   }
 }
 
