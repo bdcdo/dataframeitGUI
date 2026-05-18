@@ -718,7 +718,7 @@ export function CodingPage({
         <>
           {browseLoading ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              Carregando documentos...
+              Carregando documentos…
             </div>
           ) : !selectedBrowseDoc ? (
             <DocumentPicker

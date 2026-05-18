@@ -278,7 +278,7 @@ export function DocumentsPageClient({
                     : `Estes ${excludeTarget.ids.length} documentos`}{" "}
                   e suas{" "}
                   <strong>{excludeTarget.totalResponses} resposta(s)</strong>{" "}
-                  serão ocultados das listas. A exclusão é reversível —
+                  serão ocultados das listas. A exclusão é reversível:
                   você pode restaurar ou apagar permanentemente depois em
                   &quot;Mostrar excluídos&quot;.
                 </>

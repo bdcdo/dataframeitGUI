@@ -1,0 +1,14 @@
+{
+  "entry": [
+    "src/app/**/{page,layout,loading,error,not-found,route,template,default}.{ts,tsx}",
+    "next.config.{js,mjs,ts}",
+    "playwright.config.{ts,js}",
+    "e2e/**/*.spec.ts",
+    "e2e/global.setup.ts",
+    "scripts/**/*.{ts,mjs}",
+    "vitest.config.ts"
+  ],
+  "ignore": [
+    "src/lib/supabase/database.types.ts"
+  ]
+}

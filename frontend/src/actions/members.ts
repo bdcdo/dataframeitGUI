@@ -7,7 +7,7 @@ import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
 import { clerkClient } from "@clerk/nextjs/server";
 import { revalidatePath, revalidateTag } from "next/cache";
 
-const TAG_PROFILE = { expire: 300 };
+const TAG_PROFILE = Object.freeze({ expire: 300 });
 
 export async function addMember(
   projectId: string,

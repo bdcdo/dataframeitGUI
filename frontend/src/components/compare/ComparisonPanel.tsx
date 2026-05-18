@@ -289,7 +289,7 @@ export function ComparisonPanel({
           <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-              Concordante — todos os respondentes concordam.
+              Concordante: todos os respondentes concordam.
             </div>
             <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onMarkReviewed}>
               Marcar doc como revisado

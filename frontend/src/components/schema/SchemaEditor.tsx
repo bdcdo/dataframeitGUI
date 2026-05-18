@@ -290,7 +290,7 @@ export function SchemaEditor({
             <strong className="text-foreground">Sobre versões do schema.</strong>{" "}
             Toda edição bumpa a versão automaticamente (MINOR para mudanças
             estruturais como adicionar/remover campo ou opção, PATCH para texto).
-            Nenhuma edição apaga respostas — elas ficam rotuladas com a versão em
+            Nenhuma edição apaga respostas: elas ficam rotuladas com a versão em
             que foram dadas. Quando você quiser consolidar o codebook como{" "}
             <strong className="text-foreground">baseline oficial</strong>, clique em{" "}
             <strong className="text-foreground">Publicar MAJOR</strong>. A partir daí,
@@ -379,7 +379,7 @@ export function SchemaEditor({
               tenta match por <strong>answer_field_hashes</strong> (hashes gravados a cada
               save); se não bater, cai em <strong>created_at</strong>. Respostas salvas
               diretamente na plataforma (live_save) preservam a versão original.
-              Idempotente — pode rodar de novo sem problemas.
+              Idempotente: pode rodar de novo sem problemas.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
