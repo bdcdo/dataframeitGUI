@@ -4,7 +4,10 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
-import { retryPendingArbitrations } from "@/actions/field-reviews";
+import {
+  retryPendingArbitrations,
+  releaseArbitrationsFromUser,
+} from "@/actions/field-reviews";
 import { clerkClient } from "@clerk/nextjs/server";
 import { revalidatePath, revalidateTag } from "next/cache";
 
@@ -124,25 +127,37 @@ export async function changeRole(
 }
 
 // Define se um membro entra no sorteio de árbitros para casos contestados.
-// Quando habilita (canArbitrate=true), dispara retryPendingArbitrations para
-// alocar imediatamente os field_reviews que estavam sem árbitro elegível —
-// se o coordenador habilitou alguém em resposta ao banner de pool vazio,
-// o backlog não precisa esperar o próximo submitAutoReview para ser drenado.
+// Em ambos os sentidos dispara retryPendingArbitrations para realocar o
+// backlog — a contagem volta em `retried` para a UI informar o coordenador.
+//
+// Habilita (canArbitrate=true): drena os field_reviews que estavam sem árbitro
+// elegível (arbitrator_id IS NULL), sem esperar o próximo submitAutoReview.
+//
+// Desabilita (canArbitrate=false): primeiro solta as arbitragens não
+// concluídas que estavam com esse membro (releaseArbitrationsFromUser) —
+// senão ficariam presas, atribuídas a quem não pode mais arbitrar — e em
+// seguida re-sorteia os casos liberados.
 export async function setCanArbitrate(
   memberId: string,
   canArbitrate: boolean,
   projectId: string,
 ): Promise<{ error?: string; retried?: { assigned: number; stillNoPool: number } }> {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
+  const { data: member, error } = await supabase
     .from("project_members")
     .update({ can_arbitrate: canArbitrate })
-    .eq("id", memberId);
+    .eq("id", memberId)
+    .select("user_id")
+    .single();
 
   if (error) return { error: error.message };
 
+  if (!canArbitrate) {
+    await releaseArbitrationsFromUser(projectId, member.user_id);
+  }
+
   let retried: { assigned: number; stillNoPool: number } | undefined;
-  if (canArbitrate) {
+  {
     const result = await retryPendingArbitrations(projectId);
     if (result.success) {
       retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };

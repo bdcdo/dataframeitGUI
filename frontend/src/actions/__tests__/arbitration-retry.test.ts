@@ -35,6 +35,11 @@ function makeClient() {
         op = "insert";
         return builder;
       };
+      builder.delete = () => {
+        writeCalls.push({ table, op: "delete", payload: null });
+        op = "delete";
+        return builder;
+      };
       builder.then = (resolve: (v: unknown) => unknown) =>
         resolve({
           data: tableData[`${table}:${op}`] ?? tableData[table] ?? null,
@@ -169,5 +174,43 @@ describe("retryPendingArbitrations — pool vazio", () => {
     expect(r.stillNoPool).toBe(1);
     expect(updateCallsOf("field_reviews")).toHaveLength(0);
     expect(upsertCallsOf("assignments")).toHaveLength(0);
+  });
+});
+
+async function loadRelease() {
+  return (await import("@/actions/field-reviews")).releaseArbitrationsFromUser;
+}
+
+const deleteCallsOf = (table?: string) =>
+  writeCalls.filter((c) => c.op === "delete" && (!table || c.table === table));
+
+describe("releaseArbitrationsFromUser", () => {
+  it("sem field_reviews afetados → released 0, nenhum write", async () => {
+    tableData.field_reviews = [];
+    const release = await loadRelease();
+    const r = await release("p1", "userX");
+    expect(r.released).toBe(0);
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("N afetados → deleta assignments, limpa campos, released N", async () => {
+    tableData.field_reviews = [
+      { id: "fr1", document_id: "doc1" },
+      { id: "fr2", document_id: "doc1" },
+      { id: "fr3", document_id: "doc2" },
+    ];
+    const release = await loadRelease();
+    const r = await release("p1", "userX");
+    expect(r.released).toBe(3);
+    // 1 DELETE em assignments (árbitragens órfãs do ex-árbitro)
+    expect(deleteCallsOf("assignments")).toHaveLength(1);
+    // 1 UPDATE em field_reviews zerando arbitrator_id/blind_verdict/blind_decided_at
+    const upd = updateCallsOf("field_reviews");
+    expect(upd).toHaveLength(1);
+    expect(upd[0].payload).toEqual({
+      arbitrator_id: null,
+      blind_verdict: null,
+      blind_decided_at: null,
+    });
   });
 });

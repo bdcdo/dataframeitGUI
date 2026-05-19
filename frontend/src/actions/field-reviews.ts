@@ -1149,3 +1149,55 @@ export async function retryPendingArbitrations(
   }
 }
 
+// Solta todas as arbitragens ainda não concluídas (final_verdict IS NULL) que
+// estavam sob responsabilidade de `userId`. Disparada por setCanArbitrate
+// quando o coordenador desmarca can_arbitrate de um membro: sem isso, os
+// field_reviews já atribuídos àquele membro ficariam presos — ele sai do
+// sorteio de novos casos mas continua "dono" dos antigos, que não aparecem no
+// banner de pendências (esse só conta arbitrator_id IS NULL).
+//
+// Reatribui do zero: limpa arbitrator_id, blind_verdict e blind_decided_at —
+// o novo árbitro sorteado por retryPendingArbitrations refaz a fase cega. Não
+// re-sorteia aqui; quem orquestra chama retryPendingArbitrations em seguida,
+// espelhando o caminho do enable.
+export async function releaseArbitrationsFromUser(
+  projectId: string,
+  userId: string,
+): Promise<{ released: number }> {
+  const admin = createSupabaseAdmin();
+
+  const { data: affected, error: selErr } = await admin
+    .from("field_reviews")
+    .select("id, document_id")
+    .eq("project_id", projectId)
+    .eq("arbitrator_id", userId)
+    .eq("self_verdict", "contesta_llm")
+    .is("final_verdict", null);
+  if (selErr) throw new Error(selErr.message);
+  if (!affected || affected.length === 0) return { released: 0 };
+
+  // Deleta os assignments de arbitragem órfãos do ex-árbitro nos docs afetados.
+  // assignArbitrator faz upsert idempotente em (document_id, user_id, type) —
+  // sem este delete, o assignment pendente do ex-árbitro nunca seria limpo e
+  // ainda contaria como carga dele no balanceamento.
+  const docIds = [...new Set(affected.map((r) => r.document_id as string))];
+  const { error: delErr } = await admin
+    .from("assignments")
+    .delete()
+    .eq("project_id", projectId)
+    .eq("user_id", userId)
+    .eq("type", "arbitragem")
+    .neq("status", "concluido")
+    .in("document_id", docIds);
+  if (delErr) throw new Error(delErr.message);
+
+  const ids = affected.map((r) => r.id as string);
+  const { error: updErr } = await admin
+    .from("field_reviews")
+    .update({ arbitrator_id: null, blind_verdict: null, blind_decided_at: null })
+    .in("id", ids);
+  if (updErr) throw new Error(updErr.message);
+
+  return { released: ids.length };
+}
+
