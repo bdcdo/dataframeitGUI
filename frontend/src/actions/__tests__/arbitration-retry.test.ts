@@ -198,7 +198,7 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
     });
   });
 
-  it("todos os elegíveis codificaram o doc → stillNoPool, sem UPDATE", async () => {
+  it("todos os elegíveis codificaram o doc → fallback para elegível != auto-revisor", async () => {
     tableData.field_reviews = [
       { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
     ];
@@ -206,10 +206,30 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
       { user_id: "userB", role: "pesquisador" },
       { user_id: "userC", role: "pesquisador" },
     ];
+    // Doc codificado por toda a equipe elegível (caso de calibração): nenhum
+    // árbitro totalmente neutro, mas userB/userC não são o auto-revisor userA.
     tableData.responses = [
       { respondent_id: "userB" },
       { respondent_id: "userC" },
     ];
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
+    expect(r.assigned).toBe(1);
+    expect(r.stillNoPool).toBe(0);
+    expect(updateCallsOf("field_reviews")).toHaveLength(1);
+    const payload = updateCallsOf("field_reviews")[0].payload as {
+      arbitrator_id: string;
+    };
+    expect(["userB", "userC"]).toContain(payload.arbitrator_id);
+  });
+
+  it("único elegível é o próprio auto-revisor → stillNoPool, sem UPDATE", async () => {
+    tableData.field_reviews = [
+      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+    ];
+    tableData.project_members = [{ user_id: "userA", role: "pesquisador" }];
+    tableData.responses = [{ respondent_id: "userA" }];
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(true);

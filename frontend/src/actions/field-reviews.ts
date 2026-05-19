@@ -311,9 +311,10 @@ export async function submitAutoReview(
   }
 }
 
-// Escolhe um arbitro (membro elegível que NÃO codificou este documento) com
-// balanceamento por carga; em empate na menor carga, sorteia aleatoriamente
-// entre os candidatos para evitar viés estrutural em projetos pequenos.
+// Escolhe um arbitro elegível com balanceamento por carga; em empate na menor
+// carga, sorteia aleatoriamente entre os candidatos para evitar viés
+// estrutural em projetos pequenos. Prefere quem NÃO codificou o documento;
+// quando isso é impossível, cai para qualquer elegível != auto-revisor.
 //
 // Granularidade: TODOS os campos contestados deste submit recebem o MESMO
 // arbitro (um por documento, nao um por campo). Intencional para coerencia —
@@ -342,34 +343,38 @@ async function assignArbitrator(
 ): Promise<{ count: number; noPool: boolean }> {
   const admin = createSupabaseAdmin();
 
-  // Exclui do pool TODO humano que codificou este documento — não só o
-  // auto-revisor original (excludeUserId). Quando um doc tem N codificadores
-  // (recurso de comparação N+), qualquer um deles arbitrando seria juiz em
-  // causa própria: já tem resposta registrada para o mesmo documento.
+  // Codificadores humanos deste documento — quem já tem resposta registrada
+  // para o doc (recurso de comparação N+).
   const { data: coders } = await admin
     .from("responses")
     .select("respondent_id")
     .eq("project_id", projectId)
     .eq("document_id", documentId)
     .eq("respondent_type", "humano");
-  const excluded = new Set<string>([excludeUserId]);
+  const coderIds = new Set<string>();
   for (const c of coders ?? []) {
-    if (c.respondent_id) excluded.add(c.respondent_id as string);
+    if (c.respondent_id) coderIds.add(c.respondent_id as string);
   }
 
-  // Pool: membros que o coordenador marcou como elegíveis (can_arbitrate) e
-  // que não codificaram o documento. Quando o pool fica vazio, noPool=true →
-  // o chamador alerta o usuário e o banner em /config/members orienta o
-  // coordenador a habilitar alguém.
+  // Elegíveis (can_arbitrate) menos o auto-revisor original — esse nunca
+  // arbitra, sob nenhuma circunstância, porque julgaria a própria resposta.
   const { data: eligibleMembers } = await admin
     .from("project_members")
     .select("user_id, role")
     .eq("project_id", projectId)
     .eq("can_arbitrate", true);
-
-  const members = (eligibleMembers ?? []).filter(
-    (m) => !excluded.has(m.user_id),
+  const eligible = (eligibleMembers ?? []).filter(
+    (m) => m.user_id !== excludeUserId,
   );
+
+  // Pool ideal: árbitro que NÃO codificou o documento — totalmente neutro na
+  // fase cega. Fallback: documentos codificados por toda a equipe elegível
+  // (ex.: docs de calibração) não têm terceiro neutro possível; aceita-se
+  // então qualquer elegível != auto-revisor — ele não julga a própria
+  // resposta, ainda que tenha codificado o mesmo doc. noPool=true só quando
+  // nem o fallback tem candidato → o caso cai no banner de pendências.
+  const neutral = eligible.filter((m) => !coderIds.has(m.user_id));
+  const members = neutral.length > 0 ? neutral : eligible;
   if (members.length === 0) return { count: 0, noPool: true };
 
   // Conta arbitragens abertas por candidato (balanceamento)
