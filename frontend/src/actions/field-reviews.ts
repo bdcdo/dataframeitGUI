@@ -311,7 +311,7 @@ export async function submitAutoReview(
   }
 }
 
-// Escolhe um arbitro (pesquisador do projeto != humano original) com
+// Escolhe um arbitro (membro elegível que NÃO codificou este documento) com
 // balanceamento por carga; em empate na menor carga, sorteia aleatoriamente
 // entre os candidatos para evitar viés estrutural em projetos pequenos.
 //
@@ -342,18 +342,35 @@ async function assignArbitrator(
 ): Promise<{ count: number; noPool: boolean }> {
   const admin = createSupabaseAdmin();
 
-  // Pool: membros do projeto exceto o humano original, restrito a quem o
-  // coordenador marcou como elegível para arbitrar (can_arbitrate). Quando
-  // ninguém está marcado, noPool=true → o chamador alerta o usuário e o
-  // banner em /config/members orienta o coordenador a habilitar alguém.
-  const { data: members } = await admin
+  // Exclui do pool TODO humano que codificou este documento — não só o
+  // auto-revisor original (excludeUserId). Quando um doc tem N codificadores
+  // (recurso de comparação N+), qualquer um deles arbitrando seria juiz em
+  // causa própria: já tem resposta registrada para o mesmo documento.
+  const { data: coders } = await admin
+    .from("responses")
+    .select("respondent_id")
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("respondent_type", "humano");
+  const excluded = new Set<string>([excludeUserId]);
+  for (const c of coders ?? []) {
+    if (c.respondent_id) excluded.add(c.respondent_id as string);
+  }
+
+  // Pool: membros que o coordenador marcou como elegíveis (can_arbitrate) e
+  // que não codificaram o documento. Quando o pool fica vazio, noPool=true →
+  // o chamador alerta o usuário e o banner em /config/members orienta o
+  // coordenador a habilitar alguém.
+  const { data: eligibleMembers } = await admin
     .from("project_members")
     .select("user_id, role")
     .eq("project_id", projectId)
-    .eq("can_arbitrate", true)
-    .neq("user_id", excludeUserId);
+    .eq("can_arbitrate", true);
 
-  if (!members || members.length === 0) return { count: 0, noPool: true };
+  const members = (eligibleMembers ?? []).filter(
+    (m) => !excluded.has(m.user_id),
+  );
+  if (members.length === 0) return { count: 0, noPool: true };
 
   // Conta arbitragens abertas por candidato (balanceamento)
   const { data: openCounts } = await admin

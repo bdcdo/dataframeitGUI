@@ -73,6 +73,7 @@ beforeEach(() => {
     field_reviews: [],
     project_members: [],
     assignments: [],
+    responses: [],
   };
   hoisted.isCoord.mockResolvedValue(true);
 });
@@ -174,6 +175,47 @@ describe("retryPendingArbitrations — pool vazio", () => {
     expect(r.stillNoPool).toBe(1);
     expect(updateCallsOf("field_reviews")).toHaveLength(0);
     expect(upsertCallsOf("assignments")).toHaveLength(0);
+  });
+});
+
+describe("retryPendingArbitrations — exclui codificadores do documento", () => {
+  it("membro que codificou o doc é excluído do pool", async () => {
+    tableData.field_reviews = [
+      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+    ];
+    tableData.project_members = [
+      { user_id: "userB", role: "pesquisador" },
+      { user_id: "userC", role: "pesquisador" },
+    ];
+    // userB deu resposta humana em doc1 → não pode arbitrar (juiz em causa própria)
+    tableData.responses = [{ respondent_id: "userB" }];
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
+    expect(updateCallsOf("field_reviews")).toHaveLength(1);
+    expect(updateCallsOf("field_reviews")[0].payload).toMatchObject({
+      arbitrator_id: "userC",
+    });
+  });
+
+  it("todos os elegíveis codificaram o doc → stillNoPool, sem UPDATE", async () => {
+    tableData.field_reviews = [
+      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+    ];
+    tableData.project_members = [
+      { user_id: "userB", role: "pesquisador" },
+      { user_id: "userC", role: "pesquisador" },
+    ];
+    tableData.responses = [
+      { respondent_id: "userB" },
+      { respondent_id: "userC" },
+    ];
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
+    expect(r.assigned).toBe(0);
+    expect(r.stillNoPool).toBe(1);
+    expect(updateCallsOf("field_reviews")).toHaveLength(0);
   });
 });
 
