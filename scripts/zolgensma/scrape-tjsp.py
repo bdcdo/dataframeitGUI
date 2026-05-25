@@ -88,13 +88,19 @@ def main() -> int:
                 f.write(cnj + "\n")
 
     # Consolidacao final: junta todos os parquets que existirem
-    parquets = sorted(OUT_DIR.glob("cjpg-*.parquet"))
+    parquets = sorted(p for p in OUT_DIR.glob("cjpg-*.parquet") if p.name != "cjpg-agregado.parquet")
     if parquets:
         dfs = [pd.read_parquet(p) for p in parquets]
         agregado = pd.concat(dfs, ignore_index=True)
         agregado.to_parquet(OUT_DIR / "cjpg-agregado.parquet", index=False)
+        # CSV versionado em data/zolgensma/decisoes-tjsp.csv (volume pequeno, util
+        # para inspecao manual sem precisar de pandas/parquet).
+        csv_path = REPO_ROOT / "data" / "zolgensma" / "decisoes-tjsp.csv"
+        agregado.to_csv(csv_path, index=False)
         print(
-            f"\nAgregado: {len(parquets)} CNJs, {len(agregado)} decisoes -> {OUT_DIR / 'cjpg-agregado.parquet'}"
+            f"\nAgregado: {len(parquets)} CNJs, {len(agregado)} decisoes\n"
+            f"  parquet: {OUT_DIR / 'cjpg-agregado.parquet'}\n"
+            f"  csv:     {csv_path}"
         )
     else:
         print("\nNenhum parquet a agregar.")
