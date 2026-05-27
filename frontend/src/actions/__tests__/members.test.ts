@@ -43,7 +43,10 @@ const hoisted = vi.hoisted(() => ({
     stillNoPool: 0,
   })),
   release: vi.fn<
-    (projectId: string, userId: string) => Promise<{ released: number }>
+    (
+      projectId: string,
+      userId: string,
+    ) => Promise<{ released: number; error?: string }>
   >(async () => ({ released: 0 })),
 }));
 
@@ -151,5 +154,21 @@ describe("setCanArbitrate", () => {
     expect(r.error).toBe("RLS bloqueou");
     expect(hoisted.retry).not.toHaveBeenCalled();
     expect(hoisted.release).not.toHaveBeenCalled();
+  });
+
+  it("desabilita + release retorna error → propaga error e NÃO dispara retry", async () => {
+    hoisted.release.mockResolvedValueOnce({
+      released: 0,
+      error: "RLS bloqueou release",
+    });
+    const set = await loadSet();
+    const r = await set("member1", false, "p1");
+    expect(r.error).toBe("RLS bloqueou release");
+    expect(hoisted.release).toHaveBeenCalledWith("p1", "userMemberX");
+    // retry filtra arbitrator_id IS NULL — não tocaria nos casos que ficaram
+    // travados; rodar mesmo assim só faria queries inúteis e a UI poderia
+    // mostrar "X realocados" enganosamente quando o release não rodou.
+    expect(hoisted.retry).not.toHaveBeenCalled();
+    expect(r.retried).toBeUndefined();
   });
 });

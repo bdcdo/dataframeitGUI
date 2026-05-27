@@ -153,15 +153,20 @@ export async function setCanArbitrate(
   if (error) return { error: error.message };
 
   if (!canArbitrate) {
-    await releaseArbitrationsFromUser(projectId, member.user_id);
+    const releaseResult = await releaseArbitrationsFromUser(
+      projectId,
+      member.user_id,
+    );
+    // Falha no release deixa field_reviews atribuídos a quem não pode mais
+    // arbitrar — devolve error sem chamar retry (retry filtra
+    // `arbitrator_id IS NULL` e não tocaria nesses casos travados).
+    if (releaseResult.error) return { error: releaseResult.error };
   }
 
   let retried: { assigned: number; stillNoPool: number } | undefined;
-  {
-    const result = await retryPendingArbitrations(projectId);
-    if (result.success) {
-      retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };
-    }
+  const result = await retryPendingArbitrations(projectId);
+  if (result.success) {
+    retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };
   }
 
   revalidatePath(`/projects/${projectId}`);

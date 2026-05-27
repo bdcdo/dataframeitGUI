@@ -340,20 +340,27 @@ async function assignArbitrator(
   documentId: string,
   excludeUserId: string,
   fieldNames: string[],
+  precomputedCoderIds?: Set<string>,
 ): Promise<{ count: number; noPool: boolean }> {
   const admin = createSupabaseAdmin();
 
   // Codificadores humanos deste documento — quem já tem resposta registrada
-  // para o doc (recurso de comparação N+).
-  const { data: coders } = await admin
-    .from("responses")
-    .select("respondent_id")
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .eq("respondent_type", "humano");
-  const coderIds = new Set<string>();
-  for (const c of coders ?? []) {
-    if (c.respondent_id) coderIds.add(c.respondent_id as string);
+  // para o doc (recurso de comparação N+). Quando o caller pré-buscou em
+  // batch (retryPendingArbitrations), reusa o set para evitar N queries.
+  let coderIds: Set<string>;
+  if (precomputedCoderIds) {
+    coderIds = precomputedCoderIds;
+  } else {
+    const { data: coders } = await admin
+      .from("responses")
+      .select("respondent_id")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("respondent_type", "humano");
+    coderIds = new Set<string>();
+    for (const c of coders ?? []) {
+      if (c.respondent_id) coderIds.add(c.respondent_id as string);
+    }
   }
 
   // Elegíveis (can_arbitrate) menos o auto-revisor original — esse nunca
@@ -1139,6 +1146,35 @@ export async function retryPendingArbitrations(
       groups.set(key, g);
     }
 
+    // Pré-busca em batch: codificadores humanos de todos os docs pendentes
+    // de uma vez. assignArbitrator originalmente faz 1 SELECT em responses
+    // por chamada — em loop de N groups isso vira N queries. Centralizar
+    // num único SELECT mantém a chamada O(1) em queries de responses
+    // independente do tamanho do backlog.
+    const allDocIds = [
+      ...new Set([...groups.values()].map((g) => g.documentId)),
+    ];
+    const codersByDoc = new Map<string, Set<string>>();
+    if (allDocIds.length > 0) {
+      const { data: allCoders } = await admin
+        .from("responses")
+        .select("document_id, respondent_id")
+        .eq("project_id", projectId)
+        .in("document_id", allDocIds)
+        .eq("respondent_type", "humano");
+      for (const c of allCoders ?? []) {
+        const docId = c.document_id as string;
+        const respId = c.respondent_id as string | null;
+        if (!respId) continue;
+        let set = codersByDoc.get(docId);
+        if (!set) {
+          set = new Set<string>();
+          codersByDoc.set(docId, set);
+        }
+        set.add(respId);
+      }
+    }
+
     // Sequencial intencionalmente: cada assignArbitrator lê openCounts
     // recalculado, preservando o balanceamento entre grupos. Paralelizar com
     // Promise.all faria todos os groups verem o mesmo minLoad e sortearem
@@ -1153,6 +1189,7 @@ export async function retryPendingArbitrations(
         g.documentId,
         g.selfReviewerId,
         g.fieldNames,
+        codersByDoc.get(g.documentId) ?? new Set<string>(),
       );
       assigned += result.count;
       if (result.noPool) stillNoPool++;
@@ -1182,12 +1219,25 @@ export async function retryPendingArbitrations(
 // o novo árbitro sorteado por retryPendingArbitrations refaz a fase cega. Não
 // re-sorteia aqui; quem orquestra chama retryPendingArbitrations em seguida,
 // espelhando o caminho do enable.
+//
+// Ordem das operações é deliberada (sem transação): UPDATE em field_reviews
+// primeiro, DELETE em assignments depois. Se o DELETE falhar, o estado fica
+// autocorrigível — `arbitrator_id IS NULL` reentra no pool de
+// retryPendingArbitrations, e o próximo assignArbitrator faz upsert
+// idempotente em (document_id, user_id, type) sobrescrevendo o assignment
+// órfão. A ordem inversa (DELETE → UPDATE) deixaria o caso preso (mesmo bug
+// que esta função corrige) caso o UPDATE falhasse no meio.
 export async function releaseArbitrationsFromUser(
   projectId: string,
   userId: string,
-): Promise<{ released: number }> {
+): Promise<{ released: number; error?: string }> {
   const admin = createSupabaseAdmin();
 
+  // Filtro `self_verdict='contesta_llm'`: só esses field_reviews chegam a
+  // ter `arbitrator_id` preenchido (são os contestados pelo auto-revisor que
+  // entram em fase de arbitragem). Sem o filtro o SELECT é equivalente, mas
+  // explicitar evita confusão e mantém simetria com o filtro usado em
+  // retryPendingArbitrations.
   const { data: affected, error: selErr } = await admin
     .from("field_reviews")
     .select("id, document_id")
@@ -1195,13 +1245,22 @@ export async function releaseArbitrationsFromUser(
     .eq("arbitrator_id", userId)
     .eq("self_verdict", "contesta_llm")
     .is("final_verdict", null);
-  if (selErr) throw new Error(selErr.message);
+  if (selErr) return { released: 0, error: selErr.message };
   if (!affected || affected.length === 0) return { released: 0 };
+
+  const ids = affected.map((r) => r.id as string);
+  const { error: updErr } = await admin
+    .from("field_reviews")
+    .update({ arbitrator_id: null, blind_verdict: null, blind_decided_at: null })
+    .in("id", ids);
+  if (updErr) return { released: 0, error: updErr.message };
 
   // Deleta os assignments de arbitragem órfãos do ex-árbitro nos docs afetados.
   // assignArbitrator faz upsert idempotente em (document_id, user_id, type) —
   // sem este delete, o assignment pendente do ex-árbitro nunca seria limpo e
-  // ainda contaria como carga dele no balanceamento.
+  // ainda contaria como carga dele no balanceamento. Falha aqui não trava o
+  // fluxo: o UPDATE acima já liberou os field_reviews; o assignment órfão é
+  // sobrescrito no próximo sorteio.
   const docIds = [...new Set(affected.map((r) => r.document_id as string))];
   const { error: delErr } = await admin
     .from("assignments")
@@ -1211,14 +1270,7 @@ export async function releaseArbitrationsFromUser(
     .eq("type", "arbitragem")
     .neq("status", "concluido")
     .in("document_id", docIds);
-  if (delErr) throw new Error(delErr.message);
-
-  const ids = affected.map((r) => r.id as string);
-  const { error: updErr } = await admin
-    .from("field_reviews")
-    .update({ arbitrator_id: null, blind_verdict: null, blind_decided_at: null })
-    .in("id", ids);
-  if (updErr) throw new Error(updErr.message);
+  if (delErr) return { released: ids.length, error: delErr.message };
 
   return { released: ids.length };
 }
