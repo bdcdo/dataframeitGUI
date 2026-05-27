@@ -36,3 +36,23 @@ base_teste/
 
 # Supabase CLI temp
 frontend/supabase/.temp/
+
+# Ferramentas locais / agents
+.agents/
+.playwright-mcp/
+strix_runs/
+AGENTS.md
+
+# Claude Code — estado local por dev (configs/commands/agents compartilhados ficam versionados)
+.claude/projects/
+.claude/jobs/
+.claude/worktrees/
+.claude/shell-snapshots/
+.claude/todos/
+.claude/statsig/
+.claude/.credentials.json
+.claude/.last-activity
+.claude/settings.local.json
+
+# Relatorios gerados (output de rotinas/skills)
+docs/erros-llm/
