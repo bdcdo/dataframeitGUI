@@ -69,21 +69,18 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
           toast.error(result.error);
           return;
         }
-        if (!value) {
-          toast.success("Arbitragem desabilitada.");
-          return;
-        }
+        const verb = value ? "habilitada" : "desabilitada";
         const retried = result.retried;
         if (retried && retried.assigned > 0 && retried.stillNoPool > 0) {
           toast.success(
-            `Arbitragem habilitada. ${retried.assigned} caso(s) alocado(s); ${retried.stillNoPool} ainda sem árbitro elegível.`,
+            `Arbitragem ${verb}. ${retried.assigned} caso(s) realocado(s); ${retried.stillNoPool} ainda sem árbitro elegível.`,
           );
         } else if (retried && retried.assigned > 0) {
           toast.success(
-            `Arbitragem habilitada. ${retried.assigned} caso(s) pendente(s) alocado(s).`,
+            `Arbitragem ${verb}. ${retried.assigned} caso(s) realocado(s).`,
           );
         } else {
-          toast.success("Arbitragem habilitada.");
+          toast.success(`Arbitragem ${verb}.`);
         }
       } finally {
         setPendingMemberId(null);
