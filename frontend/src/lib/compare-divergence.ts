@@ -71,7 +71,9 @@ export function computeDivergentFieldNames(
       const opts = new Set<string>(field.options);
       const responseSets = applicable.map((r) => {
         const arr = (r.answers as Record<string, unknown>)?.[field.name];
-        return new Set(Array.isArray(arr) ? (arr as string[]) : []);
+        return new Set(
+          Array.isArray(arr) ? arr.filter((v): v is string => typeof v === "string") : [],
+        );
       });
       for (const set of responseSets) {
         for (const v of set) opts.add(v);

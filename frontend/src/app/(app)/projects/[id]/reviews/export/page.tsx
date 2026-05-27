@@ -136,7 +136,9 @@ export default async function ExportPage({
         const comparableOptions = new Set(fullField.options);
         const responseSets = docResponses.map((r) => {
           const arr = (r.answers as Record<string, unknown>)?.[field.name];
-          return new Set(Array.isArray(arr) ? (arr as string[]) : []);
+          return new Set(
+            Array.isArray(arr) ? arr.filter((v): v is string => typeof v === "string") : [],
+          );
         });
         for (const set of responseSets) {
           for (const v of set) comparableOptions.add(v);
