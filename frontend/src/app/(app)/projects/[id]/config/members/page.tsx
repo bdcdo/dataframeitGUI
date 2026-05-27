@@ -16,7 +16,7 @@ export default async function MembersPage({
   const [{ data: members }, { count: orphanedReviews }] = await Promise.all([
     supabase
       .from("project_members")
-      .select("id, project_id, user_id, role, can_arbitrate, profiles(id, email, first_name, last_name)")
+      .select("id, project_id, user_id, role, can_arbitrate, can_resolve, profiles(id, email, first_name, last_name)")
       .eq("project_id", id),
     supabase
       .from("field_reviews")

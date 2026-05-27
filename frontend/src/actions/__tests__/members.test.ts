@@ -134,3 +134,39 @@ describe("setCanArbitrate", () => {
     expect(hoisted.retry).not.toHaveBeenCalled();
   });
 });
+
+async function loadSetResolve() {
+  return (await import("@/actions/members")).setCanResolve;
+}
+
+describe("setCanResolve", () => {
+  it("habilita → UPDATE com can_resolve=true e NÃO dispara retry de arbitragem", async () => {
+    const set = await loadSetResolve();
+    const r = await set("member1", true, "p1");
+    expect(r.error).toBeUndefined();
+    expect(hoisted.retry).not.toHaveBeenCalled();
+    expect(writeCalls).toContainEqual({
+      table: "project_members",
+      op: "update",
+      payload: { can_resolve: true },
+    });
+  });
+
+  it("desabilita → UPDATE com can_resolve=false", async () => {
+    const set = await loadSetResolve();
+    const r = await set("member1", false, "p1");
+    expect(r.error).toBeUndefined();
+    expect(writeCalls).toContainEqual({
+      table: "project_members",
+      op: "update",
+      payload: { can_resolve: false },
+    });
+  });
+
+  it("UPDATE falha → retorna error", async () => {
+    clientError = { message: "RLS bloqueou" };
+    const set = await loadSetResolve();
+    const r = await set("member1", true, "p1");
+    expect(r.error).toBe("RLS bloqueou");
+  });
+});

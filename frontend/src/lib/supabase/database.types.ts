@@ -591,6 +591,7 @@ export type Database = {
       project_members: {
         Row: {
           can_arbitrate: boolean
+          can_resolve: boolean
           id: string
           project_id: string | null
           role: string
@@ -598,6 +599,7 @@ export type Database = {
         }
         Insert: {
           can_arbitrate?: boolean
+          can_resolve?: boolean
           id?: string
           project_id?: string | null
           role: string
@@ -605,6 +607,7 @@ export type Database = {
         }
         Update: {
           can_arbitrate?: boolean
+          can_resolve?: boolean
           id?: string
           project_id?: string | null
           role?: string

@@ -123,6 +123,28 @@ export async function changeRole(
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
 
+// Define se um membro pode resolver dificuldades LLM, erros LLM e comentários
+// de outros pesquisadores. RLS é declarativa: habilitar/desabilitar passa a
+// valer no próximo request, sem backlog a reprocessar.
+export async function setCanResolve(
+  memberId: string,
+  canResolve: boolean,
+  projectId: string,
+): Promise<{ error?: string }> {
+  const supabase = await createSupabaseServer();
+  const { error } = await supabase
+    .from("project_members")
+    .update({ can_resolve: canResolve })
+    .eq("id", memberId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/config/members`);
+  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
+  return {};
+}
+
 // Define se um membro entra no sorteio de árbitros para casos contestados.
 // Quando habilita (canArbitrate=true), dispara retryPendingArbitrations para
 // alocar imediatamente os field_reviews que estavam sem árbitro elegível —
