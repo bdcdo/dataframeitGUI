@@ -46,14 +46,14 @@ GRANT EXECUTE ON FUNCTION auth_user_resolver_project_ids() TO anon, authenticate
 -- de coordenadores. SELECT permanece intocada (qualquer membro continua
 -- vendo o histórico de resoluções).
 DROP POLICY IF EXISTS "Coordinators insert difficulty_resolutions" ON difficulty_resolutions;
-CREATE POLICY "Coordinators insert difficulty_resolutions" ON difficulty_resolutions FOR INSERT WITH CHECK (
+CREATE POLICY "Coordinators or resolvers insert difficulty_resolutions" ON difficulty_resolutions FOR INSERT WITH CHECK (
   project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR project_id IN (SELECT auth_user_resolver_project_ids())
   OR is_master()
 );
 
 DROP POLICY IF EXISTS "Coordinators delete difficulty_resolutions" ON difficulty_resolutions;
-CREATE POLICY "Coordinators delete difficulty_resolutions" ON difficulty_resolutions FOR DELETE USING (
+CREATE POLICY "Coordinators or resolvers delete difficulty_resolutions" ON difficulty_resolutions FOR DELETE USING (
   project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR project_id IN (SELECT auth_user_resolver_project_ids())
   OR is_master()
@@ -61,14 +61,14 @@ CREATE POLICY "Coordinators delete difficulty_resolutions" ON difficulty_resolut
 
 -- ========== error_resolutions ==========
 DROP POLICY IF EXISTS "Coordinators insert error_resolutions" ON error_resolutions;
-CREATE POLICY "Coordinators insert error_resolutions" ON error_resolutions FOR INSERT WITH CHECK (
+CREATE POLICY "Coordinators or resolvers insert error_resolutions" ON error_resolutions FOR INSERT WITH CHECK (
   project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR project_id IN (SELECT auth_user_resolver_project_ids())
   OR is_master()
 );
 
 DROP POLICY IF EXISTS "Coordinators delete error_resolutions" ON error_resolutions;
-CREATE POLICY "Coordinators delete error_resolutions" ON error_resolutions FOR DELETE USING (
+CREATE POLICY "Coordinators or resolvers delete error_resolutions" ON error_resolutions FOR DELETE USING (
   project_id IN (SELECT auth_user_coordinator_or_creator_project_ids())
   OR project_id IN (SELECT auth_user_resolver_project_ids())
   OR is_master()
