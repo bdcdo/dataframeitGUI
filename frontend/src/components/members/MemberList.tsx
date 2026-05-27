@@ -1,7 +1,7 @@
 "use client";
 
 import { useOptimistic, useState, useTransition } from "react";
-import { removeMember, changeRole, setCanArbitrate } from "@/actions/members";
+import { removeMember, changeRole, setCanArbitrate, setCanResolve } from "@/actions/members";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -23,10 +23,12 @@ interface MemberListProps {
 type MemberRow = ProjectMember & { profiles: Profile | null };
 
 export function MemberList({ projectId, members, currentUserId }: MemberListProps) {
-  // Per-row pending: o Switch tocado fica disabled até o server action retornar,
-  // mas outros Switches da página continuam interativos. Coordenador habilitando
-  // 4 membros em sequência não precisa esperar serializar.
-  const [pendingMemberId, setPendingMemberId] = useState<string | null>(null);
+  // Per-row + per-switch pending: o Switch tocado fica disabled até o server
+  // action retornar, mas o outro Switch da mesma linha e os Switches das demais
+  // linhas continuam interativos. Coordenador habilitando 4 membros em
+  // sequência não precisa esperar serializar.
+  const [pendingArbitrateId, setPendingArbitrateId] = useState<string | null>(null);
+  const [pendingResolveId, setPendingResolveId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   // useOptimistic: o Switch reflete imediatamente o valor escolhido enquanto o
@@ -34,10 +36,10 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
   // revalidatePath devolver — em conexão lenta parece que o clique não pegou.
   const [optimisticMembers, applyOptimistic] = useOptimistic<
     MemberRow[],
-    { memberId: string; canArbitrate: boolean }
+    { memberId: string; patch: Partial<Pick<MemberRow, "can_arbitrate" | "can_resolve">> }
   >(members, (current, update) =>
     current.map((m) =>
-      m.id === update.memberId ? { ...m, can_arbitrate: update.canArbitrate } : m,
+      m.id === update.memberId ? { ...m, ...update.patch } : m,
     ),
   );
 
@@ -60,9 +62,9 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
   };
 
   const handleToggleArbitrate = (memberId: string, value: boolean) => {
-    setPendingMemberId(memberId);
+    setPendingArbitrateId(memberId);
     startTransition(async () => {
-      applyOptimistic({ memberId, canArbitrate: value });
+      applyOptimistic({ memberId, patch: { can_arbitrate: value } });
       try {
         const result = await setCanArbitrate(memberId, value, projectId);
         if (result?.error) {
@@ -83,7 +85,28 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
           toast.success(`Arbitragem ${verb}.`);
         }
       } finally {
-        setPendingMemberId(null);
+        setPendingArbitrateId(null);
+      }
+    });
+  };
+
+  const handleToggleResolve = (memberId: string, value: boolean) => {
+    setPendingResolveId(memberId);
+    startTransition(async () => {
+      applyOptimistic({ memberId, patch: { can_resolve: value } });
+      try {
+        const result = await setCanResolve(memberId, value, projectId);
+        if (result?.error) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success(
+          value
+            ? "Permissão para resolver habilitada."
+            : "Permissão para resolver desabilitada.",
+        );
+      } finally {
+        setPendingResolveId(null);
       }
     });
   };
@@ -101,12 +124,24 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
           <div className="flex items-center gap-3">
             <label
               className="flex items-center gap-2 text-xs text-muted-foreground"
+              title="Pode marcar dificuldades LLM e comentários de outros pesquisadores como resolvidos"
+            >
+              <Switch
+                checked={m.can_resolve}
+                onCheckedChange={(v) => handleToggleResolve(m.id, v)}
+                disabled={pendingResolveId === m.id}
+                aria-label="Pode resolver pendências"
+              />
+              Resolve
+            </label>
+            <label
+              className="flex items-center gap-2 text-xs text-muted-foreground"
               title="Recebe casos contestados para arbitrar"
             >
               <Switch
                 checked={m.can_arbitrate}
                 onCheckedChange={(v) => handleToggleArbitrate(m.id, v)}
-                disabled={pendingMemberId === m.id}
+                disabled={pendingArbitrateId === m.id}
                 aria-label="Elegível para arbitrar"
               />
               Arbitra

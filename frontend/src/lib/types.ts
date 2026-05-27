@@ -76,6 +76,7 @@ export interface ProjectMember {
   user_id: string;
   role: "coordenador" | "pesquisador";
   can_arbitrate: boolean;
+  can_resolve: boolean;
   profiles?: Profile;
 }
 
