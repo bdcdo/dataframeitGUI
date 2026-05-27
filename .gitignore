@@ -36,3 +36,13 @@ base_teste/
 
 # Supabase CLI temp
 frontend/supabase/.temp/
+
+# Ferramentas locais / agents
+.agents/
+.claude/
+.playwright-mcp/
+strix_runs/
+AGENTS.md
+
+# Relatorios gerados (output de rotinas/skills)
+docs/erros-llm/
