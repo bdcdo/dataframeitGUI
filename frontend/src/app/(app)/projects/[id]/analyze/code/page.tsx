@@ -185,6 +185,12 @@ export default async function CodePage({
   const fields = ((project?.pydantic_fields || []) as PydanticField[]).filter(
     (f) => f.target !== "llm_only" && f.target !== "none",
   );
+  const fieldOptionSet = new Map<string, Set<string>>();
+  for (const field of fields) {
+    if ((field.type === "single" || field.type === "multi") && field.options) {
+      fieldOptionSet.set(field.name, new Set(field.options));
+    }
+  }
   const existingAnswers: Record<string, Record<string, unknown>> = {};
   const existingJustifications: Record<string, Record<string, unknown>> = {};
   for (const d of filteredDocuments) {
@@ -195,10 +201,11 @@ export default async function CodePage({
       const val = r.answers[field.name];
       if (val === undefined || val === null) continue;
       if (field.type === "single" && field.options) {
-        if (field.options.includes(val as string)) clean[field.name] = val;
+        if (fieldOptionSet.get(field.name)!.has(val as string)) clean[field.name] = val;
       } else if (field.type === "multi" && field.options) {
+        const allowed = fieldOptionSet.get(field.name)!;
         const arr = Array.isArray(val)
-          ? val.filter((v: string) => field.options!.includes(v))
+          ? val.filter((v: string) => allowed.has(v))
           : [];
         if (arr.length > 0) clean[field.name] = arr;
       } else {

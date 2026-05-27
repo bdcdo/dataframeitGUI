@@ -42,7 +42,7 @@ export function SuggestFieldDialog({
   open,
   onOpenChange,
 }: SuggestFieldDialogProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const field = allFields.find((f) => f.name === fieldName);
   const [description, setDescription] = useState(field?.description ?? "");
   const [helpText, setHelpText] = useState(field?.help_text ?? "");
@@ -96,7 +96,7 @@ export function SuggestFieldDialog({
       } else {
         toast.success("Sugestão enviada ao coordenador");
         onOpenChange(false);
-        router.refresh();
+        refresh();
       }
     });
   };

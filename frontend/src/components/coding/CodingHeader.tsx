@@ -148,7 +148,7 @@ function SortSelect({
 }
 
 function RoundSelect({ data }: { data: RoundFilterData }) {
-  const router = useRouter();
+  const { replace } = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const normalizedSelected = isCurrentFilter(data.selected)
@@ -163,7 +163,7 @@ function RoundSelect({ data }: { data: RoundFilterData }) {
       url.searchParams.set("round", value);
     }
     startTransition(() => {
-      router.replace(`${url.pathname}${url.search}`, { scroll: false });
+      replace(`${url.pathname}${url.search}`, { scroll: false });
     });
   };
 

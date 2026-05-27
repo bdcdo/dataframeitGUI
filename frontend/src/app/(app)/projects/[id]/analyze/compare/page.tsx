@@ -86,14 +86,14 @@ export default async function ComparePageRoute({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const { id } = await params;
-  const sp = await searchParams;
+  const [{ id }, sp, user, supabase] = await Promise.all([
+    params,
+    searchParams,
+    getAuthUser(),
+    createSupabaseServer(),
+  ]);
   const filters = readCompareFilters(sp);
-
-  const user = await getAuthUser();
   if (!user) redirect("/auth/login");
-
-  const supabase = await createSupabaseServer();
 
   const [
     { data: project },
@@ -262,9 +262,11 @@ export default async function ComparePageRoute({
   // Respondent names list (do conjunto todo, antes de filtrar)
   const respondentNames = [
     ...new Set(
-      allResponses?.map((r) => r.respondent_name).filter(Boolean) ?? [],
+      allResponses?.flatMap((r) =>
+        r.respondent_name ? [r.respondent_name] : [],
+      ) ?? [],
     ),
-  ] as string[];
+  ];
 
   const qualifiedDocIds: string[] = [];
   const divergentFields: Record<string, string[]> = {};

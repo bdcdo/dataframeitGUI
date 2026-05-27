@@ -276,8 +276,9 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
           if (!Array.isArray(vals) || vals.length === 0) {
             errors.push(`${label}: lista de valores da condição vazia`);
           } else if (triggerField.options) {
+            const triggerOptionSet = new Set(triggerField.options);
             for (const v of vals) {
-              if (typeof v === "string" && !triggerField.options.includes(v)) {
+              if (typeof v === "string" && !triggerOptionSet.has(v)) {
                 errors.push(
                   `${label}: valor "${v}" não está nas opções de "${trigger}"`,
                 );

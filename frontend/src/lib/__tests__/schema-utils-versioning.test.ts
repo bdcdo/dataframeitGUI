@@ -30,8 +30,8 @@ function expectedHash(
 ): string {
   const optionsPart = options
     ? "[" +
-      [...options]
-        .sort()
+      options
+        .toSorted()
         .map((s) => `'${s}'`)
         .join(", ") +
       "]"

@@ -85,12 +85,15 @@ export function ExportPanel({
 
       let rows: string[][];
       if (dataset === "both") {
-        const padIndividual = individualRows.map((row) => {
-          const extraCols = verdictHeaders.filter(
-            (h) => !individualHeaders.includes(h),
-          );
-          return [...row, ...extraCols.map(() => "")];
-        });
+        const individualHeaderSet = new Set(individualHeaders);
+        const extraColsCount = verdictHeaders.reduce(
+          (n, h) => (individualHeaderSet.has(h) ? n : n + 1),
+          0,
+        );
+        const padIndividual = individualRows.map((row) => [
+          ...row,
+          ...Array<string>(extraColsCount).fill(""),
+        ]);
         const padVerdict = verdictRows.map((row) => {
           const result: string[] = [];
           for (const h of headers) {

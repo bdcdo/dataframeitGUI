@@ -9,10 +9,12 @@ export default async function ConfigDocumentsPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ show?: string }>;
 }) {
-  const { id } = await params;
-  const { show } = await searchParams;
+  const [{ id }, { show }, supabase] = await Promise.all([
+    params,
+    searchParams,
+    createSupabaseServer(),
+  ]);
   const showExcluded = show === "excluded";
-  const supabase = await createSupabaseServer();
 
   let query = supabase
     .from("documents")
@@ -33,9 +35,9 @@ export default async function ConfigDocumentsPage({
   const excludedByIds = showExcluded
     ? Array.from(
         new Set(
-          (documents || [])
-            .map((d) => d.excluded_by)
-            .filter((v): v is string => !!v),
+          (documents || []).flatMap((d) =>
+            d.excluded_by ? [d.excluded_by] : [],
+          ),
         ),
       )
     : [];

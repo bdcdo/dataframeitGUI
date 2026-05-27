@@ -7,8 +7,7 @@ export default async function SchemaPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const supabase = await createSupabaseServer();
+  const [{ id }, supabase] = await Promise.all([params, createSupabaseServer()]);
 
   const { data: project } = await supabase
     .from("projects")

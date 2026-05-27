@@ -21,8 +21,7 @@ export default async function ExportPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const supabase = await createSupabaseServer();
+  const [{ id }, supabase] = await Promise.all([params, createSupabaseServer()]);
 
   const [{ data: project }, { data: responses }, { data: reviews }] =
     await Promise.all([
@@ -135,20 +134,18 @@ export default async function ExportPage({
 
       if (fullField?.type === "multi" && fullField.options?.length) {
         const comparableOptions = new Set(fullField.options);
-        for (const r of docResponses) {
+        const responseSets = docResponses.map((r) => {
           const arr = (r.answers as Record<string, unknown>)?.[field.name];
-          if (Array.isArray(arr)) {
-            for (const v of arr) {
-              if (typeof v === "string") comparableOptions.add(v);
-            }
-          }
+          return new Set(
+            Array.isArray(arr) ? arr.filter((v): v is string => typeof v === "string") : [],
+          );
+        });
+        for (const set of responseSets) {
+          for (const v of set) comparableOptions.add(v);
         }
         let hasDivergence = false;
         for (const opt of comparableOptions) {
-          const selections = docResponses.map((r) => {
-            const arr = (r.answers as Record<string, unknown>)?.[field.name];
-            return Array.isArray(arr) && arr.includes(opt);
-          });
+          const selections = responseSets.map((s) => s.has(opt));
           if (!selections.every((s) => s === selections[0])) {
             hasDivergence = true;
             break;

@@ -44,9 +44,10 @@ export async function getResearcherProgress(
       today.setHours(0, 0, 0, 0);
 
       const futureDeadlines = all
-        .filter((a) => a.deadline && a.status !== "concluido")
-        .map((a) => a.deadline!)
-        .sort();
+        .flatMap((a) =>
+          a.deadline && a.status !== "concluido" ? [a.deadline] : [],
+        )
+        .toSorted();
 
       const nextDeadline = futureDeadlines.length > 0 ? futureDeadlines[0] : null;
 
@@ -75,9 +76,9 @@ export async function getResearcherProgress(
       }
 
       // Streak: consecutive days with completions ending at today
-      const completionDates = completedAssignments
-        .filter((a) => a.completed_at)
-        .map((a) => a.completed_at!.split("T")[0]);
+      const completionDates = completedAssignments.flatMap((a) =>
+        a.completed_at ? [a.completed_at.split("T")[0]] : [],
+      );
 
       const uniqueDates = Array.from(new Set(completionDates)).toSorted(
         (a, b) => b.localeCompare(a),

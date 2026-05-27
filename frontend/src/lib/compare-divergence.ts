@@ -69,18 +69,18 @@ export function computeDivergentFieldNames(
 
     if (field.type === "multi" && field.options?.length) {
       const opts = new Set<string>(field.options);
-      for (const r of applicable) {
+      const responseSets = applicable.map((r) => {
         const arr = (r.answers as Record<string, unknown>)?.[field.name];
-        if (Array.isArray(arr)) {
-          for (const v of arr) if (typeof v === "string") opts.add(v);
-        }
+        return new Set(
+          Array.isArray(arr) ? arr.filter((v): v is string => typeof v === "string") : [],
+        );
+      });
+      for (const set of responseSets) {
+        for (const v of set) opts.add(v);
       }
       let hasDivergence = false;
       for (const opt of opts) {
-        const sels = applicable.map((r) => {
-          const arr = (r.answers as Record<string, unknown>)?.[field.name];
-          return Array.isArray(arr) && arr.includes(opt);
-        });
+        const sels = responseSets.map((s) => s.has(opt));
         if (sels.length > 0 && !sels.every((s) => s === sels[0])) {
           hasDivergence = true;
           break;

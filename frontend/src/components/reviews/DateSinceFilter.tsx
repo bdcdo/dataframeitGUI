@@ -29,7 +29,7 @@ function formatBR(iso: string): string {
 }
 
 export function DateSinceFilter() {
-  const router = useRouter();
+  const { push } = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -52,7 +52,7 @@ export function DateSinceFilter() {
     }
     const qs = params.toString();
     startTransition(() => {
-      router.push(qs ? `${pathname}?${qs}` : pathname);
+      push(qs ? `${pathname}?${qs}` : pathname);
     });
   };
 

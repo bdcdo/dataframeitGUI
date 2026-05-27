@@ -167,7 +167,7 @@ export function CommentCard({
   onSuggestField,
   onOpenDocument,
 }: CommentCardProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const isResolved = !!comment.resolvedAt;
   const [suggestionPending, startSuggestionAction] = useTransition();
   const [gabaritoOpen, setGabaritoOpen] = useState(false);
@@ -326,7 +326,7 @@ export function CommentCard({
                     startSuggestionAction(async () => {
                       const result = await resolveSchemaSuggestion(comment.suggestionId!, projectId, "rejected");
                       if (result.error) toast.error(result.error);
-                      else { toast.success("Sugestão rejeitada"); router.refresh(); }
+                      else { toast.success("Sugestão rejeitada"); refresh(); }
                     });
                   }}
                 >
@@ -483,7 +483,7 @@ function ExclusionActions({
   rejectedReason?: string | null;
   isCoordinator: boolean;
 }) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isPending, startAction] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
@@ -564,7 +564,7 @@ function ExclusionActions({
                 if (result.error) toast.error(result.error);
                 else {
                   toast.success("Sugestão rejeitada");
-                  router.refresh();
+                  refresh();
                 }
               });
             }}
@@ -589,7 +589,7 @@ function ExclusionActions({
             if (result.error) toast.error(result.error);
             else {
               toast.success("Documento excluído");
-              router.refresh();
+              refresh();
             }
           });
         }}

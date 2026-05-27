@@ -44,8 +44,7 @@ export default async function AssignmentsPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const supabase = await createSupabaseServer();
+  const [{ id }, supabase] = await Promise.all([params, createSupabaseServer()]);
 
   const [documents, researchers, { data: assignments }, coordinators] =
     await Promise.all([

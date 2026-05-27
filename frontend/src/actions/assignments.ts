@@ -134,31 +134,33 @@ async function computeLottery(
   const supabase = await createSupabaseServer();
   const assignmentType = params.type || "codificacao";
 
-  // 1. Fetch researchers
-  const { data: members } = await supabase
-    .from("project_members")
-    .select("user_id")
-    .eq("project_id", params.projectId)
-    .eq("role", "pesquisador");
-
-  // 2. Fetch documents (excluidos sao ignorados na alocacao)
-  const { data: docs } = await supabase
-    .from("documents")
-    .select("id")
-    .eq("project_id", params.projectId)
-    .is("excluded_at", null);
+  // 1. Fetch researchers + documents em paralelo
+  const [{ data: members }, { data: docs }] = await Promise.all([
+    supabase
+      .from("project_members")
+      .select("user_id")
+      .eq("project_id", params.projectId)
+      .eq("role", "pesquisador"),
+    supabase
+      .from("documents")
+      .select("id")
+      .eq("project_id", params.projectId)
+      .is("excluded_at", null),
+  ]);
 
   if (!docs?.length) {
     throw new Error("Necessário ter documentos.");
   }
 
   const researcherIds = (members || []).map((m) => m.user_id);
+  const researcherIdSet = new Set(researcherIds);
 
   // Include selected coordinators in the pool
   if (params.includedCoordinatorIds?.length) {
     for (const cId of params.includedCoordinatorIds) {
-      if (!researcherIds.includes(cId)) {
+      if (!researcherIdSet.has(cId)) {
         researcherIds.push(cId);
+        researcherIdSet.add(cId);
       }
     }
   }
@@ -391,10 +393,12 @@ export async function previewLottery(params: LotteryParams): Promise<LotteryPrev
     .eq("role", "pesquisador");
 
   const allUserIds = (members || []).map((m) => m.user_id);
+  const allUserIdSet = new Set(allUserIds);
   if (params.includedCoordinatorIds?.length) {
     for (const cId of params.includedCoordinatorIds) {
-      if (!allUserIds.includes(cId)) {
+      if (!allUserIdSet.has(cId)) {
         allUserIds.push(cId);
+        allUserIdSet.add(cId);
       }
     }
   }

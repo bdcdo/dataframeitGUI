@@ -36,7 +36,7 @@ export function CompareFilters({
   availableVersions,
   latestMajorLabel,
 }: CompareFiltersProps) {
-  const router = useRouter();
+  const { push } = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
@@ -66,17 +66,17 @@ export function CompareFilters({
         }
       }
       startTransition(() => {
-        router.push(`${pathname}?${sp.toString()}`);
+        push(`${pathname}?${sp.toString()}`);
       });
     },
-    [pathname, router, searchParams],
+    [pathname, push, searchParams],
   );
 
   const reset = useCallback(() => {
     startTransition(() => {
-      router.push(pathname);
+      push(pathname);
     });
-  }, [pathname, router]);
+  }, [pathname, push]);
 
   const activeCount = [
     current.version !== DEFAULT_COMPARE_FILTERS.version,

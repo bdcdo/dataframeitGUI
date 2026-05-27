@@ -132,9 +132,11 @@ export async function submitAutoReview(
     // real de field_reviews, nao `updatedByField`. Os efeitos sao idempotentes
     // (upsert ignoreDuplicates / check-before-insert), entao re-executar e
     // seguro.
-    const sideEffectFieldNames = verdicts
-      .filter((v) => v.verdict === "equivalente" || v.verdict === "ambiguo")
-      .map((v) => v.fieldName);
+    const sideEffectFieldNames = verdicts.flatMap((v) =>
+      v.verdict === "equivalente" || v.verdict === "ambiguo"
+        ? [v.fieldName]
+        : [],
+    );
     const effectByField = new Map<
       string,
       {
@@ -238,32 +240,31 @@ export async function submitAutoReview(
         (existingComments ?? []).map((r) => r.field_name as string),
       );
 
-      const commentRows = ambiguousFields
-        .filter((v) => !alreadyCommented.has(v.fieldName))
-        .map((v) => {
-          const ids = effectByField.get(v.fieldName)!;
-          const humanAnswer = formatAnswerTechnical(
-            answersById.get(ids.human_response_id)?.[v.fieldName],
-          );
-          const llmAnswer = formatAnswerTechnical(
-            answersById.get(ids.llm_response_id)?.[v.fieldName],
-          );
-          const body = [
-            `Campo "${v.fieldName}" marcado como ambíguo na auto-revisão.`,
-            `Humano respondeu: ${humanAnswer}`,
-            `LLM respondeu: ${llmAnswer}`,
-            // Justificativa garantida nao-vazia pela validacao no topo da funcao.
-            `Justificativa do pesquisador: ${v.justification!.trim()}`,
-            `Precisa de discussão para decidir o gabarito.`,
-          ].join("\n\n");
-          return {
-            project_id: projectId,
-            document_id: documentId,
-            field_name: v.fieldName,
-            author_id: user.id,
-            body,
-          };
-        });
+      const commentRows = ambiguousFields.flatMap((v) => {
+        if (alreadyCommented.has(v.fieldName)) return [];
+        const ids = effectByField.get(v.fieldName)!;
+        const humanAnswer = formatAnswerTechnical(
+          answersById.get(ids.human_response_id)?.[v.fieldName],
+        );
+        const llmAnswer = formatAnswerTechnical(
+          answersById.get(ids.llm_response_id)?.[v.fieldName],
+        );
+        const body = [
+          `Campo "${v.fieldName}" marcado como ambíguo na auto-revisão.`,
+          `Humano respondeu: ${humanAnswer}`,
+          `LLM respondeu: ${llmAnswer}`,
+          // Justificativa garantida nao-vazia pela validacao no topo da funcao.
+          `Justificativa do pesquisador: ${v.justification!.trim()}`,
+          `Precisa de discussão para decidir o gabarito.`,
+        ].join("\n\n");
+        return [{
+          project_id: projectId,
+          document_id: documentId,
+          field_name: v.fieldName,
+          author_id: user.id,
+          body,
+        }];
+      });
 
       if (commentRows.length > 0) {
         const { error: commentErr } = await admin
@@ -275,12 +276,11 @@ export async function submitAutoReview(
 
     // Sorteia arbitro APENAS para campos cujo UPDATE acabou de gravar
     // contesta_llm (re-submit nao reabre arbitragem).
-    const contested = verdicts
-      .filter(
-        (v) =>
-          v.verdict === "contesta_llm" && updatedFieldNames.has(v.fieldName),
-      )
-      .map((v) => v.fieldName);
+    const contested = verdicts.flatMap((v) =>
+      v.verdict === "contesta_llm" && updatedFieldNames.has(v.fieldName)
+        ? [v.fieldName]
+        : [],
+    );
 
     let arbitrated = 0;
     let warning: string | undefined;
@@ -694,43 +694,42 @@ export async function submitFinalVerdicts(
         (existingComments ?? []).map((r) => r.field_name as string),
       );
 
-      const commentRows = llmChoices
-        .filter((c) => !alreadyCommented.has(c.fieldName))
-        .map((c) => {
-          const fr = frByField.get(c.fieldName);
-          const humanResp = fr
-            ? responseById.get(fr.human_response_id)
-            : null;
-          const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
-          const humanAnswer = formatAnswerTechnical(
-            (humanResp?.answers as Record<string, unknown> | undefined)?.[
-              c.fieldName
-            ],
-          );
-          const llmAnswer = formatAnswerTechnical(
-            (llmResp?.answers as Record<string, unknown> | undefined)?.[
-              c.fieldName
-            ],
-          );
-          const body = [
-            `Discordância em "${c.fieldName}".`,
-            `Humano respondeu: ${humanAnswer}`,
-            `LLM respondeu: ${llmAnswer}`,
-            `Árbitro manteve LLM.`,
-            `Sugestão de melhoria: ${c.questionImprovementSuggestion}`,
-            c.arbitratorComment ? `Comentário: ${c.arbitratorComment}` : null,
-          ]
-            .filter(Boolean)
-            .join("\n\n");
+      const commentRows = llmChoices.flatMap((c) => {
+        if (alreadyCommented.has(c.fieldName)) return [];
+        const fr = frByField.get(c.fieldName);
+        const humanResp = fr
+          ? responseById.get(fr.human_response_id)
+          : null;
+        const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
+        const humanAnswer = formatAnswerTechnical(
+          (humanResp?.answers as Record<string, unknown> | undefined)?.[
+            c.fieldName
+          ],
+        );
+        const llmAnswer = formatAnswerTechnical(
+          (llmResp?.answers as Record<string, unknown> | undefined)?.[
+            c.fieldName
+          ],
+        );
+        const body = [
+          `Discordância em "${c.fieldName}".`,
+          `Humano respondeu: ${humanAnswer}`,
+          `LLM respondeu: ${llmAnswer}`,
+          `Árbitro manteve LLM.`,
+          `Sugestão de melhoria: ${c.questionImprovementSuggestion}`,
+          c.arbitratorComment ? `Comentário: ${c.arbitratorComment}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
 
-          return {
-            project_id: projectId,
-            document_id: documentId,
-            field_name: c.fieldName,
-            author_id: user.id,
-            body,
-          };
-        });
+        return [{
+          project_id: projectId,
+          document_id: documentId,
+          field_name: c.fieldName,
+          author_id: user.id,
+          body,
+        }];
+      });
 
       if (commentRows.length > 0) {
         // Falha aqui significa que o veredito ja foi gravado mas o comentario
@@ -1029,9 +1028,9 @@ export async function regenerateAutoReviewBacklog(
       ),
     );
 
-    const orphanAssignmentIds = (autoAssignments ?? [])
-      .filter((a) => !docUserWithReviews.has(`${a.document_id}|${a.user_id}`))
-      .map((a) => a.id);
+    const orphanAssignmentIds = (autoAssignments ?? []).flatMap((a) =>
+      docUserWithReviews.has(`${a.document_id}|${a.user_id}`) ? [] : [a.id],
+    );
     if (orphanAssignmentIds.length > 0) {
       const { error } = await admin
         .from("assignments")

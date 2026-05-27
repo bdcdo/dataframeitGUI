@@ -86,7 +86,7 @@ export function EditFieldDialog({
   onOpenChange,
   pendingSuggestion,
 }: EditFieldDialogProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const field = allFields.find((f) => f.name === fieldName);
   const initial = initialFromField(field, pendingSuggestion);
   const [description, setDescription] = useState(initial.description);
@@ -175,7 +175,7 @@ export function EditFieldDialog({
           toast.success("Campo atualizado");
         }
         onOpenChange(false);
-        router.refresh();
+        refresh();
       } catch (e) {
         toast.error(
           e instanceof Error ? e.message : "Erro ao salvar",

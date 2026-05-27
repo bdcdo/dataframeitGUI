@@ -11,8 +11,7 @@ export default async function SchemaHistoryPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const supabase = await createSupabaseServer();
+  const [{ id }, supabase] = await Promise.all([params, createSupabaseServer()]);
 
   const HISTORY_LIMIT = 200;
 

@@ -39,9 +39,9 @@ export async function checkDuplicates(
   const indexFor = (i: number) => documents[i].csvIndex ?? i;
 
   // Collect external_ids that are present
-  const externalIds = documents
-    .map((d, i) => ({ id: d.external_id, index: i }))
-    .filter((d) => d.id);
+  const externalIds = documents.flatMap((d, i) =>
+    d.external_id ? [{ id: d.external_id, index: i }] : [],
+  );
 
   const duplicates: DuplicateMatch[] = [];
   const matchedCsvIndices = new Set<number>();
@@ -76,9 +76,9 @@ export async function checkDuplicates(
   }
 
   // 2. Match remaining by text_hash
-  const unmatchedHashes = hashes
-    .map((h, i) => ({ hash: h, index: i }))
-    .filter((h) => !matchedCsvIndices.has(h.index));
+  const unmatchedHashes = hashes.flatMap((h, i) =>
+    matchedCsvIndices.has(i) ? [] : [{ hash: h, index: i }],
+  );
 
   if (unmatchedHashes.length > 0) {
     const uniqueHashes = [...new Set(unmatchedHashes.map((h) => h.hash))];
@@ -347,14 +347,21 @@ export async function getDocumentForCoding(
   if (rawAnswers && project?.pydantic_fields) {
     const fields = (project.pydantic_fields as { name: string; type: string; options: string[] | null; target?: string }[])
       .filter((f) => f.target !== "llm_only" && f.target !== "none");
+    const fieldOptionSet = new Map<string, Set<string>>();
+    for (const field of fields) {
+      if ((field.type === "single" || field.type === "multi") && field.options) {
+        fieldOptionSet.set(field.name, new Set(field.options));
+      }
+    }
     const clean: Record<string, unknown> = {};
     for (const field of fields) {
       const val = rawAnswers[field.name];
       if (val === undefined || val === null) continue;
       if (field.type === "single" && field.options) {
-        if (field.options.includes(val as string)) clean[field.name] = val;
+        if (fieldOptionSet.get(field.name)!.has(val as string)) clean[field.name] = val;
       } else if (field.type === "multi" && field.options) {
-        const arr = Array.isArray(val) ? val.filter((v: string) => field.options!.includes(v)) : [];
+        const allowed = fieldOptionSet.get(field.name)!;
+        const arr = Array.isArray(val) ? val.filter((v: string) => allowed.has(v)) : [];
         if (arr.length > 0) clean[field.name] = arr;
       } else {
         clean[field.name] = val;

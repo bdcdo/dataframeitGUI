@@ -87,7 +87,7 @@ export function CommentsSplitView({
   initialDocId,
   onBack,
 }: CommentsSplitViewProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [showResolved, setShowResolved] = useState(false);
 
@@ -154,7 +154,7 @@ export function CommentsSplitView({
         toast.error(result.error);
       } else {
         toast.success("Comentário resolvido");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -171,7 +171,7 @@ export function CommentsSplitView({
         toast.error(result.error);
       } else {
         toast.success("Comentário reaberto");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -229,7 +229,7 @@ export function CommentsSplitView({
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={45} minSize={25}>
-          <div className="h-full overflow-y-auto px-4 py-4 space-y-4">
+          <div className="h-full overflow-y-auto p-4 space-y-4">
             <div className="flex items-center justify-between">
               <p className="text-xs font-medium text-muted-foreground">
                 {(() => {

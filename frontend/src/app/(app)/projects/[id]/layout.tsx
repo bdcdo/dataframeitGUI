@@ -13,12 +13,13 @@ export default async function ProjectLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const user = await getAuthUser();
+  const [{ id }, user, supabase] = await Promise.all([
+    params,
+    getAuthUser(),
+    createSupabaseServer(),
+  ]);
 
   if (!user) redirect("/auth/login");
-
-  const supabase = await createSupabaseServer();
 
   // project + membership vem de getProjectAccessContext (request-scoped via
   // cache()) — mesma leitura reaproveitada pelos layouts filhos config/llm.

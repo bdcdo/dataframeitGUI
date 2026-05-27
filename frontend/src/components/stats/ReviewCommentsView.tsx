@@ -74,7 +74,7 @@ export function ReviewCommentsView({
   totalLlmDocs = 0,
   llmDocsWithoutAmbiguities = 0,
 }: ReviewCommentsViewProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [fieldFilter, setFieldFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("open");
@@ -135,7 +135,7 @@ export function ReviewCommentsView({
         toast.error(result.error);
       } else {
         toast.success("Comentário resolvido");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -158,7 +158,7 @@ export function ReviewCommentsView({
         toast.error(result.error);
       } else {
         toast.success("Comentário reaberto");
-        router.refresh();
+        refresh();
       }
     });
   };

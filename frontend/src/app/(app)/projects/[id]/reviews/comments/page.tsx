@@ -9,9 +9,11 @@ export default async function CommentsPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const user = await getAuthUser();
-  const supabase = await createSupabaseServer();
+  const [{ id }, user, supabase] = await Promise.all([
+    params,
+    getAuthUser(),
+    createSupabaseServer(),
+  ]);
 
   const [
     { data: project },
@@ -108,12 +110,12 @@ export default async function CommentsPage({
   // Fetch reviewer and respondent (dúvida author) names
   const reviewerIds = [
     ...new Set([
-      ...((reviews || [])
-        .map((r) => r.reviewer_id)
-        .filter((rid): rid is string => !!rid)),
-      ...((verdictQuestions || [])
-        .map((q) => q.respondent_id)
-        .filter((rid): rid is string => !!rid)),
+      ...((reviews || []).flatMap((r) =>
+        r.reviewer_id ? [r.reviewer_id] : [],
+      )),
+      ...((verdictQuestions || []).flatMap((q) =>
+        q.respondent_id ? [q.respondent_id] : [],
+      )),
     ]),
   ];
 
@@ -320,9 +322,9 @@ export default async function CommentsPage({
   const noteRows = typedProjectComments.filter((c) => c.kind !== "exclusion_request");
 
   // Buscar titulos de docs excluidos referenciados por exclusion_requests resolvidas
-  const excludedDocIds = exclusionRows
-    .filter((c) => !!c.document_id && !docMap.has(c.document_id!))
-    .map((c) => c.document_id!) as string[];
+  const excludedDocIds = exclusionRows.flatMap((c) =>
+    c.document_id && !docMap.has(c.document_id) ? [c.document_id] : [],
+  );
   const excludedDocTitles = new Map<string, string>();
   if (excludedDocIds.length > 0) {
     const { data: excludedDocs } = await supabase

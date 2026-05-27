@@ -47,7 +47,7 @@ export function AddNoteButton({
   size = "sm",
   label,
 }: AddNoteButtonProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
   const [selectedField, setSelectedField] = useState<string>(fixedFieldName || "_none");
@@ -91,7 +91,7 @@ export function AddNoteButton({
         setBody("");
         setSelectedField(fixedFieldName || "_none");
         setOpen(false);
-        router.refresh();
+        refresh();
       }
     });
   };

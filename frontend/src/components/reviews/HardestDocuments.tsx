@@ -28,38 +28,38 @@ export function HardestDocuments({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b">
-            <th className="px-2 py-2 text-left text-xs font-medium">#</th>
-            <th className="px-2 py-2 text-left text-xs font-medium">
+            <th className="p-2 text-left text-xs font-medium">#</th>
+            <th className="p-2 text-left text-xs font-medium">
               Documento
             </th>
-            <th className="px-2 py-2 text-center text-xs font-medium">
+            <th className="p-2 text-center text-xs font-medium">
               Campos
             </th>
-            <th className="px-2 py-2 text-center text-xs font-medium">
+            <th className="p-2 text-center text-xs font-medium">
               Erros
             </th>
-            <th className="px-2 py-2 text-center text-xs font-medium">
+            <th className="p-2 text-center text-xs font-medium">
               Taxa de Erro
             </th>
-            <th className="px-2 py-2 text-center text-xs font-medium" />
+            <th className="p-2 text-center text-xs font-medium" />
           </tr>
         </thead>
         <tbody>
           {hardestDocuments.map((doc, idx) => (
             <tr key={doc.documentId} className="border-b last:border-0">
-              <td className="px-2 py-2 text-muted-foreground tabular-nums">
+              <td className="p-2 text-muted-foreground tabular-nums">
                 {idx + 1}
               </td>
-              <td className="max-w-[240px] truncate px-2 py-2 font-medium" title={doc.documentTitle}>
+              <td className="max-w-[240px] truncate p-2 font-medium" title={doc.documentTitle}>
                 {doc.documentTitle}
               </td>
-              <td className="px-2 py-2 text-center tabular-nums">
+              <td className="p-2 text-center tabular-nums">
                 {doc.totalFieldsReviewed}
               </td>
-              <td className="px-2 py-2 text-center tabular-nums">
+              <td className="p-2 text-center tabular-nums">
                 {doc.totalErrors}
               </td>
-              <td className="px-2 py-2">
+              <td className="p-2">
                 <div className="flex items-center gap-2">
                   <div className="h-2 w-16 overflow-hidden rounded-full bg-muted">
                     <div
@@ -88,7 +88,7 @@ export function HardestDocuments({
                   </span>
                 </div>
               </td>
-              <td className="px-2 py-2">
+              <td className="p-2">
                 <Button variant="ghost" size="sm" asChild title="Ver comparação">
                   <Link href={`/projects/${projectId}/analyze/compare?doc=${doc.documentId}`}>
                     <FileText className="size-3.5" />

@@ -186,7 +186,7 @@ export function FieldCard({
 
         {/* Body expandido */}
         <CollapsibleContent>
-          <div className="border-t px-4 py-4 space-y-4">
+          <div className="border-t p-4 space-y-4">
             {/* Nome do campo */}
             <div className="space-y-1.5">
               <Label className="text-xs">Nome do campo</Label>

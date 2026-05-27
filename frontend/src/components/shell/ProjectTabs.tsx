@@ -39,7 +39,7 @@ export function ProjectTabs({
   isLlmRunning = false,
 }: ProjectTabsProps) {
   const pathname = usePathname();
-  const router = useRouter();
+  const { push } = useRouter();
   const searchParams = useSearchParams();
 
   // Auto-revisão é sempre da própria conta — impersonate (viewAsUser /
@@ -73,7 +73,7 @@ export function ProjectTabs({
     }
     params.delete("viewAsUser");
     const qs = params.toString();
-    router.push(`${pathname}${qs ? `?${qs}` : ""}`);
+    push(`${pathname}${qs ? `?${qs}` : ""}`);
   };
 
   const selectImpersonation = (userId: string | null) => {
@@ -85,7 +85,7 @@ export function ProjectTabs({
       params.delete("viewAsUser");
     }
     const qs = params.toString();
-    router.push(`${pathname}${qs ? `?${qs}` : ""}`);
+    push(`${pathname}${qs ? `?${qs}` : ""}`);
   };
 
   return (

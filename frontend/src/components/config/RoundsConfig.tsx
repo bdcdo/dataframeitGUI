@@ -44,7 +44,7 @@ export function RoundsConfig({
   rounds,
   isCoordinator,
 }: Props) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [newLabel, setNewLabel] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Round | null>(null);
@@ -56,7 +56,7 @@ export function RoundsConfig({
       if (r.error) toast.error(r.error);
       else {
         toast.success("Estratégia atualizada");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -70,7 +70,7 @@ export function RoundsConfig({
       else {
         toast.success("Rodada criada");
         setNewLabel("");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -81,7 +81,7 @@ export function RoundsConfig({
       if (r.error) toast.error(r.error);
       else {
         toast.success("Rodada atual atualizada");
-        router.refresh();
+        refresh();
       }
     });
   };
@@ -95,7 +95,7 @@ export function RoundsConfig({
       if (r.error) toast.error(r.error);
       else {
         toast.success("Rodada excluída");
-        router.refresh();
+        refresh();
       }
     });
   };

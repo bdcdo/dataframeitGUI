@@ -255,6 +255,7 @@ export function AnswerCard({
             className="flex shrink-0 cursor-pointer items-center gap-1 rounded border border-brand/30 bg-background px-1.5 py-0.5 text-[10px] hover:bg-brand/5"
             title="Esta é a resposta que será registrada como gabarito"
             onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
           >
             <input
               type="radio"

@@ -35,7 +35,7 @@ export function RulesForm({
   minResponses,
   allowResearcherReview,
 }: RulesFormProps) {
-  const router = useRouter();
+  const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [rule, setRule] = useState(resolutionRule);
   const [min, setMin] = useState(minResponses);
@@ -50,7 +50,7 @@ export function RulesForm({
         allow_researcher_review: allowReview,
       });
       setSaved(true);
-      router.refresh();
+      refresh();
       setTimeout(() => setSaved(false), 2000);
     });
   }
