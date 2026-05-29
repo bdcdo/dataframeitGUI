@@ -399,11 +399,11 @@ export async function excludeDocuments(
   if (!user) return { error: "Não autenticado" };
   if (!reason?.trim()) return { error: "Motivo da exclusão é obrigatório" };
 
-  const supabase = await createSupabaseServer();
-
   if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode excluir documentos" };
   }
+
+  const supabase = await createSupabaseServer();
 
   const { error } = await supabase
     .from("documents")
@@ -429,11 +429,11 @@ export async function restoreDocuments(
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
-  const supabase = await createSupabaseServer();
-
   if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode restaurar documentos" };
   }
+
+  const supabase = await createSupabaseServer();
 
   const { error } = await supabase
     .from("documents")
@@ -462,11 +462,11 @@ export async function hardDeleteDocuments(
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
-  const supabase = await createSupabaseServer();
-
   if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode apagar documentos permanentemente" };
   }
+
+  const supabase = await createSupabaseServer();
 
   const { error } = await supabase
     .from("documents")

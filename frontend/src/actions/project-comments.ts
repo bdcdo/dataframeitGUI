@@ -90,11 +90,11 @@ export async function approveExclusionRequest(
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
-  const supabase = await createSupabaseServer();
-
   if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode aprovar sugestões de exclusão" };
   }
+
+  const supabase = await createSupabaseServer();
 
   const { data: comment } = await supabase
     .from("project_comments")
@@ -152,11 +152,11 @@ export async function rejectExclusionRequest(
   if (!rejectionReason?.trim())
     return { error: "Informe o motivo da rejeição" };
 
-  const supabase = await createSupabaseServer();
-
   if (!(await isProjectCoordinator(projectId, user))) {
     return { error: "Apenas coordenador pode rejeitar sugestões de exclusão" };
   }
+
+  const supabase = await createSupabaseServer();
 
   const { data, error } = await supabase
     .from("project_comments")
