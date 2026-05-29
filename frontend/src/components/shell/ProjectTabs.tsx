@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -31,7 +32,17 @@ const tabs = [
   { label: "Configurações", href: "config", coordinatorOnly: true },
 ];
 
-export function ProjectTabs({
+export function ProjectTabs(props: ProjectTabsProps) {
+  // useSearchParams precisa de boundary de Suspense (react-doctor
+  // nextjs-no-use-search-params-without-suspense).
+  return (
+    <Suspense fallback={null}>
+      <ProjectTabsInner {...props} />
+    </Suspense>
+  );
+}
+
+function ProjectTabsInner({
   projectId,
   isCoordinator,
   isMaster = false,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useTransition, useRef } from "react";
+import { Suspense, useState, useEffect, useMemo, useTransition, useRef } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   ResizablePanelGroup,
@@ -97,7 +97,17 @@ interface MyVerdictsViewProps {
 
 type FilterValue = "pending" | "incorrect" | "questioned" | "all";
 
-export function MyVerdictsView({
+export function MyVerdictsView(props: MyVerdictsViewProps) {
+  // useSearchParams precisa de boundary de Suspense (react-doctor
+  // nextjs-no-use-search-params-without-suspense).
+  return (
+    <Suspense fallback={null}>
+      <MyVerdictsViewInner {...props} />
+    </Suspense>
+  );
+}
+
+function MyVerdictsViewInner({
   projectId,
   items,
   fields,
