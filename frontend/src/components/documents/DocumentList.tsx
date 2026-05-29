@@ -114,11 +114,25 @@ export function DocumentList({
                 <th className="px-4 py-2 text-left font-medium">Respostas</th>
               )}
               {projectId && !showExcluded && (
-                <th className="w-10 px-4 py-2"></th>
+                <th className="w-10 px-4 py-2">
+                  <span className="sr-only">Copiar link</span>
+                </th>
               )}
-              {canDelete && <th className="w-10 px-4 py-2"></th>}
-              {canRestore && <th className="w-10 px-4 py-2"></th>}
-              {canHardDelete && <th className="w-10 px-4 py-2"></th>}
+              {canDelete && (
+                <th className="w-10 px-4 py-2">
+                  <span className="sr-only">Excluir</span>
+                </th>
+              )}
+              {canRestore && (
+                <th className="w-10 px-4 py-2">
+                  <span className="sr-only">Restaurar</span>
+                </th>
+              )}
+              {canHardDelete && (
+                <th className="w-10 px-4 py-2">
+                  <span className="sr-only">Apagar permanentemente</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>

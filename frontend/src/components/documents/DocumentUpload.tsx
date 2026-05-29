@@ -292,6 +292,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
             <input
               type="file"
               accept=".csv"
+              aria-label="Selecionar arquivo CSV"
               onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
               className="text-sm"
             />

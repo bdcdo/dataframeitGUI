@@ -22,6 +22,7 @@ export function ProgressDots({ total, currentIndex, answered, concordant, incomp
           <button
             type="button"
             key={i}
+            aria-label={`Ir para pergunta ${i + 1}`}
             onClick={() => onNavigate(i)}
             className={cn(
               "rounded-full transition-all",

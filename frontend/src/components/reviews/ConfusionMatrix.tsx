@@ -116,7 +116,9 @@ function SingleConfusionGrid({ data }: { data: ConfusionDataSingle }) {
         <table className="border-collapse text-xs">
           <thead>
             <tr>
-              <th className="p-0" />
+              <th className="p-0">
+                <span className="sr-only">Resposta dada × gabarito</span>
+              </th>
               {activeLabels.map((label) => (
                 <th
                   key={label}
