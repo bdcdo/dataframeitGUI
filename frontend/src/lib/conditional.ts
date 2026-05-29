@@ -32,7 +32,7 @@ function matchesScalar(value: unknown, target: ConditionScalar): boolean {
   return scalarEquals(value, target);
 }
 
-export function evaluateCondition(
+function evaluateCondition(
   condition: FieldCondition,
   answers: Record<string, unknown>,
 ): boolean {
@@ -69,13 +69,6 @@ export function isFieldVisible(
 ): boolean {
   if (!field.condition) return true;
   return evaluateCondition(field.condition, answers);
-}
-
-export function visibleFields(
-  fields: PydanticField[],
-  answers: Record<string, unknown>,
-): PydanticField[] {
-  return fields.filter((f) => isFieldVisible(f, answers));
 }
 
 // Campos que podem servir de gatilho para a condição de `currentFieldName`:
