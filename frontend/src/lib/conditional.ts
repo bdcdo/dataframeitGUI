@@ -77,3 +77,23 @@ export function visibleFields(
 ): PydanticField[] {
   return fields.filter((f) => isFieldVisible(f, answers));
 }
+
+// Campos que podem servir de gatilho para a condição de `currentFieldName`:
+// apenas campos anteriores (a condição só pode referenciar campos já definidos)
+// e com opções (single/multi). Usado pelos editores de schema.
+export function candidateTriggersFor(
+  fields: PydanticField[],
+  currentFieldName: string,
+): PydanticField[] {
+  const out: PydanticField[] = [];
+  for (const f of fields) {
+    if (f.name === currentFieldName) break;
+    // Only fields with options can be meaningfully used as triggers
+    // (single/multi). For text/date, a user can still target via `exists`,
+    // but for the initial UX we restrict triggers to option-bearing fields.
+    if ((f.type === "single" || f.type === "multi") && f.options && f.options.length > 0) {
+      out.push(f);
+    }
+  }
+  return out;
+}

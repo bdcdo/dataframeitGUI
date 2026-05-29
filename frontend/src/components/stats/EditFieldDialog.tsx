@@ -16,10 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { OptionsEditor } from "@/components/schema/OptionsEditor";
-import {
-  ConditionEditor,
-  candidateTriggersFor,
-} from "@/components/schema/ConditionEditor";
+import { ConditionEditor } from "@/components/schema/ConditionEditor";
+import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "@/components/schema/RemoveOptionDialog";
 import {
   findConditionConflicts,

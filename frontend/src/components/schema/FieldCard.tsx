@@ -17,7 +17,8 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
-import { ConditionEditor, candidateTriggersFor } from "./ConditionEditor";
+import { ConditionEditor } from "./ConditionEditor";
+import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "./RemoveOptionDialog";
 import {
   findConditionConflicts,
