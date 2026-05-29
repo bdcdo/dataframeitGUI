@@ -28,7 +28,6 @@
     "lucide-react": "^0.577.0",
     "next": "16.1.6",
     "next-themes": "^0.4.6",
-    "nuqs": "^2.8.9",
     "papaparse": "^5.5.3",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
@@ -47,7 +46,6 @@
     "react-is": "19.2.3"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.133",
     "@clerk/testing": "^2.0.27",
     "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",

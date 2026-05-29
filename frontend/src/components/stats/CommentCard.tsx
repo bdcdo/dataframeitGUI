@@ -212,6 +212,7 @@ export function CommentCard({
           <div className="min-w-0">
             {onOpenDocument && comment.documentId ? (
               <button
+                type="button"
                 onClick={() => onOpenDocument(comment.documentId)}
                 className="text-sm font-medium hover:underline text-left"
               >
@@ -391,9 +392,9 @@ export function CommentCard({
                   <span className="text-xs font-medium text-muted-foreground">
                     Respostas dos respondentes:
                   </span>
-                  {gabaritoEntries.map((a, i) => (
+                  {gabaritoEntries.map((a) => (
                     <div
-                      key={i}
+                      key={a.respondentName}
                       className={cn(
                         "flex items-start gap-2 rounded px-2 py-1 text-xs",
                         a.isChosen && "bg-brand/5",

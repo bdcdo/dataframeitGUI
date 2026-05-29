@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { useCallback, useTransition } from "react";
+import { Suspense, useCallback, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +31,17 @@ interface CompareFiltersProps {
   latestMajorLabel: string | null; // "1.0.0" ou null
 }
 
-export function CompareFilters({
+export function CompareFilters(props: CompareFiltersProps) {
+  // useSearchParams precisa de boundary de Suspense (react-doctor
+  // nextjs-no-use-search-params-without-suspense).
+  return (
+    <Suspense fallback={null}>
+      <CompareFiltersInner {...props} />
+    </Suspense>
+  );
+}
+
+function CompareFiltersInner({
   respondentNames,
   availableVersions,
   latestMajorLabel,

@@ -94,10 +94,14 @@ export function ExportPanel({
           ...row,
           ...Array<string>(extraColsCount).fill(""),
         ]);
+        const verdictHeaderIndex = new Map<string, number>();
+        verdictHeaders.forEach((h, i) => {
+          if (!verdictHeaderIndex.has(h)) verdictHeaderIndex.set(h, i);
+        });
         const padVerdict = verdictRows.map((row) => {
           const result: string[] = [];
           for (const h of headers) {
-            const vi = verdictHeaders.indexOf(h);
+            const vi = verdictHeaderIndex.get(h) ?? -1;
             result.push(vi >= 0 ? row[vi] : "");
           }
           return result;

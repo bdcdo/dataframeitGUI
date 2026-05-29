@@ -17,7 +17,8 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
-import { ConditionEditor, candidateTriggersFor } from "./ConditionEditor";
+import { ConditionEditor } from "./ConditionEditor";
+import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "./RemoveOptionDialog";
 import {
   findConditionConflicts,
@@ -152,7 +153,7 @@ export function FieldCard({
 
           {/* Nome + badges */}
           <CollapsibleTrigger asChild>
-            <button className="flex flex-1 items-center gap-2 text-left min-w-0">
+            <button type="button" className="flex flex-1 items-center gap-2 text-left min-w-0">
               <code className="text-sm font-mono truncate">{field.name}</code>
               <Badge className={cn("text-xs shrink-0", TYPE_COLORS[field.type])}>
                 {TYPE_LABELS[field.type]}

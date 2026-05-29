@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { Suspense, useTransition } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,16 @@ function formatBR(iso: string): string {
 }
 
 export function DateSinceFilter() {
+  // useSearchParams precisa de um boundary de Suspense para não forçar CSR da
+  // página inteira (react-doctor nextjs-no-use-search-params-without-suspense).
+  return (
+    <Suspense fallback={null}>
+      <DateSinceFilterInner />
+    </Suspense>
+  );
+}
+
+function DateSinceFilterInner() {
   const { push } = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

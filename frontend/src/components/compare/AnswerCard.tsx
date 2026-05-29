@@ -154,6 +154,7 @@ export function AnswerCard({
               <Popover>
                 <PopoverTrigger asChild>
                   <button
+                    type="button"
                     onClick={(e) => e.stopPropagation()}
                     className="inline-flex items-center gap-1 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/15"
                     title="Variantes marcadas como equivalentes"
@@ -187,6 +188,7 @@ export function AnswerCard({
                           </div>
                           {showUnmark && (
                             <button
+                              type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 onUnmarkPair!(v.pairId);
@@ -233,6 +235,7 @@ export function AnswerCard({
           {hasLlm && llmJustification && (
             <div className="mt-1.5">
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowJustification(!showJustification);

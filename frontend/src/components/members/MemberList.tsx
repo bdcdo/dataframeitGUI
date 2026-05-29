@@ -122,7 +122,7 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
             <p className="text-xs text-muted-foreground">{m.profiles?.email}</p>
           </div>
           <div className="flex items-center gap-3">
-            <label
+            <span
               className="flex items-center gap-2 text-xs text-muted-foreground"
               title="Pode marcar dificuldades LLM e comentários de outros pesquisadores como resolvidos"
             >
@@ -133,8 +133,8 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
                 aria-label="Pode resolver pendências"
               />
               Resolve
-            </label>
-            <label
+            </span>
+            <span
               className="flex items-center gap-2 text-xs text-muted-foreground"
               title="Recebe casos contestados para arbitrar"
             >
@@ -145,7 +145,7 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
                 aria-label="Elegível para arbitrar"
               />
               Arbitra
-            </label>
+            </span>
             <Select
               value={m.role}
               onValueChange={(v) => handleChangeRole(m.id, v as "coordenador" | "pesquisador")}

@@ -28,7 +28,6 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
 | Backend LLM | FastAPI (Python) | latest |
 | LLM | `dataframeit` | 0.5.3 |
 | Editor | Monaco Editor (`@monaco-editor/react`) | latest |
-| URL state | `nuqs` 2 | latest |
 | Graficos | `recharts` | latest |
 | Toast | `sonner` | latest |
 | CSV | `papaparse` | latest |

@@ -32,7 +32,7 @@ function matchesScalar(value: unknown, target: ConditionScalar): boolean {
   return scalarEquals(value, target);
 }
 
-export function evaluateCondition(
+function evaluateCondition(
   condition: FieldCondition,
   answers: Record<string, unknown>,
 ): boolean {
@@ -71,9 +71,22 @@ export function isFieldVisible(
   return evaluateCondition(field.condition, answers);
 }
 
-export function visibleFields(
+// Campos que podem servir de gatilho para a condição de `currentFieldName`:
+// apenas campos anteriores (a condição só pode referenciar campos já definidos)
+// e com opções (single/multi). Usado pelos editores de schema.
+export function candidateTriggersFor(
   fields: PydanticField[],
-  answers: Record<string, unknown>,
+  currentFieldName: string,
 ): PydanticField[] {
-  return fields.filter((f) => isFieldVisible(f, answers));
+  const out: PydanticField[] = [];
+  for (const f of fields) {
+    if (f.name === currentFieldName) break;
+    // Only fields with options can be meaningfully used as triggers
+    // (single/multi). For text/date, a user can still target via `exists`,
+    // but for the initial UX we restrict triggers to option-bearing fields.
+    if ((f.type === "single" || f.type === "multi") && f.options && f.options.length > 0) {
+      out.push(f);
+    }
+  }
+  return out;
 }

@@ -29,10 +29,7 @@ export function TruncationBanner({
   const labels = affected.map((k) => TABLE_LABELS[k]).join(", ");
 
   return (
-    <div
-      role="status"
-      className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
-    >
+    <output className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <div>
         <p className="font-medium">Estatísticas possivelmente incompletas</p>
@@ -43,6 +40,6 @@ export function TruncationBanner({
           inteiro.
         </p>
       </div>
-    </div>
+    </output>
   );
 }

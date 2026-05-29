@@ -165,6 +165,7 @@ export function LlmRunsPane({ projectId, runs, stats }: LlmRunsPaneProps) {
                     </Link>
                     {run.status === "error" && (
                       <button
+                        type="button"
                         onClick={() =>
                           setOpenErrorId(isOpen ? null : run.id)
                         }

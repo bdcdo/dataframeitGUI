@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,7 +63,17 @@ export interface AutoReviewPageProps {
 
 const STORAGE_KEY_PREFIX = "autoReview:docId:";
 
-export function AutoReviewPage({
+export function AutoReviewPage(props: AutoReviewPageProps) {
+  // useSearchParams precisa de boundary de Suspense (react-doctor
+  // nextjs-no-use-search-params-without-suspense).
+  return (
+    <Suspense fallback={null}>
+      <AutoReviewPageInner {...props} />
+    </Suspense>
+  );
+}
+
+function AutoReviewPageInner({
   projectId,
   docs,
   isCoordinator = false,

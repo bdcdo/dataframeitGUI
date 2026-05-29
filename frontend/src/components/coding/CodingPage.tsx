@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel } from "./QuestionsPanel";
@@ -52,7 +52,17 @@ interface CodingPageProps {
   roundFilter?: RoundFilterData;
 }
 
-export function CodingPage({
+export function CodingPage(props: CodingPageProps) {
+  // useSearchParams precisa de boundary de Suspense (react-doctor
+  // nextjs-no-use-search-params-without-suspense).
+  return (
+    <Suspense fallback={null}>
+      <CodingPageInner {...props} />
+    </Suspense>
+  );
+}
+
+function CodingPageInner({
   projectId,
   documents,
   codedAtByDoc = EMPTY_CODED_AT,

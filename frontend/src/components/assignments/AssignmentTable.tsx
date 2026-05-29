@@ -129,14 +129,20 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const statusOrder = { concluido: 3, em_andamento: 2, pendente: 1 } as const;
                   const dominant = [cod, comp]
                     .filter((a): a is Assignment => !!a)
-                    .sort(
-                      (a, b) =>
-                        (statusOrder[b.status] || 0) - (statusOrder[a.status] || 0),
-                    )[0];
+                    .reduce<Assignment | undefined>(
+                      (best, a) =>
+                        !best ||
+                        (statusOrder[a.status] || 0) > (statusOrder[best.status] || 0)
+                          ? a
+                          : best,
+                      undefined,
+                    );
                   const status = dominant?.status;
 
                   const deadlines = [cod?.deadline, comp?.deadline].filter(Boolean) as string[];
-                  const nearestDeadline = deadlines.sort()[0];
+                  const nearestDeadline = deadlines.length
+                    ? deadlines.reduce((min, d) => (d < min ? d : min))
+                    : undefined;
                   const isOverdue =
                     today &&
                     nearestDeadline &&
@@ -167,6 +173,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
 
                   const cell = (
                     <button
+                      type="button"
                       onClick={() => handleCycle(doc.id, r.user_id)}
                       disabled={isNonRemovable || isPending}
                       className={cn(

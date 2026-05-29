@@ -9,7 +9,7 @@ export interface ModelCapabilities {
   category: "standard" | "reasoning";
 }
 
-export const MODEL_REGISTRY: ModelCapabilities[] = [
+const MODEL_REGISTRY: ModelCapabilities[] = [
   // --- Google GenAI ---
   {
     provider: "google_genai",
@@ -157,16 +157,6 @@ export function getModelCapabilities(
   );
   if (found) return found;
   return { ...DEFAULT_CAPABILITIES, provider, model, label: model };
-}
-
-const PROVIDER_LABELS: Record<Provider, string> = {
-  google_genai: "Google GenAI",
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-};
-
-export function getProviderLabel(provider: Provider): string {
-  return PROVIDER_LABELS[provider] ?? provider;
 }
 
 /**

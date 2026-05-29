@@ -298,20 +298,3 @@ function ValueControl({
     </Select>
   );
 }
-
-export function candidateTriggersFor(
-  fields: PydanticField[],
-  currentFieldName: string,
-): PydanticField[] {
-  const out: PydanticField[] = [];
-  for (const f of fields) {
-    if (f.name === currentFieldName) break;
-    // Only fields with options can be meaningfully used as triggers
-    // (single/multi). For text/date, a user can still target via `exists`,
-    // but for the initial UX we restrict triggers to option-bearing fields.
-    if ((f.type === "single" || f.type === "multi") && f.options && f.options.length > 0) {
-      out.push(f);
-    }
-  }
-  return out;
-}

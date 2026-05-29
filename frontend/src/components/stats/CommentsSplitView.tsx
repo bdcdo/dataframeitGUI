@@ -317,9 +317,9 @@ export function CommentsSplitView({
                   {/* Responses (inline, from snapshot) */}
                   {snapshot && snapshot.length > 0 && (
                     <div className="space-y-0.5 rounded-md bg-muted/50 p-2">
-                      {snapshot.map((r: ResponseSnapshotEntry, i: number) => (
+                      {snapshot.map((r: ResponseSnapshotEntry) => (
                         <div
-                          key={i}
+                          key={r.id}
                           className={cn(
                             "flex items-start gap-2 rounded px-2 py-1 text-xs",
                             r.id === comment.chosenResponseId && "bg-brand/5",
