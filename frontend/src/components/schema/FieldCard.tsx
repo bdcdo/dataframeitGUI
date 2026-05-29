@@ -152,7 +152,7 @@ export function FieldCard({
 
           {/* Nome + badges */}
           <CollapsibleTrigger asChild>
-            <button className="flex flex-1 items-center gap-2 text-left min-w-0">
+            <button type="button" className="flex flex-1 items-center gap-2 text-left min-w-0">
               <code className="text-sm font-mono truncate">{field.name}</code>
               <Badge className={cn("text-xs shrink-0", TYPE_COLORS[field.type])}>
                 {TYPE_LABELS[field.type]}

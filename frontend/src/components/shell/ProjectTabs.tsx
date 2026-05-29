@@ -96,6 +96,7 @@ export function ProjectTabs({
           <span className="font-medium">{impersonatedMember.name}</span>
           {" "}({impersonatedMember.role}),{" "}
           <button
+            type="button"
             onClick={() => selectImpersonation(null)}
             className="underline hover:no-underline font-medium"
           >
@@ -107,6 +108,7 @@ export function ProjectTabs({
         <div className="bg-amber-50 text-amber-800 text-xs text-center py-1 dark:bg-amber-950/50 dark:text-amber-200">
           Visualizando como pesquisador,{" "}
           <button
+            type="button"
             onClick={toggleViewAs}
             className="underline hover:no-underline font-medium"
           >
@@ -168,6 +170,7 @@ export function ProjectTabs({
 
           {isCoordinator && !isMaster && !isAutoRevisaoRoute && (
             <button
+              type="button"
               onClick={toggleViewAs}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition-colors",

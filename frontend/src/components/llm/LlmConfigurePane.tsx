@@ -572,6 +572,7 @@ export function LlmConfigurePane({
                   <CommandList id={modelListboxId}>
                     <CommandEmpty>
                       <button
+                        type="button"
                         className="w-full text-left px-2 py-1.5 text-sm hover:bg-accent rounded-sm"
                         onMouseDown={(e) => {
                           e.preventDefault();

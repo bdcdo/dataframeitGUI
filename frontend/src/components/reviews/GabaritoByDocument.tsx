@@ -370,6 +370,7 @@ function RespondentRow({
         </span>
         {ra.justification && (
           <button
+            type="button"
             onClick={() => setShowJustification(!showJustification)}
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >

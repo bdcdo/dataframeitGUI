@@ -20,6 +20,7 @@ export function ProgressDots({ total, currentIndex, answered, concordant, incomp
         const isIncomplete = incomplete?.[i] ?? false;
         return (
           <button
+            type="button"
             key={i}
             onClick={() => onNavigate(i)}
             className={cn(

@@ -67,6 +67,7 @@ export function DocumentPicker({ documents, onSelect }: DocumentPickerProps) {
           <div className="divide-y">
             {filtered.map((doc) => (
               <button
+                type="button"
                 key={doc.id}
                 onClick={() => onSelect(doc.id)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50"

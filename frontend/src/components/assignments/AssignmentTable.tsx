@@ -167,6 +167,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
 
                   const cell = (
                     <button
+                      type="button"
                       onClick={() => handleCycle(doc.id, r.user_id)}
                       disabled={isNonRemovable || isPending}
                       className={cn(

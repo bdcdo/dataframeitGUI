@@ -212,6 +212,7 @@ export function CommentCard({
           <div className="min-w-0">
             {onOpenDocument && comment.documentId ? (
               <button
+                type="button"
                 onClick={() => onOpenDocument(comment.documentId)}
                 className="text-sm font-medium hover:underline text-left"
               >
