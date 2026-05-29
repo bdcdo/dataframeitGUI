@@ -122,6 +122,12 @@ export default async function ExportPage({
     responsesByDoc.get(r.document_id)!.push(r);
   });
 
+  // Index fields by name once — antes era fields.find() dentro de loop duplo (docs × campos).
+  const fieldByName = new Map<string, (typeof fields)[number]>();
+  for (const f of fields) {
+    if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
+  }
+
   for (const [docId, docResponses] of responsesByDoc) {
     if (docResponses.length < minResponses) continue;
 
@@ -130,7 +136,7 @@ export default async function ExportPage({
     for (const field of exportableFields) {
       if (verdictsByDoc.get(docId)?.fields.has(field.name)) continue;
 
-      const fullField = fields.find((f) => f.name === field.name);
+      const fullField = fieldByName.get(field.name);
 
       if (fullField?.type === "multi" && fullField.options?.length) {
         const comparableOptions = new Set(fullField.options);

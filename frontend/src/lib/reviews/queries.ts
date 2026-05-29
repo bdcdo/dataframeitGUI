@@ -479,10 +479,15 @@ export function computeRespondentProfiles(
     string,
     { name: string; type: "humano" | "llm" }
   >();
+  // Index resp por (docId, respondentKey) numa passada — antes era um
+  // docResps.find() O(n) por review dentro do loop de respondentes (O(n²)).
+  const respByDocKey = new Map<string, Map<string, ResponseRow>>();
 
-  for (const [, docResps] of ctx.responsesByDoc) {
+  for (const [docId, docResps] of ctx.responsesByDoc) {
+    const byKey = new Map<string, ResponseRow>();
     for (const r of docResps) {
       const key = getRespondentKey(r);
+      if (!byKey.has(key)) byKey.set(key, r); // primeiro match, igual ao .find() anterior
       if (!respondentInfoMap.has(key)) {
         respondentInfoMap.set(key, {
           name: getRespondentDisplayName(r, ctx.profileMap),
@@ -490,6 +495,7 @@ export function computeRespondentProfiles(
         });
       }
     }
+    respByDocKey.set(docId, byKey);
   }
 
   const result: RespondentProfileData[] = [];
@@ -510,8 +516,7 @@ export function computeRespondentProfiles(
       if (field.target === "llm_only" && info.type === "humano") continue;
       if (field.target === "human_only" && info.type === "llm") continue;
 
-      const docResps = ctx.responsesByDoc.get(review.document_id) || [];
-      const resp = docResps.find((r) => getRespondentKey(r) === respondentKey);
+      const resp = respByDocKey.get(review.document_id)?.get(respondentKey);
       if (!resp) continue;
 
       const answer = resp.answers[review.field_name];
