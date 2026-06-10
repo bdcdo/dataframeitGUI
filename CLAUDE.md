@@ -2,6 +2,8 @@
 
 Plataforma web para analise de conteudo de documentos. Coordenadores definem perguntas (Pydantic), atribuem documentos a pesquisadores, rodam LLM. Pesquisadores codificam e revisam. Comparacoes automaticas quando ha N+ respostas para o mesmo documento.
 
+Documento normativo do projeto: `.specify/memory/constitution.md` (constituicao v1.0.0 — principios de usabilidade, velocidade, seguranca, RLS, testes, a11y, schema e simplicidade de stack). Em conflito, a constituicao prevalece sobre este guia.
+
 ## Arquitetura
 
 ```
@@ -48,6 +50,8 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
   - (b) `compile_pydantic()` em `backend/services/pydantic_compiler.py` para le-la de volta;
   - (c) as primitivas de versionamento/auditoria em `frontend/src/lib/schema-utils.ts` — `snapshotOf`, `classifyChange`, `diffFields`, `fieldDiffIsStructural` — para que a mudanca da propriedade seja classificada (minor/patch) e registrada em `schema_change_log`. Essas primitivas sao puras e compartilhadas entre `saveSchemaFromGUI` e scripts fora do Next runtime, justamente para evitar drift (ver #63);
   - (d) o diff de historico em `frontend/src/lib/schema-change-utils.ts` (`FieldPropertyDiff`, `diffPydanticField`, `PROPERTY_LABELS`) e o renderizador `FieldChangeDiff.tsx`.
+
+  **Direcao registrada (constituicao, Principios III e VII)**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(d) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
 - Testes: **Vitest** (frontend), **pytest** (backend)
 
 ## Estrutura
@@ -155,3 +159,8 @@ Seguir estas regras para evitar regressoes de performance:
 ## Fase atual: 10 - Todas as fases implementadas (scaffold completo)
 
 Ver `docs/PHASES.md` para roadmap completo.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
