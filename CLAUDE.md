@@ -2,10 +2,12 @@
 
 Plataforma web para analise de conteudo de documentos. Coordenadores definem perguntas (Pydantic), atribuem documentos a pesquisadores, rodam LLM. Pesquisadores codificam e revisam. Comparacoes automaticas quando ha N+ respostas para o mesmo documento.
 
+Documento normativo do projeto: `.specify/memory/constitution.md` (constituicao v1.0.0 — principios de usabilidade, velocidade, seguranca, RLS, testes, a11y, schema e simplicidade de stack). Em conflito, a constituicao prevalece sobre este guia.
+
 ## Arquitetura
 
 ```
-Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
+Browser  →  Next.js 16 (Fly.io)  ←→  Supabase (Postgres + RLS)
                 |                            ^
                 | Clerk (Auth + JWT)         |
                 | HTTP (LLM + Pydantic)      |
@@ -48,12 +50,14 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
   - (b) `compile_pydantic()` em `backend/services/pydantic_compiler.py` para le-la de volta;
   - (c) as primitivas de versionamento/auditoria em `frontend/src/lib/schema-utils.ts` — `snapshotOf`, `classifyChange`, `diffFields`, `fieldDiffIsStructural` — para que a mudanca da propriedade seja classificada (minor/patch) e registrada em `schema_change_log`. Essas primitivas sao puras e compartilhadas entre `saveSchemaFromGUI` e scripts fora do Next runtime, justamente para evitar drift (ver #63);
   - (d) o diff de historico em `frontend/src/lib/schema-change-utils.ts` (`FieldPropertyDiff`, `diffPydanticField`, `PROPERTY_LABELS`) e o renderizador `FieldChangeDiff.tsx`.
+
+  **Direcao registrada (constituicao, Principios III e VII)**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(d) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
 - Testes: **Vitest** (frontend), **pytest** (backend)
 
 ## Estrutura
 
 ```
-frontend/           # Next.js 15
+frontend/           # Next.js 16
   src/
     app/            # App Router pages
     components/     # UI components (shell, coding, compare, schema, etc.)
@@ -85,7 +89,7 @@ Para aplicar migrations pendentes: `npx supabase db push`
 
 ## Deploy
 
-Vercel faz deploy automatico a partir de merge no branch `main`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
+Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Vercel → Fly.io (app `gui-analise-sistematica-frontend`); enquanto o cutover de dominio nao ocorre, Vercel ainda e a producao. Backend: Fly.io (app `gui-analise-sistematica-api`) via workflow quando ha mudanca em `backend/**`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
 
 1. **Criar git worktree isolado** para a tarefa (ver secao "Workspace isolado" abaixo) — nao trabalhar no diretorio principal
 2. Criar branch descritiva (`feat/...`, `fix/...`, `perf/...`) na worktree
@@ -155,3 +159,8 @@ Seguir estas regras para evitar regressoes de performance:
 ## Fase atual: 10 - Todas as fases implementadas (scaffold completo)
 
 Ver `docs/PHASES.md` para roadmap completo.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
