@@ -58,7 +58,7 @@ Regras de implementação não negociáveis (já praticadas no repositório, ago
 A plataforma processa dados de pesquisas ainda não publicadas, potencialmente sensíveis. Regras não negociáveis:
 
 - **Least privilege**: a service key do Supabase MUST ser usada apenas em backend (FastAPI) e Server Actions; nunca exposta ao cliente. O cliente browser opera somente via JWT do Clerk + RLS.
-- **Segredos** MUST viver exclusivamente em variáveis de ambiente (`.env.local`, secrets do Fly/Vercel); nunca em código versionado.
+- **Segredos** MUST viver exclusivamente em variáveis de ambiente (`.env.local`, secrets da plataforma de hosting); nunca em código versionado.
 - **Não execução de código arbitrário de usuário**: a plataforma MUST caminhar para eliminar a compilação de código Python editável por usuário no backend. Direção registrada: migrar a representação canônica do schema de código Pydantic para JSON declarativo (ver Princípio VII). Enquanto a migração não ocorre, o `compile_pydantic` existente MUST ser tratado como superfície de ataque e endurecido a cada mudança.
 - Dados de projeto MUST permanecer isolados entre projetos — vazamento cross-project é incidente de severidade máxima.
 
@@ -114,7 +114,7 @@ A arquitetura atual é suficiente e MUST ser defendida contra proliferação de 
 
 - Todo trabalho que modifica arquivos ocorre em git worktree própria com branch de feature criada a partir da `main` atualizada; nunca commitar direto na `main`.
 - Todo merge na `main` passa por PR com revisão do usuário; merge pelo agente só com pedido explícito.
-- Deploy é automático no merge da `main` (Vercel para frontend, Fly.io para backend via workflow quando há mudança em `backend/**`).
+- Deploy é automático no merge da `main`, para frontend e backend; a plataforma de hosting vigente é detalhe operacional registrado no `CLAUDE.md`, não matéria constitucional.
 - Migrations Supabase são aplicadas manualmente (`npx supabase db push`) — nunca rodam automaticamente no merge; verificar o estado real do banco antes de concluir que uma migration foi aplicada.
 - Os gates de qualidade dos Princípios II (budgets de velocidade), V (testes/CI) e VI (a11y) são critérios de aceitação de PR.
 
