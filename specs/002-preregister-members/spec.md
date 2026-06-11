@@ -8,6 +8,14 @@
 
 **Input**: User description: "quero poder adicionar pessoas ainda sem conta no site a um projeto, para que elas entrem normalmente no projeto ao serem adicionadas; incluir também a função de linkar mais de um email ao mesmo pesquisador, por enquanto como algo que o coordenador faz, não o pesquisador"
 
+## Clarifications
+
+### Session 2026-06-11
+
+- Q: Após unificar dois membros, desfazer o vínculo separa os membros de volta? → A: Não — a unificação é permanente; desvincular o e-mail depois apenas impede acessos futuros por aquele e-mail, e atribuições e histórico permanecem no membro unificado.
+- Q: Vincular um e-mail que ainda não tem conta funciona como pré-registro daquele e-mail para o mesmo membro? → A: Sim — a pessoa pode criar conta com qualquer um dos e-mails vinculados e entra no projeto como aquele membro.
+- Q: Quem vê os e-mails adicionais vinculados de um membro? → A: Todos os membros do projeto veem todos os e-mails vinculados de cada membro, como já ocorre com o e-mail principal na lista de membros.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Pré-registrar pessoa sem conta no projeto (Priority: P1)
@@ -41,10 +49,11 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 
 1. **Given** um membro do projeto (ativo ou pendente), **When** o coordenador vincula um e-mail adicional a ele, **Then** o e-mail adicional aparece associado ao membro na lista de membros.
 2. **Given** um membro com dois e-mails vinculados, **When** a pessoa entra na plataforma com qualquer um dos dois, **Then** ela acessa o projeto como o mesmo membro e vê exatamente o mesmo conjunto de atribuições, respostas e progresso.
-3. **Given** um e-mail adicional que já corresponde a outro membro do mesmo projeto, **When** o coordenador solicita o vínculo, **Then** o sistema explica que os dois membros serão unificados naquele projeto (atribuições somadas, sem perda nem duplicação de respostas) e só executa após confirmação explícita do coordenador.
-4. **Given** um e-mail já vinculado a um membro do projeto, **When** o coordenador tenta vinculá-lo a outro membro do mesmo projeto, **Then** o sistema impede e informa a qual membro o e-mail já está vinculado.
-5. **Given** um membro com e-mail adicional vinculado, **When** o coordenador desfaz o vínculo, **Then** o e-mail deixa de dar acesso ao projeto como aquele membro, mas todo o histórico já produzido (respostas, revisões) permanece intacto e atribuído ao membro.
-6. **Given** contas distintas associadas aos e-mails vinculados, **When** qualquer uma delas acessa áreas fora do projeto, **Then** as contas permanecem independentes — o vínculo não mescla perfis, dados pessoais nem participação em outros projetos.
+3. **Given** um e-mail adicional vinculado que ainda não pertence a nenhuma conta, **When** a pessoa cria conta com esse e-mail, **Then** ela entra no projeto como o membro ao qual o e-mail foi vinculado — o vínculo de e-mail sem conta vale como pré-registro para o mesmo membro.
+4. **Given** um e-mail adicional que já corresponde a outro membro do mesmo projeto, **When** o coordenador solicita o vínculo, **Then** o sistema explica que os dois membros serão unificados naquele projeto (atribuições somadas, sem perda nem duplicação de respostas) e só executa após confirmação explícita do coordenador.
+5. **Given** um e-mail já vinculado a um membro do projeto, **When** o coordenador tenta vinculá-lo a outro membro do mesmo projeto, **Then** o sistema impede e informa a qual membro o e-mail já está vinculado.
+6. **Given** um membro com e-mail adicional vinculado, **When** o coordenador desfaz o vínculo, **Then** o e-mail deixa de dar acesso ao projeto como aquele membro, mas todo o histórico já produzido (respostas, revisões) permanece intacto e atribuído ao membro.
+7. **Given** contas distintas associadas aos e-mails vinculados, **When** qualquer uma delas acessa áreas fora do projeto, **Then** as contas permanecem independentes — o vínculo não mescla perfis, dados pessoais nem participação em outros projetos.
 
 ---
 
@@ -74,15 +83,16 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 - **FR-009**: Quando o e-mail a vincular corresponde a outro membro do mesmo projeto, o sistema MUST exigir confirmação explícita do coordenador antes de unificar os dois membros, explicando as consequências (atribuições somadas, papel resultante, documentos com respostas de ambos).
 - **FR-010**: A unificação de membros MUST preservar todas as respostas e revisões existentes, sem perda nem duplicação, e MUST passar a tratá-las como de um único pesquisador para fins de comparações e contagens por documento.
 - **FR-011**: O sistema MUST impedir que um mesmo e-mail fique vinculado a mais de um membro do mesmo projeto, informando o conflito ao coordenador.
-- **FR-012**: O coordenador MUST poder desfazer o vínculo de um e-mail adicional; o histórico já produzido permanece atribuído ao membro.
+- **FR-012**: O coordenador MUST poder desfazer o vínculo de um e-mail adicional; o histórico já produzido permanece atribuído ao membro. A unificação de membros (FR-009) é permanente: o desvínculo posterior do e-mail não separa os membros de volta, apenas impede acessos futuros por aquele e-mail.
 - **FR-013**: O vínculo de e-mails MUST ter efeito restrito ao projeto em que foi criado: perfis, dados pessoais e participação em outros projetos das contas envolvidas permanecem independentes.
 - **FR-014**: Apenas coordenadores do projeto MUST poder pré-registrar membros, corrigir e-mails pendentes, vincular e desvincular e-mails.
+- **FR-015**: Os e-mails vinculados de cada membro MUST ser visíveis a todos os membros do projeto na lista de membros, no mesmo regime de visibilidade do e-mail principal.
 
 ### Key Entities
 
 - **Membro pendente**: pessoa adicionada a um projeto por e-mail antes de ter conta; tem papel, permissões e atribuições como um membro comum, mais o e-mail de pré-registro e o estado "sem primeiro acesso". Converte-se em membro ativo no primeiro acesso.
 - **Vínculo de e-mail**: associação, no escopo de um projeto, entre um e-mail adicional e um membro; determina que o acesso por aquele e-mail se dá como aquele membro. Criado e removido pelo coordenador.
-- **Unificação de membros**: operação que funde dois membros do mesmo projeto numa única identidade de projeto, somando atribuições e preservando respostas; exige confirmação do coordenador.
+- **Unificação de membros**: operação que funde dois membros do mesmo projeto numa única identidade de projeto, somando atribuições e preservando respostas; exige confirmação do coordenador e é permanente (não há "des-unificação").
 
 ## Success Criteria *(mandatory)*
 
