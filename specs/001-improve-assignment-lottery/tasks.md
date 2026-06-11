@@ -124,8 +124,8 @@ Web app — tudo em `frontend/` (Next.js App Router); migrations em `frontend/su
 
 **Independent Test**: marcar 5 docs e sortear; só esses 5 distribuem
 
-- [ ] T025 [P] [US5] Criar `frontend/src/components/assignments/DocumentPickerList.tsx`: Input de busca client-side por título/`external_id`, checkbox por documento, contador "N selecionados", lista com `max-h` + scroll (sem virtualização — research D6)
-- [ ] T026 [US5] Integrar o `DocumentPickerList` no `LotteryDialog.tsx` atrás de Switch "Selecionar documentos manualmente", alimentando `filters.manualDocIds`
+- [X] T025 [P] [US5] Criar `frontend/src/components/assignments/DocumentPickerList.tsx`: Input de busca client-side por título/`external_id`, checkbox por documento, contador "N selecionados", lista com `max-h` + scroll (sem virtualização — research D6)
+- [X] T026 [US5] Integrar o `DocumentPickerList` no `LotteryDialog.tsx` atrás de Switch "Selecionar documentos manualmente", alimentando `filters.manualDocIds`
 - [ ] T027 [US5] Validar acceptance scenarios da US5 (quickstart passo 7): só os marcados distribuem; manual ∩ filtro de codificações vale a interseção; subset aleatório amostra dentro da seleção
 
 **Checkpoint**: todos os controles de elegibilidade entregues

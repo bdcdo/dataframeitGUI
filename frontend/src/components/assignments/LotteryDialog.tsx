@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DocumentPickerList } from "@/components/assignments/DocumentPickerList";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Collapsible,
@@ -502,6 +503,24 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                   documentos.
                 </p>
               </div>
+            )}
+
+            <div className="flex items-center justify-between">
+              <Label htmlFor="manual-switch">
+                Selecionar documentos manualmente
+              </Label>
+              <Switch
+                id="manual-switch"
+                checked={manualEnabled}
+                onCheckedChange={setManualEnabled}
+              />
+            </div>
+            {manualEnabled && stats !== null && (
+              <DocumentPickerList
+                docs={stats.docs}
+                selected={manualDocIds}
+                onChange={setManualDocIds}
+              />
             )}
           </div>
 
