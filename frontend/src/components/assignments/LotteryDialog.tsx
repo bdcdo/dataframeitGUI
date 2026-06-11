@@ -416,6 +416,36 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
 
           <Separator />
 
+          {/* Section: Pending assignments mode (US2) */}
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">Atribuições pendentes</h4>
+            <RadioGroup
+              value={mode}
+              onValueChange={(v) => setMode(v as LotteryMode)}
+              className="space-y-1"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="append" id="mode-append" />
+                <Label htmlFor="mode-append" className="font-normal">
+                  Acrescentar ao existente
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="replace" id="mode-replace" />
+                <Label htmlFor="mode-replace" className="font-normal">
+                  Substituir pendentes
+                </Label>
+              </div>
+            </RadioGroup>
+            <p className="text-xs text-muted-foreground">
+              {mode === "append"
+                ? "As atribuições pendentes existentes são preservadas; o sorteio só adiciona novas."
+                : `As atribuições pendentes de ${isComparacao ? "comparação" : "codificação"} são descartadas e redistribuídas. Em andamento e concluídas nunca são tocadas.`}
+            </p>
+          </div>
+
+          <Separator />
+
           {/* Section 1: Distribution */}
           <div className="space-y-4">
             <h4 className="text-sm font-semibold">Distribuição</h4>

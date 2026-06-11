@@ -68,7 +68,7 @@ Web app — tudo em `frontend/` (Next.js App Router); migrations em `frontend/su
 
 **Independent Test**: sortear Lote 1; sortear Lote 2 em modo acrescentar; pendentes do Lote 1 intactas e zero duplicidades
 
-- [ ] T013 [US2] Adicionar RadioGroup "Atribuições pendentes" no `frontend/src/components/assignments/LotteryDialog.tsx` (acrescentar ao existente = default / substituir pendentes), ligado a `params.mode`, com texto curto explicando o efeito de cada modo
+- [X] T013 [US2] Adicionar RadioGroup "Atribuições pendentes" no `frontend/src/components/assignments/LotteryDialog.tsx` (acrescentar ao existente = default / substituir pendentes), ligado a `params.mode`, com texto curto explicando o efeito de cada modo
 - [ ] T014 [US2] Validar acceptance scenarios da US2 (quickstart passos 3–4): append preserva todas as pendentes preexistentes; replace descarta e redistribui só as pendentes do tipo; em ambos os modos nada toca em_andamento/concluído e não há duplicidade doc+pessoa+tipo
 
 **Checkpoint**: fluxo de lotes incrementais funcional
