@@ -149,7 +149,7 @@ Web app — tudo em `frontend/` (Next.js App Router); migrations em `frontend/su
 
 - [X] T030 Rodar `cd frontend && npx tsc --noEmit && npm run lint && npx vitest run` limpos; gate react-doctor roda no pre-commit (usar `--diff`)
 - [ ] T031 Validação manual completa do quickstart.md, incluindo bordas (0 elegíveis, 0 participantes, manual + subset) e SC-005 (prévia ≡ resultado do sorteio para a mesma configuração) — quickstart passos 10–11
-- [ ] T032 Abrir PR contra `main` via `gh pr create` (título `feat(sorteio): ...`, corpo em pt-BR referenciando `specs/001-improve-assignment-lottery/`; sem keyword de auto-close — a issue #176 é escopo separado); se `api.github.com` seguir inacessível, usar o workaround REST com `curl --resolve` registrado na memória da sessão
+- [X] T032 Abrir PR contra `main` via `gh pr create` (título `feat(sorteio): ...`, corpo em pt-BR referenciando `specs/001-improve-assignment-lottery/`; sem keyword de auto-close — a issue #176 é escopo separado); se `api.github.com` seguir inacessível, usar o workaround REST com `curl --resolve` registrado na memória da sessão
 
 ---
 
