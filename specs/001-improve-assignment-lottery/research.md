@@ -1,6 +1,6 @@
 # Research: Melhorar o sorteio de atribuições
 
-**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10
+**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10 | **Updated**: 2026-06-11 (US7 — equilíbrio configurável: D7/D10 revisados, D11/D12 adicionados)
 
 O Technical Context não tem NEEDS CLARIFICATION — stack e padrões são os do projeto. Este documento consolida as decisões de desenho que a implementação deve seguir, com alternativas consideradas.
 
@@ -67,9 +67,9 @@ e remover `deadlineMode`, `deadlineDate`, `recurringCount`, `recurringStart`.
 
 ## D7. Registro da configuração do sorteio (FR-015)
 
-**Decision**: migration aditiva em `assignment_batches`: `mode TEXT NOT NULL DEFAULT 'replace' CHECK (mode IN ('append','replace'))` e `filters JSONB` (snapshot de `maxHumanCodings`, `assignmentFilter`, `batchFilter`, `manualDocIds` (apenas contagem + ids), `participantIds`, `docSubsetSize`). Colunas de deadline existentes ficam intocadas (passam a receber `'none'`/NULL por default).
+**Decision**: migration aditiva em `assignment_batches`: `mode TEXT NOT NULL DEFAULT 'replace' CHECK (mode IN ('append','replace'))`, `balancing TEXT NOT NULL DEFAULT 'history' CHECK (balancing IN ('round','history'))` e `filters JSONB` (snapshot de `maxHumanCodings`, `assignmentFilter`, `batchFilter`, `manualDocIds` (apenas contagem + ids), `participantIds`, `docSubsetSize`). Colunas de deadline existentes ficam intocadas (passam a receber `'none'`/NULL por default).
 
-**Rationale**: `mode` como coluna tipada (consultável); `filters` como JSONB evita o sprawl de ~6 colunas para dados que são só auditoria/consulta. Default `'replace'` descreve corretamente os lotes históricos (todos foram substitutivos).
+**Rationale**: `mode` e `balancing` como colunas tipadas (consultáveis, FR-015/FR-016); `filters` como JSONB evita o sprawl de ~6 colunas para dados que são só auditoria/consulta. Default `'replace'` descreve corretamente os lotes históricos (todos foram substitutivos); default `'history'` em `balancing` idem — o comportamento antigo aproximava o nivelamento por carga acumulada (water-filling), nunca a divisão uniforme da rodada. A UI envia `'round'` como default para sorteios novos (D11).
 
 **Alternatives considered**: colunas individuais para cada filtro (padrão dos campos de 2026-03) — mais rígido e exige nova migration a cada filtro futuro; tudo em JSONB inclusive mode — perde a checagem de domínio barata.
 
@@ -87,6 +87,22 @@ e remover `deadlineMode`, `deadlineDate`, `recurringCount`, `recurringStart`.
 
 ## D10. Testes
 
-**Decision**: unit tests Vitest para `filterEligibleDocs` cobrindo: cada filtro isolado, composição por interseção, `maxHumanCodings` 0/N, interação com tipo comparação (exigência mínima preservada — FR-011), seleção manual ∩ filtros, e casos de borda da spec (0 elegíveis). A distribuição (`computeLottery`) permanece testada indiretamente — extrair seu núcleo puro fica como refactor futuro se necessário.
+**Decision**: unit tests Vitest para as duas primitivas puras de `lottery-utils.ts`. Para `filterEligibleDocs`: cada filtro isolado, composição por interseção, `maxHumanCodings` 0/N, interação com tipo comparação (exigência mínima preservada — FR-011), seleção manual ∩ filtros, e casos de borda da spec (0 elegíveis). Para `distributeDocs` (D12), com RNG injetável para determinismo: uniformidade no modo `round` (⌊D·R/P⌋..⌈D·R/P⌉ — SC-006), nivelamento no modo `history` (SC-007), não-concentração com múltiplos participantes com capacidade, desempate independente da ordem do array de participantes (FR-019), respeito a `docsPerResearcher`, anti-duplicidade com preservadas e variação de duplas como critério secundário (FR-014).
 
-**Rationale**: a função pura é o ponto de maior risco lógico novo e é trivialmente testável; o algoritmo de distribuição não muda (FR-014).
+**Rationale**: as duas funções puras concentram todo o risco lógico novo da feature; o redesenho da distribuição (D12) é exatamente o tipo de código que precisa de testes determinísticos — daí o RNG injetável em vez de `Math.random` hardcoded.
+
+## D11. Modo de equilíbrio: representação e default
+
+**Decision**: novo campo `balancing: "round" | "history"` em `LotteryParams`, default `"round"` na UI (RadioGroup na seção "Distribuição" do dialog: "Equilibrar só esta rodada" / "Equilibrar considerando rodadas anteriores"). No modo `history`, a carga acumulada de um participante = nº de atribuições do tipo sorteado no conjunto preservado do sorteio corrente — em `append`, pendentes + em andamento + concluídas; em `replace`, em andamento + concluídas, porque as pendentes do tipo são descartadas pelo próprio sorteio e deixam de existir como carga.
+
+**Rationale**: decisões tomadas com o usuário em 2026-06-11: default "só esta rodada" (cada sorteio sai equilibrado por si, mais previsível) e carga acumulada contando pendentes (corrige a distorção atual de ignorar trabalho distribuído e não iniciado — `researcherAssignedCount` hoje só conta `em_andamento`/`concluido`). Derivar a carga do conjunto preservado do modo mantém coerência interna: o que o sorteio preserva é o que pesa; o que ele apaga não pesa.
+
+**Alternatives considered**: (1) contar pendentes também em `replace` — contaria atribuições que o próprio sorteio acabou de apagar, distorcendo o nivelamento; (2) terceiro modo "sem equilíbrio" (aleatório puro) — sem caso de uso relatado, YAGNI.
+
+## D12. Redesenho do núcleo de distribuição (`distributeDocs`)
+
+**Decision**: extrair a distribuição de `computeLottery` (passo 10 atual) para uma função pura `distributeDocs(eligibleDocIds, participants, options)` em `lottery-utils.ts`, onde `participants` traz `{ id, accumulatedLoad, capacity }` e `options` traz `{ researchersPerDoc, balancing, preservedPairs, coOccurrence, rng }`. Para cada documento (em ordem embaralhada), os candidatos são ordenados por chave composta — primário: carga corrente do modo (`round`: só atribuições novas deste sorteio; `history`: `accumulatedLoad` + novas deste sorteio); secundário: co-ocorrência com quem já está no documento; terciário: aleatório (array de candidatos embaralhado com `rng` antes do sort estável). A carga corrente é recalculada a cada atribuição feita (o sort acontece por documento, sobre valores atualizados).
+
+**Rationale**: corrige os dois defeitos confirmados em `frontend/src/actions/assignments.ts:264-298`: (a) sem `docsPerResearcher`, capacidade `Infinity` empatava o desempate e o sort estável entregava todos os documentos aos primeiros da lista de membros — o embaralhamento pré-sort elimina o viés de ordem (FR-019); (b) com limite, o desempate por maior capacidade restante produzia water-filling involuntário — agora o critério primário é explícito e configurável (FR-017/FR-018), e a contagem usada é a carga, não a capacidade residual. Equilíbrio como critério primário e duplas como secundário é o que torna SC-006 garantível (diferença máxima de 1 na rodada); a variação de duplas continua atuando entre empatados de carga, preservando FR-014. A extração para função pura viabiliza os testes de D10 e segue o padrão anti-drift de `schema-utils.ts`.
+
+**Alternatives considered**: (1) corrigir in-place dentro de `computeLottery` (trocar o tie-break por aleatório e o critério por carga) — corrige o bug mas mantém o núcleo intestável dentro de uma Server Action com I/O; o custo da extração é baixo e o ganho em testabilidade é o ponto da feature; (2) round-robin estrito por participante em vez de greedy por documento — garante uniformidade mas conflita com a estrutura por-documento necessária para anti-duplicidade por doc e variação de duplas; o greedy por documento com critério de carga atinge o mesmo resultado (diferença ≤ 1) mantendo a estrutura; (3) otimização global (matching/fluxo) — complexidade desproporcional para o tamanho do problema e ganho nulo perceptível.

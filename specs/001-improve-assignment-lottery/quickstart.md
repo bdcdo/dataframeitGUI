@@ -37,6 +37,8 @@ npx supabase db push
 cd frontend && npx vitest run src/lib/__tests__/lottery-utils.test.ts
 ```
 
+Cobrem as duas primitivas puras: `filterEligibleDocs` (filtros e composição) e `distributeDocs` (uniformidade da rodada, nivelamento por histórico, não-concentração, desempate aleatório via RNG injetado — research.md D10/D12).
+
 ## Validação manual (espelha os acceptance scenarios da spec)
 
 1. Abrir um projeto com documentos parcialmente codificados → `/projects/<id>/analyze/assignments` → "Sortear".
@@ -47,8 +49,9 @@ cd frontend && npx vitest run src/lib/__tests__/lottery-utils.test.ts
 6. **Lote (US4)**: excluir o "Lote 1" da elegibilidade e conferir que nenhum doc daquele lote reaparece.
 7. **Manual (US5)**: ligar a seleção manual, buscar e marcar 5 docs, sortear; só esses 5 distribuem.
 8. **Prazo (US6)**: percorrer o dialog — sem seção de prazo; prévia sem coluna Prazo.
-9. **Bordas**: combinar filtros até 0 elegíveis → botões desabilitados com mensagem; todos os toggles desligados → idem.
-10. **Prévia (SC-005)**: para a mesma configuração, "Visualizar prévia" e o toast pós-sorteio devem reportar os mesmos totais.
+9. **Equilíbrio (US7)**: num projeto com 3+ participantes de cargas diferentes, sortear ~12 docs no modo "Equilibrar só esta rodada" → prévia e tabela mostram cada participante com a mesma quantidade de atribuições novas (±1); repetir no modo "considerando rodadas anteriores" → quem tinha menos carga recebe mais, sem ninguém levar tudo. Repetir o sorteio (substituir) algumas vezes e conferir que os contemplados variam (desempate aleatório, não a ordem dos membros).
+10. **Bordas**: combinar filtros até 0 elegíveis → botões desabilitados com mensagem; todos os toggles desligados → idem.
+11. **Prévia (SC-005)**: para a mesma configuração, "Visualizar prévia" e o toast pós-sorteio devem reportar os mesmos totais.
 
 ## Verificação de qualidade antes do PR
 

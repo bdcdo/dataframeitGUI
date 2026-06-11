@@ -1,16 +1,17 @@
 # Data Model: Melhorar o sorteio de atribuições
 
-**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10
+**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10 | **Updated**: 2026-06-11 (US7 — coluna `balancing`, distribuição redesenhada)
 
 Nenhuma tabela nova. Uma migration aditiva em `assignment_batches`; as demais entidades são lidas como estão.
 
 ## Alteração de schema
 
-### `assignment_batches` (migration `20260610XXXXXX_lottery_mode_filters.sql`)
+### `assignment_batches` (migration `20260611XXXXXX_lottery_mode_filters.sql`)
 
 | Coluna nova | Tipo | Regra | Descrição |
 |-------------|------|-------|-----------|
 | `mode` | TEXT NOT NULL DEFAULT `'replace'` | CHECK (`mode IN ('append','replace')`) | Interação do sorteio com pendentes; default descreve lotes históricos (todos substitutivos) |
+| `balancing` | TEXT NOT NULL DEFAULT `'history'` | CHECK (`balancing IN ('round','history')`) | Modo de equilíbrio da distribuição; default descreve lotes históricos (o comportamento antigo aproximava o nivelamento por carga acumulada). UI envia `'round'` para sorteios novos |
 | `filters` | JSONB NULL | — | Snapshot da configuração de elegibilidade e participantes usada no sorteio |
 
 Shape do `filters` (gravado pelo server, livre de PII além de user ids já presentes no schema):
@@ -64,7 +65,17 @@ Fonte do pool de participantes (`user_id, role`); `participantIds` recebidos do 
 5. `batchFilter`: `only` → `batchIds` contém o lote; `exclude` → interseção vazia com os lotes excluídos.
 6. (Para tipo comparação, antes de tudo no server) exigência `humanCount latest >= min_responses_for_comparison` — preservada de `computeLottery`, compõe com os demais filtros (FR-011).
 
-Após o pipeline, `computeLottery` aplica: vagas (`< researchersPerDoc` considerando o conjunto preservado do modo) → subconjunto aleatório (`docSubsetSize`) → distribuição balanceada (inalterada).
+Após o pipeline, `computeLottery` aplica: vagas (`< researchersPerDoc` considerando o conjunto preservado do modo) → subconjunto aleatório (`docSubsetSize`) → distribuição via `distributeDocs` (pura — research.md D12).
+
+### Distribuição (`distributeDocs` — por documento, em ordem embaralhada)
+
+Para cada documento com vaga, candidatos = participantes sem atribuição preservada ou nova naquele documento e com capacidade restante (`docsPerResearcher`). Ordenação por chave composta:
+
+1. **Carga corrente do modo de equilíbrio** — `round`: atribuições novas deste sorteio; `history`: carga acumulada (atribuições do tipo no conjunto preservado — em `append` inclui pendentes; em `replace` não, pois foram descartadas) + novas deste sorteio.
+2. **Co-ocorrência** com quem já está no documento (variação de duplas — FR-014).
+3. **Aleatório** — candidatos embaralhados antes do sort estável; a ordem de cadastro dos membros nunca decide (FR-019).
+
+A carga corrente é atualizada a cada atribuição feita, então o critério primário vale documento a documento — é o que garante diferença máxima de 1 no modo `round` (SC-006) e o nivelamento no modo `history` (SC-007).
 
 ## Transições de estado relevantes
 

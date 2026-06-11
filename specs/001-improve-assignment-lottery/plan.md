@@ -1,14 +1,14 @@
 # Implementation Plan: Melhorar o sorteio de atribuições
 
-**Branch**: `001-improve-assignment-lottery` | **Date**: 2026-06-10 | **Spec**: [spec.md](./spec.md)
+**Branch**: `001-improve-assignment-lottery` | **Date**: 2026-06-10 | **Updated**: 2026-06-11 (US7 — equilíbrio configurável) | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `/specs/001-improve-assignment-lottery/spec.md`
 
 ## Summary
 
-Dar ao coordenador controle sobre o sorteio de atribuições em três eixos: elegibilidade de documentos (filtros por nº de codificações humanas, status de atribuição, lote anterior e seleção manual), interação com atribuições pendentes (modo acrescentar — novo default — vs substituir) e pool de participantes (toggle individual por membro). Remover a configuração de prazo do dialog.
+Dar ao coordenador controle sobre o sorteio de atribuições em quatro eixos: elegibilidade de documentos (filtros por nº de codificações humanas, status de atribuição, lote anterior e seleção manual), interação com atribuições pendentes (modo acrescentar — novo default — vs substituir), pool de participantes (toggle individual por membro) e equilíbrio da distribuição (só a rodada atual — novo default — vs considerando rodadas anteriores). Remover a configuração de prazo do dialog e corrigir os defeitos do algoritmo atual que concentram documentos num único participante.
 
-Abordagem técnica: a elegibilidade é calculada por uma função pura compartilhada (`filterEligibleDocs` em `frontend/src/lib/lottery-utils.ts`) aplicada sobre estatísticas leves por documento carregadas uma vez na abertura do dialog — o client usa a função para contagem ao vivo e para a lista de seleção manual; o server (`computeLottery`) reaplica a mesma função como fonte de verdade no preview e na execução. O modo acrescentar muda o conjunto "preservado" de `computeLottery` de "não-pendentes" para "todas as atribuições do tipo" e suprime o DELETE de pendentes em `smartRandomize`. A configuração usada (modo + filtros + participantes) é registrada em `assignment_batches` via migration aditiva.
+Abordagem técnica: a elegibilidade é calculada por uma função pura compartilhada (`filterEligibleDocs` em `frontend/src/lib/lottery-utils.ts`) aplicada sobre estatísticas leves por documento carregadas uma vez na abertura do dialog — o client usa a função para contagem ao vivo e para a lista de seleção manual; o server (`computeLottery`) reaplica a mesma função como fonte de verdade no preview e na execução. O modo acrescentar muda o conjunto "preservado" de `computeLottery` de "não-pendentes" para "todas as atribuições do tipo" e suprime o DELETE de pendentes em `smartRandomize`. O núcleo de distribuição sai de `computeLottery` para uma segunda função pura (`distributeDocs`), com critério primário de carga conforme o modo de equilíbrio, variação de duplas como critério secundário e desempate aleatório (research.md D12). A configuração usada (modos + filtros + participantes) é registrada em `assignment_batches` via migration aditiva.
 
 ## Technical Context
 
@@ -18,7 +18,7 @@ Abordagem técnica: a elegibilidade é calculada por uma função pura compartil
 
 **Storage**: Supabase Postgres — tabelas existentes `documents`, `assignments`, `responses`, `assignment_batches`, `project_members`; uma migration aditiva em `assignment_batches`
 
-**Testing**: Vitest (frontend) — unit tests da função pura de elegibilidade; backend FastAPI não é tocado
+**Testing**: Vitest (frontend) — unit tests das funções puras de elegibilidade (`filterEligibleDocs`) e distribuição (`distributeDocs`, com RNG injetável); backend FastAPI não é tocado
 
 **Target Platform**: Web desktop (alvo é desktop/mouse; densidade > alvos de toque, conforme CLAUDE.md)
 
@@ -48,6 +48,8 @@ Abordagem técnica: a elegibilidade é calculada por uma função pura compartil
 
 Re-check pós-Phase 1: PASS (nenhuma violação introduzida pelo desenho; sem entradas em Complexity Tracking).
 
+Re-check pós-US7 (2026-06-11): PASS — o redesenho da distribuição adiciona apenas uma função pura em `lib/` (sem dependência nova, sem tabela nova), a migration continua aditiva sobre `assignment_batches`, e as Server Actions permanecem o único canal de mutation.
+
 ## Project Structure
 
 ### Documentation (this feature)
@@ -69,23 +71,25 @@ specs/001-improve-assignment-lottery/
 frontend/
 ├── src/
 │   ├── lib/
-│   │   └── lottery-utils.ts                 # NOVO — tipos de filtro + filterEligibleDocs (pura)
+│   │   └── lottery-utils.ts                 # NOVO — tipos de filtro + filterEligibleDocs e
+│   │                                        #   distributeDocs (puras, RNG injetável)
 │   ├── lib/__tests__/
-│   │   └── lottery-utils.test.ts            # NOVO — unit tests Vitest
+│   │   └── lottery-utils.test.ts            # NOVO — unit tests Vitest (filtros + distribuição)
 │   ├── actions/
 │   │   └── assignments.ts                   # ALTERADO — LotteryParams v2, getLotteryDocStats,
-│   │                                        #   computeLottery com filtros/modo, remoção de deadline
+│   │                                        #   computeLottery com filtros/modos delegando a
+│   │                                        #   distributeDocs, remoção de deadline
 │   ├── components/assignments/
-│   │   ├── LotteryDialog.tsx                # ALTERADO — seções de filtros, modo, participantes;
-│   │   │                                    #   remoção da seção Prazo
+│   │   ├── LotteryDialog.tsx                # ALTERADO — seções de filtros, modos (atribuição e
+│   │   │                                    #   equilíbrio), participantes; remoção da seção Prazo
 │   │   └── DocumentPickerList.tsx           # NOVO — lista pesquisável p/ seleção manual
 │   └── app/(app)/projects/[id]/analyze/assignments/
 │       └── page.tsx                         # ALTERADO — passa members (nome+role) ao dialog
 └── supabase/migrations/
-    └── 20260610XXXXXX_lottery_mode_filters.sql  # NOVA — mode + filters em assignment_batches
+    └── 20260611XXXXXX_lottery_mode_filters.sql  # NOVA — mode + balancing + filters em assignment_batches
 ```
 
-**Structure Decision**: feature inteiramente no frontend (Next.js) + uma migration SQL. O backend FastAPI não participa (sorteio é CRUD/distribuição, não LLM/Pydantic). A lógica de elegibilidade vive numa primitiva pura compartilhada em `lib/`, seguindo o padrão já adotado pelo projeto para `schema-utils.ts` (primitivas puras reutilizadas por actions e scripts, evitando drift — cf. #63).
+**Structure Decision**: feature inteiramente no frontend (Next.js) + uma migration SQL. O backend FastAPI não participa (sorteio é CRUD/distribuição, não LLM/Pydantic). As lógicas de elegibilidade e de distribuição vivem em primitivas puras compartilhadas em `lib/`, seguindo o padrão já adotado pelo projeto para `schema-utils.ts` (primitivas puras reutilizadas por actions e scripts, evitando drift — cf. #63).
 
 ## Complexity Tracking
 

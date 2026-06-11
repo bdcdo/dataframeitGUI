@@ -1,6 +1,6 @@
 # Contracts: Server Actions do sorteio
 
-**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10
+**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10 | **Updated**: 2026-06-11 (US7 — `balancing` + `distributeDocs`)
 
 Interface exposta = Server Actions em `frontend/src/actions/assignments.ts` consumidas pelo `LotteryDialog`. Todas exigem usuário autenticado (Clerk) e operam sob RLS (coordenador do projeto).
 
@@ -8,6 +8,7 @@ Interface exposta = Server Actions em `frontend/src/actions/assignments.ts` cons
 
 ```ts
 export type LotteryMode = "append" | "replace";
+export type LotteryBalancing = "round" | "history";
 export type AssignmentFilter = "any" | "noActiveOfType" | "neverAssigned";
 
 export interface LotteryFilters {
@@ -33,6 +34,26 @@ export function filterEligibleDocs(
   type: "codificacao" | "comparacao",
   filters: LotteryFilters,
 ): LotteryDocStats[];
+
+// Pura — núcleo da distribuição (research.md D12); RNG injetável p/ testes
+export interface LotteryParticipant {
+  id: string;
+  accumulatedLoad: number;   // atribuições do tipo no conjunto preservado do modo
+  capacity: number;          // docsPerResearcher - accumulatedLoad, ou Infinity
+}
+
+export function distributeDocs(
+  eligibleDocIds: string[],
+  participants: LotteryParticipant[],
+  options: {
+    researchersPerDoc: number;
+    balancing: LotteryBalancing;
+    preservedPairs: Set<string>;                    // "docId:userId" já existentes
+    docAssignedUsers: Record<string, string[]>;     // usuários preservados por doc
+    coOccurrence: Record<string, Record<string, number>>;
+    rng?: () => number;                              // default Math.random
+  },
+): { document_id: string; user_id: string }[];
 ```
 
 ## `getLotteryDocStats(projectId: string)` — NOVA (leitura)
@@ -56,6 +77,7 @@ export interface LotteryParams {
   projectId: string;
   type?: "codificacao" | "comparacao";   // default "codificacao"
   mode: LotteryMode;                      // NOVO — default na UI: "append"
+  balancing: LotteryBalancing;            // NOVO — default na UI: "round"
   researchersPerDoc: number;
   docsPerResearcher?: number;
   docSubsetSize?: number;
@@ -97,11 +119,13 @@ returns Promise<{ count: number; preserved: number }>
 Efeitos:
 
 1. `mode === "replace"`: DELETE das atribuições `pendente` do tipo no projeto; `mode === "append"`: nenhum delete.
-2. INSERT em `assignment_batches` com `mode`, `filters` (JSONB, incluindo `participantIds` e `docSubsetSize`), `deadline_mode: 'none'`, demais colunas como hoje.
+2. INSERT em `assignment_batches` com `mode`, `balancing`, `filters` (JSONB, incluindo `participantIds` e `docSubsetSize`), `deadline_mode: 'none'`, demais colunas como hoje.
 3. INSERT das novas atribuições em chunks de 100, sem `deadline`, com `batch_id` e `type`.
 4. `revalidatePath` de assignments/code/compare (inalterado).
 
 Invariantes (FR-009): nunca viola `UNIQUE(document_id, user_id, type)`; nunca toca atribuições `em_andamento`/`concluido`.
+
+Garantias da distribuição (US7): no modo `balancing: "round"` sem limites de capacidade, diferença máxima de 1 atribuição nova entre participantes (SC-006); no modo `"history"`, prioridade a quem tem menor carga acumulada (pendentes + em andamento + concluídas em `append`; em andamento + concluídas em `replace`); em ambos, desempate aleatório — a ordem do array de membros não influencia o resultado (FR-019) — e nunca um único participante recebe todos os documentos havendo outros com capacidade.
 
 ## Removida
 
@@ -111,4 +135,4 @@ Invariantes (FR-009): nunca viola `UNIQUE(document_id, user_id, type)`; nunca to
 
 Props: `projectId: string; members: { userId: string; name: string; role: "pesquisador" | "coordenador" }[]` (a page de atribuições já tem nomes; `totalDocs`/`totalResearchers`/`coordinators` saem — contagens passam a vir de `getLotteryDocStats` + toggles).
 
-Comportamentos obrigatórios: contagem de elegíveis e estimativa por participante recalculadas client-side a cada mudança (FR-007); "Visualizar prévia" e "Sortear" desabilitados com 0 elegíveis ou 0 participantes, com mensagem contextual; seção Prazo inexistente (FR-012); prévia sem coluna Prazo e exibindo nomes dos participantes (não mais `userId.slice(0,8)`).
+Comportamentos obrigatórios: contagem de elegíveis e estimativa por participante recalculadas client-side a cada mudança (FR-007); "Visualizar prévia" e "Sortear" desabilitados com 0 elegíveis ou 0 participantes, com mensagem contextual; seção Prazo inexistente (FR-012); prévia sem coluna Prazo e exibindo nomes dos participantes (não mais `userId.slice(0,8)`); seleção do modo de equilíbrio na seção Distribuição (RadioGroup "Equilibrar só esta rodada" — default — / "Equilibrar considerando rodadas anteriores"), refletida na prévia (FR-016).
