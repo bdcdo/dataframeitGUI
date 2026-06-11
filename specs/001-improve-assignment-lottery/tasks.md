@@ -25,8 +25,8 @@ Web app — tudo em `frontend/` (Next.js App Router); migrations em `frontend/su
 
 **Purpose**: workspace e schema prontos para a implementação
 
-- [ ] T001 Confirmar workspace: implementação neste checkout primário, branch `001-improve-assignment-lottery` ativa (decisão registrada no plano — exceção pontual à regra de worktree; sem worktree nesta feature)
-- [ ] T002 Criar migration `frontend/supabase/migrations/<timestamp>_lottery_mode_filters.sql` adicionando a `assignment_batches`: `mode TEXT NOT NULL DEFAULT 'replace' CHECK (mode IN ('append','replace'))`, `balancing TEXT NOT NULL DEFAULT 'history' CHECK (balancing IN ('round','history'))` e `filters JSONB` (shape em data-model.md)
+- [X] T001 Confirmar workspace: implementação em worktree própria (`../worktrees/001-improve-assignment-lottery`, branch `001-improve-assignment-lottery`) — decisão revista em 2026-06-11 a pedido do usuário, alinhando ao plan.md e ao quickstart.md; o checkout primário ficou ocupado pela branch 002
+- [X] T002 Criar migration `frontend/supabase/migrations/<timestamp>_lottery_mode_filters.sql` adicionando a `assignment_batches`: `mode TEXT NOT NULL DEFAULT 'replace' CHECK (mode IN ('append','replace'))`, `balancing TEXT NOT NULL DEFAULT 'history' CHECK (balancing IN ('round','history'))` e `filters JSONB` (shape em data-model.md)
 - [ ] T003 Aplicar a migration no projeto remoto via fluxo manual do CLAUDE.md (`cd frontend && export SUPABASE_ACCESS_TOKEN=... && npx supabase link --project-ref nryebmwlmxuwvynfuzsv && npx supabase db push`) — aditiva com defaults, segura de aplicar antes do código
 
 ---
