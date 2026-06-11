@@ -14,12 +14,12 @@ Todas as actions exigem chamador coordenador do projeto (FR-014), validado como 
 ## `updatePendingMemberEmail(projectId, memberUserId, newEmail)` — nova
 
 - Pré-condições: membro do projeto com `profiles.activated_at IS NULL`; `newEmail` válido e sem profile/vínculo existente no projeto.
-- Efeito: atualiza `auth.users.email` (admin API) + `profiles.email`.
+- Efeito: atualiza `auth.users.email` (admin API) + `profiles.email`. **Efeito global** (FR-005): a correção vale para todos os projetos em que o placeholder está pré-registrado; a action retorna `otherProjectsCount` (projetos além do atual) para a UI exibir aviso de confirmação quando `> 0`.
 - Erros: membro já ativo (corrigir via vínculo/US2); e-mail em uso.
 
 ## `removeMember(projectId, memberId)` — modificada
 
-- Além de deletar `project_members`: deleta `assignments` com `status = 'pendente'` do usuário no projeto (FR-005) e os `member_email_links` cujo `member_user_id` é o removido.
+- Além de deletar `project_members`: deleta `assignments` com `status = 'pendente'` do usuário no projeto (FR-005) e os `member_email_links` do projeto cujo `member_user_id` é o removido. A limpeza de `member_email_links` entra na fase da US2 (quando a tabela passa a existir); na US1, a action trata apenas assignments.
 
 ## `linkMemberEmail(projectId, memberUserId, email)` — nova
 
@@ -48,6 +48,7 @@ Após o `syncClerkUserToSupabase` atual (que já mapeia signup para placeholder 
 
 1. Marca `profiles.activated_at = now()` no profile resolvido, se `NULL` (transição pendente→ativo, SC-005).
 2. Resolve vínculos pendentes: `UPDATE member_email_links SET linked_user_id = <profile> WHERE email = <email> AND linked_user_id IS NULL`.
+3. Ativa os membros canônicos desses vínculos: `UPDATE profiles SET activated_at = now() WHERE id IN (<member_user_id resolvidos no passo 2>) AND activated_at IS NULL` — sem isso, um pendente cuja pessoa entra pelo e-mail vinculado ficaria "pendente" para sempre (SC-005, caminho via alias).
 
 Fallback em `getAuthUser()` (`frontend/src/lib/auth.ts`): se o profile da sessão tem `activated_at IS NULL`, seta `now()` (cobre webhook perdido e contas antigas).
 

@@ -11,7 +11,7 @@ ALTER TABLE profiles ADD COLUMN activated_at TIMESTAMPTZ;
 UPDATE profiles SET activated_at = created_at;  -- backfill: existentes contam como ativos
 ```
 
-- **Semântica**: `NULL` = membro pendente (nunca teve acesso autenticado). Preenchida uma única vez — pelo webhook `user.created` (signup real) ou pelo fallback em `getAuthUser()`.
+- **Semântica**: `NULL` = membro pendente (nunca teve acesso autenticado). Preenchida uma única vez — pelo webhook `user.created` (signup real; quando o signup é de um e-mail vinculado, o webhook ativa também o `member_user_id` canônico do vínculo) ou pelo fallback em `getAuthUser()`.
 - **Estados**: `pendente (activated_at IS NULL)` → `ativo (activated_at NOT NULL)`. Transição única, irreversível.
 - Sem index novo: a coluna é lida via join `project_members → profiles`, já indexado.
 
@@ -93,7 +93,7 @@ Numa transação, no escopo de `p_project_id` (ver D4 do research.md):
 | `assignments` | `user_id` | `UNIQUE(document_id, user_id, type)`: se o target já tem a mesma (doc, type), deleta a do source |
 | `responses` | `respondent_id` | recalcular `is_latest` por documento (a mais recente do conjunto fundido fica `true`) |
 | `reviews` | `reviewer_id`, `resolved_by` | — |
-| `field_reviews` | `self_reviewer_id`, `arbitrator_id` | unique por (response_field, …) se existir: target prevalece |
+| `field_reviews` | `self_reviewer_id`, `arbitrator_id` | sem colisão possível — `field_reviews_unique` é `(document_id, field_name)` e não envolve usuário (migration `20260513000001_field_reviews.sql:45`) |
 | `project_comments` | `author_id`, `resolved_by` | — |
 | `difficulty_resolutions` / `error_resolutions` / `note_resolutions` | `resolved_by` | — |
 | `response_equivalences` | `reviewer_id` | — |

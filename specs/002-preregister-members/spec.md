@@ -49,7 +49,7 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 
 1. **Given** um membro do projeto (ativo ou pendente), **When** o coordenador vincula um e-mail adicional a ele, **Then** o e-mail adicional aparece associado ao membro na lista de membros.
 2. **Given** um membro com dois e-mails vinculados, **When** a pessoa entra na plataforma com qualquer um dos dois, **Then** ela acessa o projeto como o mesmo membro e vê exatamente o mesmo conjunto de atribuições, respostas e progresso.
-3. **Given** um e-mail adicional vinculado que ainda não pertence a nenhuma conta, **When** a pessoa cria conta com esse e-mail, **Then** ela entra no projeto como o membro ao qual o e-mail foi vinculado — o vínculo de e-mail sem conta vale como pré-registro para o mesmo membro.
+3. **Given** um e-mail adicional vinculado que ainda não pertence a nenhuma conta, **When** a pessoa cria conta com esse e-mail, **Then** ela entra no projeto como o membro ao qual o e-mail foi vinculado — o vínculo de e-mail sem conta vale como pré-registro para o mesmo membro — e, se o membro estava pendente, ele passa a ativo nesse primeiro acesso.
 4. **Given** um e-mail adicional que já corresponde a outro membro do mesmo projeto, **When** o coordenador solicita o vínculo, **Then** o sistema explica que os dois membros serão unificados naquele projeto (atribuições somadas, sem perda nem duplicação de respostas) e só executa após confirmação explícita do coordenador.
 5. **Given** um e-mail já vinculado a um membro do projeto, **When** o coordenador tenta vinculá-lo a outro membro do mesmo projeto, **Then** o sistema impede e informa a qual membro o e-mail já está vinculado.
 6. **Given** um membro com e-mail adicional vinculado, **When** o coordenador desfaz o vínculo, **Then** o e-mail deixa de dar acesso ao projeto como aquele membro, mas todo o histórico já produzido (respostas, revisões) permanece intacto e atribuído ao membro.
@@ -76,7 +76,7 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 - **FR-002**: O sistema MUST exibir membros pré-registrados na lista de membros com status visível de "pendente" (ainda sem primeiro acesso), distinguindo-os dos membros ativos.
 - **FR-003**: Membros pendentes MUST ser elegíveis para atribuição de documentos — tanto pelo sorteio quanto por atribuição manual — em igualdade com membros ativos.
 - **FR-004**: Quando uma pessoa cria conta com um e-mail pré-registrado, o sistema MUST conceder-lhe acesso automático a todos os projetos em que aquele e-mail foi pré-registrado, com o papel, as permissões e as atribuições já definidos, sem ação do coordenador.
-- **FR-005**: O coordenador MUST poder corrigir o e-mail ou remover um membro pendente; na remoção, as atribuições do membro retornam ao conjunto de documentos não atribuídos.
+- **FR-005**: O coordenador MUST poder corrigir o e-mail ou remover um membro pendente; na remoção, as atribuições do membro retornam ao conjunto de documentos não atribuídos. A correção de e-mail vale para todos os projetos em que aquele e-mail está pré-registrado (trata-se da mesma pessoa); quando o pendente pertence a mais de um projeto, o sistema informa isso ao coordenador antes de confirmar.
 - **FR-006**: O sistema MUST validar o formato do e-mail na entrada e impedir pré-registro duplicado do mesmo e-mail no mesmo projeto.
 - **FR-007**: O coordenador MUST poder vincular um ou mais e-mails adicionais a um membro do projeto (ativo ou pendente); o pesquisador não gerencia os próprios vínculos nesta versão.
 - **FR-008**: O sistema MUST garantir que o acesso ao projeto por qualquer e-mail vinculado se dê como o mesmo membro, com conjunto unificado de atribuições, respostas e progresso.
@@ -102,7 +102,7 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 - **SC-002**: 100% das pessoas que criam conta com um e-mail pré-registrado veem seus projetos e atribuições no primeiro acesso, sem qualquer intervenção do coordenador.
 - **SC-003**: Após o vínculo de e-mails, a pessoa acessa o projeto com qualquer um dos e-mails vinculados e vê exatamente o mesmo conjunto de atribuições — zero atribuições perdidas, zero duplicadas.
 - **SC-004**: Em toda unificação de membros, 100% das respostas e revisões pré-existentes permanecem acessíveis e corretamente atribuídas após a operação.
-- **SC-005**: A lista de membros distingue pendentes de ativos em 100% dos casos, e o status muda para ativo no primeiro acesso da pessoa.
+- **SC-005**: A lista de membros distingue pendentes de ativos em 100% dos casos, e o status muda para ativo no primeiro acesso da pessoa — inclusive quando o primeiro acesso acontece por um e-mail vinculado, e não pelo e-mail de pré-registro.
 
 ## Assumptions
 

@@ -24,7 +24,7 @@ São necessárias 2+ contas de e-mail de teste (aliases Gmail `+sufixo` funciona
 ## US2 — Vínculo de e-mails (P2)
 
 1. Num membro existente, "Vincular e-mail" com um e-mail **sem conta** → aparece como e-mail adicional na lista.
-2. Criar conta com esse segundo e-mail → a conta nova vê o projeto e exatamente as mesmas atribuições do membro (acessa "como" ele); fora do projeto, conta independente.
+2. Criar conta com esse segundo e-mail → a conta nova vê o projeto e exatamente as mesmas atribuições do membro (acessa "como" ele); fora do projeto, conta independente. Se o membro estava pendente, o badge "Pendente" some (ativação do membro canônico via alias).
 3. Vincular um e-mail que **já é outro membro do mesmo projeto** → dialog de unificação com contagens (atribuições migradas, docs com resposta de ambos, papel resultante); confirmar → lista mostra um membro só, atribuições somadas, respostas preservadas.
 4. Tentar vincular e-mail já vinculado a outro membro → erro indicando o membro.
 5. Desvincular o e-mail adicional → conta do e-mail perde acesso ao projeto; histórico do membro intacto.
