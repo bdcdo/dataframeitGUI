@@ -5,12 +5,14 @@ import { getAuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import {
   createRng,
+  distributeDocs,
   filterEligibleDocs,
   shuffleWithRng,
   type LotteryBalancing,
   type LotteryDocStats,
   type LotteryFilters,
   type LotteryMode,
+  type LotteryParticipant,
 } from "@/lib/lottery-utils";
 
 /**
@@ -339,54 +341,35 @@ async function computeLottery(params: LotteryParams): Promise<{
     }
   }
 
-  // Carga acumulada + capacidade por participante (do conjunto preservado)
-  const capacity: Record<string, number> = {};
-  for (const pId of participantIds) {
-    capacity[pId] = params.docsPerResearcher
-      ? Math.max(0, params.docsPerResearcher - (preservedByUser[pId] || 0))
-      : Infinity;
-  }
+  // Carga acumulada (conjunto preservado do modo) + capacidade
+  const participants: LotteryParticipant[] = participantIds.map((pId) => {
+    const accumulatedLoad = preservedByUser[pId] || 0;
+    return {
+      id: pId,
+      accumulatedLoad,
+      capacity: params.docsPerResearcher
+        ? Math.max(0, params.docsPerResearcher - accumulatedLoad)
+        : Infinity,
+    };
+  });
 
-  // Distribuição (núcleo inline — substituído por distributeDocs na US7)
-  const newAssignments: LotteryAssignment[] = [];
-  const newDocUsers: Record<string, string[]> = {};
-
-  const shuffledEligible = shuffleWithRng(eligibleDocIds, rng);
-
-  for (const docId of shuffledEligible) {
-    const currentUsers = docAssignedUsers[docId] || new Set<string>();
-    const need = params.researchersPerDoc - currentUsers.size;
-    if (need <= 0) continue;
-
-    const candidates = participantIds.filter(
-      (pId) => !currentUsers.has(pId) && !preservedSet.has(`${docId}:${pId}`) && capacity[pId] > 0
-    );
-
-    const alreadyOnDoc = [...Array.from(currentUsers), ...(newDocUsers[docId] || [])];
-
-    const scored = candidates.map((pId) => {
-      const coScore = alreadyOnDoc.reduce((sum, uid) => sum + (coOccurrence[pId]?.[uid] || 0), 0);
-      return { pId, coScore, cap: capacity[pId] === Infinity ? 999999 : capacity[pId] };
-    });
-
-    scored.sort((a, b) => a.coScore - b.coScore || b.cap - a.cap);
-
-    const chosen = scored.slice(0, need);
-    if (!newDocUsers[docId]) newDocUsers[docId] = [];
-
-    for (const { pId } of chosen) {
-      newAssignments.push({ document_id: docId, user_id: pId });
-      capacity[pId]--;
-      newDocUsers[docId].push(pId);
-
-      for (const uid of [...alreadyOnDoc, ...newDocUsers[docId]]) {
-        if (uid !== pId) {
-          if (coOccurrence[pId]) coOccurrence[pId][uid] = (coOccurrence[pId][uid] || 0) + 1;
-          if (coOccurrence[uid]) coOccurrence[uid][pId] = (coOccurrence[uid][pId] || 0) + 1;
-        }
-      }
+  const newAssignments: LotteryAssignment[] = distributeDocs(
+    eligibleDocIds,
+    participants,
+    {
+      researchersPerDoc: params.researchersPerDoc,
+      balancing: params.balancing,
+      preservedPairs: preservedSet,
+      docAssignedUsers: Object.fromEntries(
+        Object.entries(docAssignedUsers).map(([docId, users]) => [
+          docId,
+          Array.from(users),
+        ])
+      ),
+      coOccurrence,
+      rng,
     }
-  }
+  );
 
   const batchData = {
     project_id: params.projectId,

@@ -101,3 +101,91 @@ export function shuffleWithRng<T>(arr: T[], rng: () => number): T[] {
   }
   return shuffled;
 }
+
+/**
+ * Núcleo da distribuição do sorteio (research D12). Para cada documento
+ * (em ordem embaralhada), cada vaga é dada ao candidato de menor chave
+ * composta: carga corrente do modo de equilíbrio (`round`: só as novas
+ * deste sorteio; `history`: acumulada + novas) → co-ocorrência com quem
+ * já está no documento (variação de duplas, FR-014) → aleatório
+ * (candidatos embaralhados antes do sort estável — a ordem do array de
+ * participantes nunca decide, FR-019). Carga e co-ocorrência são
+ * atualizadas a cada atribuição. Pura: não muta os inputs.
+ */
+export function distributeDocs(
+  eligibleDocIds: string[],
+  participants: LotteryParticipant[],
+  options: {
+    researchersPerDoc: number;
+    balancing: LotteryBalancing;
+    /** pares "docId:userId" já existentes (anti-duplicidade) */
+    preservedPairs: Set<string>;
+    /** usuários preservados por doc */
+    docAssignedUsers: Record<string, string[]>;
+    coOccurrence: Record<string, Record<string, number>>;
+    rng: () => number;
+  },
+): { document_id: string; user_id: string }[] {
+  const { researchersPerDoc, balancing, preservedPairs, docAssignedUsers, rng } = options;
+
+  const accumulated: Record<string, number> = {};
+  const newLoad: Record<string, number> = {};
+  const remaining: Record<string, number> = {};
+  for (const p of participants) {
+    accumulated[p.id] = p.accumulatedLoad;
+    newLoad[p.id] = 0;
+    remaining[p.id] = p.capacity;
+  }
+
+  // Cópia local da matriz para preservar a pureza da função
+  const coOccurrence: Record<string, Record<string, number>> = {};
+  for (const p of participants) {
+    coOccurrence[p.id] = { ...(options.coOccurrence[p.id] || {}) };
+  }
+
+  const result: { document_id: string; user_id: string }[] = [];
+
+  for (const docId of shuffleWithRng(eligibleDocIds, rng)) {
+    const preservedOnDoc = docAssignedUsers[docId] || [];
+    const newOnDoc = new Set<string>();
+    let need = researchersPerDoc - preservedOnDoc.length;
+
+    while (need > 0) {
+      const alreadyOnDoc = [...preservedOnDoc, ...newOnDoc];
+      const candidates = participants.filter(
+        (p) =>
+          remaining[p.id] > 0 &&
+          !newOnDoc.has(p.id) &&
+          !preservedOnDoc.includes(p.id) &&
+          !preservedPairs.has(`${docId}:${p.id}`),
+      );
+      if (!candidates.length) break;
+
+      const scored = shuffleWithRng(candidates, rng).map((p) => ({
+        id: p.id,
+        load:
+          balancing === "round"
+            ? newLoad[p.id]
+            : accumulated[p.id] + newLoad[p.id],
+        coScore: alreadyOnDoc.reduce(
+          (sum, uid) => sum + (coOccurrence[p.id]?.[uid] || 0),
+          0,
+        ),
+      }));
+      scored.sort((a, b) => a.load - b.load || a.coScore - b.coScore);
+
+      const chosen = scored[0].id;
+      result.push({ document_id: docId, user_id: chosen });
+      newLoad[chosen]++;
+      remaining[chosen]--;
+      for (const uid of alreadyOnDoc) {
+        if (coOccurrence[chosen]) coOccurrence[chosen][uid] = (coOccurrence[chosen][uid] || 0) + 1;
+        if (coOccurrence[uid]) coOccurrence[uid][chosen] = (coOccurrence[uid][chosen] || 0) + 1;
+      }
+      newOnDoc.add(chosen);
+      need--;
+    }
+  }
+
+  return result;
+}

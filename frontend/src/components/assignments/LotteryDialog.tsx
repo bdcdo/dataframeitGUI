@@ -511,6 +511,33 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
               />
             )}
 
+            <div>
+              <Label>Equilíbrio</Label>
+              <RadioGroup
+                value={balancing}
+                onValueChange={(v) => setBalancing(v as LotteryBalancing)}
+                className="mt-2 space-y-1"
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="round" id="bal-round" />
+                  <Label htmlFor="bal-round" className="font-normal">
+                    Equilibrar só esta rodada
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="history" id="bal-history" />
+                  <Label htmlFor="bal-history" className="font-normal">
+                    Equilibrar considerando rodadas anteriores
+                  </Label>
+                </div>
+              </RadioGroup>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {balancing === "round"
+                  ? "Cada participante recebe a mesma quantidade de atribuições novas (±1)."
+                  : "Quem tem menos atribuições acumuladas recebe mais, até nivelar."}
+              </p>
+            </div>
+
             {blockedMessage ? (
               <p className="text-xs text-destructive">{blockedMessage}</p>
             ) : (
@@ -519,7 +546,11 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                   ? statsError
                     ? "Não foi possível carregar os documentos."
                     : "Carregando documentos..."
-                  : `${eligibleCount} documentos elegíveis, ${participantIds.length} participantes. Estimativa: ~${estimatedPerParticipant} docs por participante.`}
+                  : `${eligibleCount} documentos elegíveis, ${participantIds.length} participantes. ${
+                      balancing === "round"
+                        ? `Estimativa: ~${estimatedPerParticipant} docs por participante.`
+                        : `Média: ~${estimatedPerParticipant} docs por participante — quem tem menos carga recebe mais.`
+                    }`}
               </p>
             )}
           </div>
