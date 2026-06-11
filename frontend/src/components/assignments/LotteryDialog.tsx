@@ -15,17 +15,6 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DocumentPickerList } from "@/components/assignments/DocumentPickerList";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import {
   Select,
@@ -49,8 +38,6 @@ import {
   type LotteryMode,
 } from "@/lib/lottery-utils";
 import { toast } from "sonner";
-import { CalendarIcon, ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { ptBR } from "date-fns/locale";
 import { format } from "date-fns";
 
@@ -96,15 +83,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     };
   }, [open, stats, projectId]);
 
-  // Hidratado client-only para o "disabled date in past" do Calendar não
-  // produzir mismatch entre server e cliente.
-  const [todayMidnight, setTodayMidnight] = useState<Date | null>(null);
-  useEffect(() => {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    setTodayMidnight(t);
-  }, []);
-
   // Tipo do sorteio (codificação ou comparação)
   const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
 
@@ -149,15 +127,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
         .filter((id) => participants[id]),
     [members, participants]
   );
-
-  // Prazo (seção legada — sem efeito no sorteio; remoção na US6)
-  const [deadlineOpen, setDeadlineOpen] = useState(false);
-  const [deadlineMode, setDeadlineMode] = useState<
-    "none" | "batch" | "recurring"
-  >("none");
-  const [deadlineDate, setDeadlineDate] = useState<Date | undefined>();
-  const [recurringCount, setRecurringCount] = useState(10);
-  const [recurringStart, setRecurringStart] = useState<Date | undefined>();
 
   // Label
   const [label, setLabel] = useState("");
@@ -271,11 +240,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
       toast.error(e instanceof Error ? e.message : "Erro ao sortear");
     }
     setLoading(false);
-  };
-
-  const formatDate = (date: Date | undefined) => {
-    if (!date) return "Selecionar data";
-    return format(date, "dd/MM/yyyy", { locale: ptBR });
   };
 
   const docsConsidered =
@@ -701,113 +665,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
               </div>
             </>
           )}
-
-          <Separator />
-
-          {/* Section 2: Deadline */}
-          <Collapsible open={deadlineOpen} onOpenChange={setDeadlineOpen}>
-            <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-semibold">
-              Prazo
-              <ChevronDown
-                className={cn(
-                  "size-4 transition-transform",
-                  deadlineOpen && "rotate-180"
-                )}
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-3 space-y-4">
-              <RadioGroup
-                value={deadlineMode}
-                onValueChange={(v) =>
-                  setDeadlineMode(v as "none" | "batch" | "recurring")
-                }
-              >
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="none" id="dl-none" />
-                  <Label htmlFor="dl-none">Sem prazo</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="batch" id="dl-batch" />
-                  <Label htmlFor="dl-batch">Prazo único</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="recurring" id="dl-recurring" />
-                  <Label htmlFor="dl-recurring">Recorrente</Label>
-                </div>
-              </RadioGroup>
-
-              {deadlineMode === "batch" && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal",
-                        !deadlineDate && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 size-4" />
-                      {formatDate(deadlineDate)}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={deadlineDate}
-                      onSelect={setDeadlineDate}
-                      locale={ptBR}
-                      disabled={todayMidnight ? (date) => date < todayMidnight : undefined}
-                    />
-                  </PopoverContent>
-                </Popover>
-              )}
-
-              {deadlineMode === "recurring" && (
-                <div className="space-y-3">
-                  <div>
-                    <Label>Documentos por semana</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={recurringCount}
-                      onChange={(e) =>
-                        setRecurringCount(parseInt(e.target.value) || 1)
-                      }
-                      className="mt-1 w-24"
-                    />
-                  </div>
-                  <div>
-                    <Label>Data de início</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn(
-                            "mt-1 w-full justify-start text-left font-normal",
-                            !recurringStart && "text-muted-foreground"
-                          )}
-                        >
-                          <CalendarIcon className="mr-2 size-4" />
-                          {formatDate(recurringStart)}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        className="w-auto p-0"
-                        align="start"
-                      >
-                        <Calendar
-                          mode="single"
-                          selected={recurringStart}
-                          onSelect={setRecurringStart}
-                          locale={ptBR}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
 
           <Separator />
 

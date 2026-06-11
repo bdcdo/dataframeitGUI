@@ -138,7 +138,7 @@ Web app — tudo em `frontend/` (Next.js App Router); migrations em `frontend/su
 
 **Independent Test**: percorrer o dialog (sem seção de prazo) e sortear (atribuições com deadline NULL)
 
-- [ ] T028 [US6] Remover do `frontend/src/components/assignments/LotteryDialog.tsx` a seção Prazo inteira (Collapsible, Calendar, Popover, estados `deadlineOpen`/`deadlineMode`/`deadlineDate`/`recurringCount`/`recurringStart`, `todayMidnight`, imports órfãos de date-fns/lucide) e a coluna "Prazo" da tabela de prévia
+- [X] T028 [US6] Remover do `frontend/src/components/assignments/LotteryDialog.tsx` a seção Prazo inteira (Collapsible, Calendar, Popover, estados `deadlineOpen`/`deadlineMode`/`deadlineDate`/`recurringCount`/`recurringStart`, `todayMidnight`, imports órfãos de date-fns/lucide) e a coluna "Prazo" da tabela de prévia
 - [ ] T029 [US6] Validar acceptance scenarios da US6 (quickstart passo 8): nenhuma opção de prazo no dialog; atribuições novas com `deadline` NULL; prazos antigos seguem visíveis no resto da plataforma (fora do escopo — issue #176)
 
 **Checkpoint**: todas as user stories entregues
