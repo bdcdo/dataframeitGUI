@@ -4,6 +4,8 @@ export interface Profile {
   first_name: string | null;
   last_name: string | null;
   created_at: string;
+  // NULL = membro pendente (pré-registrado, nunca teve acesso autenticado).
+  activated_at: string | null;
 }
 
 export type RoundStrategy = "schema_version" | "manual";

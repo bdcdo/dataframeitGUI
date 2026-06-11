@@ -17,7 +17,7 @@
 
 **Purpose**: garantir ambiente pronto para migrations (memória do projeto: migrations são manuais, nunca automáticas no merge)
 
-- [ ] T001 Conferir Supabase CLI linkado e estado das migrations: `cd frontend && export SUPABASE_ACCESS_TOKEN=$(grep SUPABASE_ACCESS_TOKEN .env.local | cut -d= -f2) && npx supabase link --project-ref nryebmwlmxuwvynfuzsv && npx supabase migration list`
+- [X] T001 Conferir Supabase CLI linkado e estado das migrations: `cd frontend && export SUPABASE_ACCESS_TOKEN=$(grep SUPABASE_ACCESS_TOKEN .env.local | cut -d= -f2) && npx supabase link --project-ref nryebmwlmxuwvynfuzsv && npx supabase migration list`
 
 ---
 
@@ -27,8 +27,8 @@
 
 **⚠️ CRITICAL**: nenhuma story começa antes desta fase
 
-- [ ] T002 Migration `frontend/supabase/migrations/20260611120000_profiles_activated_at.sql`: `ALTER TABLE profiles ADD COLUMN activated_at TIMESTAMPTZ` + backfill `UPDATE profiles SET activated_at = created_at` (data-model.md §profiles); aplicar com `npx supabase db push` e confirmar no banco
-- [ ] T003 [P] Adicionar `activated_at: string | null` ao tipo `Profile` em `frontend/src/lib/types.ts`
+- [X] T002 Migration `frontend/supabase/migrations/20260611120000_profiles_activated_at.sql`: `ALTER TABLE profiles ADD COLUMN activated_at TIMESTAMPTZ` + backfill `UPDATE profiles SET activated_at = created_at` (data-model.md §profiles); aplicar com `npx supabase db push` e confirmar no banco
+- [X] T003 [P] Adicionar `activated_at: string | null` ao tipo `Profile` em `frontend/src/lib/types.ts`
 
 **Checkpoint**: coluna existe no banco remoto; tipos compilam
 
