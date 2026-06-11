@@ -269,12 +269,15 @@ export async function changeRole(
   projectId: string
 ) {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("project_members")
     .update({ role })
-    .eq("id", memberId);
+    .eq("id", memberId)
+    .select("id");
 
   if (error) return { error: error.message };
+  if (!data || data.length === 0)
+    return { error: "Sem permissão para alterar papéis neste projeto." };
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
@@ -288,12 +291,15 @@ export async function setCanResolve(
   projectId: string,
 ): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("project_members")
     .update({ can_resolve: canResolve })
-    .eq("id", memberId);
+    .eq("id", memberId)
+    .select("id");
 
   if (error) return { error: error.message };
+  if (!data || data.length === 0)
+    return { error: "Sem permissão para alterar permissões neste projeto." };
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);
