@@ -111,7 +111,7 @@ Web app — tudo em `frontend/` (Next.js App Router); migrations em `frontend/su
 
 **Independent Test**: sortear lote rotulado; segundo sorteio excluindo esse lote não redistribui nenhum doc dele
 
-- [ ] T023 [US4] Adicionar UI do filtro por lote no `frontend/src/components/assignments/LotteryDialog.tsx`: lista de lotes (label + data, vinda de `batches` das stats) com seleção múltipla para `filters.batchFilter.exclude` e seleção única para `filters.batchFilter.only`, mutuamente exclusivos na UI
+- [X] T023 [US4] Adicionar UI do filtro por lote no `frontend/src/components/assignments/LotteryDialog.tsx`: lista de lotes (label + data, vinda de `batches` das stats) com seleção múltipla para `filters.batchFilter.exclude` e seleção única para `filters.batchFilter.only`, mutuamente exclusivos na UI
 - [ ] T024 [US4] Validar acceptance scenarios da US4 (quickstart passo 6): exclusão de lote remove seus docs da elegibilidade; "somente do lote" restringe a ele
 
 **Checkpoint**: filtros automáticos completos

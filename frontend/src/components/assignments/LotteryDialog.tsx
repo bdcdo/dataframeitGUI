@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Collapsible,
@@ -124,6 +125,9 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [maxCodingsValue, setMaxCodingsValue] = useState(1);
   const [assignmentFilter, setAssignmentFilter] =
     useState<AssignmentFilter>("any");
+  const [batchFilterMode, setBatchFilterMode] = useState<
+    "none" | "exclude" | "only"
+  >("none");
   const [batchExclude, setBatchExclude] = useState<string[]>([]);
   const [batchOnly, setBatchOnly] = useState<string | null>(null);
   const [manualEnabled, setManualEnabled] = useState(false);
@@ -164,14 +168,18 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     if (codingsFilterMode === "none") f.maxHumanCodings = 0;
     else if (codingsFilterMode === "atMost") f.maxHumanCodings = maxCodingsValue;
     if (assignmentFilter !== "any") f.assignmentFilter = assignmentFilter;
-    if (batchOnly) f.batchFilter = { only: batchOnly };
-    else if (batchExclude.length) f.batchFilter = { exclude: batchExclude };
+    if (batchFilterMode === "only" && batchOnly) {
+      f.batchFilter = { only: batchOnly };
+    } else if (batchFilterMode === "exclude" && batchExclude.length) {
+      f.batchFilter = { exclude: batchExclude };
+    }
     if (manualEnabled) f.manualDocIds = Array.from(manualDocIds);
     return f;
   }, [
     codingsFilterMode,
     maxCodingsValue,
     assignmentFilter,
+    batchFilterMode,
     batchOnly,
     batchExclude,
     manualEnabled,
@@ -413,6 +421,88 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                 </SelectContent>
               </Select>
             </div>
+
+            {stats !== null && stats.batches.length > 0 && (
+              <div>
+                <Label htmlFor="batch-filter-mode">Lotes anteriores</Label>
+                <Select
+                  value={batchFilterMode}
+                  onValueChange={(v) =>
+                    setBatchFilterMode(v as "none" | "exclude" | "only")
+                  }
+                >
+                  <SelectTrigger id="batch-filter-mode" className="mt-1 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Todos os lotes</SelectItem>
+                    <SelectItem value="exclude">Excluir lotes</SelectItem>
+                    <SelectItem value="only">Somente de um lote</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {batchFilterMode === "exclude" && (
+                  <div className="mt-2 max-h-32 space-y-2 overflow-y-auto rounded-md border p-2">
+                    {stats.batches.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`batch-ex-${b.id}`}
+                          checked={batchExclude.includes(b.id)}
+                          onCheckedChange={(checked) =>
+                            setBatchExclude((prev) =>
+                              checked
+                                ? [...prev, b.id]
+                                : prev.filter((id) => id !== b.id)
+                            )
+                          }
+                        />
+                        <Label
+                          htmlFor={`batch-ex-${b.id}`}
+                          className="font-normal"
+                        >
+                          {b.label || "Sem rótulo"}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
+                              locale: ptBR,
+                            })}
+                          </span>
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {batchFilterMode === "only" && (
+                  <RadioGroup
+                    value={batchOnly ?? ""}
+                    onValueChange={setBatchOnly}
+                    className="mt-2 max-h-32 space-y-1 overflow-y-auto rounded-md border p-2"
+                  >
+                    {stats.batches.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2">
+                        <RadioGroupItem value={b.id} id={`batch-only-${b.id}`} />
+                        <Label
+                          htmlFor={`batch-only-${b.id}`}
+                          className="font-normal"
+                        >
+                          {b.label || "Sem rótulo"}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
+                              locale: ptBR,
+                            })}
+                          </span>
+                        </Label>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                )}
+
+                <p className="mt-1 text-xs text-muted-foreground">
+                  O vínculo com o lote vem das atribuições existentes dos
+                  documentos.
+                </p>
+              </div>
+            )}
           </div>
 
           <Separator />
