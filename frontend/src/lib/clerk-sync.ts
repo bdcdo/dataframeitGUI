@@ -30,7 +30,17 @@ export async function preregisterSupabaseUser(email: string): Promise<string> {
   });
 
   if (error) {
-    // Race ou auth.users órfão de profile: reusar o usuário existente
+    // Race entre dois pré-registros do mesmo e-mail: o trigger
+    // handle_new_user do vencedor já criou o profile — re-consultar profiles
+    // resolve sem depender de listUsers (paginado em 50, não escala).
+    const { data: raced } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("email", email)
+      .single();
+    if (raced) return raced.id;
+
+    // Último recurso: auth.users órfão de profile (estado anômalo).
     const { data: existingUsers } = await admin.auth.admin.listUsers();
     const match = existingUsers?.users?.find((u) => u.email === email);
     if (match) return match.id;

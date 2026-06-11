@@ -251,9 +251,11 @@ async function loadAdd() {
 }
 
 // O chamador é coordenador (server client devolve role coordenador); a
-// variação fica por conta do lookup de profiles e do insert (admin client).
+// variação fica por conta dos lookups (profiles, member_email_links) e do
+// insert (admin client).
 function setupAddMember(opts: {
-  profile?: { id: string } | null;
+  profile?: { id: string; activated_at: string | null } | null;
+  emailLink?: { member_user_id: string } | null;
   insertError?: { message: string; code?: string };
 }) {
   serverTableResults = {
@@ -261,6 +263,7 @@ function setupAddMember(opts: {
   };
   adminTableResults = {
     profiles: { data: opts.profile ?? null },
+    member_email_links: { data: opts.emailLink ?? null },
     project_members: { data: null, error: opts.insertError ?? null },
   };
 }
@@ -288,8 +291,8 @@ describe("addMember (pré-registro, spec 002)", () => {
     });
   });
 
-  it("e-mail com profile existente → comportamento atual, sem pré-registro", async () => {
-    setupAddMember({ profile: { id: "existingUid" } });
+  it("e-mail com profile existente ativo → comportamento atual, sem pré-registro", async () => {
+    setupAddMember({ profile: { id: "existingUid", activated_at: "2026-01-01" } });
     const add = await loadAdd();
     const r = await add("p1", "ja-tem@conta.com", "pesquisador");
     expect(r.error).toBeUndefined();
@@ -302,9 +305,29 @@ describe("addMember (pré-registro, spec 002)", () => {
     });
   });
 
+  it("profile existente mas ainda pendente (pré-registrado em outro projeto) → pending true", async () => {
+    setupAddMember({ profile: { id: "placeholderUid2", activated_at: null } });
+    const add = await loadAdd();
+    const r = await add("p1", "pendente@conta.com", "pesquisador");
+    expect(r.error).toBeUndefined();
+    expect(r.pending).toBe(true);
+    expect(hoisted.preregister).not.toHaveBeenCalled();
+  });
+
+  it("e-mail vinculado a outro membro do projeto → erro orientando a desvincular", async () => {
+    setupAddMember({
+      profile: { id: "srcUid", activated_at: "2026-01-01" },
+      emailLink: { member_user_id: "target1" },
+    });
+    const add = await loadAdd();
+    const r = await add("p1", "vinculado@conta.com", "pesquisador");
+    expect(r.error).toContain("vinculado a outro membro");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
   it("insert duplicado (23505) → mensagem de já membro", async () => {
     setupAddMember({
-      profile: { id: "existingUid" },
+      profile: { id: "existingUid", activated_at: "2026-01-01" },
       insertError: { message: "duplicate key", code: "23505" },
     });
     const add = await loadAdd();

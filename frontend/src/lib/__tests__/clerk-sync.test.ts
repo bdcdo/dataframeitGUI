@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // preregisterSupabaseUser (spec 002): placeholder Supabase-only. Os testes
-// cobrem a idempotência — profile existente, criação nova e recuperação de
-// race/auth.users órfão via listUsers.
-let profileRow: { id: string } | null;
+// cobrem a idempotência — profile existente, criação nova, recuperação de
+// race via re-consulta de profiles e último recurso via listUsers.
+// `profileRowQueue` é consumida na ordem das consultas a profiles (lookup
+// inicial e, no caminho de race, a re-consulta).
+let profileRowQueue: ({ id: string } | null)[];
 let createUserResult: {
   data: { user: { id: string } } | { user: null };
   error: { message: string } | null;
@@ -13,7 +15,7 @@ let listedUsers: { id: string; email: string }[];
 const createUserSpy = vi.fn(async () => createUserResult);
 const listUsersSpy = vi.fn(async () => ({
   data: { users: listedUsers },
-  users: listedUsers,
+  error: null,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -25,7 +27,10 @@ vi.mock("@/lib/supabase/admin", () => ({
       }
       builder.then = (resolve: (v: unknown) => unknown) =>
         resolve({
-          data: table === "profiles" ? profileRow : null,
+          data:
+            table === "profiles" && profileRowQueue.length > 0
+              ? profileRowQueue.shift()
+              : null,
           error: null,
         });
       return builder;
@@ -33,10 +38,7 @@ vi.mock("@/lib/supabase/admin", () => ({
     auth: {
       admin: {
         createUser: createUserSpy,
-        listUsers: async () => ({
-          data: { users: listedUsers },
-          error: null,
-        }),
+        listUsers: listUsersSpy,
       },
     },
   }),
@@ -49,7 +51,7 @@ vi.mock("@clerk/nextjs/server", () => ({
 }));
 
 beforeEach(() => {
-  profileRow = null;
+  profileRowQueue = [];
   createUserResult = {
     data: { user: { id: "newUid" } },
     error: null,
@@ -75,14 +77,26 @@ describe("preregisterSupabaseUser", () => {
   });
 
   it("idempotente: profile já existe → retorna o id atual sem createUser", async () => {
-    profileRow = { id: "existingUid" };
+    profileRowQueue = [{ id: "existingUid" }];
     const preregister = await loadPreregister();
     const uid = await preregister("ja-existe@exemplo.com");
     expect(uid).toBe("existingUid");
     expect(createUserSpy).not.toHaveBeenCalled();
   });
 
-  it("race/auth.users órfão: createUser falha mas listUsers encontra → reusa o id", async () => {
+  it("race entre pré-registros: createUser falha e a re-consulta de profiles resolve, sem listUsers", async () => {
+    profileRowQueue = [null, { id: "racedUid" }];
+    createUserResult = {
+      data: { user: null },
+      error: { message: "email already registered" },
+    };
+    const preregister = await loadPreregister();
+    const uid = await preregister("corrida@exemplo.com");
+    expect(uid).toBe("racedUid");
+    expect(listUsersSpy).not.toHaveBeenCalled();
+  });
+
+  it("auth.users órfão de profile: re-consulta vazia → listUsers encontra e reusa o id", async () => {
     createUserResult = {
       data: { user: null },
       error: { message: "email already registered" },

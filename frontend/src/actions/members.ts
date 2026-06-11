@@ -47,17 +47,39 @@ export async function addMember(
 
   // Admin client for lookup + insert (bypasses RLS)
   const admin = createSupabaseAdmin();
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("id")
-    .eq("email", email)
-    .single();
+  const [{ data: profile }, { data: linkedTo }] = await Promise.all([
+    admin
+      .from("profiles")
+      .select("id, activated_at")
+      .eq("email", email)
+      .single(),
+    admin
+      .from("member_email_links")
+      .select("member_user_id")
+      .eq("project_id", projectId)
+      .eq("email", email)
+      .maybeSingle(),
+  ]);
+
+  // E-mail já vinculado a um membro deste projeto: adicioná-lo como membro
+  // próprio criaria uma identidade inutilizável — getEffectiveMemberId
+  // resolveria a conta para o membro canônico do vínculo (caso típico:
+  // e-mail de um source já unificado). Desvincular primeiro.
+  if (linkedTo) {
+    return {
+      error:
+        "Este e-mail está vinculado a outro membro do projeto. Desvincule-o antes de adicioná-lo como membro próprio.",
+    };
+  }
 
   let userId: string;
   let pending = false;
 
   if (profile) {
     userId = profile.id;
+    // Placeholder pré-registrado em outro projeto continua pendente aqui —
+    // a UI deve mostrar "pré-registrado", não "adicionado".
+    pending = profile.activated_at === null;
   } else {
     // Pré-registro (spec 002): placeholder Supabase-only, sem usuário Clerk.
     // O membro nasce pendente (activated_at = NULL) e entra de fato no
