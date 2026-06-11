@@ -68,11 +68,20 @@ export async function createRound(
     // Nao-transacional: se este update falhar, a rodada ja foi criada e o
     // coordenador precisa marca-la como atual manualmente em /config/rounds.
     // Uma RPC com transacao seria overkill para a baixa frequencia da operacao.
-    const { error: updErr } = await supabase
+    // O id volta junto com o erro para a UI refletir o estado parcial.
+    const { data: updated, error: updErr } = await supabase
       .from("projects")
       .update({ current_round_id: data.id })
-      .eq("id", projectId);
-    if (updErr) return { error: updErr.message };
+      .eq("id", projectId)
+      .select("id");
+    if (updErr) return { id: data.id, error: updErr.message };
+    if (!updated || updated.length === 0) {
+      return {
+        id: data.id,
+        error:
+          "Rodada criada, mas não foi possível defini-la como atual (sem permissão). Selecione-a manualmente em Configurações → Rodadas.",
+      };
+    }
   }
 
   revalidatePath(`/projects/${projectId}/config/rounds`);
@@ -92,12 +101,16 @@ export async function renameRound(
   if (auth.error) return { error: auth.error };
 
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("rounds")
     .update({ label: trimmed })
     .eq("id", roundId)
-    .eq("project_id", projectId);
+    .eq("project_id", projectId)
+    .select("id");
   if (error) return { error: mapRoundsError(error) };
+  if (!data || data.length === 0) {
+    return { error: "Sem permissão para renomear esta rodada (ou ela não existe)." };
+  }
 
   revalidatePath(`/projects/${projectId}/config/rounds`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
@@ -126,11 +139,15 @@ export async function setCurrentRound(
     if (!round) return { error: "Rodada inválida para este projeto." };
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("projects")
     .update({ current_round_id: roundId })
-    .eq("id", projectId);
+    .eq("id", projectId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!data || data.length === 0) {
+    return { error: "Sem permissão para alterar a rodada atual deste projeto." };
+  }
 
   revalidatePath(`/projects/${projectId}/config/rounds`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
@@ -145,12 +162,16 @@ export async function deleteRound(
   if (auth.error) return { error: auth.error };
 
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("rounds")
     .delete()
     .eq("id", roundId)
-    .eq("project_id", projectId);
+    .eq("project_id", projectId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!data || data.length === 0) {
+    return { error: "Sem permissão para excluir esta rodada (ou ela não existe)." };
+  }
 
   revalidatePath(`/projects/${projectId}/config/rounds`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
@@ -176,11 +197,15 @@ export async function setRoundStrategy(
   if (auth.error) return { error: auth.error };
 
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("projects")
     .update({ round_strategy: strategy })
-    .eq("id", projectId);
+    .eq("id", projectId)
+    .select("id");
   if (error) return { error: error.message };
+  if (!data || data.length === 0) {
+    return { error: "Sem permissão para alterar a estratégia de rodadas deste projeto." };
+  }
 
   revalidatePath(`/projects/${projectId}/config/rounds`);
   revalidatePath(`/projects/${projectId}/analyze/code`);

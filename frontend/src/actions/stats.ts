@@ -14,15 +14,18 @@ export async function resolveReviewComment(
 
     const supabase = await createSupabaseServer();
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("reviews")
       .update({
         resolved_at: new Date().toISOString(),
         resolved_by: user.id,
       })
-      .eq("id", reviewId);
+      .eq("id", reviewId)
+      .select("id");
 
     if (error) return { success: false, error: error.message };
+    if (!data || data.length === 0)
+      return { success: false, error: "Sem permissão para resolver este comentário" };
 
     revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
@@ -41,15 +44,18 @@ export async function reopenReviewComment(
 
     const supabase = await createSupabaseServer();
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("reviews")
       .update({
         resolved_at: null,
         resolved_by: null,
       })
-      .eq("id", reviewId);
+      .eq("id", reviewId)
+      .select("id");
 
     if (error) return { success: false, error: error.message };
+    if (!data || data.length === 0)
+      return { success: false, error: "Sem permissão para reabrir este comentário" };
 
     revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
@@ -95,13 +101,16 @@ export async function reopenNote(
 
     const supabase = await createSupabaseServer();
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("note_resolutions")
       .delete()
       .eq("project_id", projectId)
-      .eq("response_id", responseId);
+      .eq("response_id", responseId)
+      .select("response_id");
 
     if (error) return { success: false, error: error.message };
+    if (!data || data.length === 0)
+      return { success: false, error: "Nada reaberto: sem permissão ou anotação já reaberta" };
 
     revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
@@ -213,13 +222,16 @@ export async function reopenDifficulty(
 
     const supabase = await createSupabaseServer();
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("difficulty_resolutions")
       .delete()
       .eq("project_id", projectId)
-      .eq("response_id", responseId);
+      .eq("response_id", responseId)
+      .select("response_id");
 
     if (error) return { success: false, error: error.message };
+    if (!data || data.length === 0)
+      return { success: false, error: "Nada reaberto: sem permissão ou dificuldade já reaberta" };
 
     revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
@@ -309,14 +321,17 @@ export async function reopenError(
 
     const supabase = await createSupabaseServer();
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("error_resolutions")
       .delete()
       .eq("project_id", projectId)
       .eq("document_id", documentId)
-      .eq("field_name", fieldName);
+      .eq("field_name", fieldName)
+      .select("document_id");
 
     if (error) return { success: false, error: error.message };
+    if (!data || data.length === 0)
+      return { success: false, error: "Nada reaberto: sem permissão ou erro já reaberto" };
 
     revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };

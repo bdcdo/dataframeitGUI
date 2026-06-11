@@ -68,13 +68,16 @@ export async function submitVerdict(
       .maybeSingle();
 
     if (!existingAmbiguity) {
+      // author_id é a conta autenticada, não o id efetivo: a policy de INSERT
+      // de project_comments exige author_id = clerk_uid() — com effectiveId,
+      // uma conta-alias (spec 002) tomaria 42501 aqui.
       const { error: commentError } = await supabase
         .from("project_comments")
         .insert({
           project_id: projectId,
           document_id: documentId,
           field_name: fieldName,
-          author_id: effectiveId,
+          author_id: user.id,
           body: comment?.trim()
             ? `Campo marcado como ambíguo na revisão (aba Comparar): ${comment.trim()}`
             : "Campo marcado como ambíguo na revisão (aba Comparar).",

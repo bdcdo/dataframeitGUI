@@ -14,6 +14,7 @@ import {
   fieldDiffIsStructural,
   type ChangeType,
 } from "@/lib/schema-utils";
+import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import crypto from "crypto";
 
 interface ValidateResponse {
@@ -50,12 +51,10 @@ export async function saveSchema(
     updatePayload.schema_version_patch = versionBump.patch;
   }
 
-  const { error } = await supabase
-    .from("projects")
-    .update(updatePayload)
-    .eq("id", projectId);
-
-  if (error) throw new Error(error.message);
+  await updateOrThrow(supabase, "projects", updatePayload, { id: projectId }, {
+    message:
+      "Não foi possível salvar o schema: sem permissão para alterar este projeto.",
+  });
 
   // is_latest não é flipado para false aqui — staleness é detectada no
   // display via answer_field_hashes (lib/reviews/queries.ts:isFieldStale).
@@ -71,12 +70,13 @@ export async function saveSchema(
 
 export async function savePrompt(projectId: string, promptTemplate: string) {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
-    .from("projects")
-    .update({ prompt_template: promptTemplate })
-    .eq("id", projectId);
-
-  if (error) throw new Error(error.message);
+  await updateOrThrow(
+    supabase,
+    "projects",
+    { prompt_template: promptTemplate },
+    { id: projectId },
+    { message: "Não foi possível salvar o prompt: sem permissão para alterar este projeto." },
+  );
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/llm/configure`);
 }
@@ -128,9 +128,12 @@ export async function saveSchemaFromGUI(
   }));
   await saveSchema(projectId, code, fieldsWithHash, changeType ? bumped : undefined);
 
-  // Insert audit log entries com change_type + versão alvo
+  // Insert audit log entries com change_type + versão alvo. Só roda depois
+  // que saveSchema confirmou ≥1 linha atualizada (lança em 0-rows) — antes o
+  // log era gravado mesmo com o UPDATE de projects filtrado pela RLS, gerando
+  // histórico fantasma (#178).
   if (logEntries.length > 0 && user) {
-    await supabase.from("schema_change_log").insert(
+    const { error: logErr } = await supabase.from("schema_change_log").insert(
       logEntries.map((e) => ({
         project_id: projectId,
         changed_by: user.id,
@@ -141,6 +144,11 @@ export async function saveSchemaFromGUI(
         ...e,
       })),
     );
+    if (logErr) {
+      throw new Error(
+        `Schema salvo, mas falha ao registrar o histórico: ${logErr.message}`,
+      );
+    }
   }
 }
 
@@ -247,7 +255,7 @@ export async function backfillSchemaVersionHistory(projectId: string) {
   }
 
   // 2) Update each log entry with classification + version
-  await Promise.all(
+  const logUpdateResults = await Promise.all(
     enriched.map((e) =>
       supabase
         .from("schema_change_log")
@@ -257,19 +265,33 @@ export async function backfillSchemaVersionHistory(projectId: string) {
           version_minor: e.version.minor,
           version_patch: e.version.patch,
         })
-        .eq("id", e.id),
+        .eq("id", e.id)
+        .select("id"),
     ),
   );
+  const logUpdateFailures = logUpdateResults.filter(
+    (r) => r.error || !r.data || r.data.length === 0,
+  );
+  if (logUpdateFailures.length > 0) {
+    const firstErr = logUpdateFailures.find((r) => r.error)?.error;
+    throw new Error(
+      `Backfill: ${logUpdateFailures.length} de ${enriched.length} entradas do histórico não puderam ser atualizadas` +
+        (firstErr ? ` (${firstErr.message})` : " (sem permissão de UPDATE em schema_change_log)"),
+    );
+  }
 
   // 3) Set project current version
-  await supabase
-    .from("projects")
-    .update({
+  await updateOrThrow(
+    supabase,
+    "projects",
+    {
       schema_version_major: current.major,
       schema_version_minor: current.minor,
       schema_version_patch: current.patch,
-    })
-    .eq("id", projectId);
+    },
+    { id: projectId },
+    { message: "Backfill: sem permissão para atualizar a versão do projeto." },
+  );
 
   // 4) Reconstruct snapshots at each version, walking log in reverse.
   // Current project fields = snapshot of the "current" version after all entries applied.
@@ -473,11 +495,24 @@ export async function backfillSchemaVersionHistory(projectId: string) {
             schema_version_patch: bucket.version.patch,
             version_inferred_from: bucket.method,
           })
-          .in("id", chunk),
+          .in("id", chunk)
+          .select("id")
+          .then((r) => ({ result: r, expected: chunk.length })),
       );
     }
   }
-  await Promise.all(updatePromises);
+  const responseUpdateResults = await Promise.all(updatePromises);
+  for (const { result, expected } of responseUpdateResults) {
+    if (result.error) {
+      throw new Error(`Backfill: falha ao versionar respostas (${result.error.message})`);
+    }
+    const affected = result.data?.length ?? 0;
+    if (affected < expected) {
+      throw new Error(
+        `Backfill: ${expected - affected} resposta(s) não puderam ser versionadas (sem permissão de UPDATE em responses).`,
+      );
+    }
+  }
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/config/schema`);
@@ -520,18 +555,19 @@ export async function publishMajorVersion(projectId: string) {
   };
   const bumped = bumpVersion(current, "major");
 
-  const { error } = await supabase
-    .from("projects")
-    .update({
+  await updateOrThrow(
+    supabase,
+    "projects",
+    {
       schema_version_major: bumped.major,
       schema_version_minor: bumped.minor,
       schema_version_patch: bumped.patch,
-    })
-    .eq("id", projectId);
+    },
+    { id: projectId },
+    { message: "Não foi possível publicar a MAJOR: sem permissão para alterar este projeto." },
+  );
 
-  if (error) throw new Error(error.message);
-
-  await supabase.from("schema_change_log").insert({
+  const { error: logErr } = await supabase.from("schema_change_log").insert({
     project_id: projectId,
     changed_by: user.id,
     field_name: "(projeto)",
@@ -543,6 +579,11 @@ export async function publishMajorVersion(projectId: string) {
     version_minor: bumped.minor,
     version_patch: bumped.patch,
   });
+  if (logErr) {
+    throw new Error(
+      `MAJOR publicada, mas falha ao registrar o histórico: ${logErr.message}`,
+    );
+  }
 
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
@@ -585,12 +626,10 @@ export async function saveLlmConfig(
   }
 ) {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
-    .from("projects")
-    .update(config)
-    .eq("id", projectId);
-
-  if (error) throw new Error(error.message);
+  await updateOrThrow(supabase, "projects", config, { id: projectId }, {
+    message:
+      "Não foi possível salvar a configuração do LLM: sem permissão para alterar este projeto.",
+  });
   revalidatePath(`/projects/${projectId}/llm/configure`);
   revalidatePath(`/projects/${projectId}/config`);
 }

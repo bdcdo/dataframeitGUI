@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { saveSchemaFromGUI } from "./schema";
 import type { PydanticField } from "@/lib/types";
@@ -38,6 +38,9 @@ export async function resolveSchemaSuggestion(
 ): Promise<{ error?: string }> {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
+  if (!(await isProjectCoordinator(projectId, user))) {
+    return { error: "Apenas coordenadores podem resolver sugestões de schema." };
+  }
 
   const supabase = await createSupabaseServer();
 
@@ -72,8 +75,14 @@ export async function resolveSchemaSuggestion(
       };
     });
 
-    // Save schema (triggers audit log)
-    await saveSchemaFromGUI(projectId, updatedFields);
+    // Save schema (triggers audit log). Em falha (ex.: RLS filtrou o UPDATE
+    // de projects — #178), retorna sem marcar a sugestão como aprovada,
+    // evitando a divergência "Aprovada" com schema não aplicado.
+    try {
+      await saveSchemaFromGUI(projectId, updatedFields);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : "Erro ao aplicar a sugestão ao schema" };
+    }
   }
 
   // Mark suggestion as resolved
@@ -99,10 +108,19 @@ export async function approveSchemaSuggestionWithEdits(
 ): Promise<{ error?: string }> {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
+  if (!(await isProjectCoordinator(projectId, user))) {
+    return { error: "Apenas coordenadores podem aprovar sugestões de schema." };
+  }
 
   const supabase = await createSupabaseServer();
 
-  await saveSchemaFromGUI(projectId, editedFields);
+  // Mesma proteção de resolveSchemaSuggestion: sugestão só vira "approved"
+  // depois que o schema persistiu de fato.
+  try {
+    await saveSchemaFromGUI(projectId, editedFields);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Erro ao aplicar a sugestão ao schema" };
+  }
 
   const { error } = await supabase
     .from("schema_suggestions")

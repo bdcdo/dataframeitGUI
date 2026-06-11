@@ -2,6 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
+import { updateOrThrow, deleteOrThrow } from "@/lib/supabase/rls-guard";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -49,23 +50,17 @@ export async function updateProject(
   }
 ) {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
-    .from("projects")
-    .update(data)
-    .eq("id", projectId);
-
-  if (error) throw new Error(error.message);
+  await updateOrThrow(supabase, "projects", data, { id: projectId }, {
+    message: "Sem permissão para alterar as configurações deste projeto.",
+  });
   revalidatePath(`/projects/${projectId}`);
 }
 
 export async function deleteProject(projectId: string) {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
-    .from("projects")
-    .delete()
-    .eq("id", projectId);
-
-  if (error) throw new Error(error.message);
+  await deleteOrThrow(supabase, "projects", { id: projectId }, {
+    message: "Sem permissão para excluir este projeto.",
+  });
   revalidatePath("/dashboard");
   redirect("/dashboard");
 }
