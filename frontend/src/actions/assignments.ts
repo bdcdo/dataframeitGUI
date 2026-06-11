@@ -258,11 +258,12 @@ async function computeLottery(params: LotteryParams): Promise<{
     fetchLotteryData(params.projectId),
   ]);
 
-  // Pool de participantes: explícito e validado contra project_members
+  // Pool de participantes: deduplicado e validado contra project_members
   // (qualquer role) — defesa em profundidade além do RLS (research D5)
   const memberIds = new Set((members || []).map((m) => m.user_id));
-  const participantIds = params.participantIds.filter((id) => memberIds.has(id));
-  if (!participantIds.length || participantIds.length !== params.participantIds.length) {
+  const uniqueIds = [...new Set(params.participantIds)];
+  const participantIds = uniqueIds.filter((id) => memberIds.has(id));
+  if (!participantIds.length || participantIds.length !== uniqueIds.length) {
     throw new Error("Necessário ter ao menos um participante válido.");
   }
 
@@ -399,6 +400,9 @@ async function computeLottery(params: LotteryParams): Promise<{
 }
 
 export async function previewLottery(params: LotteryParams): Promise<LotteryPreview> {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
   const { newAssignments, preservedCount, preservedByUser, eligibleCount, seed } =
     await computeLottery(params);
 
@@ -408,7 +412,7 @@ export async function previewLottery(params: LotteryParams): Promise<LotteryPrev
   }
 
   return {
-    participants: params.participantIds.map((userId) => ({
+    participants: [...new Set(params.participantIds)].map((userId) => ({
       userId,
       existing: preservedByUser[userId] || 0,
       newDocs: newCounts[userId] || 0,
@@ -429,23 +433,35 @@ export async function smartRandomize(params: LotteryParams) {
 
   const { newAssignments, preservedCount, batchData } = await computeLottery(params);
 
-  // Pendentes do tipo só são descartadas no modo substituir
-  if (params.mode === "replace") {
-    await supabase
-      .from("assignments")
-      .delete()
-      .eq("project_id", params.projectId)
-      .eq("status", "pendente")
-      .eq("type", assignmentType);
-  }
-
-  const { data: batch } = await supabase
+  // O batch é criado antes de qualquer mudança em assignments: se falhar
+  // (ex.: migration ausente), nada foi deletado ainda
+  const { data: batch, error: batchError } = await supabase
     .from("assignment_batches")
     .insert({ ...batchData, created_by: user.id })
     .select("id")
     .single();
 
-  const batchId = batch?.id || null;
+  if (batchError || !batch) {
+    throw new Error(
+      `Erro ao registrar o lote do sorteio: ${batchError?.message ?? "resposta vazia"}`
+    );
+  }
+
+  // Pendentes do tipo só são descartadas no modo substituir.
+  // Delete + inserts não são atômicos (sem transação via PostgREST) —
+  // os erros são verificados e expostos, mas uma falha entre o delete e
+  // os inserts ainda perde pendentes; transação via RPC é follow-up.
+  if (params.mode === "replace") {
+    const { error: deleteError } = await supabase
+      .from("assignments")
+      .delete()
+      .eq("project_id", params.projectId)
+      .eq("status", "pendente")
+      .eq("type", assignmentType);
+    if (deleteError) {
+      throw new Error(`Erro ao descartar atribuições pendentes: ${deleteError.message}`);
+    }
+  }
 
   const chunkSize = 100;
   for (let i = 0; i < newAssignments.length; i += chunkSize) {
@@ -453,10 +469,15 @@ export async function smartRandomize(params: LotteryParams) {
       project_id: params.projectId,
       document_id: a.document_id,
       user_id: a.user_id,
-      batch_id: batchId,
+      batch_id: batch.id,
       type: assignmentType,
     }));
-    await supabase.from("assignments").insert(chunk);
+    const { error: insertError } = await supabase.from("assignments").insert(chunk);
+    if (insertError) {
+      throw new Error(
+        `Erro ao gravar as atribuições (${i} de ${newAssignments.length} inseridas): ${insertError.message}`
+      );
+    }
   }
 
   revalidatePath(`/projects/${params.projectId}/analyze/assignments`);

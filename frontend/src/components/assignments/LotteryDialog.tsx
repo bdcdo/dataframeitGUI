@@ -117,20 +117,24 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [manualEnabled, setManualEnabled] = useState(false);
   const [manualDocIds, setManualDocIds] = useState<Set<string>>(new Set());
 
-  // Participantes: pesquisadores ligados por default, coordenadores desligados
-  const [participants, setParticipants] = useState<Record<string, boolean>>(
-    () =>
-      Object.fromEntries(
-        members.map((m) => [m.userId, m.role === "pesquisador"])
-      )
-  );
+  // Participantes: default por role (pesquisador ON, coordenador OFF) +
+  // overrides dos toggles — derivar do prop em vez de snapshot garante que
+  // membro adicionado com o dialog montado entra com o default do role
+  const [participantOverrides, setParticipantOverrides] = useState<
+    Record<string, boolean>
+  >({});
+
+  const isParticipant = (m: LotteryMember) =>
+    participantOverrides[m.userId] ?? m.role === "pesquisador";
 
   const participantIds = useMemo(
     () =>
       members
-        .map((m) => m.userId)
-        .filter((id) => participants[id]),
-    [members, participants]
+        .filter(
+          (m) => participantOverrides[m.userId] ?? m.role === "pesquisador"
+        )
+        .map((m) => m.userId),
+    [members, participantOverrides]
   );
 
   // Label
@@ -163,7 +167,9 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
 
   // Prévia + semente (research D13): a seed da última prévia é reaproveitada
   // ao sortear; a prévia é guardada junto da configuração que a gerou, então
-  // qualquer mudança de configuração a invalida (e à seed) por derivação
+  // qualquer mudança de configuração a invalida (e à seed) por derivação.
+  // O rótulo fica de fora: não afeta o resultado do sorteio, e é lido em
+  // buildParams na hora do submit
   const configKey = JSON.stringify({
     type,
     researchersPerDoc,
@@ -175,7 +181,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     balancing,
     filters,
     participantIds,
-    label,
   });
   const [previewState, setPreviewState] = useState<{
     key: string;
@@ -657,9 +662,9 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                     </Label>
                     <Switch
                       id={`member-${m.userId}`}
-                      checked={!!participants[m.userId]}
+                      checked={isParticipant(m)}
                       onCheckedChange={(checked) =>
-                        setParticipants((prev) => ({
+                        setParticipantOverrides((prev) => ({
                           ...prev,
                           [m.userId]: checked,
                         }))
