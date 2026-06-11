@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -12,125 +12,227 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DocumentPickerList } from "@/components/assignments/DocumentPickerList";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
-import { smartRandomize, previewLottery } from "@/actions/assignments";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  getLotteryDocStats,
+  smartRandomize,
+  previewLottery,
+} from "@/actions/assignments";
 import type { LotteryParams, LotteryPreview } from "@/actions/assignments";
+import {
+  filterEligibleDocs,
+  type AssignmentFilter,
+  type LotteryBalancing,
+  type LotteryDocStats,
+  type LotteryFilters,
+  type LotteryMode,
+} from "@/lib/lottery-utils";
 import { toast } from "sonner";
-import { CalendarIcon, ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { ptBR } from "date-fns/locale";
 import { format } from "date-fns";
 
-interface CoordinatorOption {
+export interface LotteryMember {
   userId: string;
   name: string;
+  role: "pesquisador" | "coordenador";
 }
 
 interface LotteryDialogProps {
   projectId: string;
-  totalDocs: number;
-  totalResearchers: number;
-  coordinators?: CoordinatorOption[];
+  members: LotteryMember[];
 }
 
-const EMPTY_COORDINATORS: CoordinatorOption[] = [];
+interface LotteryStats {
+  docs: LotteryDocStats[];
+  batches: { id: string; label: string | null; createdAt: string }[];
+  minResponsesForComparison: number;
+}
 
-export function LotteryDialog({
-  projectId,
-  totalDocs,
-  totalResearchers,
-  coordinators = EMPTY_COORDINATORS,
-}: LotteryDialogProps) {
+type CodingsFilterMode = "all" | "none" | "atMost";
+
+export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
-  // Hidratado client-only para o "disabled date in past" do Calendar não
-  // produzir mismatch entre server e cliente.
-  const [todayMidnight, setTodayMidnight] = useState<Date | null>(null);
+
+  // Stats de elegibilidade, recarregadas a cada abertura do dialog —
+  // um sorteio muda atribuições/lotes, então reabrir com stats da
+  // abertura anterior mentiria na contagem de elegíveis
+  const [stats, setStats] = useState<LotteryStats | null>(null);
+  const [statsError, setStatsError] = useState(false);
   useEffect(() => {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    setTodayMidnight(t);
-  }, []);
+    if (!open) return;
+    let cancelled = false;
+    getLotteryDocStats(projectId)
+      .then((s) => {
+        if (!cancelled) {
+          setStats(s);
+          setStatsError(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStatsError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectId]);
 
   // Tipo do sorteio (codificação ou comparação)
   const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
 
-  // Distribution
+  // Distribuição
   const [researchersPerDoc, setResearchersPerDoc] = useState(2);
   const [docsPerResearcherEnabled, setDocsPerResearcherEnabled] =
     useState(false);
   const [docsPerResearcher, setDocsPerResearcher] = useState(10);
   const [docSubsetEnabled, setDocSubsetEnabled] = useState(false);
-  const [docSubsetSize, setDocSubsetSize] = useState(() =>
-    Math.min(50, totalDocs)
-  );
+  const [docSubsetSize, setDocSubsetSize] = useState(50);
+  const [balancing, setBalancing] = useState<LotteryBalancing>("round");
 
-  // Deadline
-  const [deadlineOpen, setDeadlineOpen] = useState(false);
-  const [deadlineMode, setDeadlineMode] = useState<
-    "none" | "batch" | "recurring"
+  // Atribuições pendentes (modo)
+  const [mode, setMode] = useState<LotteryMode>("append");
+
+  // Filtros de elegibilidade
+  const [codingsFilterMode, setCodingsFilterMode] =
+    useState<CodingsFilterMode>("all");
+  const [maxCodingsValue, setMaxCodingsValue] = useState(1);
+  const [assignmentFilter, setAssignmentFilter] =
+    useState<AssignmentFilter>("any");
+  const [batchFilterMode, setBatchFilterMode] = useState<
+    "none" | "exclude" | "only"
   >("none");
-  const [deadlineDate, setDeadlineDate] = useState<Date | undefined>();
-  const [recurringCount, setRecurringCount] = useState(10);
-  const [recurringStart, setRecurringStart] = useState<Date | undefined>();
+  const [batchExclude, setBatchExclude] = useState<string[]>([]);
+  const [batchOnly, setBatchOnly] = useState<string | null>(null);
+  const [manualEnabled, setManualEnabled] = useState(false);
+  const [manualDocIds, setManualDocIds] = useState<Set<string>>(new Set());
 
-  // Coordinators
-  const [includedCoordinators, setIncludedCoordinators] = useState<Record<string, boolean>>({});
+  // Participantes: default por role (pesquisador ON, coordenador OFF) +
+  // overrides dos toggles — derivar do prop em vez de snapshot garante que
+  // membro adicionado com o dialog montado entra com o default do role
+  const [participantOverrides, setParticipantOverrides] = useState<
+    Record<string, boolean>
+  >({});
 
-  const includedCoordinatorIds = Object.entries(includedCoordinators)
-    .filter(([, v]) => v)
-    .map(([k]) => k);
+  const isParticipant = (m: LotteryMember) =>
+    participantOverrides[m.userId] ?? m.role === "pesquisador";
 
-  const effectiveResearchers = totalResearchers + includedCoordinatorIds.length;
+  const participantIds = useMemo(
+    () =>
+      members
+        .filter(
+          (m) => participantOverrides[m.userId] ?? m.role === "pesquisador"
+        )
+        .map((m) => m.userId),
+    [members, participantOverrides]
+  );
 
   // Label
   const [label, setLabel] = useState("");
 
-  // Preview
-  const [preview, setPreview] = useState<LotteryPreview | null>(null);
-
   const isComparacao = type === "comparacao";
 
-  const buildParams = (): LotteryParams => ({
+  const filters = useMemo<LotteryFilters>(() => {
+    const f: LotteryFilters = {};
+    if (codingsFilterMode === "none") f.maxHumanCodings = 0;
+    else if (codingsFilterMode === "atMost") f.maxHumanCodings = maxCodingsValue;
+    if (assignmentFilter !== "any") f.assignmentFilter = assignmentFilter;
+    if (batchFilterMode === "only" && batchOnly) {
+      f.batchFilter = { only: batchOnly };
+    } else if (batchFilterMode === "exclude" && batchExclude.length) {
+      f.batchFilter = { exclude: batchExclude };
+    }
+    if (manualEnabled) f.manualDocIds = Array.from(manualDocIds);
+    return f;
+  }, [
+    codingsFilterMode,
+    maxCodingsValue,
+    assignmentFilter,
+    batchFilterMode,
+    batchOnly,
+    batchExclude,
+    manualEnabled,
+    manualDocIds,
+  ]);
+
+  // Prévia + semente (research D13): a seed da última prévia é reaproveitada
+  // ao sortear; a prévia é guardada junto da configuração que a gerou, então
+  // qualquer mudança de configuração a invalida (e à seed) por derivação.
+  // O rótulo fica de fora: não afeta o resultado do sorteio, e é lido em
+  // buildParams na hora do submit
+  const configKey = JSON.stringify({
+    type,
+    researchersPerDoc,
+    docsPerResearcherEnabled,
+    docsPerResearcher,
+    docSubsetEnabled,
+    docSubsetSize,
+    mode,
+    balancing,
+    filters,
+    participantIds,
+  });
+  const [previewState, setPreviewState] = useState<{
+    key: string;
+    preview: LotteryPreview;
+  } | null>(null);
+  const preview = previewState?.key === configKey ? previewState.preview : null;
+  const seed = preview?.seed ?? null;
+
+  // Contagem de elegíveis ao vivo, com a mesma função pura do server
+  const eligibleCount = useMemo(() => {
+    if (!stats) return null;
+    let candidates = stats.docs;
+    if (isComparacao) {
+      candidates = candidates.filter(
+        (d) => d.humanCodingCount >= stats.minResponsesForComparison
+      );
+    }
+    return filterEligibleDocs(candidates, type, filters).length;
+  }, [stats, type, isComparacao, filters]);
+
+  const blockedMessage =
+    participantIds.length === 0
+      ? "Nenhum participante selecionado."
+      : eligibleCount === 0
+        ? "Nenhum documento passa nos filtros atuais."
+        : null;
+
+  const canSubmit = !blockedMessage && stats !== null;
+
+  const buildParams = (withSeed: boolean): LotteryParams => ({
     projectId,
     type,
+    mode,
+    balancing,
+    seed: withSeed && seed !== null ? seed : undefined,
     researchersPerDoc,
     docsPerResearcher: docsPerResearcherEnabled
       ? docsPerResearcher
       : undefined,
     docSubsetSize: docSubsetEnabled ? docSubsetSize : undefined,
-    deadlineMode,
-    deadlineDate: deadlineDate?.toISOString().split("T")[0],
-    recurringCount:
-      deadlineMode === "recurring" ? recurringCount : undefined,
-    recurringStart:
-      deadlineMode === "recurring" && recurringStart
-        ? recurringStart.toISOString().split("T")[0]
-        : undefined,
     label: label || undefined,
-    includedCoordinatorIds: includedCoordinatorIds.length ? includedCoordinatorIds : undefined,
+    filters,
+    participantIds,
   });
 
   const handlePreview = async () => {
     setPreviewing(true);
     try {
-      const result = await previewLottery(buildParams());
-      setPreview(result);
-    } catch (e: any) {
-      toast.error(e.message);
+      const result = await previewLottery(buildParams(false));
+      setPreviewState({ key: configKey, preview: result });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao calcular a prévia");
     }
     setPreviewing(false);
   };
@@ -138,38 +240,39 @@ export function LotteryDialog({
   const handleRandomize = async () => {
     setLoading(true);
     try {
-      const result = await smartRandomize(buildParams());
+      const result = await smartRandomize(buildParams(true));
       toast.success(
         `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
       );
       setOpen(false);
-      setPreview(null);
-    } catch (e: any) {
-      toast.error(e.message);
+      setPreviewState(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao sortear");
     }
     setLoading(false);
   };
 
-  const formatDate = (date: Date | undefined) => {
-    if (!date) return "Selecionar data";
-    return format(date, "dd/MM/yyyy", { locale: ptBR });
-  };
+  const docsConsidered =
+    eligibleCount === null
+      ? null
+      : docSubsetEnabled
+        ? Math.min(docSubsetSize, eligibleCount)
+        : eligibleCount;
 
-  const estimatedPerResearcher =
-    effectiveResearchers > 0
-      ? Math.ceil(
-          ((docSubsetEnabled ? docSubsetSize : totalDocs) *
-            researchersPerDoc) /
-            effectiveResearchers
-        )
+  const estimatedPerParticipant =
+    docsConsidered !== null && participantIds.length > 0
+      ? Math.ceil((docsConsidered * researchersPerDoc) / participantIds.length)
       : 0;
+
+  const memberName = (userId: string) =>
+    members.find((m) => m.userId === userId)?.name ?? userId.slice(0, 8);
 
   return (
     <Dialog
       open={open}
       onOpenChange={(v) => {
         setOpen(v);
-        if (!v) setPreview(null);
+        if (!v) setPreviewState(null);
       }}
     >
       <DialogTrigger asChild>
@@ -224,6 +327,209 @@ export function LotteryDialog({
 
           <Separator />
 
+          {/* Section: Eligible documents (US1) */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-semibold">Documentos elegíveis</h4>
+
+            <div>
+              <Label>Codificações humanas</Label>
+              <RadioGroup
+                value={codingsFilterMode}
+                onValueChange={(v) =>
+                  setCodingsFilterMode(v as CodingsFilterMode)
+                }
+                className="mt-2 space-y-1"
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="all" id="cod-all" />
+                  <Label htmlFor="cod-all" className="font-normal">
+                    Todos os documentos
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="none" id="cod-none" />
+                  <Label htmlFor="cod-none" className="font-normal">
+                    Sem nenhuma codificação
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="atMost" id="cod-atmost" />
+                  <Label htmlFor="cod-atmost" className="font-normal">
+                    No máximo
+                  </Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={maxCodingsValue}
+                    onChange={(e) =>
+                      setMaxCodingsValue(parseInt(e.target.value) || 1)
+                    }
+                    onFocus={() => setCodingsFilterMode("atMost")}
+                    className="h-7 w-16"
+                    aria-label="Número máximo de codificações"
+                  />
+                  <span className="text-sm font-normal">codificações</span>
+                </div>
+              </RadioGroup>
+            </div>
+
+            <div>
+              <Label htmlFor="assignment-filter">Status de atribuição</Label>
+              <Select
+                value={assignmentFilter}
+                onValueChange={(v) =>
+                  setAssignmentFilter(v as AssignmentFilter)
+                }
+              >
+                <SelectTrigger id="assignment-filter" className="mt-1 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Qualquer</SelectItem>
+                  <SelectItem value="noActiveOfType">
+                    Sem atribuição ativa de{" "}
+                    {isComparacao ? "comparação" : "codificação"}
+                  </SelectItem>
+                  <SelectItem value="neverAssigned">
+                    Nunca atribuído
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {stats !== null && stats.batches.length > 0 && (
+              <div>
+                <Label htmlFor="batch-filter-mode">Lotes anteriores</Label>
+                <Select
+                  value={batchFilterMode}
+                  onValueChange={(v) =>
+                    setBatchFilterMode(v as "none" | "exclude" | "only")
+                  }
+                >
+                  <SelectTrigger id="batch-filter-mode" className="mt-1 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Todos os lotes</SelectItem>
+                    <SelectItem value="exclude">Excluir lotes</SelectItem>
+                    <SelectItem value="only">Somente de um lote</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {batchFilterMode === "exclude" && (
+                  <div className="mt-2 max-h-32 space-y-2 overflow-y-auto rounded-md border p-2">
+                    {stats.batches.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`batch-ex-${b.id}`}
+                          checked={batchExclude.includes(b.id)}
+                          onCheckedChange={(checked) =>
+                            setBatchExclude((prev) =>
+                              checked
+                                ? [...prev, b.id]
+                                : prev.filter((id) => id !== b.id)
+                            )
+                          }
+                        />
+                        <Label
+                          htmlFor={`batch-ex-${b.id}`}
+                          className="font-normal"
+                        >
+                          {b.label || "Sem rótulo"}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
+                              locale: ptBR,
+                            })}
+                          </span>
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {batchFilterMode === "only" && (
+                  <RadioGroup
+                    value={batchOnly ?? ""}
+                    onValueChange={setBatchOnly}
+                    className="mt-2 max-h-32 space-y-1 overflow-y-auto rounded-md border p-2"
+                  >
+                    {stats.batches.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2">
+                        <RadioGroupItem value={b.id} id={`batch-only-${b.id}`} />
+                        <Label
+                          htmlFor={`batch-only-${b.id}`}
+                          className="font-normal"
+                        >
+                          {b.label || "Sem rótulo"}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
+                              locale: ptBR,
+                            })}
+                          </span>
+                        </Label>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                )}
+
+                <p className="mt-1 text-xs text-muted-foreground">
+                  O vínculo com o lote vem das atribuições existentes dos
+                  documentos.
+                </p>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between">
+              <Label htmlFor="manual-switch">
+                Selecionar documentos manualmente
+              </Label>
+              <Switch
+                id="manual-switch"
+                checked={manualEnabled}
+                onCheckedChange={setManualEnabled}
+              />
+            </div>
+            {manualEnabled && stats !== null && (
+              <DocumentPickerList
+                docs={stats.docs}
+                selected={manualDocIds}
+                onChange={setManualDocIds}
+              />
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Section: Pending assignments mode (US2) */}
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">Atribuições pendentes</h4>
+            <RadioGroup
+              value={mode}
+              onValueChange={(v) => setMode(v as LotteryMode)}
+              className="space-y-1"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="append" id="mode-append" />
+                <Label htmlFor="mode-append" className="font-normal">
+                  Acrescentar ao existente
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="replace" id="mode-replace" />
+                <Label htmlFor="mode-replace" className="font-normal">
+                  Substituir pendentes
+                </Label>
+              </div>
+            </RadioGroup>
+            <p className="text-xs text-muted-foreground">
+              {mode === "append"
+                ? "As atribuições pendentes existentes são preservadas; o sorteio só adiciona novas."
+                : `As atribuições pendentes de ${isComparacao ? "comparação" : "codificação"} são descartadas e redistribuídas. Em andamento e concluídas nunca são tocadas.`}
+            </p>
+          </div>
+
+          <Separator />
+
           {/* Section 1: Distribution */}
           <div className="space-y-4">
             <h4 className="text-sm font-semibold">Distribuição</h4>
@@ -236,7 +542,7 @@ export function LotteryDialog({
                 id="per-doc"
                 type="number"
                 min={1}
-                max={Math.min(10, totalResearchers)}
+                max={Math.max(1, Math.min(10, members.length))}
                 value={researchersPerDoc}
                 onChange={(e) =>
                   setResearchersPerDoc(parseInt(e.target.value) || 1)
@@ -281,7 +587,6 @@ export function LotteryDialog({
               <Input
                 type="number"
                 min={1}
-                max={totalDocs}
                 value={docSubsetSize}
                 onChange={(e) =>
                   setDocSubsetSize(parseInt(e.target.value) || 1)
@@ -290,33 +595,78 @@ export function LotteryDialog({
               />
             )}
 
-            <p className="text-xs text-muted-foreground">
-              {totalDocs} documentos disponíveis, {effectiveResearchers}{" "}
-              participantes. Estimativa: ~{estimatedPerResearcher} docs por
-              participante.
-            </p>
+            <div>
+              <Label>Equilíbrio</Label>
+              <RadioGroup
+                value={balancing}
+                onValueChange={(v) => setBalancing(v as LotteryBalancing)}
+                className="mt-2 space-y-1"
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="round" id="bal-round" />
+                  <Label htmlFor="bal-round" className="font-normal">
+                    Equilibrar só esta rodada
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="history" id="bal-history" />
+                  <Label htmlFor="bal-history" className="font-normal">
+                    Equilibrar considerando rodadas anteriores
+                  </Label>
+                </div>
+              </RadioGroup>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {balancing === "round"
+                  ? "Cada participante recebe a mesma quantidade de atribuições novas (±1)."
+                  : "Quem tem menos atribuições acumuladas recebe mais, até nivelar."}
+              </p>
+            </div>
+
+            {blockedMessage ? (
+              <p className="text-xs text-destructive">{blockedMessage}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {stats === null
+                  ? statsError
+                    ? "Não foi possível carregar os documentos."
+                    : "Carregando documentos..."
+                  : `${eligibleCount} documentos elegíveis, ${participantIds.length} participantes. ${
+                      balancing === "round"
+                        ? `Estimativa: ~${estimatedPerParticipant} docs por participante.`
+                        : `Média: ~${estimatedPerParticipant} docs por participante — quem tem menos carga recebe mais.`
+                    }`}
+              </p>
+            )}
           </div>
 
-          {coordinators.length > 0 && (
+          {members.length > 0 && (
             <>
               <Separator />
 
-              {/* Section: Coordinators */}
+              {/* Section: Participants (US3) */}
               <div className="space-y-3">
-                <h4 className="text-sm font-semibold">Coordenadores</h4>
+                <h4 className="text-sm font-semibold">Participantes</h4>
                 <p className="text-xs text-muted-foreground">
-                  Ative para incluir coordenadores no sorteio.
+                  Quem está ligado entra no sorteio. Pesquisadores começam
+                  ligados; coordenadores, desligados.
                 </p>
-                {coordinators.map((c) => (
-                  <div key={c.userId} className="flex items-center justify-between">
-                    <Label htmlFor={`coord-${c.userId}`}>{c.name}</Label>
+                {members.map((m) => (
+                  <div key={m.userId} className="flex items-center justify-between">
+                    <Label htmlFor={`member-${m.userId}`} className="font-normal">
+                      {m.name}
+                      {m.role === "coordenador" && (
+                        <span className="ml-1.5 text-xs text-muted-foreground">
+                          coordenador
+                        </span>
+                      )}
+                    </Label>
                     <Switch
-                      id={`coord-${c.userId}`}
-                      checked={!!includedCoordinators[c.userId]}
+                      id={`member-${m.userId}`}
+                      checked={isParticipant(m)}
                       onCheckedChange={(checked) =>
-                        setIncludedCoordinators((prev) => ({
+                        setParticipantOverrides((prev) => ({
                           ...prev,
-                          [c.userId]: checked,
+                          [m.userId]: checked,
                         }))
                       }
                     />
@@ -328,122 +678,14 @@ export function LotteryDialog({
 
           <Separator />
 
-          {/* Section 2: Deadline */}
-          <Collapsible open={deadlineOpen} onOpenChange={setDeadlineOpen}>
-            <CollapsibleTrigger className="flex w-full items-center justify-between text-sm font-semibold">
-              Prazo
-              <ChevronDown
-                className={cn(
-                  "size-4 transition-transform",
-                  deadlineOpen && "rotate-180"
-                )}
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-3 space-y-4">
-              <RadioGroup
-                value={deadlineMode}
-                onValueChange={(v) =>
-                  setDeadlineMode(v as "none" | "batch" | "recurring")
-                }
-              >
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="none" id="dl-none" />
-                  <Label htmlFor="dl-none">Sem prazo</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="batch" id="dl-batch" />
-                  <Label htmlFor="dl-batch">Prazo único</Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="recurring" id="dl-recurring" />
-                  <Label htmlFor="dl-recurring">Recorrente</Label>
-                </div>
-              </RadioGroup>
-
-              {deadlineMode === "batch" && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left font-normal",
-                        !deadlineDate && "text-muted-foreground"
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 size-4" />
-                      {formatDate(deadlineDate)}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={deadlineDate}
-                      onSelect={setDeadlineDate}
-                      locale={ptBR}
-                      disabled={todayMidnight ? (date) => date < todayMidnight : undefined}
-                    />
-                  </PopoverContent>
-                </Popover>
-              )}
-
-              {deadlineMode === "recurring" && (
-                <div className="space-y-3">
-                  <div>
-                    <Label>Documentos por semana</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={recurringCount}
-                      onChange={(e) =>
-                        setRecurringCount(parseInt(e.target.value) || 1)
-                      }
-                      className="mt-1 w-24"
-                    />
-                  </div>
-                  <div>
-                    <Label>Data de início</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn(
-                            "mt-1 w-full justify-start text-left font-normal",
-                            !recurringStart && "text-muted-foreground"
-                          )}
-                        >
-                          <CalendarIcon className="mr-2 size-4" />
-                          {formatDate(recurringStart)}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        className="w-auto p-0"
-                        align="start"
-                      >
-                        <Calendar
-                          mode="single"
-                          selected={recurringStart}
-                          onSelect={setRecurringStart}
-                          locale={ptBR}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
-
-          <Separator />
-
           {/* Section 3: Preview + Confirm */}
           <div className="space-y-3">
             <Button
               variant="outline"
               onClick={handlePreview}
-              disabled={previewing}
+              disabled={previewing || !canSubmit}
               className="w-full"
-            >
-              {previewing ? "Calculando..." : "Visualizar prévia"}
+            >              {previewing ? "Calculando..." : "Visualizar prévia"}
             </Button>
 
             {preview && (
@@ -456,23 +698,17 @@ export function LotteryDialog({
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-1">Pesquisador</th>
+                        <th className="pb-1">Participante</th>
                         <th className="pb-1 text-center">Existentes</th>
                         <th className="pb-1 text-center">Novos</th>
-                        <th className="pb-1 text-right">Prazo</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.researchers.map((r) => (
+                      {preview.participants.map((r) => (
                         <tr key={r.userId} className="border-b last:border-0">
-                          <td className="py-1 font-mono">
-                            {r.userId.slice(0, 8)}
-                          </td>
+                          <td className="py-1">{memberName(r.userId)}</td>
                           <td className="py-1 text-center">{r.existing}</td>
                           <td className="py-1 text-center">{r.newDocs}</td>
-                          <td className="py-1 text-right text-muted-foreground">
-                            {r.deadline || "—"}
-                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -483,7 +719,7 @@ export function LotteryDialog({
 
             <Button
               onClick={handleRandomize}
-              disabled={loading}
+              disabled={loading || !canSubmit}
               className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
             >
               {loading ? "Sorteando..." : "Sortear"}

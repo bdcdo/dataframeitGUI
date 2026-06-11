@@ -66,10 +66,11 @@ export default async function AssignmentsPage({
 
   const allResearchersForTable = [...typedResearchers, ...typedCoordinators];
 
-  const coordinatorOptions = typedCoordinators.map((c) => ({
-    userId: c.user_id,
+  const lotteryMembers = allResearchersForTable.map((m) => ({
+    userId: m.user_id,
     name:
-      c.profiles?.first_name || c.profiles?.email || c.user_id.slice(0, 8),
+      m.profiles?.first_name || m.profiles?.email || m.user_id.slice(0, 8),
+    role: m.role as "pesquisador" | "coordenador",
   }));
 
   const assignedDocIds = new Set(
@@ -107,12 +108,7 @@ export default async function AssignmentsPage({
               pendingByType={pendingByType}
             />
           )}
-          <LotteryDialog
-            projectId={id}
-            totalDocs={(documents || []).length}
-            totalResearchers={typedResearchers.length}
-            coordinators={coordinatorOptions}
-          />
+          <LotteryDialog projectId={id} members={lotteryMembers} />
         </div>
       </div>
       <AssignmentTable
