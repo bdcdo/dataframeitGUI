@@ -23,7 +23,8 @@ Shape do `filters` (gravado pelo server, livre de PII além de user ids já pres
   "batchFilter": { "exclude": ["<batch-uuid>"] },
   "manualDocIds": ["<doc-uuid>", "..."],
   "participantIds": ["<user-uuid>", "..."],
-  "docSubsetSize": 50
+  "docSubsetSize": 50,
+  "seed": 1234567890
 }
 ```
 

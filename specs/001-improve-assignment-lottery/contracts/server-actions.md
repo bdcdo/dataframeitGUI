@@ -1,6 +1,6 @@
 # Contracts: Server Actions do sorteio
 
-**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10 | **Updated**: 2026-06-11 (US7 — `balancing` + `distributeDocs`)
+**Feature**: 001-improve-assignment-lottery | **Date**: 2026-06-10 | **Updated**: 2026-06-11 (US7 — `balancing` + `distributeDocs`; remediação I1 — semente prévia → sorteio, research D13)
 
 Interface exposta = Server Actions em `frontend/src/actions/assignments.ts` consumidas pelo `LotteryDialog`. Todas exigem usuário autenticado (Clerk) e operam sob RLS (coordenador do projeto).
 
@@ -51,7 +51,7 @@ export function distributeDocs(
     preservedPairs: Set<string>;                    // "docId:userId" já existentes
     docAssignedUsers: Record<string, string[]>;     // usuários preservados por doc
     coOccurrence: Record<string, Record<string, number>>;
-    rng?: () => number;                              // default Math.random
+    rng: () => number;                               // PRNG seedado vindo de computeLottery (research D13)
   },
 ): { document_id: string; user_id: string }[];
 ```
@@ -78,6 +78,7 @@ export interface LotteryParams {
   type?: "codificacao" | "comparacao";   // default "codificacao"
   mode: LotteryMode;                      // NOVO — default na UI: "append"
   balancing: LotteryBalancing;            // NOVO — default na UI: "round"
+  seed?: number;                          // NOVO — semente da prévia (research D13); ausente = gerar nova
   researchersPerDoc: number;
   docsPerResearcher?: number;
   docSubsetSize?: number;
@@ -105,10 +106,11 @@ export interface LotteryPreview {
   totalNew: number;
   totalPreserved: number;   // em append inclui pendentes preservadas
   eligibleDocs: number;     // NOVO — nº de docs elegíveis pós-filtros (pré-subset)
+  seed: number;             // NOVO — semente usada; o dialog a reenvia em smartRandomize (research D13)
 }
 ```
 
-Garantia (FR-013/SC-005): usa exatamente o mesmo `computeLottery(params)` da execução; `existing` conta as atribuições preservadas pelo modo corrente (em `append`, inclui pendentes).
+Garantia (FR-013/SC-005): usa exatamente o mesmo `computeLottery(params)` da execução, e toda a aleatoriedade (shuffle de docs, subset, desempates de `distributeDocs`) deriva do PRNG seedado — mesma semente + mesma configuração + mesmos dados ⇒ resultado idêntico ao sortear. `existing` conta as atribuições preservadas pelo modo corrente (em `append`, inclui pendentes).
 
 ## `smartRandomize(params: LotteryParams)` — ALTERADA
 
@@ -119,7 +121,7 @@ returns Promise<{ count: number; preserved: number }>
 Efeitos:
 
 1. `mode === "replace"`: DELETE das atribuições `pendente` do tipo no projeto; `mode === "append"`: nenhum delete.
-2. INSERT em `assignment_batches` com `mode`, `balancing`, `filters` (JSONB, incluindo `participantIds` e `docSubsetSize`), `deadline_mode: 'none'`, demais colunas como hoje.
+2. INSERT em `assignment_batches` com `mode`, `balancing`, `filters` (JSONB, incluindo `participantIds`, `docSubsetSize` e `seed`), `deadline_mode: 'none'`, demais colunas como hoje.
 3. INSERT das novas atribuições em chunks de 100, sem `deadline`, com `batch_id` e `type`.
 4. `revalidatePath` de assignments/code/compare (inalterado).
 
@@ -135,4 +137,4 @@ Garantias da distribuição (US7): no modo `balancing: "round"` sem limites de c
 
 Props: `projectId: string; members: { userId: string; name: string; role: "pesquisador" | "coordenador" }[]` (a page de atribuições já tem nomes; `totalDocs`/`totalResearchers`/`coordinators` saem — contagens passam a vir de `getLotteryDocStats` + toggles).
 
-Comportamentos obrigatórios: contagem de elegíveis e estimativa por participante recalculadas client-side a cada mudança (FR-007); "Visualizar prévia" e "Sortear" desabilitados com 0 elegíveis ou 0 participantes, com mensagem contextual; seção Prazo inexistente (FR-012); prévia sem coluna Prazo e exibindo nomes dos participantes (não mais `userId.slice(0,8)`); seleção do modo de equilíbrio na seção Distribuição (RadioGroup "Equilibrar só esta rodada" — default — / "Equilibrar considerando rodadas anteriores"), refletida na prévia (FR-016).
+Comportamentos obrigatórios: contagem de elegíveis e estimativa por participante recalculadas client-side a cada mudança (FR-007); "Visualizar prévia" e "Sortear" desabilitados com 0 elegíveis ou 0 participantes, com mensagem contextual; seção Prazo inexistente (FR-012); prévia sem coluna Prazo e exibindo nomes dos participantes (não mais `userId.slice(0,8)`); seleção do modo de equilíbrio na seção Distribuição (RadioGroup "Equilibrar só esta rodada" — default — / "Equilibrar considerando rodadas anteriores"), refletida na prévia (FR-016); o dialog guarda a `seed` retornada pela prévia e a envia ao sortear, descartando-a sempre que qualquer configuração muda (sortear sem prévia ⇒ sem `seed`, o server gera nova — research D13).
