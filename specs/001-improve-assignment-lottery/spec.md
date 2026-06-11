@@ -8,11 +8,13 @@
 
 **Input**: User description: "quero melhorar a funcionalidade de sortear atribuições. Acho incompleta e pouco funcional. Deveríamos poder selecionar só documentos sem revisão, com no máximo uma revisão, etc. Acho que podemos remover a questão do prazo, porque o controle de prazo por enquanto pode ficar de fora da plataforma."
 
+**Input (2026-06-11)**: User description: "o sorteio atual acho que tá sempre mandando pareceres (todos os da rodada) para quem inicia a rodada com menos pareceres. A distribuição de novos pareceres deve buscar equilibrio entre os pesquisadores, mas acho que é melhor configurar entre equilibrar só com base na rodada e equilibrar com base em rodadas anteriores. Acho que mesmo considerando rodadas anteriores tá meio bugado"
+
 ## Visão geral
 
-O sorteio de atribuições distribui documentos do projeto entre os participantes para codificação ou comparação. Hoje o coordenador não controla quais documentos entram no sorteio (todo documento ativo com vaga participa), cada sorteio descarta as atribuições pendentes do tipo e redistribui tudo — o que inviabiliza lotes incrementais —, o conjunto de participantes é rígido (todos os pesquisadores, sempre) e a configuração de prazo adiciona complexidade que ficará fora da plataforma por ora.
+O sorteio de atribuições distribui documentos do projeto entre os participantes para codificação ou comparação. Hoje o coordenador não controla quais documentos entram no sorteio (todo documento ativo com vaga participa), cada sorteio descarta as atribuições pendentes do tipo e redistribui tudo — o que inviabiliza lotes incrementais —, o conjunto de participantes é rígido (todos os pesquisadores, sempre) e a configuração de prazo adiciona complexidade que ficará fora da plataforma por ora. Além disso, a distribuição concentra documentos: dependendo da configuração, todos os documentos de uma rodada vão para o participante que começou com menos atribuições (ou para os mesmos participantes de sempre), em vez de se espalharem com equilíbrio pela equipe.
 
-Esta feature dá ao coordenador controle sobre três eixos do sorteio: quais documentos são elegíveis (filtros por codificações existentes, por status de atribuição, por lote anterior e seleção manual), como o sorteio interage com atribuições pendentes (acrescentar vs substituir) e quem participa (toggle individual por membro). Além disso, remove a configuração de prazo do dialog.
+Esta feature dá ao coordenador controle sobre quatro eixos do sorteio: quais documentos são elegíveis (filtros por codificações existentes, por status de atribuição, por lote anterior e seleção manual), como o sorteio interage com atribuições pendentes (acrescentar vs substituir), quem participa (toggle individual por membro) e como a distribuição equilibra a carga entre os participantes (só a rodada atual vs considerando rodadas anteriores). Além disso, remove a configuração de prazo do dialog.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -111,6 +113,23 @@ O dialog de sorteio não oferece mais configuração de prazo (nem prazo único,
 
 ---
 
+### User Story 7 - Equilibrar a distribuição entre os participantes (Priority: P1)
+
+O coordenador escolhe no dialog como o sorteio equilibra a carga: "equilibrar só esta rodada" (padrão) divide os documentos do sorteio atual igualmente entre os participantes, ignorando cargas anteriores; "equilibrar considerando rodadas anteriores" direciona mais documentos a quem tem menos carga acumulada, até nivelar os totais. Em qualquer modo, a distribuição se espalha pela equipe — nunca concentra todos os documentos num único participante enquanto outros têm capacidade disponível.
+
+**Why this priority**: Corrige um defeito observado em uso real — rodadas inteiras indo para uma única pessoa (a que começou com menos atribuições, ou sempre as mesmas pessoas da lista) — que mina a confiança da equipe no sorteio e obriga o coordenador a redistribuir na mão.
+
+**Independent Test**: Num projeto com 3 participantes de cargas acumuladas diferentes, sortear 12 documentos no modo "só esta rodada" e verificar que cada participante recebeu 4 atribuições novas; repetir no modo "rodadas anteriores" e verificar que quem tinha menos carga recebeu mais, sem ninguém receber tudo.
+
+**Acceptance Scenarios**:
+
+1. **Given** D documentos elegíveis, R participantes por documento e P participantes ativos sem limite de documentos por participante, **When** o coordenador sorteia no modo "equilibrar só esta rodada", **Then** cada participante recebe entre ⌊D·R/P⌋ e ⌈D·R/P⌉ atribuições novas, independentemente da carga que cada um tinha antes.
+2. **Given** participantes com cargas acumuladas diferentes (atribuições pendentes, em andamento e concluídas do tipo sorteado), **When** o coordenador sorteia no modo "equilibrar considerando rodadas anteriores", **Then** quem tem menor carga acumulada recebe proporcionalmente mais documentos novos, aproximando os totais ao final do sorteio.
+3. **Given** qualquer modo de equilíbrio e mais de um participante com capacidade disponível, **When** o sorteio executa, **Then** nenhum participante único recebe todos os documentos da rodada.
+4. **Given** participantes empatados pelo critério do modo escolhido, **When** o sorteio decide quem recebe o próximo documento, **Then** o desempate é aleatório — a ordem de cadastro dos membros no projeto não influencia o resultado.
+
+---
+
 ### Edge Cases
 
 - Filtros que resultam em 0 documentos elegíveis: o dialog informa a contagem zerada e o botão de sortear fica desabilitado, com mensagem explicando o motivo.
@@ -120,6 +139,9 @@ O dialog de sorteio não oferece mais configuração de prazo (nem prazo único,
 - Filtro "no máximo N codificações" combinado com o tipo comparação: a exigência mínima de codificações para comparação continua valendo; se a combinação tornar o conjunto vazio (ex.: máx. 1 codificação quando comparação exige 2), o dialog mostra 0 elegíveis e orienta o coordenador.
 - Limite de documentos por participante menor que a demanda total: documentos podem ficar com menos atribuições do que o solicitado (comportamento atual, mantido); a prévia evidencia o déficit.
 - Participante desligado que já tinha atribuições pendentes: as atribuições existentes dele não são tocadas em modo acrescentar; em modo substituir, as pendentes dele do tipo sorteado são descartadas junto com as demais e ele não recebe novas.
+- Membro novo (carga acumulada zero) no modo "rodadas anteriores": recebe mais documentos que os demais até nivelar — comportamento esperado do modo, não defeito; a prévia evidencia a assimetria antes de o coordenador confirmar.
+- Modo "só esta rodada" com limite de documentos por participante menor que a cota uniforme (⌈D·R/P⌉): o participante para no limite e o excedente é redistribuído entre os demais com capacidade; se ninguém tem capacidade, documentos ficam com menos atribuições que o solicitado (déficit evidenciado na prévia).
+- Modo "rodadas anteriores" com cargas já niveladas: a distribuição degenera para a uniforme — equivalente ao modo "só esta rodada" para aquele sorteio.
 
 ## Requirements *(mandatory)*
 
@@ -138,15 +160,19 @@ O dialog de sorteio não oferece mais configuração de prazo (nem prazo único,
 - **FR-011**: Para sorteios do tipo comparação, o sistema MUST continuar exigindo o número mínimo de codificações por documento configurado no projeto, e os filtros desta feature MUST compor por cima dessa exigência.
 - **FR-012**: O dialog MUST NOT oferecer configuração de prazo; sorteios novos MUST ser criados sem prazo e a prévia MUST NOT exibir informação de prazo. Prazos de sorteios antigos permanecem intactos onde já são exibidos.
 - **FR-013**: A prévia MUST refletir exatamente o resultado que o sorteio produziria com a configuração corrente (filtros, modo, participantes, limites), incluindo quantidade de atribuições novas e preservadas por participante.
-- **FR-014**: O sorteio MUST manter a distribuição equilibrada existente: variação de duplas de participantes por documento e respeito ao limite de documentos por participante.
-- **FR-015**: O rótulo do lote MUST continuar opcional e MUST ser registrado junto com a configuração usada no sorteio (filtros, modo e participantes), para consulta posterior.
+- **FR-014**: O sorteio MUST manter a variação de duplas de participantes por documento e o respeito ao limite de documentos por participante, em ambos os modos de equilíbrio.
+- **FR-015**: O rótulo do lote MUST continuar opcional e MUST ser registrado junto com a configuração usada no sorteio (filtros, modo de atribuição, modo de equilíbrio e participantes), para consulta posterior.
+- **FR-016**: O dialog MUST oferecer a escolha do modo de equilíbrio da distribuição, com as opções "equilibrar só esta rodada" (padrão) e "equilibrar considerando rodadas anteriores".
+- **FR-017**: No modo "equilibrar só esta rodada", o sorteio MUST distribuir as atribuições novas da forma mais uniforme possível entre os participantes ativos — diferença máxima de 1 atribuição entre quaisquer dois participantes, salvo quando limites de capacidade ou restrições de elegibilidade impedirem —, sem considerar a carga acumulada de rodadas anteriores.
+- **FR-018**: No modo "equilibrar considerando rodadas anteriores", o sorteio MUST priorizar os participantes com menor carga acumulada, contando as atribuições pendentes, em andamento e concluídas do tipo sorteado.
+- **FR-019**: Em qualquer modo de equilíbrio, desempates entre participantes MUST ser resolvidos aleatoriamente; a ordem de cadastro dos membros no projeto MUST NOT influenciar quem recebe cada documento.
 
 ### Key Entities
 
 - **Documento**: unidade de análise do projeto; acumula codificações humanas e pode estar ativo ou excluído (excluídos nunca são elegíveis).
 - **Codificação**: resposta de uma pessoa a um documento; só a versão mais recente de cada pessoa conta para os filtros de elegibilidade.
 - **Atribuição**: vínculo entre documento, participante e tipo de tarefa (codificação ou comparação), com estados pendente, em andamento e concluído.
-- **Lote de sorteio**: registro de cada execução do sorteio, com rótulo opcional e a configuração usada; base do filtro por lote anterior.
+- **Lote de sorteio**: registro de cada execução do sorteio, com rótulo opcional e a configuração usada (incluindo o modo de equilíbrio); base do filtro por lote anterior.
 - **Participante**: membro do projeto (pesquisador ou coordenador) que pode ser incluído ou excluído de cada sorteio individualmente.
 
 ## Success Criteria *(mandatory)*
@@ -158,6 +184,8 @@ O dialog de sorteio não oferece mais configuração de prazo (nem prazo único,
 - **SC-003**: Após qualquer sequência de sorteios, não existe nenhuma duplicidade de documento + pessoa + tipo nas atribuições.
 - **SC-004**: O coordenador completa o fluxo configurar filtros → conferir prévia → sortear em menos de 1 minuto num projeto com cerca de 100 documentos.
 - **SC-005**: A prévia coincide com o resultado real do sorteio em 100% das execuções com a mesma configuração (mesmas contagens por participante).
+- **SC-006**: No modo "equilibrar só esta rodada" sem limites de capacidade, 100% dos sorteios resultam em cada participante com ⌊D·R/P⌋ a ⌈D·R/P⌉ atribuições novas (D documentos, R participantes por documento, P participantes ativos).
+- **SC-007**: No modo "equilibrar considerando rodadas anteriores", após o sorteio a diferença de carga acumulada entre quaisquer dois participantes com capacidade disponível é a mínima alcançável com os documentos distribuídos — ninguém com folga de capacidade termina o sorteio com 2 ou mais atribuições a menos que outro participante enquanto havia documento que poderia ter ido para ele.
 
 ## Assumptions
 
@@ -165,12 +193,13 @@ O dialog de sorteio não oferece mais configuração de prazo (nem prazo único,
 - O modo acrescentar é o padrão por ser o comportamento seguro (não destrutivo); o modo substituir preserva o fluxo atual de re-sortear do zero.
 - A remoção completa do controle de prazo da plataforma (tabela de atribuições, página de progresso, dados históricos) é tratada em demanda separada; esta feature remove apenas a configuração de prazo do dialog de sorteio.
 - Os tipos de tarefa atribuídos automaticamente por outros fluxos (auto-revisão e arbitragem) estão fora do escopo do sorteio.
-- O algoritmo de balanceamento da distribuição não muda; a feature controla apenas a entrada dele (documentos elegíveis, participantes, modo).
+- O modo de equilíbrio padrão é "equilibrar só esta rodada", por ser o comportamento mais previsível: cada sorteio sai equilibrado por si, independentemente do histórico (decidido com o usuário em 2026-06-11).
+- No modo "equilibrar considerando rodadas anteriores", a carga acumulada de um participante conta as atribuições pendentes, em andamento e concluídas do tipo sorteado — incluir as pendentes corrige a distorção observada de o equilíbrio histórico ignorar trabalho já distribuído e ainda não iniciado (decidido com o usuário em 2026-06-11).
 
 ## Out of Scope
 
 - Remoção completa do controle de prazo da plataforma (indicadores de atraso, página de progresso pessoal, dados históricos) — registrada como issue separada.
 - Qualquer controle de prazo dentro ou fora do dialog.
 - Sorteio ou gestão de tarefas de auto-revisão e arbitragem.
-- Alterações no algoritmo de balanceamento de duplas e cargas.
 - Filtros por metadados ou conteúdo dos documentos.
+- Pesos individuais de carga por participante (ex.: meio período recebe metade da cota) — o equilíbrio trata todos os participantes ativos como equivalentes.

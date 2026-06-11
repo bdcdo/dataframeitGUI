@@ -2,6 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-06-10
+**Updated**: 2026-06-11 (revalidado após inclusão da User Story 7 — equilíbrio configurável da distribuição)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -33,3 +34,4 @@
 
 - As 4 decisões críticas de escopo (filtros, modo aditivo vs substitutivo, alcance da remoção do prazo, controle de participantes) foram resolvidas com o usuário antes da redação — nenhum [NEEDS CLARIFICATION] restante.
 - A remoção completa do controle de prazo foi explicitamente excluída do escopo e registrada como issue separada no GitHub.
+- 2026-06-11: a spec foi estendida com a User Story 7 (equilíbrio configurável: só a rodada vs rodadas anteriores), FR-016 a FR-019, ajustes em FR-014/FR-015, SC-006/SC-007 e novos edge cases. As 3 decisões da extensão (estender a 001 em vez de criar 002; modo padrão "só esta rodada"; carga acumulada = pendentes + em andamento + concluídas) foram resolvidas com o usuário antes da redação. A antiga exclusão "alterações no algoritmo de balanceamento" saiu do Out of Scope por ter entrado em escopo. Todos os itens acima foram revalidados e seguem passando.
