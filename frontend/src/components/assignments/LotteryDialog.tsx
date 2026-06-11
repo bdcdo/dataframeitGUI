@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DocumentPickerList } from "@/components/assignments/DocumentPickerList";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
   Select,
@@ -45,6 +46,8 @@ export interface LotteryMember {
   userId: string;
   name: string;
   role: "pesquisador" | "coordenador";
+  // Pré-registrado (spec 002): ainda não criou conta.
+  pending?: boolean;
 }
 
 interface LotteryDialogProps {
@@ -658,6 +661,15 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                         <span className="ml-1.5 text-xs text-muted-foreground">
                           coordenador
                         </span>
+                      )}
+                      {m.pending && (
+                        <Badge
+                          variant="secondary"
+                          className="ml-1.5"
+                          title="Pré-registrado: ainda não criou conta."
+                        >
+                          Pendente
+                        </Badge>
                       )}
                     </Label>
                     <Switch
