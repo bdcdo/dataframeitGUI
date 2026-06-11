@@ -31,12 +31,21 @@ export async function validateSchema(code: string): Promise<ValidateResponse> {
   });
 }
 
+// As actions deste arquivo retornam { error } em vez de lançar: o Next mascara
+// a message de erros lançados em Server Actions em produção (o client recebe
+// mensagem genérica + digest), então a copy pt-BR só chega ao toast pelo
+// retorno. Os helpers de rls-guard continuam lançando — o catch fica na
+// fronteira da action.
+function errorMessage(e: unknown, fallback: string): string {
+  return e instanceof Error ? e.message : fallback;
+}
+
 export async function saveSchema(
   projectId: string,
   code: string,
   fields: PydanticField[],
   versionBump?: { major: number; minor: number; patch: number },
-) {
+): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
   const hash = crypto.createHash("sha256").update(code).digest("hex").slice(0, 16);
 
@@ -51,10 +60,14 @@ export async function saveSchema(
     updatePayload.schema_version_patch = versionBump.patch;
   }
 
-  await updateOrThrow(supabase, "projects", updatePayload, { id: projectId }, {
-    message:
-      "Não foi possível salvar o schema: sem permissão para alterar este projeto.",
-  });
+  try {
+    await updateOrThrow(supabase, "projects", updatePayload, { id: projectId }, {
+      message:
+        "Não foi possível salvar o schema: sem permissão para alterar este projeto.",
+    });
+  } catch (e) {
+    return { error: errorMessage(e, "Erro ao salvar o schema") };
+  }
 
   // is_latest não é flipado para false aqui — staleness é detectada no
   // display via answer_field_hashes (lib/reviews/queries.ts:isFieldStale).
@@ -66,19 +79,28 @@ export async function saveSchema(
   revalidatePath(`/projects/${projectId}/reviews`);
   revalidatePath(`/projects/${projectId}/llm/configure`);
   revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  return {};
 }
 
-export async function savePrompt(projectId: string, promptTemplate: string) {
+export async function savePrompt(
+  projectId: string,
+  promptTemplate: string,
+): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
-  await updateOrThrow(
-    supabase,
-    "projects",
-    { prompt_template: promptTemplate },
-    { id: projectId },
-    { message: "Não foi possível salvar o prompt: sem permissão para alterar este projeto." },
-  );
+  try {
+    await updateOrThrow(
+      supabase,
+      "projects",
+      { prompt_template: promptTemplate },
+      { id: projectId },
+      { message: "Não foi possível salvar o prompt: sem permissão para alterar este projeto." },
+    );
+  } catch (e) {
+    return { error: errorMessage(e, "Erro ao salvar o prompt") };
+  }
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/llm/configure`);
+  return {};
 }
 
 // ---------- Save from GUI ----------
@@ -91,7 +113,7 @@ export async function savePrompt(projectId: string, promptTemplate: string) {
 export async function saveSchemaFromGUI(
   projectId: string,
   fields: PydanticField[]
-) {
+): Promise<{ error?: string }> {
   const [supabase, user] = await Promise.all([
     createSupabaseServer(),
     getAuthUser(),
@@ -126,10 +148,11 @@ export async function saveSchemaFromGUI(
     ...f,
     hash: computeFieldHash(f.name, f.type, f.options, f.description),
   }));
-  await saveSchema(projectId, code, fieldsWithHash, changeType ? bumped : undefined);
+  const saved = await saveSchema(projectId, code, fieldsWithHash, changeType ? bumped : undefined);
+  if (saved.error) return saved;
 
   // Insert audit log entries com change_type + versão alvo. Só roda depois
-  // que saveSchema confirmou ≥1 linha atualizada (lança em 0-rows) — antes o
+  // que saveSchema confirmou ≥1 linha atualizada (erro em 0-rows) — antes o
   // log era gravado mesmo com o UPDATE de projects filtrado pela RLS, gerando
   // histórico fantasma (#178).
   if (logEntries.length > 0 && user) {
@@ -145,11 +168,12 @@ export async function saveSchemaFromGUI(
       })),
     );
     if (logErr) {
-      throw new Error(
-        `Schema salvo, mas falha ao registrar o histórico: ${logErr.message}`,
-      );
+      return {
+        error: `Schema salvo, mas falha ao registrar o histórico: ${logErr.message}`,
+      };
     }
   }
+  return {};
 }
 
 // ---------- Backfill retroativo usando schema_change_log ----------
@@ -194,7 +218,32 @@ function computeHashesFromSnapshot(snap: Map<string, FieldSnapshot>): Record<str
   return hashes;
 }
 
-export async function backfillSchemaVersionHistory(projectId: string) {
+type BackfillStats = {
+  finalVersion: { major: number; minor: number; patch: number };
+  logEntriesUpdated: number;
+  responsesProcessed: number;
+  byMethod: {
+    hashes: number;
+    created_at: number;
+    fallback_created_at: number;
+    live_save: number;
+  };
+};
+
+// Fronteira da action: runBackfill lança nos vários pontos de falha (leituras,
+// updates filtrados, permissões) e aqui o throw vira { error } para a copy
+// chegar ao client em produção.
+export async function backfillSchemaVersionHistory(
+  projectId: string,
+): Promise<{ stats?: BackfillStats; error?: string }> {
+  try {
+    return { stats: await runBackfill(projectId) };
+  } catch (e) {
+    return { error: errorMessage(e, "Erro ao reconstruir o histórico de versões") };
+  }
+}
+
+async function runBackfill(projectId: string): Promise<BackfillStats> {
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
@@ -533,12 +582,16 @@ export async function backfillSchemaVersionHistory(projectId: string) {
 
 // ---------- MAJOR version bump (manual) ----------
 
-export async function publishMajorVersion(projectId: string) {
+// Em sucesso retorna { bumped }; em falha parcial (versão publicada mas log
+// não gravado) retorna { bumped, error } para a UI poder refletir o estado.
+export async function publishMajorVersion(
+  projectId: string,
+): Promise<{ bumped?: { major: number; minor: number; patch: number }; error?: string }> {
   const [supabase, user] = await Promise.all([
     createSupabaseServer(),
     getAuthUser(),
   ]);
-  if (!user) throw new Error("Não autenticado");
+  if (!user) return { error: "Não autenticado" };
 
   const { data: project } = await supabase
     .from("projects")
@@ -555,17 +608,21 @@ export async function publishMajorVersion(projectId: string) {
   };
   const bumped = bumpVersion(current, "major");
 
-  await updateOrThrow(
-    supabase,
-    "projects",
-    {
-      schema_version_major: bumped.major,
-      schema_version_minor: bumped.minor,
-      schema_version_patch: bumped.patch,
-    },
-    { id: projectId },
-    { message: "Não foi possível publicar a MAJOR: sem permissão para alterar este projeto." },
-  );
+  try {
+    await updateOrThrow(
+      supabase,
+      "projects",
+      {
+        schema_version_major: bumped.major,
+        schema_version_minor: bumped.minor,
+        schema_version_patch: bumped.patch,
+      },
+      { id: projectId },
+      { message: "Não foi possível publicar a MAJOR: sem permissão para alterar este projeto." },
+    );
+  } catch (e) {
+    return { error: errorMessage(e, "Erro ao publicar a MAJOR") };
+  }
 
   const { error: logErr } = await supabase.from("schema_change_log").insert({
     project_id: projectId,
@@ -579,24 +636,26 @@ export async function publishMajorVersion(projectId: string) {
     version_minor: bumped.minor,
     version_patch: bumped.patch,
   });
-  if (logErr) {
-    throw new Error(
-      `MAJOR publicada, mas falha ao registrar o histórico: ${logErr.message}`,
-    );
-  }
 
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/reviews`);
   revalidatePath(`/projects/${projectId}/llm/configure`);
-  return bumped;
+
+  if (logErr) {
+    return {
+      bumped,
+      error: `MAJOR publicada, mas falha ao registrar o histórico: ${logErr.message}`,
+    };
+  }
+  return { bumped };
 }
 
 export async function toggleLlmField(
   projectId: string,
   fieldDef: PydanticField,
   enabled: boolean
-) {
+): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
   const { data: project } = await supabase
     .from("projects")
@@ -614,7 +673,7 @@ export async function toggleLlmField(
     fields = fields.filter((f) => f.name !== fieldDef.name);
   }
 
-  await saveSchemaFromGUI(projectId, fields);
+  return saveSchemaFromGUI(projectId, fields);
 }
 
 export async function saveLlmConfig(
@@ -624,12 +683,17 @@ export async function saveLlmConfig(
     llm_model: string;
     llm_kwargs: Record<string, unknown>;
   }
-) {
+): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
-  await updateOrThrow(supabase, "projects", config, { id: projectId }, {
-    message:
-      "Não foi possível salvar a configuração do LLM: sem permissão para alterar este projeto.",
-  });
+  try {
+    await updateOrThrow(supabase, "projects", config, { id: projectId }, {
+      message:
+        "Não foi possível salvar a configuração do LLM: sem permissão para alterar este projeto.",
+    });
+  } catch (e) {
+    return { error: errorMessage(e, "Erro ao salvar a configuração do LLM") };
+  }
   revalidatePath(`/projects/${projectId}/llm/configure`);
   revalidatePath(`/projects/${projectId}/config`);
+  return {};
 }

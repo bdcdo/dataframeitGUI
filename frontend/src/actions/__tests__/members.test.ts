@@ -1,67 +1,35 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Mock supabase chainable enxuto. setCanArbitrate executa um UPDATE em
-// project_members com .select("user_id").single() e dispara
-// releaseArbitrationsFromUser / retryPendingArbitrations (mockados abaixo).
-// `tableResults` permite a testes (addMember) fixarem o retorno por tabela e
-// por cliente (server vs admin); sem entrada, vale o default histórico.
-type WriteCall = { table: string; op: string; payload: unknown };
+// Mock supabase chainable compartilhado (supabase-mock.ts). setCanArbitrate
+// executa um UPDATE em project_members com .select("user_id").single() e
+// dispara releaseArbitrationsFromUser / retryPendingArbitrations (mockados
+// abaixo). `tableResults` permite a testes (addMember) fixarem o retorno por
+// tabela e por cliente (server vs admin); sem entrada, vale o default
+// histórico ({ user_id: "userMemberX" }, ou erro quando clientError é setado).
+import {
+  makeSupabaseMock,
+  type TableResults,
+  type WriteCall,
+} from "./supabase-mock";
+
 let writeCalls: WriteCall[];
 
-type TableResult = {
-  data?: unknown;
-  error?: { message: string; code?: string } | null;
-  count?: number;
-};
-
-// Por tabela: um resultado fixo, ou uma fila (array) consumida na ordem das
-// queries — necessário quando a action consulta a mesma tabela mais de uma
-// vez com expectativas diferentes (ex.: linkMemberEmail e project_members).
 function makeClient(
   updateError?: { message: string },
-  tableResults?: Record<string, TableResult | TableResult[]>,
+  tableResults?: TableResults,
 ) {
-  return {
-    from: (table: string) => {
-      const builder: Record<string, unknown> = {};
-      for (const m of ["eq", "is", "in", "neq", "select", "single", "maybeSingle", "order", "limit"]) {
-        builder[m] = () => builder;
-      }
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        writeCalls.push({ table, op: "insert", payload });
-        return builder;
-      };
-      builder.delete = () => {
-        writeCalls.push({ table, op: "delete", payload: null });
-        return builder;
-      };
-      builder.then = (resolve: (v: unknown) => unknown) => {
-        const entry = tableResults?.[table];
-        const fixed = Array.isArray(entry) ? entry.shift() : entry;
-        if (fixed) {
-          return resolve({
-            data: fixed.data ?? null,
-            error: fixed.error ?? null,
-            count: fixed.count ?? null,
-          });
-        }
-        return resolve({
-          data: updateError ? null : { user_id: "userMemberX" },
-          error: updateError ?? null,
-        });
-      };
-      return builder;
-    },
-  };
+  return makeSupabaseMock({
+    tableResults,
+    defaultResult: updateError
+      ? { data: null, error: updateError }
+      : { data: { user_id: "userMemberX" } },
+    writeCalls,
+  });
 }
 
 let clientError: { message: string } | undefined;
-let serverTableResults: Record<string, TableResult | TableResult[]> | undefined;
-let adminTableResults: Record<string, TableResult | TableResult[]> | undefined;
+let serverTableResults: TableResults | undefined;
+let adminTableResults: TableResults | undefined;
 
 // hoisted mocks — release/retry precisam ser observáveis por teste para
 // distinguir o caminho de habilitar vs desabilitar.

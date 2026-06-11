@@ -46,11 +46,15 @@ export function RulesForm({
   function handleSave() {
     startTransition(async () => {
       try {
-        await updateProject(projectId, {
+        const r = await updateProject(projectId, {
           resolution_rule: rule,
           min_responses_for_comparison: min,
           allow_researcher_review: allowReview,
         });
+        if (r?.error) {
+          toast.error(r.error);
+          return;
+        }
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Erro ao salvar as regras");
         return;

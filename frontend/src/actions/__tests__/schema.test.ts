@@ -1,53 +1,20 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { PydanticField } from "@/lib/types";
+import {
+  makeSupabaseMock,
+  type TableResult,
+  type TableResults,
+  type WriteCall,
+} from "./supabase-mock";
 
 // Testes do conserto da #178: o UPDATE de projects filtrado pela RLS retorna
 // sucesso com 0 linhas no PostgREST — antes, saveSchemaFromGUI seguia em
 // frente e inseria entradas em schema_change_log, gerando histórico fantasma.
-// O mock segue o padrão de members.test.ts: builder chainable + thenable, com
-// fila de resultados por tabela consumida na ordem das queries.
+// As actions retornam { error } (não lançam): o Next mascara a message de
+// erros lançados em Server Actions em produção.
 
-type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
-
-type TableResult = {
-  data?: unknown;
-  error?: { message: string; code?: string } | null;
-};
-
-function makeClient(tableResults?: Record<string, TableResult | TableResult[]>) {
-  return {
-    from: (table: string) => {
-      const builder: Record<string, unknown> = {};
-      for (const m of ["eq", "is", "in", "neq", "match", "select", "single", "maybeSingle", "order", "limit"]) {
-        builder[m] = () => builder;
-      }
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        writeCalls.push({ table, op: "insert", payload });
-        return builder;
-      };
-      builder.delete = () => {
-        writeCalls.push({ table, op: "delete", payload: null });
-        return builder;
-      };
-      builder.then = (resolve: (v: unknown) => unknown) => {
-        const entry = tableResults?.[table];
-        const fixed = Array.isArray(entry) ? entry.shift() : entry;
-        return resolve({
-          data: fixed?.data ?? null,
-          error: fixed?.error ?? null,
-        });
-      };
-      return builder;
-    },
-  };
-}
-
-let serverTableResults: Record<string, TableResult | TableResult[]> | undefined;
+let serverTableResults: TableResults | undefined;
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
@@ -60,7 +27,8 @@ vi.mock("@/lib/api", () => ({
   fetchFastAPI: async () => ({ valid: true, fields: [], model_name: null, errors: [] }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(serverTableResults),
+  createSupabaseServer: async () =>
+    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
 }));
 
 import {
@@ -93,12 +61,13 @@ beforeEach(() => {
 });
 
 describe("saveSchemaFromGUI", () => {
-  it("o caso da #178: UPDATE de projects filtrado (0 linhas) rejeita e NÃO grava histórico fantasma", async () => {
+  it("o caso da #178: UPDATE de projects filtrado (0 linhas) retorna erro e NÃO grava histórico fantasma", async () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [] }],
     };
 
-    await expect(saveSchemaFromGUI("p1", [FIELD])).rejects.toThrow(/sem permissão/i);
+    const r = await saveSchemaFromGUI("p1", [FIELD]);
+    expect(r.error).toMatch(/sem permissão/i);
 
     const logInserts = writeCalls.filter(
       (c) => c.table === "schema_change_log" && c.op === "insert",
@@ -112,7 +81,8 @@ describe("saveSchemaFromGUI", () => {
       schema_change_log: { data: null, error: null },
     };
 
-    await expect(saveSchemaFromGUI("p1", [FIELD])).resolves.toBeUndefined();
+    const r = await saveSchemaFromGUI("p1", [FIELD]);
+    expect(r.error).toBeUndefined();
 
     const ops = writeCalls.map((c) => `${c.table}:${c.op}`);
     expect(ops.indexOf("projects:update")).toBeLessThan(
@@ -136,20 +106,21 @@ describe("saveSchemaFromGUI", () => {
     });
   });
 
-  it("erro no insert do log rejeita com mensagem de histórico (schema já salvo)", async () => {
+  it("erro no insert do log retorna erro com mensagem de histórico (schema já salvo)", async () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
       schema_change_log: { data: null, error: { message: "log boom" } },
     };
 
-    await expect(saveSchemaFromGUI("p1", [FIELD])).rejects.toThrow(/histórico.*log boom/);
+    const r = await saveSchemaFromGUI("p1", [FIELD]);
+    expect(r.error).toMatch(/histórico.*log boom/);
     // O update de projects aconteceu antes da falha do log.
     expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(true);
   });
 });
 
 describe("publishMajorVersion", () => {
-  it("0 linhas no bump rejeita e não grava entrada MAJOR fantasma", async () => {
+  it("0 linhas no bump retorna erro e não grava entrada MAJOR fantasma", async () => {
     serverTableResults = {
       projects: [
         { data: { schema_version_major: 0, schema_version_minor: 18, schema_version_patch: 0 } },
@@ -157,25 +128,57 @@ describe("publishMajorVersion", () => {
       ],
     };
 
-    await expect(publishMajorVersion("p1")).rejects.toThrow(/sem permissão/i);
+    const r = await publishMajorVersion("p1");
+    expect(r.error).toMatch(/sem permissão/i);
+    expect(r.bumped).toBeUndefined();
     expect(
       writeCalls.filter((c) => c.table === "schema_change_log" && c.op === "insert"),
     ).toHaveLength(0);
   });
+
+  it("falha parcial: MAJOR publicada mas log falhou → retorna bumped E erro", async () => {
+    serverTableResults = {
+      projects: [
+        { data: { schema_version_major: 0, schema_version_minor: 18, schema_version_patch: 0 } },
+        { data: [{ id: "p1" }] },
+      ],
+      schema_change_log: { data: null, error: { message: "log boom" } },
+    };
+
+    const r = await publishMajorVersion("p1");
+    expect(r.bumped).toEqual({ major: 1, minor: 0, patch: 0 });
+    expect(r.error).toMatch(/MAJOR publicada.*log boom/);
+  });
+
+  it("caminho feliz: retorna a versão bumpada sem erro", async () => {
+    serverTableResults = {
+      projects: [
+        { data: { schema_version_major: 0, schema_version_minor: 18, schema_version_patch: 0 } },
+        { data: [{ id: "p1" }] },
+      ],
+      schema_change_log: { data: null, error: null },
+    };
+
+    const r = await publishMajorVersion("p1");
+    expect(r.error).toBeUndefined();
+    expect(r.bumped).toEqual({ major: 1, minor: 0, patch: 0 });
+  });
 });
 
 describe("savePrompt / saveLlmConfig", () => {
-  it("savePrompt rejeita em 0 linhas com a copy específica", async () => {
+  it("savePrompt retorna erro em 0 linhas com a copy específica", async () => {
     serverTableResults = { projects: { data: [] } };
-    await expect(savePrompt("p1", "novo prompt")).rejects.toThrow(
-      /Não foi possível salvar o prompt/,
-    );
+    const r = await savePrompt("p1", "novo prompt");
+    expect(r.error).toMatch(/Não foi possível salvar o prompt/);
   });
 
-  it("saveLlmConfig rejeita em 0 linhas com a copy específica", async () => {
+  it("saveLlmConfig retorna erro em 0 linhas com a copy específica", async () => {
     serverTableResults = { projects: { data: [] } };
-    await expect(
-      saveLlmConfig("p1", { llm_provider: "google", llm_model: "gemini", llm_kwargs: {} }),
-    ).rejects.toThrow(/configuração do LLM/);
+    const r = await saveLlmConfig("p1", {
+      llm_provider: "google",
+      llm_model: "gemini",
+      llm_kwargs: {},
+    });
+    expect(r.error).toMatch(/configuração do LLM/);
   });
 });

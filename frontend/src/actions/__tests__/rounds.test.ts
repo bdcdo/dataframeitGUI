@@ -2,50 +2,17 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Testes da detecção de 0-rows nos UPDATEs de rounds/projects (#178): o
 // PostgREST devolve sucesso com 0 linhas quando a RLS filtra — as actions
-// devem devolver { error } em vez de sucesso falso. Mock no padrão de
-// members.test.ts (fila de resultados por tabela).
+// devem devolver { error } em vez de sucesso falso. Mock compartilhado
+// (supabase-mock.ts), fila de resultados por tabela.
+import {
+  makeSupabaseMock,
+  type TableResult,
+  type TableResults,
+  type WriteCall,
+} from "./supabase-mock";
 
-type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
-
-type TableResult = {
-  data?: unknown;
-  error?: { message: string; code?: string } | null;
-};
-
-function makeClient(tableResults?: Record<string, TableResult | TableResult[]>) {
-  return {
-    from: (table: string) => {
-      const builder: Record<string, unknown> = {};
-      for (const m of ["eq", "is", "in", "neq", "match", "select", "single", "maybeSingle", "order", "limit"]) {
-        builder[m] = () => builder;
-      }
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        writeCalls.push({ table, op: "insert", payload });
-        return builder;
-      };
-      builder.delete = () => {
-        writeCalls.push({ table, op: "delete", payload: null });
-        return builder;
-      };
-      builder.then = (resolve: (v: unknown) => unknown) => {
-        const entry = tableResults?.[table];
-        const fixed = Array.isArray(entry) ? entry.shift() : entry;
-        return resolve({
-          data: fixed?.data ?? null,
-          error: fixed?.error ?? null,
-        });
-      };
-      return builder;
-    },
-  };
-}
-
-let serverTableResults: Record<string, TableResult | TableResult[]> | undefined;
+let serverTableResults: TableResults | undefined;
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
@@ -57,7 +24,8 @@ vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord", isMaster: false }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(serverTableResults),
+  createSupabaseServer: async () =>
+    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
 }));
 
 import {

@@ -37,12 +37,13 @@ export function GeneralForm({
     }
     setSaving(true);
     try {
-      await updateProject(projectId, {
+      const r = await updateProject(projectId, {
         name: trimmedName,
         description,
         arbitration_blind: arbitrationBlind,
       });
-      toast.success("Projeto atualizado!");
+      if (r?.error) toast.error(r.error);
+      else toast.success("Projeto atualizado!");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar");
     }

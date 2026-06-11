@@ -375,8 +375,9 @@ export function LlmConfigurePane({
   const handleSavePrompt = async () => {
     setSavingPrompt(true);
     try {
-      await savePrompt(projectId, prompt);
-      toast.success("Prompt salvo!");
+      const r = await savePrompt(projectId, prompt);
+      if (r?.error) toast.error(r.error);
+      else toast.success("Prompt salvo!");
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -385,8 +386,9 @@ export function LlmConfigurePane({
 
   const handleSaveConfig = async () => {
     try {
-      await saveLlmConfig(projectId, config);
-      toast.success("Configuração salva!");
+      const r = await saveLlmConfig(projectId, config);
+      if (r?.error) toast.error(r.error);
+      else toast.success("Configuração salva!");
     } catch (e: any) {
       toast.error(e.message);
     }
@@ -398,10 +400,15 @@ export function LlmConfigurePane({
     setErrorInfo(null);
     try {
       // Save config before running
-      await Promise.all([
+      const [cfgResult, promptResult] = await Promise.all([
         saveLlmConfig(projectId, config),
         savePrompt(projectId, prompt),
       ]);
+      const saveError = cfgResult?.error ?? promptResult?.error;
+      if (saveError) {
+        toast.error(saveError);
+        return;
+      }
 
       const body: Record<string, unknown> = {
         project_id: projectId,
@@ -448,13 +455,20 @@ export function LlmConfigurePane({
     setHasAmbiguities(checked);
     startTransition(async () => {
       try {
-        await toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked);
+        const r = await toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked);
+        if (r?.error) {
+          // Reverte o estado otimista: o schema não mudou.
+          setHasAmbiguities(!checked);
+          toast.error(r.error);
+          return;
+        }
         toast.success(
           checked
             ? "Campo de ambiguidades adicionado"
             : "Campo de ambiguidades removido"
         );
       } catch (e: any) {
+        setHasAmbiguities(!checked);
         toast.error(e.message);
       }
     });

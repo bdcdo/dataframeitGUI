@@ -6,6 +6,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // sucesso falso (issue #178: coordenador não-criador "salvava" o schema sem
 // persistir nada). Todo UPDATE/DELETE de Server Action via createSupabaseServer
 // deve passar por aqui ou checar 0-rows manualmente.
+//
+// Pressuposto: o .select() pós-write usa RETURNING, que no Postgres exige que
+// a linha afetada seja visível pela policy de SELECT. Se uma tabela tiver
+// policy de UPDATE/DELETE mais permissiva que a de SELECT, o guard reporta
+// falha falsa após uma escrita bem-sucedida — alinhar as policies antes de
+// usar o guard nessa tabela.
+//
+// Os throws daqui não devem atravessar a fronteira de uma Server Action: o
+// Next mascara a message em produção. A action captura e retorna { error }.
 
 export class ZeroRowsError extends Error {
   constructor(
