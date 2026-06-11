@@ -8,16 +8,23 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
 
-type TableResult = { data?: unknown; error?: { message: string; code?: string } | null };
+type TableResult = {
+  data?: unknown;
+  error?: { message: string; code?: string } | null;
+  count?: number;
+};
 
+// Por tabela: um resultado fixo, ou uma fila (array) consumida na ordem das
+// queries — necessário quando a action consulta a mesma tabela mais de uma
+// vez com expectativas diferentes (ex.: linkMemberEmail e project_members).
 function makeClient(
   updateError?: { message: string },
-  tableResults?: Record<string, TableResult>,
+  tableResults?: Record<string, TableResult | TableResult[]>,
 ) {
   return {
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      for (const m of ["eq", "is", "in", "neq", "select", "single", "maybeSingle"]) {
+      for (const m of ["eq", "is", "in", "neq", "select", "single", "maybeSingle", "order", "limit"]) {
         builder[m] = () => builder;
       }
       builder.update = (payload: unknown) => {
@@ -33,9 +40,14 @@ function makeClient(
         return builder;
       };
       builder.then = (resolve: (v: unknown) => unknown) => {
-        const fixed = tableResults?.[table];
+        const entry = tableResults?.[table];
+        const fixed = Array.isArray(entry) ? entry.shift() : entry;
         if (fixed) {
-          return resolve({ data: fixed.data ?? null, error: fixed.error ?? null });
+          return resolve({
+            data: fixed.data ?? null,
+            error: fixed.error ?? null,
+            count: fixed.count ?? null,
+          });
         }
         return resolve({
           data: updateError ? null : { user_id: "userMemberX" },
@@ -48,8 +60,8 @@ function makeClient(
 }
 
 let clientError: { message: string } | undefined;
-let serverTableResults: Record<string, TableResult> | undefined;
-let adminTableResults: Record<string, TableResult> | undefined;
+let serverTableResults: Record<string, TableResult | TableResult[]> | undefined;
+let adminTableResults: Record<string, TableResult | TableResult[]> | undefined;
 
 // hoisted mocks — release/retry precisam ser observáveis por teste para
 // distinguir o caminho de habilitar vs desabilitar.
@@ -306,6 +318,137 @@ describe("addMember (pré-registro, spec 002)", () => {
     const add = await loadAdd();
     const r = await add("p1", "novo@exemplo.com", "pesquisador");
     expect(r.error).toBe("Erro ao pré-registrar: kaboom");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+});
+
+async function loadLink() {
+  return (await import("@/actions/members")).linkMemberEmail;
+}
+
+// Matriz do contrato de linkMemberEmail. As queries ao admin client seguem a
+// ordem do Promise.all (project_members, member_email_links, profiles) e, no
+// caso 2, a segunda leitura de project_members é o membership do dono do
+// e-mail — daí as filas por tabela.
+describe("linkMemberEmail (vínculo de e-mails, spec 002 US2)", () => {
+  const LINK_ROW = {
+    id: "link1",
+    project_id: "p1",
+    member_user_id: "target1",
+    email: "extra@exemplo.com",
+    linked_user_id: null,
+    created_by: "userCoord",
+    created_at: "2026-06-11T00:00:00Z",
+  };
+
+  it("caso 1: e-mail já vinculado no projeto → erro com o membro atual", async () => {
+    adminTableResults = {
+      project_members: { data: { role: "pesquisador" } },
+      member_email_links: { data: { id: "l0", member_user_id: "outro1" } },
+      profiles: { data: { id: "outro1", first_name: "Ana", email: "ana@x.com" } },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "extra@exemplo.com");
+    expect(r.error).toBe("Este e-mail já está vinculado a Ana neste projeto.");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
+  it("caso 2: e-mail principal de outro membro → requiresUnification com preview, sem executar", async () => {
+    adminTableResults = {
+      project_members: [
+        { data: { role: "coordenador" } }, // membership do target
+        { data: { id: "pmSource" } }, // membership do dono do e-mail
+      ],
+      member_email_links: { data: null },
+      profiles: { data: { id: "src1", first_name: "Beto", email: "beto@x.com" } },
+      assignments: { count: 7 },
+      responses: {
+        data: [
+          { document_id: "docA", respondent_id: "src1" },
+          { document_id: "docA", respondent_id: "target1" },
+          { document_id: "docB", respondent_id: "src1" },
+          { document_id: "docC", respondent_id: "target1" },
+        ],
+      },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "beto@x.com");
+    expect(r.error).toBeUndefined();
+    expect(r.requiresUnification).toEqual({
+      sourceUserId: "src1",
+      sourceName: "Beto",
+      targetUserId: "target1",
+      assignmentsToMigrate: 7,
+      docsWithBothResponses: 1,
+      resultingRole: "coordenador",
+    });
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
+  it("caso 3: conta existente não-membro → insert com linked_user_id preenchido", async () => {
+    adminTableResults = {
+      project_members: [
+        { data: { role: "pesquisador" } },
+        { data: null }, // dono do e-mail não é membro
+      ],
+      member_email_links: [
+        { data: null }, // leitura: sem link
+        { data: { ...LINK_ROW, linked_user_id: "acc1" } }, // retorno do insert
+      ],
+      profiles: { data: { id: "acc1", first_name: null, email: "extra@exemplo.com" } },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "Extra@Exemplo.com");
+    expect(r.error).toBeUndefined();
+    expect(r.link?.linked_user_id).toBe("acc1");
+    expect(writeCalls).toContainEqual({
+      table: "member_email_links",
+      op: "insert",
+      payload: {
+        project_id: "p1",
+        member_user_id: "target1",
+        email: "extra@exemplo.com",
+        linked_user_id: "acc1",
+        created_by: "userCoord",
+      },
+    });
+  });
+
+  it("caso 4: e-mail sem conta → insert com linked_user_id NULL (pré-registro do e-mail)", async () => {
+    adminTableResults = {
+      project_members: { data: { role: "pesquisador" } },
+      member_email_links: [
+        { data: null },
+        { data: LINK_ROW },
+      ],
+      profiles: { data: null },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "extra@exemplo.com");
+    expect(r.error).toBeUndefined();
+    expect(r.link?.linked_user_id).toBeNull();
+    expect(writeCalls).toContainEqual({
+      table: "member_email_links",
+      op: "insert",
+      payload: {
+        project_id: "p1",
+        member_user_id: "target1",
+        email: "extra@exemplo.com",
+        linked_user_id: null,
+        created_by: "userCoord",
+      },
+    });
+  });
+
+  it("e-mail principal do próprio membro → erro sem insert", async () => {
+    adminTableResults = {
+      project_members: { data: { role: "pesquisador" } },
+      member_email_links: { data: null },
+      profiles: { data: { id: "target1", first_name: null, email: "eu@x.com" } },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "eu@x.com");
+    expect(r.error).toBe("Este já é o e-mail principal deste membro.");
     expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
   });
 });

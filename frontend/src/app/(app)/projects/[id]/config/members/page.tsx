@@ -2,7 +2,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { MemberList } from "@/components/members/MemberList";
 import { AddMemberDialog } from "@/components/members/AddMemberDialog";
-import type { ProjectMember, Profile } from "@/lib/types";
+import type { MemberEmailLink, ProjectMember, Profile } from "@/lib/types";
 
 export default async function MembersPage({
   params,
@@ -15,18 +15,23 @@ export default async function MembersPage({
     createSupabaseServer(),
   ]);
 
-  const [{ data: members }, { count: orphanedReviews }] = await Promise.all([
-    supabase
-      .from("project_members")
-      .select("id, project_id, user_id, role, can_arbitrate, can_resolve, profiles(id, email, first_name, last_name, activated_at)")
-      .eq("project_id", id),
-    supabase
-      .from("field_reviews")
-      .select("id", { count: "exact", head: true })
-      .eq("project_id", id)
-      .eq("self_verdict", "contesta_llm")
-      .is("arbitrator_id", null),
-  ]);
+  const [{ data: members }, { count: orphanedReviews }, { data: emailLinks }] =
+    await Promise.all([
+      supabase
+        .from("project_members")
+        .select("id, project_id, user_id, role, can_arbitrate, can_resolve, profiles(id, email, first_name, last_name, activated_at)")
+        .eq("project_id", id),
+      supabase
+        .from("field_reviews")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", id)
+        .eq("self_verdict", "contesta_llm")
+        .is("arbitrator_id", null),
+      supabase
+        .from("member_email_links")
+        .select("id, project_id, member_user_id, email, linked_user_id, created_by, created_at")
+        .eq("project_id", id),
+    ]);
 
   const typedMembers = (members || []) as unknown as (ProjectMember & { profiles: Profile })[];
 
@@ -44,6 +49,7 @@ export default async function MembersPage({
       <MemberList
         projectId={id}
         members={typedMembers}
+        emailLinks={(emailLinks || []) as MemberEmailLink[]}
         currentUserId={user!.id}
       />
     </div>

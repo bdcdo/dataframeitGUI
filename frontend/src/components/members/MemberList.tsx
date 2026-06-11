@@ -7,7 +7,11 @@ import {
   setCanArbitrate,
   setCanResolve,
   updatePendingMemberEmail,
+  unlinkMemberEmail,
+  type UnificationPreview,
 } from "@/actions/members";
+import { LinkEmailDialog } from "@/components/members/LinkEmailDialog";
+import { UnifyMembersDialog } from "@/components/members/UnifyMembersDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,11 +30,12 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import type { ProjectMember, Profile } from "@/lib/types";
+import type { MemberEmailLink, ProjectMember, Profile } from "@/lib/types";
 
 interface MemberListProps {
   projectId: string;
   members: (ProjectMember & { profiles: Profile | null })[];
+  emailLinks: MemberEmailLink[];
   currentUserId: string;
 }
 
@@ -100,7 +105,16 @@ function EditPendingEmailDialog({
   );
 }
 
-export function MemberList({ projectId, members, currentUserId }: MemberListProps) {
+function memberDisplayName(m: MemberRow): string {
+  return m.profiles?.first_name || m.profiles?.email || "Sem perfil";
+}
+
+export function MemberList({
+  projectId,
+  members,
+  emailLinks,
+  currentUserId,
+}: MemberListProps) {
   // Per-row + per-switch pending: o Switch tocado fica disabled até o server
   // action retornar, mas o outro Switch da mesma linha e os Switches das demais
   // linhas continuam interativos. Coordenador habilitando 4 membros em
@@ -108,7 +122,28 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
   const [pendingArbitrateId, setPendingArbitrateId] = useState<string | null>(null);
   const [pendingResolveId, setPendingResolveId] = useState<string | null>(null);
   const [editingEmailMemberId, setEditingEmailMemberId] = useState<string | null>(null);
+  // Vínculo de e-mails (US2): um único par de dialogs no root, dirigido pelo
+  // membro selecionado / preview de unificação retornado pela action.
+  const [linkingMember, setLinkingMember] = useState<MemberRow | null>(null);
+  const [unifyPreview, setUnifyPreview] = useState<UnificationPreview | null>(null);
+  const [unifyTargetName, setUnifyTargetName] = useState("");
   const [, startTransition] = useTransition();
+
+  const linksByMember = new Map<string, MemberEmailLink[]>();
+  for (const link of emailLinks) {
+    const list = linksByMember.get(link.member_user_id) ?? [];
+    list.push(link);
+    linksByMember.set(link.member_user_id, list);
+  }
+
+  const handleUnlink = async (linkId: string) => {
+    const result = await unlinkMemberEmail(projectId, linkId);
+    if (result?.error) {
+      toast.error(result.error);
+    } else {
+      toast.success("E-mail desvinculado. Acessos futuros por ele cessam; o histórico permanece.");
+    }
+  };
 
   // useOptimistic: o Switch reflete imediatamente o valor escolhido enquanto o
   // server action roda. Sem isso, o `checked` permanece no valor antigo até o
@@ -196,7 +231,7 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
         <div key={m.id} className="flex items-center justify-between rounded-lg border p-3">
           <div>
             <p className="flex items-center gap-2 text-sm font-medium">
-              {m.profiles?.first_name || m.profiles?.email || "Sem perfil"}
+              {memberDisplayName(m)}
               {m.profiles && m.profiles.activated_at === null && (
                 <Badge
                   variant="secondary"
@@ -207,8 +242,36 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
               )}
             </p>
             <p className="text-xs text-muted-foreground">{m.profiles?.email}</p>
+            {(linksByMember.get(m.user_id) ?? []).map((link) => (
+              <p
+                key={link.id}
+                className="flex items-center gap-1 text-xs text-muted-foreground"
+                title={
+                  link.linked_user_id
+                    ? "E-mail vinculado: a conta acessa o projeto como este membro."
+                    : "E-mail vinculado aguardando criação da conta."
+                }
+              >
+                <span>↳ {link.email}</span>
+                {!link.linked_user_id && <span className="italic">(sem conta)</span>}
+                <button
+                  type="button"
+                  onClick={() => handleUnlink(link.id)}
+                  className="ml-1 text-destructive hover:underline"
+                >
+                  desvincular
+                </button>
+              </p>
+            ))}
           </div>
           <div className="flex items-center gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setLinkingMember(m)}
+            >
+              Vincular e-mail
+            </Button>
             {m.profiles && m.profiles.activated_at === null && (
               <>
                 <Button
@@ -273,6 +336,28 @@ export function MemberList({ projectId, members, currentUserId }: MemberListProp
           </div>
         </div>
       ))}
+      {linkingMember && (
+        <LinkEmailDialog
+          projectId={projectId}
+          memberUserId={linkingMember.user_id}
+          memberName={memberDisplayName(linkingMember)}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setLinkingMember(null);
+          }}
+          onRequiresUnification={(preview) => {
+            setUnifyTargetName(memberDisplayName(linkingMember));
+            setLinkingMember(null);
+            setUnifyPreview(preview);
+          }}
+        />
+      )}
+      <UnifyMembersDialog
+        projectId={projectId}
+        preview={unifyPreview}
+        targetName={unifyTargetName}
+        onClose={() => setUnifyPreview(null)}
+      />
     </div>
   );
 }

@@ -82,6 +82,18 @@ export interface ProjectMember {
   profiles?: Profile;
 }
 
+// E-mail adicional vinculado a um membro, com efeito restrito ao projeto
+// (spec 002). linked_user_id NULL = vínculo aguardando a conta existir.
+export interface MemberEmailLink {
+  id: string;
+  project_id: string;
+  member_user_id: string;
+  email: string;
+  linked_user_id: string | null;
+  created_by: string;
+  created_at: string;
+}
+
 export interface Document {
   id: string;
   project_id: string;

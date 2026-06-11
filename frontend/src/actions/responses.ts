@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { isFieldVisible } from "@/lib/conditional";
 import { createAutoReviewIfDiverges } from "@/lib/auto-review";
@@ -23,23 +23,32 @@ export async function saveResponse(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
+    // Identidade de trabalho no projeto (spec 002): conta vinculada codifica
+    // como o membro canônico — respondent_id, assignments e auto-review usam
+    // sempre o id efetivo.
+    const effectiveId = await getEffectiveMemberId(projectId);
+
     const supabase = await createSupabaseServer();
 
-    // Fetch profile, existing response, and project config in parallel
+    // Fetch profile, existing response, and project config in parallel.
+    // O lookup de existing filtra is_latest: após uma unificação de membros o
+    // conjunto fundido pode ter respostas antigas (is_latest=false) no mesmo
+    // documento — .single() sem o filtro erraria com múltiplas linhas.
     const [{ data: profile }, { data: existing }, { data: project, error: projErr }] = await Promise.all([
       supabase
         .from("profiles")
         .select("first_name, last_name")
-        .eq("id", user.id)
+        .eq("id", effectiveId)
         .single(),
       supabase
         .from("responses")
         .select("id, is_partial")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
-        .eq("respondent_id", user.id)
+        .eq("respondent_id", effectiveId)
         .eq("respondent_type", "humano")
-        .single(),
+        .eq("is_latest", true)
+        .maybeSingle(),
       supabase
         .from("projects")
         .select(
@@ -116,7 +125,7 @@ export async function saveResponse(
       const { error: insertErr } = await supabase.from("responses").insert({
         project_id: projectId,
         document_id: documentId,
-        respondent_id: user.id,
+        respondent_id: effectiveId,
         respondent_type: "humano",
         respondent_name: respondentName,
         is_latest: true,
@@ -157,7 +166,7 @@ export async function saveResponse(
           .update({ status: "concluido", completed_at: new Date().toISOString() })
           .eq("project_id", projectId)
           .eq("document_id", documentId)
-          .eq("user_id", user.id)
+          .eq("user_id", effectiveId)
           .eq("type", "codificacao");
         if (assignErr) return { success: false, error: assignErr.message };
 
@@ -165,7 +174,7 @@ export async function saveResponse(
         // o submit do pesquisador — coordenador pode regenerar o backlog
         // manualmente via regenerateAutoReviewBacklog().
         try {
-          await createAutoReviewIfDiverges(projectId, documentId, user.id);
+          await createAutoReviewIfDiverges(projectId, documentId, effectiveId);
         } catch (err) {
           // Log estruturado JSON — mesmo formato dos demais eventos em
           // lib/auto-review.ts, facilita grep "[auto-review]" nos logs.
@@ -174,7 +183,7 @@ export async function saveResponse(
               event: "inline_call_failed",
               projectId,
               documentId,
-              userId: user.id,
+              userId: effectiveId,
               error: err instanceof Error ? err.message : String(err),
             })}`,
           );
@@ -186,7 +195,7 @@ export async function saveResponse(
           .select("status")
           .eq("project_id", projectId)
           .eq("document_id", documentId)
-          .eq("user_id", user.id)
+          .eq("user_id", effectiveId)
           .eq("type", "codificacao")
           .maybeSingle();
 
@@ -196,7 +205,7 @@ export async function saveResponse(
             .update({ status: "em_andamento", completed_at: null })
             .eq("project_id", projectId)
             .eq("document_id", documentId)
-            .eq("user_id", user.id)
+            .eq("user_id", effectiveId)
             .eq("type", "codificacao");
           if (assignErr) return { success: false, error: assignErr.message };
         }

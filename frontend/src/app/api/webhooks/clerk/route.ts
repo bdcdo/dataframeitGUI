@@ -63,6 +63,29 @@ export async function POST(request: Request) {
         .update({ activated_at: new Date().toISOString() })
         .eq("id", supabaseUid)
         .is("activated_at", null);
+
+      // Vínculos pendentes (spec 002, US2): a conta recém-criada passa a ser
+      // o alias dos vínculos que aguardavam este e-mail.
+      const { data: resolvedLinks } = await admin
+        .from("member_email_links")
+        .update({ linked_user_id: supabaseUid })
+        .eq("email", email.toLowerCase())
+        .is("linked_user_id", null)
+        .select("member_user_id");
+
+      // SC-005, caminho via alias: o membro canônico de um vínculo resolvido
+      // também ativa — sem isso, um pendente cuja pessoa entra pelo e-mail
+      // vinculado ficaria "pendente" para sempre.
+      if (resolvedLinks && resolvedLinks.length > 0) {
+        await admin
+          .from("profiles")
+          .update({ activated_at: new Date().toISOString() })
+          .in(
+            "id",
+            resolvedLinks.map((l) => l.member_user_id),
+          )
+          .is("activated_at", null);
+      }
     }
   }
 

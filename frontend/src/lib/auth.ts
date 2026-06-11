@@ -96,6 +96,30 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
   };
 });
 
+// Identidade efetiva do usuário num projeto (spec 002): se a conta atual está
+// vinculada como alias de um membro (member_email_links.linked_user_id), todo
+// o trabalho no projeto acontece como o membro canônico (member_user_id);
+// senão, como ela própria. `cache()` deduplica por request — páginas e actions
+// do mesmo render pedem a mesma resolução.
+export const getEffectiveMemberId = cache(
+  async (projectId: string): Promise<string> => {
+    const user = await getAuthUser();
+    if (!user) throw new Error("Não autenticado");
+
+    const admin = createSupabaseAdmin();
+    const { data: alias } = await admin
+      .from("member_email_links")
+      .select("member_user_id")
+      .eq("project_id", projectId)
+      .eq("linked_user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    return alias?.member_user_id ?? user.id;
+  },
+);
+
 export interface ProjectAccessContext {
   project: { id: string; name: string; created_by: string } | null;
   membershipRole: string | null;
