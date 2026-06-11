@@ -26,6 +26,13 @@ import {
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   getLotteryDocStats,
   smartRandomize,
   previewLottery,
@@ -332,6 +339,79 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
               onChange={(e) => setLabel(e.target.value)}
               className="mt-1"
             />
+          </div>
+
+          <Separator />
+
+          {/* Section: Eligible documents (US1) */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-semibold">Documentos elegíveis</h4>
+
+            <div>
+              <Label>Codificações humanas</Label>
+              <RadioGroup
+                value={codingsFilterMode}
+                onValueChange={(v) =>
+                  setCodingsFilterMode(v as CodingsFilterMode)
+                }
+                className="mt-2 space-y-1"
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="all" id="cod-all" />
+                  <Label htmlFor="cod-all" className="font-normal">
+                    Todos os documentos
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="none" id="cod-none" />
+                  <Label htmlFor="cod-none" className="font-normal">
+                    Sem nenhuma codificação
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="atMost" id="cod-atmost" />
+                  <Label htmlFor="cod-atmost" className="font-normal">
+                    No máximo
+                  </Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={maxCodingsValue}
+                    onChange={(e) =>
+                      setMaxCodingsValue(parseInt(e.target.value) || 1)
+                    }
+                    onFocus={() => setCodingsFilterMode("atMost")}
+                    className="h-7 w-16"
+                    aria-label="Número máximo de codificações"
+                  />
+                  <span className="text-sm font-normal">codificações</span>
+                </div>
+              </RadioGroup>
+            </div>
+
+            <div>
+              <Label htmlFor="assignment-filter">Status de atribuição</Label>
+              <Select
+                value={assignmentFilter}
+                onValueChange={(v) =>
+                  setAssignmentFilter(v as AssignmentFilter)
+                }
+              >
+                <SelectTrigger id="assignment-filter" className="mt-1 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Qualquer</SelectItem>
+                  <SelectItem value="noActiveOfType">
+                    Sem atribuição ativa de{" "}
+                    {isComparacao ? "comparação" : "codificação"}
+                  </SelectItem>
+                  <SelectItem value="neverAssigned">
+                    Nunca atribuído
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <Separator />
