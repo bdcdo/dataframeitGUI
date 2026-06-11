@@ -281,7 +281,8 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
       ? Math.ceil((docsConsidered * researchersPerDoc) / participantIds.length)
       : 0;
 
-  const coordinators = members.filter((m) => m.role === "coordenador");
+  const memberName = (userId: string) =>
+    members.find((m) => m.userId === userId)?.name ?? userId.slice(0, 8);
 
   return (
     <Dialog
@@ -555,26 +556,34 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
             )}
           </div>
 
-          {coordinators.length > 0 && (
+          {members.length > 0 && (
             <>
               <Separator />
 
-              {/* Section: Coordinators */}
+              {/* Section: Participants (US3) */}
               <div className="space-y-3">
-                <h4 className="text-sm font-semibold">Coordenadores</h4>
+                <h4 className="text-sm font-semibold">Participantes</h4>
                 <p className="text-xs text-muted-foreground">
-                  Ative para incluir coordenadores no sorteio.
+                  Quem está ligado entra no sorteio. Pesquisadores começam
+                  ligados; coordenadores, desligados.
                 </p>
-                {coordinators.map((c) => (
-                  <div key={c.userId} className="flex items-center justify-between">
-                    <Label htmlFor={`coord-${c.userId}`}>{c.name}</Label>
+                {members.map((m) => (
+                  <div key={m.userId} className="flex items-center justify-between">
+                    <Label htmlFor={`member-${m.userId}`} className="font-normal">
+                      {m.name}
+                      {m.role === "coordenador" && (
+                        <span className="ml-1.5 text-xs text-muted-foreground">
+                          coordenador
+                        </span>
+                      )}
+                    </Label>
                     <Switch
-                      id={`coord-${c.userId}`}
-                      checked={!!participants[c.userId]}
+                      id={`member-${m.userId}`}
+                      checked={!!participants[m.userId]}
                       onCheckedChange={(checked) =>
                         setParticipants((prev) => ({
                           ...prev,
-                          [c.userId]: checked,
+                          [m.userId]: checked,
                         }))
                       }
                     />
@@ -721,9 +730,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                     <tbody>
                       {preview.participants.map((r) => (
                         <tr key={r.userId} className="border-b last:border-0">
-                          <td className="py-1 font-mono">
-                            {r.userId.slice(0, 8)}
-                          </td>
+                          <td className="py-1">{memberName(r.userId)}</td>
                           <td className="py-1 text-center">{r.existing}</td>
                           <td className="py-1 text-center">{r.newDocs}</td>
                         </tr>

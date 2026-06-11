@@ -97,8 +97,8 @@ Web app — tudo em `frontend/` (Next.js App Router); migrations em `frontend/su
 
 **Independent Test**: desligar um pesquisador e sortear; ele não recebe atribuições novas
 
-- [ ] T020 [US3] Substituir a seção "Coordenadores" por seção "Participantes" no `frontend/src/components/assignments/LotteryDialog.tsx`: Switch por membro de `members` (pesquisadores ligados por default, coordenadores desligados), alimentando `participantIds`; estimativa recalcula a cada toggle
-- [ ] T021 [US3] Exibir nomes dos participantes na tabela de prévia do `LotteryDialog.tsx` (lookup em `members`) em vez de `userId.slice(0, 8)`
+- [X] T020 [US3] Substituir a seção "Coordenadores" por seção "Participantes" no `frontend/src/components/assignments/LotteryDialog.tsx`: Switch por membro de `members` (pesquisadores ligados por default, coordenadores desligados), alimentando `participantIds`; estimativa recalcula a cada toggle
+- [X] T021 [US3] Exibir nomes dos participantes na tabela de prévia do `LotteryDialog.tsx` (lookup em `members`) em vez de `userId.slice(0, 8)`
 - [ ] T022 [US3] Validar acceptance scenarios da US3 (quickstart passo 5): pesquisador desligado não recebe; coordenador ligado recebe; todos desligados bloqueia o sorteio com mensagem
 
 **Checkpoint**: pool de participantes totalmente controlável
