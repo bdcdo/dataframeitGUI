@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -25,37 +25,68 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
-import { smartRandomize, previewLottery } from "@/actions/assignments";
+import {
+  getLotteryDocStats,
+  smartRandomize,
+  previewLottery,
+} from "@/actions/assignments";
 import type { LotteryParams, LotteryPreview } from "@/actions/assignments";
+import {
+  filterEligibleDocs,
+  type AssignmentFilter,
+  type LotteryBalancing,
+  type LotteryDocStats,
+  type LotteryFilters,
+  type LotteryMode,
+} from "@/lib/lottery-utils";
 import { toast } from "sonner";
 import { CalendarIcon, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ptBR } from "date-fns/locale";
 import { format } from "date-fns";
 
-interface CoordinatorOption {
+export interface LotteryMember {
   userId: string;
   name: string;
+  role: "pesquisador" | "coordenador";
 }
 
 interface LotteryDialogProps {
   projectId: string;
-  totalDocs: number;
-  totalResearchers: number;
-  coordinators?: CoordinatorOption[];
+  members: LotteryMember[];
 }
 
-const EMPTY_COORDINATORS: CoordinatorOption[] = [];
+interface LotteryStats {
+  docs: LotteryDocStats[];
+  batches: { id: string; label: string | null; createdAt: string }[];
+  minResponsesForComparison: number;
+}
 
-export function LotteryDialog({
-  projectId,
-  totalDocs,
-  totalResearchers,
-  coordinators = EMPTY_COORDINATORS,
-}: LotteryDialogProps) {
+type CodingsFilterMode = "all" | "none" | "atMost";
+
+export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+
+  // Stats de elegibilidade, carregadas uma vez na abertura do dialog
+  const [stats, setStats] = useState<LotteryStats | null>(null);
+  const [statsError, setStatsError] = useState(false);
+  useEffect(() => {
+    if (!open || stats) return;
+    let cancelled = false;
+    getLotteryDocStats(projectId)
+      .then((s) => {
+        if (!cancelled) setStats(s);
+      })
+      .catch(() => {
+        if (!cancelled) setStatsError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, stats, projectId]);
+
   // Hidratado client-only para o "disabled date in past" do Calendar não
   // produzir mismatch entre server e cliente.
   const [todayMidnight, setTodayMidnight] = useState<Date | null>(null);
@@ -68,17 +99,46 @@ export function LotteryDialog({
   // Tipo do sorteio (codificação ou comparação)
   const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
 
-  // Distribution
+  // Distribuição
   const [researchersPerDoc, setResearchersPerDoc] = useState(2);
   const [docsPerResearcherEnabled, setDocsPerResearcherEnabled] =
     useState(false);
   const [docsPerResearcher, setDocsPerResearcher] = useState(10);
   const [docSubsetEnabled, setDocSubsetEnabled] = useState(false);
-  const [docSubsetSize, setDocSubsetSize] = useState(() =>
-    Math.min(50, totalDocs)
+  const [docSubsetSize, setDocSubsetSize] = useState(50);
+  const [balancing, setBalancing] = useState<LotteryBalancing>("round");
+
+  // Atribuições pendentes (modo)
+  const [mode, setMode] = useState<LotteryMode>("append");
+
+  // Filtros de elegibilidade
+  const [codingsFilterMode, setCodingsFilterMode] =
+    useState<CodingsFilterMode>("all");
+  const [maxCodingsValue, setMaxCodingsValue] = useState(1);
+  const [assignmentFilter, setAssignmentFilter] =
+    useState<AssignmentFilter>("any");
+  const [batchExclude, setBatchExclude] = useState<string[]>([]);
+  const [batchOnly, setBatchOnly] = useState<string | null>(null);
+  const [manualEnabled, setManualEnabled] = useState(false);
+  const [manualDocIds, setManualDocIds] = useState<Set<string>>(new Set());
+
+  // Participantes: pesquisadores ligados por default, coordenadores desligados
+  const [participants, setParticipants] = useState<Record<string, boolean>>(
+    () =>
+      Object.fromEntries(
+        members.map((m) => [m.userId, m.role === "pesquisador"])
+      )
   );
 
-  // Deadline
+  const participantIds = useMemo(
+    () =>
+      members
+        .map((m) => m.userId)
+        .filter((id) => participants[id]),
+    [members, participants]
+  );
+
+  // Prazo (seção legada — sem efeito no sorteio; remoção na US6)
   const [deadlineOpen, setDeadlineOpen] = useState(false);
   const [deadlineMode, setDeadlineMode] = useState<
     "none" | "batch" | "recurring"
@@ -87,50 +147,97 @@ export function LotteryDialog({
   const [recurringCount, setRecurringCount] = useState(10);
   const [recurringStart, setRecurringStart] = useState<Date | undefined>();
 
-  // Coordinators
-  const [includedCoordinators, setIncludedCoordinators] = useState<Record<string, boolean>>({});
-
-  const includedCoordinatorIds = Object.entries(includedCoordinators)
-    .filter(([, v]) => v)
-    .map(([k]) => k);
-
-  const effectiveResearchers = totalResearchers + includedCoordinatorIds.length;
-
   // Label
   const [label, setLabel] = useState("");
 
-  // Preview
-  const [preview, setPreview] = useState<LotteryPreview | null>(null);
-
   const isComparacao = type === "comparacao";
 
-  const buildParams = (): LotteryParams => ({
+  const filters = useMemo<LotteryFilters>(() => {
+    const f: LotteryFilters = {};
+    if (codingsFilterMode === "none") f.maxHumanCodings = 0;
+    else if (codingsFilterMode === "atMost") f.maxHumanCodings = maxCodingsValue;
+    if (assignmentFilter !== "any") f.assignmentFilter = assignmentFilter;
+    if (batchOnly) f.batchFilter = { only: batchOnly };
+    else if (batchExclude.length) f.batchFilter = { exclude: batchExclude };
+    if (manualEnabled) f.manualDocIds = Array.from(manualDocIds);
+    return f;
+  }, [
+    codingsFilterMode,
+    maxCodingsValue,
+    assignmentFilter,
+    batchOnly,
+    batchExclude,
+    manualEnabled,
+    manualDocIds,
+  ]);
+
+  // Prévia + semente (research D13): a seed da última prévia é reaproveitada
+  // ao sortear; a prévia é guardada junto da configuração que a gerou, então
+  // qualquer mudança de configuração a invalida (e à seed) por derivação
+  const configKey = JSON.stringify({
+    type,
+    researchersPerDoc,
+    docsPerResearcherEnabled,
+    docsPerResearcher,
+    docSubsetEnabled,
+    docSubsetSize,
+    mode,
+    balancing,
+    filters,
+    participantIds,
+    label,
+  });
+  const [previewState, setPreviewState] = useState<{
+    key: string;
+    preview: LotteryPreview;
+  } | null>(null);
+  const preview = previewState?.key === configKey ? previewState.preview : null;
+  const seed = preview?.seed ?? null;
+
+  // Contagem de elegíveis ao vivo, com a mesma função pura do server
+  const eligibleCount = useMemo(() => {
+    if (!stats) return null;
+    let candidates = stats.docs;
+    if (isComparacao) {
+      candidates = candidates.filter(
+        (d) => d.humanCodingCount >= stats.minResponsesForComparison
+      );
+    }
+    return filterEligibleDocs(candidates, type, filters).length;
+  }, [stats, type, isComparacao, filters]);
+
+  const blockedMessage =
+    participantIds.length === 0
+      ? "Nenhum participante selecionado."
+      : eligibleCount === 0
+        ? "Nenhum documento passa nos filtros atuais."
+        : null;
+
+  const canSubmit = !blockedMessage && stats !== null;
+
+  const buildParams = (withSeed: boolean): LotteryParams => ({
     projectId,
     type,
+    mode,
+    balancing,
+    seed: withSeed && seed !== null ? seed : undefined,
     researchersPerDoc,
     docsPerResearcher: docsPerResearcherEnabled
       ? docsPerResearcher
       : undefined,
     docSubsetSize: docSubsetEnabled ? docSubsetSize : undefined,
-    deadlineMode,
-    deadlineDate: deadlineDate?.toISOString().split("T")[0],
-    recurringCount:
-      deadlineMode === "recurring" ? recurringCount : undefined,
-    recurringStart:
-      deadlineMode === "recurring" && recurringStart
-        ? recurringStart.toISOString().split("T")[0]
-        : undefined,
     label: label || undefined,
-    includedCoordinatorIds: includedCoordinatorIds.length ? includedCoordinatorIds : undefined,
+    filters,
+    participantIds,
   });
 
   const handlePreview = async () => {
     setPreviewing(true);
     try {
-      const result = await previewLottery(buildParams());
-      setPreview(result);
-    } catch (e: any) {
-      toast.error(e.message);
+      const result = await previewLottery(buildParams(false));
+      setPreviewState({ key: configKey, preview: result });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao calcular a prévia");
     }
     setPreviewing(false);
   };
@@ -138,14 +245,14 @@ export function LotteryDialog({
   const handleRandomize = async () => {
     setLoading(true);
     try {
-      const result = await smartRandomize(buildParams());
+      const result = await smartRandomize(buildParams(true));
       toast.success(
         `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
       );
       setOpen(false);
-      setPreview(null);
-    } catch (e: any) {
-      toast.error(e.message);
+      setPreviewState(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao sortear");
     }
     setLoading(false);
   };
@@ -155,21 +262,26 @@ export function LotteryDialog({
     return format(date, "dd/MM/yyyy", { locale: ptBR });
   };
 
-  const estimatedPerResearcher =
-    effectiveResearchers > 0
-      ? Math.ceil(
-          ((docSubsetEnabled ? docSubsetSize : totalDocs) *
-            researchersPerDoc) /
-            effectiveResearchers
-        )
+  const docsConsidered =
+    eligibleCount === null
+      ? null
+      : docSubsetEnabled
+        ? Math.min(docSubsetSize, eligibleCount)
+        : eligibleCount;
+
+  const estimatedPerParticipant =
+    docsConsidered !== null && participantIds.length > 0
+      ? Math.ceil((docsConsidered * researchersPerDoc) / participantIds.length)
       : 0;
+
+  const coordinators = members.filter((m) => m.role === "coordenador");
 
   return (
     <Dialog
       open={open}
       onOpenChange={(v) => {
         setOpen(v);
-        if (!v) setPreview(null);
+        if (!v) setPreviewState(null);
       }}
     >
       <DialogTrigger asChild>
@@ -236,7 +348,7 @@ export function LotteryDialog({
                 id="per-doc"
                 type="number"
                 min={1}
-                max={Math.min(10, totalResearchers)}
+                max={Math.max(1, Math.min(10, members.length))}
                 value={researchersPerDoc}
                 onChange={(e) =>
                   setResearchersPerDoc(parseInt(e.target.value) || 1)
@@ -281,7 +393,6 @@ export function LotteryDialog({
               <Input
                 type="number"
                 min={1}
-                max={totalDocs}
                 value={docSubsetSize}
                 onChange={(e) =>
                   setDocSubsetSize(parseInt(e.target.value) || 1)
@@ -290,11 +401,17 @@ export function LotteryDialog({
               />
             )}
 
-            <p className="text-xs text-muted-foreground">
-              {totalDocs} documentos disponíveis, {effectiveResearchers}{" "}
-              participantes. Estimativa: ~{estimatedPerResearcher} docs por
-              participante.
-            </p>
+            {blockedMessage ? (
+              <p className="text-xs text-destructive">{blockedMessage}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {stats === null
+                  ? statsError
+                    ? "Não foi possível carregar os documentos."
+                    : "Carregando documentos..."
+                  : `${eligibleCount} documentos elegíveis, ${participantIds.length} participantes. Estimativa: ~${estimatedPerParticipant} docs por participante.`}
+              </p>
+            )}
           </div>
 
           {coordinators.length > 0 && (
@@ -312,9 +429,9 @@ export function LotteryDialog({
                     <Label htmlFor={`coord-${c.userId}`}>{c.name}</Label>
                     <Switch
                       id={`coord-${c.userId}`}
-                      checked={!!includedCoordinators[c.userId]}
+                      checked={!!participants[c.userId]}
                       onCheckedChange={(checked) =>
-                        setIncludedCoordinators((prev) => ({
+                        setParticipants((prev) => ({
                           ...prev,
                           [c.userId]: checked,
                         }))
@@ -440,10 +557,9 @@ export function LotteryDialog({
             <Button
               variant="outline"
               onClick={handlePreview}
-              disabled={previewing}
+              disabled={previewing || !canSubmit}
               className="w-full"
-            >
-              {previewing ? "Calculando..." : "Visualizar prévia"}
+            >              {previewing ? "Calculando..." : "Visualizar prévia"}
             </Button>
 
             {preview && (
@@ -456,23 +572,19 @@ export function LotteryDialog({
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-1">Pesquisador</th>
+                        <th className="pb-1">Participante</th>
                         <th className="pb-1 text-center">Existentes</th>
                         <th className="pb-1 text-center">Novos</th>
-                        <th className="pb-1 text-right">Prazo</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {preview.researchers.map((r) => (
+                      {preview.participants.map((r) => (
                         <tr key={r.userId} className="border-b last:border-0">
                           <td className="py-1 font-mono">
                             {r.userId.slice(0, 8)}
                           </td>
                           <td className="py-1 text-center">{r.existing}</td>
                           <td className="py-1 text-center">{r.newDocs}</td>
-                          <td className="py-1 text-right text-muted-foreground">
-                            {r.deadline || "—"}
-                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -483,7 +595,7 @@ export function LotteryDialog({
 
             <Button
               onClick={handleRandomize}
-              disabled={loading}
+              disabled={loading || !canSubmit}
               className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
             >
               {loading ? "Sorteando..." : "Sortear"}
