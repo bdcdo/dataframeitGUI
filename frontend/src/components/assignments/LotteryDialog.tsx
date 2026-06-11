@@ -65,15 +65,20 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
 
-  // Stats de elegibilidade, carregadas uma vez na abertura do dialog
+  // Stats de elegibilidade, recarregadas a cada abertura do dialog —
+  // um sorteio muda atribuições/lotes, então reabrir com stats da
+  // abertura anterior mentiria na contagem de elegíveis
   const [stats, setStats] = useState<LotteryStats | null>(null);
   const [statsError, setStatsError] = useState(false);
   useEffect(() => {
-    if (!open || stats) return;
+    if (!open) return;
     let cancelled = false;
     getLotteryDocStats(projectId)
       .then((s) => {
-        if (!cancelled) setStats(s);
+        if (!cancelled) {
+          setStats(s);
+          setStatsError(false);
+        }
       })
       .catch(() => {
         if (!cancelled) setStatsError(true);
@@ -81,7 +86,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     return () => {
       cancelled = true;
     };
-  }, [open, stats, projectId]);
+  }, [open, projectId]);
 
   // Tipo do sorteio (codificação ou comparação)
   const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
