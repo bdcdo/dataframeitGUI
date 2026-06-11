@@ -62,11 +62,29 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
   if (!supabaseUid) return null;
 
   const admin = createSupabaseAdmin();
-  const { data: masterRow } = await admin
-    .from("master_users")
-    .select("user_id")
-    .eq("user_id", supabaseUid)
-    .maybeSingle();
+  const [{ data: masterRow }, { data: profileRow }] = await Promise.all([
+    admin
+      .from("master_users")
+      .select("user_id")
+      .eq("user_id", supabaseUid)
+      .maybeSingle(),
+    admin
+      .from("profiles")
+      .select("activated_at")
+      .eq("id", supabaseUid)
+      .maybeSingle(),
+  ]);
+
+  // Fallback de ativação (research D2): sessão autenticada com profile ainda
+  // pendente cobre webhook perdido e contas antigas — o caminho normal é o
+  // webhook user.created.
+  if (profileRow && profileRow.activated_at === null) {
+    await admin
+      .from("profiles")
+      .update({ activated_at: new Date().toISOString() })
+      .eq("id", supabaseUid)
+      .is("activated_at", null);
+  }
 
   return {
     id: supabaseUid,

@@ -1,6 +1,7 @@
 import { Webhook } from "svix";
 import { headers } from "next/headers";
 import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
 interface ClerkWebhookEvent {
   type: string;
@@ -46,7 +47,22 @@ export async function POST(request: Request) {
     const { id, email_addresses, first_name, last_name } = event.data;
     const email = email_addresses[0]?.email_address;
     if (email) {
-      await syncClerkUserToSupabase(id, email, first_name, last_name);
+      const supabaseUid = await syncClerkUserToSupabase(
+        id,
+        email,
+        first_name,
+        last_name
+      );
+
+      // Pré-registro (spec 002): primeiro acesso autenticado transiciona o
+      // membro de pendente para ativo (FR-004/SC-005). Transição única — o
+      // filtro IS NULL evita sobrescrever ativações anteriores.
+      const admin = createSupabaseAdmin();
+      await admin
+        .from("profiles")
+        .update({ activated_at: new Date().toISOString() })
+        .eq("id", supabaseUid)
+        .is("activated_at", null);
     }
   }
 

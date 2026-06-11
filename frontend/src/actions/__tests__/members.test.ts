@@ -3,31 +3,53 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Mock supabase chainable enxuto. setCanArbitrate executa um UPDATE em
 // project_members com .select("user_id").single() e dispara
 // releaseArbitrationsFromUser / retryPendingArbitrations (mockados abaixo).
+// `tableResults` permite a testes (addMember) fixarem o retorno por tabela e
+// por cliente (server vs admin); sem entrada, vale o default histórico.
 type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
 
-function makeClient(updateError?: { message: string }) {
+type TableResult = { data?: unknown; error?: { message: string; code?: string } | null };
+
+function makeClient(
+  updateError?: { message: string },
+  tableResults?: Record<string, TableResult>,
+) {
   return {
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      for (const m of ["eq", "is", "in", "neq", "select", "single"]) {
+      for (const m of ["eq", "is", "in", "neq", "select", "single", "maybeSingle"]) {
         builder[m] = () => builder;
       }
       builder.update = (payload: unknown) => {
         writeCalls.push({ table, op: "update", payload });
         return builder;
       };
-      builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({
+      builder.insert = (payload: unknown) => {
+        writeCalls.push({ table, op: "insert", payload });
+        return builder;
+      };
+      builder.delete = () => {
+        writeCalls.push({ table, op: "delete", payload: null });
+        return builder;
+      };
+      builder.then = (resolve: (v: unknown) => unknown) => {
+        const fixed = tableResults?.[table];
+        if (fixed) {
+          return resolve({ data: fixed.data ?? null, error: fixed.error ?? null });
+        }
+        return resolve({
           data: updateError ? null : { user_id: "userMemberX" },
           error: updateError ?? null,
         });
+      };
       return builder;
     },
   };
 }
 
 let clientError: { message: string } | undefined;
+let serverTableResults: Record<string, TableResult> | undefined;
+let adminTableResults: Record<string, TableResult> | undefined;
 
 // hoisted mocks — release/retry precisam ser observáveis por teste para
 // distinguir o caminho de habilitar vs desabilitar.
@@ -48,6 +70,9 @@ const hoisted = vi.hoisted(() => ({
       userId: string,
     ) => Promise<{ released: number; error?: string }>
   >(async () => ({ released: 0 })),
+  preregister: vi.fn<(email: string) => Promise<string>>(
+    async () => "placeholderUid",
+  ),
 }));
 
 vi.mock("next/cache", () => ({
@@ -60,17 +85,13 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/clerk-sync", () => ({
   syncClerkUserToSupabase: async () => "userX",
-}));
-vi.mock("@clerk/nextjs/server", () => ({
-  clerkClient: async () => ({
-    users: { getUserList: async () => ({ data: [] }), createUser: async () => ({ id: "x" }) },
-  }),
+  preregisterSupabaseUser: hoisted.preregister,
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(clientError),
+  createSupabaseServer: async () => makeClient(clientError, serverTableResults),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(clientError),
+  createSupabaseAdmin: () => makeClient(clientError, adminTableResults),
 }));
 vi.mock("@/actions/field-reviews", () => ({
   retryPendingArbitrations: hoisted.retry,
@@ -80,10 +101,14 @@ vi.mock("@/actions/field-reviews", () => ({
 beforeEach(() => {
   writeCalls = [];
   clientError = undefined;
+  serverTableResults = undefined;
+  adminTableResults = undefined;
   hoisted.retry.mockReset();
   hoisted.retry.mockResolvedValue({ success: true, assigned: 0, stillNoPool: 0 });
   hoisted.release.mockReset();
   hoisted.release.mockResolvedValue({ released: 0 });
+  hoisted.preregister.mockReset();
+  hoisted.preregister.mockResolvedValue("placeholderUid");
 });
 
 async function loadSet() {
@@ -206,5 +231,81 @@ describe("setCanResolve", () => {
     const set = await loadSetResolve();
     const r = await set("member1", true, "p1");
     expect(r.error).toBe("RLS bloqueou");
+  });
+});
+
+async function loadAdd() {
+  return (await import("@/actions/members")).addMember;
+}
+
+// O chamador é coordenador (server client devolve role coordenador); a
+// variação fica por conta do lookup de profiles e do insert (admin client).
+function setupAddMember(opts: {
+  profile?: { id: string } | null;
+  insertError?: { message: string; code?: string };
+}) {
+  serverTableResults = {
+    project_members: { data: { role: "coordenador" } },
+  };
+  adminTableResults = {
+    profiles: { data: opts.profile ?? null },
+    project_members: { data: null, error: opts.insertError ?? null },
+  };
+}
+
+describe("addMember (pré-registro, spec 002)", () => {
+  it("e-mail inválido → erro sem tocar no banco nem pré-registrar", async () => {
+    const add = await loadAdd();
+    const r = await add("p1", "sem-arroba", "pesquisador");
+    expect(r.error).toBe("E-mail inválido.");
+    expect(hoisted.preregister).not.toHaveBeenCalled();
+    expect(writeCalls).toEqual([]);
+  });
+
+  it("normaliza e-mail (trim + lowercase) antes de pré-registrar", async () => {
+    setupAddMember({ profile: null });
+    const add = await loadAdd();
+    const r = await add("p1", "  Pessoa@Exemplo.COM ", "pesquisador");
+    expect(r.error).toBeUndefined();
+    expect(r.pending).toBe(true);
+    expect(hoisted.preregister).toHaveBeenCalledWith("pessoa@exemplo.com");
+    expect(writeCalls).toContainEqual({
+      table: "project_members",
+      op: "insert",
+      payload: { project_id: "p1", user_id: "placeholderUid", role: "pesquisador" },
+    });
+  });
+
+  it("e-mail com profile existente → comportamento atual, sem pré-registro", async () => {
+    setupAddMember({ profile: { id: "existingUid" } });
+    const add = await loadAdd();
+    const r = await add("p1", "ja-tem@conta.com", "pesquisador");
+    expect(r.error).toBeUndefined();
+    expect(r.pending).toBe(false);
+    expect(hoisted.preregister).not.toHaveBeenCalled();
+    expect(writeCalls).toContainEqual({
+      table: "project_members",
+      op: "insert",
+      payload: { project_id: "p1", user_id: "existingUid", role: "pesquisador" },
+    });
+  });
+
+  it("insert duplicado (23505) → mensagem de já membro", async () => {
+    setupAddMember({
+      profile: { id: "existingUid" },
+      insertError: { message: "duplicate key", code: "23505" },
+    });
+    const add = await loadAdd();
+    const r = await add("p1", "ja-tem@conta.com", "pesquisador");
+    expect(r.error).toBe("Usuário já é membro deste projeto.");
+  });
+
+  it("falha no pré-registro → erro amigável, sem insert em project_members", async () => {
+    setupAddMember({ profile: null });
+    hoisted.preregister.mockRejectedValueOnce(new Error("kaboom"));
+    const add = await loadAdd();
+    const r = await add("p1", "novo@exemplo.com", "pesquisador");
+    expect(r.error).toBe("Erro ao pré-registrar: kaboom");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
   });
 });

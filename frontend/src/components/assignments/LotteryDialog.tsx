@@ -24,6 +24,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { smartRandomize, previewLottery } from "@/actions/assignments";
 import type { LotteryParams, LotteryPreview } from "@/actions/assignments";
@@ -36,6 +37,8 @@ import { format } from "date-fns";
 interface CoordinatorOption {
   userId: string;
   name: string;
+  // Pré-registrado (spec 002): ainda não criou conta.
+  pending?: boolean;
 }
 
 interface LotteryDialogProps {
@@ -309,7 +312,17 @@ export function LotteryDialog({
                 </p>
                 {coordinators.map((c) => (
                   <div key={c.userId} className="flex items-center justify-between">
-                    <Label htmlFor={`coord-${c.userId}`}>{c.name}</Label>
+                    <Label htmlFor={`coord-${c.userId}`} className="flex items-center gap-2">
+                      {c.name}
+                      {c.pending && (
+                        <Badge
+                          variant="secondary"
+                          title="Pré-registrado: ainda não criou conta."
+                        >
+                          Pendente
+                        </Badge>
+                      )}
+                    </Label>
                     <Switch
                       id={`coord-${c.userId}`}
                       checked={!!includedCoordinators[c.userId]}

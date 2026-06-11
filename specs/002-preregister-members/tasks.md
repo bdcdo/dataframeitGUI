@@ -42,16 +42,16 @@
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Criar helper `preregisterSupabaseUser(email): Promise<string>` em `frontend/src/lib/clerk-sync.ts`: cria `auth.users` (admin, email_confirm) + `profiles` com `activated_at = NULL`, idempotente para e-mail já existente (research D1)
-- [ ] T005 [US1] Refatorar `addMember` em `frontend/src/actions/members.ts`: validar formato do e-mail + normalizar lowercase (FR-006); trocar criação de usuário Clerk (linhas 51-80, incl. workaround Turnstile) por `preregisterSupabaseUser`; retornar `{ pending: true }` no lugar de `invited` (contracts §addMember)
-- [ ] T006 [P] [US1] Webhook `frontend/src/app/api/webhooks/clerk/route.ts`: após `syncClerkUserToSupabase`, setar `profiles.activated_at = now()` se `NULL` (transição pendente→ativo, FR-004/SC-005)
-- [ ] T007 [P] [US1] Fallback em `getAuthUser()` em `frontend/src/lib/auth.ts`: se profile da sessão tem `activated_at IS NULL`, setar `now()` (cobre webhook perdido e contas antigas, research D2)
-- [ ] T008 [US1] Nova action `updatePendingMemberEmail(projectId, memberUserId, newEmail)` em `frontend/src/actions/members.ts`: só para `activated_at IS NULL`; atualiza `auth.users` (admin API) + `profiles.email`; efeito é global (FR-005) — retornar `otherProjectsCount` para a UI avisar quando o pendente pertence a outros projetos; erros do contrato (contracts §updatePendingMemberEmail)
-- [ ] T009 [US1] `removeMember` em `frontend/src/actions/members.ts`: deletar também `assignments` com `status = 'pendente'` do usuário no projeto (FR-005, research D6)
-- [ ] T010 [US1] Query da página `frontend/src/app/(app)/projects/[id]/config/members/page.tsx`: incluir `activated_at` no select do join `profiles` (colunas explícitas)
-- [ ] T011 [US1] `frontend/src/components/members/MemberList.tsx`: badge "Pendente" (shadcn Badge) para `activated_at === null` + ação "Corrigir e-mail" (visível só em pendentes) chamando `updatePendingMemberEmail` com aviso quando `otherProjectsCount > 0`; aplicar o mesmo badge na seleção de pesquisadores do sorteio em `frontend/src/components/assignments/LotteryDialog.tsx` (research D5)
-- [ ] T012 [P] [US1] `frontend/src/components/members/AddMemberDialog.tsx`: toast para `pending: true` — "Membro pré-registrado. Ele entrará no projeto ao criar conta com este e-mail." (sem promessa de envio de e-mail)
-- [ ] T013 [US1] Testes Vitest em `frontend/src/actions/__tests__/members.test.ts` (arquivo existente): validação/normalização de e-mail do `addMember` e idempotência do `preregisterSupabaseUser` (mock do admin client)
+- [X] T004 [US1] Criar helper `preregisterSupabaseUser(email): Promise<string>` em `frontend/src/lib/clerk-sync.ts`: cria `auth.users` (admin, email_confirm) + `profiles` com `activated_at = NULL`, idempotente para e-mail já existente (research D1)
+- [X] T005 [US1] Refatorar `addMember` em `frontend/src/actions/members.ts`: validar formato do e-mail + normalizar lowercase (FR-006); trocar criação de usuário Clerk (linhas 51-80, incl. workaround Turnstile) por `preregisterSupabaseUser`; retornar `{ pending: true }` no lugar de `invited` (contracts §addMember)
+- [X] T006 [P] [US1] Webhook `frontend/src/app/api/webhooks/clerk/route.ts`: após `syncClerkUserToSupabase`, setar `profiles.activated_at = now()` se `NULL` (transição pendente→ativo, FR-004/SC-005)
+- [X] T007 [P] [US1] Fallback em `getAuthUser()` em `frontend/src/lib/auth.ts`: se profile da sessão tem `activated_at IS NULL`, setar `now()` (cobre webhook perdido e contas antigas, research D2)
+- [X] T008 [US1] Nova action `updatePendingMemberEmail(projectId, memberUserId, newEmail)` em `frontend/src/actions/members.ts`: só para `activated_at IS NULL`; atualiza `auth.users` (admin API) + `profiles.email`; efeito é global (FR-005) — retornar `otherProjectsCount` para a UI avisar quando o pendente pertence a outros projetos; erros do contrato (contracts §updatePendingMemberEmail)
+- [X] T009 [US1] `removeMember` em `frontend/src/actions/members.ts`: deletar também `assignments` com `status = 'pendente'` do usuário no projeto (FR-005, research D6)
+- [X] T010 [US1] Query da página `frontend/src/app/(app)/projects/[id]/config/members/page.tsx`: incluir `activated_at` no select do join `profiles` (colunas explícitas)
+- [X] T011 [US1] `frontend/src/components/members/MemberList.tsx`: badge "Pendente" (shadcn Badge) para `activated_at === null` + ação "Corrigir e-mail" (visível só em pendentes) chamando `updatePendingMemberEmail` com aviso quando `otherProjectsCount > 0`; aplicar o mesmo badge na seleção de pesquisadores do sorteio em `frontend/src/components/assignments/LotteryDialog.tsx` (research D5)
+- [X] T012 [P] [US1] `frontend/src/components/members/AddMemberDialog.tsx`: toast para `pending: true` — "Membro pré-registrado. Ele entrará no projeto ao criar conta com este e-mail." (sem promessa de envio de e-mail)
+- [X] T013 [US1] Testes Vitest em `frontend/src/actions/__tests__/members.test.ts` (arquivo existente): validação/normalização de e-mail do `addMember` e idempotência do `preregisterSupabaseUser` (mock do admin client)
 - [ ] T014 [US1] Validar quickstart.md §US1 (passos 1–5) no ambiente real
 
 **Checkpoint**: US1 completa e testável de ponta a ponta — MVP entregável

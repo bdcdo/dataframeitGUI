@@ -3,23 +3,33 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
-import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
+import { preregisterSupabaseUser } from "@/lib/clerk-sync";
 import {
   retryPendingArbitrations,
   releaseArbitrationsFromUser,
 } from "@/actions/field-reviews";
-import { clerkClient } from "@clerk/nextjs/server";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// FR-006: normaliza antes de validar; retorna null para formato inválido.
+function normalizeEmail(raw: string): string | null {
+  const email = raw.trim().toLowerCase();
+  return EMAIL_RE.test(email) ? email : null;
+}
+
 export async function addMember(
   projectId: string,
-  email: string,
+  rawEmail: string,
   role: "coordenador" | "pesquisador"
-): Promise<{ error?: string; invited?: boolean }> {
+): Promise<{ error?: string; pending?: boolean }> {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado." };
+
+  const email = normalizeEmail(rawEmail);
+  if (!email) return { error: "E-mail inválido." };
 
   const supabase = await createSupabaseServer();
 
@@ -43,40 +53,24 @@ export async function addMember(
     .single();
 
   let userId: string;
-  let invited = false;
+  let pending = false;
 
   if (profile) {
     userId = profile.id;
   } else {
-    // Create or reuse Clerk user, then sync to Supabase
+    // Pré-registro (spec 002): placeholder Supabase-only, sem usuário Clerk.
+    // O membro nasce pendente (activated_at = NULL) e entra de fato no
+    // primeiro acesso, quando o signup real é mapeado pelo e-mail.
     try {
-      const clerk = await clerkClient();
-
-      // Pre-check: o usuario pode ja existir no Clerk (ex: signup
-      // anterior bloqueado pelo Cloudflare Turnstile deixa o user
-      // criado mas sem profile no Supabase). Reusar evita 422
-      // form_identifier_exists na chamada de createUser.
-      const existing = await clerk.users.getUserList({
-        emailAddress: [email],
-      });
-
-      const clerkUserId =
-        existing.data.length > 0
-          ? existing.data[0].id
-          : (await clerk.users.createUser({ emailAddress: [email] })).id;
-
-      userId = await syncClerkUserToSupabase(clerkUserId, email);
-      invited = existing.data.length === 0;
+      userId = await preregisterSupabaseUser(email);
+      pending = true;
     } catch (e) {
-      // ClerkAPIResponseError tem .errors com detalhes; logar pra
-      // diagnostico server-side e mostrar mensagem amigavel ao coordenador.
-      console.error("[addMember] erro ao criar/sincronizar usuario Clerk", {
+      console.error("[addMember] erro ao pré-registrar usuário", {
         email,
         error: e,
-        clerkErrors: (e as { errors?: unknown })?.errors,
       });
       const msg = e instanceof Error ? e.message : "Erro desconhecido";
-      return { error: `Erro ao convidar: ${msg}` };
+      return { error: `Erro ao pré-registrar: ${msg}` };
     }
   }
 
@@ -95,17 +89,123 @@ export async function addMember(
 
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
-  return { invited };
+  return { pending };
+}
+
+// Corrige o e-mail de um membro ainda pendente (activated_at IS NULL).
+// Efeito é global (FR-005): o placeholder é um só, então a correção vale para
+// todos os projetos em que ele está pré-registrado — `otherProjectsCount`
+// permite à UI avisar o coordenador quando há outros projetos afetados.
+export async function updatePendingMemberEmail(
+  projectId: string,
+  memberUserId: string,
+  rawNewEmail: string
+): Promise<{ error?: string; otherProjectsCount?: number }> {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado." };
+
+  const newEmail = normalizeEmail(rawNewEmail);
+  if (!newEmail) return { error: "E-mail inválido." };
+
+  const supabase = await createSupabaseServer();
+  const { data: callerMember } = await supabase
+    .from("project_members")
+    .select("role")
+    .eq("project_id", projectId)
+    .eq("user_id", user.id)
+    .single();
+  if (callerMember?.role !== "coordenador") {
+    return { error: "Apenas coordenadores podem corrigir e-mails." };
+  }
+
+  const admin = createSupabaseAdmin();
+
+  const [{ data: membership }, { data: targetProfile }, { data: emailOwner }] =
+    await Promise.all([
+      admin
+        .from("project_members")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("user_id", memberUserId)
+        .maybeSingle(),
+      admin
+        .from("profiles")
+        .select("id, activated_at")
+        .eq("id", memberUserId)
+        .maybeSingle(),
+      admin
+        .from("profiles")
+        .select("id")
+        .eq("email", newEmail)
+        .maybeSingle(),
+    ]);
+
+  if (!membership || !targetProfile) {
+    return { error: "Membro não encontrado neste projeto." };
+  }
+  if (targetProfile.activated_at !== null) {
+    return {
+      error:
+        "Membro já ativou a conta — corrija via vínculo de e-mail adicional.",
+    };
+  }
+  if (emailOwner && emailOwner.id !== memberUserId) {
+    return { error: "Este e-mail já está em uso por outra conta." };
+  }
+
+  const { error: authError } = await admin.auth.admin.updateUserById(
+    memberUserId,
+    { email: newEmail, email_confirm: true }
+  );
+  if (authError) {
+    return { error: `Erro ao atualizar e-mail: ${authError.message}` };
+  }
+
+  const { error: profileError } = await admin
+    .from("profiles")
+    .update({ email: newEmail })
+    .eq("id", memberUserId);
+  if (profileError) return { error: profileError.message };
+
+  const { count } = await admin
+    .from("project_members")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", memberUserId)
+    .neq("project_id", projectId);
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
+  return { otherProjectsCount: count ?? 0 };
 }
 
 export async function removeMember(projectId: string, memberId: string) {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
+  const { data: removed, error } = await supabase
     .from("project_members")
     .delete()
-    .eq("id", memberId);
+    .eq("id", memberId)
+    .select("user_id")
+    .single();
 
   if (error) return { error: error.message };
+
+  // FR-005 (research D6): atribuições nunca iniciadas voltam ao pool de
+  // documentos não atribuídos. Trabalho começado (outros status) permanece.
+  const admin = createSupabaseAdmin();
+  const { error: assignmentsError } = await admin
+    .from("assignments")
+    .delete()
+    .eq("project_id", projectId)
+    .eq("user_id", removed.user_id)
+    .eq("status", "pendente");
+  if (assignmentsError) {
+    console.error("[removeMember] erro ao liberar atribuições pendentes", {
+      projectId,
+      userId: removed.user_id,
+      error: assignmentsError.message,
+    });
+  }
+
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
