@@ -87,8 +87,8 @@
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-- [ ] T029 [P] Rodar react-doctor/lint no frontend e resolver diagnósticos introduzidos pela feature
-- [ ] T030 Revisão de performance das queries novas: colunas explícitas, sem N+1 na lista de membros, `getEffectiveMemberId` sem chamada duplicada por request (memoizar via cache() se necessário)
+- [X] T029 [P] Rodar react-doctor/lint no frontend e resolver diagnósticos introduzidos pela feature
+- [X] T030 Revisão de performance das queries novas: colunas explícitas, sem N+1 na lista de membros, `getEffectiveMemberId` sem chamada duplicada por request (memoizar via cache() se necessário)
 - [ ] T031 Regressão manual: fluxo antigo de membro com conta existente (adicionar, trocar role, can_arbitrate/can_resolve, remover) permanece intacto; quickstart completo
 
 ---

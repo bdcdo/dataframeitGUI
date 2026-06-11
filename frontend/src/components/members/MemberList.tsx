@@ -125,8 +125,10 @@ export function MemberList({
   // Vínculo de e-mails (US2): um único par de dialogs no root, dirigido pelo
   // membro selecionado / preview de unificação retornado pela action.
   const [linkingMember, setLinkingMember] = useState<MemberRow | null>(null);
-  const [unifyPreview, setUnifyPreview] = useState<UnificationPreview | null>(null);
-  const [unifyTargetName, setUnifyTargetName] = useState("");
+  const [unify, setUnify] = useState<{
+    preview: UnificationPreview;
+    targetName: string;
+  } | null>(null);
   const [, startTransition] = useTransition();
 
   const linksByMember = new Map<string, MemberEmailLink[]>();
@@ -346,17 +348,16 @@ export function MemberList({
             if (!open) setLinkingMember(null);
           }}
           onRequiresUnification={(preview) => {
-            setUnifyTargetName(memberDisplayName(linkingMember));
+            setUnify({ preview, targetName: memberDisplayName(linkingMember) });
             setLinkingMember(null);
-            setUnifyPreview(preview);
           }}
         />
       )}
       <UnifyMembersDialog
         projectId={projectId}
-        preview={unifyPreview}
-        targetName={unifyTargetName}
-        onClose={() => setUnifyPreview(null)}
+        preview={unify?.preview ?? null}
+        targetName={unify?.targetName ?? ""}
+        onClose={() => setUnify(null)}
       />
     </div>
   );
