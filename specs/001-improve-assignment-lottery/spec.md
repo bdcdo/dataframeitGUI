@@ -142,6 +142,7 @@ O coordenador escolhe no dialog como o sorteio equilibra a carga: "equilibrar s�
 - Membro novo (carga acumulada zero) no modo "rodadas anteriores": recebe mais documentos que os demais até nivelar — comportamento esperado do modo, não defeito; a prévia evidencia a assimetria antes de o coordenador confirmar.
 - Modo "só esta rodada" com limite de documentos por participante menor que a cota uniforme (⌈D·R/P⌉): o participante para no limite e o excedente é redistribuído entre os demais com capacidade; se ninguém tem capacidade, documentos ficam com menos atribuições que o solicitado (déficit evidenciado na prévia).
 - Modo "rodadas anteriores" com cargas já niveladas: a distribuição degenera para a uniforme — equivalente ao modo "só esta rodada" para aquele sorteio.
+- Dados do projeto mudam entre a prévia e o sorteio (outro sorteio executado, atribuições alteradas): o sorteio recalcula sobre os dados atuais e pode divergir da prévia — a igualdade garantida (SC-005) vale para configuração e dados inalterados. Sortear sem prévia produz aleatorização nova, sem compromisso com prévias anteriores.
 
 ## Requirements *(mandatory)*
 
@@ -159,12 +160,12 @@ O coordenador escolhe no dialog como o sorteio equilibra a carga: "equilibrar s�
 - **FR-010**: O dialog MUST listar todos os membros do projeto com um controle individual de participação: pesquisadores ativados por padrão, coordenadores desativados por padrão.
 - **FR-011**: Para sorteios do tipo comparação, o sistema MUST continuar exigindo o número mínimo de codificações por documento configurado no projeto, e os filtros desta feature MUST compor por cima dessa exigência.
 - **FR-012**: O dialog MUST NOT oferecer configuração de prazo; sorteios novos MUST ser criados sem prazo e a prévia MUST NOT exibir informação de prazo. Prazos de sorteios antigos permanecem intactos onde já são exibidos.
-- **FR-013**: A prévia MUST refletir exatamente o resultado que o sorteio produziria com a configuração corrente (filtros, modo, participantes, limites), incluindo quantidade de atribuições novas e preservadas por participante.
+- **FR-013**: A prévia MUST refletir exatamente o resultado que o sorteio produziria com a configuração corrente (filtros, modos, participantes, limites), incluindo quantidade de atribuições novas e preservadas por participante. Ao sortear a partir de uma prévia, sem mudança de configuração nem dos dados do projeto, o resultado MUST ser idêntico ao previsualizado; sorteios sem prévia, ou após mudança de configuração ou de dados, produzem nova aleatorização.
 - **FR-014**: O sorteio MUST manter a variação de duplas de participantes por documento e o respeito ao limite de documentos por participante, em ambos os modos de equilíbrio.
 - **FR-015**: O rótulo do lote MUST continuar opcional e MUST ser registrado junto com a configuração usada no sorteio (filtros, modo de atribuição, modo de equilíbrio e participantes), para consulta posterior.
 - **FR-016**: O dialog MUST oferecer a escolha do modo de equilíbrio da distribuição, com as opções "equilibrar só esta rodada" (padrão) e "equilibrar considerando rodadas anteriores".
 - **FR-017**: No modo "equilibrar só esta rodada", o sorteio MUST distribuir as atribuições novas da forma mais uniforme possível entre os participantes ativos — diferença máxima de 1 atribuição entre quaisquer dois participantes, salvo quando limites de capacidade ou restrições de elegibilidade impedirem —, sem considerar a carga acumulada de rodadas anteriores.
-- **FR-018**: No modo "equilibrar considerando rodadas anteriores", o sorteio MUST priorizar os participantes com menor carga acumulada, contando as atribuições pendentes, em andamento e concluídas do tipo sorteado.
+- **FR-018**: No modo "equilibrar considerando rodadas anteriores", o sorteio MUST priorizar os participantes com menor carga acumulada, contando as atribuições do tipo sorteado preservadas pelo modo corrente — em modo acrescentar: pendentes, em andamento e concluídas; em modo substituir: em andamento e concluídas (as pendentes do tipo são descartadas pelo próprio sorteio e deixam de existir como carga).
 - **FR-019**: Em qualquer modo de equilíbrio, desempates entre participantes MUST ser resolvidos aleatoriamente; a ordem de cadastro dos membros no projeto MUST NOT influenciar quem recebe cada documento.
 
 ### Key Entities
@@ -172,7 +173,7 @@ O coordenador escolhe no dialog como o sorteio equilibra a carga: "equilibrar s�
 - **Documento**: unidade de análise do projeto; acumula codificações humanas e pode estar ativo ou excluído (excluídos nunca são elegíveis).
 - **Codificação**: resposta de uma pessoa a um documento; só a versão mais recente de cada pessoa conta para os filtros de elegibilidade.
 - **Atribuição**: vínculo entre documento, participante e tipo de tarefa (codificação ou comparação), com estados pendente, em andamento e concluído.
-- **Lote de sorteio**: registro de cada execução do sorteio, com rótulo opcional e a configuração usada (incluindo o modo de equilíbrio); base do filtro por lote anterior.
+- **Lote de sorteio**: registro de cada execução do sorteio, com rótulo opcional e a configuração usada (incluindo o modo de equilíbrio); base do filtro por lote anterior. "Rodada" é o mesmo conceito na linguagem da UI do equilíbrio — o termo canônico dos artefatos é lote.
 - **Participante**: membro do projeto (pesquisador ou coordenador) que pode ser incluído ou excluído de cada sorteio individualmente.
 
 ## Success Criteria *(mandatory)*
@@ -183,9 +184,9 @@ O coordenador escolhe no dialog como o sorteio equilibra a carga: "equilibrar s�
 - **SC-002**: A contagem de documentos elegíveis exibida no dialog corresponde a 100% dos documentos efetivamente distribuídos ou distribuíveis pelo sorteio com aquela configuração.
 - **SC-003**: Após qualquer sequência de sorteios, não existe nenhuma duplicidade de documento + pessoa + tipo nas atribuições.
 - **SC-004**: O coordenador completa o fluxo configurar filtros → conferir prévia → sortear em menos de 1 minuto num projeto com cerca de 100 documentos.
-- **SC-005**: A prévia coincide com o resultado real do sorteio em 100% das execuções com a mesma configuração (mesmas contagens por participante).
+- **SC-005**: O sorteio executado a partir de uma prévia, sem mudança de configuração nem dos dados do projeto, coincide com ela em 100% das execuções (mesmas contagens por participante).
 - **SC-006**: No modo "equilibrar só esta rodada" sem limites de capacidade, 100% dos sorteios resultam em cada participante com ⌊D·R/P⌋ a ⌈D·R/P⌉ atribuições novas (D documentos, R participantes por documento, P participantes ativos).
-- **SC-007**: No modo "equilibrar considerando rodadas anteriores", após o sorteio a diferença de carga acumulada entre quaisquer dois participantes com capacidade disponível é a mínima alcançável com os documentos distribuídos — ninguém com folga de capacidade termina o sorteio com 2 ou mais atribuições a menos que outro participante enquanto havia documento que poderia ter ido para ele.
+- **SC-007**: No modo "equilibrar considerando rodadas anteriores", nenhum participante com folga de capacidade termina o sorteio com 2 ou mais atribuições acumuladas a menos que outro participante enquanto havia documento elegível que poderia ter ido para ele.
 
 ## Assumptions
 

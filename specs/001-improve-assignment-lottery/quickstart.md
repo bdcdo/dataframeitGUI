@@ -51,7 +51,7 @@ Cobrem as duas primitivas puras: `filterEligibleDocs` (filtros e composição) e
 8. **Prazo (US6)**: percorrer o dialog — sem seção de prazo; prévia sem coluna Prazo.
 9. **Equilíbrio (US7)**: num projeto com 3+ participantes de cargas diferentes, sortear ~12 docs no modo "Equilibrar só esta rodada" → prévia e tabela mostram cada participante com a mesma quantidade de atribuições novas (±1); repetir no modo "considerando rodadas anteriores" → quem tinha menos carga recebe mais, sem ninguém levar tudo. Repetir o sorteio (substituir) algumas vezes e conferir que os contemplados variam (desempate aleatório, não a ordem dos membros).
 10. **Bordas**: combinar filtros até 0 elegíveis → botões desabilitados com mensagem; todos os toggles desligados → idem.
-11. **Prévia (SC-005)**: para a mesma configuração, "Visualizar prévia" e o toast pós-sorteio devem reportar os mesmos totais.
+11. **Prévia (SC-005)**: "Visualizar prévia" e sortear em seguida (sem mudar nada) devem produzir exatamente as mesmas contagens por participante — a semente da prévia é reaproveitada (research D13). Mudar qualquer configuração e sortear sem nova prévia produz aleatorização nova.
 
 ## Verificação de qualidade antes do PR
 
