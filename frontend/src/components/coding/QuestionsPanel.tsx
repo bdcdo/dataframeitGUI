@@ -9,6 +9,7 @@ import { Check, GripVertical, Loader2, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { isFieldVisible } from "@/lib/conditional";
+import { isIncompleteOther } from "@/lib/other-option";
 import { reorderFullList } from "@/lib/field-order";
 import { getScrollBehavior } from "@/lib/scroll";
 import type { PydanticField } from "@/lib/types";
@@ -29,9 +30,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-const OTHER_PREFIX = "Outro: ";
-const isIncompleteOther = (v: unknown) =>
-  typeof v === "string" && v === OTHER_PREFIX;
 const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
   if (val === undefined || val === null || val === "") return false;
   if (field.type === "single" && isIncompleteOther(val)) return false;
