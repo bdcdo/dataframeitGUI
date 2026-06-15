@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { saveSchemaFromGUI } from "./schema";
 import type { PydanticField } from "@/lib/types";
@@ -38,6 +38,9 @@ export async function resolveSchemaSuggestion(
 ): Promise<{ error?: string }> {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
+  if (!(await isProjectCoordinator(projectId, user))) {
+    return { error: "Apenas coordenadores podem resolver sugestões de schema." };
+  }
 
   const supabase = await createSupabaseServer();
 
@@ -72,12 +75,18 @@ export async function resolveSchemaSuggestion(
       };
     });
 
-    // Save schema (triggers audit log)
-    await saveSchemaFromGUI(projectId, updatedFields);
+    // Save schema (triggers audit log). Em falha (ex.: RLS filtrou o UPDATE
+    // de projects — #178), retorna sem marcar a sugestão como aprovada,
+    // evitando a divergência "Aprovada" com schema não aplicado.
+    const saved = await saveSchemaFromGUI(projectId, updatedFields);
+    if (saved.error) return { error: saved.error };
   }
 
-  // Mark suggestion as resolved
-  const { error } = await supabase
+  // Mark suggestion as resolved. O .select() detecta o caso inverso ao da
+  // #178: schema já aplicado mas UPDATE de schema_suggestions filtrado pela
+  // RLS (0 linhas) — sem o guard, a action retornaria sucesso com a sugestão
+  // ainda "pendente".
+  const { data: updated, error } = await supabase
     .from("schema_suggestions")
     .update({
       status: action,
@@ -85,9 +94,18 @@ export async function resolveSchemaSuggestion(
       resolved_at: new Date().toISOString(),
       ...(rejectionReason && { rejection_reason: rejectionReason }),
     })
-    .eq("id", suggestionId);
+    .eq("id", suggestionId)
+    .select("id");
 
   if (error) return { error: error.message };
+  if (!updated || updated.length === 0) {
+    return {
+      error:
+        action === "approved"
+          ? "Schema aplicado, mas sem permissão para marcar a sugestão como aprovada."
+          : "Sem permissão para resolver esta sugestão.",
+    };
+  }
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   return {};
 }
@@ -99,21 +117,33 @@ export async function approveSchemaSuggestionWithEdits(
 ): Promise<{ error?: string }> {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
+  if (!(await isProjectCoordinator(projectId, user))) {
+    return { error: "Apenas coordenadores podem aprovar sugestões de schema." };
+  }
 
   const supabase = await createSupabaseServer();
 
-  await saveSchemaFromGUI(projectId, editedFields);
+  // Mesma proteção de resolveSchemaSuggestion: sugestão só vira "approved"
+  // depois que o schema persistiu de fato.
+  const saved = await saveSchemaFromGUI(projectId, editedFields);
+  if (saved.error) return { error: saved.error };
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("schema_suggestions")
     .update({
       status: "approved",
       resolved_by: user.id,
       resolved_at: new Date().toISOString(),
     })
-    .eq("id", suggestionId);
+    .eq("id", suggestionId)
+    .select("id");
 
   if (error) return { error: error.message };
+  if (!updated || updated.length === 0) {
+    return {
+      error: "Schema aplicado, mas sem permissão para marcar a sugestão como aprovada.",
+    };
+  }
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   return {};
 }

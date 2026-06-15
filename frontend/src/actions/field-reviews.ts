@@ -2,7 +2,11 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getEffectiveMemberId,
+  isProjectCoordinator,
+} from "@/lib/auth";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
@@ -51,6 +55,10 @@ export async function submitAutoReview(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
+    // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
+    // como o membro canônico.
+    const effectiveId = await getEffectiveMemberId(projectId);
+
     // contesta_llm e ambiguo exigem justificativa — o arbitro precisa do
     // contraponto humano na revelacao; ambiguo leva o porque para a discussao.
     for (const v of verdicts) {
@@ -85,7 +93,7 @@ export async function submitAutoReview(
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("field_name", v.fieldName)
-          .eq("self_reviewer_id", user.id)
+          .eq("self_reviewer_id", effectiveId)
           .is("self_verdict", null)
           .select("field_name"),
       ),
@@ -111,7 +119,7 @@ export async function submitAutoReview(
       .select("id")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
-      .eq("self_reviewer_id", user.id)
+      .eq("self_reviewer_id", effectiveId)
       .is("self_verdict", null)
       .limit(1);
 
@@ -121,7 +129,7 @@ export async function submitAutoReview(
         .update({ status: "concluido", completed_at: now })
         .eq("project_id", projectId)
         .eq("document_id", documentId)
-        .eq("user_id", user.id)
+        .eq("user_id", effectiveId)
         .eq("type", "auto_revisao");
     }
 
@@ -151,7 +159,7 @@ export async function submitAutoReview(
         .select("field_name, self_verdict, human_response_id, llm_response_id")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
-        .eq("self_reviewer_id", user.id)
+        .eq("self_reviewer_id", effectiveId)
         .in("field_name", sideEffectFieldNames);
       if (stateErr) return { success: false, error: stateErr.message };
       for (const r of stateRows ?? []) {
@@ -186,7 +194,7 @@ export async function submitAutoReview(
           field_name: v.fieldName,
           response_a_id: a,
           response_b_id: b,
-          reviewer_id: user.id,
+          reviewer_id: effectiveId,
         };
       });
       const { error: equivErr } = await admin
@@ -235,7 +243,7 @@ export async function submitAutoReview(
           "field_name",
           ambiguousFields.map((v) => v.fieldName),
         )
-        .eq("author_id", user.id);
+        .eq("author_id", effectiveId);
       const alreadyCommented = new Set(
         (existingComments ?? []).map((r) => r.field_name as string),
       );
@@ -261,7 +269,7 @@ export async function submitAutoReview(
           project_id: projectId,
           document_id: documentId,
           field_name: v.fieldName,
-          author_id: user.id,
+          author_id: effectiveId,
           body,
         }];
       });
@@ -288,7 +296,7 @@ export async function submitAutoReview(
       const result = await assignArbitrator(
         projectId,
         documentId,
-        user.id,
+        effectiveId,
         contested,
       );
       arbitrated = result.count;
@@ -472,6 +480,9 @@ export async function submitBlindVerdicts(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
+    // Conta vinculada arbitra como o membro canônico (spec 002).
+    const effectiveId = await getEffectiveMemberId(projectId);
+
     const supabase = await createSupabaseServer();
     const now = new Date().toISOString();
 
@@ -484,7 +495,7 @@ export async function submitBlindVerdicts(
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("id", c.fieldReviewId)
-          .eq("arbitrator_id", user.id)
+          .eq("arbitrator_id", effectiveId)
           .is("blind_verdict", null)
           .select("id");
       }),
@@ -508,7 +519,7 @@ export async function submitBlindVerdicts(
         .from("field_reviews")
         .select("id, blind_verdict")
         .in("id", failedIds)
-        .eq("arbitrator_id", user.id);
+        .eq("arbitrator_id", effectiveId);
       const existingById = new Map(
         (existing ?? []).map((r) => [
           r.id as string,
@@ -564,6 +575,9 @@ export async function submitFinalVerdicts(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
+    // Conta vinculada arbitra como o membro canônico (spec 002).
+    const effectiveId = await getEffectiveMemberId(projectId);
+
     // Validacao: se humano perdeu (final='llm'), sugestao obrigatoria
     for (const c of choices) {
       if (c.verdict === "llm" && !c.questionImprovementSuggestion?.trim()) {
@@ -605,7 +619,7 @@ export async function submitFinalVerdicts(
         "field_name",
         choices.map((c) => c.fieldName),
       )
-      .eq("arbitrator_id", user.id);
+      .eq("arbitrator_id", effectiveId);
     if (frErr) return { success: false, error: frErr.message };
 
     const frByField = new Map(
@@ -685,7 +699,7 @@ export async function submitFinalVerdicts(
             .eq("project_id", projectId)
             .eq("document_id", documentId)
             .eq("field_name", c.fieldName)
-            .eq("arbitrator_id", user.id)
+            .eq("arbitrator_id", effectiveId)
             .not("blind_verdict", "is", null)
             .is("final_verdict", null)
             .select("id"),
@@ -718,7 +732,7 @@ export async function submitFinalVerdicts(
           "field_name",
           llmChoices.map((c) => c.fieldName),
         )
-        .eq("author_id", user.id);
+        .eq("author_id", effectiveId);
       const alreadyCommented = new Set(
         (existingComments ?? []).map((r) => r.field_name as string),
       );
@@ -755,7 +769,7 @@ export async function submitFinalVerdicts(
           project_id: projectId,
           document_id: documentId,
           field_name: c.fieldName,
-          author_id: user.id,
+          author_id: effectiveId,
           body,
         }];
       });
@@ -784,7 +798,7 @@ export async function submitFinalVerdicts(
       .select("id")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
-      .eq("arbitrator_id", user.id)
+      .eq("arbitrator_id", effectiveId)
       .is("final_verdict", null)
       .limit(1);
 
@@ -794,7 +808,7 @@ export async function submitFinalVerdicts(
         .update({ status: "concluido", completed_at: now })
         .eq("project_id", projectId)
         .eq("document_id", documentId)
-        .eq("user_id", user.id)
+        .eq("user_id", effectiveId)
         .eq("type", "arbitragem");
     }
 

@@ -43,6 +43,8 @@ function makeClient() {
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "user1" }),
+  // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
+  getEffectiveMemberId: async () => "user1",
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),

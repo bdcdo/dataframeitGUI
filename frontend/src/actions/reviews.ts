@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 
@@ -25,6 +25,11 @@ export async function submitVerdict(
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
+  // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
+  // como o membro canônico — reviewer_id, author_id e o sync do assignment
+  // usam o id efetivo, casando com o onConflict do upsert.
+  const effectiveId = await getEffectiveMemberId(projectId);
+
   const supabase = await createSupabaseServer();
 
   const { error } = await supabase.from("reviews").upsert(
@@ -32,7 +37,7 @@ export async function submitVerdict(
       project_id: projectId,
       document_id: documentId,
       field_name: fieldName,
-      reviewer_id: user.id,
+      reviewer_id: effectiveId,
       verdict,
       chosen_response_id: chosenResponseId || null,
       comment: comment || null,
@@ -63,6 +68,9 @@ export async function submitVerdict(
       .maybeSingle();
 
     if (!existingAmbiguity) {
+      // author_id é a conta autenticada, não o id efetivo: a policy de INSERT
+      // de project_comments exige author_id = clerk_uid() — com effectiveId,
+      // uma conta-alias (spec 002) tomaria 42501 aqui.
       const { error: commentError } = await supabase
         .from("project_comments")
         .insert({
@@ -110,7 +118,7 @@ export async function submitVerdict(
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
 
-  await syncCompareAssignment(supabase, projectId, documentId, user.id);
+  await syncCompareAssignment(supabase, projectId, documentId, effectiveId);
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
@@ -124,6 +132,9 @@ export async function markCompareDocReviewed(
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
+  // Conta vinculada fecha o doc como o membro canônico (spec 002).
+  const effectiveId = await getEffectiveMemberId(projectId);
+
   const supabase = await createSupabaseServer();
 
   const { error } = await supabase
@@ -131,7 +142,7 @@ export async function markCompareDocReviewed(
     .update({ status: "concluido", completed_at: new Date().toISOString() })
     .eq("project_id", projectId)
     .eq("document_id", documentId)
-    .eq("user_id", user.id)
+    .eq("user_id", effectiveId)
     .eq("type", "comparacao");
 
   if (error) throw new Error(error.message);

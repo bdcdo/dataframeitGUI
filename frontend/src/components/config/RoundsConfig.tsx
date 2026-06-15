@@ -66,8 +66,15 @@ export function RoundsConfig({
     if (!label) return;
     startTransition(async () => {
       const r = await createRound(projectId, label, rounds.length === 0);
-      if (r.error) toast.error(r.error);
-      else {
+      if (r.error) {
+        toast.error(r.error);
+        // Estado parcial: a rodada existe mas não virou a atual — atualiza a
+        // lista para o coordenador poder marcá-la manualmente.
+        if (r.id) {
+          setNewLabel("");
+          refresh();
+        }
+      } else {
         toast.success("Rodada criada");
         setNewLabel("");
         refresh();

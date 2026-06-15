@@ -169,7 +169,8 @@ export function EditFieldDialog({
           if (result.error) throw new Error(result.error);
           toast.success("Sugestão aprovada e campo atualizado");
         } else {
-          await saveSchemaFromGUI(projectId, updatedFields);
+          const result = await saveSchemaFromGUI(projectId, updatedFields);
+          if (result?.error) throw new Error(result.error);
           toast.success("Campo atualizado");
         }
         onOpenChange(false);

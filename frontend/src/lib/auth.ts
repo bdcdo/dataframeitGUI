@@ -62,11 +62,29 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
   if (!supabaseUid) return null;
 
   const admin = createSupabaseAdmin();
-  const { data: masterRow } = await admin
-    .from("master_users")
-    .select("user_id")
-    .eq("user_id", supabaseUid)
-    .maybeSingle();
+  const [{ data: masterRow }, { data: profileRow }] = await Promise.all([
+    admin
+      .from("master_users")
+      .select("user_id")
+      .eq("user_id", supabaseUid)
+      .maybeSingle(),
+    admin
+      .from("profiles")
+      .select("activated_at")
+      .eq("id", supabaseUid)
+      .maybeSingle(),
+  ]);
+
+  // Fallback de ativação (research D2): sessão autenticada com profile ainda
+  // pendente cobre webhook perdido e contas antigas — o caminho normal é o
+  // webhook user.created.
+  if (profileRow && profileRow.activated_at === null) {
+    await admin
+      .from("profiles")
+      .update({ activated_at: new Date().toISOString() })
+      .eq("id", supabaseUid)
+      .is("activated_at", null);
+  }
 
   return {
     id: supabaseUid,
@@ -77,6 +95,30 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
     isMaster: !!masterRow,
   };
 });
+
+// Identidade efetiva do usuário num projeto (spec 002): se a conta atual está
+// vinculada como alias de um membro (member_email_links.linked_user_id), todo
+// o trabalho no projeto acontece como o membro canônico (member_user_id);
+// senão, como ela própria. `cache()` deduplica por request — páginas e actions
+// do mesmo render pedem a mesma resolução.
+export const getEffectiveMemberId = cache(
+  async (projectId: string): Promise<string> => {
+    const user = await getAuthUser();
+    if (!user) throw new Error("Não autenticado");
+
+    const admin = createSupabaseAdmin();
+    const { data: alias } = await admin
+      .from("member_email_links")
+      .select("member_user_id")
+      .eq("project_id", projectId)
+      .eq("linked_user_id", user.id)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    return alias?.member_user_id ?? user.id;
+  },
+);
 
 export interface ProjectAccessContext {
   project: { id: string; name: string; created_by: string } | null;

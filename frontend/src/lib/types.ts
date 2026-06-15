@@ -4,6 +4,8 @@ export interface Profile {
   first_name: string | null;
   last_name: string | null;
   created_at: string;
+  // NULL = membro pendente (pré-registrado, nunca teve acesso autenticado).
+  activated_at: string | null;
 }
 
 export type RoundStrategy = "schema_version" | "manual";
@@ -78,6 +80,18 @@ export interface ProjectMember {
   can_arbitrate: boolean;
   can_resolve: boolean;
   profiles?: Profile;
+}
+
+// E-mail adicional vinculado a um membro, com efeito restrito ao projeto
+// (spec 002). linked_user_id NULL = vínculo aguardando a conta existir.
+export interface MemberEmailLink {
+  id: string;
+  project_id: string;
+  member_user_id: string;
+  email: string;
+  linked_user_id: string | null;
+  created_by: string;
+  created_at: string;
 }
 
 export interface Document {

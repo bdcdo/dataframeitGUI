@@ -6,6 +6,50 @@ import { clerkClient } from "@clerk/nextjs/server";
  * and a row in clerk_user_mapping.  Returns the Supabase UUID.
  * Idempotent — safe to call concurrently for the same user.
  */
+/**
+ * Cria um placeholder Supabase-only para pré-registro de membro (spec 002):
+ * auth.users com email confirmado + profiles via trigger handle_new_user,
+ * com activated_at = NULL (pendente). Não cria usuário Clerk — o auto-join
+ * acontece no signup real, quando syncClerkUserToSupabase mapeia o novo
+ * Clerk user para este profile pelo e-mail.
+ * Idempotente: e-mail já existente (profile ou auth.users) retorna o id atual.
+ */
+export async function preregisterSupabaseUser(email: string): Promise<string> {
+  const admin = createSupabaseAdmin();
+
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("email", email)
+    .single();
+  if (profile) return profile.id;
+
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    email_confirm: true,
+  });
+
+  if (error) {
+    // Race entre dois pré-registros do mesmo e-mail: o trigger
+    // handle_new_user do vencedor já criou o profile — re-consultar profiles
+    // resolve sem depender de listUsers (paginado em 50, não escala).
+    const { data: raced } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("email", email)
+      .single();
+    if (raced) return raced.id;
+
+    // Último recurso: auth.users órfão de profile (estado anômalo).
+    const { data: existingUsers } = await admin.auth.admin.listUsers();
+    const match = existingUsers?.users?.find((u) => u.email === email);
+    if (match) return match.id;
+    throw new Error(`Erro ao criar usuário Supabase: ${error.message}`);
+  }
+
+  return data.user.id;
+}
+
 export async function syncClerkUserToSupabase(
   clerkUserId: string,
   email: string,
