@@ -9,6 +9,7 @@ import { Check, GripVertical, Loader2, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { isFieldVisible } from "@/lib/conditional";
+import { isIncompleteOther } from "@/lib/other-option";
 import { reorderFullList } from "@/lib/field-order";
 import { getScrollBehavior } from "@/lib/scroll";
 import type { PydanticField } from "@/lib/types";
@@ -29,9 +30,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-const OTHER_PREFIX = "Outro: ";
-const isIncompleteOther = (v: unknown) =>
-  typeof v === "string" && v === OTHER_PREFIX;
 const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
   if (val === undefined || val === null || val === "") return false;
   if (field.type === "single" && isIncompleteOther(val)) return false;
@@ -44,8 +42,8 @@ const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
 
 interface QuestionsPanelProps {
   fields: PydanticField[];
-  answers: Record<string, any>;
-  onAnswer: (fieldName: string, value: any) => void;
+  answers: Record<string, unknown>;
+  onAnswer: (fieldName: string, value: unknown) => void;
   onSubmit: () => void;
   submitting?: boolean;
   notes?: string;
@@ -150,6 +148,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   const skipScrollRef = useRef(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- limpa os destaques ao trocar o schema (prop fields)
     setHighlightedFields(new Set());
     skipScrollRef.current = true;
   }, [fields]);
@@ -216,7 +215,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   );
 
   const handleAnswerWithClear = useCallback(
-    (fieldName: string, value: any) => {
+    (fieldName: string, value: unknown) => {
       onAnswer(fieldName, value);
       setHighlightedFields((prev) => {
         if (!prev.has(fieldName)) return prev;

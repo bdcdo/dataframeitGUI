@@ -124,6 +124,7 @@ export function CommentsSplitView({
   useEffect(() => {
     if (!currentDocId || docTextCache[currentDocId]) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- inicia o lazy-load do texto do doc (sincronização com backend)
     setLoadingText(true);
     getDocumentText(projectId, currentDocId).then((result) => {
       if (cancelled) return;

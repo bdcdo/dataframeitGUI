@@ -99,6 +99,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
   useEffect(() => {
     const t = new Date();
     t.setHours(0, 0, 0, 0);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- valor client-only (hora local); ver comentário acima
     setToday(t);
   }, []);
 

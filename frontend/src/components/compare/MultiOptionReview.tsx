@@ -107,6 +107,7 @@ export function MultiOptionReview({
   useEffect(() => {
     const existing = parseExistingMultiVerdict(existingVerdict?.verdict);
     if (existing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reseta as escolhas ao trocar de campo/verdict/estatísticas
       setChoices(existing);
     } else {
       const result: Record<string, boolean> = {};

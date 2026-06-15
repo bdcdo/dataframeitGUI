@@ -1,5 +1,6 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { isCodingComplete } from "@/lib/coding-completeness";
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
@@ -83,6 +84,24 @@ export async function createAutoReviewIfDiverges(
   }
 
   const fields = project.pydantic_fields as PydanticField[];
+
+  // #174: nunca arbitrar codificacao incompleta. O caminho inline (saveResponse)
+  // ja so chama esta funcao apos allAnswered, mas a guarda evita regressao se a
+  // funcao for chamada de outro ponto — e usa a mesma definicao de completude
+  // (isCodingComplete) do gate inline e do backlog.
+  if (
+    !isCodingComplete(
+      fields,
+      (humanResponse.answers as Record<string, unknown>) ?? {},
+    )
+  ) {
+    log("skip_incomplete_coding", {
+      projectId,
+      documentId,
+      userId: humanUserId,
+    });
+    return { divergentCount: 0 };
+  }
 
   // Respeita equivalencias ja marcadas (aba Comparar ou veredito "equivalente"
   // da propria auto-revisao) — sem isto, um par marcado como equivalente

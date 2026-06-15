@@ -8,7 +8,6 @@ import { Label } from "@/components/ui/label";
 import { Download } from "lucide-react";
 
 interface ExportPanelProps {
-  projectId: string;
   projectName: string;
   individualHeaders: string[];
   individualRows: string[][];
@@ -40,7 +39,6 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function ExportPanel({
-  projectId,
   projectName,
   individualHeaders,
   individualRows,
@@ -115,30 +113,25 @@ export function ExportPanel({
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       downloadBlob(blob, `${projectName}-${suffix}-${timestamp}.csv`);
     } else {
-      const XLSX = await import("xlsx");
-      const wb = XLSX.utils.book_new();
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
 
       if (dataset === "both") {
-        const ws1 = XLSX.utils.aoa_to_sheet([
-          individualHeaders,
-          ...individualRows,
-        ]);
-        XLSX.utils.book_append_sheet(wb, ws1, "Respostas");
-        const ws2 = XLSX.utils.aoa_to_sheet([
-          verdictHeaders,
-          ...verdictRows,
-        ]);
-        XLSX.utils.book_append_sheet(wb, ws2, "Gabarito");
+        const ws1 = wb.addWorksheet("Respostas");
+        ws1.addRow(individualHeaders);
+        ws1.addRows(individualRows);
+        const ws2 = wb.addWorksheet("Gabarito");
+        ws2.addRow(verdictHeaders);
+        ws2.addRows(verdictRows);
       } else {
-        const ws = XLSX.utils.aoa_to_sheet([currentHeaders, ...currentRows]);
-        XLSX.utils.book_append_sheet(
-          wb,
-          ws,
+        const ws = wb.addWorksheet(
           dataset === "individual" ? "Respostas" : "Gabarito",
         );
+        ws.addRow(currentHeaders);
+        ws.addRows(currentRows);
       }
 
-      const buffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
