@@ -6,7 +6,9 @@ import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 // funcionando — tudo somente leitura (previewLottery não grava nada; o
 // sorteio de fato não é executado para não mutar o projeto de teste).
 // Requer credenciais de um coordenador e E2E_LOTTERY_PROJECT_ID — um
-// projeto onde esse usuário é coordenador, com documentos e membros.
+// projeto onde esse usuário é coordenador, com documentos e pelo menos um
+// pesquisador (sem pesquisador a contagem de elegíveis não renderiza e o
+// teste estoura por timeout em vez de pular — ver .env.e2e.example).
 // Pulado se faltar qualquer um, para não quebrar CI sem o tenant de teste.
 test("dialog de sorteio abre com filtros, modos e prévia funcionais", async ({
   page,
