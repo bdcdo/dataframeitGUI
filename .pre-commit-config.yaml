@@ -9,13 +9,18 @@
 # --fail-on error bloqueia só diagnósticos error-level: código novo é barrado, o
 # débito legado de warnings fica grandfathered. Detalhes em docs/LINT_CONFIG.md.
 #
-# Setup local (1x): pre-commit install   (requer `npm install` em frontend/)
+# O hook invoca o binário pinado em frontend/node_modules/.bin/react-doctor — não
+# `npx`, que baixaria @latest se as deps não estivessem instaladas, furando o pin.
+# Se o binário estiver ausente, o hook falha fechado pedindo `npm install`.
+#
+# Setup local (1x): uv tool install pre-commit && pre-commit install
+#   (requer `npm install` em frontend/ para o binário pinado do react-doctor)
 repos:
   - repo: local
     hooks:
       - id: react-doctor
         name: react-doctor (diff, fail on new errors)
-        entry: bash -c 'cd frontend && exec npx react-doctor . --diff --fail-on error'
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/react-doctor && exec ./node_modules/.bin/react-doctor . --diff --fail-on error || { echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false
