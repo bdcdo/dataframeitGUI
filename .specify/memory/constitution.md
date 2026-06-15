@@ -68,7 +68,7 @@ A plataforma processa dados de pesquisas ainda não publicadas, potencialmente s
 
 Toda tabela nova MUST nascer, na mesma migration, com: RLS habilitado, policies por papel (coordenador/pesquisador, incluindo flags como `can_arbitrate`/`can_resolve` quando aplicável) e índices nas colunas usadas pelas policies (tipicamente `user_id` e `project_id`). Acesso que contorna RLS (service key) MUST ser pontual, justificado no código e restrito a operações que o RLS não cobre.
 
-**Racional**: o RLS é a linha de defesa que vale mesmo quando a camada de aplicação erra; 38 das 70 migrations existentes já seguem o padrão e ele é o mecanismo concreto do isolamento exigido pelo Princípio III.
+**Racional**: o RLS é a linha de defesa que vale mesmo quando a camada de aplicação erra; a maioria das migrations que criam tabelas já segue o padrão e ele é o mecanismo concreto do isolamento exigido pelo Princípio III.
 
 ### V. Robustez via testes
 
