@@ -93,6 +93,7 @@ export function AutoReviewFieldPanel({
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reabre a justificativa ao trocar de campo
     setShowJustification(true);
   }, [field.fieldName]);
 

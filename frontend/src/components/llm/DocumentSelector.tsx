@@ -38,6 +38,7 @@ export function DocumentSelector({
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- inicia o fetch dos docs ao abrir (sincronização com backend)
       setLoading(true);
       setLocalSelected(new Set(selectedIds));
       getDocumentsForSelection(projectId)

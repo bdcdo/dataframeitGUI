@@ -53,9 +53,9 @@ import type { PydanticField } from "@/lib/types";
 import { Textarea } from "@/components/ui/textarea";
 
 function buildKwargsForCapabilities(
-  currentKwargs: Record<string, any>,
+  currentKwargs: Record<string, unknown>,
   caps: ModelCapabilities
-): Record<string, any> {
+): Record<string, unknown> {
   const newKwargs = { ...currentKwargs };
   if (!caps.supportsTemperature) delete newKwargs.temperature;
   else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
@@ -91,7 +91,7 @@ interface LlmConfigurePaneProps {
   config: {
     llm_provider: string;
     llm_model: string;
-    llm_kwargs: Record<string, any>;
+    llm_kwargs: Record<string, unknown>;
   };
   pydanticFields: PydanticField[] | null;
   pydanticCode: string | null;
@@ -280,12 +280,15 @@ export function LlmConfigurePane({
             });
           }
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (intervalRef.current) clearInterval(intervalRef.current);
         intervalRef.current = null;
         setStatus("error");
         setPhase("error");
-        const msg = e?.message ?? "Não foi possível atualizar o progresso";
+        const msg =
+          e instanceof Error
+            ? e.message
+            : "Não foi possível atualizar o progresso";
         setErrorInfo({
           message: msg,
           type: "NetworkError",
@@ -378,8 +381,8 @@ export function LlmConfigurePane({
       const r = await savePrompt(projectId, prompt);
       if (r?.error) toast.error(r.error);
       else toast.success("Prompt salvo!");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar prompt");
     }
     setSavingPrompt(false);
   };
@@ -389,8 +392,8 @@ export function LlmConfigurePane({
       const r = await saveLlmConfig(projectId, config);
       if (r?.error) toast.error(r.error);
       else toast.success("Configuração salva!");
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar configuração");
     }
   };
 
@@ -437,8 +440,8 @@ export function LlmConfigurePane({
       // Refresca o layout do projeto para o badge "LLM rodando" aparecer na aba.
       refresh();
       pollProgress(res.job_id);
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao iniciar execução");
     } finally {
       setIsStartingRun(false);
     }
@@ -467,9 +470,9 @@ export function LlmConfigurePane({
             ? "Campo de ambiguidades adicionado"
             : "Campo de ambiguidades removido"
         );
-      } catch (e: any) {
+      } catch (e: unknown) {
         setHasAmbiguities(!checked);
-        toast.error(e.message);
+        toast.error(e instanceof Error ? e.message : "Erro ao atualizar campo");
       }
     });
   };
@@ -650,7 +653,7 @@ export function LlmConfigurePane({
                 step={0.1}
                 min={0}
                 max={2}
-                value={config.llm_kwargs.temperature ?? 1.0}
+                value={(config.llm_kwargs.temperature as number | undefined) ?? 1.0}
                 onChange={(e) => {
                   const parsed = parseFloat(e.target.value);
                   if (!isNaN(parsed))
@@ -666,7 +669,7 @@ export function LlmConfigurePane({
             <div className="space-y-1.5">
               <Label className="text-sm">Nível de raciocínio</Label>
               <Select
-                value={config.llm_kwargs.thinking_level ?? "medium"}
+                value={(config.llm_kwargs.thinking_level as string | undefined) ?? "medium"}
                 onValueChange={(v) =>
                   setConfig((c) => ({
                     ...c,
@@ -742,7 +745,7 @@ export function LlmConfigurePane({
                   type="number"
                   min={1}
                   max={50}
-                  value={config.llm_kwargs.parallel_requests ?? 5}
+                  value={(config.llm_kwargs.parallel_requests as number | undefined) ?? 5}
                   onChange={(e) => {
                     const v = parseInt(e.target.value);
                     if (!isNaN(v) && v >= 1)
@@ -763,7 +766,7 @@ export function LlmConfigurePane({
                   step={0.1}
                   min={0}
                   max={10}
-                  value={config.llm_kwargs.rate_limit_delay ?? 0.5}
+                  value={(config.llm_kwargs.rate_limit_delay as number | undefined) ?? 0.5}
                   onChange={(e) => {
                     const v = parseFloat(e.target.value);
                     if (!isNaN(v) && v >= 0)

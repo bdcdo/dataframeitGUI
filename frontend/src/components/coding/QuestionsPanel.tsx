@@ -44,8 +44,8 @@ const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
 
 interface QuestionsPanelProps {
   fields: PydanticField[];
-  answers: Record<string, any>;
-  onAnswer: (fieldName: string, value: any) => void;
+  answers: Record<string, unknown>;
+  onAnswer: (fieldName: string, value: unknown) => void;
   onSubmit: () => void;
   submitting?: boolean;
   notes?: string;
@@ -216,7 +216,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   );
 
   const handleAnswerWithClear = useCallback(
-    (fieldName: string, value: any) => {
+    (fieldName: string, value: unknown) => {
       onAnswer(fieldName, value);
       setHighlightedFields((prev) => {
         if (!prev.has(fieldName)) return prev;
