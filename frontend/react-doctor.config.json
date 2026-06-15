@@ -6,7 +6,16 @@
         "rules": [
           "react-doctor/server-auth-actions"
         ]
+      },
+      {
+        "files": ["src/components/ui/**"],
+        "rules": [
+          "react-doctor/only-export-components"
+        ]
       }
     ]
+  },
+  "rules": {
+    "react-doctor/js-combine-iterations": "off"
   }
 }

@@ -8,3 +8,27 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+
+  # react-doctor como gate local de qualidade React (estilo flake8/mypy).
+  #
+  # Por que --diff e não --staged: o modo --staged do react-doctor não resolve os
+  # paths neste monorepo (git root != frontend/) e ainda dispara falsos
+  # unused-dependency. O --diff (vs HEAD) resolve certo; e como o pre-commit faz
+  # auto-stash dos arquivos unstaged, o working tree fica == staged, então --diff
+  # enxerga exatamente o que vai ser commitado.
+  #
+  # --fail-on error bloqueia só diagnósticos error-level: código novo é barrado, o
+  # débito legado de warnings fica grandfathered. Detalhes em docs/LINT_CONFIG.md.
+  #
+  # O hook invoca o binário pinado em frontend/node_modules/.bin/react-doctor — não
+  # `npx`, que baixaria @latest se as deps não estivessem instaladas, furando o pin.
+  # Se o binário estiver ausente, falha fechado pedindo `npm install` em frontend/.
+  - repo: local
+    hooks:
+      - id: react-doctor
+        name: react-doctor (diff, fail on new errors)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/react-doctor && exec ./node_modules/.bin/react-doctor . --diff --fail-on error || { echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        require_serial: true
