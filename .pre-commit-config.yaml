@@ -1,0 +1,10 @@
+# Hooks de pre-commit. Habilite uma vez por checkout com `pre-commit install`
+# (instale a ferramenta antes: `pipx install pre-commit` ou
+# `uv tool install pre-commit`). O CI roda o mesmo gitleaks em todo push/PR
+# via .github/workflows/secret-scan.yml — este hook é a primeira barreira,
+# antes do segredo entrar no histórico.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
