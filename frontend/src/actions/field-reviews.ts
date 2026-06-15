@@ -955,7 +955,18 @@ export async function regenerateAutoReviewBacklog(
       // completa. Espelha o gate inline de saveResponse (allAnswered) via o
       // mesmo helper. Sem isto, codificações em andamento eram varridas para a
       // arbitragem e apareciam como "(vazio)" em diversos campos.
-      if (!isCodingComplete(fields, (human.answers as Record<string, unknown>) ?? {})) {
+      //
+      // Staleness-aware: passamos answer_field_hashes porque a avaliação é
+      // RETROATIVA (schema atual vs. codificações antigas). Sem isto, um campo
+      // obrigatório adicionado depois (ex.: `medicamento`) tornaria toda
+      // codificação anterior "incompleta", varrendo arbitragens legítimas.
+      if (
+        !isCodingComplete(
+          fields,
+          (human.answers as Record<string, unknown>) ?? {},
+          human.answer_field_hashes as AnswerFieldHashes,
+        )
+      ) {
         continue;
       }
 

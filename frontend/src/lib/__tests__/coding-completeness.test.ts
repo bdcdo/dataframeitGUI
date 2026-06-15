@@ -99,3 +99,45 @@ describe("isCodingComplete", () => {
     expect(isCodingComplete(fields, { q1: "a" })).toBe(false);
   });
 });
+
+// Staleness-awareness (#174 follow-up): quando answer_field_hashes é fornecido,
+// um campo obrigatório ausente do snapshot não existia quando a resposta foi
+// codificada e não deve reprovar a completude. Sem isto, um campo adicionado ao
+// schema depois (ex.: `medicamento`) tornaria toda codificação antiga
+// falsamente "incompleta" na avaliação retroativa do backlog.
+describe("isCodingComplete — staleness-aware", () => {
+  it("campo obrigatório ausente do schema da época (não está nos hashes) → não exigido → true", () => {
+    const fields = [field({ name: "q1" }), field({ name: "medicamento", type: "multi" })];
+    // hashes da época só tinha q1 → medicamento não existia → não exigir
+    const hashes = { q1: "h1" };
+    expect(isCodingComplete(fields, { q1: "a" }, hashes)).toBe(true);
+  });
+
+  it("campo obrigatório que existia (está nos hashes) mas não respondido → false", () => {
+    const fields = [field({ name: "q1" }), field({ name: "q2" })];
+    const hashes = { q1: "h1", q2: "h2" };
+    expect(isCodingComplete(fields, { q1: "a" }, hashes)).toBe(false);
+    expect(isCodingComplete(fields, { q1: "a", q2: "b" }, hashes)).toBe(true);
+  });
+
+  it("hashes vazios = legacy → exige todos (comportamento staleness-blind)", () => {
+    const fields = [field({ name: "q1" }), field({ name: "medicamento", type: "multi" })];
+    expect(isCodingComplete(fields, { q1: "a" }, {})).toBe(false);
+  });
+
+  it("sem hashes = legacy → exige todos (comportamento staleness-blind do save-time)", () => {
+    const fields = [field({ name: "q1" }), field({ name: "medicamento", type: "multi" })];
+    expect(isCodingComplete(fields, { q1: "a" })).toBe(false);
+  });
+
+  it("campo da época respondido + campo novo (fora dos hashes) ausente → true", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2" }),
+      field({ name: "medicamento", type: "multi" }),
+    ];
+    const hashes = { q1: "h1", q2: "h2" };
+    // q1/q2 respondidos, medicamento (novo) ausente → completo
+    expect(isCodingComplete(fields, { q1: "a", q2: "b" }, hashes)).toBe(true);
+  });
+});
