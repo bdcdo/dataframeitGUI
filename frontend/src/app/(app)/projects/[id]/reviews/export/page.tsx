@@ -240,7 +240,6 @@ export default async function ExportPage({
   return (
     <div className="mx-auto max-w-4xl p-6">
       <ExportPanel
-        projectId={id}
         projectName={project?.name || "Projeto"}
         individualHeaders={individualHeaders}
         individualRows={individualRows}
