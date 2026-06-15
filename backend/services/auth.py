@@ -13,6 +13,7 @@ com fallback para `sub` — que usamos como user_id.
 Fail-closed: sem configuração de verificação, ou com token/claim inválido, a
 request é rejeitada. Nunca passa.
 """
+import logging
 from dataclasses import dataclass
 
 import jwt
@@ -20,6 +21,8 @@ from fastapi import Header, HTTPException
 
 from config import settings
 from services.supabase_client import get_supabase
+
+logger = logging.getLogger(__name__)
 
 _BEARER = {"WWW-Authenticate": "Bearer"}
 
@@ -41,7 +44,9 @@ def _get_jwks_client() -> jwt.PyJWKClient:
 
 
 def _decode_kwargs() -> dict:
-    options: dict = {}
+    # require=["exp"]: rejeita token sem claim de expiração — sem isto, um token
+    # sem `exp` jamais expiraria. Vale para HS256 e RS256 (defesa em profundidade).
+    options: dict = {"require": ["exp"]}
     kwargs: dict = {}
     # O template "supabase" costuma emitir aud="authenticated". Só validamos a
     # audience se ela estiver configurada; caso contrário desligamos a checagem
@@ -131,6 +136,11 @@ def require_authenticated_user(
     return verify_jwt(token)
 
 
+# Os lookups de autorização abaixo são indexados no banco: `master_users.user_id`
+# é PK, `projects.id` é PK, `project_members(project_id, user_id)` é UNIQUE e
+# `llm_runs.job_id` é UNIQUE (ver migrations). Por isso /status/{job_id} pode ser
+# pollado a cada 2s sem cache de autorização — checar a cada poll é o caminho
+# mais seguro e os índices mantêm o custo baixo.
 def _is_master(sb, user_id: str) -> bool:
     res = (
         sb.table("master_users")
@@ -170,33 +180,46 @@ def require_project_coordinator(project_id: str, user: AuthUser) -> None:
 
     Replica a regra de `getProjectAccessContext` do frontend
     (frontend/src/lib/auth.ts). Levanta 403 quando não autorizado.
+
+    Fail-closed: uma falha de infra ao consultar o banco vira 503 (não 500
+    genérico nem liberação), distinguindo "não pude verificar" de "negado".
     """
-    sb = get_supabase()
-    if _is_master(sb, user.id):
-        return
-    proj = (
-        sb.table("projects")
-        .select("created_by")
-        .eq("id", project_id)
-        .limit(1)
-        .execute()
-    )
-    if proj.data and proj.data[0].get("created_by") == user.id:
-        return
-    mem = (
-        sb.table("project_members")
-        .select("role")
-        .eq("project_id", project_id)
-        .eq("user_id", user.id)
-        .eq("role", "coordenador")
-        .limit(1)
-        .execute()
-    )
-    if mem.data:
-        return
-    raise HTTPException(
-        status_code=403, detail="Acesso negado: requer coordenador do projeto"
-    )
+    try:
+        sb = get_supabase()
+        if _is_master(sb, user.id):
+            return
+        proj = (
+            sb.table("projects")
+            .select("created_by")
+            .eq("id", project_id)
+            .limit(1)
+            .execute()
+        )
+        if proj.data and proj.data[0].get("created_by") == user.id:
+            return
+        mem = (
+            sb.table("project_members")
+            .select("role")
+            .eq("project_id", project_id)
+            .eq("user_id", user.id)
+            .eq("role", "coordenador")
+            .limit(1)
+            .execute()
+        )
+        authorized = bool(mem.data)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Falha ao verificar coordenador (project_id=%s)", project_id
+        )
+        raise HTTPException(
+            status_code=503, detail="Não foi possível verificar autorização"
+        )
+    if not authorized:
+        raise HTTPException(
+            status_code=403, detail="Acesso negado: requer coordenador do projeto"
+        )
 
 
 def require_job_access(job_id: str, user: AuthUser) -> str:
@@ -204,20 +227,29 @@ def require_job_access(job_id: str, user: AuthUser) -> str:
 
     Usado por /status/{job_id}: ver progresso é leitura, basta ser membro
     (criador, membro ou master). Levanta 404 se o job não existe, 403 se o
-    usuário não pertence ao projeto.
+    usuário não pertence ao projeto, 503 se a verificação no banco falhar.
     """
-    sb = get_supabase()
-    run = (
-        sb.table("llm_runs")
-        .select("project_id")
-        .eq("job_id", job_id)
-        .limit(1)
-        .execute()
-    )
-    if not run.data:
-        raise HTTPException(status_code=404, detail="Job não encontrado")
-    project_id = run.data[0]["project_id"]
-    if _is_project_member(sb, project_id, user.id):
+    try:
+        sb = get_supabase()
+        run = (
+            sb.table("llm_runs")
+            .select("project_id")
+            .eq("job_id", job_id)
+            .limit(1)
+            .execute()
+        )
+        if not run.data:
+            raise HTTPException(status_code=404, detail="Job não encontrado")
+        project_id = run.data[0]["project_id"]
+        is_member = _is_project_member(sb, project_id, user.id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Falha ao verificar acesso ao job (job_id=%s)", job_id)
+        raise HTTPException(
+            status_code=503, detail="Não foi possível verificar autorização"
+        )
+    if is_member:
         return project_id
     raise HTTPException(
         status_code=403, detail="Acesso negado: requer membro do projeto"

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -36,13 +37,70 @@ def make_token(claims: dict | None = None, secret: str = SECRET) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-# ---- fake Supabase (ignora filtros; retorna o data fixo por tabela) ----
+@pytest.fixture(scope="module")
+def rsa_private_key():
+    # Gerar a chave uma vez por módulo (RSA-2048 é caro).
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def make_rs256_token(private_key, claims: dict | None = None) -> str:
+    payload = {
+        "supabase_uid": USER,
+        "exp": int(time.time()) + 3600,
+        **(claims or {}),
+    }
+    return jwt.encode(payload, private_key, algorithm="RS256")
+
+
+def configure_rs256(monkeypatch, public_key):
+    # Liga o caminho RS256 e faz o PyJWKClient devolver a chave pública dada,
+    # sem rede: substitui `_get_jwks_client`.
+    monkeypatch.setattr(settings, "supabase_jwt_secret", "")
+    monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
+    fake_client = SimpleNamespace(
+        get_signing_key_from_jwt=lambda token: SimpleNamespace(key=public_key)
+    )
+    monkeypatch.setattr(auth_mod, "_get_jwks_client", lambda: fake_client)
+
+
+# ---- fake Supabase (honra os filtros .eq() para pegar bug de query) ----
 
 
 class _FakeTable:
     def __init__(self, rows):
         self._rows = rows
+        self._filters: dict = {}
 
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, column, value):
+        # Aplicado de verdade no execute(): assim um filtro errado (ex.: esquecer
+        # `.eq("role", "coordenador")`) reprova o teste em vez de passar batido.
+        self._filters[column] = value
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def execute(self):
+        rows = [
+            r
+            for r in self._rows
+            if all(r.get(k) == v for k, v in self._filters.items())
+        ]
+        return SimpleNamespace(data=rows)
+
+
+class FakeSupabase:
+    def __init__(self, **tables):
+        self._tables = tables
+
+    def table(self, name):
+        return _FakeTable(self._tables.get(name, []))
+
+
+class _BoomTable:
     def select(self, *a, **k):
         return self
 
@@ -53,15 +111,14 @@ class _FakeTable:
         return self
 
     def execute(self):
-        return SimpleNamespace(data=list(self._rows))
+        raise RuntimeError("db indisponível")
 
 
-class FakeSupabase:
-    def __init__(self, **tables):
-        self._tables = tables
+class _BoomSupabase:
+    """Simula falha de infra: toda query levanta no execute()."""
 
     def table(self, name):
-        return _FakeTable(self._tables.get(name, []))
+        return _BoomTable()
 
 
 @pytest.fixture(autouse=True)
@@ -127,6 +184,40 @@ def test_verify_jwt_not_configured_is_503(monkeypatch):
     assert exc.value.status_code == 503
 
 
+def test_verify_jwt_missing_exp_rejected():
+    # require=["exp"]: token sem expiração nunca passa.
+    token = jwt.encode({"supabase_uid": USER}, SECRET, algorithm="HS256")
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(token)
+    assert exc.value.status_code == 401
+
+
+# ------------------------------ verify_jwt RS256 ------------------------------
+
+
+def test_verify_jwt_rs256_valid(monkeypatch, rsa_private_key):
+    configure_rs256(monkeypatch, rsa_private_key.public_key())
+    user = verify_jwt(make_rs256_token(rsa_private_key))
+    assert user == AuthUser(id=USER)
+
+
+def test_verify_jwt_rs256_wrong_signature_rejected(monkeypatch, rsa_private_key):
+    # JWKS expõe a pública de `rsa_private_key`, mas o token é assinado por outra
+    # chave → assinatura não bate → 401.
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    configure_rs256(monkeypatch, rsa_private_key.public_key())
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_rs256_token(other_key))
+    assert exc.value.status_code == 401
+
+
+def test_verify_jwt_rs256_not_configured_is_503(rsa_private_key):
+    # clerk_jwks_url vazio (default do _configure_secret) → 503 antes do JWKS.
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_rs256_token(rsa_private_key))
+    assert exc.value.status_code == 503
+
+
 # ---------------------- require_authenticated_user ----------------------
 
 
@@ -158,7 +249,9 @@ def test_coordinator_master(monkeypatch):
 def test_coordinator_creator(monkeypatch):
     use_supabase(
         monkeypatch,
-        FakeSupabase(master_users=[], projects=[{"created_by": USER}]),
+        FakeSupabase(
+            master_users=[], projects=[{"id": "p1", "created_by": USER}]
+        ),
     )
     require_project_coordinator("p1", AuthUser(id=USER))
 
@@ -168,8 +261,10 @@ def test_coordinator_role(monkeypatch):
         monkeypatch,
         FakeSupabase(
             master_users=[],
-            projects=[{"created_by": "someone-else"}],
-            project_members=[{"role": "coordenador"}],
+            projects=[{"id": "p1", "created_by": "someone-else"}],
+            project_members=[
+                {"project_id": "p1", "user_id": USER, "role": "coordenador"}
+            ],
         ),
     )
     require_project_coordinator("p1", AuthUser(id=USER))
@@ -180,13 +275,39 @@ def test_coordinator_denied_for_non_member(monkeypatch):
         monkeypatch,
         FakeSupabase(
             master_users=[],
-            projects=[{"created_by": "someone-else"}],
+            projects=[{"id": "p1", "created_by": "someone-else"}],
             project_members=[],
         ),
     )
     with pytest.raises(HTTPException) as exc:
         require_project_coordinator("p1", AuthUser(id=USER))
     assert exc.value.status_code == 403
+
+
+def test_coordinator_denied_for_wrong_role(monkeypatch):
+    # Membro do projeto, mas role != "coordenador". Só passa porque o fake honra
+    # o `.eq("role", "coordenador")` — antes esse caso passaria batido.
+    use_supabase(
+        monkeypatch,
+        FakeSupabase(
+            master_users=[],
+            projects=[{"id": "p1", "created_by": "someone-else"}],
+            project_members=[
+                {"project_id": "p1", "user_id": USER, "role": "pesquisador"}
+            ],
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        require_project_coordinator("p1", AuthUser(id=USER))
+    assert exc.value.status_code == 403
+
+
+def test_coordinator_infra_error_is_503(monkeypatch):
+    # Falha de banco ao verificar autorização vira 503 (fail-closed), não 500.
+    use_supabase(monkeypatch, _BoomSupabase())
+    with pytest.raises(HTTPException) as exc:
+        require_project_coordinator("p1", AuthUser(id=USER))
+    assert exc.value.status_code == 503
 
 
 # ---------------------------- require_job_access ----------------------------
@@ -203,10 +324,10 @@ def test_job_access_member_ok(monkeypatch):
     use_supabase(
         monkeypatch,
         FakeSupabase(
-            llm_runs=[{"project_id": "p1"}],
+            llm_runs=[{"job_id": "job1", "project_id": "p1"}],
             master_users=[],
-            projects=[{"created_by": "other"}],
-            project_members=[{"id": "m1"}],
+            projects=[{"id": "p1", "created_by": "other"}],
+            project_members=[{"id": "m1", "project_id": "p1", "user_id": USER}],
         ),
     )
     assert require_job_access("job1", AuthUser(id=USER)) == "p1"
@@ -216,15 +337,23 @@ def test_job_access_non_member_403(monkeypatch):
     use_supabase(
         monkeypatch,
         FakeSupabase(
-            llm_runs=[{"project_id": "p1"}],
+            llm_runs=[{"job_id": "job1", "project_id": "p1"}],
             master_users=[],
-            projects=[{"created_by": "other"}],
+            projects=[{"id": "p1", "created_by": "other"}],
             project_members=[],
         ),
     )
     with pytest.raises(HTTPException) as exc:
         require_job_access("job1", AuthUser(id=USER))
     assert exc.value.status_code == 403
+
+
+def test_job_access_infra_error_is_503(monkeypatch):
+    # Falha de banco ao resolver o job vira 503 (fail-closed), não 500.
+    use_supabase(monkeypatch, _BoomSupabase())
+    with pytest.raises(HTTPException) as exc:
+        require_job_access("job1", AuthUser(id=USER))
+    assert exc.value.status_code == 503
 
 
 # ------------------- borda das rotas (TestClient) -------------------
@@ -258,7 +387,9 @@ def test_run_forbidden_for_non_coordinator(client, monkeypatch):
     use_supabase(
         monkeypatch,
         FakeSupabase(
-            master_users=[], projects=[{"created_by": "other"}], project_members=[]
+            master_users=[],
+            projects=[{"id": "p1", "created_by": "other"}],
+            project_members=[],
         ),
     )
     resp = client.post(
