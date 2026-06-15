@@ -44,7 +44,7 @@ interface CodingPageProps {
   documents: (Document & { assignment?: Pick<Assignment, "id" | "status"> })[];
   codedAtByDoc?: Record<string, string>;
   fields: PydanticField[];
-  existingAnswers: Record<string, Record<string, any>>;
+  existingAnswers: Record<string, Record<string, unknown>>;
   existingJustifications?: Record<string, Record<string, unknown>>;
   hasAssignments?: boolean;
   progress?: ProgressBannerData | null;
@@ -93,8 +93,11 @@ function CodingPageInner({
     [documents, sortMode, codedAtByDoc],
   );
 
-  // Compute initial state from URL param
-  const getInitialState = useCallback(() => {
+  // Estado inicial derivado do ?doc= da URL. O lazy initializer do useState
+  // roda só no mount, capturando docParam/sortedDocuments/hasAssignments
+  // iniciais — intencional: navegação posterior não deve recomputar o estado
+  // inicial (era um useCallback com deps [] + eslint-disable).
+  const [initial] = useState(() => {
     if (docParam) {
       const assignedIdx = sortedDocuments.findIndex((d) => d.id === docParam);
       if (assignedIdx >= 0) {
@@ -102,14 +105,15 @@ function CodingPageInner({
       }
       return { mode: "browse" as const, docIndex: 0 };
     }
-    return { mode: (hasAssignments ? "assigned" : "browse") as "assigned" | "browse", docIndex: 0 };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const initial = getInitialState();
+    return {
+      mode: (hasAssignments ? "assigned" : "browse") as "assigned" | "browse",
+      docIndex: 0,
+    };
+  });
 
   // Assigned mode state
   const [docIndex, setDocIndex] = useState(initial.docIndex);
-  const [allAnswers, setAllAnswers] = useState<Record<string, Record<string, any>>>(existingAnswers);
+  const [allAnswers, setAllAnswers] = useState<Record<string, Record<string, unknown>>>(existingAnswers);
   const [allNotes, setAllNotes] = useState<Record<string, string>>(() => {
     const notes: Record<string, string> = {};
     for (const [docId, justifications] of Object.entries(existingJustifications)) {
@@ -230,7 +234,7 @@ function CodingPageInner({
     title: string | null;
     text: string;
   } | null>(null);
-  const [browseAnswers, setBrowseAnswers] = useState<Record<string, any>>({});
+  const [browseAnswers, setBrowseAnswers] = useState<Record<string, unknown>>({});
   const [browseNotes, setBrowseNotes] = useState("");
   const browseFetchedRef = useRef(false);
 
@@ -252,6 +256,7 @@ function CodingPageInner({
   useEffect(() => {
     if (mode === "browse" && !browseFetchedRef.current) {
       browseFetchedRef.current = true;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- inicia o lazy-load dos docs do modo Explorar (sincronização com backend)
       setBrowseLoading(true);
       getDocumentsForBrowse(projectId)
         .then(setBrowseDocuments)
@@ -277,7 +282,10 @@ function CodingPageInner({
 
   // --- Assigned mode handlers ---
   const currentDoc = sortedDocuments[docIndex];
-  const docAnswers = allAnswers[currentDoc?.id] || {};
+  const docAnswers = useMemo(
+    () => allAnswers[currentDoc?.id] || {},
+    [allAnswers, currentDoc?.id],
+  );
   const docNotes = allNotes[currentDoc?.id] ?? "";
 
   // --- Auto-save on exit (#14) ---
@@ -346,20 +354,24 @@ function CodingPageInner({
   }, [mode, currentDoc, docAnswers, docNotes, selectedBrowseDoc, browseAnswers, browseNotes, projectId, dirtyDocs]);
 
   const handleAnswer = useCallback(
-    (fieldName: string, value: any) => {
+    (fieldName: string, value: unknown) => {
+      const docId = currentDoc?.id;
+      if (!docId) return;
       setAllAnswers((prev) => ({
         ...prev,
-        [currentDoc.id]: { ...prev[currentDoc.id], [fieldName]: value },
+        [docId]: { ...prev[docId], [fieldName]: value },
       }));
-      markDirty(currentDoc.id);
+      markDirty(docId);
     },
     [currentDoc?.id, markDirty]
   );
 
   const handleNotesChange = useCallback(
     (notes: string) => {
-      setAllNotes((prev) => ({ ...prev, [currentDoc.id]: notes }));
-      markDirty(currentDoc.id);
+      const docId = currentDoc?.id;
+      if (!docId) return;
+      setAllNotes((prev) => ({ ...prev, [docId]: notes }));
+      markDirty(docId);
     },
     [currentDoc?.id, markDirty]
   );
@@ -459,9 +471,7 @@ function CodingPageInner({
       try {
         const result = await getDocumentForCoding(projectId, docId);
         setSelectedBrowseDoc(result.document);
-        setBrowseAnswers(
-          (result.existingAnswers as Record<string, any>) ?? {}
-        );
+        setBrowseAnswers(result.existingAnswers ?? {});
         setBrowseNotes(
           typeof result.existingJustifications?._notes === "string"
             ? result.existingJustifications._notes
@@ -487,13 +497,14 @@ function CodingPageInner({
       const assignedIdx = documents.findIndex((d) => d.id === docParam);
       if (assignedIdx < 0) {
         initialBrowseLoadRef.current = true;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- carrega o doc do ?doc= da URL no modo Explorar (sincronização com backend)
         handleBrowseSelect(docParam);
       }
     }
   }, [docParam, mode, documents, selectedBrowseDoc, handleBrowseSelect]);
 
   const handleBrowseAnswer = useCallback(
-    (fieldName: string, value: any) => {
+    (fieldName: string, value: unknown) => {
       setBrowseAnswers((prev) => ({ ...prev, [fieldName]: value }));
       if (selectedBrowseDoc) markDirty(selectedBrowseDoc.id);
     },

@@ -94,6 +94,7 @@ function AutoReviewPageInner({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const v = window.sessionStorage.getItem(storageKey);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- restaura o doc do sessionStorage (client-only)
     if (v) setPinnedDocId(v);
   }, [storageKey]);
 
@@ -134,6 +135,7 @@ function AutoReviewPageInner({
     `${docId}::${fieldName}`;
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reseta o campo ao trocar de documento
     setFieldIndex(0);
   }, [docIndex]);
 

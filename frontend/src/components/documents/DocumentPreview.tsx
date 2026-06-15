@@ -31,6 +31,7 @@ export function DocumentPreview({
 
   useEffect(() => {
     if (!documentId || !open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset ao fechar o preview / sem doc selecionado
       setText(null);
       return;
     }

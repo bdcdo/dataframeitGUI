@@ -210,6 +210,7 @@ export function ComparePage({
     : null;
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza o comentário editável com o verdict do contexto atual
     setComment(currentVerdict?.comment || "");
   }, [currentFieldName, currentDoc?.id, currentVerdict?.comment]);
 

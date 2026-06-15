@@ -205,6 +205,7 @@ function MyVerdictsViewInner({
 
   // Reset doc index when filters change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reseta o índice ao mudar os filtros
     setDocIndex(0);
   }, [filter, fieldFilter, searchQuery]);
 
@@ -217,6 +218,7 @@ function MyVerdictsViewInner({
   useEffect(() => {
     if (!currentDocId || docTextCache[currentDocId]) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- inicia o lazy-load do texto do doc (sincronização com backend)
     setLoadingText(true);
     getDocumentText(projectId, currentDocId).then((result) => {
       if (cancelled) return;
