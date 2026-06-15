@@ -88,11 +88,14 @@ export async function createAutoReviewIfDiverges(
   // #174: nunca arbitrar codificacao incompleta. O caminho inline (saveResponse)
   // ja so chama esta funcao apos allAnswered, mas a guarda evita regressao se a
   // funcao for chamada de outro ponto — e usa a mesma definicao de completude
-  // (isCodingComplete) do gate inline e do backlog.
+  // (isCodingComplete) do gate inline e do backlog. Staleness-aware: passa
+  // answer_field_hashes para nao reprovar codificacao completa a epoca por causa
+  // de campo obrigatorio adicionado depois (mesmo motivo do backlog).
   if (
     !isCodingComplete(
       fields,
       (humanResponse.answers as Record<string, unknown>) ?? {},
+      humanResponse.answer_field_hashes as AnswerFieldHashes,
     )
   ) {
     log("skip_incomplete_coding", {
