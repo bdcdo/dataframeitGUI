@@ -7,7 +7,7 @@ Documento normativo do projeto: `.specify/memory/constitution.md` (constituicao 
 ## Arquitetura
 
 ```
-Browser  →  Next.js 16 (Fly.io)  ←→  Supabase (Postgres + RLS)
+Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
                 |                            ^
                 | Clerk (Auth + JWT)         |
                 | HTTP (LLM + Pydantic)      |
@@ -161,6 +161,5 @@ Seguir estas regras para evitar regressoes de performance:
 Ver `docs/PHASES.md` para roadmap completo.
 
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+For additional context about technologies to be used, project structure, shell commands, and other important information, read the current plan: `specs/002-preregister-members/plan.md` (feature ativa; artefatos em `specs/002-preregister-members/`).
 <!-- SPECKIT END -->

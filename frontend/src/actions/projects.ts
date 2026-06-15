@@ -2,6 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
+import { updateOrThrow, deleteOrThrow } from "@/lib/supabase/rls-guard";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -37,6 +38,9 @@ export async function createProject(_prev: unknown, formData: FormData) {
   redirect(`/projects/${project.id}/documents`);
 }
 
+// Retorno { error } em vez de throw: o Next mascara a message de erros
+// lançados em Server Actions em produção (o client recebe mensagem genérica
+// + digest), então a copy pt-BR só chega ao toast pelo retorno.
 export async function updateProject(
   projectId: string,
   data: {
@@ -47,25 +51,28 @@ export async function updateProject(
     allow_researcher_review?: boolean;
     arbitration_blind?: boolean;
   }
-) {
+): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
-    .from("projects")
-    .update(data)
-    .eq("id", projectId);
-
-  if (error) throw new Error(error.message);
+  try {
+    await updateOrThrow(supabase, "projects", data, { id: projectId }, {
+      message: "Sem permissão para alterar as configurações deste projeto.",
+    });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Erro ao salvar o projeto" };
+  }
   revalidatePath(`/projects/${projectId}`);
+  return {};
 }
 
-export async function deleteProject(projectId: string) {
+export async function deleteProject(projectId: string): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
-  const { error } = await supabase
-    .from("projects")
-    .delete()
-    .eq("id", projectId);
-
-  if (error) throw new Error(error.message);
+  try {
+    await deleteOrThrow(supabase, "projects", { id: projectId }, {
+      message: "Sem permissão para excluir este projeto.",
+    });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Erro ao excluir o projeto" };
+  }
   revalidatePath("/dashboard");
   redirect("/dashboard");
 }

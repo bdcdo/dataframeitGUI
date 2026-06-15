@@ -1,6 +1,7 @@
 import { Webhook } from "svix";
 import { headers } from "next/headers";
 import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 
 interface ClerkWebhookEvent {
   type: string;
@@ -46,7 +47,45 @@ export async function POST(request: Request) {
     const { id, email_addresses, first_name, last_name } = event.data;
     const email = email_addresses[0]?.email_address;
     if (email) {
-      await syncClerkUserToSupabase(id, email, first_name, last_name);
+      const supabaseUid = await syncClerkUserToSupabase(
+        id,
+        email,
+        first_name,
+        last_name
+      );
+
+      // Pré-registro (spec 002): primeiro acesso autenticado transiciona o
+      // membro de pendente para ativo (FR-004/SC-005). Transição única — o
+      // filtro IS NULL evita sobrescrever ativações anteriores.
+      const admin = createSupabaseAdmin();
+      await admin
+        .from("profiles")
+        .update({ activated_at: new Date().toISOString() })
+        .eq("id", supabaseUid)
+        .is("activated_at", null);
+
+      // Vínculos pendentes (spec 002, US2): a conta recém-criada passa a ser
+      // o alias dos vínculos que aguardavam este e-mail.
+      const { data: resolvedLinks } = await admin
+        .from("member_email_links")
+        .update({ linked_user_id: supabaseUid })
+        .eq("email", email.toLowerCase())
+        .is("linked_user_id", null)
+        .select("member_user_id");
+
+      // SC-005, caminho via alias: o membro canônico de um vínculo resolvido
+      // também ativa — sem isso, um pendente cuja pessoa entra pelo e-mail
+      // vinculado ficaria "pendente" para sempre.
+      if (resolvedLinks && resolvedLinks.length > 0) {
+        await admin
+          .from("profiles")
+          .update({ activated_at: new Date().toISOString() })
+          .in(
+            "id",
+            resolvedLinks.map((l) => l.member_user_id),
+          )
+          .is("activated_at", null);
+      }
     }
   }
 

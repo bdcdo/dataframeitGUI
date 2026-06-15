@@ -9,6 +9,8 @@ vi.mock("next/cache", () => ({
 
 vi.mock("@/lib/auth", () => ({
   getAuthUser: vi.fn(async () => ({ id: "user-1", email: "u@test.com" })),
+  // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
+  getEffectiveMemberId: vi.fn(async () => "user-1"),
 }));
 
 interface State {
@@ -95,6 +97,7 @@ vi.mock("@/lib/supabase/server", () => ({
             const c: Record<string, unknown> = {};
             c.eq = () => c;
             c.single = async () => ({ data: state.existingResponse });
+            c.maybeSingle = async () => ({ data: state.existingResponse });
             return c;
           },
           insert: async (payload: Record<string, unknown>) => {

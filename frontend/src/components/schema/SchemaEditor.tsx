@@ -83,8 +83,15 @@ export function SchemaEditor({
   const handlePublishMajor = () => {
     startTransition(async () => {
       try {
-        const bumped = await publishMajorVersion(projectId);
-        toast.success(`Nova versão MAJOR publicada: ${bumped.major}.${bumped.minor}.${bumped.patch}`);
+        const r = await publishMajorVersion(projectId);
+        if (r?.error) {
+          toast.error(r.error);
+          // Falha parcial: a MAJOR foi publicada (só o log falhou) — reflete.
+          if (!r.bumped) return;
+        } else if (r?.bumped) {
+          const b = r.bumped;
+          toast.success(`Nova versão MAJOR publicada: ${b.major}.${b.minor}.${b.patch}`);
+        }
         setMajorDialogOpen(false);
         refresh();
       } catch (e: unknown) {
@@ -97,11 +104,15 @@ export function SchemaEditor({
   const handleBackfill = () => {
     startTransition(async () => {
       try {
-        const result = await backfillSchemaVersionHistory(projectId);
-        const v = result.finalVersion;
-        const m = result.byMethod;
+        const r = await backfillSchemaVersionHistory(projectId);
+        if (r?.error || !r?.stats) {
+          toast.error(r?.error ?? "Erro ao reconstruir");
+          return;
+        }
+        const v = r.stats.finalVersion;
+        const m = r.stats.byMethod;
         toast.success(
-          `v${v.major}.${v.minor}.${v.patch} · ${result.logEntriesUpdated} entradas, ${result.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
+          `v${v.major}.${v.minor}.${v.patch} · ${r.stats.logEntriesUpdated} entradas, ${r.stats.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
           { duration: 10000 },
         );
         setBackfillDialogOpen(false);
@@ -184,14 +195,22 @@ export function SchemaEditor({
             return;
           }
           setGuiErrors([]);
-          await saveSchemaFromGUI(projectId, fields);
+          const r = await saveSchemaFromGUI(projectId, fields);
+          if (r?.error) {
+            toast.error(r.error);
+            return;
+          }
           toast.success("Schema salvo!");
         } else {
           if (validationStatus !== "valid") {
             toast.error("Valide o schema antes de salvar");
             return;
           }
-          await saveSchema(projectId, code, codeFields);
+          const r = await saveSchema(projectId, code, codeFields);
+          if (r?.error) {
+            toast.error(r.error);
+            return;
+          }
           toast.success("Schema salvo!");
         }
       } catch (e: any) {

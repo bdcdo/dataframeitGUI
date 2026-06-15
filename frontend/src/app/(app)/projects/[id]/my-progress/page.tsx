@@ -1,4 +1,4 @@
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getResearcherProgress } from "@/actions/progress";
 import { ProgressCards } from "@/components/progress/ProgressCards";
@@ -20,8 +20,12 @@ export default async function MyProgressPage({
   ]);
   if (!user) redirect("/auth/login");
 
+  // Impersonação master tem precedência; senão, conta vinculada vira o
+  // membro canônico do projeto (spec 002).
   const effectiveUserId =
-    user.isMaster && sp.viewAsUser ? sp.viewAsUser : user.id;
+    user.isMaster && sp.viewAsUser
+      ? sp.viewAsUser
+      : await getEffectiveMemberId(id);
 
   const progress = await getResearcherProgress(id, effectiveUserId);
 

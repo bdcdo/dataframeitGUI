@@ -70,11 +70,11 @@ Toda tabela nova MUST nascer, na mesma migration, com: RLS habilitado, policies 
 
 **Racional**: o RLS é a linha de defesa que vale mesmo quando a camada de aplicação erra; 38 das 70 migrations existentes já seguem o padrão e ele é o mecanismo concreto do isolamento exigido pelo Princípio III.
 
-### V. Robustez via testes (CI bloqueante)
+### V. Robustez via testes
 
-Todo PR MUST passar a suíte completa (Vitest no frontend, pytest no backend) em CI antes do merge. Código novo em `frontend/src/lib`, `frontend/src/actions`, `backend/services` e `backend/routes` MUST vir acompanhado de testes. Meta de coverage: ≥ 80% de linhas nesses diretórios. Correção de bug MUST incluir teste de regressão que falhava antes da correção.
+Código novo em `frontend/src/lib`, `frontend/src/actions`, `backend/services` e `backend/routes` MUST vir acompanhado de testes (Vitest no frontend, pytest no backend), e correção de bug MUST incluir teste de regressão que falhava antes da correção. Este requisito vale desde já e é verificado na revisão de PR.
 
-*Dívida declarada*: o workflow de CI que roda testes ainda não existe (os workflows atuais só fazem deploy) e MUST ser criado como primeira feature pós-constituição; até lá, rodar as suítes localmente antes de abrir PR é obrigatório.
+O gate automatizado é meta declarada, ainda sem vigor: assim que existir workflow de CI rodando as suítes, todo PR MUST passar a suíte completa antes do merge, com coverage ≥ 80% de linhas nesses diretórios. Enquanto esse workflow não existe — os atuais só fazem deploy —, o bloqueio é manual: rodar as suítes localmente antes de abrir PR é obrigatório, e a revisão confere que os testes acompanham o código. Criar o workflow de CI é a primeira dívida a quitar pós-constituição.
 
 **Racional**: a plataforma sustenta decisões de pesquisa; regressões silenciosas corrompem dados de codificação e comparações.
 
@@ -105,7 +105,7 @@ A arquitetura atual é suficiente e MUST ser defendida contra proliferação de 
 
 ## Restrições Adicionais
 
-- **Stack fixada**: Next.js 16 (App Router), React 19, TypeScript 5.7, Tailwind CSS v4, Clerk (auth), Supabase (Postgres + RLS, free tier), FastAPI (Python), dataframeit, Monaco, recharts, sonner, papaparse. Troca de qualquer item exige emenda constitucional.
+- **Stack fixada**: Next.js (App Router), React, TypeScript, Tailwind CSS, Clerk (auth), Supabase (Postgres + RLS, free tier), FastAPI (Python), dataframeit, Monaco, recharts, sonner, papaparse. A *escolha* de cada tecnologia é constitucional — trocar ou remover um item exige emenda. As *versões* exatas em vigor (Next 16, React 19, TS 5.7, Tailwind v4 etc.) vivem na tabela Tech Stack do `CLAUDE.md`: bumps de versão são detalhe operacional e não exigem emenda, desde que não alterem a arquitetura descrita aqui.
 - **Língua**: pt-BR para toda a UI (labels, mensagens, toasts) e comunicação com usuários; inglês para código (variáveis, funções, types, nomes de arquivo).
 - **Desktop-first explícito**: o alvo é desktop com mouse. Priorizar densidade de informação e alvos de clique para mouse — não aplicar mínimos de toque (44px). Não há obrigação de esforço contínuo de responsividade mobile/tablet, e features não devem ser limitadas para acomodar viewports pequenos; em contrapartida, não quebrar gratuitamente o uso em janelas menores de desktop.
 - **Brand color**: teal `#2F6868` = `oklch(0.44 0.08 185)`.

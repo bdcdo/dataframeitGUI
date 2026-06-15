@@ -1,33 +1,35 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Mock supabase chainable enxuto. setCanArbitrate executa um UPDATE em
-// project_members com .select("user_id").single() e dispara
-// releaseArbitrationsFromUser / retryPendingArbitrations (mockados abaixo).
-type WriteCall = { table: string; op: string; payload: unknown };
+// Mock supabase chainable compartilhado (supabase-mock.ts). setCanArbitrate
+// executa um UPDATE em project_members com .select("user_id").single() e
+// dispara releaseArbitrationsFromUser / retryPendingArbitrations (mockados
+// abaixo). `tableResults` permite a testes (addMember) fixarem o retorno por
+// tabela e por cliente (server vs admin); sem entrada, vale o default
+// histórico ({ user_id: "userMemberX" }, ou erro quando clientError é setado).
+import {
+  makeSupabaseMock,
+  type TableResults,
+  type WriteCall,
+} from "./supabase-mock";
+
 let writeCalls: WriteCall[];
 
-function makeClient(updateError?: { message: string }) {
-  return {
-    from: (table: string) => {
-      const builder: Record<string, unknown> = {};
-      for (const m of ["eq", "is", "in", "neq", "select", "single"]) {
-        builder[m] = () => builder;
-      }
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        return builder;
-      };
-      builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({
-          data: updateError ? null : { user_id: "userMemberX" },
-          error: updateError ?? null,
-        });
-      return builder;
-    },
-  };
+function makeClient(
+  updateError?: { message: string },
+  tableResults?: TableResults,
+) {
+  return makeSupabaseMock({
+    tableResults,
+    defaultResult: updateError
+      ? { data: null, error: updateError }
+      : { data: { user_id: "userMemberX" } },
+    writeCalls,
+  });
 }
 
 let clientError: { message: string } | undefined;
+let serverTableResults: TableResults | undefined;
+let adminTableResults: TableResults | undefined;
 
 // hoisted mocks — release/retry precisam ser observáveis por teste para
 // distinguir o caminho de habilitar vs desabilitar.
@@ -48,6 +50,9 @@ const hoisted = vi.hoisted(() => ({
       userId: string,
     ) => Promise<{ released: number; error?: string }>
   >(async () => ({ released: 0 })),
+  preregister: vi.fn<(email: string) => Promise<string>>(
+    async () => "placeholderUid",
+  ),
 }));
 
 vi.mock("next/cache", () => ({
@@ -60,17 +65,13 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/clerk-sync", () => ({
   syncClerkUserToSupabase: async () => "userX",
-}));
-vi.mock("@clerk/nextjs/server", () => ({
-  clerkClient: async () => ({
-    users: { getUserList: async () => ({ data: [] }), createUser: async () => ({ id: "x" }) },
-  }),
+  preregisterSupabaseUser: hoisted.preregister,
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(clientError),
+  createSupabaseServer: async () => makeClient(clientError, serverTableResults),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(clientError),
+  createSupabaseAdmin: () => makeClient(clientError, adminTableResults),
 }));
 vi.mock("@/actions/field-reviews", () => ({
   retryPendingArbitrations: hoisted.retry,
@@ -80,10 +81,14 @@ vi.mock("@/actions/field-reviews", () => ({
 beforeEach(() => {
   writeCalls = [];
   clientError = undefined;
+  serverTableResults = undefined;
+  adminTableResults = undefined;
   hoisted.retry.mockReset();
   hoisted.retry.mockResolvedValue({ success: true, assigned: 0, stillNoPool: 0 });
   hoisted.release.mockReset();
   hoisted.release.mockResolvedValue({ released: 0 });
+  hoisted.preregister.mockReset();
+  hoisted.preregister.mockResolvedValue("placeholderUid");
 });
 
 async function loadSet() {
@@ -206,5 +211,235 @@ describe("setCanResolve", () => {
     const set = await loadSetResolve();
     const r = await set("member1", true, "p1");
     expect(r.error).toBe("RLS bloqueou");
+  });
+});
+
+async function loadAdd() {
+  return (await import("@/actions/members")).addMember;
+}
+
+// O chamador é coordenador (server client devolve role coordenador); a
+// variação fica por conta dos lookups (profiles, member_email_links) e do
+// insert (admin client).
+function setupAddMember(opts: {
+  profile?: { id: string; activated_at: string | null } | null;
+  emailLink?: { member_user_id: string } | null;
+  insertError?: { message: string; code?: string };
+}) {
+  serverTableResults = {
+    project_members: { data: { role: "coordenador" } },
+  };
+  adminTableResults = {
+    profiles: { data: opts.profile ?? null },
+    member_email_links: { data: opts.emailLink ?? null },
+    project_members: { data: null, error: opts.insertError ?? null },
+  };
+}
+
+describe("addMember (pré-registro, spec 002)", () => {
+  it("e-mail inválido → erro sem tocar no banco nem pré-registrar", async () => {
+    const add = await loadAdd();
+    const r = await add("p1", "sem-arroba", "pesquisador");
+    expect(r.error).toBe("E-mail inválido.");
+    expect(hoisted.preregister).not.toHaveBeenCalled();
+    expect(writeCalls).toEqual([]);
+  });
+
+  it("normaliza e-mail (trim + lowercase) antes de pré-registrar", async () => {
+    setupAddMember({ profile: null });
+    const add = await loadAdd();
+    const r = await add("p1", "  Pessoa@Exemplo.COM ", "pesquisador");
+    expect(r.error).toBeUndefined();
+    expect(r.pending).toBe(true);
+    expect(hoisted.preregister).toHaveBeenCalledWith("pessoa@exemplo.com");
+    expect(writeCalls).toContainEqual({
+      table: "project_members",
+      op: "insert",
+      payload: { project_id: "p1", user_id: "placeholderUid", role: "pesquisador" },
+    });
+  });
+
+  it("e-mail com profile existente ativo → comportamento atual, sem pré-registro", async () => {
+    setupAddMember({ profile: { id: "existingUid", activated_at: "2026-01-01" } });
+    const add = await loadAdd();
+    const r = await add("p1", "ja-tem@conta.com", "pesquisador");
+    expect(r.error).toBeUndefined();
+    expect(r.pending).toBe(false);
+    expect(hoisted.preregister).not.toHaveBeenCalled();
+    expect(writeCalls).toContainEqual({
+      table: "project_members",
+      op: "insert",
+      payload: { project_id: "p1", user_id: "existingUid", role: "pesquisador" },
+    });
+  });
+
+  it("profile existente mas ainda pendente (pré-registrado em outro projeto) → pending true", async () => {
+    setupAddMember({ profile: { id: "placeholderUid2", activated_at: null } });
+    const add = await loadAdd();
+    const r = await add("p1", "pendente@conta.com", "pesquisador");
+    expect(r.error).toBeUndefined();
+    expect(r.pending).toBe(true);
+    expect(hoisted.preregister).not.toHaveBeenCalled();
+  });
+
+  it("e-mail vinculado a outro membro do projeto → erro orientando a desvincular", async () => {
+    setupAddMember({
+      profile: { id: "srcUid", activated_at: "2026-01-01" },
+      emailLink: { member_user_id: "target1" },
+    });
+    const add = await loadAdd();
+    const r = await add("p1", "vinculado@conta.com", "pesquisador");
+    expect(r.error).toContain("vinculado a outro membro");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
+  it("insert duplicado (23505) → mensagem de já membro", async () => {
+    setupAddMember({
+      profile: { id: "existingUid", activated_at: "2026-01-01" },
+      insertError: { message: "duplicate key", code: "23505" },
+    });
+    const add = await loadAdd();
+    const r = await add("p1", "ja-tem@conta.com", "pesquisador");
+    expect(r.error).toBe("Usuário já é membro deste projeto.");
+  });
+
+  it("falha no pré-registro → erro amigável, sem insert em project_members", async () => {
+    setupAddMember({ profile: null });
+    hoisted.preregister.mockRejectedValueOnce(new Error("kaboom"));
+    const add = await loadAdd();
+    const r = await add("p1", "novo@exemplo.com", "pesquisador");
+    expect(r.error).toBe("Erro ao pré-registrar: kaboom");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+});
+
+async function loadLink() {
+  return (await import("@/actions/members")).linkMemberEmail;
+}
+
+// Matriz do contrato de linkMemberEmail. As queries ao admin client seguem a
+// ordem do Promise.all (project_members, member_email_links, profiles) e, no
+// caso 2, a segunda leitura de project_members é o membership do dono do
+// e-mail — daí as filas por tabela.
+describe("linkMemberEmail (vínculo de e-mails, spec 002 US2)", () => {
+  const LINK_ROW = {
+    id: "link1",
+    project_id: "p1",
+    member_user_id: "target1",
+    email: "extra@exemplo.com",
+    linked_user_id: null,
+    created_by: "userCoord",
+    created_at: "2026-06-11T00:00:00Z",
+  };
+
+  it("caso 1: e-mail já vinculado no projeto → erro com o membro atual", async () => {
+    adminTableResults = {
+      project_members: { data: { role: "pesquisador" } },
+      member_email_links: { data: { id: "l0", member_user_id: "outro1" } },
+      profiles: { data: { id: "outro1", first_name: "Ana", email: "ana@x.com" } },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "extra@exemplo.com");
+    expect(r.error).toBe("Este e-mail já está vinculado a Ana neste projeto.");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
+  it("caso 2: e-mail principal de outro membro → requiresUnification com preview, sem executar", async () => {
+    adminTableResults = {
+      project_members: [
+        { data: { role: "coordenador" } }, // membership do target
+        { data: { id: "pmSource" } }, // membership do dono do e-mail
+      ],
+      member_email_links: { data: null },
+      profiles: { data: { id: "src1", first_name: "Beto", email: "beto@x.com" } },
+      assignments: { count: 7 },
+      responses: {
+        data: [
+          { document_id: "docA", respondent_id: "src1" },
+          { document_id: "docA", respondent_id: "target1" },
+          { document_id: "docB", respondent_id: "src1" },
+          { document_id: "docC", respondent_id: "target1" },
+        ],
+      },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "beto@x.com");
+    expect(r.error).toBeUndefined();
+    expect(r.requiresUnification).toEqual({
+      sourceUserId: "src1",
+      sourceName: "Beto",
+      targetUserId: "target1",
+      assignmentsToMigrate: 7,
+      docsWithBothResponses: 1,
+      resultingRole: "coordenador",
+    });
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
+  it("caso 3: conta existente não-membro → insert com linked_user_id preenchido", async () => {
+    adminTableResults = {
+      project_members: [
+        { data: { role: "pesquisador" } },
+        { data: null }, // dono do e-mail não é membro
+      ],
+      member_email_links: [
+        { data: null }, // leitura: sem link
+        { data: { ...LINK_ROW, linked_user_id: "acc1" } }, // retorno do insert
+      ],
+      profiles: { data: { id: "acc1", first_name: null, email: "extra@exemplo.com" } },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "Extra@Exemplo.com");
+    expect(r.error).toBeUndefined();
+    expect(r.link?.linked_user_id).toBe("acc1");
+    expect(writeCalls).toContainEqual({
+      table: "member_email_links",
+      op: "insert",
+      payload: {
+        project_id: "p1",
+        member_user_id: "target1",
+        email: "extra@exemplo.com",
+        linked_user_id: "acc1",
+        created_by: "userCoord",
+      },
+    });
+  });
+
+  it("caso 4: e-mail sem conta → insert com linked_user_id NULL (pré-registro do e-mail)", async () => {
+    adminTableResults = {
+      project_members: { data: { role: "pesquisador" } },
+      member_email_links: [
+        { data: null },
+        { data: LINK_ROW },
+      ],
+      profiles: { data: null },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "extra@exemplo.com");
+    expect(r.error).toBeUndefined();
+    expect(r.link?.linked_user_id).toBeNull();
+    expect(writeCalls).toContainEqual({
+      table: "member_email_links",
+      op: "insert",
+      payload: {
+        project_id: "p1",
+        member_user_id: "target1",
+        email: "extra@exemplo.com",
+        linked_user_id: null,
+        created_by: "userCoord",
+      },
+    });
+  });
+
+  it("e-mail principal do próprio membro → erro sem insert", async () => {
+    adminTableResults = {
+      project_members: { data: { role: "pesquisador" } },
+      member_email_links: { data: null },
+      profiles: { data: { id: "target1", first_name: null, email: "eu@x.com" } },
+    };
+    const link = await loadLink();
+    const r = await link("p1", "target1", "eu@x.com");
+    expect(r.error).toBe("Este já é o e-mail principal deste membro.");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
   });
 });

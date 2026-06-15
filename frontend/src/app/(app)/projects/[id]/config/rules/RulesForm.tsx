@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { updateProject } from "@/actions/projects";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,11 +45,20 @@ export function RulesForm({
 
   function handleSave() {
     startTransition(async () => {
-      await updateProject(projectId, {
-        resolution_rule: rule,
-        min_responses_for_comparison: min,
-        allow_researcher_review: allowReview,
-      });
+      try {
+        const r = await updateProject(projectId, {
+          resolution_rule: rule,
+          min_responses_for_comparison: min,
+          allow_researcher_review: allowReview,
+        });
+        if (r?.error) {
+          toast.error(r.error);
+          return;
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Erro ao salvar as regras");
+        return;
+      }
       setSaved(true);
       refresh();
       setTimeout(() => setSaved(false), 2000);
