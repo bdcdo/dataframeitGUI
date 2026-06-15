@@ -3,7 +3,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
-import { fetchFastAPI } from "@/lib/api";
+import { fetchFastAPIServer } from "@/lib/api-server";
 import type { PydanticField } from "@/lib/types";
 import {
   generatePydanticCode,
@@ -25,7 +25,7 @@ interface ValidateResponse {
 }
 
 export async function validateSchema(code: string): Promise<ValidateResponse> {
-  return fetchFastAPI<ValidateResponse>("/api/pydantic/validate", {
+  return fetchFastAPIServer<ValidateResponse>("/api/pydantic/validate", {
     method: "POST",
     body: JSON.stringify({ code }),
   });

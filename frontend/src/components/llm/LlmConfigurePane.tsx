@@ -35,6 +35,7 @@ import {
   getEligibleDocCount,
   getRunningLlmJob,
 } from "@/actions/llm";
+import { useAuth } from "@clerk/nextjs";
 import { fetchFastAPI } from "@/lib/api";
 import { getScrollBehavior } from "@/lib/scroll";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
@@ -110,6 +111,7 @@ export function LlmConfigurePane({
   docsWithLlm,
 }: LlmConfigurePaneProps) {
   const { refresh } = useRouter();
+  const { getToken } = useAuth();
   const modelListboxId = useId();
 
   // Prompt state
@@ -188,6 +190,7 @@ export function LlmConfigurePane({
       // anterior continua visível em vez de piscar "Carregando…" a cada tecla.
       if (!cancelled) setPreviewLoading(true);
       try {
+        const token = await getToken({ template: "supabase" });
         const res = await fetchFastAPI<{ prompt: string }>(
           "/api/llm/preview-prompt",
           {
@@ -196,7 +199,8 @@ export function LlmConfigurePane({
               project_description: projectDescription,
               prompt_template: prompt,
             }),
-          }
+          },
+          token ?? undefined
         );
         if (!cancelled) setPreviewPrompt(res.prompt);
       } catch (e) {
@@ -212,7 +216,7 @@ export function LlmConfigurePane({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [previewOpen, prompt, projectDescription]);
+  }, [previewOpen, prompt, projectDescription, getToken]);
 
   // useCallback para referência estável — usado como dep do useEffect de
   // retomada de polling abaixo. Sem isso, o lint warning forçava um
@@ -222,6 +226,8 @@ export function LlmConfigurePane({
     if (intervalRef.current) clearInterval(intervalRef.current);
     intervalRef.current = setInterval(async () => {
       try {
+        // Token fresco a cada tick: o do template expira em ~60s.
+        const token = await getToken({ template: "supabase" });
         const res = await fetchFastAPI<{
           status: string;
           phase: string;
@@ -239,7 +245,7 @@ export function LlmConfigurePane({
           processed_complete: number;
           processed_partial: number;
           processed_empty: number;
-        }>(`/api/llm/status/${id}`);
+        }>(`/api/llm/status/${id}`, undefined, token ?? undefined);
         setProgress(res.progress);
         setTotal(res.total);
         setStatus(res.status);
@@ -297,7 +303,7 @@ export function LlmConfigurePane({
         toast.error(msg);
       }
     }, 2000);
-  }, [refresh, pydanticCode]);
+  }, [refresh, pydanticCode, getToken]);
 
   // Retomar polling se houver uma run em execucao ao montar (ex.: usuario
   // recarregou a pagina ou voltou para a aba). Sem isso, o card de execucao
@@ -419,10 +425,15 @@ export function LlmConfigurePane({
       if (filterMode === "max_responses")
         body.max_response_count = maxResponseCount;
 
-      const res = await fetchFastAPI<{ job_id: string }>("/api/llm/run", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const token = await getToken({ template: "supabase" });
+      const res = await fetchFastAPI<{ job_id: string }>(
+        "/api/llm/run",
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+        token ?? undefined
+      );
       setJobId(res.job_id);
       setStatus("running");
       setPhase("loading");

@@ -14,8 +14,9 @@ from services.llm_runner import _build_prompt
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+def client(auth_headers: dict[str, str]) -> TestClient:
+    # preview-prompt agora exige autenticação; o client já manda o Bearer.
+    return TestClient(app, headers=auth_headers)
 
 
 def test_preview_matches_build_prompt(client: TestClient) -> None:

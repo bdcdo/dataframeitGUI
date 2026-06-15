@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from services.auth import AuthUser, require_authenticated_user
 from services.pydantic_compiler import compile_pydantic
 
 router = APIRouter()
@@ -25,6 +26,11 @@ class ValidateResponse(BaseModel):
 
 
 @router.post("/validate", response_model=ValidateResponse)
-async def validate_pydantic(req: ValidateRequest):
+async def validate_pydantic(
+    req: ValidateRequest,
+    user: AuthUser = Depends(require_authenticated_user),
+):
+    # Exige autenticação: a compilação roda no processo do backend. O PR de
+    # AST allowlist elimina o exec() de fato; aqui fechamos a exposição anônima.
     result = compile_pydantic(req.code)
     return result

@@ -14,7 +14,21 @@ dependencies = [
     "langchain-google-genai>=2.1",
     "langchain-openai>=0.3",
     "langchain-anthropic>=0.3",
+    "pyjwt[crypto]>=2.9",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+# Este projeto é um app FastAPI executado via `uvicorn main:app`, não uma lib
+# instalável — não há diretório de pacote para empacotar. Sem isto, `uv sync` /
+# `uv run` falham tentando buildar um wheel. O deploy (Dockerfile) instala as
+# dependências direto via `uv pip install --system`, sem empacotar o app.
+[tool.uv]
+package = false
 
 [build-system]
 requires = ["hatchling"]

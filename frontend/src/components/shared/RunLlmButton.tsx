@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { fetchFastAPI } from "@/lib/api";
 import { toast } from "sonner";
@@ -21,6 +22,7 @@ export function RunLlmButton({
   size = "icon",
   variant = "ghost",
 }: RunLlmButtonProps) {
+  const { getToken } = useAuth();
   const [running, setRunning] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelledRef = useRef(false);
@@ -42,10 +44,13 @@ export function RunLlmButton({
       const poll = async () => {
         if (cancelledRef.current) return;
         try {
+          // Token fresco a cada poll: o do template expira em ~60s e o
+          // polling pode durar minutos.
+          const token = await getToken({ template: "supabase" });
           const status = await fetchFastAPI<{
             status: string;
             errors: string[];
-          }>(`/api/llm/status/${jobId}`);
+          }>(`/api/llm/status/${jobId}`, undefined, token ?? undefined);
 
           if (cancelledRef.current) return;
 
@@ -69,7 +74,7 @@ export function RunLlmButton({
 
       timeoutRef.current = setTimeout(poll, 2000);
     },
-    [onComplete]
+    [onComplete, getToken]
   );
 
   const handleRun = async () => {
@@ -77,14 +82,19 @@ export function RunLlmButton({
     setRunning(true);
 
     try {
-      const res = await fetchFastAPI<{ job_id: string }>("/api/llm/run", {
-        method: "POST",
-        body: JSON.stringify({
-          project_id: projectId,
-          document_ids: [documentId],
-          filter_mode: "all",
-        }),
-      });
+      const token = await getToken({ template: "supabase" });
+      const res = await fetchFastAPI<{ job_id: string }>(
+        "/api/llm/run",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            project_id: projectId,
+            document_ids: [documentId],
+            filter_mode: "all",
+          }),
+        },
+        token ?? undefined
+      );
 
       pollStatus(res.job_id);
     } catch (e: any) {

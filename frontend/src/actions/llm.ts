@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { fetchFastAPI } from "@/lib/api";
+import { fetchFastAPIServer } from "@/lib/api-server";
 
 export async function getEligibleDocCount(
   projectId: string,
@@ -238,7 +238,7 @@ export async function cleanupStaleLlmRuns(
   projectId: string
 ): Promise<{ cleaned: number }> {
   try {
-    return await fetchFastAPI<{ cleaned: number }>(
+    return await fetchFastAPIServer<{ cleaned: number }>(
       "/api/llm/cleanup-stale",
       {
         method: "POST",

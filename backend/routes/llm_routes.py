@@ -1,8 +1,14 @@
 import uuid
 from typing import Literal
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 
+from services.auth import (
+    AuthUser,
+    require_authenticated_user,
+    require_job_access,
+    require_project_coordinator,
+)
 from services.llm_runner import (
     _build_prompt,
     get_job_status,
@@ -62,7 +68,12 @@ class StatusResponse(BaseModel):
 
 
 @router.post("/run", response_model=RunResponse)
-async def run(req: RunRequest, background_tasks: BackgroundTasks):
+async def run(
+    req: RunRequest,
+    background_tasks: BackgroundTasks,
+    user: AuthUser = Depends(require_authenticated_user),
+):
+    require_project_coordinator(req.project_id, user)
     job_id = str(uuid.uuid4())
     # Síncrono: insere a row de llm_runs ANTES do background task. Se falhar
     # (RLS, conexão, payload), a request retorna 500 e o frontend mostra o erro
@@ -81,7 +92,12 @@ async def run(req: RunRequest, background_tasks: BackgroundTasks):
 
 
 @router.post("/run-field", response_model=RunResponse)
-async def run_field(req: RunFieldRequest, background_tasks: BackgroundTasks):
+async def run_field(
+    req: RunFieldRequest,
+    background_tasks: BackgroundTasks,
+    user: AuthUser = Depends(require_authenticated_user),
+):
+    require_project_coordinator(req.project_id, user)
     job_id = str(uuid.uuid4())
     # filter_mode "all" porque run-field não tem semântica de subset; o
     # subset é o conjunto de fields, não de docs.
@@ -93,7 +109,11 @@ async def run_field(req: RunFieldRequest, background_tasks: BackgroundTasks):
 
 
 @router.get("/status/{job_id}", response_model=StatusResponse)
-async def status(job_id: str):
+async def status(
+    job_id: str,
+    user: AuthUser = Depends(require_authenticated_user),
+):
+    require_job_access(job_id, user)
     return get_job_status(job_id)
 
 
@@ -115,12 +135,18 @@ class PreviewPromptResponse(BaseModel):
 
 
 @router.post("/preview-prompt", response_model=PreviewPromptResponse)
-async def preview_prompt(req: PreviewPromptRequest):
+async def preview_prompt(
+    req: PreviewPromptRequest,
+    user: AuthUser = Depends(require_authenticated_user),
+):
     """Monta o prompt final igual ao usado na execução real.
 
     Single source of truth: o frontend (LlmConfigurePane) consome este
     endpoint em vez de duplicar a lógica de _build_prompt. Se a montagem
     do prompt mudar no backend, o preview acompanha sem ficar defasado.
+
+    Não toca o banco (só monta strings do próprio payload), mas consome
+    compute — exige autenticação para não ser endpoint aberto.
     """
     return PreviewPromptResponse(
         prompt=_build_prompt(req.project_description, req.prompt_template)
@@ -128,13 +154,17 @@ async def preview_prompt(req: PreviewPromptRequest):
 
 
 @router.post("/cleanup-stale", response_model=CleanupResponse)
-async def cleanup_stale(req: CleanupRequest):
+async def cleanup_stale(
+    req: CleanupRequest,
+    user: AuthUser = Depends(require_authenticated_user),
+):
     """Marca runs com status='running' sem heartbeat recente como 'error'.
 
     Idempotente. Chamado pelo frontend antes de getRunningLlmJob para evitar
-    que polling órfão (de uma run cuja máquina morreu) seja religado. Sem
-    autenticação extra: backend está atrás do JWT do frontend e a função
-    filtra por project_id (RLS via service key na supabase_client).
+    que polling órfão (de uma run cuja máquina morreu) seja religado. Exige
+    coordenador do projeto: o backend usa a service key (bypassa RLS), então
+    a autorização é checada aqui, não no banco.
     """
+    require_project_coordinator(req.project_id, user)
     n = mark_stale_runs_as_error(get_supabase(), req.project_id)
     return CleanupResponse(cleaned=n)

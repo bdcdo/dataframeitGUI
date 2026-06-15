@@ -15,7 +15,8 @@ RUN uv pip install --system --no-cache \
     "pandas>=2.2" \
     "langchain-google-genai>=2.1" \
     "langchain-openai>=0.3" \
-    "langchain-anthropic>=0.3"
+    "langchain-anthropic>=0.3" \
+    "pyjwt[crypto]>=2.9"
 
 COPY . .
 
