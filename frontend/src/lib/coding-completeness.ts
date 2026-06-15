@@ -1,15 +1,6 @@
 import { isFieldVisible } from "@/lib/conditional";
+import { isIncompleteOther } from "@/lib/other-option";
 import type { PydanticField } from "@/lib/types";
-
-// Prefixo gravado quando o pesquisador escolhe a opção "Outro" mas ainda não
-// digitou o complemento de texto livre. Um valor exatamente igual ao prefixo
-// (sem complemento) conta como resposta incompleta. Mantido em sincronia com o
-// gate inline de saveResponse (actions/responses.ts).
-const OTHER_PREFIX = "Outro: ";
-
-function isIncompleteOther(v: unknown): boolean {
-  return typeof v === "string" && v === OTHER_PREFIX;
-}
 
 // Campos que o humano precisa responder para a codificação contar como
 // completa: visíveis para humano (target != "llm_only"/"none"), obrigatórios

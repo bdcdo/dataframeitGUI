@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Check, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { OTHER_PREFIX } from "@/lib/other-option";
 import {
   arePartsValid,
   buildDateValue,
@@ -30,7 +31,6 @@ interface FieldRendererProps {
 }
 
 const NOT_INFORMED = "Não informada";
-export const OTHER_PREFIX = "Outro: ";
 const isOtherValue = (v: unknown): v is string =>
   typeof v === "string" && v.startsWith(OTHER_PREFIX);
 const otherText = (v: string) => v.slice(OTHER_PREFIX.length);
