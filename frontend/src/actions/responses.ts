@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { isFieldVisible } from "@/lib/conditional";
+import { isCodingComplete } from "@/lib/coding-completeness";
 import { createAutoReviewIfDiverges } from "@/lib/auto-review";
 import type { PydanticField } from "@/lib/types";
 
@@ -135,26 +136,9 @@ export async function saveResponse(
     }
 
     if (fields.length > 0) {
-      const humanFields = fields.filter(
-        (f) =>
-          (f.target || "all") !== "llm_only" &&
-          f.target !== "none" &&
-          f.required !== false &&
-          isFieldVisible(f, sanitizedAnswers),
-      );
-      const OTHER_PREFIX = "Outro: ";
-      const isIncompleteOther = (v: unknown) =>
-        typeof v === "string" && v === OTHER_PREFIX;
-      const allAnswered = humanFields.every((f) => {
-        const v = sanitizedAnswers[f.name];
-        if (v === undefined || v === null || v === "") return false;
-        if (f.type === "single" && isIncompleteOther(v)) return false;
-        if (f.type === "multi" && Array.isArray(v)) {
-          if (v.length === 0) return false;
-          if (v.some(isIncompleteOther)) return false;
-        }
-        return true;
-      });
+      // Definição única de "codificação completa" — ver lib/coding-completeness.
+      // O mesmo helper gateia o backlog de auto-revisão (issue #174).
+      const allAnswered = isCodingComplete(fields, sanitizedAnswers);
 
       // Auto-save nunca promove para "concluido" — mesmo que todos os campos
       // estejam preenchidos, o pesquisador ainda nao clicou em Enviar. Sem essa
