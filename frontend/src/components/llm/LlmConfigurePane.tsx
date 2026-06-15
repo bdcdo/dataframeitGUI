@@ -166,6 +166,7 @@ export function LlmConfigurePane({
   const [isStartingRun, setIsStartingRun] = useState(false);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza o toggle com o schema (prop pydanticFields)
     setHasAmbiguities(
       pydanticFields?.some((f) => f.name === "llm_ambiguidades") ?? false
     );
@@ -182,6 +183,7 @@ export function LlmConfigurePane({
   useEffect(() => {
     if (!previewOpen) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- limpa o erro anterior ao reabrir/reexecutar o preview
     setPreviewError(null);
     const timer = setTimeout(async () => {
       // Loading só dentro do debounce: durante a digitação o preview

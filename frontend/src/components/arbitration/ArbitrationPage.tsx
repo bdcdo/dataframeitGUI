@@ -78,6 +78,7 @@ export function ArbitrationPage({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const v = window.sessionStorage.getItem(storageKey);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- restaura o doc do sessionStorage (client-only)
     if (v) setPinnedDocId(v);
   }, [storageKey]);
 
@@ -114,6 +115,7 @@ export function ArbitrationPage({
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- recalcula a fase (blind/reveal) ao trocar de documento
     setPhase(computePhaseForDoc(docs[docIndex]));
   }, [docIndex, docs]);
 
@@ -123,6 +125,7 @@ export function ArbitrationPage({
     if (phase !== "reveal") return;
     const currentDoc = docs[docIndex];
     if (!currentDoc) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- pré-popula as escolhas finais com o verdict cego ao entrar na fase reveal
     setFinalChoices((prev) => {
       const merged = { ...prev };
       let changed = false;

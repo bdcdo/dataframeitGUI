@@ -127,7 +127,14 @@ cd backend && uvicorn main:app --reload
 
 # Supabase local
 cd frontend && npx supabase start
+
+# Lint / qualidade React (react-doctor)
+cd frontend && npm run lint
+cd frontend && npm run react-doctor        # scan completo
+cd frontend && npm run react-doctor:diff   # só arquivos alterados vs main
 ```
+
+O **react-doctor** é um linter pinado (`react-doctor@0.2.11`, devDependency) com config em `frontend/react-doctor.config.json` (fonte única). Um hook **local de pre-commit** (`.pre-commit-config.yaml`) roda `react-doctor . --diff --fail-on error` nos commits que tocam `frontend/**/*.{ts,tsx}`: **bloqueia só se o commit introduzir um novo error**; o débito legado de warnings fica grandfathered. Setup (1x): `uv tool install pre-commit && pre-commit install` (requer `npm install` em `frontend/`). Por ser local e opt-in, é uma rede de proteção do dev — não um portão de merge no servidor. Detalhes e regras silenciadas em `docs/LINT_CONFIG.md`.
 
 ## Performance — Regras de Arquitetura
 

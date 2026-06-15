@@ -151,6 +151,24 @@ describe("createAutoReviewIfDiverges", () => {
     });
   });
 
+  it("codificacao humana incompleta → divergentCount=0 e nenhum upsert (#174)", async () => {
+    const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
+    state.project = {
+      pydantic_fields: [
+        { name: "q1", type: "single", options: ["a", "b"], target: "all" },
+        { name: "q2", type: "single", options: ["x", "y"], target: "all" },
+      ],
+    };
+    // Humano so respondeu q1 (q2 ausente) → codificacao incompleta. Mesmo
+    // divergindo em q1, nao deve gerar arbitragem.
+    state.humanResponse = { id: "h1", answers: { q1: "a" } };
+    state.llmResponse = { id: "l1", answers: { q1: "b", q2: "x" } };
+
+    const r = await createAutoReviewIfDiverges("p1", "doc1", "user1");
+    expect(r.divergentCount).toBe(0);
+    expect(state.upserts).toHaveLength(0);
+  });
+
   it("equivalencia marcada → campo nao conta como divergente", async () => {
     const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
     state.project = {
