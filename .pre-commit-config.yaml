@@ -17,8 +17,9 @@ repos:
   # auto-stash dos arquivos unstaged, o working tree fica == staged, então --diff
   # enxerga exatamente o que vai ser commitado.
   #
-  # --fail-on error bloqueia só diagnósticos error-level: código novo é barrado, o
+  # --blocking error bloqueia só diagnósticos error-level: código novo é barrado, o
   # débito legado de warnings fica grandfathered. Detalhes em docs/LINT_CONFIG.md.
+  # (a flag antiga --fail-on foi removida na 0.5.x; --blocking é o substituto.)
   #
   # O hook invoca o binário pinado em frontend/node_modules/.bin/react-doctor — não
   # `npx`, que baixaria @latest se as deps não estivessem instaladas, furando o pin.
@@ -27,7 +28,7 @@ repos:
     hooks:
       - id: react-doctor
         name: react-doctor (diff, fail on new errors)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/react-doctor && exec ./node_modules/.bin/react-doctor . --diff --fail-on error || { echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/react-doctor && exec ./node_modules/.bin/react-doctor . --diff --blocking error || { echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false
