@@ -152,3 +152,35 @@ describe("after strip, validateGUIFields should pass", () => {
     expect(validateGUIFields(fixed)).toEqual([]);
   });
 });
+
+describe("validateGUIFields — nomes dunder", () => {
+  it("rejeita nome de campo que começa e termina com __", () => {
+    const fields = [
+      baseField({ name: "__class__", type: "text", description: "x" }),
+    ];
+    expect(validateGUIFields(fields)).toContain(
+      'Campo 1: nome "__class__" não pode começar e terminar com "__" (reservado pelo Python)',
+    );
+  });
+
+  it("aceita nome com __ interno (não é dunder estrito)", () => {
+    const fields = [
+      baseField({ name: "my__field", type: "text", description: "x" }),
+    ];
+    expect(validateGUIFields(fields)).toEqual([]);
+  });
+
+  it("rejeita chave de subcampo dunder estrito", () => {
+    const fields = [
+      baseField({
+        name: "doc",
+        type: "text",
+        description: "doc",
+        subfields: [{ key: "__init__", label: "Init", required: true }],
+      }),
+    ];
+    expect(validateGUIFields(fields)).toContain(
+      'Campo 1: subcampo "__init__" não pode começar e terminar com "__" (reservado pelo Python)',
+    );
+  });
+});

@@ -142,3 +142,59 @@ def test_top_level_literal_assignment_allowed_but_no_model():
 def test_no_side_effect_global_sentinel():
     # Reforço: nenhum dos payloads tocou o processo.
     assert not os.environ.get("PWNED")
+
+
+# ----------------------- nomes e dunders (item #197 review) -----------------
+
+
+def test_field_name_with_internal_double_underscore_accepted():
+    # Nome legítimo com "__" interno não pode ser barrado pela guarda de
+    # dunder — só dunders estritos (começam E terminam com "__") são perigosos.
+    code = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    my__field: str = Field(description="X")
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    assert result["fields"][0]["name"] == "my__field"
+
+
+def test_nested_class_name_with_boundary_underscore_accepted():
+    # O gerador nomeia a classe aninhada `_<campo>_fields`; um campo terminando
+    # em "_" produz `_doc__fields` (com "__" interno), que deve compilar.
+    code = '''from pydantic import BaseModel, Field
+
+class _doc__fields(BaseModel):
+    part_a: str = Field(description="A")
+
+class Analysis(BaseModel):
+    doc_: _doc__fields = Field(description="Doc")
+'''
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+
+
+def test_strict_dunder_field_name_rejected():
+    # Dunder estrito continua barrado (defense-in-depth).
+    code = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    __class__: str = Field(description="X")
+'''
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert result["errors"]
+
+
+def test_deeply_nested_annotation_rejected_with_message():
+    # Aninhamento patológico vira SchemaError claro, não RecursionError.
+    ann = "list[" * 25 + "int" + "]" * 25
+    code = (
+        "from pydantic import BaseModel, Field\n"
+        "class Analysis(BaseModel):\n"
+        f'    x: {ann} = Field(description="X")\n'
+    )
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert any("aninhada" in e for e in result["errors"])

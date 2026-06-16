@@ -179,6 +179,11 @@ export function generatePydanticCode(
 // ---------- Validação client-side ----------
 
 const PYTHON_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+// Dunders estritos (ex.: __class__) são reservados pelo Python e rejeitados
+// pela allowlist do compilador backend; barrar aqui dá feedback imediato em
+// vez de gerar código que o `llm_runner` recusaria. "__" interno (my__field)
+// é permitido.
+const STRICT_DUNDER = /^__.*__$/;
 
 export function validateGUIFields(fields: PydanticField[]): string[] {
   const errors: string[] = [];
@@ -197,6 +202,10 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
       errors.push(
         `${label}: nome inválido "${f.name}" (use letras minúsculas, números e _)`
       );
+    } else if (STRICT_DUNDER.test(f.name)) {
+      errors.push(
+        `${label}: nome "${f.name}" não pode começar e terminar com "__" (reservado pelo Python)`
+      );
     }
     if (names.has(f.name)) {
       errors.push(`${label}: nome "${f.name}" duplicado`);
@@ -214,6 +223,10 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
         if (!sf.key || !PYTHON_IDENTIFIER.test(sf.key)) {
           errors.push(
             `${label}: subcampo ${j + 1} tem chave inválida "${sf.key}"`
+          );
+        } else if (STRICT_DUNDER.test(sf.key)) {
+          errors.push(
+            `${label}: subcampo "${sf.key}" não pode começar e terminar com "__" (reservado pelo Python)`
           );
         }
         if (sfKeys.has(sf.key)) {

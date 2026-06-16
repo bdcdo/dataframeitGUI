@@ -239,7 +239,6 @@ _SCALAR_TYPES: dict[str, type] = {
     "int": int,
     "float": float,
     "bool": bool,
-    "bytes": bytes,
 }
 
 # Nós que jamais aparecem num schema legítimo e abririam espaço para efeito
@@ -274,9 +273,28 @@ _FORBIDDEN_NODES = (
     ast.Import,  # `import x` — ImportFrom permitido só p/ módulos do allowlist
 )
 
+# Profundidade máxima de aninhamento de anotações de tipo. Anotações legítimas
+# (Optional[list[Literal[...]]]) ficam muito abaixo disso; o limite só existe
+# para transformar um aninhamento patológico num SchemaError claro em vez de
+# RecursionError.
+_MAX_TYPE_DEPTH = 20
+
 
 def build_model_from_code(code: str):
     """Parseia, valida e reconstrói a classe Pydantic raiz — sem executar nada.
+
+    O código aceito é o subconjunto que ``generatePydanticCode`` (frontend)
+    emite, mais variações equivalentes: classes ``BaseModel`` com campos
+    anotados por escalares (str/int/float/bool), ``Literal[...]``,
+    ``list[Literal[...]]``, ``Optional[...]``, união ``X | None``, ``dict``,
+    ``tuple`` e ``BaseModel`` aninhado; valores de ``Field(...)`` e defaults
+    são literais (avaliados por ``ast.literal_eval``, que não chama funções).
+    Imports são restritos a pydantic/typing. Qualquer outra construção
+    (import arbitrário, chamada que não ``Field``, acesso a atributo, dunder
+    estrito, lambda, comprehension, decorador) é rejeitada por
+    ``_reject_dangerous``. A edição manual do código foi descontinuada na UI;
+    o código existe apenas como fonte de verdade gerada pela GUI, mas a
+    allowlist é mantida como defense-in-depth sobre ``projects.pydantic_code``.
 
     Retorna a classe (equivalente ao antigo find_root_model do namespace
     exec'd) ou None se nenhum BaseModel for definido. Levanta SchemaError em
@@ -308,8 +326,16 @@ def _reject_dangerous(tree: ast.AST) -> None:
         if isinstance(node, ast.Call):
             if not (isinstance(node.func, ast.Name) and node.func.id == "Field"):
                 raise SchemaError("Apenas Field(...) pode ser chamado no schema")
-        # Bloqueia dunders (__import__, __class__, __subclasses__, ...).
-        if isinstance(node, ast.Name) and "__" in node.id:
+        # Bloqueia dunders estritos (__import__, __class__, __subclasses__, ...).
+        # Nomes de campo legítimos com "__" interno (ex.: my__field) ou de
+        # borda (a classe aninhada _doc__fields gerada de um campo terminando
+        # em "_") são liberados; só identificadores que começam E terminam com
+        # "__" são atributos mágicos/builtins perigosos.
+        if (
+            isinstance(node, ast.Name)
+            and node.id.startswith("__")
+            and node.id.endswith("__")
+        ):
             raise SchemaError(f"Identificador não permitido: {node.id}")
         # Só BitOr (X | None) é aceito como operação binária (em anotações).
         if isinstance(node, ast.BinOp) and not isinstance(node.op, ast.BitOr):
@@ -399,8 +425,10 @@ def _slice_elements(sl: ast.AST) -> list[ast.AST]:
     return list(sl.elts) if isinstance(sl, ast.Tuple) else [sl]
 
 
-def _resolve_type(node: ast.AST, built: dict):
+def _resolve_type(node: ast.AST, built: dict, depth: int = 0):
     """Converte um nó de anotação de tipo num objeto de tipo real (sem eval)."""
+    if depth > _MAX_TYPE_DEPTH:
+        raise SchemaError("Anotação de tipo aninhada demais")
     if isinstance(node, ast.Name):
         if node.id in _SCALAR_TYPES:
             return _SCALAR_TYPES[node.id]
@@ -416,7 +444,10 @@ def _resolve_type(node: ast.AST, built: dict):
         raise SchemaError(f"Anotação inválida: {node.value!r}")
 
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        return Union[_resolve_type(node.left, built), _resolve_type(node.right, built)]
+        return Union[
+            _resolve_type(node.left, built, depth + 1),
+            _resolve_type(node.right, built, depth + 1),
+        ]
 
     if isinstance(node, ast.Subscript):
         if not isinstance(node.value, ast.Name):
@@ -427,21 +458,28 @@ def _resolve_type(node: ast.AST, built: dict):
             values = tuple(_literal_value(e) for e in _slice_elements(sl))
             return Literal[values]
         if ctor in ("list", "List"):
-            return list[_resolve_type(_single_arg(sl), built)]
+            return list[_resolve_type(_single_arg(sl), built, depth + 1)]
         if ctor == "Optional":
-            return Optional[_resolve_type(_single_arg(sl), built)]
+            return Optional[_resolve_type(_single_arg(sl), built, depth + 1)]
         if ctor == "Union":
-            return Union[tuple(_resolve_type(e, built) for e in _slice_elements(sl))]
+            return Union[
+                tuple(_resolve_type(e, built, depth + 1) for e in _slice_elements(sl))
+            ]
         if ctor == "Annotated":
             elts = _slice_elements(sl)
-            inner = _resolve_type(elts[0], built)
+            inner = _resolve_type(elts[0], built, depth + 1)
             meta = [_safe_literal(e) for e in elts[1:]]
             return Annotated[tuple([inner, *meta])]
         if ctor in ("dict", "Dict"):
             k, v = _slice_elements(sl)
-            return dict[_resolve_type(k, built), _resolve_type(v, built)]
+            return dict[
+                _resolve_type(k, built, depth + 1),
+                _resolve_type(v, built, depth + 1),
+            ]
         if ctor in ("tuple", "Tuple"):
-            return tuple[tuple(_resolve_type(e, built) for e in _slice_elements(sl))]
+            return tuple[
+                tuple(_resolve_type(e, built, depth + 1) for e in _slice_elements(sl))
+            ]
         raise SchemaError(f"Construtor de tipo não suportado: {ctor}")
 
     raise SchemaError(f"Anotação de tipo inválida: {type(node).__name__}")
