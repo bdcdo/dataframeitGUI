@@ -3,7 +3,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
-import { fetchFastAPI } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
 import {
   generatePydanticCode,
@@ -17,20 +16,6 @@ import {
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import crypto from "crypto";
 
-interface ValidateResponse {
-  valid: boolean;
-  fields: PydanticField[];
-  model_name: string | null;
-  errors: string[];
-}
-
-export async function validateSchema(code: string): Promise<ValidateResponse> {
-  return fetchFastAPI<ValidateResponse>("/api/pydantic/validate", {
-    method: "POST",
-    body: JSON.stringify({ code }),
-  });
-}
-
 // As actions deste arquivo retornam { error } em vez de lançar: o Next mascara
 // a message de erros lançados em Server Actions em produção (o client recebe
 // mensagem genérica + digest), então a copy pt-BR só chega ao toast pelo
@@ -40,7 +25,10 @@ function errorMessage(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
 }
 
-export async function saveSchema(
+// Não exportada: usada apenas internamente por saveSchemaFromGUI. A edição
+// manual do código foi descontinuada, então não há Server Action que receba
+// código Pydantic cru do cliente.
+async function saveSchema(
   projectId: string,
   code: string,
   fields: PydanticField[],

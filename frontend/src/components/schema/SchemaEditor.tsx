@@ -16,8 +16,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  validateSchema,
-  saveSchema,
   saveSchemaFromGUI,
   publishMajorVersion,
   backfillSchemaVersionHistory,
@@ -51,19 +49,13 @@ export function SchemaEditor({
   currentVersion,
 }: SchemaEditorProps) {
   const { refresh } = useRouter();
-  const defaultMode =
-    !initialFields?.length && initialCode ? "code" : "gui";
 
-  const [mode, setMode] = useState<"gui" | "code">(defaultMode);
+  // O modo "código" é somente leitura: o schema é editado no modo visual e o
+  // código Pydantic é a fonte de verdade gerada a partir dos campos. Por isso
+  // o estado inicial é sempre "gui".
+  const [mode, setMode] = useState<"gui" | "code">("gui");
   const [fields, setFields] = useState<PydanticField[]>(initialFields || []);
   const [code, setCode] = useState(initialCode || "");
-  const [codeFields, setCodeFields] = useState<PydanticField[]>(
-    initialFields || []
-  );
-  const [validationStatus, setValidationStatus] = useState<
-    "idle" | "valid" | "error"
-  >("idle");
-  const [errors, setErrors] = useState<string[]>([]);
   const [guiErrors, setGuiErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
   const [majorDialogOpen, setMajorDialogOpen] = useState(false);
@@ -125,62 +117,17 @@ export function SchemaEditor({
   };
 
   // --- Troca de modo ---
+  // O modo "código" é só visualização da fonte de verdade. Alternar não
+  // recompila nada: os campos já estão no estado e o código é gerado deles.
 
   const switchToCode = () => {
-    const generated = generatePydanticCode(fields);
-    setCode(generated);
-    setCodeFields(fields);
-    setValidationStatus("idle");
-    setGuiErrors([]);
+    setCode(generatePydanticCode(fields));
     setMode("code");
   };
 
-  const switchToGUI = async () => {
-    if (!code.trim()) {
-      setFields([]);
-      setGuiErrors([]);
-      setMode("gui");
-      return;
-    }
-    try {
-      const result = await validateSchema(code);
-      if (result.valid) {
-        setFields(result.fields);
-        setCodeFields(result.fields);
-        setValidationStatus("valid");
-        setGuiErrors([]);
-        setMode("gui");
-      } else {
-        toast.error(
-          "Corrija os erros no código antes de trocar para o modo visual"
-        );
-        setErrors(result.errors);
-        setValidationStatus("error");
-      }
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
-
-  // --- Validar (modo código) ---
-
-  const handleValidate = async () => {
-    try {
-      const result = await validateSchema(code);
-      if (result.valid) {
-        setCodeFields(result.fields);
-        setValidationStatus("valid");
-        setErrors([]);
-        toast.success(`${result.fields.length} campos encontrados`);
-      } else {
-        setValidationStatus("error");
-        setErrors(result.errors);
-        toast.error("Erro na validação");
-      }
-    } catch (e: any) {
-      setValidationStatus("error");
-      setErrors([e.message]);
-    }
+  const switchToGUI = () => {
+    setGuiErrors([]);
+    setMode("gui");
   };
 
   // --- Salvar ---
@@ -188,39 +135,26 @@ export function SchemaEditor({
   const handleSave = () => {
     startTransition(async () => {
       try {
-        if (mode === "gui") {
-          const errs = validateGUIFields(fields);
-          if (errs.length > 0) {
-            setGuiErrors(errs);
-            return;
-          }
-          setGuiErrors([]);
-          const r = await saveSchemaFromGUI(projectId, fields);
-          if (r?.error) {
-            toast.error(r.error);
-            return;
-          }
-          toast.success("Schema salvo!");
-        } else {
-          if (validationStatus !== "valid") {
-            toast.error("Valide o schema antes de salvar");
-            return;
-          }
-          const r = await saveSchema(projectId, code, codeFields);
-          if (r?.error) {
-            toast.error(r.error);
-            return;
-          }
-          toast.success("Schema salvo!");
+        const errs = validateGUIFields(fields);
+        if (errs.length > 0) {
+          setGuiErrors(errs);
+          return;
         }
-      } catch (e: any) {
-        toast.error(e.message);
+        setGuiErrors([]);
+        const r = await saveSchemaFromGUI(projectId, fields);
+        if (r?.error) {
+          toast.error(r.error);
+          return;
+        }
+        toast.success("Schema salvo!");
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
       }
     });
   };
 
   // --- Info para badges ---
-  const currentFields = mode === "gui" ? fields : codeFields;
+  const currentFields = fields;
   const fieldCount = currentFields.length;
   const llmOnlyCount = currentFields.filter(
     (f) => f.target === "llm_only"
@@ -333,21 +267,28 @@ export function SchemaEditor({
         {mode === "gui" ? (
           <SchemaBuilderGUI fields={fields} onChange={setFields} />
         ) : (
-          <MonacoEditor
-            height="100%"
-            language="python"
-            theme="vs-light"
-            value={code}
-            onChange={(val) => {
-              setCode(val || "");
-              setValidationStatus("idle");
-            }}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              wordWrap: "on",
-            }}
-          />
+          <div className="flex h-full flex-col">
+            <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+              <Info className="size-3.5 shrink-0" />
+              Somente leitura — o código é gerado a partir do editor visual.
+              Para editar o schema, use o modo Visual.
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <MonacoEditor
+                height="100%"
+                language="python"
+                theme="vs-light"
+                value={code}
+                options={{
+                  readOnly: true,
+                  domReadOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  wordWrap: "on",
+                }}
+              />
+            </div>
+          </div>
         )}
       </div>
 
@@ -362,28 +303,19 @@ export function SchemaEditor({
 
       {/* Footer */}
       <div className="flex items-center gap-2 border-t px-4 py-2">
-        {mode === "code" && (
+        {mode === "gui" ? (
           <Button
-            variant="outline"
             size="sm"
-            onClick={handleValidate}
+            onClick={handleSave}
             disabled={isPending}
+            className="bg-brand hover:bg-brand/90 text-brand-foreground"
           >
-            Validar
+            Salvar
           </Button>
-        )}
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={isPending}
-          className="bg-brand hover:bg-brand/90 text-brand-foreground"
-        >
-          Salvar
-        </Button>
-        {mode === "code" && validationStatus === "error" && (
-          <Badge variant="destructive" className="text-xs">
-            {errors[0]}
-          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            Visualização somente leitura — para editar, use o modo Visual.
+          </span>
         )}
       </div>
 
