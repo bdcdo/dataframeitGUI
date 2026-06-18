@@ -279,8 +279,12 @@ export default async function ComparePageRoute({
 
     // Apply version + since + respondent filters per response
     const qualifiedResponses = docResponses.filter((r) => {
-      // Keep only active (is_latest) OR human responses — antigos (is_latest=false) do LLM ficam fora
-      if (!r.is_latest && r.respondent_type !== "humano") return false;
+      // Só respostas ativas (is_latest). Antigas (is_latest=false) — do LLM
+      // (re-runs) ou humanas (codificação rebaixada ao promover uma versão mais
+      // recente, ou após unificação de membros/documentos) — ficam de fora.
+      // Mantê-las faria o mesmo respondente aparecer como dois cards. A contagem
+      // abaixo ainda agrega por respondente distinto como defesa adicional.
+      if (!r.is_latest) return false;
 
       // Respostas pré-versionamento (pydantic_hash NULL) foram gravadas antes
       // da migration 20260420 que introduziu schema_version_*. Elas têm
@@ -306,15 +310,29 @@ export default async function ComparePageRoute({
       return true;
     });
 
-    const humanCount = qualifiedResponses.filter((r) => r.respondent_type === "humano").length;
+    // Conta respondentes humanos DISTINTOS (não linhas). Fallback para r.id
+    // quando respondent_id é null (dados legados) para não fundir respostas
+    // anônimas distintas numa só.
+    const humanCount = new Set(
+      qualifiedResponses
+        .filter((r) => r.respondent_type === "humano")
+        .map((r) => r.respondent_id ?? r.id),
+    ).size;
     const totalCount = qualifiedResponses.length;
 
     const assignedUsers = codingAssignedByDoc.get(docId) ?? new Set<string>();
     const assignedCodingCount = assignedUsers.size;
 
-    const humansFromAssigned = qualifiedResponses.filter(
-      (r) => r.respondent_type === "humano" && r.respondent_id && assignedUsers.has(r.respondent_id),
-    ).length;
+    const humansFromAssigned = new Set(
+      qualifiedResponses
+        .filter(
+          (r) =>
+            r.respondent_type === "humano" &&
+            r.respondent_id &&
+            assignedUsers.has(r.respondent_id),
+        )
+        .map((r) => r.respondent_id),
+    ).size;
 
     const pct = assignedCodingCount === 0 ? 100 : Math.round((humansFromAssigned / assignedCodingCount) * 100);
 
