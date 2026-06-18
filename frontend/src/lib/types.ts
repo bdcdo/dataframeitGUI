@@ -10,6 +10,49 @@ export interface Profile {
 
 export type RoundStrategy = "schema_version" | "manual";
 
+// Modo de automação de revisão do projeto (projects.automation_mode). Define o
+// "mínimo necessário para liberar a revisão" + quem revê, e governa quais abas
+// de revisão aparecem. Mutuamente exclusivo. Ver lib/auto-review.ts (auto_review_llm)
+// e lib/auto-comparison.ts (compare_*).
+export type AutomationMode =
+  | "none"
+  | "auto_review_llm"
+  | "compare_humans"
+  | "compare_llm";
+
+// Fonte única dos rótulos/descrições dos modos — reaproveitada pelos seletores
+// de criação (projects/new) e de Config › Regras (RulesForm), evitando drift.
+export const AUTOMATION_MODES: ReadonlyArray<{
+  value: AutomationMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "none",
+    label: "Nenhuma automação",
+    description:
+      "Sem revisão automática. Qualquer comparação ou revisão é criada manualmente pelo coordenador.",
+  },
+  {
+    value: "auto_review_llm",
+    label: "Auto-revisão vs LLM",
+    description:
+      "Quando uma pessoa termina de codificar e diverge do LLM, ela mesma revisa os campos divergentes; contestados vão para arbitragem.",
+  },
+  {
+    value: "compare_humans",
+    label: "Comparação humano-vs-humano",
+    description:
+      "Quando duas pessoas codificam o mesmo documento e divergem, um revisor é sorteado para comparar as codificações.",
+  },
+  {
+    value: "compare_llm",
+    label: "Comparação pessoa-vs-LLM",
+    description:
+      "Quando uma pessoa codifica e diverge do LLM, um revisor é sorteado para comparar a codificação humana contra a do LLM.",
+  },
+];
+
 export interface Round {
   id: string;
   project_id: string;
@@ -36,6 +79,10 @@ export interface Project {
   round_strategy: RoundStrategy;
   current_round_id: string | null;
   arbitration_blind: boolean;
+  automation_mode: AutomationMode;
+  // Só relevante em automation_mode = "compare_humans": inclui a resposta do LLM
+  // (quando existe) no cálculo de divergência que dispara a comparação.
+  comparison_includes_llm: boolean;
 }
 
 export interface SubfieldDef {
@@ -79,6 +126,8 @@ export interface ProjectMember {
   role: "coordenador" | "pesquisador";
   can_arbitrate: boolean;
   can_resolve: boolean;
+  // Elegível para receber comparações automáticas (assignComparisonReviewer).
+  can_compare: boolean;
   // Carga relativa no sorteio (1 = normal, 0.5 = metade). Ver distributeDocs.
   // Opcional: nem toda query de project_members seleciona estas colunas.
   assignment_weight?: number;
