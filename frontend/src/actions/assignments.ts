@@ -2,7 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import {
   createRng,
   distributeDocs,
@@ -14,6 +14,10 @@ import {
   type LotteryMode,
   type LotteryParticipant,
 } from "@/lib/lottery-utils";
+
+// Perfil de cache do revalidateTag (Next 16) — espelha o revalidate: 300 do
+// getCachedMembers na página de atribuições. Mesmo padrão de members.ts.
+const TAG_PROFILE = Object.freeze({ expire: 300 });
 
 /**
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
@@ -112,6 +116,13 @@ export interface LotteryParams {
   label?: string;
   filters?: LotteryFilters;
   participantIds: string[];
+  /**
+   * Peso e limite por participante (spec: carga desigual). weight escala a
+   * carga na distribuição (default 1); cap é o teto absoluto de docs novos do
+   * participante (null/ausente = sem limite individual). Persistido em
+   * project_members ao sortear para pré-preencher o próximo sorteio.
+   */
+  participantSettings?: Record<string, { weight?: number; cap?: number | null }>;
 }
 
 interface LotteryAssignment {
@@ -342,16 +353,21 @@ async function computeLottery(params: LotteryParams): Promise<{
     }
   }
 
-  // Carga acumulada (conjunto preservado do modo) + capacidade
+  // Carga acumulada (conjunto preservado do modo) + capacidade + peso.
+  // O limite individual (cap) compõe com o global docsPerResearcher: vence
+  // o menor. O peso escala a chave de distribuição (load/weight).
+  const settings = params.participantSettings ?? {};
   const participants: LotteryParticipant[] = participantIds.map((pId) => {
     const accumulatedLoad = preservedByUser[pId] || 0;
-    return {
-      id: pId,
-      accumulatedLoad,
-      capacity: params.docsPerResearcher
-        ? Math.max(0, params.docsPerResearcher - accumulatedLoad)
-        : Infinity,
-    };
+    const cfg = settings[pId] ?? {};
+    const weight = cfg.weight && cfg.weight > 0 ? cfg.weight : 1;
+    const caps: number[] = [];
+    if (params.docsPerResearcher) caps.push(params.docsPerResearcher);
+    if (cfg.cap != null && cfg.cap > 0) caps.push(cfg.cap);
+    const capacity = caps.length
+      ? Math.max(0, Math.min(...caps) - accumulatedLoad)
+      : Infinity;
+    return { id: pId, accumulatedLoad, capacity, weight };
   });
 
   const newAssignments: LotteryAssignment[] = distributeDocs(
@@ -384,6 +400,7 @@ async function computeLottery(params: LotteryParams): Promise<{
     filters: {
       ...filters,
       participantIds,
+      participantSettings: settings,
       docSubsetSize: params.docSubsetSize ?? null,
       seed,
     },
@@ -478,6 +495,32 @@ export async function smartRandomize(params: LotteryParams) {
         `Erro ao gravar as atribuições (${i} de ${newAssignments.length} inseridas): ${insertError.message}`
       );
     }
+  }
+
+  // Persiste o peso/limite usado por participante (decisão: editar no diálogo,
+  // mas assumir continuidade no próximo sorteio). As atribuições já foram
+  // gravadas — uma falha aqui só afeta o default da próxima vez, não bloqueia.
+  const settingsEntries = Object.entries(params.participantSettings ?? {});
+  if (settingsEntries.length > 0) {
+    const results = await Promise.all(
+      settingsEntries.map(([userId, cfg]) =>
+        supabase
+          .from("project_members")
+          .update({
+            assignment_weight: cfg.weight && cfg.weight > 0 ? cfg.weight : 1,
+            assignment_cap: cfg.cap != null && cfg.cap > 0 ? cfg.cap : null,
+          })
+          .eq("project_id", params.projectId)
+          .eq("user_id", userId),
+      ),
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) {
+      console.error(
+        `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
+      );
+    }
+    revalidateTag(`project-${params.projectId}-members`, TAG_PROFILE);
   }
 
   revalidatePath(`/projects/${params.projectId}/analyze/assignments`);

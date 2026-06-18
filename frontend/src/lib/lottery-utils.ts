@@ -34,6 +34,11 @@ export interface LotteryParticipant {
   accumulatedLoad: number;
   /** docsPerResearcher - accumulatedLoad, ou Infinity */
   capacity: number;
+  /**
+   * Peso relativo de carga (default 1). A chave de distribuição é load/weight,
+   * então peso 0.5 recebe ~metade dos docs de um peso 1. Ausente/≤0 → 1.
+   */
+  weight?: number;
 }
 
 /**
@@ -105,12 +110,14 @@ export function shuffleWithRng<T>(arr: T[], rng: () => number): T[] {
 /**
  * Núcleo da distribuição do sorteio (research D12). Para cada documento
  * (em ordem embaralhada), cada vaga é dada ao candidato de menor chave
- * composta: carga corrente do modo de equilíbrio (`round`: só as novas
- * deste sorteio; `history`: acumulada + novas) → co-ocorrência com quem
- * já está no documento (variação de duplas, FR-014) → aleatório
- * (candidatos embaralhados antes do sort estável — a ordem do array de
- * participantes nunca decide, FR-019). Carga e co-ocorrência são
- * atualizadas a cada atribuição. Pura: não muta os inputs.
+ * composta: carga corrente do modo de equilíbrio dividida pelo peso do
+ * participante (`round`: só as novas deste sorteio; `history`: acumulada +
+ * novas) → co-ocorrência com quem já está no documento (variação de duplas,
+ * FR-014) → aleatório (candidatos embaralhados antes do sort estável — a
+ * ordem do array de participantes nunca decide, FR-019). O peso (default 1)
+ * escala a carga: quem tem peso 0.5 atinge a mesma chave com metade dos docs,
+ * recebendo ~metade; o teto duro continua sendo `capacity`. Carga e
+ * co-ocorrência são atualizadas a cada atribuição. Pura: não muta os inputs.
  */
 export function distributeDocs(
   eligibleDocIds: string[],
@@ -131,10 +138,14 @@ export function distributeDocs(
   const accumulated: Record<string, number> = {};
   const newLoad: Record<string, number> = {};
   const remaining: Record<string, number> = {};
+  const weight: Record<string, number> = {};
   for (const p of participants) {
     accumulated[p.id] = p.accumulatedLoad;
     newLoad[p.id] = 0;
     remaining[p.id] = p.capacity;
+    // Peso ausente, zero ou negativo cai para 1 (neutro) — a UI valida > 0;
+    // deselecionar o participante é o caminho para "peso zero".
+    weight[p.id] = p.weight && p.weight > 0 ? p.weight : 1;
   }
 
   // Cópia local da matriz para preservar a pureza da função
@@ -164,9 +175,9 @@ export function distributeDocs(
       const scored = shuffleWithRng(candidates, rng).map((p) => ({
         id: p.id,
         load:
-          balancing === "round"
+          (balancing === "round"
             ? newLoad[p.id]
-            : accumulated[p.id] + newLoad[p.id],
+            : accumulated[p.id] + newLoad[p.id]) / weight[p.id],
         coScore: alreadyOnDoc.reduce(
           (sum, uid) => sum + (coOccurrence[p.id]?.[uid] || 0),
           0,

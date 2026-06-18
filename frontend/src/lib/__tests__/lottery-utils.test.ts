@@ -342,6 +342,64 @@ describe("distributeDocs", () => {
     for (const c of Object.values(counts)) expect(c).toBeLessThanOrEqual(2);
   });
 
+  describe("peso por participante", () => {
+    it("weight 0.5 recebe ~metade dos pares de peso 1 (round)", () => {
+      // pesos 1, 1, 0.5 → soma 2.5; 50 docs × 1 vaga → p2 ≈ 50·(0.5/2.5) = 10
+      const participants: LotteryParticipant[] = [
+        { id: "p0", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p1", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p2", accumulatedLoad: 0, capacity: Infinity, weight: 0.5 },
+      ];
+      const counts = countByUser(run(docIds(50), participants));
+      expect(counts.p0 + counts.p1 + counts.p2).toBe(50);
+      expect(counts.p2).toBeLessThan(counts.p0);
+      expect(counts.p2).toBeLessThan(counts.p1);
+      expect(counts.p2).toBeGreaterThanOrEqual(8);
+      expect(counts.p2).toBeLessThanOrEqual(12);
+    });
+
+    it("weight escala também no modo history", () => {
+      // todos partem de 0; alvo do history é nivelar load/weight, então
+      // p2 (peso 0.5) termina com ~metade da carga dos demais
+      const participants: LotteryParticipant[] = [
+        { id: "p0", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p1", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p2", accumulatedLoad: 0, capacity: Infinity, weight: 0.5 },
+      ];
+      const counts = countByUser(
+        run(docIds(50), participants, { balancing: "history" }),
+      );
+      expect(counts.p2).toBeLessThan(counts.p0);
+      expect(counts.p2).toBeLessThan(counts.p1);
+      expect(counts.p2).toBeGreaterThanOrEqual(8);
+      expect(counts.p2).toBeLessThanOrEqual(12);
+    });
+
+    it("weight ausente equivale a peso 1 (regressão)", () => {
+      // mesma entrada, com e sem weight=1 explícito → mesmo resultado
+      const semWeight = makeParticipants([0, 0, 0]);
+      const comWeight: LotteryParticipant[] = semWeight.map((p) => ({
+        ...p,
+        weight: 1,
+      }));
+      const a = run(docIds(12), semWeight, { seed: 7 });
+      const b = run(docIds(12), comWeight, { seed: 7 });
+      expect(a).toEqual(b);
+    });
+  });
+
+  it("limite individual corta a carga do participante; o resto vai aos demais", () => {
+    // p0 com capacity 3 (limite individual); p1 e p2 sem limite absorvem o resto
+    const participants: LotteryParticipant[] = [
+      { id: "p0", accumulatedLoad: 0, capacity: 3, weight: 1 },
+      { id: "p1", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+      { id: "p2", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+    ];
+    const counts = countByUser(run(docIds(30), participants));
+    expect(counts.p0).toBe(3);
+    expect((counts.p1 ?? 0) + (counts.p2 ?? 0)).toBe(27);
+  });
+
   it("nunca duplica par doc+pessoa preservado (preservedPairs)", () => {
     const participants = makeParticipants([0, 0]);
     for (let seed = 0; seed < 20; seed++) {

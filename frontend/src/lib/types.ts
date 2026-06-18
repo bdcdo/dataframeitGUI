@@ -79,6 +79,10 @@ export interface ProjectMember {
   role: "coordenador" | "pesquisador";
   can_arbitrate: boolean;
   can_resolve: boolean;
+  // Carga relativa no sorteio (1 = normal, 0.5 = metade). Ver distributeDocs.
+  assignment_weight: number;
+  // Teto absoluto de docs novos por sorteio; null = sem limite individual.
+  assignment_cap: number | null;
   profiles?: Profile;
 }
 

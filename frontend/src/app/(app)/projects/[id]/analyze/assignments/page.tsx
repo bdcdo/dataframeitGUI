@@ -29,7 +29,9 @@ function getCachedMembers(projectId: string, role: string) {
       const supabase = createSupabaseAdmin();
       const { data } = await supabase
         .from("project_members")
-        .select("user_id, role, project_id, profiles(first_name, email, activated_at)")
+        .select(
+          "user_id, role, project_id, assignment_weight, assignment_cap, profiles(first_name, email, activated_at)",
+        )
         .eq("project_id", projectId)
         .eq("role", role);
       return data || [];
@@ -76,6 +78,8 @@ export default async function AssignmentsPage({
       m.profiles?.first_name || m.profiles?.email || m.user_id.slice(0, 8),
     role: m.role as "pesquisador" | "coordenador",
     pending: m.profiles?.activated_at === null,
+    weight: m.assignment_weight ?? 1,
+    cap: m.assignment_cap ?? null,
   }));
 
   const assignedDocIds = new Set(
