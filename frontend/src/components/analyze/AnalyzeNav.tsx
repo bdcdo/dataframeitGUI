@@ -7,24 +7,26 @@ import { cn } from "@/lib/utils";
 const baseTabs = [
   { label: "Atribuições", href: "assignments" },
   { label: "Codificar", href: "code" },
-  { label: "Comparar", href: "compare" },
 ];
 
 interface AnalyzeNavProps {
   projectId: string;
   showAutoReview?: boolean;
   showArbitragem?: boolean;
+  showCompare?: boolean;
 }
 
 export function AnalyzeNav({
   projectId,
   showAutoReview = false,
   showArbitragem = false,
+  showCompare = false,
 }: AnalyzeNavProps) {
   const pathname = usePathname();
 
   const tabs = [
     ...baseTabs,
+    ...(showCompare ? [{ label: "Comparar", href: "compare" }] : []),
     ...(showAutoReview
       ? [{ label: "Auto-revisão", href: "auto-revisao" }]
       : []),
