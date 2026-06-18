@@ -4,18 +4,24 @@ import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { AssignmentTable } from "@/components/assignments/AssignmentTable";
 import { LotteryDialog } from "@/components/assignments/LotteryDialog";
 import { ClearPendingButton } from "@/components/assignments/ClearPendingButton";
+import { membersTag } from "@/lib/cache";
 import type { ProjectMember } from "@/lib/types";
 
 function getCachedDocuments(projectId: string) {
   return unstable_cache(
     async () => {
       const supabase = createSupabaseAdmin();
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("documents")
         .select("id, external_id, title")
         .eq("project_id", projectId)
         .is("excluded_at", null)
         .order("created_at", { ascending: true });
+      if (error) {
+        console.error(
+          `[assignments] getCachedDocuments falhou (projeto ${projectId}): ${error.message}`,
+        );
+      }
       return data || [];
     },
     [`assignments-docs-${projectId}`],
@@ -27,17 +33,22 @@ function getCachedMembers(projectId: string, role: string) {
   return unstable_cache(
     async () => {
       const supabase = createSupabaseAdmin();
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("project_members")
         .select(
           "user_id, role, project_id, assignment_weight, assignment_cap, profiles(first_name, email, activated_at)",
         )
         .eq("project_id", projectId)
         .eq("role", role);
+      if (error) {
+        console.error(
+          `[assignments] getCachedMembers falhou (projeto ${projectId}, role ${role}): ${error.message}`,
+        );
+      }
       return data || [];
     },
     [`assignments-members-${projectId}-${role}`],
-    { tags: [`project-${projectId}-members`], revalidate: 300 },
+    { tags: [membersTag(projectId)], revalidate: 300 },
   )();
 }
 

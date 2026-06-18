@@ -32,13 +32,54 @@ export interface LotteryParticipant {
   id: string;
   /** atribuições do tipo no conjunto preservado do modo */
   accumulatedLoad: number;
-  /** docsPerResearcher - accumulatedLoad, ou Infinity */
+  /** teto de docs NOVOS neste sorteio (ver computeCapacity), ou Infinity */
   capacity: number;
   /**
    * Peso relativo de carga (default 1). A chave de distribuição é load/weight,
    * então peso 0.5 recebe ~metade dos docs de um peso 1. Ausente/≤0 → 1.
    */
   weight?: number;
+}
+
+/**
+ * Peso efetivo de carga: ausente, NaN, zero ou negativo caem para 1 (neutro).
+ * Centraliza a regra usada no cliente (LotteryDialog), no server
+ * (computeLottery e persistência) e em distributeDocs — evita drift (#63).
+ */
+export function resolveWeight(weight?: number | null): number {
+  return weight != null && Number.isFinite(weight) && weight > 0 ? weight : 1;
+}
+
+/**
+ * Limite efetivo de docs NOVOS por participante: ausente, NaN, zero ou
+ * negativo → null (sem limite individual). Caso contrário, truncado para
+ * inteiro — a coluna assignment_cap é INTEGER.
+ */
+export function resolveCap(cap?: number | null): number | null {
+  return cap != null && Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : null;
+}
+
+/**
+ * Capacidade de docs NOVOS de um participante neste sorteio (o teto duro de
+ * distributeDocs). Compõe dois limites e vence o menor:
+ *  - docsPerResearcher é teto TOTAL (acumulado + novos) — convertido aqui em
+ *    slots novos restantes (`docsPerResearcher - accumulatedLoad`);
+ *  - cap é teto direto de docs NOVOS, independente da carga acumulada.
+ * Ausência de ambos → Infinity (sem limite). Pura.
+ */
+export function computeCapacity(opts: {
+  accumulatedLoad: number;
+  docsPerResearcher?: number | null;
+  cap?: number | null;
+}): number {
+  const { accumulatedLoad, docsPerResearcher, cap } = opts;
+  const limits: number[] = [];
+  if (docsPerResearcher) {
+    limits.push(Math.max(0, docsPerResearcher - accumulatedLoad));
+  }
+  const resolvedCap = resolveCap(cap);
+  if (resolvedCap != null) limits.push(resolvedCap);
+  return limits.length ? Math.min(...limits) : Infinity;
 }
 
 /**
@@ -145,7 +186,7 @@ export function distributeDocs(
     remaining[p.id] = p.capacity;
     // Peso ausente, zero ou negativo cai para 1 (neutro) — a UI valida > 0;
     // deselecionar o participante é o caminho para "peso zero".
-    weight[p.id] = p.weight && p.weight > 0 ? p.weight : 1;
+    weight[p.id] = resolveWeight(p.weight);
   }
 
   // Cópia local da matriz para preservar a pureza da função

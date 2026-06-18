@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,8 @@ import {
 import type { LotteryParams, LotteryPreview } from "@/actions/assignments";
 import {
   filterEligibleDocs,
+  resolveWeight,
+  resolveCap,
   type AssignmentFilter,
   type LotteryBalancing,
   type LotteryDocStats,
@@ -140,10 +142,15 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     participantOverrides[m.userId] ?? m.role === "pesquisador";
 
   // String exibida nos inputs: override local, senão default persistido.
-  const weightValue = (m: LotteryMember) =>
-    weightInputs[m.userId] ?? String(m.weight ?? 1);
-  const capValue = (m: LotteryMember) =>
-    capInputs[m.userId] ?? (m.cap != null ? String(m.cap) : "");
+  const weightValue = useCallback(
+    (m: LotteryMember) => weightInputs[m.userId] ?? String(m.weight ?? 1),
+    [weightInputs],
+  );
+  const capValue = useCallback(
+    (m: LotteryMember) =>
+      capInputs[m.userId] ?? (m.cap != null ? String(m.cap) : ""),
+    [capInputs],
+  );
 
   const participantIds = useMemo(
     () =>
@@ -162,17 +169,15 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     const out: Record<string, { weight: number; cap: number | null }> = {};
     for (const m of members) {
       if (!(participantOverrides[m.userId] ?? m.role === "pesquisador")) continue;
-      const wStr = weightInputs[m.userId] ?? String(m.weight ?? 1);
-      const cStr = capInputs[m.userId] ?? (m.cap != null ? String(m.cap) : "");
-      const w = parseFloat(wStr);
-      const c = cStr.trim() === "" ? null : parseInt(cStr, 10);
+      const cStr = capValue(m);
       out[m.userId] = {
-        weight: Number.isFinite(w) && w > 0 ? w : 1,
-        cap: c != null && Number.isFinite(c) && c > 0 ? c : null,
+        // Mesma coerção do server (resolveWeight/resolveCap) — fonte única.
+        weight: resolveWeight(parseFloat(weightValue(m))),
+        cap: resolveCap(cStr.trim() === "" ? null : parseInt(cStr, 10)),
       };
     }
     return out;
-  }, [members, participantOverrides, weightInputs, capInputs]);
+  }, [members, participantOverrides, weightValue, capValue]);
 
   // Label
   const [label, setLabel] = useState("");
@@ -736,7 +741,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                           <Input
                             id={`weight-${m.userId}`}
                             type="number"
-                            min={0}
+                            min={0.5}
                             step={0.5}
                             value={weightValue(m)}
                             onChange={(e) =>

@@ -8,16 +8,16 @@ import {
   distributeDocs,
   filterEligibleDocs,
   shuffleWithRng,
+  computeCapacity,
+  resolveWeight,
+  resolveCap,
   type LotteryBalancing,
   type LotteryDocStats,
   type LotteryFilters,
   type LotteryMode,
   type LotteryParticipant,
 } from "@/lib/lottery-utils";
-
-// Perfil de cache do revalidateTag (Next 16) — espelha o revalidate: 300 do
-// getCachedMembers na página de atribuições. Mesmo padrão de members.ts.
-const TAG_PROFILE = Object.freeze({ expire: 300 });
+import { MEMBERS_TAG_PROFILE, membersTag } from "@/lib/cache";
 
 /**
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
@@ -354,20 +354,23 @@ async function computeLottery(params: LotteryParams): Promise<{
   }
 
   // Carga acumulada (conjunto preservado do modo) + capacidade + peso.
-  // O limite individual (cap) compõe com o global docsPerResearcher: vence
-  // o menor. O peso escala a chave de distribuição (load/weight).
+  // capacity é o teto de docs NOVOS: o limite individual (cap, teto direto de
+  // novos) compõe com o global docsPerResearcher (teto total) — vence o menor
+  // (ver computeCapacity). O peso escala a chave de distribuição (load/weight).
   const settings = params.participantSettings ?? {};
   const participants: LotteryParticipant[] = participantIds.map((pId) => {
     const accumulatedLoad = preservedByUser[pId] || 0;
     const cfg = settings[pId] ?? {};
-    const weight = cfg.weight && cfg.weight > 0 ? cfg.weight : 1;
-    const caps: number[] = [];
-    if (params.docsPerResearcher) caps.push(params.docsPerResearcher);
-    if (cfg.cap != null && cfg.cap > 0) caps.push(cfg.cap);
-    const capacity = caps.length
-      ? Math.max(0, Math.min(...caps) - accumulatedLoad)
-      : Infinity;
-    return { id: pId, accumulatedLoad, capacity, weight };
+    return {
+      id: pId,
+      accumulatedLoad,
+      capacity: computeCapacity({
+        accumulatedLoad,
+        docsPerResearcher: params.docsPerResearcher,
+        cap: cfg.cap,
+      }),
+      weight: resolveWeight(cfg.weight),
+    };
   });
 
   const newAssignments: LotteryAssignment[] = distributeDocs(
@@ -507,8 +510,8 @@ export async function smartRandomize(params: LotteryParams) {
         supabase
           .from("project_members")
           .update({
-            assignment_weight: cfg.weight && cfg.weight > 0 ? cfg.weight : 1,
-            assignment_cap: cfg.cap != null && cfg.cap > 0 ? cfg.cap : null,
+            assignment_weight: resolveWeight(cfg.weight),
+            assignment_cap: resolveCap(cfg.cap),
           })
           .eq("project_id", params.projectId)
           .eq("user_id", userId),
@@ -520,7 +523,7 @@ export async function smartRandomize(params: LotteryParams) {
         `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
       );
     }
-    revalidateTag(`project-${params.projectId}-members`, TAG_PROFILE);
+    revalidateTag(membersTag(params.projectId), MEMBERS_TAG_PROFILE);
   }
 
   revalidatePath(`/projects/${params.projectId}/analyze/assignments`);

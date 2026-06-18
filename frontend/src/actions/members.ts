@@ -10,8 +10,7 @@ import {
   releaseArbitrationsFromUser,
 } from "@/actions/field-reviews";
 import { revalidatePath, revalidateTag } from "next/cache";
-
-const TAG_PROFILE = Object.freeze({ expire: 300 });
+import { MEMBERS_TAG_PROFILE as TAG_PROFILE } from "@/lib/cache";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
