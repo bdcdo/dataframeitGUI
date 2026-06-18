@@ -6,6 +6,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { isFieldVisible } from "@/lib/conditional";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { createAutoReviewIfDiverges } from "@/lib/auto-review";
+import { createAutoComparisonIfDiverges } from "@/lib/auto-comparison";
 import type { PydanticField } from "@/lib/types";
 
 export interface SaveResponseOpts {
@@ -53,7 +54,7 @@ export async function saveResponse(
       supabase
         .from("projects")
         .select(
-          "pydantic_hash, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, round_strategy, current_round_id",
+          "pydantic_hash, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, round_strategy, current_round_id, automation_mode",
         )
         .eq("id", projectId)
         .single(),
@@ -154,17 +155,27 @@ export async function saveResponse(
           .eq("type", "codificacao");
         if (assignErr) return { success: false, error: assignErr.message };
 
-        // Dispara auto-revisao humano vs LLM ao submeter. Falhas nao bloqueiam
-        // o submit do pesquisador — coordenador pode regenerar o backlog
-        // manualmente via regenerateAutoReviewBacklog().
+        // Dispara a automacao do projeto ao submeter, conforme automation_mode.
+        // Falhas nao bloqueiam o submit do pesquisador — o coordenador pode
+        // regenerar o backlog manualmente (regenerateAutoReviewBacklog /
+        // retryPendingComparisons). "none" nao dispara nada.
+        const mode = project?.automation_mode;
         try {
-          await createAutoReviewIfDiverges(projectId, documentId, effectiveId);
+          if (mode === "auto_review_llm") {
+            await createAutoReviewIfDiverges(projectId, documentId, effectiveId);
+          } else if (mode === "compare_humans") {
+            await createAutoComparisonIfDiverges(projectId, documentId, "compare_humans");
+          } else if (mode === "compare_llm") {
+            await createAutoComparisonIfDiverges(projectId, documentId, "compare_llm");
+          }
         } catch (err) {
-          // Log estruturado JSON — mesmo formato dos demais eventos em
-          // lib/auto-review.ts, facilita grep "[auto-review]" nos logs.
+          // Log estruturado JSON — mesmo formato dos demais eventos das libs de
+          // automacao, facilita grep "[auto-review]" / "[auto-compare]" nos logs.
+          const prefix = mode === "auto_review_llm" ? "[auto-review]" : "[auto-compare]";
           console.error(
-            `[auto-review] ${JSON.stringify({
+            `${prefix} ${JSON.stringify({
               event: "inline_call_failed",
+              mode,
               projectId,
               documentId,
               userId: effectiveId,
