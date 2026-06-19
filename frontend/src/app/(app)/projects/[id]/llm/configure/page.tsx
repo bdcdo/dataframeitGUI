@@ -23,15 +23,22 @@ export default async function LlmConfigurePage({
         .select("id", { count: "exact", head: true })
         .eq("project_id", id)
         .is("excluded_at", null),
+      // `documents!inner` + filtro excluded_at: conta só respostas de docs não
+      // arquivados, alinhado com totalDocs acima (B4 — evita docsWithLlm >
+      // totalDocs e pendentes negativo).
       supabase
         .from("responses")
-        .select("document_id")
+        .select("document_id, documents!inner(excluded_at)")
         .eq("project_id", id)
         .eq("respondent_type", "llm")
-        .eq("is_latest", true),
+        .eq("is_latest", true)
+        .is("documents.excluded_at", null),
     ]);
 
-  const docsWithLlm = new Set(llmResponses?.map((r) => r.document_id)).size;
+  const docsWithLlm = Math.min(
+    totalDocs ?? 0,
+    new Set(llmResponses?.map((r) => r.document_id)).size,
+  );
 
   return (
     <LlmConfigurePane

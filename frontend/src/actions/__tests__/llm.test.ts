@@ -71,6 +71,36 @@ describe("getEligibleDocCount", () => {
       eligible: 10,
     });
   });
+
+  it("pending desconta docs que já têm resposta LLM", async () => {
+    results.documents = { count: 10 };
+    results.responses = {
+      data: [{ document_id: "d1" }, { document_id: "d2" }],
+    };
+    const { getEligibleDocCount } = await loadLlm();
+    await expect(getEligibleDocCount("p1", "pending")).resolves.toEqual({
+      total: 10,
+      eligible: 8,
+    });
+  });
+
+  it("B4: pending nunca retorna eligible negativo (clamp)", async () => {
+    // Incidente Zolgensma: mais docs com resposta LLM (incl. arquivados) do que
+    // o total de não-arquivados → antes do fix, eligible ficava negativo.
+    results.documents = { count: 2 };
+    results.responses = {
+      data: [
+        { document_id: "d1" },
+        { document_id: "d2" },
+        { document_id: "d3" },
+      ],
+    };
+    const { getEligibleDocCount } = await loadLlm();
+    await expect(getEligibleDocCount("p1", "pending")).resolves.toEqual({
+      total: 2,
+      eligible: 0,
+    });
+  });
 });
 
 describe("getLlmRuns", () => {
