@@ -4,6 +4,7 @@ import {
   isFreeTextField,
   isDocComplete,
   findNextPendingDocIndex,
+  resolveCompareStatus,
 } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
@@ -267,5 +268,31 @@ describe("findNextPendingDocIndex", () => {
     expect(
       findNextPendingDocIndex(["d2", "d3", "d1"], divergentFields, reviews, "d1"),
     ).toBe(-1);
+  });
+});
+
+describe("resolveCompareStatus", () => {
+  it("concluido quando todos os campos divergentes foram revisados", () => {
+    expect(resolveCompareStatus(["a", "b"], new Set(["a", "b"]))).toBe(
+      "concluido",
+    );
+  });
+
+  // #217: edge `divergentFields.length === 0` — antes ficava preso em
+  // em_andamento; um doc sem divergências (ex.: todas fundidas por equivalência)
+  // agora fecha, mesmo sem reviews (`every` é vácuo-verdadeiro).
+  it("concluido quando não há campos divergentes (lista vazia)", () => {
+    expect(resolveCompareStatus([], new Set())).toBe("concluido");
+    expect(resolveCompareStatus([], new Set(["a"]))).toBe("concluido");
+  });
+
+  it("pendente quando há divergências e nenhuma review", () => {
+    expect(resolveCompareStatus(["a", "b"], new Set())).toBe("pendente");
+  });
+
+  it("em_andamento quando há divergências não revisadas mas alguma review", () => {
+    expect(resolveCompareStatus(["a", "b"], new Set(["a"]))).toBe(
+      "em_andamento",
+    );
   });
 });

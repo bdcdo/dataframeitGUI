@@ -5,7 +5,14 @@ import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import {
   computeDivergentFieldNames,
   isFreeTextField,
+  resolveCompareStatus,
 } from "@/lib/compare-divergence";
+import {
+  latestMajorAnchor,
+  responseQualifiesForVersion,
+  type SchemaVersion,
+  type VersionedResponse,
+} from "@/lib/compare-version";
 import type { EquivalencePair } from "@/lib/equivalence";
 
 // Recomputes assignment status (pendente / em_andamento / concluido) for the
@@ -36,12 +43,16 @@ export async function syncCompareAssignment(
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch",
+      )
       .eq("id", projectId)
       .single(),
     supabase
       .from("responses")
-      .select("id, respondent_type, is_latest, answers, answer_field_hashes")
+      .select(
+        "id, respondent_type, is_latest, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, answers, answer_field_hashes",
+      )
       .eq("project_id", projectId)
       .eq("document_id", documentId),
     supabase
@@ -59,24 +70,41 @@ export async function syncCompareAssignment(
 
   const reviewedFields = new Set((reviews ?? []).map((r) => r.field_name));
 
-  if (reviewedFields.size === 0) {
-    if (assignment.status !== "pendente") {
-      await supabase
-        .from("assignments")
-        .update({ status: "pendente", completed_at: null })
-        .eq("id", assignment.id);
-    }
-    return;
-  }
-
   const fields = (project?.pydantic_fields as PydanticField[]) || [];
+
+  // Conclusão usa o MESMO predicado da página (`responseQualifiesForVersion`,
+  // anti-drift #217) com o piso da RODADA CORRENTE — `latestMajorAnchor` da
+  // versão atual do projeto, que é exatamente o filtro default `latest_major`
+  // da UI. Esse é o conjunto canônico de "concluído": independe do filtro de
+  // versão efêmero que a revisora escolha, e por ser a visão mais estreita
+  // selecionável é sempre subconjunto do que ela vê em qualquer filtro — então
+  // resolver tudo que aparece na tela sempre fecha o parecer. Isso descarta
+  // tanto o pré-versionamento (pydantic_hash NULL) quanto rodadas antigas
+  // (is_latest superseded ou versão < corrente), espelhando o que a tela mostra.
+  const projectVersion: SchemaVersion = {
+    major: project?.schema_version_major ?? 0,
+    minor: project?.schema_version_minor ?? 1,
+    patch: project?.schema_version_patch ?? 0,
+  };
+  const minVersion = latestMajorAnchor(projectVersion);
+  const projectVersionCtx = {
+    pydanticHash: project?.pydantic_hash ?? null,
+    version: projectVersion,
+  };
+
   type ActiveResponse = {
     id: string;
     answers: Record<string, unknown>;
     answerFieldHashes: AnswerFieldHashes;
   };
   const activeResponses: ActiveResponse[] = (responses ?? [])
-    .filter((r) => r.is_latest || r.respondent_type === "humano")
+    .filter((r) =>
+      responseQualifiesForVersion(
+        r as unknown as VersionedResponse,
+        minVersion,
+        projectVersionCtx,
+      ),
+    )
     .map((r) => ({
       id: r.id,
       answers: (r.answers ?? {}) as Record<string, unknown>,
@@ -100,21 +128,18 @@ export async function syncCompareAssignment(
     equivalencesByField,
   );
 
-  const allReviewed =
-    divergentFields.length > 0 &&
-    divergentFields.every((fn) => reviewedFields.has(fn));
-
-  if (allReviewed) {
-    if (assignment.status !== "concluido") {
-      await supabase
-        .from("assignments")
-        .update({ status: "concluido", completed_at: new Date().toISOString() })
-        .eq("id", assignment.id);
-    }
-  } else if (assignment.status === "pendente") {
+  // `resolveCompareStatus` trata o caso `divergentFields.length === 0` (ex.:
+  // todas as divergências fundidas por equivalência): vira `concluido` em vez de
+  // ficar preso. Atualiza só quando o status muda, limpando `completed_at` em
+  // qualquer regressão (ex.: desmarcar uma equivalência reabre a divergência).
+  const next = resolveCompareStatus(divergentFields, reviewedFields);
+  if (assignment.status !== next) {
     await supabase
       .from("assignments")
-      .update({ status: "em_andamento" })
+      .update({
+        status: next,
+        completed_at: next === "concluido" ? new Date().toISOString() : null,
+      })
       .eq("id", assignment.id);
   }
 }
