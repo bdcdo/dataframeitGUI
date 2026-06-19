@@ -260,6 +260,11 @@ export default async function ComparePageRoute({
     // compare-sync.ts via responseQualifiesForVersion; aqui adicionamos só os
     // filtros efêmeros de UI (since/respondent).
     const qualifiedResponses = docResponses.filter((r) => {
+      // Qualificação por versão (is_latest, pré-versionamento, piso)
+      // centralizada em responseQualifiesForVersion. Após o merge do PR #213,
+      // essa regra descarta TODA resposta superseded (is_latest=false), humana
+      // ou LLM — não só a LLM. A contagem abaixo ainda agrega por respondente
+      // distinto como defesa adicional.
       if (!responseQualifiesForVersion(r, minVersion, projectVersionCtx))
         return false;
       if (sinceMs !== null) {
@@ -271,15 +276,29 @@ export default async function ComparePageRoute({
       return true;
     });
 
-    const humanCount = qualifiedResponses.filter((r) => r.respondent_type === "humano").length;
+    // Conta respondentes humanos DISTINTOS (não linhas). Fallback para r.id
+    // quando respondent_id é null (dados legados) para não fundir respostas
+    // anônimas distintas numa só.
+    const humanCount = new Set(
+      qualifiedResponses
+        .filter((r) => r.respondent_type === "humano")
+        .map((r) => r.respondent_id ?? r.id),
+    ).size;
     const totalCount = qualifiedResponses.length;
 
     const assignedUsers = codingAssignedByDoc.get(docId) ?? new Set<string>();
     const assignedCodingCount = assignedUsers.size;
 
-    const humansFromAssigned = qualifiedResponses.filter(
-      (r) => r.respondent_type === "humano" && r.respondent_id && assignedUsers.has(r.respondent_id),
-    ).length;
+    const humansFromAssigned = new Set(
+      qualifiedResponses
+        .filter(
+          (r) =>
+            r.respondent_type === "humano" &&
+            r.respondent_id &&
+            assignedUsers.has(r.respondent_id),
+        )
+        .map((r) => r.respondent_id),
+    ).size;
 
     const pct = assignedCodingCount === 0 ? 100 : Math.round((humansFromAssigned / assignedCodingCount) * 100);
 

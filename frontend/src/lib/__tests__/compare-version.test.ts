@@ -93,14 +93,23 @@ describe("responseQualifiesForVersion", () => {
       responseQualifiesForVersion(resp({ is_latest: false }), floor, proj),
     ).toBe(false);
   });
-  it("mantém resposta humana mesmo com is_latest=false", () => {
+  it("descarta resposta humana superseded (is_latest=false) — fix PR #213", () => {
     expect(
       responseQualifiesForVersion(
         resp({ respondent_type: "humano", is_latest: false }),
         floor,
         proj,
       ),
-    ).toBe(true);
+    ).toBe(false);
+  });
+  it("descarta superseded humana mesmo sem filtro de versão (minVersion null)", () => {
+    expect(
+      responseQualifiesForVersion(
+        resp({ respondent_type: "humano", is_latest: false }),
+        null,
+        proj,
+      ),
+    ).toBe(false);
   });
   it("com filtro ativo, descarta resposta pré-versionamento (pydantic_hash NULL)", () => {
     expect(

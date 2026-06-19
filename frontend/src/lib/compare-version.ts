@@ -84,8 +84,11 @@ export interface ProjectVersionContext {
 
 // Predicado único de qualificação de uma resposta sob um piso de versão.
 // Regras, nesta ordem:
-//   1. respostas LLM superseded (is_latest=false) ficam de fora; humanas sempre
-//      passam essa cláusula;
+//   1. respostas superseded (is_latest=false) ficam de fora — humanas OU LLM.
+//      Após o PR #213, uma codificação humana rebaixada (ao promover uma versão
+//      mais recente no dedup de documentos, ou após unificação de membros) tem
+//      is_latest=false e não deve reaparecer como segundo card / inflar a
+//      contagem. Antes a cláusula mantinha humano por engano;
 //   2. sem filtro de versão (minVersion null = filtro "all"), qualifica;
 //   3. respostas pré-versionamento (pydantic_hash NULL, gravadas antes da
 //      migration 20260420) são descartadas com filtro ativo — não há como
@@ -106,7 +109,7 @@ export function responseQualifiesForVersion(
   minVersion: SchemaVersion | null,
   project: ProjectVersionContext,
 ): boolean {
-  if (!r.is_latest && r.respondent_type !== "humano") return false;
+  if (!r.is_latest) return false;
   if (!minVersion) return true;
   if (r.pydantic_hash === null) return false;
   if (r.schema_version_major !== null) {
