@@ -49,3 +49,6 @@ next-env.d.ts
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# backups gerados por scripts de dedup (contem dados do banco)
+/scripts/dedup-backups/
