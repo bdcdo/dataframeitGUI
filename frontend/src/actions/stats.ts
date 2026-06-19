@@ -264,7 +264,9 @@ export async function fetchGabaritoForComment(
       .select("id, respondent_name, respondent_type, answers")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
-      .or("is_latest.eq.true,respondent_type.eq.humano");
+      // Só respostas ativas: humanas rebaixadas (is_latest=false) ou LLM antigo
+      // não devem aparecer no gabarito do comentário.
+      .eq("is_latest", true);
 
     if (!responses) return { answers: [] };
 
