@@ -6,6 +6,10 @@ import {
   computeDivergentFieldNames,
   isFreeTextField,
 } from "@/lib/compare-divergence";
+import {
+  resolveMinVersion,
+  responseQualifiesForVersion,
+} from "@/lib/compare-version";
 import type { EquivalencePair } from "@/lib/equivalence";
 
 // Recomputes assignment status (pendente / em_andamento / concluido) for the
@@ -36,12 +40,16 @@ export async function syncCompareAssignment(
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch",
+      )
       .eq("id", projectId)
       .single(),
     supabase
       .from("responses")
-      .select("id, respondent_type, is_latest, answers, answer_field_hashes")
+      .select(
+        "id, respondent_type, is_latest, answers, answer_field_hashes, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch",
+      )
       .eq("project_id", projectId)
       .eq("document_id", documentId),
     supabase
@@ -70,13 +78,33 @@ export async function syncCompareAssignment(
   }
 
   const fields = (project?.pydantic_fields as PydanticField[]) || [];
+
+  // Qualifica as respostas pelo MESMO predicado de versão da página
+  // (compare-version.ts). Ancoramos sempre na versão corrente do projeto
+  // (latest_major) — não no filtro efêmero da UI: a conclusão do assignment de
+  // um revisor não pode depender de qual filtro de versão ele tinha aberto na
+  // tela, senão dois revisores com filtros diferentes fechariam o mesmo doc de
+  // formas distintas. Antes, este sync ignorava versão e usava todas as
+  // respostas is_latest/humano, fazendo o assignment não fechar quando havia
+  // respostas de schemas antigos (o sintoma "sai sem terminar de avaliar").
+  const projectVersion = {
+    major: project?.schema_version_major ?? 0,
+    minor: project?.schema_version_minor ?? 1,
+    patch: project?.schema_version_patch ?? 0,
+  };
+  const minVersion = resolveMinVersion("latest_major", projectVersion);
+  const projectVersionCtx = {
+    pydanticHash: project?.pydantic_hash ?? null,
+    version: projectVersion,
+  };
+
   type ActiveResponse = {
     id: string;
     answers: Record<string, unknown>;
     answerFieldHashes: AnswerFieldHashes;
   };
   const activeResponses: ActiveResponse[] = (responses ?? [])
-    .filter((r) => r.is_latest || r.respondent_type === "humano")
+    .filter((r) => responseQualifiesForVersion(r, minVersion, projectVersionCtx))
     .map((r) => ({
       id: r.id,
       answers: (r.answers ?? {}) as Record<string, unknown>,

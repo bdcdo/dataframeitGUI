@@ -5,10 +5,14 @@ import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
+import { readCompareFilters } from "@/lib/compare-filters";
 import {
-  readCompareFilters,
-  type CompareFiltersValue,
-} from "@/lib/compare-filters";
+  resolveMinVersion,
+  responseQualifiesForVersion,
+  latestMajorAnchor,
+  formatVersion,
+  parseVersionStr,
+} from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 interface CompareDoc {
@@ -44,39 +48,6 @@ export interface DocCoverage {
   divergentCount: number;
   reviewedCount: number;
   assignmentStatus: "pendente" | "em_andamento" | "concluido" | null;
-}
-
-// Compara (a.b.c) >= (d.e.f)
-function versionGte(
-  a: { major: number; minor: number; patch: number },
-  b: { major: number; minor: number; patch: number },
-): boolean {
-  if (a.major !== b.major) return a.major > b.major;
-  if (a.minor !== b.minor) return a.minor > b.minor;
-  return a.patch >= b.patch;
-}
-
-function parseVersionStr(
-  s: string,
-): { major: number; minor: number; patch: number } | null {
-  const m = s.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!m) return null;
-  return {
-    major: Number.parseInt(m[1], 10),
-    minor: Number.parseInt(m[2], 10),
-    patch: Number.parseInt(m[3], 10),
-  };
-}
-
-function resolveMinVersion(
-  filter: CompareFiltersValue["version"],
-  projectCurrent: { major: number; minor: number; patch: number },
-): { major: number; minor: number; patch: number } | null {
-  if (filter === "all") return null;
-  if (filter === "latest_major") {
-    return { major: projectCurrent.major, minor: 0, patch: 0 };
-  }
-  return parseVersionStr(filter);
 }
 
 export default async function ComparePageRoute({
@@ -118,10 +89,13 @@ export default async function ComparePageRoute({
       .single(),
     supabase
       .from("responses")
+      // `documents!inner` + filtro excluded_at: documentos arquivados não
+      // entram na fila de comparação (consistente com a contagem de B4).
       .select(
-        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents(id, title, external_id)",
+        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents!inner(id, title, external_id)",
       )
       .eq("project_id", id)
+      .is("documents.excluded_at", null)
       .limit(5000),
     supabase
       .from("schema_change_log")
@@ -183,6 +157,10 @@ export default async function ComparePageRoute({
     patch: project?.schema_version_patch ?? 0,
   };
   const minVersion = resolveMinVersion(filters.version, projectVersion);
+  const projectVersionCtx = {
+    pydanticHash: project?.pydantic_hash ?? null,
+    version: projectVersion,
+  };
   const sinceMs = filters.since ? new Date(filters.since).getTime() : null;
 
   // Build distinct ordered version list desc — une versões do schema_change_log
@@ -212,7 +190,7 @@ export default async function ComparePageRoute({
     if (pa.minor !== pb.minor) return pb.minor - pa.minor;
     return pb.patch - pa.patch;
   });
-  const latestMajorLabel = `${projectVersion.major}.0.0`;
+  const latestMajorLabel = formatVersion(latestMajorAnchor(projectVersion));
 
   // Compare-type assignments filter for researchers
   let compareAssignedDocIds: Set<string> | null = null;
@@ -277,26 +255,13 @@ export default async function ComparePageRoute({
     if (compareAssignedDocIds && !compareAssignedDocIds.has(docId)) continue;
     if (!docsMetaMap.has(docId)) continue;
 
-    // Apply version + since + respondent filters per response
+    // Apply version + since + respondent filters per response. A regra de
+    // versão (is_latest/humano, pré-versionamento, piso) é compartilhada com
+    // compare-sync.ts via responseQualifiesForVersion; aqui adicionamos só os
+    // filtros efêmeros de UI (since/respondent).
     const qualifiedResponses = docResponses.filter((r) => {
-      // Keep only active (is_latest) OR human responses — antigos (is_latest=false) do LLM ficam fora
-      if (!r.is_latest && r.respondent_type !== "humano") return false;
-
-      // Respostas pré-versionamento (pydantic_hash NULL) foram gravadas antes
-      // da migration 20260420 que introduziu schema_version_*. Elas têm
-      // `rv = {0,0,0}` via os `?? 0` abaixo e por isso passam o filtro
-      // latest_major, reaparecendo como "divergências" mesmo quando a versão
-      // atual tem consenso. Quando há filtro de versão ativo, descartamos.
-      if (minVersion && r.pydantic_hash === null) return false;
-
-      if (minVersion) {
-        const rv = {
-          major: r.schema_version_major ?? 0,
-          minor: r.schema_version_minor ?? 0,
-          patch: r.schema_version_patch ?? 0,
-        };
-        if (!versionGte(rv, minVersion)) return false;
-      }
+      if (!responseQualifiesForVersion(r, minVersion, projectVersionCtx))
+        return false;
       if (sinceMs !== null) {
         if (new Date(r.created_at).getTime() < sinceMs) return false;
       }
