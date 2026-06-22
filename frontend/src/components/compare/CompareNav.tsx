@@ -21,6 +21,7 @@ interface CompareNavProps {
   onToggleFullscreen: () => void;
   parecerUrl?: string;
   respondentNames: string[];
+  defaultMinHumans: number;
   availableVersions: string[];
   latestMajorLabel: string | null;
   currentProjectVersion: string;
@@ -40,6 +41,7 @@ export function CompareNav({
   onToggleFullscreen,
   parecerUrl,
   respondentNames,
+  defaultMinHumans,
   availableVersions,
   latestMajorLabel,
   currentProjectVersion,
@@ -65,6 +67,7 @@ export function CompareNav({
         </Badge>
         <CompareFilters
           respondentNames={respondentNames}
+          defaultMinHumans={defaultMinHumans}
           availableVersions={availableVersions}
           latestMajorLabel={latestMajorLabel}
         />
