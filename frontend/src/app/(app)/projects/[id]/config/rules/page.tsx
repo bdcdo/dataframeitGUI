@@ -10,7 +10,7 @@ export default async function RulesPage({
 
   const { data: project } = await supabase
     .from("projects")
-    .select("resolution_rule, min_responses_for_comparison, allow_researcher_review")
+    .select("resolution_rule, min_responses_for_comparison, allow_researcher_review, automation_mode, comparison_includes_llm")
     .eq("id", id)
     .single();
 
@@ -21,6 +21,8 @@ export default async function RulesPage({
         resolutionRule={project?.resolution_rule || "majority"}
         minResponses={project?.min_responses_for_comparison || 2}
         allowResearcherReview={project?.allow_researcher_review ?? false}
+        automationMode={project?.automation_mode ?? "auto_review_llm"}
+        comparisonIncludesLlm={project?.comparison_includes_llm ?? true}
       />
     </div>
   );

@@ -16,12 +16,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
 
 interface RulesFormProps {
   projectId: string;
   resolutionRule: string;
   minResponses: number;
   allowResearcherReview: boolean;
+  automationMode: AutomationMode;
+  comparisonIncludesLlm: boolean;
 }
 
 const RESOLUTION_OPTIONS = [
@@ -35,13 +39,19 @@ export function RulesForm({
   resolutionRule,
   minResponses,
   allowResearcherReview,
+  automationMode,
+  comparisonIncludesLlm,
 }: RulesFormProps) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [rule, setRule] = useState(resolutionRule);
   const [min, setMin] = useState(minResponses);
   const [allowReview, setAllowReview] = useState(allowResearcherReview);
+  const [mode, setMode] = useState<AutomationMode>(automationMode);
+  const [includesLlm, setIncludesLlm] = useState(comparisonIncludesLlm);
   const [saved, setSaved] = useState(false);
+
+  const modeMeta = AUTOMATION_MODES.find((m) => m.value === mode);
 
   function handleSave() {
     startTransition(async () => {
@@ -50,6 +60,8 @@ export function RulesForm({
           resolution_rule: rule,
           min_responses_for_comparison: min,
           allow_researcher_review: allowReview,
+          automation_mode: mode,
+          comparison_includes_llm: includesLlm,
         });
         if (r?.error) {
           toast.error(r.error);
@@ -68,9 +80,54 @@ export function RulesForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Regras de Resolução</CardTitle>
+        <CardTitle>Regras de Revisão</CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
+        <div className="space-y-2">
+          <Label className="text-sm">Modo de automação</Label>
+          <Select value={mode} onValueChange={(v) => setMode(v as AutomationMode)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {AUTOMATION_MODES.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {modeMeta && (
+            <p className="text-xs text-muted-foreground">{modeMeta.description}</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Mudar o modo só afeta novas codificações; o backlog existente é
+            preenchido conforme as pessoas codificam (ou via sorteio manual).
+            Determina também quais abas de revisão aparecem no projeto.
+          </p>
+        </div>
+
+        {mode === "compare_humans" && (
+          <div className="flex items-start gap-3">
+            <Switch
+              id="includesLlm"
+              checked={includesLlm}
+              onCheckedChange={setIncludesLlm}
+              aria-label="Incluir o LLM no disparo da comparação"
+            />
+            <div className="space-y-1">
+              <Label htmlFor="includesLlm" className="text-sm">
+                Incluir o LLM no disparo da comparação
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Quando ligado, a comparação é liberada também se os humanos
+                concordam mas o LLM diverge. Desligado, só dispara quando os
+                humanos divergem entre si (o LLM ainda aparece na comparação).
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-2">
           <Label className="text-sm">Regra de resolução</Label>
           <Select value={rule} onValueChange={setRule}>

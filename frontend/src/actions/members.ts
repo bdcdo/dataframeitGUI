@@ -9,6 +9,8 @@ import {
   retryPendingArbitrations,
   releaseArbitrationsFromUser,
 } from "@/actions/field-reviews";
+import { retryPendingComparisons } from "@/actions/comparisons";
+import { releaseComparisonsFromUser } from "@/lib/auto-comparison";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { MEMBERS_TAG_PROFILE as TAG_PROFILE } from "@/lib/cache";
 
@@ -345,6 +347,55 @@ export async function setCanArbitrate(
 
   let retried: { assigned: number; stillNoPool: number } | undefined;
   const result = await retryPendingArbitrations(projectId);
+  if (result.success) {
+    retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/config/members`);
+  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
+  return { retried };
+}
+
+// Define se um membro entra no sorteio de revisores de comparação
+// (assignComparisonReviewer). Espelha setCanArbitrate: em ambos os sentidos
+// dispara retryPendingComparisons para realocar o backlog — a contagem volta em
+// `retried` para a UI informar o coordenador.
+//
+// Habilita: drena os documentos divergentes que estavam sem revisor elegível.
+// Desabilita: solta as comparações PENDENTES atribuídas a esse membro
+// (releaseComparisonsFromUser) — senão ficariam presas com quem não pode mais
+// comparar — e em seguida re-sorteia os casos liberados.
+export async function setCanCompare(
+  memberId: string,
+  canCompare: boolean,
+  projectId: string,
+): Promise<{ error?: string; retried?: { assigned: number; stillNoPool: number } }> {
+  const supabase = await createSupabaseServer();
+  const { data: member, error } = await supabase
+    .from("project_members")
+    .update({ can_compare: canCompare })
+    .eq("id", memberId)
+    .select("user_id")
+    .single();
+
+  if (error) return { error: error.message };
+
+  if (!canCompare) {
+    const admin = createSupabaseAdmin();
+    const releaseResult = await releaseComparisonsFromUser(
+      admin,
+      projectId,
+      member.user_id,
+    );
+    // Falha no release deixa comparações atribuídas a quem não pode mais
+    // comparar — devolve error sem chamar retry (o retry só recomputa o backlog
+    // sem comparação ativa e não tocaria nesses casos travados).
+    if (releaseResult.error) return { error: releaseResult.error };
+  }
+
+  let retried: { assigned: number; stillNoPool: number } | undefined;
+  const result = await retryPendingComparisons(projectId);
   if (result.success) {
     retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };
   }

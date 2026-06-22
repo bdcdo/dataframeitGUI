@@ -6,6 +6,7 @@ import {
   changeRole,
   setCanArbitrate,
   setCanResolve,
+  setCanCompare,
   updatePendingMemberEmail,
   unlinkMemberEmail,
   type UnificationPreview,
@@ -121,6 +122,7 @@ export function MemberList({
   // sequência não precisa esperar serializar.
   const [pendingArbitrateId, setPendingArbitrateId] = useState<string | null>(null);
   const [pendingResolveId, setPendingResolveId] = useState<string | null>(null);
+  const [pendingCompareId, setPendingCompareId] = useState<string | null>(null);
   const [editingEmailMemberId, setEditingEmailMemberId] = useState<string | null>(null);
   // Vínculo de e-mails (US2): um único par de dialogs no root, dirigido pelo
   // membro selecionado / preview de unificação retornado pela action.
@@ -152,7 +154,7 @@ export function MemberList({
   // revalidatePath devolver — em conexão lenta parece que o clique não pegou.
   const [optimisticMembers, applyOptimistic] = useOptimistic<
     MemberRow[],
-    { memberId: string; patch: Partial<Pick<MemberRow, "can_arbitrate" | "can_resolve">> }
+    { memberId: string; patch: Partial<Pick<MemberRow, "can_arbitrate" | "can_resolve" | "can_compare">> }
   >(members, (current, update) =>
     current.map((m) =>
       m.id === update.memberId ? { ...m, ...update.patch } : m,
@@ -223,6 +225,35 @@ export function MemberList({
         );
       } finally {
         setPendingResolveId(null);
+      }
+    });
+  };
+
+  const handleToggleCompare = (memberId: string, value: boolean) => {
+    setPendingCompareId(memberId);
+    startTransition(async () => {
+      applyOptimistic({ memberId, patch: { can_compare: value } });
+      try {
+        const result = await setCanCompare(memberId, value, projectId);
+        if (result?.error) {
+          toast.error(result.error);
+          return;
+        }
+        const verb = value ? "habilitada" : "desabilitada";
+        const retried = result.retried;
+        if (retried && retried.assigned > 0 && retried.stillNoPool > 0) {
+          toast.success(
+            `Comparação ${verb}. ${retried.assigned} caso(s) realocado(s); ${retried.stillNoPool} ainda sem revisor elegível.`,
+          );
+        } else if (retried && retried.assigned > 0) {
+          toast.success(
+            `Comparação ${verb}. ${retried.assigned} caso(s) realocado(s).`,
+          );
+        } else {
+          toast.success(`Comparação ${verb}.`);
+        }
+      } finally {
+        setPendingCompareId(null);
       }
     });
   };
@@ -316,6 +347,18 @@ export function MemberList({
                 aria-label="Elegível para arbitrar"
               />
               Arbitra
+            </span>
+            <span
+              className="flex items-center gap-2 text-xs text-muted-foreground"
+              title="Recebe documentos divergentes para comparar"
+            >
+              <Switch
+                checked={m.can_compare}
+                onCheckedChange={(v) => handleToggleCompare(m.id, v)}
+                disabled={pendingCompareId === m.id}
+                aria-label="Elegível para comparar"
+              />
+              Compara
             </span>
             <Select
               value={m.role}
