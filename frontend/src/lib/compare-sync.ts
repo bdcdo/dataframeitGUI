@@ -8,11 +8,12 @@ import {
   resolveCompareStatus,
 } from "@/lib/compare-divergence";
 import {
-  latestMajorAnchor,
+  resolveMinVersion,
   responseQualifiesForVersion,
   type SchemaVersion,
   type VersionedResponse,
 } from "@/lib/compare-version";
+import { DEFAULT_COMPARE_FILTERS } from "@/lib/compare-filters";
 import type { EquivalencePair } from "@/lib/equivalence";
 
 // Recomputes assignment status (pendente / em_andamento / concluido) for the
@@ -72,21 +73,34 @@ export async function syncCompareAssignment(
 
   const fields = (project?.pydantic_fields as PydanticField[]) || [];
 
-  // Conclusão usa o MESMO predicado da página (`responseQualifiesForVersion`,
-  // anti-drift #217) com o piso da RODADA CORRENTE — `latestMajorAnchor` da
-  // versão atual do projeto, que é exatamente o filtro default `latest_major`
-  // da UI. Esse é o conjunto canônico de "concluído": independe do filtro de
-  // versão efêmero que a revisora escolha, e por ser a visão mais estreita
-  // selecionável é sempre subconjunto do que ela vê em qualquer filtro — então
-  // resolver tudo que aparece na tela sempre fecha o parecer. Isso descarta
-  // tanto o pré-versionamento (pydantic_hash NULL) quanto rodadas antigas
-  // (is_latest superseded ou versão < corrente), espelhando o que a tela mostra.
+  // Conclusão usa o MESMO predicado (`responseQualifiesForVersion`, anti-drift
+  // #217) e o MESMO piso de versão que a página aplica no estado DEFAULT da UI
+  // — derivado de `DEFAULT_COMPARE_FILTERS.version` via `resolveMinVersion`, a
+  // mesma função que `compare/page.tsx` chama. Hoje o default é "all"
+  // (compare-filters.ts), então `minVersion` é null (sem piso) e o fecho
+  // considera toda resposta `is_latest`, de qualquer versão — exatamente o que
+  // a revisora vê "sem filtro". Por construção, no estado default a visão e o
+  // fecho coincidem: resolver as divergências visíveis sempre fecha o parecer.
+  //
+  // O que muda em relação ao sync antigo (`is_latest || respondent_type ===
+  // "humano"`) é só a exclusão de codificações SUPERSEDED (`is_latest=false`,
+  // humanas inclusive) — que o antigo contava e a tela não mostrava, a causa
+  // real da trava do #217. Pré-versionamento (`pydantic_hash` NULL) e rodadas
+  // antigas permanecem no fecho, espelhando o default `all`.
+  //
+  // Filtros efêmeros (versão manual, `since`, `respondent`) são lentes de
+  // inspeção: NÃO redefinem "concluído". Se a revisora escolher uma lente mais
+  // estreita que o default, a tela pode mostrar menos do que o fecho exige —
+  // comportamento esperado de uma lente, fora do fluxo "sem filtro".
   const projectVersion: SchemaVersion = {
     major: project?.schema_version_major ?? 0,
     minor: project?.schema_version_minor ?? 1,
     patch: project?.schema_version_patch ?? 0,
   };
-  const minVersion = latestMajorAnchor(projectVersion);
+  const minVersion = resolveMinVersion(
+    DEFAULT_COMPARE_FILTERS.version,
+    projectVersion,
+  );
   const projectVersionCtx = {
     pydanticHash: project?.pydantic_hash ?? null,
     version: projectVersion,
