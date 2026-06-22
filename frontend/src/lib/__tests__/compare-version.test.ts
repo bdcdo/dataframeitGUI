@@ -9,6 +9,12 @@ import {
   type SchemaVersion,
   type VersionedResponse,
 } from "@/lib/compare-version";
+import { DEFAULT_COMPARE_FILTERS } from "@/lib/compare-filters";
+import {
+  computeDivergentFieldNames,
+  resolveCompareStatus,
+} from "@/lib/compare-divergence";
+import type { PydanticField } from "@/lib/types";
 
 const v = (major: number, minor: number, patch: number): SchemaVersion => ({
   major,
@@ -152,6 +158,118 @@ describe("responseQualifiesForVersion", () => {
   it("schema_version NULL + hash antigo reprova (schema anterior)", () => {
     expect(responseQualifiesForVersion(nullVer("hash-antigo"), floor, proj)).toBe(
       false,
+    );
+  });
+});
+
+// O fecho do parecer (compare-sync.ts) deriva seu piso de versão do MESMO
+// default da UI que compare/page.tsx usa, via
+// resolveMinVersion(DEFAULT_COMPARE_FILTERS.version, ...). Estes testes travam
+// esse contrato e reproduzem o incidente #217/#218 no pipeline puro do sync,
+// sem Supabase.
+describe("fecho espelha o filtro default da UI (#217/#218)", () => {
+  it("resolveMinVersion com o default da UI não impõe piso (default = 'all')", () => {
+    // Se alguém mudar DEFAULT_COMPARE_FILTERS.version sem revisar o sync, este
+    // teste quebra — a intenção é manter sync e visão default acoplados.
+    expect(DEFAULT_COMPARE_FILTERS.version).toBe("all");
+    expect(
+      resolveMinVersion(DEFAULT_COMPARE_FILTERS.version, v(0, 20, 0)),
+    ).toBeNull();
+  });
+
+  // Incidente Zolgensma: doc com várias codificações humanas — uma SUPERSEDED
+  // (is_latest=false), uma pré-versionamento (pydantic_hash NULL), uma de minor
+  // antiga (0.18.0) e duas da corrente (0.20.0). O sync antigo
+  // (`is_latest || respondent_type === "humano"`) contava a superseded, que a
+  // tela não mostra, criando divergência invisível → trava. Sob o default 'all'
+  // (minVersion null), o fecho descarta SÓ a superseded e mantém o resto,
+  // espelhando o que a revisora vê "sem filtro".
+  type Row = VersionedResponse & {
+    id: string;
+    answers: Record<string, unknown>;
+  };
+  const proj = { pydanticHash: "hash-atual", version: v(0, 20, 0) };
+  const minVersion = resolveMinVersion(
+    DEFAULT_COMPARE_FILTERS.version,
+    v(0, 20, 0),
+  );
+
+  const human = (
+    id: string,
+    answers: Record<string, unknown>,
+    over: Partial<VersionedResponse>,
+  ): Row => ({
+    id,
+    answers,
+    respondent_type: "humano",
+    is_latest: true,
+    pydantic_hash: "hash-atual",
+    schema_version_major: 0,
+    schema_version_minor: 20,
+    schema_version_patch: 0,
+    ...over,
+  });
+
+  // "decisao" diverge entre os ativos (improc vs proc); "obs" só diverge se a
+  // superseded entrar (ativos concordam em "irrelevante").
+  const rows: Row[] = [
+    human(
+      "sup",
+      { decisao: "improc", obs: "diferente" },
+      { is_latest: false, pydantic_hash: "hash-antigo", schema_version_minor: 18 },
+    ),
+    human(
+      "pre",
+      { decisao: "improc", obs: "irrelevante" },
+      {
+        pydantic_hash: null,
+        schema_version_major: null,
+        schema_version_minor: null,
+        schema_version_patch: null,
+      },
+    ),
+    human(
+      "v18",
+      { decisao: "proc", obs: "irrelevante" },
+      { pydantic_hash: "hash-018", schema_version_minor: 18 },
+    ),
+    human("v20a", { decisao: "proc", obs: "irrelevante" }, {}),
+    human("v20b", { decisao: "proc", obs: "irrelevante" }, {}),
+  ];
+
+  const fields: PydanticField[] = [
+    {
+      name: "decisao",
+      type: "single",
+      options: ["proc", "improc"],
+      description: "",
+      target: "all",
+    },
+    { name: "obs", type: "text", options: null, description: "", target: "all" },
+  ];
+
+  const active = rows.filter((r) =>
+    responseQualifiesForVersion(r, minVersion, proj),
+  );
+
+  it("o fecho descarta só a superseded, mantendo pré-versionamento e minor antiga", () => {
+    expect(active.map((r) => r.id)).toEqual(["pre", "v18", "v20a", "v20b"]);
+  });
+
+  it("incluir a superseded (bug antigo) inflaria 'obs' como divergência invisível", () => {
+    const withSuperseded = computeDivergentFieldNames(fields, rows);
+    expect(withSuperseded).toContain("obs");
+  });
+
+  it("sem a superseded, 'obs' não diverge — só 'decisao' exige veredito", () => {
+    const divergent = computeDivergentFieldNames(fields, active);
+    expect(divergent).toEqual(["decisao"]);
+  });
+
+  it("resolvido o campo divergente visível, o parecer fecha (concluido)", () => {
+    const divergent = computeDivergentFieldNames(fields, active);
+    expect(resolveCompareStatus(divergent, new Set(["decisao"]))).toBe(
+      "concluido",
     );
   });
 });
