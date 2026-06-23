@@ -1,0 +1,68 @@
+"use client";
+
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+
+const PINNED_DOC_EVENT = "pinneddoc:change";
+
+// Função estável (módulo) para o `useSyncExternalStore`. Ouve um custom event
+// para mudanças na mesma aba (sessionStorage NÃO dispara "storage" same-tab) e
+// o evento "storage" nativo para mudanças cross-tab.
+function subscribe(callback: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(PINNED_DOC_EVENT, callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    window.removeEventListener(PINNED_DOC_EVENT, callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+
+/**
+ * Seleção de documento persistida em `sessionStorage`, com limpeza de órfão.
+ *
+ * Lê o valor durante o render via `useSyncExternalStore` (React 19) em vez de um
+ * `useEffect` de restore — isso elimina de verdade o
+ * `eslint-disable react-hooks/set-state-in-effect` do padrão antigo (não apenas
+ * silencia). `getServerSnapshot` retorna `null`, então a hidratação é segura por
+ * design. O snapshot é a string crua do storage (primitivo → referencialmente
+ * estável, sem loop de render).
+ *
+ * `options.validIds`: quando o id fixado deixa de estar entre os válidos (ex.:
+ * doc resolvido saiu da fila), um effect só-`removeItem` limpa o storage. Sem
+ * `setState` no effect → sem disable; o valor reativo se atualiza pelo evento
+ * disparado.
+ */
+export function usePinnedDoc(
+  storageKey: string,
+  options?: { validIds?: readonly string[] },
+): [string | null, (id: string | null) => void] {
+  const getSnapshot = useCallback(
+    () =>
+      typeof window === "undefined"
+        ? null
+        : window.sessionStorage.getItem(storageKey),
+    [storageKey],
+  );
+  const pinnedDocId = useSyncExternalStore(subscribe, getSnapshot, () => null);
+
+  const setPinnedDocId = useCallback(
+    (id: string | null) => {
+      if (typeof window === "undefined") return;
+      if (id === null) window.sessionStorage.removeItem(storageKey);
+      else window.sessionStorage.setItem(storageKey, id);
+      window.dispatchEvent(new Event(PINNED_DOC_EVENT));
+    },
+    [storageKey],
+  );
+
+  const validIds = options?.validIds;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (pinnedDocId && validIds && !validIds.includes(pinnedDocId)) {
+      window.sessionStorage.removeItem(storageKey);
+      window.dispatchEvent(new Event(PINNED_DOC_EVENT));
+    }
+  }, [pinnedDocId, validIds, storageKey]);
+
+  return [pinnedDocId, setPinnedDocId];
+}

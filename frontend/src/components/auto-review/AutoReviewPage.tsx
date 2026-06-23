@@ -33,6 +33,7 @@ import {
   isAutoReviewFieldDecided,
   verdictRequiresJustification,
 } from "@/lib/auto-review-decided";
+import { usePinnedDoc } from "@/hooks/usePinnedDoc";
 
 export interface AutoReviewDoc {
   docId: string;
@@ -88,26 +89,12 @@ function AutoReviewPageInner({
   const readOnly = !isOwnQueue;
 
   const storageKey = `${STORAGE_KEY_PREFIX}${projectId}:${viewAsUserId}`;
-  const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
-
-  // Restore último doc visto (por projeto+fila) — espelha o padrão da Compare.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const v = window.sessionStorage.getItem(storageKey);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- restaura o doc do sessionStorage (client-only)
-    if (v) setPinnedDocId(v);
-  }, [storageKey]);
-
-  // Após refresh(), um doc totalmente resolvido sai da fila — o
-  // pinnedDocId em sessionStorage fica órfão. Limpa o storage para não
-  // restaurar um id inexistente numa sessão futura; o state em memória pode
-  // seguir intocado porque o docIndex já cai para 0 quando o id não bate.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (pinnedDocId && !docs.some((d) => d.docId === pinnedDocId)) {
-      window.sessionStorage.removeItem(storageKey);
-    }
-  }, [docs, pinnedDocId, storageKey]);
+  // Seleção persistida em sessionStorage (restore + limpeza de órfão quando um
+  // doc resolvido sai da fila) encapsulada em usePinnedDoc — ver hook.
+  const validDocIds = useMemo(() => docs.map((d) => d.docId), [docs]);
+  const [pinnedDocId, setPinnedDocId] = usePinnedDoc(storageKey, {
+    validIds: validDocIds,
+  });
 
   const docIndex = useMemo(() => {
     if (docs.length === 0) return 0;
@@ -144,9 +131,6 @@ function AutoReviewPageInner({
     const target = docs[clamped];
     if (target) {
       setPinnedDocId(target.docId);
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(storageKey, target.docId);
-      }
     }
   }
 
