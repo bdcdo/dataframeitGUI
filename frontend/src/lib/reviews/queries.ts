@@ -119,6 +119,23 @@ export function formatAnswer(val: unknown): string {
   return String(val);
 }
 
+// Resolve o respondente efetivo cujas respostas a aba "Meu Gabarito" exibe.
+// Só coordenador, criador ou master podem inspecionar as respostas de OUTRO
+// respondente (via ?viewAsUser=...); qualquer outro vê apenas as próprias.
+// SEGURANÇA: a policy RLS "Members view responses" deixa qualquer membro ler
+// todas as responses do projeto (não filtra por respondent_id), então esta
+// checagem é a única barreira — por isso o `isCoordinator` que a alimenta é
+// fail-closed (não incorpora queryFailed). Ver reviews/my-verdicts/page.tsx.
+export function resolveEffectiveUserId(opts: {
+  selfId: string;
+  isMaster: boolean;
+  isCoordinator: boolean;
+  viewAsUser: string | undefined;
+}): string {
+  const { selfId, isMaster, isCoordinator, viewAsUser } = opts;
+  return (isMaster || isCoordinator) && viewAsUser ? viewAsUser : selfId;
+}
+
 function getRespondentKey(r: {
   respondent_id: string | null;
   respondent_name: string | null;

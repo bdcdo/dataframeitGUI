@@ -5,7 +5,11 @@ import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
-import { readCompareFilters, compareDefaultsForMode } from "@/lib/compare-filters";
+import {
+  readCompareFilters,
+  compareDefaultsForMode,
+  assignedCompareDocIds,
+} from "@/lib/compare-filters";
 import {
   resolveMinVersion,
   responseQualifiesForVersion,
@@ -200,15 +204,12 @@ export default async function ComparePageRoute({
   });
   const latestMajorLabel = formatVersion(latestMajorAnchor(projectVersion));
 
-  // Compare-type assignments filter for researchers
-  let compareAssignedDocIds: Set<string> | null = null;
-  if (!isCoordinator) {
-    compareAssignedDocIds = new Set(
-      (allAssignments ?? [])
-        .filter((a) => a.type === "comparacao" && a.user_id === user.id)
-        .map((a) => a.document_id),
-    );
-  }
+  // Compare-type assignments filter for researchers (ver assignedCompareDocIds).
+  const compareAssignedDocIds = assignedCompareDocIds(
+    isCoordinator,
+    allAssignments,
+    user.id,
+  );
 
   // Coding-type assignments map per doc (denominator for % atribuídos)
   const codingAssignedByDoc = new Map<string, Set<string>>();

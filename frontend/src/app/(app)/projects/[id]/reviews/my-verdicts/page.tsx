@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
-import { isAnswerCorrect } from "@/lib/reviews/queries";
+import { isAnswerCorrect, resolveEffectiveUserId } from "@/lib/reviews/queries";
 import type { PydanticField } from "@/lib/types";
 
 export interface VerdictItem {
@@ -61,8 +61,12 @@ export default async function MyVerdictsPage({
   ]);
   const isCoordinator = access.isCoordinator;
 
-  const effectiveUserId =
-    (user.isMaster || isCoordinator) && sp.viewAsUser ? sp.viewAsUser : user.id;
+  const effectiveUserId = resolveEffectiveUserId({
+    selfId: user.id,
+    isMaster: user.isMaster,
+    isCoordinator,
+    viewAsUser: sp.viewAsUser,
+  });
 
   // Fetch responses for the effective user
   const { data: myResponses } = await supabase
