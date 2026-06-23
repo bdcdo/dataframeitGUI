@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition, useMemo } from "react";
+import { useState, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   ResizablePanelGroup,
@@ -20,7 +20,7 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getDocumentText } from "@/actions/documents";
+import { useDocumentText } from "@/hooks/useDocumentText";
 import {
   resolveReviewComment,
   reopenReviewComment,
@@ -111,33 +111,13 @@ export function CommentsSplitView({
     0,
   );
   const [docIndex, setDocIndex] = useState(initialIdx);
-  const [docTextCache, setDocTextCache] = useState<
-    Record<string, string>
-  >({});
-  const [loadingText, setLoadingText] = useState(false);
 
   const currentGroup = docGroups[docIndex];
   const currentDocId = currentGroup?.docId;
-  const currentText = currentDocId ? docTextCache[currentDocId] : undefined;
-
-  // Lazy-load document text
-  useEffect(() => {
-    if (!currentDocId || docTextCache[currentDocId]) return;
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- inicia o lazy-load do texto do doc (sincronização com backend)
-    setLoadingText(true);
-    getDocumentText(projectId, currentDocId).then((result) => {
-      if (cancelled) return;
-      setDocTextCache((prev) => ({
-        ...prev,
-        [currentDocId]: result?.text ?? "(Documento não encontrado)",
-      }));
-      setLoadingText(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentDocId, projectId, docTextCache]);
+  const { text: currentText, loading: loadingText } = useDocumentText(
+    projectId,
+    currentDocId,
+  );
 
   const handleResolve = (comment: ReviewComment) => {
     startTransition(async () => {
