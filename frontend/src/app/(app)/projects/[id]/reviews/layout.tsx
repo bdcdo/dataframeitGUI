@@ -1,4 +1,3 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { ReviewsNav } from "@/components/reviews/ReviewsNav";
 import { redirect } from "next/navigation";
@@ -10,33 +9,12 @@ export default async function ReviewsLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user, supabase] = await Promise.all([
-    params,
-    getAuthUser(),
-    createSupabaseServer(),
-  ]);
+  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
   if (!user) redirect("/auth/login");
-
-  const [{ data: project }, { data: membership }] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("created_by")
-      .eq("id", id)
-      .single(),
-    supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .single(),
-  ]);
-
-  const isCoordinator =
-    membership?.role === "coordenador" || project?.created_by === user.id;
 
   return (
     <div className="flex flex-col">
-      <ReviewsNav projectId={id} isCoordinator={isCoordinator} />
+      <ReviewsNav projectId={id} />
       <div className="flex-1">{children}</div>
     </div>
   );
