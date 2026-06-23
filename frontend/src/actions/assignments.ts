@@ -6,6 +6,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import {
   createRng,
   distributeDocs,
+  filterComparisonEligible,
   filterEligibleDocs,
   shuffleWithRng,
   computeCapacity,
@@ -144,6 +145,8 @@ interface LotteryData {
   docs: LotteryDocStats[];
   batches: { id: string; label: string | null; createdAt: string }[];
   minResponsesForComparison: number;
+  /** modo de automação do projeto — governa o gate de comparação */
+  automationMode: string | null;
   assignmentRows: {
     document_id: string;
     user_id: string;
@@ -155,8 +158,14 @@ interface LotteryData {
 async function fetchLotteryData(projectId: string): Promise<LotteryData> {
   const supabase = await createSupabaseServer();
 
-  const [{ data: docs }, { data: responses }, { data: assignments }, { data: batches }, { data: project }] =
-    await Promise.all([
+  const [
+    { data: docs },
+    { data: responses },
+    { data: llmResponses },
+    { data: assignments },
+    { data: batches },
+    { data: project },
+  ] = await Promise.all([
       supabase
         .from("documents")
         .select("id, external_id, title")
@@ -169,6 +178,12 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
         .eq("is_latest", true)
         .eq("respondent_type", "humano"),
       supabase
+        .from("responses")
+        .select("document_id")
+        .eq("project_id", projectId)
+        .eq("is_latest", true)
+        .eq("respondent_type", "llm"),
+      supabase
         .from("assignments")
         .select("document_id, user_id, status, type, batch_id")
         .eq("project_id", projectId),
@@ -179,7 +194,7 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
         .order("created_at", { ascending: false }),
       supabase
         .from("projects")
-        .select("min_responses_for_comparison")
+        .select("min_responses_for_comparison, automation_mode")
         .eq("id", projectId)
         .single(),
     ]);
@@ -188,6 +203,9 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
   for (const r of responses || []) {
     (respondentsByDoc[r.document_id] ??= new Set()).add(r.respondent_id);
   }
+
+  const docsWithLlm = new Set<string>();
+  for (const r of llmResponses || []) docsWithLlm.add(r.document_id);
 
   const activeByDoc: Record<string, { codificacao: number; comparacao: number }> = {};
   const everAssigned = new Set<string>();
@@ -210,6 +228,7 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
       externalId: d.external_id,
       title: d.title,
       humanCodingCount: respondentsByDoc[d.id]?.size || 0,
+      hasLlmResponse: docsWithLlm.has(d.id),
       activeAssignments: activeByDoc[d.id] || { codificacao: 0, comparacao: 0 },
       hasAnyAssignmentEver: everAssigned.has(d.id),
       batchIds: Array.from(batchIdsByDoc[d.id] || []),
@@ -220,6 +239,7 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
       createdAt: b.created_at,
     })),
     minResponsesForComparison: project?.min_responses_for_comparison || 2,
+    automationMode: project?.automation_mode ?? null,
     assignmentRows: (assignments || []).map((a) => ({
       document_id: a.document_id,
       user_id: a.user_id,
@@ -237,12 +257,14 @@ export async function getLotteryDocStats(projectId: string): Promise<{
   docs: LotteryDocStats[];
   batches: { id: string; label: string | null; createdAt: string }[];
   minResponsesForComparison: number;
+  automationMode: string | null;
 }> {
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
-  const { docs, batches, minResponsesForComparison } = await fetchLotteryData(projectId);
-  return { docs, batches, minResponsesForComparison };
+  const { docs, batches, minResponsesForComparison, automationMode } =
+    await fetchLotteryData(projectId);
+  return { docs, batches, minResponsesForComparison, automationMode };
 }
 
 async function computeLottery(params: LotteryParams): Promise<{
@@ -282,14 +304,21 @@ async function computeLottery(params: LotteryParams): Promise<{
     throw new Error("Necessário ter documentos.");
   }
 
-  // Exigência mínima de respostas para comparação — compõe com os filtros
+  // Gate de comparação derivado do modo de automação — compõe com os filtros.
+  // compare_llm exige 1 humano + LLM; demais modos exigem N humanos.
   let candidateDocs = data.docs;
   if (assignmentType === "comparacao") {
-    candidateDocs = candidateDocs.filter(
-      (d) => d.humanCodingCount >= data.minResponsesForComparison
+    candidateDocs = filterComparisonEligible(
+      candidateDocs,
+      data.automationMode,
+      data.minResponsesForComparison,
     );
     if (!candidateDocs.length) {
-      throw new Error("Nenhum documento tem respostas suficientes para comparação.");
+      throw new Error(
+        data.automationMode === "compare_llm"
+          ? "Nenhum documento tem resposta humana e do LLM para comparação."
+          : "Nenhum documento tem respostas humanas suficientes para comparação.",
+      );
     }
   }
 

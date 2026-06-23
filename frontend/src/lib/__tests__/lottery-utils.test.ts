@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   createRng,
   distributeDocs,
+  filterComparisonEligible,
   filterEligibleDocs,
   computeCapacity,
   resolveWeight,
@@ -16,6 +17,7 @@ function doc(overrides: Partial<LotteryDocStats> & { id: string }): LotteryDocSt
     externalId: null,
     title: null,
     humanCodingCount: 0,
+    hasLlmResponse: false,
     activeAssignments: { codificacao: 0, comparacao: 0 },
     hasAnyAssignmentEver: false,
     batchIds: [],
@@ -216,6 +218,80 @@ describe("filterEligibleDocs", () => {
     expect(
       filterEligibleDocs(docs, "codificacao", { maxHumanCodings: 0 }),
     ).toEqual([]);
+  });
+});
+
+describe("filterComparisonEligible", () => {
+  const docs = [
+    doc({ id: "h0", humanCodingCount: 0, hasLlmResponse: true }),
+    doc({ id: "h1", humanCodingCount: 1, hasLlmResponse: false }),
+    doc({ id: "h1llm", humanCodingCount: 1, hasLlmResponse: true }),
+    doc({ id: "h2", humanCodingCount: 2, hasLlmResponse: false }),
+    doc({ id: "h2llm", humanCodingCount: 2, hasLlmResponse: true }),
+  ];
+
+  describe("modo compare_llm", () => {
+    it("exige >= 1 humano E resposta do LLM", () => {
+      expect(ids(filterComparisonEligible(docs, "compare_llm", 2))).toEqual([
+        "h1llm",
+        "h2llm",
+      ]);
+    });
+
+    it("doc de 1 humano + LLM passa (independente de min_responses)", () => {
+      const d = [doc({ id: "x", humanCodingCount: 1, hasLlmResponse: true })];
+      expect(ids(filterComparisonEligible(d, "compare_llm", 2))).toEqual(["x"]);
+    });
+
+    it("doc com 2 humanos mas sem LLM é excluído", () => {
+      const d = [doc({ id: "x", humanCodingCount: 2, hasLlmResponse: false })];
+      expect(filterComparisonEligible(d, "compare_llm", 2)).toEqual([]);
+    });
+
+    it("doc com 0 humanos + LLM é excluído", () => {
+      const d = [doc({ id: "x", humanCodingCount: 0, hasLlmResponse: true })];
+      expect(filterComparisonEligible(d, "compare_llm", 2)).toEqual([]);
+    });
+  });
+
+  describe("modo compare_humans / none / null", () => {
+    it("respeita min_responses, ignorando o LLM", () => {
+      expect(ids(filterComparisonEligible(docs, "compare_humans", 2))).toEqual([
+        "h2",
+        "h2llm",
+      ]);
+    });
+
+    it("doc de 1 humano + LLM falha quando min=2", () => {
+      const d = [doc({ id: "x", humanCodingCount: 1, hasLlmResponse: true })];
+      expect(filterComparisonEligible(d, "compare_humans", 2)).toEqual([]);
+    });
+
+    it("null (projeto legado) cai no gate por humanos", () => {
+      expect(ids(filterComparisonEligible(docs, null, 1))).toEqual([
+        "h1",
+        "h1llm",
+        "h2",
+        "h2llm",
+      ]);
+    });
+
+    it("auto_review_llm (default do DB) cai no gate por humanos, ignorando o LLM", () => {
+      expect(ids(filterComparisonEligible(docs, "auto_review_llm", 2))).toEqual([
+        "h2",
+        "h2llm",
+      ]);
+    });
+
+    it("min_responses 0/inválido cai no piso de 1 humano (Math.max)", () => {
+      // sem o piso, min=0 deixaria passar docs com 0 humanos (h0)
+      expect(ids(filterComparisonEligible(docs, "compare_humans", 0))).toEqual([
+        "h1",
+        "h1llm",
+        "h2",
+        "h2llm",
+      ]);
+    });
   });
 });
 

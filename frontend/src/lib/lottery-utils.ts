@@ -22,6 +22,8 @@ export interface LotteryDocStats {
   title: string | null;
   /** respondentes humanos distintos com resposta is_latest */
   humanCodingCount: number;
+  /** existe ao menos uma resposta LLM is_latest para o doc */
+  hasLlmResponse: boolean;
   /** pendente + em_andamento, por tipo */
   activeAssignments: { codificacao: number; comparacao: number };
   hasAnyAssignmentEver: boolean;
@@ -80,6 +82,35 @@ export function computeCapacity(opts: {
   const resolvedCap = resolveCap(cap);
   if (resolvedCap != null) limits.push(resolvedCap);
   return limits.length ? Math.min(...limits) : Infinity;
+}
+
+/**
+ * Gate de elegibilidade do sorteio de COMPARAÇÃO, derivado do modo de
+ * automação do projeto (projects.automation_mode). Espelha o *critério de
+ * elegibilidade* do gatilho que cria a comparação automática
+ * (createAutoComparisonIfDiverges em lib/auto-comparison.ts) — quem é candidato
+ * a virar comparação — mas NÃO a condição de divergência: o sorteio manual
+ * libera por presença de respostas, de propósito, justamente para distribuir a
+ * revisão que a automação não cobriu (não exige que os codificadores divirjam).
+ *   - compare_llm    → 1 humano + resposta do LLM (a 2ª resposta é o LLM)
+ *   - demais modos   → min_responses_for_comparison humanos (piso de 1)
+ * Compõe ANTES de filterEligibleDocs (que não recebe esse limiar). `mode` é
+ * string solta de propósito: tolera o valor null/legado de projetos antes da
+ * migration do automation_mode, sem depender de types.ts.
+ */
+export function filterComparisonEligible(
+  docs: LotteryDocStats[],
+  mode: string | null | undefined,
+  minResponsesForComparison: number,
+): LotteryDocStats[] {
+  if (mode === "compare_llm") {
+    return docs.filter((d) => d.humanCodingCount >= 1 && d.hasLlmResponse);
+  }
+  // Piso de 1 humano mesmo se min_responses for 0/inválido — simetria com
+  // compareDefaultsForMode (compare-filters.ts, #219): comparação sem nenhum
+  // humano não faz sentido.
+  const minHumans = Math.max(1, minResponsesForComparison);
+  return docs.filter((d) => d.humanCodingCount >= minHumans);
 }
 
 /**

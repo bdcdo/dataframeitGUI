@@ -31,6 +31,7 @@ import {
 } from "@/actions/assignments";
 import type { LotteryParams, LotteryPreview } from "@/actions/assignments";
 import {
+  filterComparisonEligible,
   filterEligibleDocs,
   resolveWeight,
   resolveCap,
@@ -65,6 +66,7 @@ interface LotteryStats {
   docs: LotteryDocStats[];
   batches: { id: string; label: string | null; createdAt: string }[];
   minResponsesForComparison: number;
+  automationMode: string | null;
 }
 
 type CodingsFilterMode = "all" | "none" | "atMost";
@@ -237,8 +239,10 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     if (!stats) return null;
     let candidates = stats.docs;
     if (isComparacao) {
-      candidates = candidates.filter(
-        (d) => d.humanCodingCount >= stats.minResponsesForComparison
+      candidates = filterComparisonEligible(
+        candidates,
+        stats.automationMode,
+        stats.minResponsesForComparison,
       );
     }
     return filterEligibleDocs(candidates, type, filters).length;
@@ -353,6 +357,13 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                 </Label>
               </div>
             </RadioGroup>
+            {isComparacao && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {stats?.automationMode === "compare_llm"
+                  ? "Elegíveis: documentos com ao menos 1 codificação humana e 1 resposta do LLM."
+                  : `Elegíveis: documentos com ao menos ${stats?.minResponsesForComparison ?? 2} codificações humanas.`}
+              </p>
+            )}
           </div>
 
           <Separator />
