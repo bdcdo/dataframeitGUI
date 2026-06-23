@@ -3,7 +3,6 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
-import { getResearcherProgress } from "@/actions/progress";
 import type {
   Document,
   Assignment,
@@ -47,7 +46,7 @@ export default async function CodePage({
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, { data: assignments }, { data: rounds }, progressResult] =
+  const [{ data: project }, { data: assignments }, { data: rounds }] =
     await Promise.all([
       supabase
         .from("projects")
@@ -69,7 +68,6 @@ export default async function CodePage({
         .select("id, project_id, label, created_at")
         .eq("project_id", id)
         .order("created_at", { ascending: true }),
-      getResearcherProgress(id, effectiveUserId).catch(() => null),
     ]);
 
   const allDocuments = (assignments || []).map((a) => ({
@@ -222,18 +220,6 @@ export default async function CodePage({
     }
   }
 
-  let progress = null;
-  if (allDocuments.length > 0 && progressResult) {
-    progress = {
-      completed: progressResult.completed,
-      total: progressResult.total,
-      nextDeadline: progressResult.nextDeadline,
-      daysUntilDeadline: progressResult.daysUntilDeadline,
-      requiredPace: progressResult.requiredPace,
-      streak: progressResult.streak,
-    };
-  }
-
   // Quando filtra por rodada anterior, painel fica readOnly para evitar
   // que pesquisador edite achando que ainda esta na rodada antiga.
   // (Salvar promove para a rodada atual de qualquer jeito.)
@@ -250,7 +236,6 @@ export default async function CodePage({
         existingAnswers={existingAnswers}
         existingJustifications={existingJustifications}
         hasAssignments={allDocuments.length > 0}
-        progress={progress}
         readOnly={isImpersonating || isViewingPreviousRound}
         roundFilter={{
           strategy,
