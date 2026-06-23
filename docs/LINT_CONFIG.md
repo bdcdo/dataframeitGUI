@@ -1,6 +1,6 @@
 # Configuração do react-doctor
 
-O [react-doctor](https://react.doctor) é tratado como um linter da toolchain do frontend, no mesmo espírito do eslint/mypy: é uma `devDependency` **pinada** (`react-doctor@0.5.6` em `frontend/package.json`), roda via script `npm run`, e o arquivo `frontend/doctor.config.json` cumpre o papel de um `mypy.ini`/`.eslintrc` — fonte única de configuração (o config na raiz do repo foi removido para evitar drift, já que os scripts npm e o hook de pre-commit rodam escopados a `frontend/`).
+O [react-doctor](https://react.doctor) é tratado como um linter da toolchain do frontend, no mesmo espírito do eslint/mypy: é uma `devDependency` **pinada** (`react-doctor@0.5.8` em `frontend/package.json`), roda via script `npm run`, e o arquivo `frontend/doctor.config.json` cumpre o papel de um `mypy.ini`/`.eslintrc` — fonte única de configuração (o config na raiz do repo foi removido para evitar drift, já que os scripts npm e o hook de pre-commit rodam escopados a `frontend/`).
 
 > **Nome do arquivo de config (0.5.x):** a partir da 0.5, o react-doctor procura `doctor.config.*` (ou a chave `reactDoctor` em `package.json`); o nome antigo `react-doctor.config.json` deixou de ser reconhecido. O arquivo foi renomeado para `doctor.config.json` no bump 0.2.11 → 0.5.6. O schema (`ignore.overrides` + `rules`) é o mesmo.
 
@@ -16,7 +16,7 @@ A config é lida do diretório de execução (o react-doctor resolve o projeto v
 
 ## Gate local de pre-commit — bloqueante para código novo, não para o legado
 
-O gate roda **localmente, antes do commit** (estilo flake8/mypy), não no CI. `.pre-commit-config.yaml` define um hook `repo: local` que executa `react-doctor . --diff --blocking error` em commits que tocam arquivos `frontend/**/*.{ts,tsx}`. Como `--diff` analisa só os arquivos alterados — e, verificado na 0.5.6, é **hunk-scoped**: só acusa diagnósticos nas *linhas* efetivamente alteradas — e `--blocking error` só falha em diagnósticos *error*-level, o gate **bloqueia somente quando o commit toca uma linha que produz um error**. Todo o débito legado (os 17 errors e ~148 warnings da baseline 0.5.6 abaixo) fica grandfathered: editar uma linha qualquer de um arquivo que já tem um error em *outra* linha não barra o commit. Para endurecer o gate no futuro (ex.: `--blocking warning` depois de pagar o débito de State & Effects), basta ajustar a flag.
+O gate roda **localmente, antes do commit** (estilo flake8/mypy), não no CI. `.pre-commit-config.yaml` define um hook `repo: local` que executa `react-doctor . --scope changed --base HEAD --blocking error` em commits que tocam arquivos `frontend/**/*.{ts,tsx}`. Como `--scope changed --base HEAD` reporta só issues nas *linhas* alteradas vs HEAD — verificado na 0.5.8 — e `--blocking error` só falha em diagnósticos *error*-level, o gate **bloqueia somente quando o commit toca uma linha que produz um error**. Todo o débito legado (os 8 errors e ~118 warnings da baseline 0.5.8 abaixo) fica grandfathered: editar uma linha qualquer de um arquivo que já tem um error em *outra* linha não barra o commit. Para endurecer o gate no futuro (ex.: `--blocking warning` depois de pagar o débito de State & Effects), basta ajustar a flag.
 
 > **Mudança de flag (0.5.x):** a flag `--fail-on <level>` da 0.2.x foi removida; o substituto é `--blocking <level>` (`error` | `warning` | `none`; default já é `error`). O hook e os scripts foram migrados no bump.
 
@@ -32,20 +32,20 @@ pre-commit install              # da raiz do repo: grava o hook em .git/hooks
 
 ### Detalhes de implementação
 
-- **`--diff`, não `--staged`**: a 0.5.x tem um modo `--staged` próprio para pre-commit, mas mantemos `--diff` (vs HEAD), que está verificado resolvendo os paths corretamente neste monorepo (git root ≠ `frontend/`) na 0.5.6 e é hunk-scoped. Como o pre-commit faz auto-stash dos arquivos unstaged antes de rodar o hook, o working tree fica idêntico ao staged, então `--diff` enxerga exatamente o que vai ser commitado.
+- **`--scope changed --base HEAD`, não `--staged`**: a 0.5.x tem um modo `--staged` próprio para pre-commit, mas ele é *file-scoped* (escaneia o arquivo staged inteiro), o que quebraria o grandfathering — tocar uma linha qualquer de um arquivo com error legado em *outra* linha barraria o commit. Usamos `--scope changed --base HEAD`, que é *line-scoped* (só as linhas alteradas vs HEAD) e foi verificado na 0.5.8 reproduzindo o grandfathering: tocar uma linha limpa de um arquivo com errors em outras linhas não bloqueia; tocar uma linha que produz error bloqueia. Como o pre-commit faz auto-stash dos arquivos unstaged antes de rodar o hook, o working tree fica idêntico ao staged, então o diff vs HEAD enxerga exatamente o que vai ser commitado.
+- **Migração de `--diff` → `--scope changed`**: até a 0.5.6 o hook e o script `react-doctor:diff` usavam `--diff [ref]`. A **0.5.7 deprecou `--diff`** (passou a imprimir um warning a cada run; [#844](https://github.com/millionco/react-doctor/pull/844)) em favor de `--scope changed` (`--base <ref>` para fixar a base). As duas flags foram verificadas equivalentes para o gate na 0.5.8 (mesmo comportamento line-scoped), então a migração é semanticamente neutra.
 - O hook faz `cd frontend` (o react-doctor resolve config e escopo pelo diretório de execução) e invoca **diretamente** o binário pinado em `frontend/node_modules/.bin/react-doctor` — não via `npx`, que baixaria a versão mais recente do registry caso as deps não estivessem instaladas, furando o pin. Se o binário estiver ausente, o hook falha fechado pedindo `npm install`, em vez de prosseguir com uma versão não pinada.
 
-## Baseline (react-doctor 0.5.6, medida em 2026-06-15)
+## Baseline (react-doctor 0.5.8, medida em 2026-06-23)
 
-Scan completo (`npm run react-doctor`) após o bump 0.2.11 → 0.5.6, já com os overrides aplicados:
+Scan completo (`npm run react-doctor`) na 0.5.8, contra a `main` atual, já com os overrides aplicados:
 
-- **Score: 39 / 100** na medição do bump (o algoritmo de score mudou entre 0.2 e 0.5 — não é comparável ao "75" da versão anterior).
-- **Baseline do bump (2026-06-15): 17 errors** contabilizados — Security (6 errors), Bugs (11 errors), além de ~148 warnings (Bugs 90, Performance 19, Accessibility 5, Maintainability 34).
-- **Após a auditoria de #203: os 6 errors de Security saem da contagem** (Security 6 → 0 errors). Foram classificados como falso positivo e silenciados via override escopado por arquivo (ver as duas subseções abaixo). Restam os errors da categoria Bugs.
+- **Score: 53 / 100** (o algoritmo de score mudou entre 0.2 e 0.5 — não é comparável ao "75" da 0.2.x; era 39 na medição do bump em 2026-06-15 e subiu para 53 conforme o débito de errors foi pago nos PRs abaixo).
+- **8 errors / 118 warnings** (126 issues), distribuídos em: Bugs (8 errors + 75 warnings), Performance (19 warnings), Maintainability (24 warnings).
 
-Os errors do bump vinham de **três regras novas** da 0.5.x. Após #203, o débito de errors **legítimo e não silenciado** é o da categoria Bugs — sobretudo o cluster `no-adjust-state-on-prop-change` —, grandfathered pelo `--diff` hunk-scoped até que as linhas em questão sejam editadas:
+O bump 0.5.6 → 0.5.8 (só patches: timeouts de fase, ordenação determinística, auto-tuning de workers) **não alterou a saída de errors do ruleset** — verificado empiricamente, 0.5.6 e 0.5.8 produzem os mesmos diagnósticos. A queda de 17 errors (baseline 0.5.6, 2026-06-15) para 8 é efeito de outros PRs mesclados na `main` desde então, não da versão: #203/#242 tirou os 6 errors de Security da contagem (silenciados como FP — ver abaixo) e aplicou `Object.freeze()` em `AUTOMATION_MODE_VALUES` (zerando `server-no-mutable-module-state` em `actions/projects.ts`), enquanto #232/#246/#248 refatoraram `MyVerdictsView`, `AnswerCard` e `MobileWarning`, encolhendo o cluster de Bugs. Conte sempre via `npm run react-doctor`, **não fixe o total aqui**.
 
-- `react-doctor/no-adjust-state-on-prop-change` (11) — Bugs; ajustar state em effect/render conforme prop muda. Ex.: `DocumentPreview.tsx`, `CodingPage.tsx`, `MyVerdictsView.tsx`. **Legítimo, não silenciado.** (Um scan posterior pode listar também `server-no-mutable-module-state` em `projects.ts` conforme o código evolui; contar via `npm run react-doctor`, não fixar o total aqui.)
+Os 8 errors restantes são todos da regra `react-doctor/no-adjust-state-on-prop-change` (Bugs; ajustar state em effect/render conforme prop muda) — débito **legítimo e não silenciado**, grandfathered pelo `--scope changed` line-scoped até que as linhas em questão sejam editadas. Ex.: `AutoReviewFieldPanel.tsx`, `AutoReviewPage.tsx`, `CodingPage.tsx`, `QuestionsPanel.tsx`, `DocumentPreview.tsx`, `DocumentSelector.tsx`, `LlmConfigurePane.tsx`.
 
 Os 6 errors de Security (4 `supabase-client-owned-authz-field` + 2 `supabase-table-missing-rls`) foram auditados em #203, confirmados como FP heurístico e silenciados por arquivo — detalhes nas subseções "Por que `supabase-client-owned-authz-field`…" e "Por que `supabase-table-missing-rls`…" abaixo.
 
