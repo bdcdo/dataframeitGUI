@@ -140,6 +140,12 @@ cd frontend && npm run react-doctor:diff   # só arquivos alterados vs main
 
 O **react-doctor** é um linter pinado (`react-doctor@0.5.8`, devDependency) com config em `frontend/doctor.config.json` (fonte única; na 0.5.x o nome do arquivo passou a ser `doctor.config.*`). Um hook **local de pre-commit** (`.pre-commit-config.yaml`) roda `react-doctor . --scope changed --base HEAD --blocking error` nos commits que tocam `frontend/**/*.{ts,tsx}`: **bloqueia só se a linha alterada produzir um error** (`--scope changed` é line-scoped; substituiu o `--diff` deprecado na 0.5.7); o débito legado de errors/warnings fica grandfathered. Setup (1x): `uv tool install pre-commit && pre-commit install` (requer `npm install` em `frontend/`). Por ser local e opt-in, é uma rede de proteção do dev — não um portão de merge no servidor. Detalhes, baseline 0.5.8 e regras silenciadas em `docs/LINT_CONFIG.md`.
 
+## Scripts one-off de dados / específicos de projeto
+
+Scripts pontuais que operam sobre os dados de **um projeto específico** (dedup, correção de import, migração de dados ad hoc, re-OCR) **não vão para o repositório geral**: vivem em `pipeline-processos/` (gitignored), junto dos outros utilitários locais do Zolgensma. Motivo: carregam IDs e suposições de um projeto/dataset, não são reutilizáveis nem revisáveis como código de produto, e versioná-los polui o repo e expõe dados do banco (backups). Quando precisar resolver o `.env.local`, use caminho canônico do `frontend/` ou a env var `SUPABASE_ENV_PATH` — nunca suba a árvore de diretórios.
+
+Vai para o repo (PR normal) só a **correção de causa raiz genérica** que decorre desse trabalho — migration, mudança de comportamento no app, teste. Exemplo concreto (2026-06-23): as duplicatas de `documents` por re-import (projetos Zolgensma `0c6394da` e Zolgensma-Judiciário `00779233`) foram resolvidas por scripts locais em `pipeline-processos/dedup/`; o que entrou no repo foi a **migration do índice único parcial** `documents_project_external_id_active_uniq` (`UNIQUE(project_id, external_id) WHERE external_id IS NOT NULL AND excluded_at IS NULL`) + o **filtro defensivo** `filterActiveExternalIdConflicts` em `uploadDocuments`, que pula external_ids já ativos ou repetidos no lote em vez de deixar o INSERT em lote falhar inteiro.
+
 ## Performance — Regras de Arquitetura
 
 Seguir estas regras para evitar regressoes de performance:
