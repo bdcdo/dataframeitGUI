@@ -2,6 +2,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { RoundsConfig } from "@/components/config/RoundsConfig";
+import { coordinatorGate } from "@/lib/project-access";
 import type { Round, RoundStrategy } from "@/lib/types";
 import { versionLabel } from "@/lib/rounds";
 
@@ -37,7 +38,7 @@ export default async function RoundsConfigPage({
   // isCoordinator aqui so liga affordances de config (mutacoes de rodada
   // re-checam coordenador em actions/rounds.ts). getProjectAccessContext cobre
   // isMaster e e cache-hit da leitura ja feita pelo config/layout.
-  const isCoordinator = access.isCoordinator || access.queryFailed;
+  const isCoordinator = coordinatorGate(access, { failOpen: true });
 
   const currentVersion = versionLabel({
     major: project?.schema_version_major ?? 0,

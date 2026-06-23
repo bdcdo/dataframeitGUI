@@ -3,6 +3,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
 import { isAnswerCorrect, resolveEffectiveUserId } from "@/lib/reviews/queries";
+import { coordinatorGate } from "@/lib/project-access";
 import type { PydanticField } from "@/lib/types";
 
 export interface VerdictItem {
@@ -59,7 +60,7 @@ export default async function MyVerdictsPage({
       .single(),
     getProjectAccessContext(id, user.id, user.isMaster),
   ]);
-  const isCoordinator = access.isCoordinator;
+  const isCoordinator = coordinatorGate(access, { failOpen: false });
 
   const effectiveUserId = resolveEffectiveUserId({
     selfId: user.id,

@@ -1,5 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { coordinatorGate } from "@/lib/project-access";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { ReviewComment } from "@/components/stats/CommentCard";
 import type { PydanticField } from "@/lib/types";
@@ -114,12 +115,14 @@ export default async function CommentsPage({
     ]),
   ];
 
-  // Fail-open em erro transitorio de query (ver config/layout.tsx): nao rebaixa
-  // um coordenador legitimo a nao-coordenador por falha transiente. As mutacoes
-  // por tras das affordances re-checam via isProjectCoordinator (fail-closed).
-  const isCoordinator = accessContext
-    ? accessContext.isCoordinator || accessContext.queryFailed
-    : false;
+  // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
+  // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so
+  // liga affordances no ReviewCommentsView (a view nao recorta dados por papel)
+  // e as mutacoes por tras delas re-checam via isProjectCoordinator (fail-closed).
+  // NB: ao contrario de config/rounds, o layout-pai reviews/layout.tsx NAO
+  // gateia coordenador (so faz `if (!user) redirect`) — a seguranca do fail-open
+  // aqui depende inteiramente do affordance-only acima, nao de um backstop no layout.
+  const isCoordinator = coordinatorGate(accessContext, { failOpen: true });
 
   let reviewerMap = new Map<string, string>();
   if (reviewerIds.length > 0) {

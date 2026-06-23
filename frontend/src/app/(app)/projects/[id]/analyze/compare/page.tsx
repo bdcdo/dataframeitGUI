@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
+import { coordinatorGate } from "@/lib/project-access";
 import {
   readCompareFilters,
   compareDefaultsForMode,
@@ -140,7 +141,7 @@ export default async function ComparePageRoute({
   // si (compareAssignedDocIds). A policy RLS deixa qualquer membro ler todas as
   // responses, entao esse recorte e so aplicacional; fail-open exporia
   // documentos/respostas de terceiros em erro transitorio.
-  const isCoordinator = access.isCoordinator;
+  const isCoordinator = coordinatorGate(access, { failOpen: false });
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 

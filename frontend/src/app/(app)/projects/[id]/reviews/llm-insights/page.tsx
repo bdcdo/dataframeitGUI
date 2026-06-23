@@ -1,5 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { coordinatorGate } from "@/lib/project-access";
 import { normalizeForComparison } from "@/lib/utils";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import { formatAnswer } from "@/lib/reviews/queries";
@@ -92,12 +93,14 @@ export default async function LlmInsightsPage({
       : Promise.resolve(null),
   ]);
 
-  // Fail-open em erro transitorio de query (ver config/layout.tsx): nao rebaixa
-  // um coordenador legitimo a nao-coordenador por falha transiente. As mutacoes
-  // por tras das affordances re-checam via isProjectCoordinator (fail-closed).
-  const isCoordinator = accessContext
-    ? accessContext.isCoordinator || accessContext.queryFailed
-    : false;
+  // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
+  // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so
+  // liga affordances no LlmInsightsView (a view nao recorta dados por papel) e as
+  // mutacoes por tras delas re-checam via isProjectCoordinator (fail-closed).
+  // NB: ao contrario de config/rounds, o layout-pai reviews/layout.tsx NAO
+  // gateia coordenador (so faz `if (!user) redirect`) — a seguranca do fail-open
+  // aqui depende inteiramente do affordance-only acima, nao de um backstop no layout.
+  const isCoordinator = coordinatorGate(accessContext, { failOpen: true });
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
 
