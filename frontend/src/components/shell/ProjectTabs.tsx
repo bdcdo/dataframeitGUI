@@ -25,7 +25,6 @@ interface ProjectTabsProps {
 const EMPTY_MEMBERS: ProjectMember[] = [];
 
 const tabs = [
-  { label: "Meu Progresso", href: "my-progress" },
   { label: "Analisar", href: "analyze" },
   { label: "Revisar", href: "reviews" },
   { label: "LLM", href: "llm", coordinatorOnly: true },

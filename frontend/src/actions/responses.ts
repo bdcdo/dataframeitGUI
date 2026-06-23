@@ -94,9 +94,8 @@ export async function saveResponse(
     // current_pending em classifyDocStatus) e submit explicito grava false.
     // Excecao: auto-save em response ja submetida (is_partial=false) NAO
     // rebaixa o sinal — combinado com o guard que preserva assignment.status
-    // = "concluido", esse rebaixamento produziria contagem dupla em
-    // getResearcherProgress (doc completo no dashboard, pendente em
-    // classifyDocStatus). A imutabilidade descrita na migration
+    // = "concluido", esse rebaixamento faria um doc ja concluido reaparecer
+    // como pendente em classifyDocStatus. A imutabilidade descrita na migration
     // 20260425000000 vale so para o fluxo LLM.
     const isPartialToWrite =
       isAutoSave && existing?.is_partial !== false;

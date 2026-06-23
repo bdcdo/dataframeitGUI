@@ -189,8 +189,8 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     // Cenario critico: response existe com is_partial=false (foi submetida) e
     // assignment esta concluido. Pesquisador reabre e edita; auto-save NAO
     // deve flipar is_partial para true, senao classifyDocStatus passa a tratar
-    // o doc como pendente enquanto getResearcherProgress segue contando como
-    // concluido (assignment.status preservado pelo guard) — contagem dupla.
+    // o doc como pendente mesmo com o assignment.status preservado pelo guard
+    // como concluido — estado inconsistente.
     state.existingResponse = { id: "resp-1", is_partial: false };
     state.currentAssignmentStatus = "concluido";
     const saveResponse = await loadSaveResponse();

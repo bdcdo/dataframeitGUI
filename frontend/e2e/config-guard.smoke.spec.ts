@@ -2,12 +2,12 @@ import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 
 // Valida o guard server-side de #27: um pesquisador (role "membro") que conheça
-// a URL de uma rota `config/*` é redirecionado para `my-progress`.
+// a URL de uma rota `config/*` é redirecionado para `analyze/code`.
 // Requer, além do e-mail do usuário membro, E2E_PROJECT_ID — um projeto
 // onde esse usuário é pesquisador (NÃO coordenador). Pulado se faltar qualquer
 // um, para não quebrar CI sem o tenant de teste configurado.
 // Login por ticket — ver nota em dashboard.smoke.spec.ts.
-test("pesquisador é redirecionado de config/* para my-progress", async ({
+test("pesquisador é redirecionado de config/* para analyze/code", async ({
   page,
 }) => {
   const identifier = process.env.E2E_MEMBER_EMAIL;
@@ -25,7 +25,7 @@ test("pesquisador é redirecionado de config/* para my-progress", async ({
   try {
     await page.goto(`/projects/${projectId}/config/schema`);
     await expect(page).toHaveURL(
-      new RegExp(`/projects/${projectId}/my-progress`),
+      new RegExp(`/projects/${projectId}/analyze/code`),
     );
   } finally {
     await clerk.signOut({ page });

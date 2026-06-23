@@ -17,7 +17,6 @@ import { getResearcherFieldOrder, saveResearcherFieldOrder } from "@/actions/fie
 import { applyFieldOrder } from "@/lib/field-order";
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
-import { ProgressBanner, type ProgressBannerData } from "./ProgressBanner";
 import { CodingHeader } from "./CodingHeader";
 import { sortByRecent } from "@/lib/coding-sort";
 import { CURRENT_FILTER_VALUE } from "@/lib/rounds";
@@ -47,7 +46,6 @@ interface CodingPageProps {
   existingAnswers: Record<string, Record<string, unknown>>;
   existingJustifications?: Record<string, Record<string, unknown>>;
   hasAssignments?: boolean;
-  progress?: ProgressBannerData | null;
   readOnly?: boolean;
   roundFilter?: RoundFilterData;
 }
@@ -70,7 +68,6 @@ function CodingPageInner({
   existingAnswers,
   existingJustifications = EMPTY_JUSTIFICATIONS,
   hasAssignments = false,
-  progress = null,
   readOnly = false,
   roundFilter,
 }: CodingPageProps) {
@@ -652,7 +649,6 @@ function CodingPageInner({
             }
             onToggleFullscreen={toggleFullscreen}
           />
-          {progress && mode === "assigned" && <ProgressBanner data={progress} />}
         </>
       )}
 
@@ -666,9 +662,6 @@ function CodingPageInner({
                 Você completou todos os {documents.length} documento{documents.length !== 1 ? "s" : ""} atribuído{documents.length !== 1 ? "s" : ""}.
               </p>
               <div className="flex gap-3 mt-2">
-                <Button variant="outline" asChild>
-                  <a href={`/projects/${projectId}`}>Meu Progresso</a>
-                </Button>
                 <Button
                   className="bg-brand hover:bg-brand/90 text-brand-foreground"
                   onClick={() => { setMode("browse"); setAllDone(false); }}
