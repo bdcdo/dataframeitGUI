@@ -39,16 +39,17 @@ pre-commit install              # da raiz do repo: grava o hook em .git/hooks
 
 Scan completo (`npm run react-doctor`) após o bump 0.2.11 → 0.5.6, já com os overrides aplicados:
 
-- **Score: 39 / 100** (o algoritmo de score mudou entre 0.2 e 0.5 — não é comparável ao "75" da versão anterior).
-- **17 errors / 148 warnings** (165 issues), distribuídos em: Security (6 errors), Bugs (11 errors + 90 warnings), Performance (19 warnings), Accessibility (5 warnings), Maintainability (34 warnings).
+- **Score: 39 / 100** na medição do bump (o algoritmo de score mudou entre 0.2 e 0.5 — não é comparável ao "75" da versão anterior).
+- **Baseline do bump (2026-06-15): 17 errors** contabilizados — Security (6 errors), Bugs (11 errors), além de ~148 warnings (Bugs 90, Performance 19, Accessibility 5, Maintainability 34).
+- **Após a auditoria de #203: os 6 errors de Security saem da contagem** (Security 6 → 0 errors). Foram classificados como falso positivo e silenciados via override escopado por arquivo (ver as duas subseções abaixo). Restam os errors da categoria Bugs.
 
-Os 17 errors vêm de **três regras novas** da 0.5.x, todas legítimas (não são FP) e por isso **não silenciadas** — ficam grandfathered pelo `--diff` hunk-scoped até que as linhas em questão sejam editadas:
+Os errors do bump vinham de **três regras novas** da 0.5.x. Após #203, o débito de errors **legítimo e não silenciado** é o da categoria Bugs — sobretudo o cluster `no-adjust-state-on-prop-change` —, grandfathered pelo `--diff` hunk-scoped até que as linhas em questão sejam editadas:
 
-- `react-doctor/no-adjust-state-on-prop-change` (11) — Bugs; ajustar state em effect/render conforme prop muda. Ex.: `DocumentPreview.tsx`, `CodingPage.tsx`, `MyVerdictsView.tsx`.
-- `react-doctor/supabase-client-owned-authz-field` (4) — Security; campo de autorização escrito via client. Ex.: `lib/auto-review.ts`, `actions/{assignments,members,projects}.ts`.
-- `react-doctor/supabase-table-missing-rls` (2) — Security; `CREATE TABLE` sem RLS em `migrations/{clerk_user_mapping,master_users}.sql`.
+- `react-doctor/no-adjust-state-on-prop-change` (11) — Bugs; ajustar state em effect/render conforme prop muda. Ex.: `DocumentPreview.tsx`, `CodingPage.tsx`, `MyVerdictsView.tsx`. **Legítimo, não silenciado.** (Um scan posterior pode listar também `server-no-mutable-module-state` em `projects.ts` conforme o código evolui; contar via `npm run react-doctor`, não fixar o total aqui.)
 
-Pagar esse débito (corrigir os errors de verdade) é trabalho de PR(s) à parte, fora do escopo do bump. O gate de pre-commit não obriga a corrigi-los para commitar — só barra se a *linha* alterada produzir um error.
+Os 6 errors de Security (4 `supabase-client-owned-authz-field` + 2 `supabase-table-missing-rls`) foram auditados em #203, confirmados como FP heurístico e silenciados por arquivo — detalhes nas subseções "Por que `supabase-client-owned-authz-field`…" e "Por que `supabase-table-missing-rls`…" abaixo.
+
+Pagar o débito de Bugs restante é trabalho de PR(s) à parte (cluster State & Effects #149/#152), fora do escopo de #203. O gate de pre-commit não obriga a corrigi-los para commitar — só barra se a *linha* alterada produzir um error.
 
 ## Por que `server-auth-actions` está silenciada em `src/actions/**`
 
@@ -61,6 +62,23 @@ Se o react-doctor passar a aceitar custom auth helpers (ou se o projeto adotar `
 ## `only-export-components` ignorada em `src/components/ui/**`
 
 Os componentes shadcn/ui (`ui/button`, `ui/badge`, `ui/tabs`) exportam, além do componente, suas variantes CVA (`buttonVariants`, `badgeVariants` etc.) — convenção intencional do shadcn. A regra `react-doctor/only-export-components` (orientada a Fast Refresh) acusa isso como error. O override silencia a regra **apenas em `src/components/ui/**`** (onde o padrão é da própria biblioteca), mantendo-a ativa no resto do app. Na 0.2.x estes eram os únicos errors do codebase, junto com `server-auth-actions`; com os overrides, a baseline daquela versão era 0 errors. Na 0.5.6 o ruleset expandido introduziu novos errors (ver baseline abaixo), mas estes dois overrides continuam necessários e ativos.
+
+## Por que `supabase-client-owned-authz-field` está silenciada nos 4 arquivos auditados
+
+A regra `react-doctor/supabase-client-owned-authz-field` acusa código client Supabase que escreve campos de `user`/`tenant`/`owner`/`role` que deveriam ser enforçados pela RLS. Os 4 disparos da baseline foram auditados em #203 e confirmados como FP heurístico — silenciados **por arquivo** (não pela regra inteira, nem por `src/actions/**`), para que a regra continue pegando actions novas:
+
+- `src/lib/auto-review.ts` — a escrita (`assignments.status`, `field_reviews`) passa pelo **admin client** (service-role), que ignora a RLS por design; `status` é estado de workflow, não autz. O uso do admin é deliberado e comentado no arquivo (a policy de `assignments` restringe INSERT a coordenadores; o pesquisador precisa criar a própria fila de revisão).
+- `src/actions/assignments.ts` — a regra aponta o parâmetro `userId`; as escritas gravam `type`/`assignment_weight`/`assignment_cap` (operacionais) e são barradas pela policy `Coordinators manage assignments`.
+- `src/actions/members.ts` — escreve `role`/`can_resolve`/`can_arbitrate`/`can_compare` via client autenticado, mas a policy `Coordinators manage members` (`USING project_id IN auth_user_coordinator_or_creator_project_ids() OR is_master()`) barra qualquer não-coordenador: o UPDATE afeta 0 linhas e o código retorna "Sem permissão". Não há auto-escalação explorável. A ausência de um *column-level guard* em `project_members` (defesa em profundidade, presente em `projects`/`project_comments`/`schema_change_log`) é a única lacuna real, rastreada em issue-filha de #203 — não é vulnerabilidade, e fechá-la embute decisão de produto (se um coordenador pode alternar as próprias flags).
+- `src/actions/projects.ts` — `role: "coordenador"` inserido no bootstrap criador→coordenador, gated pela policy `Creator inserts members` (só permite inserir em projeto cujo `created_by = clerk_uid()`). Intencional; ninguém entra em projeto alheio.
+
+Se algum desses fluxos migrar para depender de coluna client-fornecida sem RLS, **remover o override do arquivo afetado** e corrigir.
+
+## Por que `supabase-table-missing-rls` está silenciada nas 2 migrations auditadas
+
+A regra `react-doctor/supabase-table-missing-rls` acusa `CREATE TABLE` que não habilita RLS **na mesma migration**. Os 2 disparos (`migrations/20260401000000_clerk_user_mapping.sql` e `migrations/20260402000000_master_users.sql`) foram auditados em #203 e são FP: ambas as tabelas têm RLS habilitada numa migration posterior (`20260407000000_enable_rls_system_tables.sql`) somada a `REVOKE ALL ... FROM anon, authenticated`, e são acessadas só via service-role (`lib/clerk-sync.ts` e `lib/auth.ts`). A proteção existe — só está distribuída entre arquivos, padrão que a heurística não reconhece. Editar migrations já aplicadas em produção para re-habilitar RLS seria no-op.
+
+O override é escopado **às duas migrations específicas**, de propósito: uma `CREATE TABLE` nova sem RLS deve continuar falhando.
 
 ## `js-combine-iterations` desligada globalmente
 

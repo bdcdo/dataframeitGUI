@@ -13,6 +13,26 @@
         "rules": [
           "react-doctor/only-export-components"
         ]
+      },
+      {
+        "files": [
+          "src/lib/auto-review.ts",
+          "src/actions/assignments.ts",
+          "src/actions/members.ts",
+          "src/actions/projects.ts"
+        ],
+        "rules": [
+          "react-doctor/supabase-client-owned-authz-field"
+        ]
+      },
+      {
+        "files": [
+          "supabase/migrations/20260401000000_clerk_user_mapping.sql",
+          "supabase/migrations/20260402000000_master_users.sql"
+        ],
+        "rules": [
+          "react-doctor/supabase-table-missing-rls"
+        ]
       }
     ]
   },
