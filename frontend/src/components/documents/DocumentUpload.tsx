@@ -135,6 +135,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
     try {
       const chunks = chunkByBytes(docs);
       let processed = 0;
+      let totalSkipped = 0;
       for (let ci = 0; ci < chunks.length; ci++) {
         const { items, startIndex } = chunks[ci];
         const endIndex = startIndex + items.length;
@@ -161,10 +162,16 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
           localOptions
         );
         if (result.error) throw new Error(result.error);
+        totalSkipped += result.skipped ?? 0;
         processed += items.length;
         setProgress({ current: processed, total: docs.length });
       }
-      toast.success(`${docs.length} documentos importados!`);
+      const imported = docs.length - totalSkipped;
+      toast.success(
+        totalSkipped > 0
+          ? `${imported} documento(s) importado(s); ${totalSkipped} ignorado(s) (já existiam no projeto ou repetidos no arquivo).`
+          : `${docs.length} documentos importados!`
+      );
       setParsedData(null);
       setStep("idle");
       setAnalysis(null);
