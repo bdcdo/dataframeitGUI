@@ -24,6 +24,12 @@ export const DEFAULT_COMPARE_FILTERS: CompareFiltersValue = {
 
 export function readCompareFilters(
   params: URLSearchParams | Record<string, string | undefined>,
+  // Defaults aplicados quando o param não vem na URL. Por padrão são os globais
+  // (DEFAULT_COMPARE_FILTERS); a página e o filtro passam os defaults derivados
+  // do modo de automação (ver `compareDefaultsForMode`) para que o piso de
+  // "mín. humanos" reflita o modo — sem isso, compare_llm (1 humano) nunca
+  // alcançaria o piso fixo de 2 e a fila ficaria vazia.
+  defaults: CompareFiltersValue = DEFAULT_COMPARE_FILTERS,
 ): CompareFiltersValue {
   const get = (k: string): string | undefined => {
     if (params instanceof URLSearchParams) return params.get(k) ?? undefined;
@@ -35,14 +41,37 @@ export function readCompareFilters(
     return Number.isFinite(n) ? n : fallback;
   };
   return {
-    version: get("version") ?? DEFAULT_COMPARE_FILTERS.version,
-    minHumans: toInt(get("min_humans"), DEFAULT_COMPARE_FILTERS.minHumans),
-    minTotal: toInt(get("min_total"), DEFAULT_COMPARE_FILTERS.minTotal),
-    minAssignedPct: toInt(
-      get("min_assigned_pct"),
-      DEFAULT_COMPARE_FILTERS.minAssignedPct,
-    ),
-    since: get("since") ?? DEFAULT_COMPARE_FILTERS.since,
-    respondent: get("respondent") ?? DEFAULT_COMPARE_FILTERS.respondent,
+    version: get("version") ?? defaults.version,
+    minHumans: toInt(get("min_humans"), defaults.minHumans),
+    minTotal: toInt(get("min_total"), defaults.minTotal),
+    minAssignedPct: toInt(get("min_assigned_pct"), defaults.minAssignedPct),
+    since: get("since") ?? defaults.since,
+    respondent: get("respondent") ?? defaults.respondent,
   };
+}
+
+// Defaults da aba Comparar derivados do modo de automação do projeto
+// (projects.automation_mode). O piso de "mín. humanos" espelha o gatilho que
+// cria o assignment de comparação (createAutoComparisonIfDiverges em
+// lib/auto-comparison.ts), para a lista da página não divergir de quando uma
+// comparação é de fato materializada (mesmo princípio anti-drift de
+// compare-version.ts / #217–#218):
+//   - compare_llm    → 1 humano completo (a 2ª resposta exigida por minTotal=2
+//                      é, na prática, o LLM)
+//   - compare_humans → min_responses_for_comparison humanos
+//   - auto_review_llm / none / desconhecido / null → default base (2)
+// `mode` é string solta (não o tipo AutomationMode) de propósito: mantém este
+// módulo de baixo nível sem depender de types.ts e tolera o valor null/legado
+// de projetos antes da migration do automation_mode.
+export function compareDefaultsForMode(
+  mode: string | null | undefined,
+  minResponsesForComparison: number,
+): CompareFiltersValue {
+  let minHumans = DEFAULT_COMPARE_FILTERS.minHumans;
+  if (mode === "compare_llm") {
+    minHumans = 1;
+  } else if (mode === "compare_humans") {
+    minHumans = Math.max(1, minResponsesForComparison);
+  }
+  return { ...DEFAULT_COMPARE_FILTERS, minHumans };
 }

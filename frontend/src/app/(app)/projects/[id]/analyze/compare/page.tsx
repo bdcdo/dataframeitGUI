@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
-import { readCompareFilters } from "@/lib/compare-filters";
+import { readCompareFilters, compareDefaultsForMode } from "@/lib/compare-filters";
 import {
   resolveMinVersion,
   responseQualifiesForVersion,
@@ -63,7 +63,6 @@ export default async function ComparePageRoute({
     getAuthUser(),
     createSupabaseServer(),
   ]);
-  const filters = readCompareFilters(sp);
   if (!user) redirect("/auth/login");
 
   const [
@@ -77,7 +76,7 @@ export default async function ComparePageRoute({
     supabase
       .from("projects")
       .select(
-        "pydantic_hash, pydantic_fields, min_responses_for_comparison, created_by, schema_version_major, schema_version_minor, schema_version_patch",
+        "pydantic_hash, pydantic_fields, min_responses_for_comparison, created_by, schema_version_major, schema_version_minor, schema_version_patch, automation_mode",
       )
       .eq("id", id)
       .single(),
@@ -150,6 +149,16 @@ export default async function ComparePageRoute({
       </div>
     );
   }
+
+  // Defaults da fila derivados do modo de automação do projeto. Em compare_llm
+  // o piso de humanos cai para 1 (a 2ª resposta exigida por minTotal é o LLM) —
+  // sem isso a aba ficaria vazia para documentos de 1 codificador + LLM. A
+  // revisora ainda pode estreitar a lente via o filtro `min_humans` na URL.
+  const compareDefaults = compareDefaultsForMode(
+    project?.automation_mode,
+    project?.min_responses_for_comparison ?? 2,
+  );
+  const filters = readCompareFilters(sp, compareDefaults);
 
   const projectVersion = {
     major: project?.schema_version_major ?? 0,
@@ -305,7 +314,16 @@ export default async function ComparePageRoute({
     // Apply coverage filters
     if (humanCount < filters.minHumans) continue;
     if (totalCount < filters.minTotal) continue;
-    if (assignedCodingCount > 0 && pct < filters.minAssignedPct) continue;
+    // O gate de "% atribuídos que responderam" só faz sentido quando se espera
+    // ≥ 2 humanos. Em compare_llm (piso de 1 humano + LLM) ele esconderia docs
+    // de 1 codificador onde há mais de um atribuído — fora do que o gatilho de
+    // comparação exige. Aplica-se só quando o piso de humanos é ≥ 2.
+    if (
+      filters.minHumans >= 2 &&
+      assignedCodingCount > 0 &&
+      pct < filters.minAssignedPct
+    )
+      continue;
 
     // Equivalence-aware divergence detection (free-text fields can have
     // responses fused via the reviewer's "marcar como equivalentes" action).
@@ -457,6 +475,7 @@ export default async function ComparePageRoute({
         existingReviews={existingReviews}
         projectPydanticHash={project?.pydantic_hash ?? null}
         respondentNames={respondentNames}
+        defaultMinHumans={compareDefaults.minHumans}
         coverageByDoc={coverageByDoc}
         commentCountsByKey={commentCountsByKey}
         suggestionCountsByField={suggestionCountsByField}

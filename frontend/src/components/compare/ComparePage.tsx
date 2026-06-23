@@ -71,6 +71,9 @@ interface ComparePageProps {
   existingReviews: Record<string, Record<string, ExistingVerdictInfo>>;
   projectPydanticHash: string | null;
   respondentNames: string[];
+  // Default de "mín. humanos" derivado do automation_mode (compareDefaultsForMode):
+  // mantém o filtro da UI coerente com o piso aplicado no servidor.
+  defaultMinHumans: number;
   coverageByDoc: Record<string, DocCoverage>;
   commentCountsByKey: Record<string, number>;
   suggestionCountsByField: Record<string, number>;
@@ -94,6 +97,7 @@ export function ComparePage({
   existingReviews,
   projectPydanticHash,
   respondentNames,
+  defaultMinHumans,
   coverageByDoc,
   commentCountsByKey,
   suggestionCountsByField,
@@ -557,6 +561,7 @@ export function ComparePage({
           onToggleFullscreen={toggleFullscreen}
           parecerUrl={parecerUrl}
           respondentNames={respondentNames}
+          defaultMinHumans={defaultMinHumans}
           availableVersions={availableVersions}
           latestMajorLabel={latestMajorLabel}
           currentProjectVersion={currentProjectVersion}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { Suspense, useCallback, useTransition } from "react";
+import { Suspense, useCallback, useMemo, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +27,10 @@ import {
 
 interface CompareFiltersProps {
   respondentNames: string[];
+  // Piso default de "mín. humanos" derivado do automation_mode do projeto
+  // (compareDefaultsForMode). Mantém o controle coerente com o filtro aplicado
+  // no servidor — em compare_llm o default é 1, não o global 2.
+  defaultMinHumans: number;
   availableVersions: string[]; // ["X.Y.Z", ...] ordered desc
   latestMajorLabel: string | null; // "1.0.0" ou null
 }
@@ -43,6 +47,7 @@ export function CompareFilters(props: CompareFiltersProps) {
 
 function CompareFiltersInner({
   respondentNames,
+  defaultMinHumans,
   availableVersions,
   latestMajorLabel,
 }: CompareFiltersProps) {
@@ -51,12 +56,20 @@ function CompareFiltersInner({
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
 
-  const current = readCompareFilters(searchParams);
+  // Defaults coerentes com o modo de automação (o servidor deriva o piso de
+  // humanos de compareDefaultsForMode). Sem isto o filtro exibiria "2" enquanto
+  // a página lista docs de 1 humano em compare_llm, e marcar "2" pareceria o
+  // default mas esconderia esses docs.
+  const effectiveDefaults = useMemo(
+    () => ({ ...DEFAULT_COMPARE_FILTERS, minHumans: defaultMinHumans }),
+    [defaultMinHumans],
+  );
+  const current = readCompareFilters(searchParams, effectiveDefaults);
 
   const update = useCallback(
     (patch: Partial<CompareFiltersValue>) => {
       const sp = new URLSearchParams(searchParams.toString());
-      const apply = { ...readCompareFilters(searchParams), ...patch };
+      const apply = { ...readCompareFilters(searchParams, effectiveDefaults), ...patch };
       const map: Record<keyof CompareFiltersValue, string> = {
         version: "version",
         minHumans: "min_humans",
@@ -68,7 +81,7 @@ function CompareFiltersInner({
       for (const key of Object.keys(map) as (keyof CompareFiltersValue)[]) {
         const urlKey = map[key];
         const value = apply[key];
-        const def = DEFAULT_COMPARE_FILTERS[key];
+        const def = effectiveDefaults[key];
         if (value === def || value === "" || value === null) {
           sp.delete(urlKey);
         } else {
@@ -79,7 +92,7 @@ function CompareFiltersInner({
         push(`${pathname}?${sp.toString()}`);
       });
     },
-    [pathname, push, searchParams],
+    [pathname, push, searchParams, effectiveDefaults],
   );
 
   const reset = useCallback(() => {
@@ -89,12 +102,12 @@ function CompareFiltersInner({
   }, [pathname, push]);
 
   const activeCount = [
-    current.version !== DEFAULT_COMPARE_FILTERS.version,
-    current.minHumans !== DEFAULT_COMPARE_FILTERS.minHumans,
-    current.minTotal !== DEFAULT_COMPARE_FILTERS.minTotal,
-    current.minAssignedPct !== DEFAULT_COMPARE_FILTERS.minAssignedPct,
-    current.since !== DEFAULT_COMPARE_FILTERS.since,
-    current.respondent !== DEFAULT_COMPARE_FILTERS.respondent,
+    current.version !== effectiveDefaults.version,
+    current.minHumans !== effectiveDefaults.minHumans,
+    current.minTotal !== effectiveDefaults.minTotal,
+    current.minAssignedPct !== effectiveDefaults.minAssignedPct,
+    current.since !== effectiveDefaults.since,
+    current.respondent !== effectiveDefaults.respondent,
   ].filter(Boolean).length;
 
   return (
