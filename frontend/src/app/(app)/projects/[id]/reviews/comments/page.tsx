@@ -1,5 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { ReviewComment } from "@/components/stats/CommentCard";
 import type { PydanticField } from "@/lib/types";
@@ -19,7 +19,6 @@ export default async function CommentsPage({
     { data: project },
     { data: reviews },
     { data: documents },
-    { data: membership },
     { data: responsesWithNotes },
     { data: suggestions },
     { data: llmResponses },
@@ -27,10 +26,11 @@ export default async function CommentsPage({
     { data: projectComments },
     { data: verdictQuestions },
     { data: noteResolutions },
+    accessContext,
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, created_by")
+      .select("pydantic_fields")
       .eq("id", id)
       .single(),
     supabase
@@ -46,14 +46,6 @@ export default async function CommentsPage({
       .select("id, title, external_id")
       .eq("project_id", id)
       .is("excluded_at", null),
-    user
-      ? supabase
-          .from("project_members")
-          .select("role")
-          .eq("project_id", id)
-          .eq("user_id", user.id)
-          .maybeSingle()
-      : Promise.resolve({ data: null }),
     supabase
       .from("responses")
       .select("id, document_id, respondent_name, justifications, created_at")
@@ -94,6 +86,9 @@ export default async function CommentsPage({
       .from("note_resolutions")
       .select("response_id, resolved_at")
       .eq("project_id", id),
+    user
+      ? getProjectAccessContext(id, user.id, user.isMaster)
+      : Promise.resolve(null),
   ]);
 
   const noteResolvedMap = new Map(
@@ -119,8 +114,7 @@ export default async function CommentsPage({
     ]),
   ];
 
-  const isCoordinator =
-    project?.created_by === user?.id || membership?.role === "coordenador";
+  const isCoordinator = accessContext?.isCoordinator ?? false;
 
   let reviewerMap = new Map<string, string>();
   if (reviewerIds.length > 0) {

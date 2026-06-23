@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
 import { isAnswerCorrect } from "@/lib/reviews/queries";
 import type { PydanticField } from "@/lib/types";
@@ -43,23 +43,17 @@ export default async function MyVerdictsPage({
 
   const supabase = await createSupabaseServer();
 
-  // First fetch project + membership to determine role
-  const [{ data: project }, { data: membership }] = await Promise.all([
+  // Project fields + papel do usuario. isCoordinator vem de
+  // getProjectAccessContext (request-scoped via cache()) — reaproveita a
+  // leitura project+membership ja feita pelo layout pai e cobre isMaster.
+  const [{ data: project }, { isCoordinator }] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, created_by")
+      .select("pydantic_fields")
       .eq("id", id)
       .single(),
-    supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .maybeSingle(),
+    getProjectAccessContext(id, user.id, user.isMaster),
   ]);
-
-  const isCoordinator =
-    project?.created_by === user.id || membership?.role === "coordenador";
 
   const effectiveUserId =
     (user.isMaster || isCoordinator) && sp.viewAsUser ? sp.viewAsUser : user.id;
