@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useOptimistic, useState, useTransition } from "react";
+import { useOptimistic, useTransition } from "react";
 import { cycleAssignment } from "@/actions/assignments";
 import { cn } from "@/lib/utils";
 import {
@@ -57,7 +57,6 @@ function cycleOptimistic(
     status: "pendente",
     type,
     batch_id: null,
-    deadline: null,
     completed_at: null,
   });
 
@@ -92,16 +91,6 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
       await cycleAssignment(projectId, documentId, userId);
     });
   };
-
-  // Hidratado client-only para evitar mismatch entre server (timezone do server)
-  // e client (timezone do navegador) no cálculo de `isOverdue`.
-  const [today, setToday] = useState<Date | null>(null);
-  useEffect(() => {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- valor client-only (hora local); ver comentário acima
-    setToday(t);
-  }, []);
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -140,16 +129,6 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                     );
                   const status = dominant?.status;
 
-                  const deadlines = [cod?.deadline, comp?.deadline].filter(Boolean) as string[];
-                  const nearestDeadline = deadlines.length
-                    ? deadlines.reduce((min, d) => (d < min ? d : min))
-                    : undefined;
-                  const isOverdue =
-                    today &&
-                    nearestDeadline &&
-                    status !== "concluido" &&
-                    new Date(nearestDeadline + "T00:00:00") < today;
-
                   const isNonRemovable = status === "concluido" || status === "em_andamento";
 
                   // Cor base pelo status
@@ -180,7 +159,6 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                       className={cn(
                         "relative size-6 rounded border transition-colors",
                         baseColor,
-                        isOverdue && "ring-2 ring-destructive ring-offset-1",
                         (isNonRemovable || isPending) && "cursor-default",
                       )}
                       aria-label={
@@ -212,13 +190,6 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const tooltipParts: string[] = [];
                   if (cod) tooltipParts.push(`Codificação (${cod.status})`);
                   if (comp) tooltipParts.push(`Comparação (${comp.status})`);
-                  if (nearestDeadline) {
-                    const label = `Prazo: ${new Date(nearestDeadline + "T00:00:00").toLocaleDateString(
-                      "pt-BR",
-                      { day: "numeric", month: "short" },
-                    )}${isOverdue ? " (atrasado)" : ""}`;
-                    tooltipParts.push(label);
-                  }
 
                   return (
                     <td key={r.user_id} className="px-3 py-1.5 text-center">

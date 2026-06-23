@@ -65,7 +65,7 @@ export default async function AssignmentsPage({
       getCachedMembers(id, "pesquisador"),
       supabase
         .from("assignments")
-        .select("id, project_id, document_id, user_id, status, type, batch_id, deadline, completed_at")
+        .select("id, project_id, document_id, user_id, status, type, batch_id, completed_at")
         .eq("project_id", id),
       getCachedMembers(id, "coordenador"),
     ]);

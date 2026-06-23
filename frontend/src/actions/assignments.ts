@@ -425,7 +425,6 @@ async function computeLottery(params: LotteryParams): Promise<{
     researchers_per_doc: params.researchersPerDoc,
     docs_per_researcher: params.docsPerResearcher || null,
     doc_subset_size: params.docSubsetSize || null,
-    deadline_mode: "none",
     label: params.label || null,
     mode: params.mode,
     balancing: params.balancing,
