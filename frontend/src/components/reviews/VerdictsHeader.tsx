@@ -108,6 +108,7 @@ export function VerdictsHeader({
                 className="size-7"
                 disabled={docIndex === 0}
                 onClick={onPrev}
+                aria-label="Documento anterior"
               >
                 <ChevronLeft className="size-4" />
               </Button>
@@ -120,6 +121,7 @@ export function VerdictsHeader({
                 className="size-7"
                 disabled={docIndex === docCount - 1}
                 onClick={onNext}
+                aria-label="Próximo documento"
               >
                 <ChevronRight className="size-4" />
               </Button>
