@@ -46,8 +46,11 @@ export default async function MyVerdictsPage({
   // Project fields + papel do usuario. isCoordinator vem de
   // getProjectAccessContext (request-scoped via cache()) — reaproveita a
   // leitura project+membership ja feita pelo layout pai e cobre isMaster.
-  // Fail-open em erro transitorio (ver config/layout.tsx): coordenador legitimo
-  // nao perde affordances; mutacoes re-checam via isProjectCoordinator.
+  // Fail-CLOSED aqui (ao contrario de comments/llm-insights): isCoordinator
+  // gateia viewAsUser, que le o gabarito de OUTRO respondente. A policy RLS
+  // "Members view responses" deixa qualquer membro ler todas as responses (nao
+  // filtra por respondent_id), entao o recorte por effectiveUserId e so
+  // aplicacional — fail-open exporia gabarito de terceiros em erro transitorio.
   const [{ data: project }, access] = await Promise.all([
     supabase
       .from("projects")
@@ -56,7 +59,7 @@ export default async function MyVerdictsPage({
       .single(),
     getProjectAccessContext(id, user.id, user.isMaster),
   ]);
-  const isCoordinator = access.isCoordinator || access.queryFailed;
+  const isCoordinator = access.isCoordinator;
 
   const effectiveUserId =
     (user.isMaster || isCoordinator) && sp.viewAsUser ? sp.viewAsUser : user.id;

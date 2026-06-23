@@ -1,5 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { RoundsConfig } from "@/components/config/RoundsConfig";
 import type { Round, RoundStrategy } from "@/lib/types";
@@ -17,32 +17,27 @@ export default async function RoundsConfigPage({
   ]);
   if (!user) redirect("/auth/login");
 
-  const [{ data: project }, { data: rounds }, { data: membership }] =
-    await Promise.all([
-      supabase
-        .from("projects")
-        .select(
-          "round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch, created_by",
-        )
-        .eq("id", id)
-        .single(),
-      supabase
-        .from("rounds")
-        .select("id, project_id, label, created_at")
-        .eq("project_id", id)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("project_members")
-        .select("role")
-        .eq("project_id", id)
-        .eq("user_id", user.id)
-        .maybeSingle(),
-    ]);
+  const [{ data: project }, { data: rounds }, access] = await Promise.all([
+    supabase
+      .from("projects")
+      .select(
+        "round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch",
+      )
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("rounds")
+      .select("id, project_id, label, created_at")
+      .eq("project_id", id)
+      .order("created_at", { ascending: true }),
+    getProjectAccessContext(id, user.id, user.isMaster),
+  ]);
 
-  const isCoordinator =
-    user.isMaster ||
-    project?.created_by === user.id ||
-    membership?.role === "coordenador";
+  // Fail-open em erro transitorio, alinhado ao gate fail-open de config/layout:
+  // isCoordinator aqui so liga affordances de config (mutacoes de rodada
+  // re-checam coordenador em actions/rounds.ts). getProjectAccessContext cobre
+  // isMaster e e cache-hit da leitura ja feita pelo config/layout.
+  const isCoordinator = access.isCoordinator || access.queryFailed;
 
   const currentVersion = versionLabel({
     major: project?.schema_version_major ?? 0,

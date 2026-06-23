@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
@@ -67,24 +67,18 @@ export default async function ComparePageRoute({
 
   const [
     { data: project },
-    { data: membership },
     { data: allResponses, error: responsesError },
     { data: versionLog },
     { data: allAssignments },
     { data: allEquivalences },
+    access,
   ] = await Promise.all([
     supabase
       .from("projects")
       .select(
-        "pydantic_hash, pydantic_fields, min_responses_for_comparison, created_by, schema_version_major, schema_version_minor, schema_version_patch, automation_mode",
+        "pydantic_hash, pydantic_fields, min_responses_for_comparison, schema_version_major, schema_version_minor, schema_version_patch, automation_mode",
       )
       .eq("id", id)
-      .single(),
-    supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
       .single(),
     supabase
       .from("responses")
@@ -114,6 +108,7 @@ export default async function ComparePageRoute({
       // divergences. Revisit if it becomes a bottleneck.
       .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
       .eq("project_id", id),
+    getProjectAccessContext(id, user.id, user.isMaster),
   ]);
 
   // Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
@@ -136,8 +131,12 @@ export default async function ComparePageRoute({
     });
   }
 
-  const isCoordinator =
-    membership?.role === "coordenador" || project?.created_by === user.id || user.isMaster;
+  // Fail-CLOSED (ao contrario de comments/llm-insights): isCoordinator decide
+  // quais documentos aparecem na fila — um nao-coordenador ve so os atribuidos a
+  // si (compareAssignedDocIds). A policy RLS deixa qualquer membro ler todas as
+  // responses, entao esse recorte e so aplicacional; fail-open exporia
+  // documentos/respostas de terceiros em erro transitorio.
+  const isCoordinator = access.isCoordinator;
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 
