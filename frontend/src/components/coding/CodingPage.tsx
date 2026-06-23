@@ -11,12 +11,13 @@ import {
 import { DocumentPicker } from "./DocumentPicker";
 import { FullscreenNav } from "./FullscreenNav";
 import { saveResponse } from "@/actions/responses";
-import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
 import { applyFieldOrder } from "@/lib/field-order";
 import { useUrlState } from "@/hooks/useUrlState";
 import { useFieldOrder } from "@/hooks/useFieldOrder";
 import { useAutosaveOnExit, type AutosavePayload } from "@/hooks/useAutosaveOnExit";
-import type { BrowseDocument } from "@/actions/documents";
+import { useBrowseDocuments } from "@/hooks/useBrowseDocuments";
+import { useDocumentForCoding } from "@/hooks/useDocumentForCoding";
+import { BrowseDocCoder } from "./BrowseDocCoder";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { CodingHeader } from "./CodingHeader";
 import { sortByRecent } from "@/lib/coding-sort";
@@ -160,18 +161,27 @@ function CodingPageInner({
     });
   }, []);
 
-  // Browse mode state
-  const [browseDocuments, setBrowseDocuments] = useState<BrowseDocument[] | null>(null);
-  const [browseLoading, setBrowseLoading] = useState(false);
-  const [selectedBrowseDoc, setSelectedBrowseDoc] = useState<{
-    id: string;
-    external_id: string | null;
-    title: string | null;
-    text: string;
+  // Browse mode — lista via hook (cache + loading derivado), seleção via URL
+  // (?doc=) e conteúdo do doc selecionado via hook. Nada em estado/effect aqui:
+  // é isso que zera no-adjust-state-on-prop-change / no-derived-state /
+  // no-chain-state-updates / no-event-handler do modo Explorar.
+  const { documents: browseDocuments, loading: browseLoading, markResponded } =
+    useBrowseDocuments(projectId, mode === "browse");
+  const browseDocId = useMemo(() => {
+    if (mode !== "browse" || !docParam) return null;
+    // Só docs não-atribuídos entram no modo Explorar (assigned abre em assigned).
+    return documents.some((d) => d.id === docParam) ? null : docParam;
+  }, [mode, docParam, documents]);
+  const { doc: browseDoc, loading: browseDocLoading } = useDocumentForCoding(
+    projectId,
+    browseDocId,
+  );
+  // Rascunho atual do doc de browse, reportado pelo BrowseDocCoder; lido pelo
+  // autosave-on-exit centralizado. Ref (não estado) para não entrar no render.
+  const browseDraftRef = useRef<{
+    answers: Record<string, unknown>;
+    notes: string;
   } | null>(null);
-  const [browseAnswers, setBrowseAnswers] = useState<Record<string, unknown>>({});
-  const [browseNotes, setBrowseNotes] = useState("");
-  const browseFetchedRef = useRef(false);
 
   // Update URL query param without full navigation
   const updateDocParam = useCallback(
@@ -180,19 +190,6 @@ function CodingPageInner({
     },
     [setParams]
   );
-
-  // Lazy-load browse documents
-  useEffect(() => {
-    if (mode === "browse" && !browseFetchedRef.current) {
-      browseFetchedRef.current = true;
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- inicia o lazy-load dos docs do modo Explorar (sincronização com backend)
-      setBrowseLoading(true);
-      getDocumentsForBrowse(projectId)
-        .then(setBrowseDocuments)
-        .finally(() => setBrowseLoading(false));
-    }
-  }, [mode, projectId]);
-
 
   // Fullscreen keyboard shortcuts
   useEffect(() => {
@@ -220,9 +217,7 @@ function CodingPageInner({
   // --- Auto-save on exit (#14, #28) ---
   // beforeunload + visibilitychange + sendBeacon->fetch keepalive no hook.
   const activeDocId =
-    mode === "assigned"
-      ? currentDoc?.id ?? null
-      : selectedBrowseDoc?.id ?? null;
+    mode === "assigned" ? currentDoc?.id ?? null : browseDocId;
   const isActiveDocDirty = !!activeDocId && dirtyDocs.has(activeDocId);
   const getAutosavePayload = useCallback((): AutosavePayload | null => {
     if (mode === "assigned") {
@@ -234,25 +229,16 @@ function CodingPageInner({
         notes: docNotes,
       };
     }
-    if (selectedBrowseDoc) {
+    if (browseDocId && browseDraftRef.current) {
       return {
         projectId,
-        documentId: selectedBrowseDoc.id,
-        answers: browseAnswers,
-        notes: browseNotes,
+        documentId: browseDocId,
+        answers: browseDraftRef.current.answers,
+        notes: browseDraftRef.current.notes,
       };
     }
     return null;
-  }, [
-    mode,
-    currentDoc,
-    docAnswers,
-    docNotes,
-    selectedBrowseDoc,
-    browseAnswers,
-    browseNotes,
-    projectId,
-  ]);
+  }, [mode, currentDoc, docAnswers, docNotes, browseDocId, projectId]);
   useAutosaveOnExit({
     activeDocId,
     isDirty: isActiveDocDirty,
@@ -369,119 +355,87 @@ function CodingPageInner({
   );
 
   // --- Browse mode handlers ---
+  // Seleção = escrever o ?doc= (os hooks buscam a lista e o doc). Trocar de doc
+  // descarta o rascunho do anterior — comportamento atual do Explorar — por
+  // isso reseta o browseDraftRef.
   const handleBrowseSelect = useCallback(
-    async (docId: string) => {
-      try {
-        const result = await getDocumentForCoding(projectId, docId);
-        setSelectedBrowseDoc(result.document);
-        setBrowseAnswers(result.existingAnswers ?? {});
-        setBrowseNotes(
-          typeof result.existingJustifications?._notes === "string"
-            ? result.existingJustifications._notes
-            : ""
-        );
-        updateDocParam(docId);
-      } catch (e) {
-        console.error("Failed to load document:", e);
-      }
+    (docId: string) => {
+      browseDraftRef.current = null;
+      updateDocParam(docId);
     },
-    [projectId, updateDocParam]
+    [updateDocParam],
   );
 
-  // Auto-load browse doc from URL param
-  const initialBrowseLoadRef = useRef(false);
-  useEffect(() => {
-    if (
-      docParam &&
-      mode === "browse" &&
-      !initialBrowseLoadRef.current &&
-      !selectedBrowseDoc
-    ) {
-      const assignedIdx = documents.findIndex((d) => d.id === docParam);
-      if (assignedIdx < 0) {
-        initialBrowseLoadRef.current = true;
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- carrega o doc do ?doc= da URL no modo Explorar (sincronização com backend)
-        handleBrowseSelect(docParam);
-      }
-    }
-  }, [docParam, mode, documents, selectedBrowseDoc, handleBrowseSelect]);
-
-  const handleBrowseAnswer = useCallback(
-    (fieldName: string, value: unknown) => {
-      setBrowseAnswers((prev) => ({ ...prev, [fieldName]: value }));
-      if (selectedBrowseDoc) markDirty(selectedBrowseDoc.id);
+  // Reportado pelo BrowseDocCoder a cada edição: alimenta o autosave-on-exit
+  // (via ref) e marca o doc como sujo.
+  const handleDraftChange = useCallback(
+    (answers: Record<string, unknown>, notes: string) => {
+      browseDraftRef.current = { answers, notes };
+      if (browseDocId) markDirty(browseDocId);
     },
-    [selectedBrowseDoc, markDirty]
+    [browseDocId, markDirty],
   );
 
-  const handleBrowseSubmit = useCallback(async () => {
-    if (!selectedBrowseDoc || Object.keys(browseAnswers).length === 0) return;
-    setSubmitting(true);
-    const result = await saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, { notes: browseNotes });
-    setSubmitting(false);
-    if (result.success) {
-      markClean(selectedBrowseDoc.id);
-      toast.success("Respostas salvas!");
-      setBrowseDocuments((prev) =>
-        prev?.map((d) =>
-          d.id === selectedBrowseDoc.id
-            ? {
-                ...d,
-                responseCount: d.userAlreadyResponded
-                  ? d.responseCount
-                  : d.responseCount + 1,
-                userAlreadyResponded: true,
-              }
-            : d
-        ) ?? null
-      );
-      setSelectedBrowseDoc(null);
-      setBrowseAnswers({});
-      setBrowseNotes("");
-    } else {
-      toast.error(result.error || "Erro ao salvar respostas");
-    }
-  }, [selectedBrowseDoc, browseAnswers, browseNotes, projectId, markClean]);
+  const handleBrowseSubmit = useCallback(
+    async (answers: Record<string, unknown>, notes: string) => {
+      if (!browseDocId || Object.keys(answers).length === 0) return;
+      setSubmitting(true);
+      const result = await saveResponse(projectId, browseDocId, answers, {
+        notes,
+      });
+      setSubmitting(false);
+      if (result.success) {
+        markClean(browseDocId);
+        toast.success("Respostas salvas!");
+        markResponded(browseDocId, true);
+        browseDraftRef.current = null;
+        updateDocParam(null);
+      } else {
+        toast.error(result.error || "Erro ao salvar respostas");
+      }
+    },
+    [browseDocId, projectId, markClean, markResponded, updateDocParam],
+  );
 
   const handleBrowseBack = useCallback(() => {
-    if (selectedBrowseDoc && dirtyDocs.has(selectedBrowseDoc.id)) {
-      saveResponse(projectId, selectedBrowseDoc.id, browseAnswers, {
-        notes: browseNotes,
+    if (browseDocId && dirtyDocs.has(browseDocId) && browseDraftRef.current) {
+      const { answers, notes } = browseDraftRef.current;
+      saveResponse(projectId, browseDocId, answers, {
+        notes,
         isAutoSave: true,
       }).then((result) => {
         if (result.success) {
-          markClean(selectedBrowseDoc.id);
-          setBrowseDocuments((prev) =>
-            prev?.map((d) =>
-              d.id === selectedBrowseDoc.id
-                ? { ...d, userAlreadyResponded: true }
-                : d
-            ) ?? null
-          );
+          markClean(browseDocId);
+          markResponded(browseDocId, false);
         } else {
           toast.error(result.error || "Erro ao salvar respostas");
         }
       });
     }
-    setSelectedBrowseDoc(null);
-    setBrowseAnswers({});
-    setBrowseNotes("");
+    browseDraftRef.current = null;
     updateDocParam(null);
-  }, [selectedBrowseDoc, browseAnswers, browseNotes, projectId, updateDocParam, dirtyDocs, markClean]);
+  }, [
+    browseDocId,
+    projectId,
+    updateDocParam,
+    dirtyDocs,
+    markClean,
+    markResponded,
+  ]);
 
   const handleBrowseRandom = useCallback(() => {
     if (!browseDocuments || browseDocuments.length === 0) return;
     const notResponded = browseDocuments.filter(
-      (d) => !d.userAlreadyResponded && d.id !== selectedBrowseDoc?.id
+      (d) => !d.userAlreadyResponded && d.id !== browseDocId,
     );
     const pool =
       notResponded.length > 0
         ? notResponded
-        : browseDocuments.filter((d) => d.id !== selectedBrowseDoc?.id);
+        : browseDocuments.filter((d) => d.id !== browseDocId);
     if (pool.length === 0) return;
     const pick = pool[Math.floor(Math.random() * pool.length)];
     handleBrowseSelect(pick.id);
-  }, [browseDocuments, selectedBrowseDoc?.id, handleBrowseSelect]);
+  }, [browseDocuments, browseDocId, handleBrowseSelect]);
 
   // --- Empty states ---
   if (fields.length === 0) {
@@ -495,20 +449,25 @@ function CodingPageInner({
     );
   }
 
-  // Get browse doc info for nav
-  const browseDocInfo = selectedBrowseDoc
-    ? browseDocuments?.find((d) => d.id === selectedBrowseDoc.id)
+  // Get browse doc info for nav (metadados vêm da lista; o texto, do hook).
+  const browseDocInfo = browseDocId
+    ? browseDocuments?.find((d) => d.id === browseDocId)
     : null;
 
   const assignedTitle = currentDoc?.title || currentDoc?.external_id || "Documento";
-  const browseTitle = selectedBrowseDoc?.title || selectedBrowseDoc?.external_id || "Documento";
+  const browseTitle =
+    browseDocInfo?.title ||
+    browseDocInfo?.external_id ||
+    browseDoc?.document.title ||
+    browseDoc?.document.external_id ||
+    "Documento";
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
   const assignedParecerUrl = currentDoc
     ? `${baseUrl}/projects/${projectId}/analyze/code?doc=${currentDoc.id}`
     : undefined;
-  const browseParecerUrl = selectedBrowseDoc
-    ? `${baseUrl}/projects/${projectId}/analyze/code?doc=${selectedBrowseDoc.id}`
+  const browseParecerUrl = browseDocId
+    ? `${baseUrl}/projects/${projectId}/analyze/code?doc=${browseDocId}`
     : undefined;
 
   return (
@@ -540,7 +499,7 @@ function CodingPageInner({
                     projectId,
                     documentId: currentDoc.id,
                   }
-                : mode === "browse" && selectedBrowseDoc
+                : mode === "browse" && browseDocId
                 ? {
                     variant: "browse",
                     title: browseTitle,
@@ -549,7 +508,7 @@ function CodingPageInner({
                     onRandom: handleBrowseRandom,
                     parecerUrl: browseParecerUrl,
                     projectId,
-                    documentId: selectedBrowseDoc.id,
+                    documentId: browseDocId,
                   }
                 : undefined
             }
@@ -643,43 +602,34 @@ function CodingPageInner({
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               Carregando documentos…
             </div>
-          ) : !selectedBrowseDoc ? (
+          ) : !browseDocId ? (
             <DocumentPicker
               documents={browseDocuments ?? []}
               onSelect={handleBrowseSelect}
             />
+          ) : browseDocLoading ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+              Carregando documento…
+            </div>
+          ) : browseDoc ? (
+            <BrowseDocCoder
+              key={browseDocId}
+              doc={browseDoc}
+              fields={orderedFields}
+              submitting={submitting}
+              readOnly={readOnly}
+              isFullscreen={isFullscreen}
+              title={browseTitle}
+              responseCount={browseDocInfo?.responseCount ?? 0}
+              onToggleFullscreen={toggleFullscreen}
+              onReorder={handleReorder}
+              onSubmit={handleBrowseSubmit}
+              onDraftChange={handleDraftChange}
+            />
           ) : (
-            <>
-              {isFullscreen && (
-                <FullscreenNav
-                  title={browseTitle}
-                  responseCount={browseDocInfo?.responseCount ?? 0}
-                  onExit={toggleFullscreen}
-                />
-              )}
-              <ResizablePanelGroup
-                className="flex-1"
-              >
-                <ResizablePanel defaultSize={55} minSize={25}>
-                  <DocumentReader text={selectedBrowseDoc.text} />
-                </ResizablePanel>
-                <ResizableHandle withHandle />
-                <ResizablePanel defaultSize={45} minSize={25}>
-                  <QuestionsPanel
-                    key={selectedBrowseDoc?.id}
-                    fields={orderedFields}
-                    answers={browseAnswers}
-                    onAnswer={handleBrowseAnswer}
-                    onSubmit={handleBrowseSubmit}
-                    submitting={submitting}
-                    notes={browseNotes}
-                    onNotesChange={setBrowseNotes}
-                    readOnly={readOnly}
-                    onReorder={handleReorder}
-                  />
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            </>
+            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+              Documento não encontrado.
+            </div>
           )}
         </>
       )}
