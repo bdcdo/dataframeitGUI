@@ -178,17 +178,6 @@ export interface Assignment {
   completed_at: string | null;
 }
 
-export interface AssignmentBatch {
-  id: string;
-  project_id: string;
-  created_by: string;
-  created_at: string;
-  researchers_per_doc: number;
-  docs_per_researcher: number | null;
-  doc_subset_size: number | null;
-  label: string | null;
-}
-
 // Snapshot por-campo do schema contra o qual a response foi codificada
 // (1 chave por campo existente na época, valor = field.hash). Gravado em
 // saveResponse iterando o schema completo (não os campos respondidos), então
