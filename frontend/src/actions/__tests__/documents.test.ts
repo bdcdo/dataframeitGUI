@@ -111,3 +111,92 @@ describe("uploadDocuments — filtro do indice unico (add_all)", () => {
     expect(insertedExternalIds()).toEqual([null, null]);
   });
 });
+
+describe("uploadDocuments — contagem em add_new_only", () => {
+  it("conta os duplicados do duplicateMap em skipped (count + skipped == total)", async () => {
+    // SELECT do filtro nao acha nada ativo; INSERT do DOC-2 ok.
+    serverTableResults = {
+      documents: [{ data: [] }, { error: null }],
+    };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "ja existe no projeto" },
+        { external_id: "DOC-2", text: "novo" },
+      ],
+      false,
+      {
+        mode: "add_new_only",
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "external_id" },
+        ],
+      },
+    );
+
+    expect(r.error).toBeUndefined();
+    expect(r.count).toBe(1);
+    expect(r.skipped).toBe(1);
+    expect(insertedExternalIds()).toEqual(["DOC-2"]);
+  });
+
+  it("todos duplicados -> 0 importados e skipped == total", async () => {
+    // Early return: nenhuma query e disparada.
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "x" },
+        { external_id: "DOC-2", text: "y" },
+      ],
+      false,
+      {
+        mode: "add_new_only",
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "external_id" },
+          { csvIndex: 1, existingDocId: "id-2", matchType: "external_id" },
+        ],
+      },
+    );
+
+    expect(r.count).toBe(0);
+    expect(r.skipped).toBe(2);
+  });
+});
+
+describe("uploadDocuments — replace_and_add propaga erro de UPDATE", () => {
+  it("retorna error quando o UPDATE viola o indice unico (23505)", async () => {
+    // 1a query em documents = o UPDATE do duplicado, que falha com 23505.
+    serverTableResults = {
+      documents: [
+        {
+          error: {
+            message: "duplicate key value violates unique constraint",
+            code: "23505",
+          },
+        },
+      ],
+    };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [{ external_id: "DOC-1", text: "casa por hash com outro doc" }],
+      false,
+      {
+        mode: "replace_and_add",
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "text_hash" },
+        ],
+      },
+    );
+
+    expect(r.error).toContain("duplicate key");
+    // O INSERT nao deve acontecer apos o erro do UPDATE.
+    expect(
+      writeCalls.some((c) => c.table === "documents" && c.op === "insert"),
+    ).toBe(false);
+  });
+});

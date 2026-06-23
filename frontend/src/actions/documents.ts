@@ -201,7 +201,11 @@ export async function uploadDocuments(
   if (mode === "add_new_only") {
     // Filter out duplicates, only insert new ones
     const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
-    if (newDocs.length === 0) return { count: 0, skipped: 0 };
+    // Duplicatas descartadas aqui (detectadas pelo duplicateMap) ja contam como
+    // ignoradas — mantem a invariante count + skipped == documents.length para
+    // o toast reportar o numero correto.
+    const skippedDuplicates = documents.length - newDocs.length;
+    if (newDocs.length === 0) return { count: 0, skipped: skippedDuplicates };
 
     const baseRows = newDocs.map((doc) => ({
       project_id: projectId,
@@ -225,7 +229,10 @@ export async function uploadDocuments(
       revalidatePath(`/projects/${projectId}/config/documents`);
       revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
     }
-    return { count: rows.length, skipped: skippedExisting + skippedInBatch };
+    return {
+      count: rows.length,
+      skipped: skippedDuplicates + skippedExisting + skippedInBatch,
+    };
   }
 
   if (mode === "replace_and_add") {
@@ -257,7 +264,11 @@ export async function uploadDocuments(
 
     // Batch update duplicate documents (avoid N+1)
     if (duplicateMap.length > 0) {
-      await Promise.all(
+      // Checa o erro de cada update: setar external_id num doc casado por
+      // text_hash pode colidir com outro doc ativo e violar o indice unico
+      // parcial (23505). Sem isso o erro seria resolvido e ignorado em silencio
+      // (o doc nao seria atualizado mas contaria como processado).
+      const updateResults = await Promise.all(
         duplicateMap.map((dup) => {
           const doc = documents[dup.csvIndex];
           return supabase
@@ -272,6 +283,8 @@ export async function uploadDocuments(
             .eq("id", dup.existingDocId);
         })
       );
+      const failedUpdate = updateResults.find((r) => r.error);
+      if (failedUpdate?.error) return { error: failedUpdate.error.message };
     }
 
     // Insert new (non-duplicate) documents
