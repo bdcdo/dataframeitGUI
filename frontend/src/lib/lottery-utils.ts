@@ -22,6 +22,8 @@ export interface LotteryDocStats {
   title: string | null;
   /** respondentes humanos distintos com resposta is_latest */
   humanCodingCount: number;
+  /** existe ao menos uma resposta LLM is_latest para o doc */
+  hasLlmResponse: boolean;
   /** pendente + em_andamento, por tipo */
   activeAssignments: { codificacao: number; comparacao: number };
   hasAnyAssignmentEver: boolean;
@@ -80,6 +82,29 @@ export function computeCapacity(opts: {
   const resolvedCap = resolveCap(cap);
   if (resolvedCap != null) limits.push(resolvedCap);
   return limits.length ? Math.min(...limits) : Infinity;
+}
+
+/**
+ * Gate de elegibilidade do sorteio de COMPARAÇÃO, derivado do modo de
+ * automação do projeto (projects.automation_mode) — espelha o gatilho que
+ * cria a comparação automática (createAutoComparisonIfDiverges em
+ * lib/auto-comparison.ts) para o sorteio manual não divergir de quando uma
+ * comparação é de fato materializada:
+ *   - compare_llm    → 1 humano + resposta do LLM (a 2ª resposta é o LLM)
+ *   - demais modos   → min_responses_for_comparison humanos
+ * Compõe ANTES de filterEligibleDocs (que não recebe esse limiar). `mode` é
+ * string solta de propósito: tolera o valor null/legado de projetos antes da
+ * migration do automation_mode, sem depender de types.ts.
+ */
+export function filterComparisonEligible(
+  docs: LotteryDocStats[],
+  mode: string | null | undefined,
+  minResponsesForComparison: number,
+): LotteryDocStats[] {
+  if (mode === "compare_llm") {
+    return docs.filter((d) => d.humanCodingCount >= 1 && d.hasLlmResponse);
+  }
+  return docs.filter((d) => d.humanCodingCount >= minResponsesForComparison);
 }
 
 /**
