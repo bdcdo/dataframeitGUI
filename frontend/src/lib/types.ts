@@ -175,7 +175,6 @@ export interface Assignment {
   status: "pendente" | "em_andamento" | "concluido";
   type: AssignmentType;
   batch_id: string | null;
-  deadline: string | null;
   completed_at: string | null;
 }
 
@@ -187,10 +186,6 @@ export interface AssignmentBatch {
   researchers_per_doc: number;
   docs_per_researcher: number | null;
   doc_subset_size: number | null;
-  deadline_mode: "none" | "batch" | "recurring";
-  deadline_date: string | null;
-  recurring_count: number | null;
-  recurring_start: string | null;
   label: string | null;
 }
 
