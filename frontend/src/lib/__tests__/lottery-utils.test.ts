@@ -275,6 +275,23 @@ describe("filterComparisonEligible", () => {
         "h2llm",
       ]);
     });
+
+    it("auto_review_llm (default do DB) cai no gate por humanos, ignorando o LLM", () => {
+      expect(ids(filterComparisonEligible(docs, "auto_review_llm", 2))).toEqual([
+        "h2",
+        "h2llm",
+      ]);
+    });
+
+    it("min_responses 0/inválido cai no piso de 1 humano (Math.max)", () => {
+      // sem o piso, min=0 deixaria passar docs com 0 humanos (h0)
+      expect(ids(filterComparisonEligible(docs, "compare_humans", 0))).toEqual([
+        "h1",
+        "h1llm",
+        "h2",
+        "h2llm",
+      ]);
+    });
   });
 });
 
