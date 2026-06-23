@@ -48,7 +48,7 @@ describe("useAutosaveOnExit — beforeunload", () => {
     const { rerender } = renderHook((props) => useAutosaveOnExit(props), {
       initialProps: {
         activeDocId: "d" as string | null,
-        isDirty: true,
+        getIsDirty: () => true,
         getPayload: () => payload,
       },
     });
@@ -57,12 +57,12 @@ describe("useAutosaveOnExit — beforeunload", () => {
     window.dispatchEvent(ev1);
     expect(ev1.defaultPrevented).toBe(true);
 
-    rerender({ activeDocId: "d", isDirty: false, getPayload: () => payload });
+    rerender({ activeDocId: "d", getIsDirty: () => false, getPayload: () => payload });
     const ev2 = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(ev2);
     expect(ev2.defaultPrevented).toBe(false);
 
-    rerender({ activeDocId: null, isDirty: true, getPayload: () => payload });
+    rerender({ activeDocId: null, getIsDirty: () => true, getPayload: () => payload });
     const ev3 = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(ev3);
     expect(ev3.defaultPrevented).toBe(false);
@@ -73,7 +73,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
   it("usa sendBeacon e NÃO chama fetch quando enfileira", async () => {
     sendBeacon.mockReturnValue(true);
     renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: true, getPayload: () => payload }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => true, getPayload: () => payload }),
     );
 
     fireVisibility("hidden");
@@ -90,7 +90,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
   it("cai no fetch keepalive quando sendBeacon retorna false", () => {
     sendBeacon.mockReturnValue(false);
     renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: true, getPayload: () => payload }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => true, getPayload: () => payload }),
     );
 
     fireVisibility("hidden");
@@ -113,7 +113,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
       throw new Error("fila cheia");
     });
     renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: true, getPayload: () => payload }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => true, getPayload: () => payload }),
     );
 
     fireVisibility("hidden");
@@ -130,7 +130,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
       writable: true,
     });
     renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: true, getPayload: () => payload }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => true, getPayload: () => payload }),
     );
 
     fireVisibility("hidden");
@@ -140,7 +140,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
   it("não salva quando a aba continua visível", () => {
     sendBeacon.mockReturnValue(true);
     renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: true, getPayload: () => payload }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => true, getPayload: () => payload }),
     );
 
     fireVisibility("visible");
@@ -151,7 +151,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
   it("não salva quando não está sujo", () => {
     sendBeacon.mockReturnValue(true);
     renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: false, getPayload: () => payload }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => false, getPayload: () => payload }),
     );
 
     fireVisibility("hidden");
@@ -161,7 +161,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
   it("não salva quando getPayload retorna null", () => {
     sendBeacon.mockReturnValue(true);
     renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: true, getPayload: () => null }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => true, getPayload: () => null }),
     );
 
     fireVisibility("hidden");
@@ -171,7 +171,7 @@ describe("useAutosaveOnExit — visibilitychange", () => {
   it("remove os listeners no unmount", () => {
     sendBeacon.mockReturnValue(true);
     const { unmount } = renderHook(() =>
-      useAutosaveOnExit({ activeDocId: "d", isDirty: true, getPayload: () => payload }),
+      useAutosaveOnExit({ activeDocId: "d", getIsDirty: () => true, getPayload: () => payload }),
     );
 
     unmount();
@@ -184,13 +184,13 @@ describe("useAutosaveOnExit — visibilitychange", () => {
     const { rerender } = renderHook((props) => useAutosaveOnExit(props), {
       initialProps: {
         activeDocId: "d" as string | null,
-        isDirty: true,
+        getIsDirty: () => true,
         getPayload: () => payload,
       },
     });
 
     const newPayload: AutosavePayload = { ...payload, answers: { q1: "z" } };
-    rerender({ activeDocId: "d", isDirty: true, getPayload: () => newPayload });
+    rerender({ activeDocId: "d", getIsDirty: () => true, getPayload: () => newPayload });
 
     fireVisibility("hidden");
     const blob = sendBeacon.mock.calls[0][1] as Blob;
