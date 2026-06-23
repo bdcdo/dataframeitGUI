@@ -21,40 +21,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isAnswerCorrect } from "@/lib/reviews/queries";
+import { formatAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import type { VerdictItem } from "@/app/(app)/projects/[id]/reviews/my-verdicts/page";
 import type { PydanticField } from "@/lib/types";
-
-function formatAnswer(answer: unknown): string {
-  if (answer == null) return "(sem resposta)";
-  if (typeof answer === "string") return answer;
-  if (Array.isArray(answer)) return answer.join(", ");
-  if (typeof answer === "object") {
-    return Object.entries(answer as Record<string, unknown>)
-      .flatMap(([k, v]) =>
-        v != null && String(v).trim() !== "" ? [`${k}: ${v}`] : [],
-      )
-      .join(", ");
-  }
-  return String(answer);
-}
-
-function formatVerdictDisplay(verdict: string, fieldType?: string): string {
-  if (verdict === "ambiguo") return "Ambíguo";
-  if (verdict === "pular") return "Pular";
-  if (fieldType === "multi" || verdict.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(verdict) as Record<string, boolean>;
-      const selected = Object.entries(parsed).flatMap(([k, v]) =>
-        v ? [k] : [],
-      );
-      return selected.length > 0 ? selected.join("; ") : "(nenhuma)";
-    } catch {
-      // fallback
-    }
-  }
-  return verdict;
-}
 
 export interface DocGroup {
   docId: string;

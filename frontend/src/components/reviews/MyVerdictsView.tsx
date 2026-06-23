@@ -22,8 +22,6 @@ import { VerdictsList } from "@/components/reviews/VerdictsList";
 import type { VerdictItem } from "@/app/(app)/projects/[id]/reviews/my-verdicts/page";
 import type { PydanticField } from "@/lib/types";
 
-export type { RespondentOption };
-
 /** Sort priority: incorrect+pending first, then incorrect+questioned, then incorrect+accepted, then correct */
 function verdictSortKey(item: VerdictItem): number {
   if (!item.isCorrect) {
@@ -174,14 +172,21 @@ function MyVerdictsViewInner({
   ): Promise<boolean> =>
     new Promise((resolve) => {
       startTransition(async () => {
-        const result = await acknowledgeVerdict(reviewId, projectId, status, comment);
-        if (result.error) {
-          toast.error(result.error);
+        try {
+          const result = await acknowledgeVerdict(reviewId, projectId, status, comment);
+          if (result.error) {
+            toast.error(result.error);
+            resolve(false);
+          } else {
+            toast.success(status === "accepted" ? "Correção aceita" : "Dúvida enviada");
+            refresh();
+            resolve(true);
+          }
+        } catch {
+          // Server action rejeitou (rede/auth) — sem catch, a Promise nunca
+          // resolveria e o input de dúvida ficaria pendente para sempre.
+          toast.error("Não foi possível registrar. Tente novamente.");
           resolve(false);
-        } else {
-          toast.success(status === "accepted" ? "Correção aceita" : "Dúvida enviada");
-          refresh();
-          resolve(true);
         }
       });
     });
