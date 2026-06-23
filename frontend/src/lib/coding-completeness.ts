@@ -21,7 +21,7 @@ function fieldExistedWhenCoded(
 // (required !== false), com a condição de visibilidade satisfeita pelas
 // respostas atuais e — quando `answerFieldHashes` é fornecido — que já existiam
 // no schema contra o qual a resposta foi codificada (staleness-aware).
-export function requiredHumanFields(
+function requiredHumanFields(
   fields: PydanticField[],
   answers: Record<string, unknown>,
   answerFieldHashes?: AnswerFieldHashes,
