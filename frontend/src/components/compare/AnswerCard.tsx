@@ -82,18 +82,9 @@ export function AnswerCard({
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={onVote}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onVote();
-        }
-      }}
       className={cn(
-        "w-full cursor-pointer rounded-lg border p-2.5 text-left transition-colors hover:bg-accent/50",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        "relative isolate w-full rounded-lg border p-2.5 text-left transition-colors hover:bg-accent/50",
+        "has-[[data-vote-target]:focus-visible]:outline-none has-[[data-vote-target]:focus-visible]:ring-2 has-[[data-vote-target]:focus-visible]:ring-ring has-[[data-vote-target]:focus-visible]:ring-offset-2",
         isChosen
           ? "border-green-500/50 bg-green-500/5"
           : selected
@@ -101,13 +92,29 @@ export function AnswerCard({
             : "border-muted",
       )}
     >
+      {/*
+        Vote target: a transparent <button> overlaying the whole card. The card
+        itself is a plain <div> so the interactive controls below (checkbox,
+        popover, gabarito radio) can be siblings of this button instead of
+        nested inside it (nested interactive = invalid HTML, plus the manual
+        role="button" that prefer-tag-over-role flagged). Any new interactive or
+        hover child must be lifted above this overlay with `relative z-[2]`;
+        non-interactive content stays below and clicking it votes
+        (stretched-link pattern). The native <button> handles Enter/Space.
+      */}
+      <button
+        type="button"
+        data-vote-target
+        onClick={onVote}
+        aria-label={`Escolher esta resposta: ${displayAnswer || "(vazia)"}`}
+        className="absolute inset-0 z-[1] cursor-pointer rounded-lg focus:outline-none"
+      />
       <div className="flex items-start gap-2">
         {selectable && (
-          <div className="flex h-5 shrink-0 items-center">
+          <div className="relative z-[2] flex h-5 shrink-0 items-center">
             <Checkbox
               checked={selected}
               onCheckedChange={() => onSelectionToggle?.()}
-              onClick={(e) => e.stopPropagation()}
               aria-label="Selecionar para marcar como equivalente"
               title="Selecionar como equivalente"
             />
@@ -122,7 +129,7 @@ export function AnswerCard({
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="cursor-default underline decoration-dotted underline-offset-2">
+                <span className="relative z-[2] cursor-default underline decoration-dotted underline-offset-2">
                   {respondentCount}{" "}
                   {respondentCount === 1 ? "respondente" : "respondentes"}
                 </span>
@@ -155,19 +162,14 @@ export function AnswerCard({
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/15"
+                    className="relative z-[2] inline-flex items-center gap-1 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/15"
                     title="Variantes marcadas como equivalentes"
                   >
                     <Link2 className="size-3" />
                     {fusedCount} variante{fusedCount === 1 ? "" : "s"}
                   </button>
                 </PopoverTrigger>
-                <PopoverContent
-                  align="start"
-                  className="w-72 p-2"
-                  onClick={(e) => e.stopPropagation()}
-                >
+                <PopoverContent align="start" className="w-72 p-2">
                   <p className="px-1 pb-1.5 text-xs font-medium">
                     Respostas equivalentes
                   </p>
@@ -189,10 +191,7 @@ export function AnswerCard({
                           {showUnmark && (
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onUnmarkPair!(v.pairId);
-                              }}
+                              onClick={() => onUnmarkPair!(v.pairId)}
                               className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                               title="Desfazer equivalência"
                               aria-label="Desfazer equivalência"
@@ -219,7 +218,7 @@ export function AnswerCard({
             {versions.length > 1 && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="cursor-default font-mono text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2">
+                  <span className="relative z-[2] cursor-default font-mono text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2">
                     {versions.length} versões
                   </span>
                 </TooltipTrigger>
@@ -236,11 +235,8 @@ export function AnswerCard({
             <div className="mt-1.5">
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowJustification(!showJustification);
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setShowJustification(!showJustification)}
+                className="relative z-[2] text-xs text-muted-foreground hover:text-foreground"
               >
                 {showJustification ? <ChevronDown className="inline size-3" /> : <ChevronRight className="inline size-3" />}{" "}Justificativa
               </button>
@@ -255,16 +251,13 @@ export function AnswerCard({
 
         {showGabarito && (
           <label
-            className="flex shrink-0 cursor-pointer items-center gap-1 rounded border border-brand/30 bg-background px-1.5 py-0.5 text-[10px] hover:bg-brand/5"
+            className="relative z-[2] flex shrink-0 cursor-pointer items-center gap-1 rounded border border-brand/30 bg-background px-1.5 py-0.5 text-[10px] hover:bg-brand/5"
             title="Esta é a resposta que será registrada como gabarito"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
           >
             <input
               type="radio"
               checked={isGabarito}
               onChange={() => onSetGabarito?.()}
-              onClick={(e) => e.stopPropagation()}
               className="size-3 accent-brand"
             />
             <span className={cn(isGabarito && "font-medium text-brand")}>
