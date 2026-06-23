@@ -16,7 +16,7 @@ A config é lida do diretório de execução (o react-doctor resolve o projeto v
 
 ## Gate local de pre-commit — bloqueante para código novo, não para o legado
 
-O gate roda **localmente, antes do commit** (estilo flake8/mypy), não no CI. `.pre-commit-config.yaml` define um hook `repo: local` que executa `react-doctor . --scope changed --base HEAD --blocking error` em commits que tocam arquivos `frontend/**/*.{ts,tsx}`. Como `--scope changed --base HEAD` reporta só issues nas *linhas* alteradas vs HEAD — verificado na 0.5.8 — e `--blocking error` só falha em diagnósticos *error*-level, o gate **bloqueia somente quando o commit toca uma linha que produz um error**. Todo o débito legado (os 18 errors e ~147 warnings da baseline 0.5.8 abaixo) fica grandfathered: editar uma linha qualquer de um arquivo que já tem um error em *outra* linha não barra o commit. Para endurecer o gate no futuro (ex.: `--blocking warning` depois de pagar o débito de State & Effects), basta ajustar a flag.
+O gate roda **localmente, antes do commit** (estilo flake8/mypy), não no CI. `.pre-commit-config.yaml` define um hook `repo: local` que executa `react-doctor . --scope changed --base HEAD --blocking error` em commits que tocam arquivos `frontend/**/*.{ts,tsx}`. Como `--scope changed --base HEAD` reporta só issues nas *linhas* alteradas vs HEAD — verificado na 0.5.8 — e `--blocking error` só falha em diagnósticos *error*-level, o gate **bloqueia somente quando o commit toca uma linha que produz um error**. Todo o débito legado (os 8 errors e ~118 warnings da baseline 0.5.8 abaixo) fica grandfathered: editar uma linha qualquer de um arquivo que já tem um error em *outra* linha não barra o commit. Para endurecer o gate no futuro (ex.: `--blocking warning` depois de pagar o débito de State & Effects), basta ajustar a flag.
 
 > **Mudança de flag (0.5.x):** a flag `--fail-on <level>` da 0.2.x foi removida; o substituto é `--blocking <level>` (`error` | `warning` | `none`; default já é `error`). O hook e os scripts foram migrados no bump.
 
@@ -40,19 +40,16 @@ pre-commit install              # da raiz do repo: grava o hook em .git/hooks
 
 Scan completo (`npm run react-doctor`) na 0.5.8, contra a `main` atual, já com os overrides aplicados:
 
-- **Score: 39 / 100** (o algoritmo de score mudou entre 0.2 e 0.5 — não é comparável ao "75" da versão anterior; permaneceu 39 do bump 0.5.6 → 0.5.8).
-- **18 errors / 147 warnings** (165 issues), distribuídos em: Security (6 errors), Bugs (12 errors + 91 warnings), Performance (20 warnings), Accessibility (4 warnings), Maintainability (32 warnings).
+- **Score: 53 / 100** (o algoritmo de score mudou entre 0.2 e 0.5 — não é comparável ao "75" da 0.2.x; era 39 na medição do bump em 2026-06-15 e subiu para 53 conforme o débito de errors foi pago nos PRs abaixo).
+- **8 errors / 118 warnings** (126 issues), distribuídos em: Bugs (8 errors + 75 warnings), Performance (19 warnings), Maintainability (24 warnings).
 
-O bump 0.5.6 → 0.5.8 (só patches: timeouts de fase, ordenação determinística, auto-tuning de workers) **não alterou a saída de errors do ruleset**. A baseline anterior na 0.5.6 (2026-06-15) era 17 errors / 148 warnings; o delta de +1 error é deriva de código — a regra `server-no-mutable-module-state` voltou a disparar num `const` introduzido depois daquela medição (PR #211, 2026-06-22), não por mudança da versão.
+O bump 0.5.6 → 0.5.8 (só patches: timeouts de fase, ordenação determinística, auto-tuning de workers) **não alterou a saída de errors do ruleset** — verificado empiricamente, 0.5.6 e 0.5.8 produzem os mesmos diagnósticos. A queda de 17 errors (baseline 0.5.6, 2026-06-15) para 8 é efeito de outros PRs mesclados na `main` desde então, não da versão: #203/#242 tirou os 6 errors de Security da contagem (silenciados como FP — ver abaixo) e aplicou `Object.freeze()` em `AUTOMATION_MODE_VALUES` (zerando `server-no-mutable-module-state` em `actions/projects.ts`), enquanto #232/#246/#248 refatoraram `MyVerdictsView`, `AnswerCard` e `MobileWarning`, encolhendo o cluster de Bugs. Conte sempre via `npm run react-doctor`, **não fixe o total aqui**.
 
-Os 18 errors vêm de **quatro regras**, todas legítimas (não são FP) e por isso **não silenciadas** — ficam grandfathered pelo `--scope changed` line-scoped até que as linhas em questão sejam editadas:
+Os 8 errors restantes são todos da regra `react-doctor/no-adjust-state-on-prop-change` (Bugs; ajustar state em effect/render conforme prop muda) — débito **legítimo e não silenciado**, grandfathered pelo `--scope changed` line-scoped até que as linhas em questão sejam editadas. Ex.: `AutoReviewFieldPanel.tsx`, `AutoReviewPage.tsx`, `CodingPage.tsx`, `QuestionsPanel.tsx`, `DocumentPreview.tsx`, `DocumentSelector.tsx`, `LlmConfigurePane.tsx`.
 
-- `react-doctor/no-adjust-state-on-prop-change` (11) — Bugs; ajustar state em effect/render conforme prop muda. Ex.: `DocumentPreview.tsx`, `CodingPage.tsx`, `MyVerdictsView.tsx`.
-- `react-doctor/supabase-client-owned-authz-field` (4) — Security; campo de autorização escrito via client. Ex.: `lib/auto-review.ts`, `actions/{assignments,members,projects}.ts`.
-- `react-doctor/supabase-table-missing-rls` (2) — Security; `CREATE TABLE` sem RLS em `migrations/{clerk_user_mapping,master_users}.sql`.
-- `react-doctor/server-no-mutable-module-state` (1) — Bugs; `const AUTOMATION_MODE_VALUES = []` module-scoped em `actions/projects.ts:10`. Resolução é o mesmo padrão `Object.freeze()` já usado no projeto (ver seção "Regras que deixaram de ser FP"), em PR à parte.
+Os 6 errors de Security (4 `supabase-client-owned-authz-field` + 2 `supabase-table-missing-rls`) foram auditados em #203, confirmados como FP heurístico e silenciados por arquivo — detalhes nas subseções "Por que `supabase-client-owned-authz-field`…" e "Por que `supabase-table-missing-rls`…" abaixo.
 
-Pagar esse débito (corrigir os errors de verdade) é trabalho de PR(s) à parte, fora do escopo do bump. O gate de pre-commit não obriga a corrigi-los para commitar — só barra se a *linha* alterada produzir um error.
+Pagar o débito de Bugs restante é trabalho de PR(s) à parte (cluster State & Effects #149/#152), fora do escopo de #203. O gate de pre-commit não obriga a corrigi-los para commitar — só barra se a *linha* alterada produzir um error.
 
 ## Por que `server-auth-actions` está silenciada em `src/actions/**`
 
@@ -66,10 +63,43 @@ Se o react-doctor passar a aceitar custom auth helpers (ou se o projeto adotar `
 
 Os componentes shadcn/ui (`ui/button`, `ui/badge`, `ui/tabs`) exportam, além do componente, suas variantes CVA (`buttonVariants`, `badgeVariants` etc.) — convenção intencional do shadcn. A regra `react-doctor/only-export-components` (orientada a Fast Refresh) acusa isso como error. O override silencia a regra **apenas em `src/components/ui/**`** (onde o padrão é da própria biblioteca), mantendo-a ativa no resto do app. Na 0.2.x estes eram os únicos errors do codebase, junto com `server-auth-actions`; com os overrides, a baseline daquela versão era 0 errors. Na 0.5.6 o ruleset expandido introduziu novos errors (ver baseline abaixo), mas estes dois overrides continuam necessários e ativos.
 
+## Por que `supabase-client-owned-authz-field` está silenciada nos 4 arquivos auditados
+
+A regra `react-doctor/supabase-client-owned-authz-field` acusa código client Supabase que escreve campos de `user`/`tenant`/`owner`/`role` que deveriam ser enforçados pela RLS. Os 4 disparos da baseline foram auditados em #203 e confirmados como FP heurístico — silenciados **por arquivo** (não pela regra inteira, nem por `src/actions/**`), para que a regra continue pegando actions novas:
+
+- `src/lib/auto-review.ts` — a escrita (`assignments.status`, `field_reviews`) passa pelo **admin client** (service-role), que ignora a RLS por design; `status` é estado de workflow, não autz. O uso do admin é deliberado e comentado no arquivo (a policy de `assignments` restringe INSERT a coordenadores; o pesquisador precisa criar a própria fila de revisão).
+- `src/actions/assignments.ts` — a regra aponta o parâmetro `userId`; as escritas gravam `type`/`assignment_weight`/`assignment_cap` (operacionais) e são barradas pela policy `Coordinators manage assignments`.
+- `src/actions/members.ts` — escreve `role`/`can_resolve`/`can_arbitrate`/`can_compare` via client autenticado, mas a policy `Coordinators manage members` (`USING project_id IN auth_user_coordinator_or_creator_project_ids() OR is_master()`) barra qualquer não-coordenador: o UPDATE afeta 0 linhas e o código retorna "Sem permissão". Não há auto-escalação explorável. A ausência de um *column-level guard* em `project_members` (defesa em profundidade, presente em `projects`/`project_comments`/`schema_change_log`) é a única lacuna real, rastreada em issue-filha de #203 — não é vulnerabilidade, e fechá-la embute decisão de produto (se um coordenador pode alternar as próprias flags).
+- `src/actions/projects.ts` — `role: "coordenador"` inserido no bootstrap criador→coordenador, gated pela policy `Creator inserts members` (só permite inserir em projeto cujo `created_by = clerk_uid()`). Intencional; ninguém entra em projeto alheio.
+
+Se algum desses fluxos migrar para depender de coluna client-fornecida sem RLS, **remover o override do arquivo afetado** e corrigir.
+
+## Por que `supabase-table-missing-rls` está silenciada nas 2 migrations auditadas
+
+A regra `react-doctor/supabase-table-missing-rls` acusa `CREATE TABLE` que não habilita RLS **na mesma migration**. Os 2 disparos (`migrations/20260401000000_clerk_user_mapping.sql` e `migrations/20260402000000_master_users.sql`) foram auditados em #203 e são FP: ambas as tabelas têm RLS habilitada numa migration posterior (`20260407000000_enable_rls_system_tables.sql`) somada a `REVOKE ALL ... FROM anon, authenticated`, e são acessadas só via service-role (`lib/clerk-sync.ts` e `lib/auth.ts`). A proteção existe — só está distribuída entre arquivos, padrão que a heurística não reconhece. Editar migrations já aplicadas em produção para re-habilitar RLS seria no-op.
+
+O override é escopado **às duas migrations específicas**, de propósito: uma `CREATE TABLE` nova sem RLS deve continuar falhando.
+
 ## `js-combine-iterations` desligada globalmente
 
 22 ocorrências de `.filter().map()` (e cadeias afins) sobre arrays pequenos — cosmético, sem impacto real de performance no domínio do projeto. Desligada via `rules` (severidade global `off`), não via ignore por caminho.
 
+## `no-multi-comp` ignorada em `src/components/ui/**`
+
+Os compound components do shadcn/Radix declaram, por convenção da biblioteca, vários componentes no mesmo arquivo: `ui/collapsible` (`Collapsible` + `CollapsibleTrigger` + `CollapsibleContent`) e `ui/resizable` (`ResizablePanelGroup` + `ResizablePanel` + `ResizableHandle`). A regra `react-doctor/no-multi-comp` (Maintainability) pede mover cada componente secundário para o seu próprio arquivo, o que quebraria o padrão de import único da lib. O override silencia a regra **apenas em `src/components/ui/**`** (×4 ocorrências na 0.5.6), mesmo escopo e justificativa de `only-export-components`. Fora de `ui/**` a regra continua ativa, onde múltiplos componentes por arquivo é sinal real de arquivo grande demais.
+
+## `exhaustive-deps` suprimida em `src/components/coding/QuestionsPanel.tsx`
+
+Os dois `useEffect` de `QuestionsPanel.tsx` (linhas 179 e 205 na 0.5.6) têm deps estreitas **deliberadas**, já anotadas com `// eslint-disable-next-line react-hooks/exhaustive-deps` no código: um anula respostas de campos condicionais que ficaram invisíveis (FR-203), reagindo só a `visibleNames` para evitar cascata; o outro rola até o campo condicional recém-revelado, também disparando só por `visibleNames`. Incluir as demais deps (`fields`, `answers`, refs) reintroduziria os efeitos em cascata que o design evita. O `eslint-disable` cobre o ESLint, mas o react-doctor mantém a sua própria regra `exhaustive-deps`; o override por arquivo silencia **só este arquivo**. As outras 5 ocorrências de `exhaustive-deps` no app (`MultiOptionReview`, `LlmConfigurePane`, `ReviewCommentsView`, `MyVerdictsView`) **não** foram avaliadas como deliberadas e ficam para a issue de hooks / State & Effects — não suprimir em bloco.
+
+## `js-length-check-first` suprimida em `src/lib/date-parts.ts`
+
+`arePartsValid` (linha 39) faz `parts.every((p, i) => ...)` sobre `DateParts`, uma tuple de **tamanho fixo 3** garantida pelo tipo (`[day, month, year]`). A regra `react-doctor/js-length-check-first` (Performance) sugere checar `.length` antes de iterar — otimização morta aqui, já que o comprimento é constante de tipo e não há array vazio possível. Override por arquivo.
+
+## a11y (`prefer-tag-over-role`, `prefer-html-dialog`, `no-noninteractive-element-interactions`) — avaliada, **não** suprimida
+
+As ocorrências dessas três regras na 0.5.6 — `shell/MobileWarning.tsx:21` (`<div role="dialog">`) e `compare/AnswerCard.tsx` (`<div role="button">` e handler em elemento não-interativo) — são **HTML cru de código de app, não primitivas Radix vendidas**. Diferente de um `role` herdado de uma primitiva da lib (que seria convenção a silenciar), aqui o caminho correto é **refatorar** para o elemento semântico nativo (`<dialog>`, `<button>`). Por isso ficam fora desta supressão de convenção e seguem para a issue de a11y (refactor), não para o `doctor.config.json`. Os FPs antigos da #152 `js-min-max-loop` (`AssignmentTable.tsx`) e `jsx-a11y/label-has-associated-control` (`MemberList.tsx`) não reproduzem mais na 0.5.6 e não exigiram supressão.
+
 ## Regras que deixaram de ser FP
 
-`server-no-mutable-module-state` deixou de ser FP após o uso de `Object.freeze()` em `TAG_PROFILE` (ver `actions/documents.ts` e `actions/members.ts`). A regra voltou a disparar (1 error) num `const AUTOMATION_MODE_VALUES = []` introduzido em `actions/projects.ts:10` pelo PR #211 — grandfathered na baseline 0.5.8 acima, a resolver com o mesmo `Object.freeze()` em PR à parte.
+`server-no-mutable-module-state` deixou de ser FP após o uso de `Object.freeze()` em `TAG_PROFILE` (ver `actions/documents.ts` e `actions/members.ts`) e em `AUTOMATION_MODE_VALUES` (`actions/projects.ts`).

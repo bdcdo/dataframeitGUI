@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel } from "./QuestionsPanel";
 import {
@@ -13,8 +12,10 @@ import { DocumentPicker } from "./DocumentPicker";
 import { FullscreenNav } from "./FullscreenNav";
 import { saveResponse } from "@/actions/responses";
 import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
-import { getResearcherFieldOrder, saveResearcherFieldOrder } from "@/actions/field-order";
 import { applyFieldOrder } from "@/lib/field-order";
+import { useUrlState } from "@/hooks/useUrlState";
+import { useFieldOrder } from "@/hooks/useFieldOrder";
+import { useAutosaveOnExit, type AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { CodingHeader } from "./CodingHeader";
@@ -71,17 +72,15 @@ function CodingPageInner({
   readOnly = false,
   roundFilter,
 }: CodingPageProps) {
-  const searchParams = useSearchParams();
-  const { replace } = useRouter();
-  const pathname = usePathname();
-  const docParam = searchParams.get("doc");
+  const { get: getParam, set: setParams } = useUrlState();
+  const docParam = getParam("doc");
 
   // Ordenacao da navegacao de documentos atribuidos (issue #108). Padrao e
   // "recent" — ordena pelo responses.updated_at do proprio pesquisador, para o
   // pesquisador cair direto no ultimo documento que mexeu. "default" (opt-in
   // via ?sort=default) mantem a ordem do servidor (status do assignment).
   const sortMode: CodingSortMode =
-    searchParams.get("sort") === "default" ? "default" : "recent";
+    getParam("sort") === "default" ? "default" : "recent";
   const sortedDocuments = useMemo(
     () =>
       sortMode === "recent"
@@ -134,69 +133,8 @@ function CodingPageInner({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
 
-  // Ordem custom de perguntas do pesquisador (carregada uma vez por projeto)
-  const [fieldOrder, setFieldOrder] = useState<string[] | null>(null);
-  const reorderSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingOrderRef = useRef<string[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getResearcherFieldOrder(projectId).then(({ order }) => {
-      // Se o pesquisador ja arrastou antes da load resolver, o drag tem
-      // prioridade — descartamos o valor vindo do banco para nao sobrescrever
-      // a intencao recente do usuario.
-      if (cancelled || pendingOrderRef.current) return;
-      setFieldOrder(order);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  const doSave = useCallback(
-    (order: string[]) => {
-      saveResearcherFieldOrder(projectId, order).then((r) => {
-        if (!r.success) {
-          console.error("[field-order save]", r.error);
-          toast.error("Não foi possível salvar a ordem das perguntas");
-        }
-      });
-    },
-    [projectId],
-  );
-
-  const flushOrderSave = useCallback(() => {
-    if (reorderSaveTimer.current) {
-      clearTimeout(reorderSaveTimer.current);
-      reorderSaveTimer.current = null;
-    }
-    const pending = pendingOrderRef.current;
-    if (!pending) return;
-    pendingOrderRef.current = null;
-    doSave(pending);
-  }, [doSave]);
-
-  const handleReorder = useCallback(
-    (newOrder: string[]) => {
-      setFieldOrder(newOrder);
-      pendingOrderRef.current = newOrder;
-      if (reorderSaveTimer.current) clearTimeout(reorderSaveTimer.current);
-      reorderSaveTimer.current = setTimeout(() => {
-        reorderSaveTimer.current = null;
-        const pending = pendingOrderRef.current;
-        if (!pending) return;
-        pendingOrderRef.current = null;
-        doSave(pending);
-      }, 500);
-    },
-    [doSave],
-  );
-
-  useEffect(() => {
-    return () => {
-      flushOrderSave();
-    };
-  }, [flushOrderSave]);
+  // Ordem custom de perguntas do pesquisador (debounce/flush/guard no hook).
+  const { fieldOrder, handleReorder } = useFieldOrder(projectId);
 
   const orderedFields = useMemo(
     () => applyFieldOrder(fields, fieldOrder),
@@ -238,15 +176,9 @@ function CodingPageInner({
   // Update URL query param without full navigation
   const updateDocParam = useCallback(
     (docId: string | null) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (docId) {
-        params.set("doc", docId);
-      } else {
-        params.delete("doc");
-      }
-      replace(`${pathname}?${params.toString()}`, { scroll: false });
+      setParams({ doc: docId }, { scroll: false });
     },
-    [searchParams, replace, pathname]
+    [setParams]
   );
 
   // Lazy-load browse documents
@@ -285,70 +217,47 @@ function CodingPageInner({
   );
   const docNotes = allNotes[currentDoc?.id] ?? "";
 
-  // --- Auto-save on exit (#14) ---
-  // Warn on page exit (close tab, navigate away)
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const activeDocId = mode === "assigned" ? currentDoc?.id : selectedBrowseDoc?.id;
-      if (activeDocId && dirtyDocs.has(activeDocId)) {
-        e.preventDefault();
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [mode, currentDoc?.id, selectedBrowseDoc?.id, dirtyDocs]);
-
-  // Auto-save when tab loses visibility (fallback for close without confirm).
-  // Usa navigator.sendBeacon -> /api/autosave (#28): Server Actions sao POSTs
-  // normais que o browser pode abortar ao fechar a tab, perdendo o save.
-  // sendBeacon/keepalive sao projetados para entregar dados durante o unload.
-  // A aba ja esta hidden — nao da pra mostrar toast, e o envio e
-  // fire-and-forget, entao falhas so aparecem no console / logs do server.
-  useEffect(() => {
-    const beaconSave = (
-      documentId: string,
-      answers: Record<string, unknown>,
-      notes: string,
-    ) => {
-      const body = JSON.stringify({ projectId, documentId, answers, notes });
-      const blob = new Blob([body], { type: "application/json" });
-      // sendBeacon pode lancar sincronamente em alguns browsers (ex.: payload
-      // acima do limite da fila). Tratamos como "nao enfileirado" para cair no
-      // fallback fetch keepalive em vez de estourar o handler de evento.
-      let queued = false;
-      try {
-        queued =
-          typeof navigator.sendBeacon === "function" &&
-          navigator.sendBeacon("/api/autosave", blob);
-      } catch (err) {
-        console.error("[auto-save] sendBeacon falhou:", err);
-      }
-      if (!queued) {
-        // Fallback: sendBeacon indisponivel ou fila cheia. keepalive tem o
-        // mesmo efeito (sobrevive ao unload) mas permite headers.
-        fetch("/api/autosave", {
-          method: "POST",
-          keepalive: true,
-          headers: { "Content-Type": "application/json" },
-          body,
-        }).catch((err) => console.error("[auto-save] exceção:", err));
-      }
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== "hidden") return;
-      if (mode === "assigned" && currentDoc && dirtyDocs.has(currentDoc.id)) {
-        beaconSave(currentDoc.id, docAnswers, docNotes);
-      } else if (
-        mode === "browse" &&
-        selectedBrowseDoc &&
-        dirtyDocs.has(selectedBrowseDoc.id)
-      ) {
-        beaconSave(selectedBrowseDoc.id, browseAnswers, browseNotes);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [mode, currentDoc, docAnswers, docNotes, selectedBrowseDoc, browseAnswers, browseNotes, projectId, dirtyDocs]);
+  // --- Auto-save on exit (#14, #28) ---
+  // beforeunload + visibilitychange + sendBeacon->fetch keepalive no hook.
+  const activeDocId =
+    mode === "assigned"
+      ? currentDoc?.id ?? null
+      : selectedBrowseDoc?.id ?? null;
+  const isActiveDocDirty = !!activeDocId && dirtyDocs.has(activeDocId);
+  const getAutosavePayload = useCallback((): AutosavePayload | null => {
+    if (mode === "assigned") {
+      if (!currentDoc) return null;
+      return {
+        projectId,
+        documentId: currentDoc.id,
+        answers: docAnswers,
+        notes: docNotes,
+      };
+    }
+    if (selectedBrowseDoc) {
+      return {
+        projectId,
+        documentId: selectedBrowseDoc.id,
+        answers: browseAnswers,
+        notes: browseNotes,
+      };
+    }
+    return null;
+  }, [
+    mode,
+    currentDoc,
+    docAnswers,
+    docNotes,
+    selectedBrowseDoc,
+    browseAnswers,
+    browseNotes,
+    projectId,
+  ]);
+  useAutosaveOnExit({
+    activeDocId,
+    isDirty: isActiveDocDirty,
+    getPayload: getAutosavePayload,
+  });
 
   const handleAnswer = useCallback(
     (fieldName: string, value: unknown) => {
@@ -440,12 +349,11 @@ function CodingPageInner({
         : 0;
       setDocIndex(Math.max(0, targetIndex));
 
-      const params = new URLSearchParams(searchParams.toString());
-      if (nextSort === "default") params.set("sort", "default");
-      else params.delete("sort");
-      if (targetId) params.set("doc", targetId);
-      const qs = params.toString();
-      replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
+      const updates: Record<string, string | null> = {
+        sort: nextSort === "default" ? "default" : null,
+      };
+      if (targetId) updates.doc = targetId;
+      setParams(updates, { scroll: false });
     },
     [
       currentDoc,
@@ -456,9 +364,7 @@ function CodingPageInner({
       codedAtByDoc,
       dirtyDocs,
       markClean,
-      searchParams,
-      replace,
-      pathname,
+      setParams,
     ]
   );
 
