@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeTruncation,
   REVIEW_BASE_DATA_LIMIT,
+  resolveEffectiveUserId,
 } from "@/lib/reviews/queries";
 
 // Array esparso: `.length` e o teto sem alocar 50k elementos.
@@ -57,5 +58,69 @@ describe("computeTruncation — flags do TruncationBanner (issue #105)", () => {
       reviews: false,
       documents: false,
     });
+  });
+});
+
+// Invariante de segurança: em "Meu Gabarito", `viewAsUser` (ver o gabarito de
+// outro respondente) só vale para coordenador/criador/master. A policy RLS
+// "Members view responses" não filtra por respondent_id, então esta função é a
+// única barreira — por isso `isCoordinator` aqui é fail-closed.
+describe("resolveEffectiveUserId — viewAsUser só para coordenador/criador/master", () => {
+  const selfId = "user-self";
+  const other = "user-other";
+
+  it("não-coordenador/não-master NÃO impersona, mesmo passando viewAsUser", () => {
+    expect(
+      resolveEffectiveUserId({
+        selfId,
+        isMaster: false,
+        isCoordinator: false,
+        viewAsUser: other,
+      }),
+    ).toBe(selfId);
+  });
+
+  it("coordenador pode ver as respostas de outro via viewAsUser", () => {
+    expect(
+      resolveEffectiveUserId({
+        selfId,
+        isMaster: false,
+        isCoordinator: true,
+        viewAsUser: other,
+      }),
+    ).toBe(other);
+  });
+
+  it("master pode ver as respostas de outro mesmo sem ser coordenador", () => {
+    expect(
+      resolveEffectiveUserId({
+        selfId,
+        isMaster: true,
+        isCoordinator: false,
+        viewAsUser: other,
+      }),
+    ).toBe(other);
+  });
+
+  it("sem viewAsUser, sempre o próprio usuário (mesmo coordenador)", () => {
+    expect(
+      resolveEffectiveUserId({
+        selfId,
+        isMaster: false,
+        isCoordinator: true,
+        viewAsUser: undefined,
+      }),
+    ).toBe(selfId);
+  });
+
+  it("viewAsUser vazio é tratado como ausente (não impersona)", () => {
+    expect(
+      resolveEffectiveUserId({
+        selfId,
+        isMaster: true,
+        isCoordinator: true,
+        viewAsUser: "",
+      }),
+    ).toBe(selfId);
   });
 });

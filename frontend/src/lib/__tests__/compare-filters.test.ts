@@ -3,6 +3,7 @@ import {
   DEFAULT_COMPARE_FILTERS,
   readCompareFilters,
   compareDefaultsForMode,
+  assignedCompareDocIds,
 } from "@/lib/compare-filters";
 
 // Estes testes cobrem a peça que liga a Comparação de "1 humano + 1 LLM": o
@@ -66,5 +67,36 @@ describe("readCompareFilters com defaults por modo", () => {
     const f = readCompareFilters(sp, defaults);
     expect(f.minHumans).toBe(1); // veio do modo
     expect(f.minTotal).toBe(3); // veio da URL
+  });
+});
+
+// Invariante de segurança: na fila de Comparação, um não-coordenador só pode
+// ver os documentos atribuídos a ele. A policy RLS "Members view responses" não
+// restringe por linha, então este recorte é a única barreira — por isso o
+// `isCoordinator` que o alimenta é fail-closed.
+describe("assignedCompareDocIds — não-coordenador vê só os docs atribuídos", () => {
+  const userId = "user-self";
+  const assignments = [
+    { document_id: "doc-meu", user_id: userId, type: "comparacao" },
+    { document_id: "doc-de-outro", user_id: "user-other", type: "comparacao" },
+    { document_id: "doc-codificacao", user_id: userId, type: "codificacao" },
+  ];
+
+  it("coordenador → null (sem restrição: vê todos os documentos)", () => {
+    expect(assignedCompareDocIds(true, assignments, userId)).toBeNull();
+  });
+
+  it("não-coordenador → só os docs de comparação atribuídos a ele", () => {
+    const visible = assignedCompareDocIds(false, assignments, userId);
+    expect(visible).toEqual(new Set(["doc-meu"]));
+    // não vaza o doc de comparação atribuído a outro respondente...
+    expect(visible!.has("doc-de-outro")).toBe(false);
+    // ...nem um assignment de outro tipo (codificação) do próprio usuário
+    expect(visible!.has("doc-codificacao")).toBe(false);
+  });
+
+  it("não-coordenador sem assignments → conjunto vazio (não vê nada)", () => {
+    expect(assignedCompareDocIds(false, [], userId)).toEqual(new Set());
+    expect(assignedCompareDocIds(false, null, userId)).toEqual(new Set());
   });
 });

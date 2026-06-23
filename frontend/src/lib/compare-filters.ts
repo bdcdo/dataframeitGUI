@@ -75,3 +75,25 @@ export function compareDefaultsForMode(
   }
   return { ...DEFAULT_COMPARE_FILTERS, minHumans };
 }
+
+// Conjunto de document_ids que um usuário pode VER na fila de comparação.
+// Coordenador → null (sem restrição: vê todos os documentos). Não-coordenador
+// → apenas os docs com assignment de comparação atribuído a ele.
+// SEGURANÇA: a policy RLS "Members view responses" deixa qualquer membro ler
+// todas as responses do projeto, então este recorte é a única barreira de
+// visibilidade — por isso o `isCoordinator` que o alimenta é fail-closed (não
+// incorpora queryFailed). Ver analyze/compare/page.tsx.
+export function assignedCompareDocIds(
+  isCoordinator: boolean,
+  assignments:
+    | ReadonlyArray<{ document_id: string; user_id: string; type: string }>
+    | null,
+  userId: string,
+): Set<string> | null {
+  if (isCoordinator) return null;
+  return new Set(
+    (assignments ?? [])
+      .filter((a) => a.type === "comparacao" && a.user_id === userId)
+      .map((a) => a.document_id),
+  );
+}
