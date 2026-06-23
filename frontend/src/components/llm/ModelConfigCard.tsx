@@ -29,12 +29,7 @@ import {
 } from "@/lib/model-registry";
 import { ModelCombobox } from "./ModelCombobox";
 import { AdvancedParamsSection } from "./AdvancedParamsSection";
-
-interface LlmConfig {
-  llm_provider: string;
-  llm_model: string;
-  llm_kwargs: Record<string, unknown>;
-}
+import type { LlmConfig } from "@/lib/types";
 
 interface ModelConfigCardProps {
   projectId: string;

@@ -1,16 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { PydanticField } from "@/lib/types";
+import type { LlmConfig, PydanticField } from "@/lib/types";
 import { PromptCard } from "./PromptCard";
 import { ModelConfigCard } from "./ModelConfigCard";
 import { RunCard } from "./RunCard";
-
-interface LlmConfig {
-  llm_provider: string;
-  llm_model: string;
-  llm_kwargs: Record<string, unknown>;
-}
 
 interface LlmConfigurePaneProps {
   projectId: string;

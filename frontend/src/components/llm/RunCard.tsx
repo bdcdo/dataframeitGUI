@@ -14,6 +14,7 @@ import { useEligibleDocCount } from "@/hooks/useEligibleDocCount";
 import { DocumentSelector } from "./DocumentSelector";
 import { LlmErrorCard } from "./LlmErrorCard";
 import { RunProgress } from "./RunProgress";
+import type { LlmConfig } from "@/lib/types";
 
 export type FilterMode =
   | "all"
@@ -21,12 +22,6 @@ export type FilterMode =
   | "max_responses"
   | "random_sample"
   | "specific";
-
-interface LlmConfig {
-  llm_provider: string;
-  llm_model: string;
-  llm_kwargs: Record<string, unknown>;
-}
 
 interface RunCardProps {
   projectId: string;
