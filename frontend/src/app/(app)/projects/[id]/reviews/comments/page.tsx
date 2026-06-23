@@ -114,7 +114,12 @@ export default async function CommentsPage({
     ]),
   ];
 
-  const isCoordinator = accessContext?.isCoordinator ?? false;
+  // Fail-open em erro transitorio de query (ver config/layout.tsx): nao rebaixa
+  // um coordenador legitimo a nao-coordenador por falha transiente. As mutacoes
+  // por tras das affordances re-checam via isProjectCoordinator (fail-closed).
+  const isCoordinator = accessContext
+    ? accessContext.isCoordinator || accessContext.queryFailed
+    : false;
 
   let reviewerMap = new Map<string, string>();
   if (reviewerIds.length > 0) {

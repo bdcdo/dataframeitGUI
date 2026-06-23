@@ -46,7 +46,9 @@ export default async function MyVerdictsPage({
   // Project fields + papel do usuario. isCoordinator vem de
   // getProjectAccessContext (request-scoped via cache()) — reaproveita a
   // leitura project+membership ja feita pelo layout pai e cobre isMaster.
-  const [{ data: project }, { isCoordinator }] = await Promise.all([
+  // Fail-open em erro transitorio (ver config/layout.tsx): coordenador legitimo
+  // nao perde affordances; mutacoes re-checam via isProjectCoordinator.
+  const [{ data: project }, access] = await Promise.all([
     supabase
       .from("projects")
       .select("pydantic_fields")
@@ -54,6 +56,7 @@ export default async function MyVerdictsPage({
       .single(),
     getProjectAccessContext(id, user.id, user.isMaster),
   ]);
+  const isCoordinator = access.isCoordinator || access.queryFailed;
 
   const effectiveUserId =
     (user.isMaster || isCoordinator) && sp.viewAsUser ? sp.viewAsUser : user.id;

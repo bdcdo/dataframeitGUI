@@ -92,7 +92,12 @@ export default async function LlmInsightsPage({
       : Promise.resolve(null),
   ]);
 
-  const isCoordinator = accessContext?.isCoordinator ?? false;
+  // Fail-open em erro transitorio de query (ver config/layout.tsx): nao rebaixa
+  // um coordenador legitimo a nao-coordenador por falha transiente. As mutacoes
+  // por tras das affordances re-checam via isProjectCoordinator (fail-closed).
+  const isCoordinator = accessContext
+    ? accessContext.isCoordinator || accessContext.queryFailed
+    : false;
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
 
