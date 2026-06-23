@@ -209,7 +209,7 @@ export function AnswerCard({
 
             {versions.length === 1 && (
               <span
-                className="font-mono text-[10px] text-muted-foreground"
+                className="relative z-[2] font-mono text-[10px] text-muted-foreground"
                 title="Versão do schema em que esta resposta foi salva"
               >
                 v{versions[0]}
