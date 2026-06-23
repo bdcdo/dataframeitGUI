@@ -11,7 +11,20 @@
       {
         "files": ["src/components/ui/**"],
         "rules": [
-          "react-doctor/only-export-components"
+          "react-doctor/only-export-components",
+          "react-doctor/no-multi-comp"
+        ]
+      },
+      {
+        "files": ["src/components/coding/QuestionsPanel.tsx"],
+        "rules": [
+          "react-doctor/exhaustive-deps"
+        ]
+      },
+      {
+        "files": ["src/lib/date-parts.ts"],
+        "rules": [
+          "react-doctor/js-length-check-first"
         ]
       }
     ]
