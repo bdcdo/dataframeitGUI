@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  choiceKey,
   isAutoReviewFieldDecided,
   verdictRequiresJustification,
 } from "@/lib/auto-review-decided";
@@ -62,5 +63,13 @@ describe("verdictRequiresJustification", () => {
     expect(verdictRequiresJustification("equivalente")).toBe(false);
     expect(verdictRequiresJustification(null)).toBe(false);
     expect(verdictRequiresJustification(undefined)).toBe(false);
+  });
+});
+
+describe("choiceKey", () => {
+  it("compõe docId e fieldName isolando por (documento, campo)", () => {
+    expect(choiceKey("docA", "q1")).toBe("docA::q1");
+    // mesmo fieldName em docs diferentes → chaves distintas (sem colisão)
+    expect(choiceKey("docA", "q1")).not.toBe(choiceKey("docB", "q1"));
   });
 });
