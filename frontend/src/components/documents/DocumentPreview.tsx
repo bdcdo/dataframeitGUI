@@ -8,17 +8,8 @@ interface DocumentPreviewProps {
   title: string;
   open: boolean;
   onClose: () => void;
-  /**
-   * projectId do documento — usado pelo fetch de texto via `getDocumentText`.
-   * Sempre presente no caller real (DocumentsPageClient, rota projects/[id]).
-   */
-  projectId?: string;
-  /**
-   * Por padrao, preview nao carrega texto de doc soft-deleted — alinhado com
-   * o resto da UI que esconde excluidos. Setar true quando o caller estiver
-   * no modo "Mostrar excluidos" para permitir visualizacao do historico.
-   */
-  allowExcluded?: boolean;
+  /** projectId do documento — usado pelo fetch de texto via `getDocumentText`. */
+  projectId: string;
 }
 
 export function DocumentPreview({
@@ -27,11 +18,8 @@ export function DocumentPreview({
   open,
   onClose,
   projectId,
-  allowExcluded = false,
 }: DocumentPreviewProps) {
-  const { text, loading } = useDocumentText(projectId, open ? documentId : null, {
-    allowExcluded,
-  });
+  const { text, loading } = useDocumentText(projectId, open ? documentId : null);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

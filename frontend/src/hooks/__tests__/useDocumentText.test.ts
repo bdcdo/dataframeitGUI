@@ -55,6 +55,15 @@ describe("useDocumentText", () => {
     expect(result.current.text).toBe("(Documento não encontrado)");
   });
 
+  it("destrava loading com sentinela de erro quando a action rejeita", async () => {
+    // Sem .catch o loading derivado ficaria preso para sempre (skeleton infinito).
+    mockGet.mockRejectedValue(new Error("falha de transporte"));
+    const { result } = renderHook(() => useDocumentText("p1", "d1"));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.text).toBe("(Erro ao carregar o documento)");
+  });
+
   it("não busca quando documentId é null", () => {
     const { result } = renderHook(() => useDocumentText("p1", null));
 

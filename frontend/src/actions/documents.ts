@@ -463,20 +463,24 @@ export async function getDocumentForCoding(
 export async function getDocumentText(
   projectId: string,
   documentId: string,
-  allowExcluded = false,
 ): Promise<{ text: string; title: string } | null> {
   const supabase = await createSupabaseServer();
-  let query = supabase
+  // Busca o texto de um doc por id (RLS aplica). Nao filtra excluded_at de
+  // proposito: a visibilidade de soft-deleted e decidida nas queries de lista
+  // (getDocumentsForBrowse, a pagina de documentos via ?show=excluded), nao no
+  // fetch de texto por id. Quem chega a pedir o texto ja escolheu o doc na lista.
+  const { data, error } = await supabase
     .from("documents")
     .select("title, text")
     .eq("id", documentId)
-    .eq("project_id", projectId);
-  // Por padrao oculta soft-deleted, alinhado com getDocumentsForBrowse /
-  // getDocumentForCoding. So o preview no modo "Mostrar excluidos" passa true.
-  if (!allowExcluded) {
-    query = query.is("excluded_at", null);
+    .eq("project_id", projectId)
+    .maybeSingle();
+  // Distingue erro real (RLS/transporte/schema) de doc inexistente: sem isto,
+  // um doc que existe mas falhou na query viraria "(nao encontrado)" silencioso.
+  if (error) {
+    console.error("[getDocumentText] erro de query", { projectId, documentId, error });
+    throw error;
   }
-  const { data } = await query.maybeSingle();
   if (!data) return null;
   return { text: data.text, title: data.title || documentId };
 }
