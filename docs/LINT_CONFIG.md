@@ -1,5 +1,7 @@
 # Configuração do react-doctor
 
+> Este documento cobre **só o react-doctor**. Para a stack de qualidade completa — fallow (grafo do codebase), typescript-eslint type-checked (tipos), ruff (backend Python), React Scan (runtime), Dependabot/semgrep (segurança) e o mapa de qual hook dispara o quê — ver [`docs/CODE_QUALITY_TOOLING.md`](CODE_QUALITY_TOOLING.md).
+
 O [react-doctor](https://react.doctor) é tratado como um linter da toolchain do frontend, no mesmo espírito do eslint/mypy: é uma `devDependency` **pinada** (`react-doctor@0.5.8` em `frontend/package.json`), roda via script `npm run`, e o arquivo `frontend/doctor.config.json` cumpre o papel de um `mypy.ini`/`.eslintrc` — fonte única de configuração (o config na raiz do repo foi removido para evitar drift, já que os scripts npm e o hook de pre-commit rodam escopados a `frontend/`).
 
 > **Nome do arquivo de config (0.5.x):** a partir da 0.5, o react-doctor procura `doctor.config.*` (ou a chave `reactDoctor` em `package.json`); o nome antigo `react-doctor.config.json` deixou de ser reconhecido. O arquivo foi renomeado para `doctor.config.json` no bump 0.2.11 → 0.5.6. O schema (`ignore.overrides` + `rules`) é o mesmo.
