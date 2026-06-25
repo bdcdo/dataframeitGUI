@@ -1,0 +1,54 @@
+# Dependabot — atualizacao automatica de dependencias vulneraveis/desatualizadas.
+# Roda no servidor do GitHub e abre PRs sozinho; nao ha nada para rodar na mao.
+# Cobre os tres ecossistemas do repo. Ver docs/CODE_QUALITY_TOOLING.md.
+#
+# cooldown (default-days: 7): espera 7 dias antes de propor uma versao
+# recem-publicada — janela de defesa contra supply-chain (pacote malicioso
+# publicado e puxado antes de ser detectado).
+version: 2
+updates:
+  # Frontend (Next.js / React) — npm
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      # Agrupa minor/patch num PR so para reduzir ruido; majors vem separados.
+      frontend-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # Backend (FastAPI) — pip/uv (le pyproject.toml + uv.lock)
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      backend-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # GitHub Actions usadas nos workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "ci"
