@@ -10,6 +10,11 @@
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
 default_install_hook_types: [pre-commit, pre-push]
+# Hook sem `stages:` proprio roda so no pre-commit (os leves: gitleaks, ruff,
+# react-doctor). Os pesados sobrescrevem com `stages: [pre-push]`. Sem este
+# default, o pre-commit rodaria os leves tambem no push (default = todos os
+# estagios), furando a divisao descrita abaixo.
+default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/gitleaks/gitleaks
@@ -92,13 +97,16 @@ repos:
         require_serial: true
         stages: [pre-push]
 
-      # semgrep SAST (JS/TS + Python) via uvx. --baseline-commit limita aos
-      # achados NOVOS vs main (grandfathering). Falha fechado em achado (exit 1);
-      # falha ABERTO em erro de infra/rede (exit>1) para nao travar push offline.
-      # Rulesets p/... exigem rede na 1a vez (depois cacheados). Ver doc.
+      # semgrep SAST (JS/TS + Python) via uvx, engine pinado (==1.168.0) para
+      # reprodutibilidade e para fugir da regressao da serie 1.12x que retornava
+      # exit 2 em runs limpos (que, sob o fail-open, tornaria o gate um no-op).
+      # --baseline-commit limita aos achados NOVOS vs origin/main (mesma logica do
+      # fallow: o `main` local costuma estar defasado). Falha fechado em achado
+      # (exit 1); falha ABERTO em erro de infra/rede (exit>1) para nao travar push
+      # offline. Rulesets p/... exigem rede na 1a vez (depois cacheados). Ver doc.
       - id: semgrep
         name: semgrep SAST (new findings, pre-push)
-        entry: bash -c 'command -v uvx >/dev/null 2>&1 || { echo "uvx ausente — semgrep pulado" >&2; exit 0; }; base=$(git merge-base HEAD main 2>/dev/null || echo main); out=$(uvx --from semgrep semgrep scan --config p/typescript --config p/react --config p/python --baseline-commit "$base" --error --quiet frontend backend 2>&1); code=$?; if [ "$code" = "1" ]; then echo "$out" >&2; echo "semgrep achou problema novo — corrija ou marque com nosemgrep" >&2; exit 1; fi; if [ "$code" -gt 1 ] 2>/dev/null; then echo "semgrep nao rodou (rede/config?) — push liberado" >&2; fi; exit 0'
+        entry: bash -c 'command -v uvx >/dev/null 2>&1 || { echo "uvx ausente — semgrep pulado" >&2; exit 0; }; base=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || echo main); out=$(uvx --from semgrep==1.168.0 semgrep scan --config p/typescript --config p/react --config p/python --baseline-commit "$base" --error --quiet frontend backend 2>&1); code=$?; if [ "$code" = "1" ]; then echo "$out" >&2; echo "semgrep achou problema novo — corrija ou marque com nosemgrep" >&2; exit 1; fi; if [ "$code" -gt 1 ] 2>/dev/null; then echo "semgrep nao rodou (rede/config?) — push liberado" >&2; fi; exit 0'
         language: system
         pass_filenames: false
         require_serial: true

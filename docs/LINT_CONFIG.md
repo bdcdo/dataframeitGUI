@@ -11,7 +11,7 @@ O [react-doctor](https://react.doctor) é tratado como um linter da toolchain do
 ```bash
 cd frontend
 npm run react-doctor          # scan completo do app (report)
-npm run react-doctor:diff     # só os arquivos do branch atual vs main (check manual)
+npm run react-doctor:diff     # só os arquivos do branch atual vs origin/main (check manual)
 ```
 
 A config é lida do diretório de execução (o react-doctor resolve o projeto via `findNearestPackageDirectory`, e só `frontend/` tem `package.json`), por isso os comandos rodam de dentro de `frontend/`.

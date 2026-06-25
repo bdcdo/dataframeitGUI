@@ -139,7 +139,7 @@ cd frontend && npm run lint:types          # typescript-eslint type-checked (no-
 cd frontend && npm run react-doctor        # react-doctor (semântica React no arquivo)
 cd frontend && npm run fallow              # fallow (grafo: dead-code/dupes/complexidade)
 cd frontend && npm run scan                # React Scan (precisa de npm run dev rodando)
-cd backend  && uvx ruff check .            # lint + complexidade do Python
+cd backend  && uv run ruff check .         # lint + complexidade do Python (hook pina v0.15.19)
 ```
 
 A stack de qualidade cobre quatro eixos — react-doctor (React no arquivo), **fallow** (grafo do codebase), **typescript-eslint type-checked** (tipos), **React Scan** (runtime) — mais **ruff** no backend Python e **Dependabot + semgrep** (segurança, sobre o gitleaks já existente). O princípio é que **nada depende de lembrar de rodar**: os hooks de `.pre-commit-config.yaml` disparam sozinhos, divididos em dois estágios — pre-commit (leve/file-scoped: gitleaks, ruff, react-doctor) e pre-push (pesado/grafo: typecheck, lint:types, fallow audit, semgrep). Setup (1x): `cd frontend && npm install && uv tool install pre-commit && pre-commit install` (instala os dois estágios). Cada gate grandfathers o débito legado (new-only no fallow/semgrep, file-scoped no ruff/lint:types, line-scoped no react-doctor). Decisão completa, baselines e o que foi diferido (tsgo, mypy, Biome) em **`docs/CODE_QUALITY_TOOLING.md`**; baseline e regras silenciadas do react-doctor em `docs/LINT_CONFIG.md`.

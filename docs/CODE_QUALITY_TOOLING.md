@@ -72,8 +72,8 @@ npm run fallow:audit     # gate incremental (new-only vs origin/main)
 npm run scan             # React Scan (precisa de `npm run dev` rodando)
 
 cd backend
-uvx ruff check .         # lint
-uvx ruff format .        # format
+uv run ruff check .      # lint (ruff do dev-group via uv.lock; o hook pina v0.15.19)
+uv run ruff format .     # format
 ```
 
 ## Monitorar

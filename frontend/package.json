@@ -10,7 +10,7 @@
     "lint:types": "eslint --config eslint.config.typed.mjs",
     "typecheck": "tsc --noEmit",
     "react-doctor": "react-doctor .",
-    "react-doctor:diff": "react-doctor . --scope changed --base main",
+    "react-doctor:diff": "react-doctor . --scope changed --base origin/main",
     "fallow": "fallow",
     "fallow:audit": "fallow audit",
     "scan": "react-scan http://localhost:3000",
