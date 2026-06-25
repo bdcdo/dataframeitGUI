@@ -38,6 +38,10 @@ async function loadUpload() {
   return (await import("@/actions/documents")).uploadDocuments;
 }
 
+async function loadCheck() {
+  return (await import("@/actions/documents")).checkDuplicates;
+}
+
 function insertedExternalIds(): (string | null)[] {
   const call = writeCalls.find(
     (c) => c.table === "documents" && c.op === "insert",
@@ -198,5 +202,62 @@ describe("uploadDocuments — replace_and_add propaga erro de UPDATE", () => {
     expect(
       writeCalls.some((c) => c.table === "documents" && c.op === "insert"),
     ).toBe(false);
+  });
+});
+
+describe("checkDuplicates — propaga erro de query (não engole silenciosamente)", () => {
+  it("lança quando a query por external_id falha", async () => {
+    serverTableResults = {
+      documents: [{ error: { message: "db down" } }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    await expect(
+      checkDuplicates("proj-1", [
+        { external_id: "X", text_hash: "h1", csvIndex: 0 },
+      ]),
+    ).rejects.toThrow(/ID externo/);
+  });
+
+  it("lança quando a query por text_hash falha (docs sem external_id)", async () => {
+    // Sem external_id, o bloco 1 é pulado e a query de hash é a 1ª em documents.
+    serverTableResults = {
+      documents: [{ error: { message: "hash fail" } }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    await expect(
+      checkDuplicates("proj-1", [{ text_hash: "h1", csvIndex: 0 }]),
+    ).rejects.toThrow(/hash de conteúdo/);
+  });
+
+  it("lança quando a query de responses falha", async () => {
+    // extId acha 1 duplicata → dispara a query de responses, que falha.
+    serverTableResults = {
+      documents: [{ data: [{ id: "d1", external_id: "X" }] }],
+      responses: [{ error: { message: "resp fail" } }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    await expect(
+      checkDuplicates("proj-1", [
+        { external_id: "X", text_hash: "h1", csvIndex: 0 },
+      ]),
+    ).rejects.toThrow(/respostas das duplicatas/);
+  });
+
+  it("caminho feliz: retorna duplicatas sem lançar quando não há erro", async () => {
+    serverTableResults = {
+      documents: [{ data: [{ id: "d1", external_id: "X" }] }],
+      responses: [{ data: [] }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    const r = await checkDuplicates("proj-1", [
+      { external_id: "X", text_hash: "h1", csvIndex: 0 },
+    ]);
+
+    expect(r.duplicates).toHaveLength(1);
+    expect(r.duplicatesWithResponses).toBe(0);
   });
 });

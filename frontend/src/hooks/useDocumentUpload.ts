@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   uploadDocuments,
   checkDuplicates,
+  revalidateProjectDocuments,
   type DuplicateMatch,
   type UploadDoc,
   type UploadOptions,
@@ -69,11 +70,26 @@ export function useDocumentUpload(projectId: string) {
     Papa.parse(file, {
       header: true,
       complete: (results) => {
+        // PapaParse é tolerante: popula `errors` em problemas recuperáveis
+        // (aspas, contagem de campos) mas ainda devolve linhas. Avisa e segue —
+        // linhas parciais costumam ser mapeáveis.
+        if (results.errors?.length) {
+          console.warn("[useDocumentUpload] Papa.parse avisos", results.errors);
+          toast.warning(
+            `CSV lido com ${results.errors.length} aviso(s) de parsing; confira as linhas afetadas.`
+          );
+        }
         const rows = results.data as Record<string, string>[];
         const columns = results.meta.fields || [];
         setCsv({ rows, columns });
         setMapping({ text: "", title: "", external_id: "" });
         setPhase({ kind: "mapping" });
+      },
+      // Erro fatal de leitura/parsing: aborta sem sair de `idle` (a dropzone
+      // continua visível para nova tentativa).
+      error: (err) => {
+        console.error("[useDocumentUpload] Papa.parse falhou", err);
+        toast.error(`Não foi possível ler o CSV: ${err.message}`);
       },
     });
   }, []);
@@ -98,9 +114,12 @@ export function useDocumentUpload(projectId: string) {
   ) => {
     setPhase({ kind: "uploading", current: 0, total: docs.length });
 
+    // Hoisted out of the try so the catch can report how many docs landed
+    // before a failure (counts docs in completed chunks, not the net inserted —
+    // uploadDocuments may skip some via duplicate filtering).
+    let processed = 0;
     try {
       const chunks = chunkByBytes(docs);
-      let processed = 0;
       for (let ci = 0; ci < chunks.length; ci++) {
         const { items, startIndex } = chunks[ci];
         const endIndex = startIndex + items.length;
@@ -138,12 +157,24 @@ export function useDocumentUpload(projectId: string) {
       setCsv(null);
       setPhase({ kind: "idle" });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      toast.error(
-        isPayloadTooLarge(msg)
-          ? PAYLOAD_TOO_LARGE_MESSAGE
-          : msg || "Erro ao importar documentos"
-      );
+      console.error("[useDocumentUpload] doUpload falhou", e);
+      const msg = e instanceof Error ? e.message : typeof e === "string" ? e : "";
+      if (processed > 0) {
+        // Chunks 0..N-1 já foram commitados, mas só o último chunk revalida o
+        // cache; revalida aqui para que esses docs apareçam na lista.
+        await revalidateProjectDocuments(projectId);
+        toast.error(
+          isPayloadTooLarge(msg)
+            ? `${processed}/${docs.length} importados. ${PAYLOAD_TOO_LARGE_MESSAGE}`
+            : `${processed} de ${docs.length} documentos importados antes de uma falha${msg ? `: ${msg}` : ""}`
+        );
+      } else {
+        toast.error(
+          isPayloadTooLarge(msg)
+            ? PAYLOAD_TOO_LARGE_MESSAGE
+            : msg || "Erro ao importar documentos"
+        );
+      }
       setPhase(returnTo);
     }
   };
@@ -212,7 +243,8 @@ export function useDocumentUpload(projectId: string) {
         });
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
+      console.error("[useDocumentUpload] handleCheckAndUpload falhou", e);
+      const msg = e instanceof Error ? e.message : typeof e === "string" ? e : "";
       toast.error(
         isPayloadTooLarge(msg)
           ? PAYLOAD_TOO_LARGE_MESSAGE

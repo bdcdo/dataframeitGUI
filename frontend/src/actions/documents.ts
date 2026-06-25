@@ -53,7 +53,7 @@ export async function checkDuplicates(
   // 1. Match by external_id (excluidos sao ignorados — re-upload de doc
   //    excluido por engano cria um novo registro normal)
   if (externalIds.length > 0) {
-    const { data: byExtId } = await supabase
+    const { data: byExtId, error: byExtIdErr } = await supabase
       .from("documents")
       .select("id, external_id")
       .eq("project_id", projectId)
@@ -61,6 +61,10 @@ export async function checkDuplicates(
       .in(
         "external_id",
         externalIds.map((e) => e.id!)
+      );
+    if (byExtIdErr)
+      throw new Error(
+        `Falha ao verificar duplicatas por ID externo: ${byExtIdErr.message}`,
       );
 
     if (byExtId) {
@@ -86,12 +90,16 @@ export async function checkDuplicates(
 
   if (unmatchedHashes.length > 0) {
     const uniqueHashes = [...new Set(unmatchedHashes.map((h) => h.hash))];
-    const { data: byHash } = await supabase
+    const { data: byHash, error: byHashErr } = await supabase
       .from("documents")
       .select("id, text_hash")
       .eq("project_id", projectId)
       .is("excluded_at", null)
       .in("text_hash", uniqueHashes);
+    if (byHashErr)
+      throw new Error(
+        `Falha ao verificar duplicatas por hash de conteúdo: ${byHashErr.message}`,
+      );
 
     if (byHash) {
       const hashMap = new Map(byHash.map((d) => [d.text_hash, d.id]));
@@ -112,11 +120,15 @@ export async function checkDuplicates(
   let duplicatesWithResponses = 0;
   if (duplicates.length > 0) {
     const docIds = duplicates.map((d) => d.existingDocId);
-    const { data: responses } = await supabase
+    const { data: responses, error: responsesErr } = await supabase
       .from("responses")
       .select("document_id")
       .eq("project_id", projectId)
       .in("document_id", docIds);
+    if (responsesErr)
+      throw new Error(
+        `Falha ao verificar respostas das duplicatas: ${responsesErr.message}`,
+      );
 
     if (responses) {
       const docsWithResponses = new Set(responses.map((r) => r.document_id));
@@ -188,6 +200,15 @@ async function filterActiveExternalIdConflicts<
   });
 
   return { rows: safe, skippedExisting, skippedInBatch };
+}
+
+// Revalida o cache de documentos do projeto: o path dinâmico de config e a tag
+// usada pela página cacheada de assignments — o mesmo par que uploadDocuments
+// dispara no último chunk. Usado quando um upload em chunks falha no meio, para
+// que os chunks já inseridos apareçam mesmo sem o revalidate do último chunk.
+export async function revalidateProjectDocuments(projectId: string) {
+  revalidatePath(`/projects/${projectId}/config/documents`);
+  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
 }
 
 export async function uploadDocuments(
