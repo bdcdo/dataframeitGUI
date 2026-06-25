@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getDocumentForCoding } from "@/actions/documents";
 
+/** Fatia de documento devolvida por `getDocumentForCoding`. Derivada da própria
+ *  action para não driftar se o shape do retorno mudar. */
+type CodingDocumentSlice = Awaited<
+  ReturnType<typeof getDocumentForCoding>
+>["document"];
+
 export interface CodingDocument {
-  document: {
-    id: string;
-    external_id: string | null;
-    title: string | null;
-    text: string;
-  };
+  document: CodingDocumentSlice;
   /** Respostas já existentes do pesquisador, saneadas contra o schema atual. */
   initialAnswers: Record<string, unknown>;
   /** Nota (`justifications._notes`) já existente, ou string vazia. */
@@ -20,21 +21,33 @@ export interface CodingDocument {
  * Lazy-load do payload de codificação de um documento (texto + respostas +
  * notas existentes), com cache por id e flag `loading` derivada.
  *
- * Mesmo padrão de [[useDocumentText]]: o `useEffect` só faz `setCache`
- * assíncrono no `.then`/`.catch`; o `loading` é derivado no render
- * (`!!id && !(id in cache)`), eliminando o `setState` síncrono em effect que
- * antes exigia `eslint-disable react-hooks/set-state-in-effect` no modo
- * Explorar do `CodingPage`. Em erro/documento ausente cacheia `null` para não
- * ficar em spinner infinito.
+ * Padrão de cache derivado igual ao de `useDocumentText`: o `useEffect` só faz
+ * `setCache` assíncrono no `.then`/`.catch` e o `loading` é derivado no render
+ * (`!!id && !(id in cache)`), sem `setState` síncrono em effect (era o
+ * `eslint-disable react-hooks/set-state-in-effect` do modo Explorar).
  *
- * Diferente de `useDocumentText` (só texto), aqui o backend é
- * `getDocumentForCoding`, que também devolve as respostas/justificativas
- * existentes — usadas para semear o estado editável do filho keyed.
+ * ATENÇÃO — diferença crítica em relação a `useDocumentText`: aqui o cache
+ * guarda respostas/notas MUTÁVEIS (o pesquisador edita e salva via
+ * `saveResponse`), não texto imutável. O cache NÃO é invalidado sozinho: quem
+ * salva (`handleBrowseSubmit`/`handleBrowseBack`) DEVE chamar `invalidate(docId)`,
+ * senão reabrir o doc na mesma sessão re-semearia o estado pré-save (stale). O
+ * código antigo evitava isso re-buscando a cada seleção.
+ *
+ * Contrato de retorno (`doc` é tri-state, sempre lido junto de `loading`):
+ *  - `undefined` + `loading=false`: nenhum doc pedido (id null/undefined);
+ *  - `undefined` + `loading=true`: pedido, fetch em andamento;
+ *  - `null`: o fetch falhou (erro de transporte ou documento ausente) — a UI
+ *    deve oferecer "tentar novamente" chamando `invalidate(docId)`;
+ *  - objeto `CodingDocument`: carregado.
  */
 export function useDocumentForCoding(
   projectId: string,
   documentId: string | null | undefined,
-): { doc: CodingDocument | null | undefined; loading: boolean } {
+): {
+  doc: CodingDocument | null | undefined;
+  loading: boolean;
+  invalidate: (docId: string) => void;
+} {
   const [cache, setCache] = useState<Record<string, CodingDocument | null>>({});
 
   useEffect(() => {
@@ -65,7 +78,20 @@ export function useDocumentForCoding(
     };
   }, [projectId, documentId, cache]);
 
+  // Remove a entrada do cache para que a próxima abertura do doc refaça o
+  // fetch. Dois usos: (1) após salvar (submit/back), pois o payload guarda
+  // respostas MUTÁVEIS e sem isto reabrir o doc na sessão semearia o estado
+  // antigo; (2) como "tentar novamente" quando o fetch falhou (entrada `null`).
+  const invalidate = useCallback((docId: string) => {
+    setCache((prev) => {
+      if (!(docId in prev)) return prev;
+      const next = { ...prev };
+      delete next[docId];
+      return next;
+    });
+  }, []);
+
   const doc = documentId ? cache[documentId] : undefined;
   const loading = !!documentId && !(documentId in cache);
-  return { doc, loading };
+  return { doc, loading, invalidate };
 }

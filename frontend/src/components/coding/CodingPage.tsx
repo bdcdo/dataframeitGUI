@@ -17,7 +17,7 @@ import { useFieldOrder } from "@/hooks/useFieldOrder";
 import { useAutosaveOnExit, type AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import { useBrowseDocuments } from "@/hooks/useBrowseDocuments";
 import { useDocumentForCoding } from "@/hooks/useDocumentForCoding";
-import { BrowseDocCoder } from "./BrowseDocCoder";
+import { BrowseDocCoder, type CodingDraft } from "./BrowseDocCoder";
 import type { PydanticField, Document, Assignment, Round, RoundStrategy } from "@/lib/types";
 import { CodingHeader } from "./CodingHeader";
 import { sortByRecent } from "@/lib/coding-sort";
@@ -162,26 +162,30 @@ function CodingPageInner({
   }, []);
 
   // Browse mode — lista via hook (cache + loading derivado), seleção via URL
-  // (?doc=) e conteúdo do doc selecionado via hook. Nada em estado/effect aqui:
-  // é isso que zera no-adjust-state-on-prop-change / no-derived-state /
-  // no-chain-state-updates / no-event-handler do modo Explorar.
-  const { documents: browseDocuments, loading: browseLoading, markResponded } =
-    useBrowseDocuments(projectId, mode === "browse");
+  // (?doc=) e conteúdo do doc selecionado via hook. Invariante: nada de estado
+  // derivado nem setState em effect aqui (a lista e o doc vivem nos hooks; a
+  // seleção é o ?doc=). É o que zera o débito do react-doctor no modo Explorar
+  // — em especial o error `react-doctor/no-adjust-state-on-prop-change`.
+  const {
+    documents: browseDocuments,
+    loading: browseLoading,
+    error: browseError,
+    retry: retryBrowseDocuments,
+    markResponded,
+  } = useBrowseDocuments(projectId, mode === "browse");
   const browseDocId = useMemo(() => {
     if (mode !== "browse" || !docParam) return null;
     // Só docs não-atribuídos entram no modo Explorar (assigned abre em assigned).
     return documents.some((d) => d.id === docParam) ? null : docParam;
   }, [mode, docParam, documents]);
-  const { doc: browseDoc, loading: browseDocLoading } = useDocumentForCoding(
-    projectId,
-    browseDocId,
-  );
+  const {
+    doc: browseDoc,
+    loading: browseDocLoading,
+    invalidate: invalidateBrowseDoc,
+  } = useDocumentForCoding(projectId, browseDocId);
   // Rascunho atual do doc de browse, reportado pelo BrowseDocCoder; lido pelo
   // autosave-on-exit centralizado. Ref (não estado) para não entrar no render.
-  const browseDraftRef = useRef<{
-    answers: Record<string, unknown>;
-    notes: string;
-  } | null>(null);
+  const browseDraftRef = useRef<CodingDraft | null>(null);
 
   // Update URL query param without full navigation
   const updateDocParam = useCallback(
@@ -369,15 +373,15 @@ function CodingPageInner({
   // Reportado pelo BrowseDocCoder a cada edição: alimenta o autosave-on-exit
   // (via ref) e marca o doc como sujo.
   const handleDraftChange = useCallback(
-    (answers: Record<string, unknown>, notes: string) => {
-      browseDraftRef.current = { answers, notes };
+    (draft: CodingDraft) => {
+      browseDraftRef.current = draft;
       if (browseDocId) markDirty(browseDocId);
     },
     [browseDocId, markDirty],
   );
 
   const handleBrowseSubmit = useCallback(
-    async (answers: Record<string, unknown>, notes: string) => {
+    async ({ answers, notes }: CodingDraft) => {
       if (!browseDocId || Object.keys(answers).length === 0) return;
       setSubmitting(true);
       const result = await saveResponse(projectId, browseDocId, answers, {
@@ -387,30 +391,47 @@ function CodingPageInner({
       if (result.success) {
         markClean(browseDocId);
         toast.success("Respostas salvas!");
-        markResponded(browseDocId, true);
+        markResponded(browseDocId, "submit");
+        // Invalida o cache do doc para que reabri-lo na sessão refaça o fetch
+        // e reflita o que acabou de ser salvo (sem isto, o seed ficaria stale).
+        invalidateBrowseDoc(browseDocId);
         browseDraftRef.current = null;
         updateDocParam(null);
       } else {
         toast.error(result.error || "Erro ao salvar respostas");
       }
     },
-    [browseDocId, projectId, markClean, markResponded, updateDocParam],
+    [
+      browseDocId,
+      projectId,
+      markClean,
+      markResponded,
+      invalidateBrowseDoc,
+      updateDocParam,
+    ],
   );
 
-  const handleBrowseBack = useCallback(() => {
+  const handleBrowseBack = useCallback(async () => {
+    // Com rascunho sujo, aguarda o autosave ANTES de navegar: se falhar, mantém
+    // o doc aberto e o rascunho intacto (em vez de descartá-lo otimisticamente).
     if (browseDocId && dirtyDocs.has(browseDocId) && browseDraftRef.current) {
       const { answers, notes } = browseDraftRef.current;
-      saveResponse(projectId, browseDocId, answers, {
+      setSubmitting(true);
+      const result = await saveResponse(projectId, browseDocId, answers, {
         notes,
         isAutoSave: true,
-      }).then((result) => {
-        if (result.success) {
-          markClean(browseDocId);
-          markResponded(browseDocId, false);
-        } else {
-          toast.error(result.error || "Erro ao salvar respostas");
-        }
       });
+      setSubmitting(false);
+      if (!result.success) {
+        toast.error(
+          result.error ||
+            "Não foi possível salvar. Suas alterações não foram perdidas.",
+        );
+        return;
+      }
+      markClean(browseDocId);
+      markResponded(browseDocId, "autosave");
+      invalidateBrowseDoc(browseDocId);
     }
     browseDraftRef.current = null;
     updateDocParam(null);
@@ -421,6 +442,7 @@ function CodingPageInner({
     dirtyDocs,
     markClean,
     markResponded,
+    invalidateBrowseDoc,
   ]);
 
   const handleBrowseRandom = useCallback(() => {
@@ -598,7 +620,20 @@ function CodingPageInner({
 
       {mode === "browse" && (
         <>
-          {browseLoading ? (
+          {browseError ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+              <p className="text-sm text-muted-foreground">
+                Não foi possível carregar os documentos.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={retryBrowseDocuments}
+              >
+                Tentar novamente
+              </Button>
+            </div>
+          ) : browseLoading ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               Carregando documentos…
             </div>
@@ -627,8 +662,19 @@ function CodingPageInner({
               onDraftChange={handleDraftChange}
             />
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              Documento não encontrado.
+            // browseDoc === null → o fetch do doc falhou (erro de transporte ou
+            // documento ausente). Oferece retry em vez de afirmar "não encontrado".
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+              <p className="text-sm text-muted-foreground">
+                Não foi possível carregar o documento.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => invalidateBrowseDoc(browseDocId)}
+              >
+                Tentar novamente
+              </Button>
             </div>
           )}
         </>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -11,6 +11,15 @@ import { QuestionsPanel } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
 import type { CodingDocument } from "@/hooks/useDocumentForCoding";
 import type { PydanticField } from "@/lib/types";
+
+/**
+ * Rascunho editável de codificação (respostas + nota), reportado pelo
+ * `BrowseDocCoder` para cima e lido pelo autosave-on-exit do container.
+ */
+export interface CodingDraft {
+  answers: Record<string, unknown>;
+  notes: string;
+}
 
 interface BrowseDocCoderProps {
   /** Documento já carregado (texto + respostas/notas iniciais). */
@@ -25,9 +34,9 @@ interface BrowseDocCoderProps {
   onToggleFullscreen: () => void;
   onReorder: (newOrder: string[]) => void;
   /** Dispara o envio; o container faz o `saveResponse` + coordenação. */
-  onSubmit: (answers: Record<string, unknown>, notes: string) => void;
+  onSubmit: (draft: CodingDraft) => void;
   /** Reporta o rascunho atual para cima (autosave-on-exit + dirty tracking). */
-  onDraftChange: (answers: Record<string, unknown>, notes: string) => void;
+  onDraftChange: (draft: CodingDraft) => void;
 }
 
 /**
@@ -36,9 +45,10 @@ interface BrowseDocCoderProps {
  * já carregado (sem `setState` em effect), e remonta limpo a cada doc.
  *
  * Não guarda o doc selecionado em estado no container nem usa effect de
- * deep-link — isso zera `no-derived-state`/`no-chain-state-updates`/
- * `no-event-handler` do `CodingPage`. O rascunho é reportado para cima
- * (`onDraftChange`) para o autosave-on-exit centralizado (#28) ler via ref.
+ * deep-link — é o que mantém o `CodingPage` sem estado derivado nem `setState`
+ * em effect (o débito de react-doctor que o refactor zera). O rascunho é
+ * reportado para cima (`onDraftChange`) para o autosave-on-exit centralizado
+ * (#28) ler via ref.
  */
 export function BrowseDocCoder({
   doc,
@@ -58,26 +68,34 @@ export function BrowseDocCoder({
   );
   const [notes, setNotes] = useState(() => doc.initialNotes);
 
+  // Espelho do rascunho corrente. Lê/escreve sempre o valor atual (não a
+  // closure), então edições no mesmo tick não se sobrescrevem e os callbacks
+  // ficam estáveis (deps só do callback do pai). O filho é keyed por docId, então
+  // o ref reinicia limpo a cada doc junto com o estado.
+  const draftRef = useRef<CodingDraft>({ answers, notes });
+
   const handleAnswer = useCallback(
     (fieldName: string, value: unknown) => {
-      const next = { ...answers, [fieldName]: value };
+      const next = { ...draftRef.current.answers, [fieldName]: value };
+      draftRef.current = { answers: next, notes: draftRef.current.notes };
       setAnswers(next);
-      onDraftChange(next, notes);
+      onDraftChange(draftRef.current);
     },
-    [answers, notes, onDraftChange],
+    [onDraftChange],
   );
 
   const handleNotesChange = useCallback(
     (next: string) => {
+      draftRef.current = { answers: draftRef.current.answers, notes: next };
       setNotes(next);
-      onDraftChange(answers, next);
+      onDraftChange(draftRef.current);
     },
-    [answers, onDraftChange],
+    [onDraftChange],
   );
 
   const handleSubmit = useCallback(() => {
-    onSubmit(answers, notes);
-  }, [answers, notes, onSubmit]);
+    onSubmit(draftRef.current);
+  }, [onSubmit]);
 
   return (
     <>

@@ -95,7 +95,10 @@ describe("BrowseDocCoder", () => {
       />,
     );
     await userEvent.click(screen.getByText("set-q1"));
-    expect(onDraftChange).toHaveBeenCalledWith({ q0: "x", q1: "sim" }, "nota0");
+    expect(onDraftChange).toHaveBeenCalledWith({
+      answers: { q0: "x", q1: "sim" },
+      notes: "nota0",
+    });
     expect(screen.getByTestId("answers").textContent).toBe('{"q0":"x","q1":"sim"}');
   });
 
@@ -110,7 +113,29 @@ describe("BrowseDocCoder", () => {
       />,
     );
     await userEvent.click(screen.getByText("set-notes"));
-    expect(onDraftChange).toHaveBeenCalledWith({ q0: "x" }, "minha nota");
+    expect(onDraftChange).toHaveBeenCalledWith({
+      answers: { q0: "x" },
+      notes: "minha nota",
+    });
+  });
+
+  it("acumula edições sequenciais de resposta e nota no mesmo rascunho", async () => {
+    const onDraftChange = vi.fn();
+    render(
+      <BrowseDocCoder
+        {...baseProps}
+        doc={makeDoc()}
+        onSubmit={vi.fn()}
+        onDraftChange={onDraftChange}
+      />,
+    );
+    await userEvent.click(screen.getByText("set-q1"));
+    await userEvent.click(screen.getByText("set-notes"));
+    // A 2ª edição (nota) não perde a 1ª (resposta): ambas no rascunho final.
+    expect(onDraftChange).toHaveBeenLastCalledWith({
+      answers: { q0: "x", q1: "sim" },
+      notes: "minha nota",
+    });
   });
 
   it("envia com as respostas e notas atuais", async () => {
@@ -125,6 +150,9 @@ describe("BrowseDocCoder", () => {
     );
     await userEvent.click(screen.getByText("set-q1"));
     await userEvent.click(screen.getByText("enviar"));
-    expect(onSubmit).toHaveBeenCalledWith({ q0: "x", q1: "sim" }, "nota0");
+    expect(onSubmit).toHaveBeenCalledWith({
+      answers: { q0: "x", q1: "sim" },
+      notes: "nota0",
+    });
   });
 });
