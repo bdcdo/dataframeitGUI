@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -29,7 +29,6 @@ interface ExistingVerdict {
 interface MultiOptionReviewProps {
   options: string[];
   responses: MultiOptionResponse[];
-  fieldName: string;
   existingVerdict: ExistingVerdict | null;
   onSubmit: (verdictJson: string) => void;
 }
@@ -49,10 +48,23 @@ function parseExistingMultiVerdict(
   return null;
 }
 
+// Escolhas iniciais: verdict existente, senão segue a maioria por opção.
+function computeInitialChoices(
+  verdict: string | undefined,
+  optionStats: { option: string; selectedCount: number; totalRespondents: number }[],
+): Record<string, boolean> {
+  const existing = parseExistingMultiVerdict(verdict);
+  if (existing) return existing;
+  const result: Record<string, boolean> = {};
+  for (const stat of optionStats) {
+    result[stat.option] = stat.selectedCount > stat.totalRespondents / 2;
+  }
+  return result;
+}
+
 export function MultiOptionReview({
   options,
   responses,
-  fieldName,
   existingVerdict,
   onSubmit,
 }: MultiOptionReviewProps) {
@@ -85,38 +97,13 @@ export function MultiOptionReview({
     });
   }, [options, responses]);
 
-  // Initialize choices from existing verdict or majority
-  const [choices, setChoices] = useState<Record<string, boolean>>(() => {
-    const existing = parseExistingMultiVerdict(existingVerdict?.verdict);
-    if (existing) return existing;
-    // Default: follow majority
-    const result: Record<string, boolean> = {};
-    for (const stat of optionStats) {
-      result[stat.option] = stat.selectedCount > stat.totalRespondents / 2;
-    }
-    return result;
-  });
-
-  // Stable key derived from optionStats to detect when responses change
-  const statsKey = useMemo(
-    () => optionStats.map((s) => `${s.option}:${s.selectedCount}/${s.totalRespondents}`).join("|"),
-    [optionStats]
+  // Escolhas iniciais: verdict existente, senão a maioria por opção.
+  // O reset ao trocar de documento/campo é feito pelo `key` no pai
+  // (ComparisonPanel, igual ao AgreementGroup): a troca de key remonta o
+  // componente e este inicializador roda de novo — sem effect de derivação.
+  const [choices, setChoices] = useState<Record<string, boolean>>(() =>
+    computeInitialChoices(existingVerdict?.verdict, optionStats),
   );
-
-  // Reset choices when field, verdict, or response stats change
-  useEffect(() => {
-    const existing = parseExistingMultiVerdict(existingVerdict?.verdict);
-    if (existing) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reseta as escolhas ao trocar de campo/verdict/estatísticas
-      setChoices(existing);
-    } else {
-      const result: Record<string, boolean> = {};
-      for (const stat of optionStats) {
-        result[stat.option] = stat.selectedCount > stat.totalRespondents / 2;
-      }
-      setChoices(result);
-    }
-  }, [fieldName, existingVerdict?.verdict, statsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleOption = (opt: string) => {
     setChoices((prev) => ({ ...prev, [opt]: !prev[opt] }));
@@ -126,10 +113,19 @@ export function MultiOptionReview({
     onSubmit(JSON.stringify(choices));
   };
 
-  // Keyboard shortcuts: 1-N toggle options, Enter submits
+  // Keyboard shortcuts: 1-N toggle options, Enter submits.
+  // Listener de teclado registra uma vez; handlers frescos chegam via ref
+  // para evitar re-registro a cada tecla.
+  const keyHandlersRef = useRef({ handleSubmit, toggleOption, options });
+  useEffect(() => {
+    keyHandlersRef.current = { handleSubmit, toggleOption, options };
+  });
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      const { handleSubmit, toggleOption, options } = keyHandlersRef.current;
 
       if (e.key === "Enter") {
         e.preventDefault();
@@ -144,7 +140,7 @@ export function MultiOptionReview({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [options, choices]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <TooltipProvider delayDuration={200}>
