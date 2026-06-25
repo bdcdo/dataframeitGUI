@@ -250,6 +250,7 @@ export function DocumentsPageClient({
         title={selectedDoc?.title ?? selectedDoc?.external_id ?? "Documento"}
         open={!!selectedDoc}
         onClose={() => setSelectedDocId(null)}
+        projectId={projectId}
         allowExcluded={showExcluded}
       />
 

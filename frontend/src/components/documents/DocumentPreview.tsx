@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useAuth } from "@clerk/nextjs";
-import { createBrowserClient } from "@/lib/supabase/client";
+import { useDocumentText } from "@/hooks/useDocumentText";
 
 interface DocumentPreviewProps {
   documentId: string | null;
   title: string;
   open: boolean;
   onClose: () => void;
+  /**
+   * projectId do documento — usado pelo fetch de texto via `getDocumentText`.
+   * Sempre presente no caller real (DocumentsPageClient, rota projects/[id]).
+   */
+  projectId?: string;
   /**
    * Por padrao, preview nao carrega texto de doc soft-deleted — alinhado com
    * o resto da UI que esconde excluidos. Setar true quando o caller estiver
@@ -23,41 +26,12 @@ export function DocumentPreview({
   title,
   open,
   onClose,
+  projectId,
   allowExcluded = false,
 }: DocumentPreviewProps) {
-  const [text, setText] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const { getToken } = useAuth();
-
-  useEffect(() => {
-    if (!documentId || !open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset ao fechar o preview / sem doc selecionado
-      setText(null);
-      return;
-    }
-    setLoading(true);
-    getToken({ template: "supabase" })
-      .then((token) => {
-        const supabase = createBrowserClient(token);
-        let query = supabase
-          .from("documents")
-          .select("text")
-          .eq("id", documentId);
-        if (!allowExcluded) {
-          query = query.is("excluded_at", null);
-        }
-        return query.maybeSingle();
-      })
-      .then(({ data }) => {
-        setText(data?.text ?? null);
-      })
-      .catch(() => {
-        setText(null);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [documentId, open, getToken, allowExcluded]);
+  const { text, loading } = useDocumentText(projectId, open ? documentId : null, {
+    allowExcluded,
+  });
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

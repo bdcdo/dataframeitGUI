@@ -463,14 +463,20 @@ export async function getDocumentForCoding(
 export async function getDocumentText(
   projectId: string,
   documentId: string,
+  allowExcluded = false,
 ): Promise<{ text: string; title: string } | null> {
   const supabase = await createSupabaseServer();
-  const { data } = await supabase
+  let query = supabase
     .from("documents")
     .select("title, text")
     .eq("id", documentId)
-    .eq("project_id", projectId)
-    .single();
+    .eq("project_id", projectId);
+  // Por padrao oculta soft-deleted, alinhado com getDocumentsForBrowse /
+  // getDocumentForCoding. So o preview no modo "Mostrar excluidos" passa true.
+  if (!allowExcluded) {
+    query = query.is("excluded_at", null);
+  }
+  const { data } = await query.maybeSingle();
   if (!data) return null;
   return { text: data.text, title: data.title || documentId };
 }
