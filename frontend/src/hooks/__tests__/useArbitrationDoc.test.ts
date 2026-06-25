@@ -241,4 +241,162 @@ describe("useArbitrationDoc — handleFinalSubmit", () => {
       },
     ]);
   });
+
+  it("comentário vazio não vai no payload (vira undefined)", async () => {
+    submitFinalVerdicts.mockResolvedValue({ success: true });
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]), {
+      docsLength: 1,
+    });
+    act(() => result.current.onComment("f1", ""));
+    await act(async () => {
+      await result.current.handleFinalSubmit();
+    });
+    expect(submitFinalVerdicts).toHaveBeenCalledWith("p1", "d1", [
+      expect.objectContaining({ arbitratorComment: undefined }),
+    ]);
+  });
+
+  it("exige sugestão só do PRIMEIRO campo 'llm' sem sugestão", async () => {
+    const { result } = setup(
+      makeDoc("d1", [field("f1", "q1", "llm"), field("f2", "q2", "llm")]),
+    );
+    act(() => result.current.onSuggestion("f1", "ok"));
+    await act(async () => {
+      await result.current.handleFinalSubmit();
+    });
+    // f1 tem sugestão, f2 não → erro cita f2, e nada é enviado.
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining("q2"),
+    );
+    expect(submitFinalVerdicts).not.toHaveBeenCalled();
+  });
+
+  it("envia quando todos os campos 'llm' têm sugestão", async () => {
+    submitFinalVerdicts.mockResolvedValue({ success: true });
+    const { result } = setup(
+      makeDoc("d1", [field("f1", "q1", "llm"), field("f2", "q2", "humano")]),
+      { docsLength: 1 },
+    );
+    act(() => result.current.onSuggestion("f1", "melhorar"));
+    await act(async () => {
+      await result.current.handleFinalSubmit();
+    });
+    expect(submitFinalVerdicts).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("em erro mostra toast e não navega nem reseta", async () => {
+    submitFinalVerdicts.mockResolvedValue({ success: false, error: "falhou" });
+    const onNavigate = vi.fn();
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]), {
+      docsLength: 2,
+      onNavigate,
+    });
+    await act(async () => {
+      await result.current.handleFinalSubmit();
+    });
+    expect(toastError).toHaveBeenCalledWith("falhou");
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("useArbitrationDoc — limpeza de override e reset de estado", () => {
+  it("avançar (blind submit) limpa o override e a fase volta a reveal", async () => {
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]));
+    act(() => result.current.onBackToBlind());
+    expect(result.current.phase).toBe("blind");
+    await act(async () => {
+      await result.current.handleBlindSubmit();
+    });
+    // Sem campos pendentes → não chama a action, mas limpa o override.
+    expect(submitBlindVerdicts).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe("reveal");
+  });
+
+  it("após enviar o final, zera blindChoices/finalChoices/suggestions/comments", async () => {
+    submitFinalVerdicts.mockResolvedValue({ success: true });
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]), {
+      docsLength: 1,
+    });
+    act(() => {
+      result.current.onChooseBlind("f1", "a");
+      result.current.onChooseFinal("f1", "llm");
+      result.current.onSuggestion("f1", "s");
+      result.current.onComment("f1", "c");
+    });
+    expect(result.current.effectiveFinalChoices.f1).toBe("llm");
+    await act(async () => {
+      await result.current.handleFinalSubmit();
+    });
+    expect(result.current.blindChoices).toEqual({});
+    expect(result.current.suggestions).toEqual({});
+    expect(result.current.comments).toEqual({});
+    // finalChoices cru zerado → effective volta ao default do verdict cego.
+    expect(result.current.effectiveFinalChoices).toEqual({ f1: "humano" });
+  });
+});
+
+describe("useArbitrationDoc — guardas e estado exposto", () => {
+  it("com doc undefined os submits são no-op", async () => {
+    const onNavigate = vi.fn();
+    const { result } = setup(undefined, { onNavigate });
+    await act(async () => {
+      await result.current.handleBlindSubmit();
+      await result.current.handleFinalSubmit();
+    });
+    expect(submitBlindVerdicts).not.toHaveBeenCalled();
+    expect(submitFinalVerdicts).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("blind submit mapeia todos os campos pendentes (multi-campo)", async () => {
+    submitBlindVerdicts.mockResolvedValue({ success: true });
+    const { result } = setup(
+      makeDoc("d1", [field("f1", "q1", null), field("f2", "q2", null)]),
+    );
+    act(() => {
+      result.current.onChooseBlind("f1", "a");
+      result.current.onChooseBlind("f2", "b");
+    });
+    await act(async () => {
+      await result.current.handleBlindSubmit();
+    });
+    expect(submitBlindVerdicts).toHaveBeenCalledWith("p1", "d1", [
+      { fieldReviewId: "f1", choice: "a" },
+      { fieldReviewId: "f2", choice: "b" },
+    ]);
+  });
+
+  it("onSuggestion e onComment expõem o estado por fieldReviewId", () => {
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]));
+    act(() => {
+      result.current.onSuggestion("f1", "sug");
+      result.current.onComment("f1", "com");
+    });
+    expect(result.current.suggestions).toEqual({ f1: "sug" });
+    expect(result.current.comments).toEqual({ f1: "com" });
+  });
+
+  it("submitting fica true durante o envio e volta a false ao fim", async () => {
+    let resolveAction: (v: { success: boolean }) => void = () => {};
+    submitBlindVerdicts.mockReturnValue(
+      new Promise((r) => {
+        resolveAction = r;
+      }),
+    );
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", null)]));
+    act(() => result.current.onChooseBlind("f1", "a"));
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.handleBlindSubmit();
+    });
+    expect(result.current.submitting).toBe(true);
+    await act(async () => {
+      resolveAction({ success: true });
+      await pending;
+    });
+    expect(result.current.submitting).toBe(false);
+  });
 });
