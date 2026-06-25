@@ -180,9 +180,9 @@ export function ComparisonPanel({
       <div className="flex-1 overflow-y-auto px-4 py-2">
         {isMulti ? (
           <MultiOptionReview
+            key={`${documentId}|${fieldName}`}
             options={fieldOptions}
             responses={responses}
-            fieldName={fieldName}
             existingVerdict={existingVerdict}
             onSubmit={(verdictJson) => onVerdict(verdictJson)}
           />
