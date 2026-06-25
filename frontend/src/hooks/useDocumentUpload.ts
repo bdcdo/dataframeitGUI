@@ -6,6 +6,7 @@ import {
   uploadDocuments,
   checkDuplicates,
   type DuplicateMatch,
+  type UploadDoc,
   type UploadOptions,
 } from "@/actions/documents";
 import { md5 } from "@/lib/hash";
@@ -15,12 +16,6 @@ import {
   isPayloadTooLarge,
   utf8Bytes,
 } from "@/lib/upload-chunking";
-
-export interface UploadDoc {
-  text: string;
-  title?: string;
-  external_id?: string;
-}
 
 export interface ColumnMapping {
   text: string;
@@ -32,7 +27,7 @@ export interface AnalysisResult {
   docs: UploadDoc[];
   duplicates: DuplicateMatch[];
   duplicatesWithResponses: number;
-  matchType: string;
+  matchType: "external_id" | "text_hash";
 }
 
 interface Csv {
@@ -40,8 +35,9 @@ interface Csv {
   columns: string[];
 }
 
-// One discriminated `phase` replaces the old step/progress/analysis cluster that
-// was set across several handlers (the trigger for react-doctor/prefer-useReducer).
+// The upload flow is one discriminated `phase`: each variant carries exactly the
+// data that state needs (analysis carries its result; uploading carries progress),
+// so a state like "analysis without a result" is unrepresentable.
 export type UploadPhase =
   | { kind: "idle" }
   | { kind: "mapping" }
@@ -64,8 +60,8 @@ export function useDocumentUpload(projectId: string) {
     external_id: "",
   });
 
-  // `loading` is fully derived: every legacy setLoading(true) was batched with a
-  // step into checking/uploading, so it is never true in idle/mapping/analysis.
+  // `loading` is derived, not stored: true exactly while a request is in flight
+  // (checking/uploading), false in idle/mapping/analysis.
   const loading = phase.kind === "checking" || phase.kind === "uploading";
 
   const handleFile = useCallback(async (file: File) => {
@@ -124,8 +120,9 @@ export function useDocumentUpload(projectId: string) {
             }
           : undefined;
 
-        // Serial on purpose: `isLast` tells the backend to finalize on the last
-        // chunk and progress is reported sequentially. Parallelizing would break both.
+        // Serial on purpose: progress is reported sequentially, and `isLast` is the
+        // `revalidate` arg — true only on the last chunk revalidates the documents
+        // cache once instead of once per chunk. Parallelizing would break both.
         // react-doctor-disable-next-line react-doctor/async-await-in-loop
         const result = await uploadDocuments(
           projectId,
@@ -210,7 +207,7 @@ export function useDocumentUpload(projectId: string) {
             docs,
             duplicates: allDuplicates,
             duplicatesWithResponses,
-            matchType: hasExternalIdMatch ? "ID externo" : "conteúdo (hash)",
+            matchType: hasExternalIdMatch ? "external_id" : "text_hash",
           },
         });
       }

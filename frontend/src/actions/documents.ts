@@ -7,12 +7,16 @@ import { revalidatePath, revalidateTag } from "next/cache";
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
 
-interface DocumentRow {
+export interface DocumentRow {
   external_id?: string;
   title?: string;
   text: string;
   metadata?: Record<string, unknown>;
 }
+
+// Single source of truth for the CSV-upload row shape (subset of DocumentRow,
+// without the server-added `metadata`). The client hook imports this type.
+export type UploadDoc = Pick<DocumentRow, "text" | "title" | "external_id">;
 
 function md5(text: string): string {
   return createHash("md5").update(text).digest("hex");

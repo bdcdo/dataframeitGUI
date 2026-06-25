@@ -102,11 +102,11 @@ As ocorrências dessas três regras na 0.5.6 — `shell/MobileWarning.tsx:21` (`
 
 ## `async-await-in-loop` suprimida inline no upload serial de `useDocumentUpload`
 
-A regra `react-doctor/async-await-in-loop` (Performance) recomenda coletar os itens e usar `await Promise.all(items.map(...))` para rodar trabalho independente em paralelo. Em `src/hooks/useDocumentUpload.ts`, o loop de upload em chunks (`doUpload`) é **serial de propósito** e não pode paralelizar: a flag `isLast` passada a `uploadDocuments` sinaliza ao backend que aquele é o último chunk (finalização da rodada), e o progresso é reportado sequencialmente (`setPhase({ kind: "uploading", current: processed, ... })`). Disparar os chunks juntos quebraria as duas garantias.
+A regra `react-doctor/async-await-in-loop` (Performance) recomenda coletar os itens e usar `await Promise.all(items.map(...))` para rodar trabalho independente em paralelo. Em `src/hooks/useDocumentUpload.ts`, o loop de upload em chunks (`doUpload`) é **serial de propósito** e não pode paralelizar: o progresso é reportado sequencialmente (`setPhase({ kind: "uploading", current: processed, ... })`), e a flag `isLast` é o 3º argumento `revalidate` de `uploadDocuments` — passá-la `true` só no último chunk revalida o cache de documentos uma vez, em vez de uma vez por chunk. Disparar os chunks juntos quebraria as duas garantias.
 
 A supressão é **inline e por linha** — `// react-doctor-disable-next-line react-doctor/async-await-in-loop` imediatamente acima da chamada `await uploadDocuments(...)` —, não um override por arquivo no `doctor.config.json`. Inline é mais estreito: a regra continua ativa no resto do hook (pega qualquer `await`-em-loop novo). A justificativa fica numa linha de comentário **separada** acima da diretiva (o parser da diretiva trata o texto após o nome da regra como rule-ids adicionais, então não se usa o sufixo `-- ...` do ESLint aqui).
 
-O segundo `async-await-in-loop` que existia no mesmo arquivo (o loop de `checkDuplicates`) **não** foi suprimido: como os chunks de hash são independentes e a agregação é comutativa, foi paralelizado de fato com `Promise.all` (#254, Onda 4). Se o backend deixar de depender de `isLast` para finalizar (ou a finalização migrar para uma chamada separada), remover esta supressão e paralelizar o upload também.
+O segundo `async-await-in-loop` que existia no mesmo arquivo (o loop de `checkDuplicates`) **não** foi suprimido: como os chunks de hash são independentes e a agregação é comutativa, foi paralelizado de fato com `Promise.all` (#254, Onda 4). Se o progresso sequencial deixar de ser necessário e a revalidação migrar para fora do loop, remover esta supressão e paralelizar o upload também.
 
 ## Regras que deixaram de ser FP
 
