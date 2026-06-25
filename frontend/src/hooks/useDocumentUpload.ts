@@ -9,6 +9,12 @@ import {
   type UploadOptions,
 } from "@/actions/documents";
 import { md5 } from "@/lib/hash";
+import {
+  MAX_CHUNK_BYTES,
+  chunkByBytes,
+  isPayloadTooLarge,
+  utf8Bytes,
+} from "@/lib/upload-chunking";
 
 export interface UploadDoc {
   text: string;
@@ -43,49 +49,8 @@ export type UploadPhase =
   | { kind: "analysis"; analysis: AnalysisResult }
   | { kind: "uploading"; current: number; total: number };
 
-// Vercel Server Actions reject payloads above ~4.5 MB (FUNCTION_PAYLOAD_TOO_LARGE).
-// Pack docs by aggregate UTF-8 byte size to stay safely under that, with a count cap to avoid latency spikes.
-const MAX_CHUNK_BYTES = 3_500_000;
-const MAX_DOCS_PER_CHUNK = 500;
 // checkDuplicates payload is small (~50B/doc), but we still chunk to bound request size on huge CSVs.
 const MAX_HASH_DOCS_PER_CHUNK = 5_000;
-
-const textEncoder = new TextEncoder();
-const utf8Bytes = (s: string) => textEncoder.encode(s).length;
-
-function isPayloadTooLarge(msg: string): boolean {
-  return (
-    msg.includes("Body exceeded") ||
-    msg.includes("413") ||
-    msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
-  );
-}
-
-function chunkByBytes(
-  docs: UploadDoc[]
-): { items: UploadDoc[]; startIndex: number }[] {
-  const chunks: { items: UploadDoc[]; startIndex: number }[] = [];
-  let current: UploadDoc[] = [];
-  let currentBytes = 0;
-  let startIndex = 0;
-  for (let i = 0; i < docs.length; i++) {
-    const itemBytes = utf8Bytes(docs[i].text);
-    if (
-      current.length > 0 &&
-      (currentBytes + itemBytes > MAX_CHUNK_BYTES ||
-        current.length >= MAX_DOCS_PER_CHUNK)
-    ) {
-      chunks.push({ items: current, startIndex });
-      current = [];
-      currentBytes = 0;
-      startIndex = i;
-    }
-    current.push(docs[i]);
-    currentBytes += itemBytes;
-  }
-  if (current.length > 0) chunks.push({ items: current, startIndex });
-  return chunks;
-}
 
 const PAYLOAD_TOO_LARGE_MESSAGE =
   "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores.";
