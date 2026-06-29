@@ -74,6 +74,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 const FIELDS: PydanticField[] = [
   { name: "q1", type: "text", options: null, description: "", required: true },
 ];
+// Hash do schema corrente: o backlog (scanComparisonBacklog) aplica o piso vivo
+// `latest_major` (#247), então as respostas precisam qualificar — usam o hash
+// atual com semver NULL (caminho de fallback por hash em responseQualifiesForVersion).
+const CURRENT_HASH = "hash-atual";
 const human = (respondent_id: string, q1: string, document_id = "doc1") => ({
   id: `r-${respondent_id}-${document_id}`,
   project_id: "p1",
@@ -83,13 +87,21 @@ const human = (respondent_id: string, q1: string, document_id = "doc1") => ({
   is_latest: true,
   answers: { q1 },
   answer_field_hashes: null,
+  pydantic_hash: CURRENT_HASH,
+  schema_version_major: null,
+  schema_version_minor: null,
+  schema_version_patch: null,
 });
 const projectRow = (over: Record<string, unknown> = {}) => ({
   id: "p1",
   pydantic_fields: FIELDS,
+  pydantic_hash: CURRENT_HASH,
   min_responses_for_comparison: 2,
   comparison_includes_llm: true,
   automation_mode: "compare_humans",
+  schema_version_major: null,
+  schema_version_minor: null,
+  schema_version_patch: null,
   ...over,
 });
 

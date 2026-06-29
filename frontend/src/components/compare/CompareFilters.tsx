@@ -24,6 +24,10 @@ import {
   readCompareFilters,
   type CompareFiltersValue,
 } from "@/lib/compare-filters";
+import {
+  VERSION_FILTER_ALL,
+  VERSION_FILTER_LATEST_MAJOR,
+} from "@/lib/compare-version";
 
 interface CompareFiltersProps {
   respondentNames: string[];
@@ -31,6 +35,12 @@ interface CompareFiltersProps {
   // (compareDefaultsForMode). Mantém o controle coerente com o filtro aplicado
   // no servidor — em compare_llm o default é 1, não o global 2.
   defaultMinHumans: number;
+  // Default VIVO de versão da fila (compareDefaultsForMode → COMPARE_DEFAULT_
+  // VERSION, "latest_major"). Sem ele o seletor usaria DEFAULT_COMPARE_FILTERS.
+  // version ("all") e divergiria do servidor: exibiria "Todas as versões"
+  // enquanto a fila já está em latest_major, e "Todas as versões" ficaria
+  // inalcançável (o `update` apagaria o param por coincidir com o default). #247
+  defaultVersion: string;
   availableVersions: string[]; // ["X.Y.Z", ...] ordered desc
   latestMajorLabel: string | null; // "1.0.0" ou null
 }
@@ -48,6 +58,7 @@ export function CompareFilters(props: CompareFiltersProps) {
 function CompareFiltersInner({
   respondentNames,
   defaultMinHumans,
+  defaultVersion,
   availableVersions,
   latestMajorLabel,
 }: CompareFiltersProps) {
@@ -56,13 +67,19 @@ function CompareFiltersInner({
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
 
-  // Defaults coerentes com o modo de automação (o servidor deriva o piso de
-  // humanos de compareDefaultsForMode). Sem isto o filtro exibiria "2" enquanto
-  // a página lista docs de 1 humano em compare_llm, e marcar "2" pareceria o
-  // default mas esconderia esses docs.
+  // Defaults coerentes com o que o servidor aplica (ambos derivados de
+  // compareDefaultsForMode): o piso de humanos e o default de versão. Sem o
+  // minHumans o filtro exibiria "2" enquanto a página lista docs de 1 humano em
+  // compare_llm; sem a version exibiria "all" enquanto a fila já está em
+  // latest_major — e, pior, selecionar "Todas as versões" apagaria o param (por
+  // coincidir com o default) e a visão completa ficaria inalcançável (#247).
   const effectiveDefaults = useMemo(
-    () => ({ ...DEFAULT_COMPARE_FILTERS, minHumans: defaultMinHumans }),
-    [defaultMinHumans],
+    () => ({
+      ...DEFAULT_COMPARE_FILTERS,
+      minHumans: defaultMinHumans,
+      version: defaultVersion,
+    }),
+    [defaultMinHumans, defaultVersion],
   );
   const current = readCompareFilters(searchParams, effectiveDefaults);
 
@@ -169,12 +186,16 @@ function CompareFiltersInner({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todas as versões</SelectItem>
-                {latestMajorLabel && (
-                  <SelectItem value="latest_major">
-                    Última MAJOR ({latestMajorLabel})
-                  </SelectItem>
-                )}
+                <SelectItem value={VERSION_FILTER_ALL}>
+                  Todas as versões
+                </SelectItem>
+                {/* Sempre renderizado: "latest_major" é o default VIVO (#247),
+                    então precisa ter item correspondente mesmo se o label da
+                    versão não vier — senão o Select controlado fica com `value`
+                    sem option. O label da MAJOR aparece só quando disponível. */}
+                <SelectItem value={VERSION_FILTER_LATEST_MAJOR}>
+                  Última MAJOR{latestMajorLabel ? ` (${latestMajorLabel})` : ""}
+                </SelectItem>
                 {availableVersions.map((v) => (
                   <SelectItem key={v} value={v}>
                     {v}

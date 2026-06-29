@@ -1,3 +1,5 @@
+import { COMPARE_DEFAULT_VERSION } from "@/lib/compare-version";
+
 export interface CompareFiltersValue {
   version: string; // "all" | "latest_major" | "X.Y.Z"
   minHumans: number;
@@ -21,6 +23,15 @@ export const DEFAULT_COMPARE_FILTERS: CompareFiltersValue = {
   since: "",
   respondent: "all",
 };
+
+// Default VIVO de versão da aba Comparar (compareDefaultsForMode o aplica). É
+// distinto de DEFAULT_COMPARE_FILTERS.version ("all"), a base para callers/testes
+// que NÃO derivam do automation_mode. Re-exportado de compare-version.ts (sua
+// fonte única, ao lado do `versionGate` que o consome) para que os importadores
+// existentes — compare-sync.ts, auto-comparison.ts, testes — não precisem mudar
+// o caminho de import (importado no topo). Ver o comentário em compare-version.ts
+// (#247, #217/#218).
+export { COMPARE_DEFAULT_VERSION };
 
 export function readCompareFilters(
   params: URLSearchParams | Record<string, string | undefined>,
@@ -63,6 +74,15 @@ export function readCompareFilters(
 // `mode` é string solta (não o tipo AutomationMode) de propósito: mantém este
 // módulo de baixo nível sem depender de types.ts e tolera o valor null/legado
 // de projetos antes da migration do automation_mode.
+//
+// Versão: o default VIVO é COMPARE_DEFAULT_VERSION ("latest_major"), não o "all"
+// de DEFAULT_COMPARE_FILTERS. Pesquisadores do Natjus (issue #247) estranharam
+// ver na fila comparações de codificações feitas sob schemas anteriores; o
+// esperado é focar na versão corrente por padrão. "all" continua disponível no
+// seletor para quem precisa revisar rodadas antigas, e DEFAULT_COMPARE_FILTERS.
+// version segue "all" (usado por outros callers/testes que não passam por aqui).
+// O fecho do parecer (compare-sync.ts) usa a MESMA constante, mantendo o
+// acoplamento visão==fecho do #217/#218 (ver COMPARE_DEFAULT_VERSION acima).
 export function compareDefaultsForMode(
   mode: string | null | undefined,
   minResponsesForComparison: number,
@@ -73,7 +93,7 @@ export function compareDefaultsForMode(
   } else if (mode === "compare_humans") {
     minHumans = Math.max(1, minResponsesForComparison);
   }
-  return { ...DEFAULT_COMPARE_FILTERS, minHumans };
+  return { ...DEFAULT_COMPARE_FILTERS, minHumans, version: COMPARE_DEFAULT_VERSION };
 }
 
 // Conjunto de document_ids que um usuário pode VER na fila de comparação.
