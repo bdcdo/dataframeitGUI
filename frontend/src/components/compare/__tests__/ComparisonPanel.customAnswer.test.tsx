@@ -53,9 +53,7 @@ function renderPanel(
       existingVerdict={null}
       reviewed={[false]}
       isDivergent={true}
-      isDocComplete={false}
-      hasNextDoc={false}
-      onNextDoc={vi.fn()}
+      docStatus={{ complete: false }}
       onFieldNavigate={vi.fn()}
       onVerdict={onVerdict}
       onMarkReviewed={vi.fn()}
@@ -63,12 +61,11 @@ function renderPanel(
       onCommentChange={vi.fn()}
       commentCount={0}
       suggestionCount={0}
-      allowEquivalence={false}
+      equivalence={{ allow: false, canManageAnyPair: false }}
       equivalences={[]}
       onConfirmEquivalent={vi.fn(async () => {})}
       onUnmarkEquivalencePair={vi.fn(async () => {})}
       currentUserId="u1"
-      canManageAnyPair={false}
       {...props}
     />,
   );
