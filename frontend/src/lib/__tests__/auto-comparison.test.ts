@@ -395,12 +395,17 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
   it("divergência só entre codificações de MAJOR anterior (semver) não materializa", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
     // Projeto na major 2; respostas divergentes da major 1 → abaixo do piso.
+    // `pydantic_hash` antigo junto do semver antigo: é o que o Postgres devolve
+    // de verdade (uma resposta de major anterior carrega o hash daquele schema,
+    // não o atual). Assim o descarte acontece pelo branch semver (major 1 < 2) E
+    // o fallback por hash também recusaria (hash != atual) — não depende da ordem
+    // dos branches em responseQualifiesForVersion.
     tableData.projects = [
       projectRow({ schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
     ];
     tableData.responses = [
-      human("userA", "A", { schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
-      human("userB", "B", { schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
+      human("userA", "A", { pydantic_hash: "hash-antigo", schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
+      human("userB", "B", { pydantic_hash: "hash-antigo", schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
     ];
     tableData.project_members = [member("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");

@@ -3,10 +3,12 @@ import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { COMPARE_DEFAULT_VERSION } from "@/lib/compare-filters";
 import {
+  deriveProjectVersionContext,
   resolveMinVersion,
   responseQualifiesForVersion,
   type SchemaVersion,
   type ProjectVersionContext,
+  type ProjectVersionRow,
   type VersionedResponse,
 } from "@/lib/compare-version";
 import type { EquivalencePair } from "@/lib/equivalence";
@@ -54,17 +56,29 @@ function toResponseLike(r: ResponseRow) {
   };
 }
 
-// Colunas SELECT comuns para as duas queries de `responses` do gatilho: além de
-// answers/hashes, traz os campos de versão para o piso `latest_major`.
+// Colunas SELECT comuns para as queries de `responses` do gatilho: além de
+// answers/hashes, traz os campos de versão para o piso `latest_major` E
+// `is_latest`. O `is_latest` é redundante com o filtro `.eq("is_latest", true)`
+// das queries, mas selecioná-lo deixa a regra 1 de `responseQualifiesForVersion`
+// (superseded → fora) ser defesa REAL no dado, não só uma garantia implícita do
+// WHERE: se um caller futuro relaxar/copiar a query sem o filtro, o predicado
+// ainda exclui superseded em vez de contá-los (regressão #213).
 const RESPONSE_VERSION_COLS =
-  "pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch";
+  "is_latest, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch";
 
-// Monta o shape `VersionedResponse` a partir de uma linha de `responses`. As
-// linhas chegam já com `is_latest=true` da query, mas o predicado exige o campo;
-// `respondent_type` é fixado pela query (humano/llm), aqui é irrelevante para a
-// decisão de versão e entra só para satisfazer o tipo.
+// Monta o shape `VersionedResponse` a partir de uma linha de `responses`.
+// `is_latest` agora vem do SELECT (ver RESPONSE_VERSION_COLS); o `?? true` é só
+// um guarda de tipo para o campo opcional. `respondent_type` é fixado pela query
+// (humano/llm), irrelevante para a decisão de versão, entra só para o tipo.
 function toVersioned(
-  r: ResponseRow,
+  r: Pick<
+    ResponseRow,
+    | "is_latest"
+    | "pydantic_hash"
+    | "schema_version_major"
+    | "schema_version_minor"
+    | "schema_version_patch"
+  >,
   respondentType: "humano" | "llm",
 ): VersionedResponse {
   return {
@@ -78,24 +92,15 @@ function toVersioned(
 }
 
 // Contexto de versão do projeto + piso `latest_major`, derivados da linha de
-// `projects`. Mesmos fallbacks de page.tsx/compare-sync ({major 0, minor 1,
-// patch 0}) e a MESMA constante `COMPARE_DEFAULT_VERSION`, mantendo o
-// acoplamento gatilho==fila==fecho (#247).
-function versionGate(project: {
-  pydantic_hash?: string | null;
-  schema_version_major?: number | null;
-  schema_version_minor?: number | null;
-  schema_version_patch?: number | null;
-}): { minVersion: SchemaVersion | null; ctx: ProjectVersionContext } {
-  const version: SchemaVersion = {
-    major: project.schema_version_major ?? 0,
-    minor: project.schema_version_minor ?? 1,
-    patch: project.schema_version_patch ?? 0,
-  };
-  return {
-    minVersion: resolveMinVersion(COMPARE_DEFAULT_VERSION, version),
-    ctx: { pydanticHash: project.pydantic_hash ?? null, version },
-  };
+// `projects`. O contexto vem do helper compartilhado `deriveProjectVersionContext`
+// (compare-version.ts) — a MESMA fonte que page.tsx e compare-sync.ts usam, sem
+// re-hardcodar o fallback {0,1,0} —, e o piso da MESMA constante
+// `COMPARE_DEFAULT_VERSION`, mantendo o acoplamento gatilho==fila==fecho (#247).
+function versionGate(
+  project: ProjectVersionRow,
+): { minVersion: SchemaVersion | null; ctx: ProjectVersionContext } {
+  const { version, ctx } = deriveProjectVersionContext(project);
+  return { minVersion: resolveMinVersion(COMPARE_DEFAULT_VERSION, version), ctx };
 }
 
 function buildEquivByField(
@@ -374,7 +379,7 @@ export async function scanComparisonBacklog(
         .single(),
       admin
         .from("responses")
-        .select("document_id, respondent_id")
+        .select(`document_id, respondent_id, ${RESPONSE_VERSION_COLS}`)
         .eq("project_id", projectId)
         .eq("respondent_type", "humano")
         .eq("is_latest", true),
@@ -394,11 +399,28 @@ export async function scanComparisonBacklog(
     (activeAsg ?? []).map((a) => a.document_id as string),
   );
 
+  // Piso `latest_major` (#247), aplicado já na fase 1 com as colunas LEVES de
+  // versão (RESPONSE_VERSION_COLS, sem `answers`): docs cujos humanos estão
+  // todos abaixo do piso são podados ANTES da fase 2, evitando o fetch pesado de
+  // `answers`/equivalências para docs que nunca entrariam no backlog (regra
+  // "fetch em 2 fases para dados pesados", CLAUDE.md). O contexto é único; só as
+  // respostas variam. A completude (`isCodingComplete`) segue conferida na fase
+  // 2, que precisa de `answers`.
+  const { minVersion, ctx: projectVersionCtx } = versionGate(project);
+
   const humansByDoc = new Map<string, Set<string>>();
   for (const r of humanMeta ?? []) {
     const docId = r.document_id as string;
     const respId = r.respondent_id as string | null;
     if (!respId) continue;
+    if (
+      !responseQualifiesForVersion(
+        toVersioned(r, "humano"),
+        minVersion,
+        projectVersionCtx,
+      )
+    )
+      continue;
     const set = humansByDoc.get(docId) ?? new Set<string>();
     set.add(respId);
     humansByDoc.set(docId, set);
@@ -459,10 +481,6 @@ export async function scanComparisonBacklog(
     byField.set(eq.field_name, list);
     equivByDoc.set(docId, byField);
   }
-
-  // Piso `latest_major` (#247), aplicado por doc — mesmo gate do gatilho e do
-  // fecho. O contexto de versao do projeto e unico; so as respostas variam.
-  const { minVersion, ctx: projectVersionCtx } = versionGate(project);
 
   const result: Array<{ documentId: string; coderIds: Set<string> }> = [];
   for (const docId of candidates) {

@@ -9,6 +9,16 @@
 // que era a causa do assignment de comparação não fechar (ver #168 e o
 // princípio anti-drift do CLAUDE.md, mesmo racional do #63 para schema-utils).
 
+// Sentinelas do filtro de versão da aba Comparar. São a FONTE ÚNICA das strings
+// mágicas: `resolveMinVersion` casa contra elas, `COMPARE_DEFAULT_VERSION`
+// (compare-filters.ts) é definido a partir delas e o `SelectItem` do filtro
+// (CompareFilters.tsx) usa-as como `value`. Sem isto, trocar o valor do default
+// num lugar (ex.: a constante) deixaria `resolveMinVersion` cair no
+// `parseVersionStr → null` e desativar o piso silenciosamente em fila/gatilho/
+// fecho, além de o `Select` controlado ficar com `value` sem option (#247).
+export const VERSION_FILTER_ALL = "all";
+export const VERSION_FILTER_LATEST_MAJOR = "latest_major";
+
 export interface SchemaVersion {
   major: number;
   minor: number;
@@ -71,8 +81,9 @@ export function resolveMinVersion(
   filter: string,
   projectCurrent: SchemaVersion,
 ): SchemaVersion | null {
-  if (filter === "all") return null;
-  if (filter === "latest_major") return latestMajorAnchor(projectCurrent);
+  if (filter === VERSION_FILTER_ALL) return null;
+  if (filter === VERSION_FILTER_LATEST_MAJOR)
+    return latestMajorAnchor(projectCurrent);
   return parseVersionStr(filter);
 }
 
@@ -80,6 +91,39 @@ export function resolveMinVersion(
 export interface ProjectVersionContext {
   pydanticHash: string | null;
   version: SchemaVersion;
+}
+
+// Linha de `projects` reduzida ao mínimo para derivar o contexto de versão.
+export interface ProjectVersionRow {
+  pydantic_hash?: string | null;
+  schema_version_major?: number | null;
+  schema_version_minor?: number | null;
+  schema_version_patch?: number | null;
+}
+
+// Deriva o `SchemaVersion` corrente do projeto e o `ProjectVersionContext` a
+// partir de uma linha de `projects`, com os fallbacks canônicos
+// {major 0, minor 1, patch 0}. FONTE ÚNICA dessa derivação, consumida por
+// compare/page.tsx, compare-sync.ts e auto-comparison.ts — antes ela vivia
+// copiada (verbatim) nos três, e o fallback `minor: 1` é load-bearing
+// (`latestMajorAnchor` ancora em {0,minor,0} para projetos 0.x): uma cópia
+// "corrigida" para `minor: 0` num só lugar dessincronizaria gatilho/fila/fecho,
+// a exata classe de drift que este módulo existe para evitar (ver cabeçalho e
+// #247). Cada caller resolve seu próprio `minVersion`: a página a partir da URL
+// (`filters.version`), o fecho/gatilho a partir de `COMPARE_DEFAULT_VERSION`.
+export function deriveProjectVersionContext(project: ProjectVersionRow): {
+  version: SchemaVersion;
+  ctx: ProjectVersionContext;
+} {
+  const version: SchemaVersion = {
+    major: project.schema_version_major ?? 0,
+    minor: project.schema_version_minor ?? 1,
+    patch: project.schema_version_patch ?? 0,
+  };
+  return {
+    version,
+    ctx: { pydanticHash: project.pydantic_hash ?? null, version },
+  };
 }
 
 // Predicado único de qualificação de uma resposta sob um piso de versão.

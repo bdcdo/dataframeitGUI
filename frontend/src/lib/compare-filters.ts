@@ -1,3 +1,5 @@
+import { VERSION_FILTER_LATEST_MAJOR } from "@/lib/compare-version";
+
 export interface CompareFiltersValue {
   version: string; // "all" | "latest_major" | "X.Y.Z"
   minHumans: number;
@@ -33,8 +35,10 @@ export const DEFAULT_COMPARE_FILTERS: CompareFiltersValue = {
 // drift silencioso em que página, filtro e fecho discordam (ver #247, e o
 // acoplamento visão==fecho do #217/#218). O default de versão é independente do
 // modo de automação — só `minHumans` varia por modo —, por isso uma constante
-// basta como fonte única, sem precisar do `mode`.
-export const COMPARE_DEFAULT_VERSION = "latest_major";
+// basta como fonte única, sem precisar do `mode`. O VALOR vem do sentinela
+// canônico em compare-version.ts (mesma string que `resolveMinVersion` casa e
+// que o `SelectItem` do filtro usa), então trocar o default não dessincroniza.
+export const COMPARE_DEFAULT_VERSION = VERSION_FILTER_LATEST_MAJOR;
 
 export function readCompareFilters(
   params: URLSearchParams | Record<string, string | undefined>,

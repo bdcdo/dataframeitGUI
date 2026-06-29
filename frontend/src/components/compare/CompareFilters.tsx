@@ -24,6 +24,10 @@ import {
   readCompareFilters,
   type CompareFiltersValue,
 } from "@/lib/compare-filters";
+import {
+  VERSION_FILTER_ALL,
+  VERSION_FILTER_LATEST_MAJOR,
+} from "@/lib/compare-version";
 
 interface CompareFiltersProps {
   respondentNames: string[];
@@ -182,12 +186,14 @@ function CompareFiltersInner({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todas as versões</SelectItem>
+                <SelectItem value={VERSION_FILTER_ALL}>
+                  Todas as versões
+                </SelectItem>
                 {/* Sempre renderizado: "latest_major" é o default VIVO (#247),
                     então precisa ter item correspondente mesmo se o label da
                     versão não vier — senão o Select controlado fica com `value`
                     sem option. O label da MAJOR aparece só quando disponível. */}
-                <SelectItem value="latest_major">
+                <SelectItem value={VERSION_FILTER_LATEST_MAJOR}>
                   Última MAJOR{latestMajorLabel ? ` (${latestMajorLabel})` : ""}
                 </SelectItem>
                 {availableVersions.map((v) => (

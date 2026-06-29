@@ -8,9 +8,9 @@ import {
   resolveCompareStatus,
 } from "@/lib/compare-divergence";
 import {
+  deriveProjectVersionContext,
   resolveMinVersion,
   responseQualifiesForVersion,
-  type SchemaVersion,
   type VersionedResponse,
 } from "@/lib/compare-version";
 import { COMPARE_DEFAULT_VERSION } from "@/lib/compare-filters";
@@ -95,19 +95,11 @@ export async function syncCompareAssignment(
   // são lentes de inspeção: NÃO redefinem "concluído". Se a revisora escolher
   // uma lente mais estreita que o default, a tela pode mostrar menos do que o
   // fecho exige — comportamento esperado de uma lente, fora do fluxo "default".
-  const projectVersion: SchemaVersion = {
-    major: project?.schema_version_major ?? 0,
-    minor: project?.schema_version_minor ?? 1,
-    patch: project?.schema_version_patch ?? 0,
-  };
-  const minVersion = resolveMinVersion(
-    COMPARE_DEFAULT_VERSION,
-    projectVersion,
-  );
-  const projectVersionCtx = {
-    pydanticHash: project?.pydantic_hash ?? null,
-    version: projectVersion,
-  };
+  // Contexto de versão do helper compartilhado (compare-version.ts) — a MESMA
+  // fonte e fallback {0,1,0} de page.tsx e auto-comparison.ts, sem re-hardcodar.
+  const { version: projectVersion, ctx: projectVersionCtx } =
+    deriveProjectVersionContext(project ?? {});
+  const minVersion = resolveMinVersion(COMPARE_DEFAULT_VERSION, projectVersion);
 
   type ActiveResponse = {
     id: string;
@@ -127,6 +119,19 @@ export async function syncCompareAssignment(
       answers: (r.answers ?? {}) as Record<string, unknown>,
       answerFieldHashes: r.answer_field_hashes as AnswerFieldHashes,
     }));
+
+  // Sem ao menos 2 respostas qualificadas sob o piso corrente não há PAR a
+  // comparar — então não há divergência a "resolver". Aqui o conjunto vazio/único
+  // faria `computeDivergentFieldNames` devolver [] e o status virar "concluido",
+  // marcando como revisado um doc que ninguém comparou na versão corrente (ex.:
+  // doc só com codificações pré-versionamento, ou cujas rodadas antigas caíram
+  // abaixo do piso após um bump estrutural). Preserva o status atual: a fila
+  // default também não mostra o doc (filtro de mín. humanos), então o assignment
+  // fica fora de vista sem fechar à toa. "concluido" continua reservado para o
+  // caso legítimo de ≥2 respostas cujas divergências foram todas resolvidas/fundidas
+  // (#217). Não regride um assignment já concluído nem reabre — só evita o fecho
+  // espúrio.
+  if (activeResponses.length < 2) return;
 
   const equivalencesByField = new Map<string, EquivalencePair[]>();
   for (const eq of equivalences ?? []) {
