@@ -20,7 +20,7 @@ const {
   getDocumentForCoding: vi.fn(),
   autosaveProps: { current: null as unknown as {
     activeDocId: string | null;
-    isDirty: boolean;
+    getIsDirty: () => boolean;
     getPayload: () => unknown;
   } },
   urlParams: { current: {} as Record<string, string | null> },
@@ -253,7 +253,7 @@ describe("CodingPage — modo Explorar (integração)", () => {
     await userEvent.click(screen.getByText("qp-set")); // edita d1 → rascunho sujo
 
     expect(autosaveProps.current.activeDocId).toBe("d1");
-    expect(autosaveProps.current.isDirty).toBe(true);
+    expect(autosaveProps.current.getIsDirty()).toBe(true);
     expect(autosaveProps.current.getPayload()).toEqual({
       projectId: "p1",
       documentId: "d1",
@@ -308,7 +308,7 @@ describe("CodingPage — modo Explorar (integração)", () => {
     await userEvent.click(screen.getByText("qp-set")); // edita d1 → rascunho sujo
 
     // Antes do toggle: rascunho presente e doc sujo.
-    expect(autosaveProps.current.isDirty).toBe(true);
+    expect(autosaveProps.current.getIsDirty()).toBe(true);
     expect(autosaveProps.current.getPayload()).toEqual({
       projectId: "p1",
       documentId: "d1",
@@ -326,7 +326,7 @@ describe("CodingPage — modo Explorar (integração)", () => {
     );
     // ...e o estado salvável concorda: nada de ghost-save no exit/Voltar.
     expect(autosaveProps.current.activeDocId).toBe("d1");
-    expect(autosaveProps.current.isDirty).toBe(false);
+    expect(autosaveProps.current.getIsDirty()).toBe(false);
     expect(autosaveProps.current.getPayload()).toBeNull();
     // O doc não foi re-buscado no retorno (cache não invalidado).
     expect(getDocumentForCoding).toHaveBeenCalledTimes(1);
@@ -347,7 +347,7 @@ describe("CodingPage — modo Explorar (integração)", () => {
       expect(screen.getByTestId("qp-answers").textContent).toBe("{}"),
     );
     await userEvent.click(screen.getByText("qp-set")); // edita d1 → sujo
-    expect(autosaveProps.current.isDirty).toBe(true);
+    expect(autosaveProps.current.getIsDirty()).toBe(true);
 
     // Random: d1 → d2 (markClean d1). Depois d2 → d1 (volta ao d1).
     await userEvent.click(screen.getByText("hdr-random"));
@@ -361,7 +361,7 @@ describe("CodingPage — modo Explorar (integração)", () => {
 
     // De volta a d1: não está mais sujo (sem prompt espúrio) e sem rascunho.
     expect(autosaveProps.current.activeDocId).toBe("d1");
-    expect(autosaveProps.current.isDirty).toBe(false);
+    expect(autosaveProps.current.getIsDirty()).toBe(false);
     expect(autosaveProps.current.getPayload()).toBeNull();
   });
 });

@@ -178,6 +178,16 @@ export interface Assignment {
   completed_at: string | null;
 }
 
+/**
+ * Documento na visão de codificação, com o subconjunto de `assignment` que o
+ * modo Atribuídos usa (id + status). Fonte única consumida por `CodingPage`,
+ * `useAssignedCoding` e `useBrowseCoding` (evita redefinir o mesmo tipo em cada
+ * arquivo).
+ */
+export type AssignedDoc = Document & {
+  assignment?: Pick<Assignment, "id" | "status">;
+};
+
 // Snapshot por-campo do schema contra o qual a response foi codificada
 // (1 chave por campo existente na época, valor = field.hash). Gravado em
 // saveResponse iterando o schema completo (não os campos respondidos), então

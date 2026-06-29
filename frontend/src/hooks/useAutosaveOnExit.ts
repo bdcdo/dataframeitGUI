@@ -12,8 +12,12 @@ export interface AutosavePayload {
 interface UseAutosaveOnExitParams {
   /** id do documento ativo (assigned ou browse), ou null se nenhum. */
   activeDocId: string | null;
-  /** true quando o documento ativo tem alterações não salvas. */
-  isDirty: boolean;
+  /**
+   * Lê se o documento ativo tem alterações não salvas. É um getter (não um
+   * boolean) para o consumidor poder ler um `useRef` em tempo de evento sem
+   * acessar o ref durante o render (proibido por react-hooks/refs).
+   */
+  getIsDirty: () => boolean;
   /** Snapshot do payload no momento do unload (chamado lazy). */
   getPayload: () => AutosavePayload | null;
   endpoint?: string;
@@ -30,30 +34,30 @@ interface UseAutosaveOnExitParams {
  *   onde uma Server Action (POST comum) poderia ser abortada.
  *
  * Os listeners são registrados uma vez só (`[endpoint]`); `activeDocId`,
- * `isDirty` e `getPayload` são lidos via refs sempre atualizados, evitando
+ * `getIsDirty` e `getPayload` são lidos via refs sempre atualizados, evitando
  * re-registrar o listener a cada keystroke.
  */
 export function useAutosaveOnExit({
   activeDocId,
-  isDirty,
+  getIsDirty,
   getPayload,
   endpoint = "/api/autosave",
 }: UseAutosaveOnExitParams): void {
   const activeDocIdRef = useRef(activeDocId);
-  const isDirtyRef = useRef(isDirty);
+  const getIsDirtyRef = useRef(getIsDirty);
   const getPayloadRef = useRef(getPayload);
 
   // Mantém os refs com os valores mais recentes (atualizados após cada render,
   // antes de qualquer evento de unload disparar).
   useEffect(() => {
     activeDocIdRef.current = activeDocId;
-    isDirtyRef.current = isDirty;
+    getIsDirtyRef.current = getIsDirty;
     getPayloadRef.current = getPayload;
   });
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (activeDocIdRef.current && isDirtyRef.current) {
+      if (activeDocIdRef.current && getIsDirtyRef.current()) {
         e.preventDefault();
       }
     };
@@ -89,7 +93,7 @@ export function useAutosaveOnExit({
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "hidden") return;
-      if (!isDirtyRef.current) return;
+      if (!getIsDirtyRef.current()) return;
       const payload = getPayloadRef.current();
       if (payload) beaconSave(payload);
     };
