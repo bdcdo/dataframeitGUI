@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   MAX_CHUNK_BYTES,
   MAX_DOCS_PER_CHUNK,
   chunkByBytes,
   isPayloadTooLarge,
+  mapWithConcurrency,
   utf8Bytes,
 } from "@/lib/upload-chunking";
 
@@ -77,5 +78,41 @@ describe("chunkByBytes", () => {
     expect(chunks[0].startIndex).toBe(0);
     expect(chunks[1].items).toHaveLength(1);
     expect(chunks[1].startIndex).toBe(1);
+  });
+});
+
+describe("mapWithConcurrency", () => {
+  it("retorna vazio para lista vazia sem chamar fn", async () => {
+    const fn = vi.fn(async (x: number) => x);
+    expect(await mapWithConcurrency([], 4, fn)).toEqual([]);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("preserva a ordem dos resultados mesmo quando as chamadas resolvem fora de ordem", async () => {
+    // delays decrescentes: item 0 resolve por último, item 3 primeiro.
+    const out = await mapWithConcurrency([30, 20, 10, 0], 4, (ms, i) =>
+      new Promise<string>((r) => setTimeout(() => r(`#${i}`), ms))
+    );
+    expect(out).toEqual(["#0", "#1", "#2", "#3"]);
+  });
+
+  it("nunca mantém mais que `limit` chamadas em voo ao mesmo tempo", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const items = Array.from({ length: 10 }, (_, i) => i);
+    await mapWithConcurrency(items, 3, async (x) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return x;
+    });
+    expect(peak).toBeLessThanOrEqual(3);
+  });
+
+  it("processa todos os itens quando há mais itens que o limite", async () => {
+    const items = Array.from({ length: 25 }, (_, i) => i);
+    const out = await mapWithConcurrency(items, 6, async (x) => x * 2);
+    expect(out).toEqual(items.map((x) => x * 2));
   });
 });

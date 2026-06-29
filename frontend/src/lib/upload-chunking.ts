@@ -46,3 +46,30 @@ export function chunkByBytes<T extends { text: string }>(
   if (current.length > 0) chunks.push({ items: current, startIndex });
   return chunks;
 }
+
+// Browsers cap concurrent connections to one host at ~6; firing every chunk at
+// once (Promise.all) on a huge CSV would queue the excess in the browser anyway
+// and pile load on the server. Bound in-flight work to this many at a time.
+export const MAX_HASH_CHECK_CONCURRENCY = 6;
+
+// Like `Promise.all(items.map(fn))` but with at most `limit` calls in flight at
+// once. Results are written by position, so the returned array mirrors `items`
+// order regardless of which calls settle first. Rejects on the first rejection
+// (matching Promise.all), leaving outstanding workers to settle unobserved.
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  const workers = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(Array.from({ length: workers }, worker));
+  return results;
+}

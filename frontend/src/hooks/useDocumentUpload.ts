@@ -12,8 +12,10 @@ import {
 import { md5 } from "@/lib/hash";
 import {
   MAX_CHUNK_BYTES,
+  MAX_HASH_CHECK_CONCURRENCY,
   chunkByBytes,
   isPayloadTooLarge,
+  mapWithConcurrency,
   utf8Bytes,
 } from "@/lib/upload-chunking";
 
@@ -101,6 +103,7 @@ export function useDocumentUpload(projectId: string) {
     try {
       const chunks = chunkByBytes(docs);
       let processed = 0;
+      let totalInserted = 0;
       for (let ci = 0; ci < chunks.length; ci++) {
         const { items, startIndex } = chunks[ci];
         const endIndex = startIndex + items.length;
@@ -131,10 +134,18 @@ export function useDocumentUpload(projectId: string) {
           localOptions
         );
         if (result.error) throw new Error(result.error);
+        // `count` is the rows actually inserted this chunk (< items in
+        // add_new_only, where duplicates are skipped server-side).
+        totalInserted += result.count ?? 0;
         processed += items.length;
         setPhase({ kind: "uploading", current: processed, total: docs.length });
       }
-      toast.success(`${docs.length} documentos importados!`);
+      const skipped = docs.length - totalInserted;
+      toast.success(
+        skipped > 0
+          ? `${totalInserted} documento(s) importado(s); ${skipped} ignorado(s) (já existiam no projeto ou repetidos no arquivo).`
+          : `${docs.length} documentos importados!`
+      );
       setCsv(null);
       setPhase({ kind: "idle" });
     } catch (e) {
@@ -177,13 +188,16 @@ export function useDocumentUpload(projectId: string) {
       }));
 
       // Chunks are independent and the aggregation below is commutative, so run
-      // them together instead of awaiting one at a time.
+      // them concurrently — but bounded, so a huge CSV doesn't fire hundreds of
+      // Server Action requests at once.
       const hashChunks: (typeof docsWithHash)[] = [];
       for (let i = 0; i < docsWithHash.length; i += MAX_HASH_DOCS_PER_CHUNK) {
         hashChunks.push(docsWithHash.slice(i, i + MAX_HASH_DOCS_PER_CHUNK));
       }
-      const results = await Promise.all(
-        hashChunks.map((chunk) => checkDuplicates(projectId, chunk))
+      const results = await mapWithConcurrency(
+        hashChunks,
+        MAX_HASH_CHECK_CONCURRENCY,
+        (chunk) => checkDuplicates(projectId, chunk)
       );
 
       const allDuplicates: DuplicateMatch[] = [];
