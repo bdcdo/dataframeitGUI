@@ -131,6 +131,10 @@ export function AutoReviewPageContent({
 
   return (
     <AutoReviewFieldPanel
+      // Remonta ao trocar de doc/campo: reseta o estado local do painel (ex.:
+      // `showJustification` volta ao default aberto) sem precisar de effect de
+      // sincronizacao — ver react-doctor/no-adjust-state-on-prop-change.
+      key={currentKey}
       field={currentField}
       fieldIndex={fieldIndex}
       totalFields={doc.fields.length}

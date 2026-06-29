@@ -43,6 +43,10 @@ interface ReviewCommentsViewProps {
   llmDocsWithoutAmbiguities?: number;
 }
 
+// Fontes que alimentam a visao "split" (revisao + dificuldade). Constante de
+// modulo: estavel entre renders, entao nao precisa entrar nas deps do useMemo.
+const splitSources = new Set(["review", "dificuldade"]);
+
 function verdictType(
   verdict: string,
 ):
@@ -164,7 +168,6 @@ export function ReviewCommentsView({
   };
 
   // Count unique documents with review/difficulty comments (for split view button)
-  const splitSources = new Set(["review", "dificuldade"]);
   const reviewDocCount = useMemo(() => {
     const docs = new Set<string>();
     for (const c of comments) {
