@@ -13,6 +13,7 @@ export interface CompareResponse {
   id: string;
   respondent_type: "humano" | "llm";
   respondent_name: string;
+  respondent_id: string | null;
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
   is_latest: boolean;
@@ -36,6 +37,7 @@ export interface FieldResponse {
   id: string;
   respondent_type: "humano" | "llm";
   respondent_name: string;
+  respondent_id: string | null;
   answer: unknown;
   justification: string | undefined;
   is_latest: boolean;

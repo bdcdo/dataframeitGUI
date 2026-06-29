@@ -73,6 +73,7 @@ export function useCompareFieldData({
       id: r.id,
       respondent_type: r.respondent_type,
       respondent_name: r.respondent_name,
+      respondent_id: r.respondent_id,
       answer: Object.prototype.hasOwnProperty.call(r.answers, currentFieldName)
         ? r.answers[currentFieldName]
         : undefined,
