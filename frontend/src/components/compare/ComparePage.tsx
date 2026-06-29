@@ -1,66 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { DocumentReader } from "../coding/DocumentReader";
+import { useCallback, useRef, useState } from "react";
 import { FullscreenNav } from "../coding/FullscreenNav";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
 import { CompareNav } from "./CompareNav";
-import { ComparisonPanel } from "./ComparisonPanel";
 import { CompareDocList, type DocListEntry } from "./CompareDocList";
-import { submitVerdict, markCompareDocReviewed, type ResponseSnapshotEntry } from "@/actions/reviews";
-import {
-  confirmEquivalentVerdict,
-  unmarkEquivalencePair,
-} from "@/actions/equivalences";
-import { toast } from "sonner";
-import { normalizeForComparison } from "@/lib/utils";
-import {
-  isFreeTextField,
-  isDocComplete,
-  findNextPendingDocIndex,
-} from "@/lib/compare-divergence";
-import { buildResponseGroupKeys } from "@/lib/equivalence";
+import { CompareWorkspace } from "./CompareWorkspace";
+import { useCompareReviews } from "./useCompareReviews";
+import { useCompareNavigation } from "./useCompareNavigation";
+import { useCompareFieldData } from "./useCompareFieldData";
+import { useCompareVerdicts } from "./useCompareVerdicts";
+import { useCompareKeyboard } from "./useCompareKeyboard";
+import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
-
-interface EquivalencePairWire {
-  id: string;
-  response_a_id: string;
-  response_b_id: string;
-  reviewer_id: string | null;
-}
-
-interface CompareResponse {
-  id: string;
-  respondent_type: "humano" | "llm";
-  respondent_name: string;
-  answers: Record<string, unknown>;
-  justifications: Record<string, string> | null;
-  is_latest: boolean;
-  pydantic_hash: string | null;
-  answer_field_hashes: Record<string, string> | null;
-  schema_version_major: number | null;
-  schema_version_minor: number | null;
-  schema_version_patch: number | null;
-  created_at: string;
-}
-
-interface CompareDocument {
-  id: string;
-  title: string | null;
-  external_id: string | null;
-  text: string;
-}
-
-interface ExistingVerdictInfo {
-  verdict: string;
-  chosenResponseId: string | null;
-  comment: string | null;
-}
+import type {
+  CompareDocument,
+  CompareResponse,
+  EquivalencePairWire,
+} from "./compare-types";
 
 interface ComparePageProps {
   projectId: string;
@@ -68,9 +25,12 @@ interface ComparePageProps {
   responses: Record<string, CompareResponse[]>;
   divergentFields: Record<string, string[]>;
   fields: PydanticField[];
-  existingReviews: Record<string, Record<string, ExistingVerdictInfo>>;
+  existingReviews: ReviewsByDoc;
   projectPydanticHash: string | null;
   respondentNames: string[];
+  // Default de "mín. humanos" derivado do automation_mode (compareDefaultsForMode):
+  // mantém o filtro da UI coerente com o piso aplicado no servidor.
+  defaultMinHumans: number;
   coverageByDoc: Record<string, DocCoverage>;
   commentCountsByKey: Record<string, number>;
   suggestionCountsByField: Record<string, number>;
@@ -94,6 +54,7 @@ export function ComparePage({
   existingReviews,
   projectPydanticHash,
   respondentNames,
+  defaultMinHumans,
   coverageByDoc,
   commentCountsByKey,
   suggestionCountsByField,
@@ -104,386 +65,121 @@ export function ComparePage({
   currentUserId,
   canManageAnyPair,
 }: ComparePageProps) {
-  const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
-  const [fieldIndex, setFieldIndex] = useState(0);
-  const [filter, setFilter] = useState("all");
-  const [comment, setComment] = useState("");
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [listCollapsed, setListCollapsed] = useState(false);
+  const { localReviews, recordReview } = useCompareReviews(existingReviews);
 
-  const [localReviews, setLocalReviews] = useState<
-    Record<string, Record<string, ExistingVerdictInfo>>
-  >(existingReviews);
+  const {
+    docIndex,
+    currentDoc,
+    allDocDivergent,
+    docFields,
+    fieldIndex,
+    setFieldIndex,
+    filter,
+    changeFilter,
+    currentFieldName,
+    currentField,
+    isCurrentFieldDivergent,
+    isCurrentDocComplete,
+    reviewedDocsCount,
+    hasNextDoc,
+    handleDocNavigate,
+    handleNextDoc,
+    goNextField,
+    goPrevField,
+  } = useCompareNavigation({ documents, divergentFields, fields, localReviews });
 
-  // O parecer atual é derivado de `pinnedDocId` (última escolha explícita do
-  // usuário). `documents` é reordenado pelo Server Component a cada
-  // `revalidatePath` (sort por pendências); rastrear por índice numérico
-  // faria o parecer mudar sob o usuário a cada veredito. Quando o ID atual
-  // some da lista (filtro mudou, etc.) caímos para `documents[0]`.
-  const docIndex = useMemo(() => {
-    if (documents.length === 0) return 0;
-    if (pinnedDocId) {
-      const i = documents.findIndex((d) => d.id === pinnedDocId);
-      if (i >= 0) return i;
-    }
-    return 0;
-  }, [documents, pinnedDocId]);
-
-  // Avisa quando o doc pinado some da lista (ex.: foi excluído). O
-  // `docIndex` memo já cai para `documents[0]` automaticamente; aqui só
-  // disparamos o toast uma vez, na transição "estava lá → sumiu".
-  const lastValidPinnedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!pinnedDocId || documents.length === 0) {
-      lastValidPinnedRef.current = pinnedDocId;
-      return;
-    }
-    const exists = documents.some((d) => d.id === pinnedDocId);
-    if (exists) {
-      lastValidPinnedRef.current = pinnedDocId;
-    } else if (lastValidPinnedRef.current === pinnedDocId) {
-      toast.info("Documento removido da fila — voltando ao topo.");
-      lastValidPinnedRef.current = null;
-    }
-  }, [pinnedDocId, documents]);
-
-  const currentDoc = documents[docIndex];
-  const allDocDivergent = useMemo(
-    () => (currentDoc ? divergentFields[currentDoc.id] || [] : []),
-    [currentDoc, divergentFields],
-  );
-  const divergentSet = useMemo(() => new Set(allDocDivergent), [allDocDivergent]);
-
-  const docFields = filter === "all"
-    ? allDocDivergent
-    : allDocDivergent.filter((fn) => fn === filter);
-  const currentFieldName = docFields[fieldIndex];
-  const currentField = fields.find((f) => f.name === currentFieldName);
-  const isCurrentFieldDivergent = divergentSet.has(currentFieldName);
-  const docResponses = currentDoc ? (responses[currentDoc.id] || []) : [];
-
-  const reviewed = docFields.map((fn) => !!localReviews[currentDoc?.id]?.[fn]);
-
-  const reviewedDocsCount = useMemo(
-    () =>
-      documents.filter((doc) =>
-        isDocComplete(divergentFields[doc.id], localReviews[doc.id]),
-      ).length,
-    [documents, divergentFields, localReviews],
-  );
-
-  // Documento "concluído" = todos os campos divergentes têm veredito. Quando
-  // verdadeiro, a UI mostra o botão "Próximo parecer" (com foco automático)
-  // em vez de avançar por timer cego.
-  const isCurrentDocComplete = useMemo(
-    () =>
-      !!currentDoc && isDocComplete(allDocDivergent, localReviews[currentDoc.id]),
-    [currentDoc, allDocDivergent, localReviews],
-  );
-
-  // `documents` é reordenado pelo servidor a cada revalidate (docs concluídos
-  // afundam para o fim da fila), então o "próximo parecer" precisa ser o
-  // próximo doc com pendências — não `docIndex + 1`, que apontaria para fora
-  // da fila assim que o doc atual fosse concluído.
-  const nextPendingDocIndex = useMemo(
-    () =>
-      findNextPendingDocIndex(
-        documents.map((d) => d.id),
-        divergentFields,
-        localReviews,
-        currentDoc?.id,
-      ),
-    [documents, divergentFields, localReviews, currentDoc],
-  );
-
-  const hasNextDoc = nextPendingDocIndex >= 0;
-
-  const handleNextDoc = useCallback(() => {
-    if (nextPendingDocIndex >= 0) {
-      setPinnedDocId(documents[nextPendingDocIndex].id);
-      setFieldIndex(0);
-    }
-  }, [nextPendingDocIndex, documents]);
-
-  const currentVerdict = currentDoc && currentFieldName
-    ? localReviews[currentDoc.id]?.[currentFieldName] ?? null
-    : null;
-
-  useEffect(() => {
-    setComment(currentVerdict?.comment || "");
-  }, [currentFieldName, currentDoc?.id, currentVerdict?.comment]);
-
-  const currentFieldHashes = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const f of fields) {
-      if (f.hash) map[f.name] = f.hash;
-    }
-    return map;
-  }, [fields]);
-
-  const fieldResponses = docResponses.map((r) => {
-    let isFieldStale = false;
-    if (r.answer_field_hashes) {
-      const savedHash = r.answer_field_hashes[currentFieldName];
-      const currentHash = currentFieldHashes[currentFieldName];
-      isFieldStale = !savedHash || !currentHash || savedHash !== currentHash;
-    } else {
-      isFieldStale = !!projectPydanticHash && r.pydantic_hash !== projectPydanticHash;
-    }
-    const version =
-      r.schema_version_major !== null
-        ? `${r.schema_version_major}.${r.schema_version_minor ?? 0}.${r.schema_version_patch ?? 0}`
-        : null;
-    return {
-      id: r.id,
-      respondent_type: r.respondent_type,
-      respondent_name: r.respondent_name,
-      answer: Object.prototype.hasOwnProperty.call(r.answers, currentFieldName)
-        ? r.answers[currentFieldName]
-        : undefined,
-      justification: r.justifications?.[currentFieldName],
-      is_latest: r.is_latest,
-      isFieldStale,
-      schemaVersion: version,
-    };
+  const {
+    fieldResponses,
+    answerGroups,
+    currentFieldEquivalences,
+    allowEquivalence,
+  } = useCompareFieldData({
+    currentDoc,
+    currentFieldName,
+    currentField,
+    responses,
+    fields,
+    projectPydanticHash,
+    equivalencesByDocField,
   });
 
-  const currentFieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
-    if (!currentDoc || !currentFieldName) return [];
-    return equivalencesByDocField[currentDoc.id]?.[currentFieldName] ?? [];
-  }, [equivalencesByDocField, currentDoc, currentFieldName]);
+  const currentVerdict =
+    currentDoc && currentFieldName
+      ? localReviews[currentDoc.id]?.[currentFieldName] ?? null
+      : null;
 
-  const allowEquivalence = useMemo(() => {
-    return !!currentField && isFreeTextField(currentField);
-  }, [currentField]);
+  // Comentário editável, semeado do veredito do contexto atual. Resetado por
+  // GUARD DE RENDER (não por effect) quando muda o par (doc, campo): elimina o
+  // `no-derived-state` que o effect disparava. O prev-tracker é um `useRef`
+  // (não `useState`) para não recair em `rerender-state-only-in-handlers`, e o
+  // estado inicia em "" (literal, não prop) para não disparar `no-derived-useState`.
+  // A chave é só (doc, campo): trocar de campo re-semeia do veredito do novo
+  // campo; permanecer no mesmo campo (após emitir um veredito sem avanço)
+  // preserva o comentário recém-digitado/salvo — por isso `useCompareVerdicts`
+  // não limpa a caixa no sucesso.
+  const [comment, setComment] = useState("");
+  const commentCtxKey =
+    currentDoc && currentFieldName
+      ? `${currentDoc.id}|${currentFieldName}`
+      : null;
+  // Sentinela `undefined` (≠ qualquer chave e ≠ null) força o guard a disparar
+  // no PRIMEIRO render, semeando o comentário do veredito existente já na
+  // montagem — o effect original fazia isso (depois do paint); aqui é antes.
+  const commentCtxRef = useRef<string | null | undefined>(undefined);
+  if (commentCtxKey !== commentCtxRef.current) {
+    commentCtxRef.current = commentCtxKey;
+    setComment(currentVerdict?.comment ?? "");
+  }
 
-  const answerGroups = useMemo(() => {
-    const present = fieldResponses.filter((r) => r.answer !== undefined);
-    const groupKeys = buildResponseGroupKeys(
-      present,
-      currentFieldEquivalences,
-      (r) => normalizeForComparison(r.answer),
-    );
-    const map = new Map<string, typeof fieldResponses>();
-    for (const r of present) {
-      const key = groupKeys.get(r.id) ?? r.id;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(r);
-    }
-    return Array.from(map.values()).toSorted((a, b) => b.length - a.length);
-  }, [fieldResponses, currentFieldEquivalences]);
+  const {
+    handleVerdict,
+    handleConfirmEquivalent,
+    handleMarkReviewed,
+    handleUnmarkPair,
+  } = useCompareVerdicts({
+    projectId,
+    currentDoc,
+    currentFieldName,
+    isCurrentFieldDivergent,
+    allDocDivergent,
+    localReviews,
+    fieldResponses,
+    comment,
+    recordReview,
+    goNextField,
+  });
 
-  const handleVerdict = useCallback(
-    async (verdict: string, chosenResponseId?: string) => {
-      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) return;
-
-      const verdictComment = comment || undefined;
-
-      const nextDocReviews = {
-        ...localReviews[currentDoc.id],
-        [currentFieldName]: {
-          verdict,
-          chosenResponseId: chosenResponseId ?? null,
-          comment: verdictComment ?? null,
-        },
-      };
-      setLocalReviews((prev) => ({
-        ...prev,
-        [currentDoc.id]: { ...prev[currentDoc.id], ...nextDocReviews },
-      }));
-
-      const snapshot: ResponseSnapshotEntry[] = fieldResponses
-        .filter((r) => r.answer !== undefined)
-        .map((r) => ({
-          id: r.id,
-          respondent_name: r.respondent_name,
-          respondent_type: r.respondent_type,
-          answer: r.answer,
-          ...(r.justification ? { justification: r.justification } : {}),
-        }));
-
-      await submitVerdict(projectId, currentDoc.id, currentFieldName, verdict, chosenResponseId, verdictComment, snapshot);
-
-      setComment("");
-      toast.success("Veredito salvo!");
-
-      // Usa `nextDocReviews` (já contém o veredito recém-emitido) em vez de
-      // `localReviews`, que ainda reflete o estado pré-setState neste closure.
-      const allFieldsReviewed = allDocDivergent.every((fn) => !!nextDocReviews[fn]);
-
-      if (allFieldsReviewed) {
-        toast.success("Revisão do documento concluída!");
-      } else if (fieldIndex < docFields.length - 1) {
-        setFieldIndex((idx) => idx + 1);
-      }
-    },
-    [projectId, currentDoc, currentFieldName, isCurrentFieldDivergent, fieldIndex, docFields, allDocDivergent, localReviews, comment, fieldResponses]
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const toggleFullscreen = useCallback(
+    () => setIsFullscreen((prev) => !prev),
+    [],
   );
+  const exitFullscreen = useCallback(() => setIsFullscreen(false), []);
+  const [listCollapsed, setListCollapsed] = useState(false);
+  const toggleList = useCallback(() => setListCollapsed((v) => !v), []);
 
-  const handleDocNavigate = useCallback(
-    (newIndex: number) => {
-      if (documents.length === 0) return;
-      const clamped = Math.max(0, Math.min(newIndex, documents.length - 1));
-      setPinnedDocId(documents[clamped].id);
-      setFieldIndex(0);
-    },
-    [documents]
+  useCompareKeyboard({
+    isFullscreen,
+    isCurrentDocComplete,
+    isCurrentFieldDivergent,
+    currentField,
+    answerGroups,
+    onToggleFullscreen: toggleFullscreen,
+    onExitFullscreen: exitFullscreen,
+    onNextField: goNextField,
+    onPrevField: goPrevField,
+    onVerdict: handleVerdict,
+  });
+
+  const reviewed = docFields.map(
+    (fn) => !!localReviews[currentDoc?.id ?? ""]?.[fn],
   );
-
-  const toggleFullscreen = useCallback(() => setIsFullscreen((prev) => !prev), []);
-
-  const handleMarkReviewed = useCallback(async () => {
-    if (!currentDoc) return;
-    await markCompareDocReviewed(projectId, currentDoc.id);
-    toast.success("Documento marcado como revisado.");
-  }, [projectId, currentDoc]);
-
-  const handleConfirmEquivalent = useCallback(
-    async (
-      responseIds: string[],
-      gabaritoId: string,
-      verdictDisplay: string,
-    ) => {
-      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) return;
-
-      const verdictComment = comment || undefined;
-      const docId = currentDoc.id;
-      const fieldName = currentFieldName;
-
-      const nextDocReviews = {
-        ...localReviews[docId],
-        [fieldName]: {
-          verdict: verdictDisplay,
-          chosenResponseId: gabaritoId,
-          comment: verdictComment ?? null,
-        },
-      };
-      setLocalReviews((prev) => ({
-        ...prev,
-        [docId]: { ...prev[docId], ...nextDocReviews },
-      }));
-
-      const snapshot: ResponseSnapshotEntry[] = fieldResponses
-        .filter((r) => r.answer !== undefined)
-        .map((r) => ({
-          id: r.id,
-          respondent_name: r.respondent_name,
-          respondent_type: r.respondent_type,
-          answer: r.answer,
-          ...(r.justification ? { justification: r.justification } : {}),
-        }));
-
-      try {
-        await confirmEquivalentVerdict(
-          projectId,
-          docId,
-          fieldName,
-          responseIds,
-          gabaritoId,
-          verdictDisplay,
-          verdictComment,
-          snapshot,
-        );
-        setComment("");
-        toast.success(
-          `${responseIds.length} respostas marcadas como equivalentes.`,
-        );
-
-        // Usa `nextDocReviews` (já contém o veredito recém-emitido) em vez de
-        // `localReviews`, que ainda reflete o estado pré-setState neste closure.
-        const allFieldsReviewed = allDocDivergent.every(
-          (fn) => !!nextDocReviews[fn],
-        );
-        if (allFieldsReviewed) {
-          toast.success("Revisão do documento concluída!");
-        } else if (fieldIndex < docFields.length - 1) {
-          setFieldIndex((idx) => idx + 1);
-        }
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Falha ao marcar equivalentes.",
-        );
-      }
-    },
-    [
-      projectId,
-      currentDoc,
-      currentFieldName,
-      isCurrentFieldDivergent,
-      fieldIndex,
-      docFields,
-      allDocDivergent,
-      localReviews,
-      comment,
-      fieldResponses,
-    ],
-  );
-
-  const handleUnmarkPair = useCallback(
-    async (pairId: string) => {
-      try {
-        await unmarkEquivalencePair(projectId, pairId);
-        toast.success("Equivalência removida.");
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Falha ao desfazer equivalência.",
-        );
-      }
-    },
-    [projectId],
-  );
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      if (e.key === "F" && e.ctrlKey && e.shiftKey) {
-        e.preventDefault();
-        setIsFullscreen((prev) => !prev);
-        return;
-      }
-      if (e.key === "Escape" && isFullscreen) {
-        setIsFullscreen(false);
-        return;
-      }
-
-      if (e.key === "n" && fieldIndex < docFields.length - 1) { setFieldIndex((idx) => idx + 1); return; }
-      if (e.key === "p" && fieldIndex > 0) { setFieldIndex((idx) => idx - 1); return; }
-
-      // Doc concluído: o avanço é por ação explícita (botão "Próximo parecer"
-      // recebe foco; Enter nele é nativo). Não deixar 1-9/a/s re-disparar
-      // veredito sobre um documento já fechado.
-      if (isCurrentDocComplete) return;
-
-      if (!isCurrentFieldDivergent) return;
-
-      const isMultiField = currentField?.type === "multi" && currentField.options?.length;
-      if (isMultiField) {
-        if (e.key === "a") handleVerdict("ambiguo");
-        if (e.key === "s") handleVerdict("pular");
-        return;
-      }
-
-      const num = parseInt(e.key);
-      if (num >= 1 && num <= answerGroups.length) {
-        const group = answerGroups[num - 1];
-        const answer = group[0].answer;
-        const displayAnswer = answer == null ? "" : Array.isArray(answer) ? answer.join(", ") : String(answer);
-        handleVerdict(displayAnswer, group[0].id);
-        return;
-      }
-
-      if (e.key === "a") handleVerdict("ambiguo");
-      if (e.key === "s") handleVerdict("pular");
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [answerGroups, handleVerdict, fieldIndex, docFields.length, isFullscreen, isCurrentFieldDivergent, isCurrentDocComplete, currentField]);
 
   const docListEntries: DocListEntry[] = documents.map((d) => {
     const c = coverageByDoc[d.id];
     const reviewedOverride = localReviews[d.id]
-      ? (divergentFields[d.id] ?? []).filter((fn) => !!localReviews[d.id][fn]).length
+      ? (divergentFields[d.id] ?? []).filter((fn) => !!localReviews[d.id][fn])
+          .length
       : c?.reviewedCount ?? 0;
     return {
       id: d.id,
@@ -507,7 +203,7 @@ export function ComparePage({
           currentIndex={docIndex}
           onSelect={handleDocNavigate}
           collapsed={listCollapsed}
-          onToggle={() => setListCollapsed((v) => !v)}
+          onToggle={toggleList}
         />
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
           {documents.length === 0
@@ -550,70 +246,61 @@ export function ComparePage({
           totalDocs={documents.length}
           onDocNavigate={handleDocNavigate}
           filter={filter}
-          onFilterChange={(v) => { setFilter(v); setFieldIndex(0); }}
+          onFilterChange={changeFilter}
           fields={fields}
           reviewedDocsCount={reviewedDocsCount}
           onToggleFullscreen={toggleFullscreen}
           parecerUrl={parecerUrl}
           respondentNames={respondentNames}
+          defaultMinHumans={defaultMinHumans}
           availableVersions={availableVersions}
           latestMajorLabel={latestMajorLabel}
           currentProjectVersion={currentProjectVersion}
           projectId={projectId}
-          documentId={currentDoc?.id}
+          documentId={currentDoc.id}
         />
       )}
 
-      <div className="flex flex-1 overflow-hidden">
-        <CompareDocList
-          docs={docListEntries}
-          currentIndex={docIndex}
-          onSelect={handleDocNavigate}
-          collapsed={listCollapsed}
-          onToggle={() => setListCollapsed((v) => !v)}
-        />
-
-        <ResizablePanelGroup className="flex-1">
-          <ResizablePanel defaultSize={50} minSize={25}>
-            <DocumentReader text={currentDoc.text} />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={50} minSize={25}>
-            <ComparisonPanel
-              projectId={projectId}
-              documentId={currentDoc?.id}
-              documentTitle={docTitle}
-              fieldName={currentFieldName}
-              fieldDescription={currentField?.description || currentFieldName}
-              fieldType={currentField?.type}
-              fieldOptions={currentField?.options}
-              fields={fields}
-              fieldIndex={fieldIndex}
-              totalFields={docFields.length}
-              responses={fieldResponses}
-              existingVerdict={currentVerdict}
-              reviewed={reviewed}
-              isDivergent={isCurrentFieldDivergent}
-              isDocComplete={isCurrentDocComplete}
-              hasNextDoc={hasNextDoc}
-              onNextDoc={handleNextDoc}
-              onFieldNavigate={setFieldIndex}
-              onVerdict={handleVerdict}
-              onMarkReviewed={handleMarkReviewed}
-              comment={comment}
-              onCommentChange={setComment}
-              commentCount={fieldCommentCount}
-              suggestionCount={fieldSuggestionCount}
-              allowEquivalence={allowEquivalence}
-              equivalences={currentFieldEquivalences}
-              onConfirmEquivalent={handleConfirmEquivalent}
-              onUnmarkEquivalencePair={handleUnmarkPair}
-              currentUserId={currentUserId}
-              canManageAnyPair={canManageAnyPair}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
+      <CompareWorkspace
+        docs={docListEntries}
+        docIndex={docIndex}
+        onDocNavigate={handleDocNavigate}
+        listCollapsed={listCollapsed}
+        onToggleList={toggleList}
+        documentText={currentDoc.text}
+        comparisonPanel={{
+          projectId,
+          documentId: currentDoc.id,
+          documentTitle: docTitle,
+          fieldName: currentFieldName,
+          fieldDescription: currentField?.description || currentFieldName,
+          fieldType: currentField?.type,
+          fieldOptions: currentField?.options,
+          fields,
+          fieldIndex,
+          totalFields: docFields.length,
+          responses: fieldResponses,
+          existingVerdict: currentVerdict,
+          reviewed,
+          isDivergent: isCurrentFieldDivergent,
+          isDocComplete: isCurrentDocComplete,
+          hasNextDoc,
+          onNextDoc: handleNextDoc,
+          onFieldNavigate: setFieldIndex,
+          onVerdict: handleVerdict,
+          onMarkReviewed: handleMarkReviewed,
+          comment,
+          onCommentChange: setComment,
+          commentCount: fieldCommentCount,
+          suggestionCount: fieldSuggestionCount,
+          allowEquivalence,
+          equivalences: currentFieldEquivalences,
+          onConfirmEquivalent: handleConfirmEquivalent,
+          onUnmarkEquivalencePair: handleUnmarkPair,
+          currentUserId,
+          canManageAnyPair,
+        }}
+      />
     </div>
   );
 }

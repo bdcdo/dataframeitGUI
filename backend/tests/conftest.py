@@ -4,6 +4,7 @@ Desde que as rotas passaram a exigir JWT (services/auth.py), os testes que
 batem na API via TestClient precisam de um secret HS256 configurado e de um
 header `Authorization: Bearer` válido.
 """
+
 import time
 
 import jwt

@@ -12,9 +12,13 @@ class Settings(BaseSettings):
     # Supabase JWT secret; RS256 usa o JWKS do Clerk. Fail-closed — sem nenhum
     # destes configurado, toda rota autenticada rejeita (ver services/auth.py).
     supabase_jwt_secret: str = ""  # HS256
-    clerk_jwks_url: str = ""  # RS256 (ex: https://<slug>.clerk.accounts.dev/.well-known/jwks.json)
+    clerk_jwks_url: str = (
+        ""  # RS256 (ex: https://<slug>.clerk.accounts.dev/.well-known/jwks.json)
+    )
     clerk_jwt_issuer: str = ""  # validação opcional de `iss`
-    clerk_jwt_audience: str = ""  # validação opcional de `aud` (template costuma usar "authenticated")
+    clerk_jwt_audience: str = (
+        ""  # validação opcional de `aud` (template costuma usar "authenticated")
+    )
 
     model_config = {"env_file": ".env"}
 

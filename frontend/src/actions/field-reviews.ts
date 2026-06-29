@@ -8,6 +8,7 @@ import {
   isProjectCoordinator,
 } from "@/lib/auth";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { isCodingComplete } from "@/lib/coding-completeness";
 import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { verdictRequiresJustification } from "@/lib/auto-review-decided";
@@ -947,6 +948,27 @@ export async function regenerateAutoReviewBacklog(
     for (const human of queue) {
       const llm = llmByDocId.get(human.document_id);
       if (!llm) continue;
+
+      // #174: só arbitrar codificações completas. is_partial é sinal inútil de
+      // completude para o humano (quase sempre false), então o filtro de query
+      // não basta: aqui pulamos respostas humanas cuja codificação não está
+      // completa. Espelha o gate inline de saveResponse (allAnswered) via o
+      // mesmo helper. Sem isto, codificações em andamento eram varridas para a
+      // arbitragem e apareciam como "(vazio)" em diversos campos.
+      //
+      // Staleness-aware: passamos answer_field_hashes porque a avaliação é
+      // RETROATIVA (schema atual vs. codificações antigas). Sem isto, um campo
+      // obrigatório adicionado depois (ex.: `medicamento`) tornaria toda
+      // codificação anterior "incompleta", varrendo arbitragens legítimas.
+      if (
+        !isCodingComplete(
+          fields,
+          (human.answers as Record<string, unknown>) ?? {},
+          human.answer_field_hashes as AnswerFieldHashes,
+        )
+      ) {
+        continue;
+      }
 
       const divergent = computeDivergentFieldNames(
         fields,

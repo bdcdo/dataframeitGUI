@@ -4,6 +4,7 @@ Cobre a verificação do JWT (HS256), as dependências FastAPI e as guards de
 autorização, além da rejeição na borda das rotas (401 sem token, 403 para
 não-coordenador) — sem tocar o backend de LLM real.
 """
+
 import time
 from types import SimpleNamespace
 
@@ -14,8 +15,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
-from config import settings
 import services.auth as auth_mod
+from config import settings
 from services.auth import (
     AuthUser,
     require_authenticated_user,
@@ -249,9 +250,7 @@ def test_coordinator_master(monkeypatch):
 def test_coordinator_creator(monkeypatch):
     use_supabase(
         monkeypatch,
-        FakeSupabase(
-            master_users=[], projects=[{"id": "p1", "created_by": USER}]
-        ),
+        FakeSupabase(master_users=[], projects=[{"id": "p1", "created_by": USER}]),
     )
     require_project_coordinator("p1", AuthUser(id=USER))
 
@@ -405,7 +404,9 @@ def test_validate_allows_authenticated_user(client):
     # passa o gate e compila o schema.
     resp = client.post(
         "/api/pydantic/validate",
-        json={"code": "from pydantic import BaseModel\n\nclass Analysis(BaseModel):\n    x: str"},
+        json={
+            "code": "from pydantic import BaseModel\n\nclass Analysis(BaseModel):\n    x: str"
+        },
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 200

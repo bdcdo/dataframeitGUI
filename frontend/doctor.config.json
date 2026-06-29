@@ -1,0 +1,55 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "ignore": {
+    "overrides": [
+      {
+        "files": ["src/actions/**"],
+        "rules": [
+          "react-doctor/server-auth-actions"
+        ]
+      },
+      {
+        "files": ["src/components/ui/**"],
+        "rules": [
+          "react-doctor/only-export-components",
+          "react-doctor/no-multi-comp"
+        ]
+      },
+      {
+        "files": ["src/components/coding/QuestionsPanel.tsx"],
+        "rules": [
+          "react-doctor/exhaustive-deps"
+        ]
+      },
+      {
+        "files": ["src/lib/date-parts.ts"],
+        "rules": [
+          "react-doctor/js-length-check-first"
+        ]
+      },
+      {
+        "files": [
+          "src/lib/auto-review.ts",
+          "src/actions/assignments.ts",
+          "src/actions/members.ts",
+          "src/actions/projects.ts"
+        ],
+        "rules": [
+          "react-doctor/supabase-client-owned-authz-field"
+        ]
+      },
+      {
+        "files": [
+          "supabase/migrations/20260401000000_clerk_user_mapping.sql",
+          "supabase/migrations/20260402000000_master_users.sql"
+        ],
+        "rules": [
+          "react-doctor/supabase-table-missing-rls"
+        ]
+      }
+    ]
+  },
+  "rules": {
+    "react-doctor/js-combine-iterations": "off"
+  }
+}

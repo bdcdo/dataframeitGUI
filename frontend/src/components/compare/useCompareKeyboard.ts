@@ -1,0 +1,113 @@
+"use client";
+
+import { useEffect } from "react";
+import type { PydanticField } from "@/lib/types";
+import type { FieldResponse } from "./compare-types";
+
+interface UseCompareKeyboardParams {
+  isFullscreen: boolean;
+  isCurrentDocComplete: boolean;
+  isCurrentFieldDivergent: boolean;
+  currentField: PydanticField | undefined;
+  answerGroups: FieldResponse[][];
+  onToggleFullscreen: () => void;
+  onExitFullscreen: () => void;
+  onNextField: () => void;
+  onPrevField: () => void;
+  onVerdict: (verdict: string, chosenResponseId?: string) => void;
+}
+
+/**
+ * Atalhos de teclado da Comparação. Extraído de `ComparePage`: o corpo do
+ * effect só chama callbacks recebidos por prop (`onToggleFullscreen`,
+ * `onNextField`, `onVerdict`, …) — nenhum `setState` léxico —, o que zera o
+ * `no-cascading-set-state` que o effect inline disparava sem precisar de
+ * `useReducer`. `onNextField`/`onPrevField` já fazem o clamp de limite
+ * internamente, então as teclas `n`/`p` chamam incondicionalmente.
+ */
+export function useCompareKeyboard({
+  isFullscreen,
+  isCurrentDocComplete,
+  isCurrentFieldDivergent,
+  currentField,
+  answerGroups,
+  onToggleFullscreen,
+  onExitFullscreen,
+  onNextField,
+  onPrevField,
+  onVerdict,
+}: UseCompareKeyboardParams): void {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return;
+
+      if (e.key === "F" && e.ctrlKey && e.shiftKey) {
+        e.preventDefault();
+        onToggleFullscreen();
+        return;
+      }
+      if (e.key === "Escape" && isFullscreen) {
+        onExitFullscreen();
+        return;
+      }
+
+      if (e.key === "n") {
+        onNextField();
+        return;
+      }
+      if (e.key === "p") {
+        onPrevField();
+        return;
+      }
+
+      // Doc concluído: o avanço é por ação explícita (botão "Próximo parecer"
+      // recebe foco; Enter nele é nativo). Não deixar 1-9/a/s re-disparar
+      // veredito sobre um documento já fechado.
+      if (isCurrentDocComplete) return;
+
+      if (!isCurrentFieldDivergent) return;
+
+      const isMultiField =
+        currentField?.type === "multi" && currentField.options?.length;
+      if (isMultiField) {
+        if (e.key === "a") onVerdict("ambiguo");
+        if (e.key === "s") onVerdict("pular");
+        return;
+      }
+
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= answerGroups.length) {
+        const group = answerGroups[num - 1];
+        const answer = group[0].answer;
+        const displayAnswer =
+          answer == null
+            ? ""
+            : Array.isArray(answer)
+              ? answer.join(", ")
+              : String(answer);
+        onVerdict(displayAnswer, group[0].id);
+        return;
+      }
+
+      if (e.key === "a") onVerdict("ambiguo");
+      if (e.key === "s") onVerdict("pular");
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    answerGroups,
+    currentField,
+    isCurrentDocComplete,
+    isCurrentFieldDivergent,
+    isFullscreen,
+    onExitFullscreen,
+    onNextField,
+    onPrevField,
+    onToggleFullscreen,
+    onVerdict,
+  ]);
+}

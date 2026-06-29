@@ -7,12 +7,16 @@ import { revalidatePath, revalidateTag } from "next/cache";
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
 
-interface DocumentRow {
+export interface DocumentRow {
   external_id?: string;
   title?: string;
   text: string;
   metadata?: Record<string, unknown>;
 }
+
+// Single source of truth for the CSV-upload row shape (subset of DocumentRow,
+// without the server-added `metadata`). The client hook imports this type.
+export type UploadDoc = Pick<DocumentRow, "text" | "title" | "external_id">;
 
 function md5(text: string): string {
   return createHash("md5").update(text).digest("hex");
@@ -131,6 +135,61 @@ export interface UploadOptions {
   deleteResponses?: boolean;
 }
 
+/**
+ * Remove as linhas que violariam o indice unico parcial
+ * documents_project_external_id_active_uniq — UNIQUE(project_id, external_id)
+ * WHERE external_id IS NOT NULL AND excluded_at IS NULL (migration
+ * 20260623130000). Dois conflitos possiveis num INSERT em lote, ambos abortariam
+ * a operacao inteira (perdendo tambem as linhas novas validas):
+ *   1. external_id ja ATIVO no projeto (re-import — a causa raiz das duplicatas);
+ *   2. external_id repetido dentro do proprio lote (CSV com linhas duplicadas).
+ * Linhas sem external_id nunca sao filtradas (varios docs sem external_id sao
+ * validos). Retorna as linhas seguras + contagem do que foi pulado.
+ */
+async function filterActiveExternalIdConflicts<
+  T extends { external_id: string | null },
+>(
+  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  projectId: string,
+  rows: T[],
+): Promise<{ rows: T[]; skippedExisting: number; skippedInBatch: number }> {
+  const ids = [
+    ...new Set(rows.map((r) => r.external_id).filter((id): id is string => !!id)),
+  ];
+
+  const existing = new Set<string>();
+  if (ids.length > 0) {
+    const { data } = await supabase
+      .from("documents")
+      .select("external_id")
+      .eq("project_id", projectId)
+      .is("excluded_at", null)
+      .in("external_id", ids);
+    for (const d of data ?? []) {
+      if (d.external_id) existing.add(d.external_id);
+    }
+  }
+
+  const seen = new Set<string>();
+  let skippedExisting = 0;
+  let skippedInBatch = 0;
+  const safe = rows.filter((r) => {
+    if (!r.external_id) return true;
+    if (existing.has(r.external_id)) {
+      skippedExisting++;
+      return false;
+    }
+    if (seen.has(r.external_id)) {
+      skippedInBatch++;
+      return false;
+    }
+    seen.add(r.external_id);
+    return true;
+  });
+
+  return { rows: safe, skippedExisting, skippedInBatch };
+}
+
 export async function uploadDocuments(
   projectId: string,
   documents: DocumentRow[],
@@ -146,9 +205,13 @@ export async function uploadDocuments(
   if (mode === "add_new_only") {
     // Filter out duplicates, only insert new ones
     const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
-    if (newDocs.length === 0) return { count: 0 };
+    // Duplicatas descartadas aqui (detectadas pelo duplicateMap) ja contam como
+    // ignoradas — mantem a invariante count + skipped == documents.length para
+    // o toast reportar o numero correto.
+    const skippedDuplicates = documents.length - newDocs.length;
+    if (newDocs.length === 0) return { count: 0, skipped: skippedDuplicates };
 
-    const rows = newDocs.map((doc) => ({
+    const baseRows = newDocs.map((doc) => ({
       project_id: projectId,
       external_id: doc.external_id || null,
       title: doc.title || null,
@@ -156,15 +219,24 @@ export async function uploadDocuments(
       text_hash: md5(doc.text),
       metadata: doc.metadata || null,
     }));
+    // Defesa extra contra o indice unico: duplicateMap pode estar stale e o
+    // proprio lote pode repetir external_id.
+    const { rows, skippedExisting, skippedInBatch } =
+      await filterActiveExternalIdConflicts(supabase, projectId, baseRows);
 
-    const { error } = await supabase.from("documents").insert(rows);
-    if (error) return { error: error.message };
+    if (rows.length > 0) {
+      const { error } = await supabase.from("documents").insert(rows);
+      if (error) return { error: error.message };
+    }
 
     if (revalidate) {
       revalidatePath(`/projects/${projectId}/config/documents`);
       revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
     }
-    return { count: rows.length };
+    return {
+      count: rows.length,
+      skipped: skippedDuplicates + skippedExisting + skippedInBatch,
+    };
   }
 
   if (mode === "replace_and_add") {
@@ -196,7 +268,11 @@ export async function uploadDocuments(
 
     // Batch update duplicate documents (avoid N+1)
     if (duplicateMap.length > 0) {
-      await Promise.all(
+      // Checa o erro de cada update: setar external_id num doc casado por
+      // text_hash pode colidir com outro doc ativo e violar o indice unico
+      // parcial (23505). Sem isso o erro seria resolvido e ignorado em silencio
+      // (o doc nao seria atualizado mas contaria como processado).
+      const updateResults = await Promise.all(
         duplicateMap.map((dup) => {
           const doc = documents[dup.csvIndex];
           return supabase
@@ -211,12 +287,15 @@ export async function uploadDocuments(
             .eq("id", dup.existingDocId);
         })
       );
+      const failedUpdate = updateResults.find((r) => r.error);
+      if (failedUpdate?.error) return { error: failedUpdate.error.message };
     }
 
     // Insert new (non-duplicate) documents
     const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
+    let skipped = 0;
     if (newDocs.length > 0) {
-      const rows = newDocs.map((doc) => ({
+      const baseRows = newDocs.map((doc) => ({
         project_id: projectId,
         external_id: doc.external_id || null,
         title: doc.title || null,
@@ -224,20 +303,28 @@ export async function uploadDocuments(
         text_hash: md5(doc.text),
         metadata: doc.metadata || null,
       }));
+      // Defesa contra o indice unico (duplicateMap stale / repeticao no lote).
+      const { rows, skippedExisting, skippedInBatch } =
+        await filterActiveExternalIdConflicts(supabase, projectId, baseRows);
+      skipped = skippedExisting + skippedInBatch;
 
-      const { error } = await supabase.from("documents").insert(rows);
-      if (error) return { error: error.message };
+      if (rows.length > 0) {
+        const { error } = await supabase.from("documents").insert(rows);
+        if (error) return { error: error.message };
+      }
     }
 
     if (revalidate) {
       revalidatePath(`/projects/${projectId}/config/documents`);
       revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
     }
-    return { count: documents.length };
+    return { count: documents.length - skipped, skipped };
   }
 
-  // Default: add_all — current behavior + compute text_hash
-  const rows = documents.map((doc) => ({
+  // Default: add_all — insere tudo, exceto o que violaria o indice unico
+  // (external_id ja ativo no projeto ou repetido no proprio lote). Sem o filtro,
+  // o INSERT em lote falharia inteiro no primeiro conflito.
+  const allRows = documents.map((doc) => ({
     project_id: projectId,
     external_id: doc.external_id || null,
     title: doc.title || null,
@@ -245,15 +332,19 @@ export async function uploadDocuments(
     text_hash: md5(doc.text),
     metadata: doc.metadata || null,
   }));
+  const { rows, skippedExisting, skippedInBatch } =
+    await filterActiveExternalIdConflicts(supabase, projectId, allRows);
 
-  const { error } = await supabase.from("documents").insert(rows);
-  if (error) return { error: error.message };
+  if (rows.length > 0) {
+    const { error } = await supabase.from("documents").insert(rows);
+    if (error) return { error: error.message };
+  }
 
   if (revalidate) {
       revalidatePath(`/projects/${projectId}/config/documents`);
       revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
     }
-  return { count: rows.length };
+  return { count: rows.length, skipped: skippedExisting + skippedInBatch };
 }
 
 export interface BrowseDocument {
@@ -378,12 +469,22 @@ export async function getDocumentText(
   documentId: string,
 ): Promise<{ text: string; title: string } | null> {
   const supabase = await createSupabaseServer();
-  const { data } = await supabase
+  // Busca o texto de um doc por id (RLS aplica). Nao filtra excluded_at de
+  // proposito: a visibilidade de soft-deleted e decidida nas queries de lista
+  // (getDocumentsForBrowse, a pagina de documentos via ?show=excluded), nao no
+  // fetch de texto por id. Quem chega a pedir o texto ja escolheu o doc na lista.
+  const { data, error } = await supabase
     .from("documents")
     .select("title, text")
     .eq("id", documentId)
     .eq("project_id", projectId)
-    .single();
+    .maybeSingle();
+  // Distingue erro real (RLS/transporte/schema) de doc inexistente: sem isto,
+  // um doc que existe mas falhou na query viraria "(nao encontrado)" silencioso.
+  if (error) {
+    console.error("[getDocumentText] erro de query", { projectId, documentId, error });
+    throw error;
+  }
   if (!data) return null;
   return { text: data.text, title: data.title || documentId };
 }

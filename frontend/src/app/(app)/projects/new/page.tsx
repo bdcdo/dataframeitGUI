@@ -1,14 +1,24 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { createProject } from "@/actions/projects";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
 
 export default function NewProjectPage() {
   const [state, formAction, pending] = useActionState(createProject, null);
+  const [mode, setMode] = useState<AutomationMode>("auto_review_llm");
+  const modeMeta = AUTOMATION_MODES.find((m) => m.value === mode);
 
   return (
     <main className="mx-auto max-w-lg p-6">
@@ -42,6 +52,35 @@ export default function NewProjectPage() {
                 placeholder="Breve descrição do objetivo da revisão..."
                 rows={3}
               />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="automation_mode_trigger" className="text-sm font-medium">
+                Modo de automação
+              </label>
+              {/* Input hidden: o form é FormData-based; o Select (Radix) controla
+                  o estado e o hidden carrega o valor para a Server Action. */}
+              <input type="hidden" name="automation_mode" value={mode} />
+              <Select
+                value={mode}
+                onValueChange={(v) => setMode(v as AutomationMode)}
+              >
+                <SelectTrigger id="automation_mode_trigger" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AUTOMATION_MODES.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {modeMeta && (
+                <p className="text-xs text-muted-foreground">
+                  {modeMeta.description} Você pode mudar isso depois em
+                  Configurações › Regras.
+                </p>
+              )}
             </div>
             <Button
               type="submit"

@@ -1,21 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useAuth } from "@clerk/nextjs";
-import { createBrowserClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { useDocumentText } from "@/hooks/useDocumentText";
 
 interface DocumentPreviewProps {
   documentId: string | null;
   title: string;
   open: boolean;
   onClose: () => void;
-  /**
-   * Por padrao, preview nao carrega texto de doc soft-deleted — alinhado com
-   * o resto da UI que esconde excluidos. Setar true quando o caller estiver
-   * no modo "Mostrar excluidos" para permitir visualizacao do historico.
-   */
-  allowExcluded?: boolean;
+  /** projectId do documento — usado pelo fetch de texto via `getDocumentText`. */
+  projectId: string;
 }
 
 export function DocumentPreview({
@@ -23,40 +18,12 @@ export function DocumentPreview({
   title,
   open,
   onClose,
-  allowExcluded = false,
+  projectId,
 }: DocumentPreviewProps) {
-  const [text, setText] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const { getToken } = useAuth();
-
-  useEffect(() => {
-    if (!documentId || !open) {
-      setText(null);
-      return;
-    }
-    setLoading(true);
-    getToken({ template: "supabase" })
-      .then((token) => {
-        const supabase = createBrowserClient(token);
-        let query = supabase
-          .from("documents")
-          .select("text")
-          .eq("id", documentId);
-        if (!allowExcluded) {
-          query = query.is("excluded_at", null);
-        }
-        return query.maybeSingle();
-      })
-      .then(({ data }) => {
-        setText(data?.text ?? null);
-      })
-      .catch(() => {
-        setText(null);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [documentId, open, getToken, allowExcluded]);
+  const { text, loading, error, retry } = useDocumentText(
+    projectId,
+    open ? documentId : null,
+  );
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -69,6 +36,13 @@ export function DocumentPreview({
             <div className="h-4 w-full animate-pulse rounded bg-muted" />
             <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
             <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
+          </div>
+        ) : error ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{text}</p>
+            <Button variant="outline" size="sm" onClick={retry}>
+              Tentar novamente
+            </Button>
           </div>
         ) : (
           <div className="whitespace-pre-wrap text-sm leading-relaxed">

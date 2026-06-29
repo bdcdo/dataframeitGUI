@@ -4,6 +4,7 @@ O endpoint só reusa _build_prompt; estes testes garantem que a rota
 encaminha description + template e que o resultado bate com a função
 usada na execução real (sem a cópia hardcoded do frontend defasar).
 """
+
 from __future__ import annotations
 
 import pytest

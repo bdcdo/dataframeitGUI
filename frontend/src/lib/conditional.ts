@@ -71,6 +71,33 @@ export function isFieldVisible(
   return evaluateCondition(field.condition, answers);
 }
 
+// Zera as respostas de campos condicionais que não estão mais visíveis. Aplica
+// ponto-fixo: limpar uma condicional pode esconder outra que dependia dela. Não
+// muta a entrada — clona apenas na primeira mudança real (copy-on-write) e
+// retorna o MESMO objeto quando nada muda, preservando a identidade referencial
+// que o React usa para evitar re-renders.
+export function clearHiddenConditionalAnswers(
+  fields: PydanticField[],
+  answers: Record<string, unknown>,
+): Record<string, unknown> {
+  let next = answers;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const f of fields) {
+      if (!f.condition) continue;
+      if (isFieldVisible(f, next)) continue;
+      const v = next[f.name];
+      if (v !== undefined && v !== null && v !== "") {
+        if (next === answers) next = { ...answers };
+        next[f.name] = null;
+        changed = true;
+      }
+    }
+  }
+  return next;
+}
+
 // Campos que podem servir de gatilho para a condição de `currentFieldName`:
 // apenas campos anteriores (a condição só pode referenciar campos já definidos)
 // e com opções (single/multi). Usado pelos editores de schema.

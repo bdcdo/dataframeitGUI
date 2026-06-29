@@ -4,7 +4,9 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { isFieldVisible } from "@/lib/conditional";
+import { isCodingComplete } from "@/lib/coding-completeness";
 import { createAutoReviewIfDiverges } from "@/lib/auto-review";
+import { createAutoComparisonIfDiverges } from "@/lib/auto-comparison";
 import type { PydanticField } from "@/lib/types";
 
 export interface SaveResponseOpts {
@@ -52,7 +54,7 @@ export async function saveResponse(
       supabase
         .from("projects")
         .select(
-          "pydantic_hash, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, round_strategy, current_round_id",
+          "pydantic_hash, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, round_strategy, current_round_id, automation_mode",
         )
         .eq("id", projectId)
         .single(),
@@ -92,9 +94,8 @@ export async function saveResponse(
     // current_pending em classifyDocStatus) e submit explicito grava false.
     // Excecao: auto-save em response ja submetida (is_partial=false) NAO
     // rebaixa o sinal — combinado com o guard que preserva assignment.status
-    // = "concluido", esse rebaixamento produziria contagem dupla em
-    // getResearcherProgress (doc completo no dashboard, pendente em
-    // classifyDocStatus). A imutabilidade descrita na migration
+    // = "concluido", esse rebaixamento faria um doc ja concluido reaparecer
+    // como pendente em classifyDocStatus. A imutabilidade descrita na migration
     // 20260425000000 vale so para o fluxo LLM.
     const isPartialToWrite =
       isAutoSave && existing?.is_partial !== false;
@@ -135,26 +136,9 @@ export async function saveResponse(
     }
 
     if (fields.length > 0) {
-      const humanFields = fields.filter(
-        (f) =>
-          (f.target || "all") !== "llm_only" &&
-          f.target !== "none" &&
-          f.required !== false &&
-          isFieldVisible(f, sanitizedAnswers),
-      );
-      const OTHER_PREFIX = "Outro: ";
-      const isIncompleteOther = (v: unknown) =>
-        typeof v === "string" && v === OTHER_PREFIX;
-      const allAnswered = humanFields.every((f) => {
-        const v = sanitizedAnswers[f.name];
-        if (v === undefined || v === null || v === "") return false;
-        if (f.type === "single" && isIncompleteOther(v)) return false;
-        if (f.type === "multi" && Array.isArray(v)) {
-          if (v.length === 0) return false;
-          if (v.some(isIncompleteOther)) return false;
-        }
-        return true;
-      });
+      // Definição única de "codificação completa" — ver lib/coding-completeness.
+      // O mesmo helper gateia o backlog de auto-revisão (issue #174).
+      const allAnswered = isCodingComplete(fields, sanitizedAnswers);
 
       // Auto-save nunca promove para "concluido" — mesmo que todos os campos
       // estejam preenchidos, o pesquisador ainda nao clicou em Enviar. Sem essa
@@ -170,17 +154,27 @@ export async function saveResponse(
           .eq("type", "codificacao");
         if (assignErr) return { success: false, error: assignErr.message };
 
-        // Dispara auto-revisao humano vs LLM ao submeter. Falhas nao bloqueiam
-        // o submit do pesquisador — coordenador pode regenerar o backlog
-        // manualmente via regenerateAutoReviewBacklog().
+        // Dispara a automacao do projeto ao submeter, conforme automation_mode.
+        // Falhas nao bloqueiam o submit do pesquisador — o coordenador pode
+        // regenerar o backlog manualmente (regenerateAutoReviewBacklog /
+        // retryPendingComparisons). "none" nao dispara nada.
+        const mode = project?.automation_mode;
         try {
-          await createAutoReviewIfDiverges(projectId, documentId, effectiveId);
+          if (mode === "auto_review_llm") {
+            await createAutoReviewIfDiverges(projectId, documentId, effectiveId);
+          } else if (mode === "compare_humans") {
+            await createAutoComparisonIfDiverges(projectId, documentId, "compare_humans");
+          } else if (mode === "compare_llm") {
+            await createAutoComparisonIfDiverges(projectId, documentId, "compare_llm");
+          }
         } catch (err) {
-          // Log estruturado JSON — mesmo formato dos demais eventos em
-          // lib/auto-review.ts, facilita grep "[auto-review]" nos logs.
+          // Log estruturado JSON — mesmo formato dos demais eventos das libs de
+          // automacao, facilita grep "[auto-review]" / "[auto-compare]" nos logs.
+          const prefix = mode === "auto_review_llm" ? "[auto-review]" : "[auto-compare]";
           console.error(
-            `[auto-review] ${JSON.stringify({
+            `${prefix} ${JSON.stringify({
               event: "inline_call_failed",
+              mode,
               projectId,
               documentId,
               userId: effectiveId,

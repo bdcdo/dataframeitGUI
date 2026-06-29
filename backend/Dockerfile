@@ -6,16 +6,16 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 COPY pyproject.toml .
 RUN uv pip install --system --no-cache \
-    "fastapi>=0.115" \
-    "uvicorn[standard]>=0.34" \
-    "pydantic>=2.10" \
-    "pydantic-settings>=2.7" \
-    "supabase>=2.11" \
-    "dataframeit>=0.5.3" \
-    "pandas>=2.2" \
-    "langchain-google-genai>=2.1" \
-    "langchain-openai>=0.3" \
-    "langchain-anthropic>=0.3" \
+    "fastapi>=0.137.2" \
+    "uvicorn[standard]>=0.49.0" \
+    "pydantic>=2.13.4" \
+    "pydantic-settings>=2.14.1" \
+    "supabase>=2.31.0" \
+    "dataframeit>=0.6.0" \
+    "pandas>=3.0.3" \
+    "langchain-google-genai>=4.2.5" \
+    "langchain-openai>=1.3.2" \
+    "langchain-anthropic>=1.4.6" \
     "pyjwt[crypto]>=2.9"
 
 COPY . .

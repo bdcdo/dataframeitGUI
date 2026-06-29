@@ -97,9 +97,9 @@ export function RunLlmButton({
       );
 
       pollStatus(res.job_id);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setRunning(false);
-      toast.error(e.message);
+      toast.error(e instanceof Error ? e.message : "Erro ao iniciar execução");
     }
   };
 

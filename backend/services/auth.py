@@ -13,6 +13,7 @@ com fallback para `sub` — que usamos como user_id.
 Fail-closed: sem configuração de verificação, ou com token/claim inválido, a
 request é rejeitada. Nunca passa.
 """
+
 import logging
 from dataclasses import dataclass
 
@@ -69,8 +70,10 @@ def verify_jwt(token: str) -> AuthUser:
     """
     try:
         header = jwt.get_unverified_header(token)
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Token inválido", headers=_BEARER)
+    except jwt.PyJWTError as e:
+        raise HTTPException(
+            status_code=401, detail="Token inválido", headers=_BEARER
+        ) from e
 
     alg = header.get("alg")
     try:
@@ -107,12 +110,12 @@ def verify_jwt(token: str) -> AuthUser:
             )
     except HTTPException:
         raise
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
         # Cobre assinatura inválida, expiração, issuer/audience errados e
         # falhas do PyJWKClient (PyJWKClientError herda de PyJWTError).
         raise HTTPException(
             status_code=401, detail="Token inválido ou expirado", headers=_BEARER
-        )
+        ) from e
 
     user_id = claims.get("supabase_uid") or claims.get("sub")
     if not user_id:
@@ -209,13 +212,11 @@ def require_project_coordinator(project_id: str, user: AuthUser) -> None:
         authorized = bool(mem.data)
     except HTTPException:
         raise
-    except Exception:
-        logger.exception(
-            "Falha ao verificar coordenador (project_id=%s)", project_id
-        )
+    except Exception as e:
+        logger.exception("Falha ao verificar coordenador (project_id=%s)", project_id)
         raise HTTPException(
             status_code=503, detail="Não foi possível verificar autorização"
-        )
+        ) from e
     if not authorized:
         raise HTTPException(
             status_code=403, detail="Acesso negado: requer coordenador do projeto"
@@ -244,11 +245,11 @@ def require_job_access(job_id: str, user: AuthUser) -> str:
         is_member = _is_project_member(sb, project_id, user.id)
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         logger.exception("Falha ao verificar acesso ao job (job_id=%s)", job_id)
         raise HTTPException(
             status_code=503, detail="Não foi possível verificar autorização"
-        )
+        ) from e
     if is_member:
         return project_id
     raise HTTPException(

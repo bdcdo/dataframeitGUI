@@ -157,8 +157,8 @@ export function SchemaEditor({
         setErrors(result.errors);
         setValidationStatus("error");
       }
-    } catch (e: any) {
-      toast.error(e.message);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao validar schema");
     }
   };
 
@@ -177,9 +177,9 @@ export function SchemaEditor({
         setErrors(result.errors);
         toast.error("Erro na validação");
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       setValidationStatus("error");
-      setErrors([e.message]);
+      setErrors([e instanceof Error ? e.message : "Erro ao validar schema"]);
     }
   };
 
@@ -213,8 +213,8 @@ export function SchemaEditor({
           }
           toast.success("Schema salvo!");
         }
-      } catch (e: any) {
-        toast.error(e.message);
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
       }
     });
   };

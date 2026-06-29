@@ -5,9 +5,6 @@ import type {
   ReviewedDocument,
   ReviewedField,
   RespondentAnswer,
-  ConfusionData,
-  RespondentProfileData,
-  HardestDocumentData,
 } from "./types";
 
 /* ── Raw row shapes ── */
@@ -120,6 +117,23 @@ export function formatAnswer(val: unknown): string {
     return parts.join("; ");
   }
   return String(val);
+}
+
+// Resolve o respondente efetivo cujas respostas a aba "Meu Gabarito" exibe.
+// Só coordenador, criador ou master podem inspecionar as respostas de OUTRO
+// respondente (via ?viewAsUser=...); qualquer outro vê apenas as próprias.
+// SEGURANÇA: a policy RLS "Members view responses" deixa qualquer membro ler
+// todas as responses do projeto (não filtra por respondent_id), então esta
+// checagem é a única barreira — por isso o `isCoordinator` que a alimenta é
+// fail-closed (não incorpora queryFailed). Ver reviews/my-verdicts/page.tsx.
+export function resolveEffectiveUserId(opts: {
+  selfId: string;
+  isMaster: boolean;
+  isCoordinator: boolean;
+  viewAsUser: string | undefined;
+}): string {
+  const { selfId, isMaster, isCoordinator, viewAsUser } = opts;
+  return (isMaster || isCoordinator) && viewAsUser ? viewAsUser : selfId;
 }
 
 function getRespondentKey(r: {
@@ -365,261 +379,5 @@ export function computeReviewedDocuments(
   }
 
   result.sort((a, b) => a.documentTitle.localeCompare(b.documentTitle));
-  return result;
-}
-
-/* ── Computation: Confusion Data ── */
-
-export function computeConfusionData(
-  ctx: ReviewComputationContext,
-): ConfusionData[] {
-  const result: ConfusionData[] = [];
-
-  for (const field of ctx.comparableFields) {
-    if (field.type === "text" || field.type === "date") continue;
-
-    const fieldReviews = ctx.uniqueReviews.filter(
-      (r) =>
-        r.field_name === field.name &&
-        r.verdict !== "ambiguo" &&
-        r.verdict !== "pular",
-    );
-    if (fieldReviews.length === 0) continue;
-
-    if (field.type === "single" && field.options) {
-      const matrix: Record<string, Record<string, number>> = {};
-      const allLabels = [...field.options];
-      const allLabelSet = new Set(allLabels);
-      for (const opt of allLabels) {
-        matrix[opt] = {};
-        for (const opt2 of allLabels) matrix[opt][opt2] = 0;
-      }
-      let total = 0;
-      for (const review of fieldReviews) {
-        const correctAnswer = review.verdict;
-        if (!allLabelSet.has(correctAnswer)) {
-          allLabels.push(correctAnswer);
-          allLabelSet.add(correctAnswer);
-          matrix[correctAnswer] = {};
-          for (const opt of allLabels) matrix[correctAnswer][opt] = 0;
-          for (const opt of allLabels) {
-            if (!matrix[opt][correctAnswer]) matrix[opt][correctAnswer] = 0;
-          }
-        }
-        const docResps = ctx.responsesByDoc.get(review.document_id) || [];
-        for (const resp of docResps) {
-          const given = formatAnswer(resp.answers[field.name]);
-          if (!given) continue;
-          if (!matrix[given]) {
-            allLabels.push(given);
-            matrix[given] = {};
-            for (const opt of allLabels) matrix[given][opt] = 0;
-            for (const opt of allLabels) {
-              if (!matrix[opt][given]) matrix[opt][given] = 0;
-            }
-          }
-          matrix[given][correctAnswer]++;
-          total++;
-        }
-      }
-      result.push({
-        type: "single",
-        fieldName: field.name,
-        fieldDescription: field.description,
-        options: allLabels,
-        matrix,
-        total,
-      });
-    } else if (field.type === "multi" && field.options) {
-      const optionStats = field.options.map((option) => {
-        let correct = 0;
-        let total = 0;
-        for (const review of fieldReviews) {
-          let verdictMap: Record<string, boolean>;
-          try {
-            verdictMap = JSON.parse(review.verdict) as Record<string, boolean>;
-          } catch {
-            continue;
-          }
-          const expectedSelected = verdictMap[option] ?? false;
-          const docResps = ctx.responsesByDoc.get(review.document_id) || [];
-          for (const resp of docResps) {
-            const arr = resp.answers[field.name];
-            const actualSelected =
-              Array.isArray(arr) && arr.includes(option);
-            total++;
-            if (actualSelected === expectedSelected) correct++;
-          }
-        }
-        return {
-          option,
-          correct,
-          total,
-          accuracy: total > 0 ? Math.round((correct / total) * 100) : 0,
-        };
-      });
-      result.push({
-        type: "multi",
-        fieldName: field.name,
-        fieldDescription: field.description,
-        options: optionStats,
-      });
-    }
-  }
-
-  return result;
-}
-
-/* ── Computation: Respondent Profiles ── */
-
-export function computeRespondentProfiles(
-  ctx: ReviewComputationContext,
-): RespondentProfileData[] {
-  const respondentInfoMap = new Map<
-    string,
-    { name: string; type: "humano" | "llm" }
-  >();
-  // Index resp por (docId, respondentKey) numa passada — antes era um
-  // docResps.find() O(n) por review dentro do loop de respondentes (O(n²)).
-  const respByDocKey = new Map<string, Map<string, ResponseRow>>();
-
-  for (const [docId, docResps] of ctx.responsesByDoc) {
-    const byKey = new Map<string, ResponseRow>();
-    for (const r of docResps) {
-      const key = getRespondentKey(r);
-      if (!byKey.has(key)) byKey.set(key, r); // primeiro match, igual ao .find() anterior
-      if (!respondentInfoMap.has(key)) {
-        respondentInfoMap.set(key, {
-          name: getRespondentDisplayName(r, ctx.profileMap),
-          type: r.respondent_type,
-        });
-      }
-    }
-    respByDocKey.set(docId, byKey);
-  }
-
-  const result: RespondentProfileData[] = [];
-
-  for (const [respondentKey, info] of respondentInfoMap) {
-    let overallCorrect = 0;
-    let overallTotal = 0;
-    const perField: Record<
-      string,
-      { correct: number; total: number; accuracy: number }
-    > = {};
-
-    for (const review of ctx.uniqueReviews) {
-      if (review.verdict === "ambiguo" || review.verdict === "pular") continue;
-      const field = ctx.fieldMap.get(review.field_name);
-      if (!field) continue;
-      if (field.target === "none") continue;
-      if (field.target === "llm_only" && info.type === "humano") continue;
-      if (field.target === "human_only" && info.type === "llm") continue;
-
-      const resp = respByDocKey.get(review.document_id)?.get(respondentKey);
-      if (!resp) continue;
-
-      const answer = resp.answers[review.field_name];
-      const correct = isAnswerCorrect(answer, review.verdict, field.type);
-
-      overallTotal++;
-      if (correct) overallCorrect++;
-
-      if (!perField[review.field_name]) {
-        perField[review.field_name] = { correct: 0, total: 0, accuracy: 0 };
-      }
-      perField[review.field_name].total++;
-      if (correct) perField[review.field_name].correct++;
-    }
-
-    for (const fn of Object.keys(perField)) {
-      const pf = perField[fn];
-      pf.accuracy =
-        pf.total > 0 ? Math.round((pf.correct / pf.total) * 100) : 0;
-    }
-
-    const mostErroredFields = Object.entries(perField)
-      .flatMap(([fn, v]) =>
-        v.total > 0 && v.accuracy < 100
-          ? [{
-              fieldName: fn,
-              fieldDescription: ctx.fieldMap.get(fn)?.description || fn,
-              errorRate: 100 - v.accuracy,
-            }]
-          : [],
-      )
-      .toSorted((a, b) => b.errorRate - a.errorRate)
-      .slice(0, 3);
-
-    if (overallTotal > 0) {
-      result.push({
-        respondentKey,
-        respondentName: info.name,
-        respondentType: info.type,
-        overallCorrect,
-        overallTotal,
-        overallAccuracy: Math.round((overallCorrect / overallTotal) * 100),
-        perField,
-        mostErroredFields,
-      });
-    }
-  }
-
-  result.sort((a, b) => a.overallAccuracy - b.overallAccuracy);
-  return result;
-}
-
-/* ── Computation: Hardest Documents ── */
-
-export function computeHardestDocuments(
-  ctx: ReviewComputationContext,
-): HardestDocumentData[] {
-  const reviewsByDoc = new Map<string, ReviewRow[]>();
-  ctx.uniqueReviews.forEach((r) => {
-    const list = reviewsByDoc.get(r.document_id) || [];
-    list.push(r);
-    reviewsByDoc.set(r.document_id, list);
-  });
-
-  const result: HardestDocumentData[] = [];
-
-  for (const [docId, docReviews] of reviewsByDoc) {
-    const docResps = ctx.responsesByDoc.get(docId) || [];
-    if (docResps.length === 0) continue;
-
-    let totalFieldsReviewed = 0;
-    let totalErrors = 0;
-
-    for (const review of docReviews) {
-      if (review.verdict === "ambiguo" || review.verdict === "pular") continue;
-      const field = ctx.fieldMap.get(review.field_name);
-      if (!field) continue;
-      if (field.target === "none") continue;
-
-      for (const resp of docResps) {
-        if (field.target === "llm_only" && resp.respondent_type === "humano")
-          continue;
-        if (field.target === "human_only" && resp.respondent_type === "llm")
-          continue;
-
-        const answer = resp.answers[review.field_name];
-        const correct = isAnswerCorrect(answer, review.verdict, field.type);
-        totalFieldsReviewed++;
-        if (!correct) totalErrors++;
-      }
-    }
-
-    if (totalFieldsReviewed > 0) {
-      result.push({
-        documentId: docId,
-        documentTitle: ctx.docMap.get(docId) || docId,
-        totalFieldsReviewed,
-        totalErrors,
-        errorRate: Math.round((totalErrors / totalFieldsReviewed) * 100),
-      });
-    }
-  }
-
-  result.sort((a, b) => b.errorRate - a.errorRate);
   return result;
 }

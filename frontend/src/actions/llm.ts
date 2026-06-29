@@ -19,12 +19,17 @@ export async function getEligibleDocCount(
       .select("id", { count: "exact", head: true })
       .eq("project_id", projectId)
       .is("excluded_at", null),
+    // `documents!inner` + `.is("documents.excluded_at", null)` restringe a
+    // respostas de documentos NÃO arquivados — alinhando com a contagem de
+    // `total` acima. Sem isso, docs excluídos com resposta LLM inflavam
+    // docsWithLlm acima de total e geravam pendentes negativo (B4).
     supabase
       .from("responses")
-      .select("document_id")
+      .select("document_id, documents!inner(excluded_at)")
       .eq("project_id", projectId)
       .eq("respondent_type", "llm")
-      .eq("is_latest", true),
+      .eq("is_latest", true)
+      .is("documents.excluded_at", null),
   ]);
 
   if (totalError) throw new Error(totalError.message);
@@ -44,7 +49,10 @@ export async function getEligibleDocCount(
 
   if (filterMode === "pending") {
     const docsWithLlm = counts.size;
-    return { total: totalDocs, eligible: totalDocs - docsWithLlm };
+    // clamp defensivo: docsWithLlm nunca deveria exceder total agora que ambas
+    // as contagens ignoram docs arquivados, mas garante que nunca exibimos
+    // pendentes negativo.
+    return { total: totalDocs, eligible: Math.max(0, totalDocs - docsWithLlm) };
   }
 
   if (filterMode === "max_responses" && maxResponseCount != null) {
@@ -52,7 +60,7 @@ export async function getEligibleDocCount(
     const docsExceeding = [...counts.values()].filter(
       (c) => c > maxResponseCount
     ).length;
-    return { total: totalDocs, eligible: totalDocs - docsExceeding };
+    return { total: totalDocs, eligible: Math.max(0, totalDocs - docsExceeding) };
   }
 
   return { total: totalDocs, eligible: totalDocs };

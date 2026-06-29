@@ -365,6 +365,66 @@ def _build_llm_error_message(
     return None
 
 
+def _build_llm_response_row(
+    *,
+    project_id: str,
+    doc_id: str,
+    llm_provider: str,
+    llm_model: str,
+    answers: dict,
+    justifications: dict | None,
+    is_partial: bool,
+    pydantic_hash: str,
+    answer_field_hashes: dict,
+    job_id: str,
+    llm_error_msg: str | None,
+    schema_version_major: int,
+    schema_version_minor: int,
+    schema_version_patch: int,
+) -> dict:
+    """Monta o dict de insert em `responses` para uma resposta LLM.
+
+    Extraído para teste unitário (tests/test_llm_runner_response_row.py): a
+    construção do payload era inline no save loop e gravava `pydantic_hash` mas
+    NÃO a versão semver, deixando toda resposta LLM com schema_version NULL — o
+    que cegava o filtro de versão da aba Comparar (B1 do PR de mistura de
+    versões).
+    """
+    return {
+        "project_id": project_id,
+        "document_id": doc_id,
+        "respondent_type": "llm",
+        "respondent_name": f"{llm_provider}/{llm_model}",
+        "answers": answers,
+        "justifications": justifications if justifications else None,
+        # is_latest: respostas parciais já nascem como False para não
+        # poluírem Comparar (ver PR #65). Uma run posterior sobre os mesmos
+        # docs também marca esta resposta como False via bulk update.
+        "is_latest": not is_partial,
+        # is_partial: imutável após o insert. Preserva o classificador
+        # "cobertura baixa" mesmo depois que uma run posterior supersede esta
+        # resposta (ver migration 20260425000000).
+        "is_partial": is_partial,
+        "pydantic_hash": pydantic_hash,
+        "answer_field_hashes": answer_field_hashes,
+        # Correlaciona a resposta com a execução que a produziu para a aba
+        # LLM > Respostas (ver migration 20260424000000).
+        "llm_job_id": job_id,
+        # Diagnóstico por documento (ver migration 20260504000002). Null quando
+        # a resposta é saudável; senão traz o motivo real.
+        "llm_error": llm_error_msg,
+        # Versão semver do schema no momento do insert (B1). Grava também
+        # version_inferred_from="live_save" — a versão foi capturada ao vivo do
+        # projeto, igual ao caminho humano (frontend/src/actions/responses.ts);
+        # isso faz o backfill (actions/schema.ts) PULAR estas linhas em vez de
+        # re-inferir por hash/timestamp e sobrescrever a versão correta.
+        "schema_version_major": schema_version_major,
+        "schema_version_minor": schema_version_minor,
+        "schema_version_patch": schema_version_patch,
+        "version_inferred_from": "live_save",
+    }
+
+
 # Prompt-base exigente usado quando o campo não traz um
 # `justification_prompt` próprio no schema. Obriga o LLM a ancorar a
 # justificativa em um trecho textual do documento, em vez de produzir uma
@@ -639,13 +699,26 @@ async def run_llm(
         # Load project (only needed columns)
         project = (
             sb.table("projects")
-            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields")
+            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch")
             .eq("id", project_id)
             .single()
             .execute()
             .data
         )
         pydantic_code = project["pydantic_code"]
+        # Versão semver corrente do projeto, gravada em cada resposta para que a
+        # aba Comparar consiga separar rodadas por versão (ver B1 do PR de
+        # mistura de versões). Fallbacks espelham o caminho humano em
+        # frontend/src/actions/responses.ts. As colunas em `projects` são
+        # NOT NULL DEFAULT (migration 20260420000000), então os `or`/default
+        # abaixo são apenas defensivos.
+        schema_version_major = project.get("schema_version_major") or 0
+        schema_version_minor = (
+            project.get("schema_version_minor")
+            if project.get("schema_version_minor") is not None
+            else 1
+        )
+        schema_version_patch = project.get("schema_version_patch") or 0
         prompt_template = _build_prompt(
             project.get("description"),
             project["prompt_template"],
@@ -663,7 +736,16 @@ async def run_llm(
         }
 
         # Load documents
-        query = sb.table("documents").select("id, text, title, external_id").eq("project_id", project_id)
+        # Ignora documentos arquivados (excluded_at != null): não devem receber
+        # resposta LLM. O frontend já os exclui das contagens (B4); o backend
+        # não filtrava, recriando respostas em docs arquivados e inflando
+        # docsWithLlm acima de totalDocs (contador negativo de pendentes).
+        query = (
+            sb.table("documents")
+            .select("id, text, title, external_id")
+            .eq("project_id", project_id)
+            .is_("excluded_at", "null")
+        )
         if document_ids:
             query = query.in_("id", document_ids)
         docs = query.execute().data
@@ -954,32 +1036,24 @@ async def run_llm(
                 _persist_run_progress(sb, job_id, _jobs[job_id])
                 _jobs[job_id]["last_progress_persist"] = now_ts
 
-            sb.table("responses").insert({
-                "project_id": project_id,
-                "document_id": doc_id,
-                "respondent_type": "llm",
-                "respondent_name": f"{llm_provider}/{llm_model}",
-                "answers": answers,
-                "justifications": justifications if justifications else None,
-                # is_latest: respostas parciais já nascem como False para não
-                # poluírem Comparar (ver PR #65). Uma run posterior sobre os
-                # mesmos docs também vai marcar esta resposta como False via
-                # bulk update logo acima.
-                "is_latest": not is_partial,
-                # is_partial: imutável após o insert. Preserva o classificador
-                # "cobertura baixa" mesmo depois que uma run posterior supersede
-                # esta resposta (ver migration 20260425000000).
-                "is_partial": is_partial,
-                "pydantic_hash": pydantic_hash,
-                "answer_field_hashes": answer_field_hashes,
-                # Correlaciona a resposta com a execução que a produziu para a
-                # aba LLM > Respostas (ver migration 20260424000000).
-                "llm_job_id": job_id,
-                # Diagnóstico por documento (ver migration 20260504000002).
-                # Null quando a resposta é saudável; senão traz o motivo real
-                # (erro do dataframeit, prune zerou, ou cobertura baixa).
-                "llm_error": llm_error_msg,
-            }).execute()
+            sb.table("responses").insert(
+                _build_llm_response_row(
+                    project_id=project_id,
+                    doc_id=doc_id,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                    answers=answers,
+                    justifications=justifications,
+                    is_partial=is_partial,
+                    pydantic_hash=pydantic_hash,
+                    answer_field_hashes=answer_field_hashes,
+                    job_id=job_id,
+                    llm_error_msg=llm_error_msg,
+                    schema_version_major=schema_version_major,
+                    schema_version_minor=schema_version_minor,
+                    schema_version_patch=schema_version_patch,
+                )
+            ).execute()
 
         # Update project hash
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq("id", project_id).execute()

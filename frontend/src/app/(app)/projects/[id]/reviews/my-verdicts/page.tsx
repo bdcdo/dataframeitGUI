@@ -1,8 +1,9 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
-import { isAnswerCorrect } from "@/lib/reviews/queries";
+import { isAnswerCorrect, resolveEffectiveUserId } from "@/lib/reviews/queries";
+import { coordinatorGate } from "@/lib/project-access";
 import type { PydanticField } from "@/lib/types";
 
 export interface VerdictItem {
@@ -43,26 +44,30 @@ export default async function MyVerdictsPage({
 
   const supabase = await createSupabaseServer();
 
-  // First fetch project + membership to determine role
-  const [{ data: project }, { data: membership }] = await Promise.all([
+  // Project fields + papel do usuario. isCoordinator vem de
+  // getProjectAccessContext (request-scoped via cache()) — reaproveita a
+  // leitura project+membership ja feita pelo layout pai e cobre isMaster.
+  // Fail-CLOSED aqui (ao contrario de comments/llm-insights): isCoordinator
+  // gateia viewAsUser, que le o gabarito de OUTRO respondente. A policy RLS
+  // "Members view responses" deixa qualquer membro ler todas as responses (nao
+  // filtra por respondent_id), entao o recorte por effectiveUserId e so
+  // aplicacional — fail-open exporia gabarito de terceiros em erro transitorio.
+  const [{ data: project }, access] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, created_by")
+      .select("pydantic_fields")
       .eq("id", id)
       .single(),
-    supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .maybeSingle(),
+    getProjectAccessContext(id, user.id, user.isMaster),
   ]);
+  const isCoordinator = coordinatorGate(access, { failOpen: false });
 
-  const isCoordinator =
-    project?.created_by === user.id || membership?.role === "coordenador";
-
-  const effectiveUserId =
-    (user.isMaster || isCoordinator) && sp.viewAsUser ? sp.viewAsUser : user.id;
+  const effectiveUserId = resolveEffectiveUserId({
+    selfId: user.id,
+    isMaster: user.isMaster,
+    isCoordinator,
+    viewAsUser: sp.viewAsUser,
+  });
 
   // Fetch responses for the effective user
   const { data: myResponses } = await supabase
