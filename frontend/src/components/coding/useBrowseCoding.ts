@@ -30,9 +30,9 @@ interface UseBrowseCodingParams {
  * keyed `BrowseDocCoder`; este hook só guarda o rascunho num ref para o
  * autosave-on-exit centralizado (#28).
  *
- * Cumpre os contratos da #257: `markResponded(id, "submit"|"autosave")`,
- * `invalidate(id)` após salvar (anti-staleness do cache de doc) e exposição de
- * `error`/`retry` da lista.
+ * Cumpre os contratos da #257: `markResponded(id)` (update otimista do contador
+ * pós-save), `invalidate(id)` após salvar (anti-staleness do cache de doc) e
+ * exposição de `error`/`retry` da lista.
  */
 export function useBrowseCoding({
   projectId,
@@ -68,6 +68,10 @@ export function useBrowseCoding({
   // Rascunho atual reportado pelo BrowseDocCoder; lido pelo autosave-on-exit.
   // Ref (não estado) para não entrar no render.
   const browseDraftRef = useRef<CodingDraft | null>(null);
+  // Guarda de reentrância dos saves de browse: impede que um duplo-clique em
+  // "Enviar"/"Voltar" dispare saveResponse/markResponded duas vezes antes do
+  // setSubmitting re-renderizar e desabilitar os botões.
+  const browseSavingRef = useRef(false);
 
   const browseDocInfo = browseDocId
     ? browseDocuments?.find((d) => d.id === browseDocId) ?? null
@@ -107,24 +111,34 @@ export function useBrowseCoding({
   const handleBrowseSubmit = useCallback(
     async ({ answers, notes }: CodingDraft) => {
       if (!browseDocId || Object.keys(answers).length === 0) return;
+      if (browseSavingRef.current) return;
+      browseSavingRef.current = true;
       setSubmitting(true);
-      const result = await saveResponse(projectId, browseDocId, answers, {
-        notes,
-      });
-      setSubmitting(false);
-      if (result.success) {
-        markClean(browseDocId);
-        toast.success("Respostas salvas!");
-        markResponded(browseDocId, "submit");
-        browseDraftRef.current = null;
-        // Zera o ?doc= ANTES de invalidar: com browseDocId já null o hook não
-        // refetcha o doc que estamos deixando (evita refetch/flicker). A
-        // invalidação garante que reabri-lo na sessão reflita o que foi salvo
-        // (sem isto, o seed ficaria stale).
-        updateDocParam(null);
-        invalidateBrowseDoc(browseDocId);
-      } else {
-        toast.error(result.error || "Erro ao salvar respostas");
+      try {
+        const result = await saveResponse(projectId, browseDocId, answers, {
+          notes,
+        });
+        if (result.success) {
+          markClean(browseDocId);
+          toast.success("Respostas salvas!");
+          markResponded(browseDocId);
+          browseDraftRef.current = null;
+          // Zera o ?doc= ANTES de invalidar: com browseDocId já null o hook não
+          // refetcha o doc que estamos deixando (evita refetch/flicker). A
+          // invalidação garante que reabri-lo na sessão reflita o que foi salvo
+          // (sem isto, o seed ficaria stale).
+          updateDocParam(null);
+          invalidateBrowseDoc(browseDocId);
+        } else {
+          toast.error(result.error || "Erro ao salvar respostas");
+        }
+      } finally {
+        // `saveResponse` é Server Action: uma rejeição de transporte (offline /
+        // erro de RPC) rejeita a promessa em vez de devolver `{success:false}`.
+        // O `finally` garante que `submitting`/o ref não fiquem presos (o que
+        // congelaria a edição até reload).
+        setSubmitting(false);
+        browseSavingRef.current = false;
       }
     },
     [
@@ -139,28 +153,37 @@ export function useBrowseCoding({
   );
 
   const handleBrowseBack = useCallback(async () => {
+    // Guarda de reentrância no topo: cobre tanto o caminho com autosave quanto o
+    // caminho limpo (sem rascunho sujo). Sem ela, um "Voltar" durante um submit
+    // em voo zeraria a URL/rascunho no meio do save.
+    if (browseSavingRef.current) return;
     const docId = browseDocId;
     let saved = false;
     // Com rascunho sujo, aguarda o autosave ANTES de navegar: se falhar, mantém
     // o doc aberto e o rascunho intacto (em vez de descartá-lo otimisticamente).
     if (docId && isDirty(docId) && browseDraftRef.current) {
+      browseSavingRef.current = true;
       const { answers, notes } = browseDraftRef.current;
       setSubmitting(true);
-      const result = await saveResponse(projectId, docId, answers, {
-        notes,
-        isAutoSave: true,
-      });
-      setSubmitting(false);
-      if (!result.success) {
-        toast.error(
-          result.error ||
-            "Não foi possível salvar. Suas alterações não foram perdidas.",
-        );
-        return;
+      try {
+        const result = await saveResponse(projectId, docId, answers, {
+          notes,
+          isAutoSave: true,
+        });
+        if (!result.success) {
+          toast.error(
+            result.error ||
+              "Não foi possível salvar. Suas alterações não foram perdidas.",
+          );
+          return;
+        }
+        markClean(docId);
+        markResponded(docId);
+        saved = true;
+      } finally {
+        setSubmitting(false);
+        browseSavingRef.current = false;
       }
-      markClean(docId);
-      markResponded(docId, "autosave");
-      saved = true;
     }
     browseDraftRef.current = null;
     // Zera o ?doc= ANTES de invalidar (mesmo motivo do submit: evita

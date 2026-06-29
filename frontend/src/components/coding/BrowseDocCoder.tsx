@@ -75,8 +75,13 @@ export function BrowseDocCoder({
   // o ref reinicia limpo a cada doc junto com o estado.
   const draftRef = useRef<CodingDraft>({ answers, notes });
 
+  // Durante um save em voo (`submitting`) a edição congela: o container já tirou
+  // o snapshot do rascunho que está salvando e, ao concluir, descarta o draftRef
+  // e navega. Sem este guard, teclas digitadas no meio do save atualizariam o
+  // draftRef tarde demais e seriam perdidas silenciosamente.
   const handleAnswer = useCallback(
     (fieldName: string, value: unknown) => {
+      if (submitting) return;
       // Ao mudar uma resposta, limpa as condicionais que ficaram órfãs —
       // mesma invariante do modo Atribuídos (`CodingPage.handleAnswer`, #252).
       const next = clearHiddenConditionalAnswers(fields, {
@@ -87,16 +92,17 @@ export function BrowseDocCoder({
       setAnswers(next);
       onDraftChange(draftRef.current);
     },
-    [onDraftChange, fields],
+    [onDraftChange, submitting, fields],
   );
 
   const handleNotesChange = useCallback(
     (next: string) => {
+      if (submitting) return;
       draftRef.current = { answers: draftRef.current.answers, notes: next };
       setNotes(next);
       onDraftChange(draftRef.current);
     },
-    [onDraftChange],
+    [onDraftChange, submitting],
   );
 
   const handleSubmit = useCallback(() => {

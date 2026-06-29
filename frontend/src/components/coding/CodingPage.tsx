@@ -243,6 +243,7 @@ function CodingPageInner({
                   responseCount: browse.browseDocInfo?.responseCount ?? 0,
                   onBack: browse.handleBrowseBack,
                   onRandom: browse.handleBrowseRandom,
+                  submitting,
                   parecerUrl: browseParecerUrl,
                   projectId,
                   documentId: browse.browseDocId,

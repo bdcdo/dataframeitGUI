@@ -156,25 +156,33 @@ export function useAssignedCoding({
   const handleSubmit = useCallback(async () => {
     if (!currentDoc || Object.keys(docAnswers).length === 0) return;
     setSubmitting(true);
-    const result = await saveResponse(projectId, currentDoc.id, docAnswers, {
-      notes: docNotes,
-    });
-    setSubmitting(false);
-    if (result.success) {
-      markClean(currentDoc.id);
-      toast.success("Respostas salvas!");
-      if (docIndex < sortedDocuments.length - 1) {
-        const nextIndex = docIndex + 1;
-        dispatch({ type: "index", index: nextIndex });
-        // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
-        // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
-        // o topo da lista), nao no proximo.
-        updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
+    try {
+      const result = await saveResponse(projectId, currentDoc.id, docAnswers, {
+        notes: docNotes,
+      });
+      if (result.success) {
+        markClean(currentDoc.id);
+        toast.success("Respostas salvas!");
+        if (docIndex < sortedDocuments.length - 1) {
+          const nextIndex = docIndex + 1;
+          dispatch({ type: "index", index: nextIndex });
+          // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
+          // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
+          // o topo da lista), nao no proximo.
+          updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
+        } else {
+          dispatch({ type: "allDone", value: true });
+        }
       } else {
-        dispatch({ type: "allDone", value: true });
+        toast.error(result.error || "Erro ao salvar respostas");
       }
-    } else {
-      toast.error(result.error || "Erro ao salvar respostas");
+    } finally {
+      // `saveResponse` é Server Action: uma rejeição de transporte (offline /
+      // erro de RPC) rejeita a promessa em vez de devolver `{success:false}`.
+      // O `finally` garante que `submitting` não fique preso `true` — como é
+      // estado único compartilhado com o modo Explorar, isso congelaria a
+      // edição lá (guards do `BrowseDocCoder`) até um reload.
+      setSubmitting(false);
     }
   }, [
     currentDoc,
