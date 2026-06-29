@@ -21,6 +21,13 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # ESLint major fica travado em 9 ate o Next 16 suportar ESLint 10. O
+      # eslint-plugin-react embutido no eslint-config-next ainda chama
+      # context.getFilename(), removido no ESLint 10 — o bump 9->10 (#278)
+      # quebrou `npm run lint` e `lint:types`. Remover quando o Next suportar v10.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "frontend"

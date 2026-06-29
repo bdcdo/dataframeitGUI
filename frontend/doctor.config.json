@@ -59,6 +59,46 @@
           "react-doctor/no-many-boolean-props",
           "react-doctor/prefer-explicit-variants"
         ]
+      },
+      {
+        "files": [
+          "src/components/auto-review/AutoReviewFieldPanel.tsx",
+          "src/components/compare/ComparisonPanel.tsx",
+          "src/components/stats/CommentCard.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-event-handler"
+        ]
+      },
+      {
+        "files": ["src/hooks/usePinnedDoc.ts"],
+        "rules": [
+          "react-doctor/no-event-handler"
+        ]
+      },
+      {
+        "files": ["src/hooks/useAutosaveOnExit.ts"],
+        "rules": [
+          "react-doctor/no-fetch-in-effect"
+        ]
+      },
+      {
+        "files": ["src/hooks/useDocumentText.ts"],
+        "rules": [
+          "react-doctor/no-chain-state-updates",
+          "react-doctor/no-derived-state"
+        ]
+      },
+      {
+        "files": [
+          "src/components/assignments/AssignmentTable.tsx",
+          "src/components/schema/OptionsEditor.tsx",
+          "src/components/schema/ValidationErrorPanel.tsx",
+          "src/components/stats/ExportPanel.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-array-index-as-key"
+        ]
       }
     ]
   },

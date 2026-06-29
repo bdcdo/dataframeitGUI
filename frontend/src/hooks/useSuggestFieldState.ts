@@ -20,6 +20,10 @@ export function useSuggestFieldState(
   const [options, setOptions] = useState<string[]>(field?.options ?? []);
   const [reason, setReason] = useState("");
 
+  // `prevFieldName` É lido no render (comparação `fieldName !== prevFieldName`
+  // abaixo) — padrão oficial React de "adjusting state on a prop change", não
+  // state só-de-handler. A regra classifica errado; useRef quebraria o padrão.
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers
   const [prevFieldName, setPrevFieldName] = useState(fieldName);
   if (fieldName !== prevFieldName) {
     setPrevFieldName(fieldName);

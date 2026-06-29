@@ -69,6 +69,9 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     let assigned = 0;
     let stillNoPool = 0;
     for (const { documentId, coderIds } of backlog) {
+      // Sequencial intencional (ver comentário acima): cada atribuição enxerga
+      // a carga atualizada da anterior; paralelizar degradaria o balanceamento.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const result = await assignComparisonReviewer(
         admin,
         projectId,

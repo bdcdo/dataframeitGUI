@@ -1219,6 +1219,9 @@ export async function retryPendingArbitrations(
     let assigned = 0;
     let stillNoPool = 0;
     for (const g of groups.values()) {
+      // Sequencial intencional (ver comentário acima): cada assignArbitrator lê
+      // openCounts recalculado; paralelizar degradaria a distribuição.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const result = await assignArbitrator(
         projectId,
         g.documentId,

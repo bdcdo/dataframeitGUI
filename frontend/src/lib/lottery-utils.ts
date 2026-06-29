@@ -230,6 +230,9 @@ export function distributeDocs(
 
   for (const docId of shuffleWithRng(eligibleDocIds, rng)) {
     const preservedOnDoc = docAssignedUsers[docId] || [];
+    // Set para lookup O(1) no filtro do while (preservedOnDoc é constante no
+    // escopo deste docId).
+    const preservedSet = new Set(preservedOnDoc);
     const newOnDoc = new Set<string>();
     let need = researchersPerDoc - preservedOnDoc.length;
 
@@ -239,7 +242,7 @@ export function distributeDocs(
         (p) =>
           remaining[p.id] > 0 &&
           !newOnDoc.has(p.id) &&
-          !preservedOnDoc.includes(p.id) &&
+          !preservedSet.has(p.id) &&
           !preservedPairs.has(`${docId}:${p.id}`),
       );
       if (!candidates.length) break;
