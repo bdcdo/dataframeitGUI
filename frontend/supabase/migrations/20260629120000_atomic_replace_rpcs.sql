@@ -10,13 +10,17 @@
 --
 -- Ambas as funções rodam como SECURITY INVOKER (não DEFINER): chamadas pelo
 -- client autenticado (lib/supabase/server.ts), o JWT do Clerk continua no
--- contexto, então (a) as RLS policies de coordenador continuam valendo dentro
--- da função e (b) os triggers enforce_*_column_guard (que fazem bypass quando
--- clerk_uid() é NULL = service-role) NÃO são desligados — ao contrário do que
--- aconteceria com SECURITY DEFINER + service_role. Direção alinhada às issues
--- de segurança #137 (reduzir uso do admin client), #134 (RLS consistente) e
--- #243 (column guards). search_path = '' por higiene (tudo qualificado com
--- public.). GRANT só a authenticated (sem REVOKE especial — não precisa).
+-- contexto, então a RLS de coordenador (braço coordinator_or_creator nas
+-- policies de documents/assignments/responses/reviews) continua sendo avaliada
+-- dentro da função. Sob SECURITY DEFINER + service_role isso se perderia: a
+-- função rodaria como owner/service_role, que BYPASSA a RLS, e clerk_uid()
+-- ficaria NULL — exatamente o anti-padrão que a #137 (reduzir uso do admin
+-- client) audita. Note que estas quatro tabelas NÃO têm triggers
+-- enforce_*_column_guard (esses existem só em projects/project_comments/
+-- schema_change_log); aqui o que protege a escrita é puramente a RLS. Direção
+-- alinhada às issues de segurança #137, #134 (RLS consistente) e #243 (column
+-- guards). search_path = '' por higiene (tudo qualificado com public.). GRANT
+-- só a authenticated (sem REVOKE especial — não precisa).
 
 -- ========== #181: sorteio ==========
 -- Quando p_replace é true, descarta as pendentes do tipo antes de inserir; o
@@ -113,7 +117,9 @@ BEGIN
     FROM jsonb_to_recordset(p_duplicate_updates)
       AS u(id uuid, "text" text, title text, external_id text,
            text_hash text, metadata jsonb)
-    WHERE d.id = u.id;
+    WHERE d.id = u.id
+      AND d.project_id = p_project_id;  -- defense-in-depth: escopa ao projeto,
+                                        -- coerente com os DELETE/INSERT acima
   END IF;
 
   IF p_new_documents IS NOT NULL
