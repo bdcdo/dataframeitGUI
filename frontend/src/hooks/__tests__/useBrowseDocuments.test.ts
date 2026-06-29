@@ -116,6 +116,54 @@ describe("useBrowseDocuments", () => {
     ).toBeUndefined();
   });
 
+  it("markResponded antes da lista resolver é aplicado quando a base chega (race de deep-link)", async () => {
+    let resolveList: (v: BrowseDocument[]) => void = () => {};
+    mockGet.mockReturnValue(
+      new Promise<BrowseDocument[]>((r) => {
+        resolveList = r;
+      }),
+    );
+    const { result } = renderHook(() => useBrowseDocuments("p1", true));
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.documents).toBeNull();
+
+    // Usuário envia rápido (deep-link) ANTES da lista chegar: a intenção fica
+    // pendente sem depender da base já carregada.
+    act(() => result.current.markResponded("d1", "submit"));
+    expect(result.current.documents).toBeNull();
+
+    // Lista chega depois, com a contagem do servidor pré-save.
+    await act(async () => {
+      resolveList([doc("d1", { responseCount: 2 }), doc("d2")]);
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const d1 = result.current.documents?.find((d) => d.id === "d1");
+    expect(d1?.userAlreadyResponded).toBe(true);
+    expect(d1?.responseCount).toBe(3);
+    const d2 = result.current.documents?.find((d) => d.id === "d2");
+    expect(d2?.userAlreadyResponded).toBe(false);
+    expect(d2?.responseCount).toBe(0);
+  });
+
+  it("bump de submit sobrevive a um autosave posterior no mesmo doc", async () => {
+    mockGet.mockResolvedValue([doc("d1", { responseCount: 2 })]);
+    const { result } = renderHook(() => useBrowseDocuments("p1", true));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => result.current.markResponded("d1", "submit"));
+    expect(
+      result.current.documents?.find((d) => d.id === "d1")?.responseCount,
+    ).toBe(3);
+
+    // autosave posterior não deve zerar o bump já aplicado.
+    act(() => result.current.markResponded("d1", "autosave"));
+    expect(
+      result.current.documents?.find((d) => d.id === "d1")?.responseCount,
+    ).toBe(3);
+  });
+
   it("toggle enabled true→false→true: refetch só 1x e preserva overrides", async () => {
     mockGet.mockResolvedValue([doc("d1", { responseCount: 1 })]);
     const { result, rerender } = renderHook(

@@ -40,6 +40,25 @@ export type CodingSortMode = "default" | "recent";
 const EMPTY_CODED_AT: Record<string, string> = {};
 const EMPTY_JUSTIFICATIONS: Record<string, Record<string, unknown>> = {};
 
+/** Estado centralizado de falha + ação de retry do modo Explorar (lista e doc
+ *  compartilham a mesma marcação). */
+function RetryState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+      <p className="text-sm text-muted-foreground">{message}</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Tentar novamente
+      </Button>
+    </div>
+  );
+}
+
 interface CodingPageProps {
   projectId: string;
   documents: (Document & { assignment?: Pick<Assignment, "id" | "status"> })[];
@@ -186,6 +205,10 @@ function CodingPageInner({
   // Rascunho atual do doc de browse, reportado pelo BrowseDocCoder; lido pelo
   // autosave-on-exit centralizado. Ref (não estado) para não entrar no render.
   const browseDraftRef = useRef<CodingDraft | null>(null);
+  // Guarda de reentrância dos saves de browse: impede que um duplo-clique em
+  // "Enviar"/"Voltar" dispare saveResponse/markResponded duas vezes antes do
+  // setSubmitting re-renderizar e desabilitar os botões.
+  const browseSavingRef = useRef(false);
 
   // Update URL query param without full navigation
   const updateDocParam = useCallback(
@@ -403,24 +426,30 @@ function CodingPageInner({
   const handleBrowseSubmit = useCallback(
     async ({ answers, notes }: CodingDraft) => {
       if (!browseDocId || Object.keys(answers).length === 0) return;
+      if (browseSavingRef.current) return;
+      browseSavingRef.current = true;
       setSubmitting(true);
-      const result = await saveResponse(projectId, browseDocId, answers, {
-        notes,
-      });
-      setSubmitting(false);
-      if (result.success) {
-        markClean(browseDocId);
-        toast.success("Respostas salvas!");
-        markResponded(browseDocId, "submit");
-        browseDraftRef.current = null;
-        // Zera o ?doc= ANTES de invalidar: com browseDocId já null, o hook não
-        // refetcha o doc que estamos deixando (evita refetch/flicker). A
-        // invalidação garante que reabri-lo na sessão reflita o que foi salvo
-        // (sem isto, o seed ficaria stale).
-        updateDocParam(null);
-        invalidateBrowseDoc(browseDocId);
-      } else {
-        toast.error(result.error || "Erro ao salvar respostas");
+      try {
+        const result = await saveResponse(projectId, browseDocId, answers, {
+          notes,
+        });
+        if (result.success) {
+          markClean(browseDocId);
+          toast.success("Respostas salvas!");
+          markResponded(browseDocId, "submit");
+          browseDraftRef.current = null;
+          // Zera o ?doc= ANTES de invalidar: com browseDocId já null, o hook não
+          // refetcha o doc que estamos deixando (evita refetch/flicker). A
+          // invalidação garante que reabri-lo na sessão reflita o que foi salvo
+          // (sem isto, o seed ficaria stale).
+          updateDocParam(null);
+          invalidateBrowseDoc(browseDocId);
+        } else {
+          toast.error(result.error || "Erro ao salvar respostas");
+        }
+      } finally {
+        setSubmitting(false);
+        browseSavingRef.current = false;
       }
     },
     [
@@ -439,23 +468,29 @@ function CodingPageInner({
     // Com rascunho sujo, aguarda o autosave ANTES de navegar: se falhar, mantém
     // o doc aberto e o rascunho intacto (em vez de descartá-lo otimisticamente).
     if (docId && dirtyDocs.has(docId) && browseDraftRef.current) {
+      if (browseSavingRef.current) return;
+      browseSavingRef.current = true;
       const { answers, notes } = browseDraftRef.current;
       setSubmitting(true);
-      const result = await saveResponse(projectId, docId, answers, {
-        notes,
-        isAutoSave: true,
-      });
-      setSubmitting(false);
-      if (!result.success) {
-        toast.error(
-          result.error ||
-            "Não foi possível salvar. Suas alterações não foram perdidas.",
-        );
-        return;
+      try {
+        const result = await saveResponse(projectId, docId, answers, {
+          notes,
+          isAutoSave: true,
+        });
+        if (!result.success) {
+          toast.error(
+            result.error ||
+              "Não foi possível salvar. Suas alterações não foram perdidas.",
+          );
+          return;
+        }
+        markClean(docId);
+        markResponded(docId, "autosave");
+        saved = true;
+      } finally {
+        setSubmitting(false);
+        browseSavingRef.current = false;
       }
-      markClean(docId);
-      markResponded(docId, "autosave");
-      saved = true;
     }
     browseDraftRef.current = null;
     // Zera o ?doc= ANTES de invalidar (mesmo motivo do handleBrowseSubmit: evita
@@ -555,6 +590,7 @@ function CodingPageInner({
                     responseCount: browseDocInfo?.responseCount ?? 0,
                     onBack: handleBrowseBack,
                     onRandom: handleBrowseRandom,
+                    submitting,
                     parecerUrl: browseParecerUrl,
                     projectId,
                     documentId: browseDocId,
@@ -648,18 +684,10 @@ function CodingPageInner({
       {mode === "browse" && (
         <>
           {browseError ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-              <p className="text-sm text-muted-foreground">
-                Não foi possível carregar os documentos.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={retryBrowseDocuments}
-              >
-                Tentar novamente
-              </Button>
-            </div>
+            <RetryState
+              message="Não foi possível carregar os documentos."
+              onRetry={retryBrowseDocuments}
+            />
           ) : browseLoading ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               Carregando documentos…
@@ -691,18 +719,10 @@ function CodingPageInner({
           ) : (
             // browseDoc === null → o fetch do doc falhou (erro de transporte ou
             // documento ausente). Oferece retry em vez de afirmar "não encontrado".
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-              <p className="text-sm text-muted-foreground">
-                Não foi possível carregar o documento.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => invalidateBrowseDoc(browseDocId)}
-              >
-                Tentar novamente
-              </Button>
-            </div>
+            <RetryState
+              message="Não foi possível carregar o documento."
+              onRetry={() => invalidateBrowseDoc(browseDocId)}
+            />
           )}
         </>
       )}

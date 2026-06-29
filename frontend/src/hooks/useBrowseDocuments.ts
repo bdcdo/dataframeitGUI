@@ -44,8 +44,12 @@ export function useBrowseDocuments(
     retry: retryResource,
   } = useCachedResource(projectId, fetcher, { enabled });
 
+  // Override guarda a INTENÇÃO (respondido; e se houve bump de contagem), não o
+  // valor absoluto. Assim `markResponded` não precisa ler a lista já carregada —
+  // o merge abaixo aplica a intenção sobre a base de forma idempotente quando a
+  // base chega (corrige a race de deep-link em que a lista ainda não resolveu).
   const [overrides, setOverrides] = useState<
-    Record<string, { userAlreadyResponded: boolean; responseCount: number }>
+    Record<string, { responded: true; bumped: boolean }>
   >({});
 
   const retry = useCallback(() => {
@@ -57,26 +61,34 @@ export function useBrowseDocuments(
     if (!base) return null;
     return base.map((d) => {
       const o = overrides[d.id];
-      return o ? { ...d, ...o } : d;
+      if (!o) return d;
+      return {
+        ...d,
+        userAlreadyResponded: true,
+        // +1 só quando o override pediu bump E a base ainda não contava este
+        // pesquisador. Recomputado de `base` a cada render → nunca acumula.
+        responseCount:
+          o.bumped && !d.userAlreadyResponded
+            ? d.responseCount + 1
+            : d.responseCount,
+      };
     });
   }, [base, overrides]);
 
-  // Lê o estado mesclado atual (base + overrides anteriores) pela closure: o
-  // callback recria quando `documents` muda, então a contagem nunca é dobrada.
+  // Registra a intenção sem ler `documents`: funciona mesmo com a lista ainda
+  // não resolvida. O bump é ADITIVO (uma vez "submit", permanece bumpado) para
+  // não se perder se um "autosave" posterior reescrever o mesmo doc.
   const markResponded = useCallback(
     (docId: string, intent: "submit" | "autosave") => {
-      const cur = documents?.find((d) => d.id === docId);
-      if (!cur) return;
-      const responseCount =
-        intent === "submit" && !cur.userAlreadyResponded
-          ? cur.responseCount + 1
-          : cur.responseCount;
       setOverrides((prev) => ({
         ...prev,
-        [docId]: { userAlreadyResponded: true, responseCount },
+        [docId]: {
+          responded: true,
+          bumped: (prev[docId]?.bumped ?? false) || intent === "submit",
+        },
       }));
     },
-    [documents],
+    [],
   );
 
   return { documents, loading, error, retry, markResponded };

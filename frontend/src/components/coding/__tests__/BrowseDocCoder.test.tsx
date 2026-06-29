@@ -138,6 +138,26 @@ describe("BrowseDocCoder", () => {
     });
   });
 
+  it("congela a edição enquanto submitting (não perde teclas durante o save em voo)", async () => {
+    const onDraftChange = vi.fn();
+    render(
+      <BrowseDocCoder
+        {...baseProps}
+        submitting
+        doc={makeDoc()}
+        onSubmit={vi.fn()}
+        onDraftChange={onDraftChange}
+      />,
+    );
+    await userEvent.click(screen.getByText("set-q1"));
+    await userEvent.click(screen.getByText("set-notes"));
+    // Com um save em voo, as edições são ignoradas: nada reportado para cima e o
+    // estado exibido permanece no seed (o container já salvou o snapshot).
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("answers").textContent).toBe('{"q0":"x"}');
+    expect(screen.getByTestId("notes").textContent).toBe("nota0");
+  });
+
   it("envia com as respostas e notas atuais", async () => {
     const onSubmit = vi.fn();
     render(

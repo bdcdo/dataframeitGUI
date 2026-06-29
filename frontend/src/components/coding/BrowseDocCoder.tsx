@@ -74,23 +74,29 @@ export function BrowseDocCoder({
   // o ref reinicia limpo a cada doc junto com o estado.
   const draftRef = useRef<CodingDraft>({ answers, notes });
 
+  // Durante um save em voo (`submitting`) a edição congela: o container já tirou
+  // o snapshot do rascunho que está salvando e, ao concluir, descarta o draftRef
+  // e navega. Sem este guard, teclas digitadas no meio do save atualizariam o
+  // draftRef tarde demais e seriam perdidas silenciosamente.
   const handleAnswer = useCallback(
     (fieldName: string, value: unknown) => {
+      if (submitting) return;
       const next = { ...draftRef.current.answers, [fieldName]: value };
       draftRef.current = { answers: next, notes: draftRef.current.notes };
       setAnswers(next);
       onDraftChange(draftRef.current);
     },
-    [onDraftChange],
+    [onDraftChange, submitting],
   );
 
   const handleNotesChange = useCallback(
     (next: string) => {
+      if (submitting) return;
       draftRef.current = { answers: draftRef.current.answers, notes: next };
       setNotes(next);
       onDraftChange(draftRef.current);
     },
-    [onDraftChange],
+    [onDraftChange, submitting],
   );
 
   const handleSubmit = useCallback(() => {

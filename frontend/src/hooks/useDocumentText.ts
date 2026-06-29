@@ -6,6 +6,14 @@ import { useCachedResource } from "./useCachedResource";
 
 const NOT_FOUND = "(Documento não encontrado)";
 
+/** Teto do cache de texto. Os consumidores (`CommentsSplitView`, `MyVerdictsView`)
+ *  percorrem um conjunto ABERTO de documentos um a um; sem teto, o `text` integral
+ *  de todo doc visitado ficaria retido pelo tempo de vida do componente (mesmo
+ *  risco de heap que motivou o teto em `useDocumentForCoding`). O teto cobre o
+ *  ir-e-voltar imediato entre docs vizinhos; reabrir um doc despejado refaz o
+ *  fetch (texto imutável, sem custo de staleness). */
+const MAX_CACHED_TEXTS = 10;
+
 /**
  * Lazy-load do texto de um documento, com cache por id e flag `loading`.
  *
@@ -35,6 +43,8 @@ export function useDocumentText(
     [projectId],
   );
 
-  const { data, loading } = useCachedResource(documentId, fetcher);
+  const { data, loading } = useCachedResource(documentId, fetcher, {
+    maxEntries: MAX_CACHED_TEXTS,
+  });
   return { text: data, loading };
 }

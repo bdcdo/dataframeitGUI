@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /**
  * Núcleo de cache-por-chave compartilhado pelos lazy-loaders do app
@@ -88,8 +88,17 @@ export function useCachedResource<T>(
   const [store, setStore] = useState<CacheStore<T>>({ entries: {}, order: [] });
   const [errors, setErrors] = useState<Record<string, true>>({});
 
+  // `needsFetch` é a única condição que dispara o effect: chave habilitada,
+  // ainda não cacheada e sem erro registrado. Como é um BOOLEANO derivado, o
+  // effect só reage quando ela vira true (precisa buscar) — e não a cada
+  // mutação do `store`/`errors`, evitando a antiga subscrição ao cache inteiro.
+  // Ao `invalidate`/`retry` a chave sai do cache, `needsFetch` volta a true e o
+  // effect refaz o fetch.
+  const needsFetch =
+    enabled && !!key && !(key in store.entries) && !errors[key];
+
   useEffect(() => {
-    if (!enabled || !key || key in store.entries || errors[key]) return;
+    if (!needsFetch || !key) return;
     let cancelled = false;
     fetcher(key)
       .then((value) => {
@@ -104,7 +113,7 @@ export function useCachedResource<T>(
     return () => {
       cancelled = true;
     };
-  }, [enabled, key, store, errors, fetcher, maxEntries]);
+  }, [needsFetch, key, fetcher, maxEntries]);
 
   const invalidate = useCallback((k: string) => {
     setStore((prev) => removeKey(prev, k));
@@ -113,18 +122,13 @@ export function useCachedResource<T>(
 
   // Limpa cache+erro da chave CORRENTE para que o effect refaça o fetch.
   const retry = useCallback(() => {
-    if (!key) return;
-    setStore((prev) => removeKey(prev, key));
-    setErrors((prev) => deleteKey(prev, key));
-  }, [key]);
+    if (key) invalidate(key);
+  }, [key, invalidate]);
 
-  const data = useMemo(
-    () => (enabled && key && key in store.entries ? store.entries[key] : undefined),
-    [enabled, key, store],
-  );
+  const data =
+    enabled && key && key in store.entries ? store.entries[key] : undefined;
   const error = enabled && !!key && !!errors[key];
-  const loading =
-    enabled && !!key && !(key in store.entries) && !errors[key];
+  const loading = needsFetch;
 
   return { data, loading, error, invalidate, retry };
 }

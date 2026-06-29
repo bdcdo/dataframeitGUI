@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import type { PydanticField, Document } from "@/lib/types";
@@ -330,6 +330,77 @@ describe("CodingPage — modo Explorar (integração)", () => {
     expect(autosaveProps.current.getPayload()).toBeNull();
     // O doc não foi re-buscado no retorno (cache não invalidado).
     expect(getDocumentForCoding).toHaveBeenCalledTimes(1);
+  });
+
+  it("nº3: duplo-clique em Enviar não duplica saveResponse", async () => {
+    getDocumentsForBrowse.mockResolvedValue([browseDoc("d1")]);
+    getDocumentForCoding.mockResolvedValue(codingResult("d1", null));
+    let resolveSave: (v: { success: boolean }) => void = () => {};
+    saveResponse.mockReturnValue(
+      new Promise<{ success: boolean }>((r) => {
+        resolveSave = r;
+      }),
+    );
+
+    render(
+      <CodingPage projectId="p1" documents={[]} fields={FIELDS} existingAnswers={{}} />,
+    );
+
+    await userEvent.click(await screen.findByText("pick-d1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("qp-answers").textContent).toBe("{}"),
+    );
+    await userEvent.click(screen.getByText("qp-set")); // q1=sim (rascunho não vazio)
+
+    // Dois cliques antes do save em voo resolver: a guarda de reentrância barra
+    // o segundo, então saveResponse roda só uma vez.
+    await userEvent.click(screen.getByText("qp-enviar"));
+    await userEvent.click(screen.getByText("qp-enviar"));
+    expect(saveResponse).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSave({ success: true });
+    });
+    // Fluxo de sucesso conclui: volta ao picker.
+    await screen.findByText("pick-d1");
+  });
+
+  it("nº6: erro ao carregar a lista mostra RetryState e refaz o fetch", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    getDocumentsForBrowse.mockRejectedValueOnce(new Error("falha de rede"));
+
+    render(
+      <CodingPage projectId="p1" documents={[]} fields={FIELDS} existingAnswers={{}} />,
+    );
+
+    expect(
+      await screen.findByText("Não foi possível carregar os documentos."),
+    ).toBeTruthy();
+
+    getDocumentsForBrowse.mockResolvedValueOnce([browseDoc("d1")]);
+    await userEvent.click(screen.getByText("Tentar novamente"));
+    expect(await screen.findByText("pick-d1")).toBeTruthy();
+  });
+
+  it("nº6: falha ao carregar o doc mostra RetryState e permite tentar de novo", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    getDocumentsForBrowse.mockResolvedValue([browseDoc("d1")]);
+    getDocumentForCoding.mockRejectedValueOnce(new Error("falha de rede"));
+
+    render(
+      <CodingPage projectId="p1" documents={[]} fields={FIELDS} existingAnswers={{}} />,
+    );
+
+    await userEvent.click(await screen.findByText("pick-d1"));
+    expect(
+      await screen.findByText("Não foi possível carregar o documento."),
+    ).toBeTruthy();
+
+    getDocumentForCoding.mockResolvedValueOnce(codingResult("d1", { q1: "ok" }));
+    await userEvent.click(screen.getByText("Tentar novamente"));
+    await waitFor(() =>
+      expect(screen.getByTestId("qp-answers").textContent).toBe('{"q1":"ok"}'),
+    );
   });
 
   it("nº5: trocar de doc limpa o dirty do anterior (sem vazamento)", async () => {
