@@ -90,29 +90,24 @@ export function computeDivergentFieldNames(
       continue;
     }
 
-    // Scalar / free-text path. For free-text we run union-find over both
-    // explicit pairs and same-normalized-answer edges, so responses with
-    // identical text always land in the same group regardless of pairs.
-    if (isFreeTextField(field)) {
-      const pairs = equivalencesByField?.get(field.name) ?? [];
-      const items = applicable.map((r) => ({
-        id: r.id,
-        answer: (r.answers as Record<string, unknown>)?.[field.name],
-      }));
-      const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
-        normalizeForComparison(r.answer),
-      );
-      const keys = new Set<string>();
-      for (const r of applicable) keys.add(groupKeys.get(r.id) ?? r.id);
-      if (keys.size > 1) divergent.push(field.name);
-      continue;
-    }
-
+    // Non-multi path: free-text, date e single (com ou sem opções). Union-find
+    // sobre pares de equivalência explícitos + arestas de mesma-resposta-
+    // normalizada: respostas com a mesma resposta normalizada caem sempre no
+    // mesmo grupo, e o revisor pode fundir respostas distintas — ex.: NI ≡ N/A ≡
+    // "não informado" num single de opções (issue #247, ponto 5). Sem pares,
+    // é equivalente a agrupar por resposta normalizada (comportamento antigo do
+    // ramo scalar). multi tem seu próprio caminho (set de opções) acima, pois
+    // sua UI de revisão (MultiOptionReview) não tem cards de equivalência.
+    const pairs = equivalencesByField?.get(field.name) ?? [];
+    const items = applicable.map((r) => ({
+      id: r.id,
+      answer: (r.answers as Record<string, unknown>)?.[field.name],
+    }));
+    const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
+      normalizeForComparison(r.answer),
+    );
     const keys = new Set<string>();
-    for (const r of applicable) {
-      const raw = (r.answers as Record<string, unknown>)?.[field.name];
-      keys.add(normalizeForComparison(raw));
-    }
+    for (const r of applicable) keys.add(groupKeys.get(r.id) ?? r.id);
     if (keys.size > 1) divergent.push(field.name);
   }
 

@@ -211,8 +211,9 @@ export function AgreementGroup({
           <div className="rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2.5 py-1.5 text-[11px] leading-tight text-muted-foreground">
             <p>
               <Link2 className="mr-1 inline size-3" />
-              Texto livre: marque os cards equivalentes e indique qual fica
-              como <strong>gabarito</strong> (a resposta que será registrada).
+              Marque os cards equivalentes (ex.: NI ≡ N/A ≡ &ldquo;não
+              informado&rdquo;) e indique qual fica como{" "}
+              <strong>gabarito</strong> (a resposta que será registrada).
             </p>
           </div>
         )}

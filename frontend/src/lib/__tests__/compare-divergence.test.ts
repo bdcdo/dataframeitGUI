@@ -124,6 +124,50 @@ describe("computeDivergentFieldNames", () => {
     ).toEqual(["a"]);
   });
 
+  it("single-com-opções: opções diferentes são divergentes sem pares", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["s"]);
+  });
+
+  it("single-com-opções: par fundindo NI ≡ N/A remove a divergência (#247, ponto 5)", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+    ];
+    const equivalencesByField = new Map<string, EquivalencePair[]>([
+      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+    ]);
+    expect(
+      computeDivergentFieldNames(fields, responses, equivalencesByField),
+    ).toEqual([]);
+  });
+
+  it("single-com-opções: par cobrindo só parte das opções deixa divergência", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+      { id: "3", answers: { s: "Sim" } },
+    ];
+    const equivalencesByField = new Map<string, EquivalencePair[]>([
+      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+    ]);
+    expect(
+      computeDivergentFieldNames(fields, responses, equivalencesByField),
+    ).toEqual(["s"]);
+  });
+
   it("multi: differing selections are divergent", () => {
     const fields = [
       field({ name: "tags", type: "multi", options: ["x", "y", "z"] }),

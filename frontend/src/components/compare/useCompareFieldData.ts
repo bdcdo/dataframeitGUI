@@ -2,7 +2,6 @@
 
 import { useMemo } from "react";
 import { normalizeForComparison } from "@/lib/utils";
-import { isFreeTextField } from "@/lib/compare-divergence";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 import type {
@@ -89,8 +88,13 @@ export function useCompareFieldData({
     return equivalencesByDocField[currentDoc.id]?.[currentFieldName] ?? [];
   }, [equivalencesByDocField, currentDoc, currentFieldName]);
 
+  // Equivalência (fundir respostas distintas como iguais) vale para qualquer
+  // campo NÃO-multi: texto, data e single (com ou sem opções). Todos renderizam
+  // via AgreementGroup, cujos cards são selecionáveis. multi usa MultiOptionReview
+  // (checkboxes), sem cards de equivalência. Antes restringia a free-text, o que
+  // deixava de fora single-com-opções (ex.: NI ≡ N/A ≡ "não informado") — #247.
   const allowEquivalence = useMemo(() => {
-    return !!currentField && isFreeTextField(currentField);
+    return !!currentField && currentField.type !== "multi";
   }, [currentField]);
 
   const answerGroups = useMemo(() => {
