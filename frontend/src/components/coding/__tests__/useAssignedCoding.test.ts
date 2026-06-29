@@ -127,6 +127,35 @@ describe("useAssignedCoding", () => {
     expect(view.result.current.currentDoc?.id).toBe("d2");
   });
 
+  // Regressão da mudança de comportamento intencional: sair da tela "Parabéns!"
+  // ao navegar ou trocar a ordenação (o `case "index"` do reducer zera allDone).
+  it("handleDocNavigate zera allDone (sai da tela Parabéns ao navegar)", async () => {
+    const { view } = setup();
+    act(() => view.result.current.handleDocNavigate(2)); // vai para d3 (último)
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+    await act(async () => {
+      await view.result.current.handleSubmit();
+    });
+    expect(view.result.current.allDone).toBe(true);
+
+    act(() => view.result.current.handleDocNavigate(0)); // ◀ reabre o doc
+    expect(view.result.current.allDone).toBe(false);
+    expect(view.result.current.currentDoc?.id).toBe("d1");
+  });
+
+  it("handleSortChange zera allDone (sai da tela Parabéns ao reordenar)", async () => {
+    const { view } = setup();
+    act(() => view.result.current.handleDocNavigate(2)); // vai para d3 (último)
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+    await act(async () => {
+      await view.result.current.handleSubmit();
+    });
+    expect(view.result.current.allDone).toBe(true);
+
+    act(() => view.result.current.handleSortChange("recent"));
+    expect(view.result.current.allDone).toBe(false);
+  });
+
   it("getPayload reflete o doc e respostas atuais", () => {
     const { view } = setup({ existingAnswers: { d1: { q: "a" } } });
     expect(view.result.current.getPayload()).toEqual({
