@@ -199,6 +199,14 @@ export async function createAutoComparisonIfDiverges(
   }
 
   // So codificacoes humanas completas contam para o gatilho (#174).
+  // NOTA (#247, follow-up): este gatilho conta toda resposta `is_latest`, sem
+  // aplicar o piso de versao do default vivo (COMPARE_DEFAULT_VERSION =
+  // "latest_major"). A fila (compare/page.tsx) e o fecho (compare-sync.ts) ja
+  // usam esse piso; aqui ainda nao. Efeito: uma divergencia que so existe entre
+  // majors antigos pode materializar um assignment que a fila nao mostra e que o
+  // fecho (latest_major) considera concluivel de imediato — fantasma cosmetico,
+  // nao a trava do #217. Alinhar exige buscar schema_version/pydantic_hash e
+  // aplicar responseQualifiesForVersion aqui; deixado como follow-up.
   const completeHumans = (humanResponses ?? []).filter((r) =>
     isCodingComplete(fields, (r.answers as Record<string, unknown>) ?? {}),
   );

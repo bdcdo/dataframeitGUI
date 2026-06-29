@@ -22,6 +22,20 @@ export const DEFAULT_COMPARE_FILTERS: CompareFiltersValue = {
   respondent: "all",
 };
 
+// Default VIVO de versão da aba Comparar — fonte única consumida pelos TRÊS
+// pontos que precisam concordar sobre "qual versão a fila reflete por padrão":
+//   1. a página (compareDefaultsForMode, via compare/page.tsx);
+//   2. o filtro do cliente (CompareFilters.effectiveDefaults, via prop
+//      defaultVersion plumbada por page → ComparePage → CompareNav);
+//   3. o fecho do parecer (compare-sync.ts, via resolveMinVersion).
+// É distinto de DEFAULT_COMPARE_FILTERS.version ("all"), que é a base para
+// callers/testes que NÃO derivam do automation_mode. Centralizar aqui evita o
+// drift silencioso em que página, filtro e fecho discordam (ver #247, e o
+// acoplamento visão==fecho do #217/#218). O default de versão é independente do
+// modo de automação — só `minHumans` varia por modo —, por isso uma constante
+// basta como fonte única, sem precisar do `mode`.
+export const COMPARE_DEFAULT_VERSION = "latest_major";
+
 export function readCompareFilters(
   params: URLSearchParams | Record<string, string | undefined>,
   // Defaults aplicados quando o param não vem na URL. Por padrão são os globais
@@ -64,12 +78,14 @@ export function readCompareFilters(
 // módulo de baixo nível sem depender de types.ts e tolera o valor null/legado
 // de projetos antes da migration do automation_mode.
 //
-// Versão: o default VIVO da página é "latest_major" (não o "all" de
-// DEFAULT_COMPARE_FILTERS). Pesquisadores do Natjus (issue #247) estranharam ver
-// na fila comparações de codificações feitas sob schemas anteriores; o esperado
-// é focar na versão corrente por padrão. "all" continua disponível no seletor
-// para quem precisa revisar rodadas antigas, e DEFAULT_COMPARE_FILTERS.version
-// segue "all" (usado por outros callers/testes que não passam por aqui).
+// Versão: o default VIVO é COMPARE_DEFAULT_VERSION ("latest_major"), não o "all"
+// de DEFAULT_COMPARE_FILTERS. Pesquisadores do Natjus (issue #247) estranharam
+// ver na fila comparações de codificações feitas sob schemas anteriores; o
+// esperado é focar na versão corrente por padrão. "all" continua disponível no
+// seletor para quem precisa revisar rodadas antigas, e DEFAULT_COMPARE_FILTERS.
+// version segue "all" (usado por outros callers/testes que não passam por aqui).
+// O fecho do parecer (compare-sync.ts) usa a MESMA constante, mantendo o
+// acoplamento visão==fecho do #217/#218 (ver COMPARE_DEFAULT_VERSION acima).
 export function compareDefaultsForMode(
   mode: string | null | undefined,
   minResponsesForComparison: number,
@@ -80,7 +96,7 @@ export function compareDefaultsForMode(
   } else if (mode === "compare_humans") {
     minHumans = Math.max(1, minResponsesForComparison);
   }
-  return { ...DEFAULT_COMPARE_FILTERS, minHumans, version: "latest_major" };
+  return { ...DEFAULT_COMPARE_FILTERS, minHumans, version: COMPARE_DEFAULT_VERSION };
 }
 
 // Conjunto de document_ids que um usuário pode VER na fila de comparação.

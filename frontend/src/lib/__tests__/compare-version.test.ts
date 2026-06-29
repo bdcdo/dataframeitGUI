@@ -9,7 +9,11 @@ import {
   type SchemaVersion,
   type VersionedResponse,
 } from "@/lib/compare-version";
-import { DEFAULT_COMPARE_FILTERS } from "@/lib/compare-filters";
+import {
+  DEFAULT_COMPARE_FILTERS,
+  COMPARE_DEFAULT_VERSION,
+  compareDefaultsForMode,
+} from "@/lib/compare-filters";
 import {
   computeDivergentFieldNames,
   resolveCompareStatus,
@@ -163,33 +167,44 @@ describe("responseQualifiesForVersion", () => {
 });
 
 // O fecho do parecer (compare-sync.ts) deriva seu piso de versão do MESMO
-// default da UI que compare/page.tsx usa, via
-// resolveMinVersion(DEFAULT_COMPARE_FILTERS.version, ...). Estes testes travam
-// esse contrato e reproduzem o incidente #217/#218 no pipeline puro do sync,
-// sem Supabase.
-describe("fecho espelha o filtro default da UI (#217/#218)", () => {
-  it("resolveMinVersion com o default da UI não impõe piso (default = 'all')", () => {
-    // Se alguém mudar DEFAULT_COMPARE_FILTERS.version sem revisar o sync, este
-    // teste quebra — a intenção é manter sync e visão default acoplados.
+// default VIVO da UI que compare/page.tsx usa — `COMPARE_DEFAULT_VERSION`
+// ("latest_major"), o mesmo valor que `compareDefaultsForMode` retorna —, via
+// `resolveMinVersion`. Estes testes travam esse contrato e reproduzem o
+// incidente #217/#218 no pipeline puro do sync, sem Supabase.
+describe("fecho espelha o filtro default da UI (#217/#218/#247)", () => {
+  it("o default VIVO é latest_major e impõe o piso latestMajorAnchor", () => {
+    // Trip-wire do acoplamento sync↔visão. Vigia o default VIVO (o que a página
+    // de fato aplica via compareDefaultsForMode), NÃO DEFAULT_COMPARE_FILTERS —
+    // foi exatamente esse descasamento que deixou o #247 regredir o #217 passar
+    // batido. Se alguém mudar o default vivo sem realinhar o fecho, isto quebra.
+    expect(COMPARE_DEFAULT_VERSION).toBe("latest_major");
+    expect(compareDefaultsForMode("compare_humans", 2).version).toBe(
+      COMPARE_DEFAULT_VERSION,
+    );
+    // DEFAULT_COMPARE_FILTERS.version segue "all" (base de outros callers), mas
+    // NÃO é o piso do fecho — o fecho usa COMPARE_DEFAULT_VERSION.
     expect(DEFAULT_COMPARE_FILTERS.version).toBe("all");
-    expect(
-      resolveMinVersion(DEFAULT_COMPARE_FILTERS.version, v(0, 20, 0)),
-    ).toBeNull();
+    expect(resolveMinVersion(COMPARE_DEFAULT_VERSION, v(0, 20, 0))).toEqual(
+      latestMajorAnchor(v(0, 20, 0)),
+    );
   });
 
-  // Incidente Zolgensma: doc com várias codificações humanas — uma SUPERSEDED
-  // (is_latest=false), uma pré-versionamento (pydantic_hash NULL), uma de minor
-  // antiga (0.18.0) e duas da corrente (0.20.0). O sync antigo
-  // (`is_latest || respondent_type === "humano"`) contava a superseded, que a
-  // tela não mostra, criando divergência invisível → trava. Sob o default 'all'
-  // (minVersion null), o fecho descarta SÓ a superseded e mantém o resto,
-  // espelhando o que a revisora vê "sem filtro".
+  // Incidente Zolgensma sob o default vivo latest_major: doc com codificações
+  // humanas — uma SUPERSEDED (is_latest=false), uma pré-versionamento
+  // (pydantic_hash NULL), uma de minor antiga (0.18.0) divergindo em "decisao",
+  // e duas da MAJOR corrente (0.20.0) concordando. Sob latest_major o fecho
+  // descarta superseded, pré-versionamento E a minor antiga, sobrando só a major
+  // corrente — exatamente o que a revisora vê na fila default. A divergência que
+  // só existe na rodada antiga (improc vs proc) NÃO trava o fecho: é o que
+  // restaura o acoplamento visão==fecho do #218 (e evita a regressão do #217).
   type Row = VersionedResponse & {
     id: string;
     answers: Record<string, unknown>;
   };
   const proj = { pydanticHash: "hash-atual", version: v(0, 20, 0) };
-  const minVersion = resolveMinVersion(
+  const minVersion = resolveMinVersion(COMPARE_DEFAULT_VERSION, v(0, 20, 0));
+  // Piso antigo ('all' = null), para contraste com o comportamento que travava.
+  const minVersionLegado = resolveMinVersion(
     DEFAULT_COMPARE_FILTERS.version,
     v(0, 20, 0),
   );
@@ -210,12 +225,10 @@ describe("fecho espelha o filtro default da UI (#217/#218)", () => {
     ...over,
   });
 
-  // "decisao" diverge entre os ativos (improc vs proc); "obs" só diverge se a
-  // superseded entrar (ativos concordam em "irrelevante").
   const rows: Row[] = [
     human(
       "sup",
-      { decisao: "improc", obs: "diferente" },
+      { decisao: "improc", obs: "irrelevante" },
       { is_latest: false, pydantic_hash: "hash-antigo", schema_version_minor: 18 },
     ),
     human(
@@ -230,7 +243,7 @@ describe("fecho espelha o filtro default da UI (#217/#218)", () => {
     ),
     human(
       "v18",
-      { decisao: "proc", obs: "irrelevante" },
+      { decisao: "improc", obs: "irrelevante" },
       { pydantic_hash: "hash-018", schema_version_minor: 18 },
     ),
     human("v20a", { decisao: "proc", obs: "irrelevante" }, {}),
@@ -251,24 +264,33 @@ describe("fecho espelha o filtro default da UI (#217/#218)", () => {
   const active = rows.filter((r) =>
     responseQualifiesForVersion(r, minVersion, proj),
   );
+  const activeLegado = rows.filter((r) =>
+    responseQualifiesForVersion(r, minVersionLegado, proj),
+  );
 
-  it("o fecho descarta só a superseded, mantendo pré-versionamento e minor antiga", () => {
-    expect(active.map((r) => r.id)).toEqual(["pre", "v18", "v20a", "v20b"]);
+  it("sob latest_major o fecho mantém só a major corrente (descarta antigas)", () => {
+    expect(active.map((r) => r.id)).toEqual(["v20a", "v20b"]);
   });
 
-  it("incluir a superseded (bug antigo) inflaria 'obs' como divergência invisível", () => {
-    const withSuperseded = computeDivergentFieldNames(fields, rows);
-    expect(withSuperseded).toContain("obs");
+  it("a divergência só existe nas rodadas antigas — invisível na fila default", () => {
+    // Na major corrente os ativos concordam: nenhum campo diverge.
+    expect(computeDivergentFieldNames(fields, active)).toEqual([]);
   });
 
-  it("sem a superseded, 'obs' não diverge — só 'decisao' exige veredito", () => {
+  it("parecer fecha sem veredito pendente (acoplamento visão==fecho)", () => {
     const divergent = computeDivergentFieldNames(fields, active);
-    expect(divergent).toEqual(["decisao"]);
+    expect(resolveCompareStatus(divergent, new Set())).toBe("concluido");
   });
 
-  it("resolvido o campo divergente visível, o parecer fecha (concluido)", () => {
-    const divergent = computeDivergentFieldNames(fields, active);
-    expect(resolveCompareStatus(divergent, new Set(["decisao"]))).toBe(
+  it("sob o piso antigo 'all', a divergência da rodada antiga travaria o fecho (regressão #217)", () => {
+    // Contraste: com 'all' (minVersion null) a minor 0.18.0 e a pré-versionamento
+    // voltam a contar, "decisao" diverge (improc vs proc) e o parecer NÃO fecha
+    // sem resolver um campo que a fila latest_major nem mostra. É o cenário que o
+    // default vivo latest_major evita.
+    expect(activeLegado.map((r) => r.id)).toEqual(["pre", "v18", "v20a", "v20b"]);
+    const divergentLegado = computeDivergentFieldNames(fields, activeLegado);
+    expect(divergentLegado).toContain("decisao");
+    expect(resolveCompareStatus(divergentLegado, new Set())).not.toBe(
       "concluido",
     );
   });

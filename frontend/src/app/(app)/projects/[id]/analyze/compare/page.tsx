@@ -477,6 +477,7 @@ export default async function ComparePageRoute({
         projectPydanticHash={project?.pydantic_hash ?? null}
         respondentNames={respondentNames}
         defaultMinHumans={compareDefaults.minHumans}
+        defaultVersion={compareDefaults.version}
         coverageByDoc={coverageByDoc}
         commentCountsByKey={commentCountsByKey}
         suggestionCountsByField={suggestionCountsByField}

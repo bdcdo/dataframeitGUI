@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_COMPARE_FILTERS,
+  COMPARE_DEFAULT_VERSION,
   readCompareFilters,
   compareDefaultsForMode,
   assignedCompareDocIds,
@@ -36,13 +37,21 @@ describe("compareDefaultsForMode", () => {
     expect(compareDefaultsForMode("valor_legado", 2).minHumans).toBe(2);
   });
 
-  it("default vivo de versão é latest_major, não o 'all' da constante base (#247)", () => {
+  it("default vivo de versão é COMPARE_DEFAULT_VERSION (latest_major), não o 'all' da base (#247)", () => {
     // A página foca na versão corrente por padrão; o seletor ainda oferece
-    // "all" para revisar rodadas antigas. DEFAULT_COMPARE_FILTERS.version segue
-    // "all" para os callers/testes que não passam por compareDefaultsForMode.
-    expect(compareDefaultsForMode("compare_llm", 2).version).toBe("latest_major");
-    expect(compareDefaultsForMode("compare_humans", 2).version).toBe("latest_major");
-    expect(compareDefaultsForMode(null, 2).version).toBe("latest_major");
+    // "all" para revisar rodadas antigas. O default vivo é a constante única
+    // COMPARE_DEFAULT_VERSION, consumida também pelo fecho (compare-sync.ts) e
+    // plumbada ao filtro do cliente (CompareFilters.effectiveDefaults).
+    // DEFAULT_COMPARE_FILTERS.version segue "all" para os callers/testes que não
+    // passam por compareDefaultsForMode.
+    expect(COMPARE_DEFAULT_VERSION).toBe("latest_major");
+    expect(compareDefaultsForMode("compare_llm", 2).version).toBe(
+      COMPARE_DEFAULT_VERSION,
+    );
+    expect(compareDefaultsForMode("compare_humans", 2).version).toBe(
+      COMPARE_DEFAULT_VERSION,
+    );
+    expect(compareDefaultsForMode(null, 2).version).toBe(COMPARE_DEFAULT_VERSION);
     expect(DEFAULT_COMPARE_FILTERS.version).toBe("all");
   });
 
@@ -64,6 +73,20 @@ describe("readCompareFilters com defaults por modo", () => {
   it("param min_humans na URL sobrepõe o default do modo (a revisora pode estreitar)", () => {
     const defaults = compareDefaultsForMode("compare_llm", 2);
     expect(readCompareFilters({ min_humans: "3" }, defaults).minHumans).toBe(3);
+  });
+
+  it("sem param de versão, herda o default vivo (latest_major) do modo", () => {
+    const defaults = compareDefaultsForMode("compare_humans", 2);
+    expect(readCompareFilters({}, defaults).version).toBe(COMPARE_DEFAULT_VERSION);
+  });
+
+  it("param version=all na URL alcança 'all' por cima do default latest_major (#247)", () => {
+    // Regressão #1: com o default vivo latest_major, "Todas as versões" só é
+    // alcançável se o param explícito vencer o default — é o que o cliente passa
+    // a fazer quando effectiveDefaults.version = latest_major (≠ "all"), evitando
+    // que o seletor apague o param e fique preso em latest_major.
+    const defaults = compareDefaultsForMode("compare_humans", 2);
+    expect(readCompareFilters({ version: "all" }, defaults).version).toBe("all");
   });
 
   it("sem defaults explícitos, mantém o comportamento legado (piso 2)", () => {
