@@ -1,5 +1,7 @@
 # Configuração do react-doctor
 
+> Este documento cobre **só o react-doctor**. Para a stack de qualidade completa — fallow (grafo do codebase), typescript-eslint type-checked (tipos), ruff (backend Python), React Scan (runtime), Dependabot/semgrep (segurança) e o mapa de qual hook dispara o quê — ver [`docs/CODE_QUALITY_TOOLING.md`](CODE_QUALITY_TOOLING.md).
+
 O [react-doctor](https://react.doctor) é tratado como um linter da toolchain do frontend, no mesmo espírito do eslint/mypy: é uma `devDependency` **pinada** (`react-doctor@0.5.8` em `frontend/package.json`), roda via script `npm run`, e o arquivo `frontend/doctor.config.json` cumpre o papel de um `mypy.ini`/`.eslintrc` — fonte única de configuração (o config na raiz do repo foi removido para evitar drift, já que os scripts npm e o hook de pre-commit rodam escopados a `frontend/`).
 
 > **Nome do arquivo de config (0.5.x):** a partir da 0.5, o react-doctor procura `doctor.config.*` (ou a chave `reactDoctor` em `package.json`); o nome antigo `react-doctor.config.json` deixou de ser reconhecido. O arquivo foi renomeado para `doctor.config.json` no bump 0.2.11 → 0.5.6. O schema (`ignore.overrides` + `rules`) é o mesmo.
@@ -9,7 +11,7 @@ O [react-doctor](https://react.doctor) é tratado como um linter da toolchain do
 ```bash
 cd frontend
 npm run react-doctor          # scan completo do app (report)
-npm run react-doctor:diff     # só os arquivos do branch atual vs main (check manual)
+npm run react-doctor:diff     # só os arquivos do branch atual vs origin/main (check manual)
 ```
 
 A config é lida do diretório de execução (o react-doctor resolve o projeto via `findNearestPackageDirectory`, e só `frontend/` tem `package.json`), por isso os comandos rodam de dentro de `frontend/`.
@@ -99,6 +101,14 @@ Os dois `useEffect` de `QuestionsPanel.tsx` (linhas 179 e 205 na 0.5.6) têm dep
 ## a11y (`prefer-tag-over-role`, `prefer-html-dialog`, `no-noninteractive-element-interactions`) — avaliada, **não** suprimida
 
 As ocorrências dessas três regras na 0.5.6 — `shell/MobileWarning.tsx:21` (`<div role="dialog">`) e `compare/AnswerCard.tsx` (`<div role="button">` e handler em elemento não-interativo) — são **HTML cru de código de app, não primitivas Radix vendidas**. Diferente de um `role` herdado de uma primitiva da lib (que seria convenção a silenciar), aqui o caminho correto é **refatorar** para o elemento semântico nativo (`<dialog>`, `<button>`). Por isso ficam fora desta supressão de convenção e seguem para a issue de a11y (refactor), não para o `doctor.config.json`. Os FPs antigos da #152 `js-min-max-loop` (`AssignmentTable.tsx`) e `jsx-a11y/label-has-associated-control` (`MemberList.tsx`) não reproduzem mais na 0.5.6 e não exigiram supressão.
+
+## `async-await-in-loop` suprimida inline no upload serial de `useDocumentUpload`
+
+A regra `react-doctor/async-await-in-loop` (Performance) recomenda coletar os itens e usar `await Promise.all(items.map(...))` para rodar trabalho independente em paralelo. Em `src/hooks/useDocumentUpload.ts`, o loop de upload em chunks (`doUpload`) é **serial de propósito** e não pode paralelizar: o progresso é reportado sequencialmente (`setPhase({ kind: "uploading", current: processed, ... })`), e a flag `isLast` é o 3º argumento `revalidate` de `uploadDocuments` — passá-la `true` só no último chunk revalida o cache de documentos uma vez, em vez de uma vez por chunk. Disparar os chunks juntos quebraria as duas garantias.
+
+A supressão é **inline e por linha** — `// react-doctor-disable-next-line react-doctor/async-await-in-loop` imediatamente acima da chamada `await uploadDocuments(...)` —, não um override por arquivo no `doctor.config.json`. Inline é mais estreito: a regra continua ativa no resto do hook (pega qualquer `await`-em-loop novo). A justificativa fica numa linha de comentário **separada** acima da diretiva (o parser da diretiva trata o texto após o nome da regra como rule-ids adicionais, então não se usa o sufixo `-- ...` do ESLint aqui).
+
+O segundo `async-await-in-loop` que existia no mesmo arquivo (o loop de `checkDuplicates`) **não** foi suprimido: como os chunks de hash são independentes e a agregação é comutativa, foi paralelizado de fato (#254, Onda 4) — com teto de concorrência via `mapWithConcurrency` (`src/lib/upload-chunking.ts`, limite `MAX_HASH_CHECK_CONCURRENCY = 6`), para que um CSV gigante não dispare centenas de Server Actions de uma vez. Se o progresso sequencial deixar de ser necessário e a revalidação migrar para fora do loop, remover esta supressão e paralelizar o upload também.
 
 ## Regras que deixaram de ser FP
 

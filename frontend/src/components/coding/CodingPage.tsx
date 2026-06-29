@@ -12,6 +12,7 @@ import { DocumentPicker } from "./DocumentPicker";
 import { FullscreenNav } from "./FullscreenNav";
 import { saveResponse } from "@/actions/responses";
 import { applyFieldOrder } from "@/lib/field-order";
+import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import { useUrlState } from "@/hooks/useUrlState";
 import { useFieldOrder } from "@/hooks/useFieldOrder";
 import { useAutosaveOnExit, type AutosavePayload } from "@/hooks/useAutosaveOnExit";
@@ -270,13 +271,16 @@ function CodingPageInner({
     (fieldName: string, value: unknown) => {
       const docId = currentDoc?.id;
       if (!docId) return;
-      setAllAnswers((prev) => ({
-        ...prev,
-        [docId]: { ...prev[docId], [fieldName]: value },
-      }));
+      setAllAnswers((prev) => {
+        const updated = { ...prev[docId], [fieldName]: value };
+        // Ao mudar uma resposta, limpa as condicionais que ficaram órfãs —
+        // invariante mantida aqui (no dono do estado) em vez de num useEffect
+        // do filho (ver #252).
+        return { ...prev, [docId]: clearHiddenConditionalAnswers(fields, updated) };
+      });
       markDirty(docId);
     },
-    [currentDoc?.id, markDirty]
+    [currentDoc?.id, markDirty, fields]
   );
 
   const handleNotesChange = useCallback(
@@ -391,7 +395,8 @@ function CodingPageInner({
   );
 
   // Reportado pelo BrowseDocCoder a cada edição: alimenta o autosave-on-exit
-  // (via ref) e marca o doc como sujo.
+  // (via ref) e marca o doc como sujo. A limpeza de condicionais órfãs (#252)
+  // acontece dentro do BrowseDocCoder, dono do estado editável do browse.
   const handleDraftChange = useCallback(
     (draft: CodingDraft) => {
       browseDraftRef.current = draft;

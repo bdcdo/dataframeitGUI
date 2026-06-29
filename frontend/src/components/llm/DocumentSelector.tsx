@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -29,34 +29,35 @@ export function DocumentSelector({
   onSelectionChange,
 }: DocumentSelectorProps) {
   const [open, setOpen] = useState(false);
-  const [docs, setDocs] = useState<DocSelectionItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [resource, setResource] = useState<{
+    loading: boolean;
+    items: DocSelectionItem[];
+  }>({ loading: false, items: [] });
   const [search, setSearch] = useState("");
-  const [localSelected, setLocalSelected] = useState<Set<string>>(
-    new Set(selectedIds)
-  );
+  const [localSelected, setLocalSelected] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- inicia o fetch dos docs ao abrir (sincronização com backend)
-      setLoading(true);
+  // Abrir o dialog é um evento: ao abrir, semeia o draft a partir do prop
+  // atual e dispara o fetch dos documentos. (Sem useEffect — ver issue #251.)
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) {
       setLocalSelected(new Set(selectedIds));
+      setResource({ loading: true, items: [] });
       getDocumentsForSelection(projectId)
-        .then((data) => setDocs(data))
-        .catch(() => setDocs([]))
-        .finally(() => setLoading(false));
+        .then((items) => setResource({ loading: false, items }))
+        .catch(() => setResource({ loading: false, items: [] }));
     }
-  }, [open, projectId, selectedIds]);
+  };
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return docs;
+    if (!search.trim()) return resource.items;
     const q = search.toLowerCase();
-    return docs.filter(
+    return resource.items.filter(
       (d) =>
         d.title?.toLowerCase().includes(q) ||
         d.external_id?.toLowerCase().includes(q)
     );
-  }, [docs, search]);
+  }, [resource.items, search]);
 
   const toggle = (id: string) => {
     setLocalSelected((prev) => {
@@ -88,7 +89,7 @@ export function DocumentSelector({
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           {selectedIds.length > 0
@@ -127,12 +128,12 @@ export function DocumentSelector({
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto border rounded-md divide-y">
-          {loading && (
+          {resource.loading && (
             <p className="p-4 text-sm text-muted-foreground text-center">
               Carregando…
             </p>
           )}
-          {!loading && filtered.length === 0 && (
+          {!resource.loading && filtered.length === 0 && (
             <p className="p-4 text-sm text-muted-foreground text-center">
               Nenhum documento encontrado.
             </p>

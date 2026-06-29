@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env*
+.vercel
+npm-debug.log*
+*.log
+coverage
+playwright-report
+test-results
+.DS_Store
+README.md

@@ -245,13 +245,15 @@ export function DocumentsPageClient({
         showExcluded={showExcluded}
       />
 
-      <DocumentPreview
-        documentId={selectedDoc?.id ?? null}
-        title={selectedDoc?.title ?? selectedDoc?.external_id ?? "Documento"}
-        open={!!selectedDoc}
-        onClose={() => setSelectedDocId(null)}
-        allowExcluded={showExcluded}
-      />
+      {projectId && (
+        <DocumentPreview
+          documentId={selectedDoc?.id ?? null}
+          title={selectedDoc?.title ?? selectedDoc?.external_id ?? "Documento"}
+          open={!!selectedDoc}
+          onClose={() => setSelectedDocId(null)}
+          projectId={projectId}
+        />
+      )}
 
       {/* Soft delete (excluir = reversivel) */}
       <AlertDialog

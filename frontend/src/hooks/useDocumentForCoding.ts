@@ -39,6 +39,11 @@ const MAX_CACHED_DOCS = 3;
  * salva (`handleBrowseSubmit`/`handleBrowseBack`) DEVE chamar `invalidate(docId)`,
  * senão reabrir o doc na mesma sessão re-semearia o estado pré-save (stale). O
  * código antigo evitava isso re-buscando a cada seleção.
+ *
+ * A chave de cache combina `projectId` e `documentId` (`projectId:documentId`),
+ * não só o id do doc: assim um mesmo documentId em projetos distintos nunca
+ * colide no cache. A API pública (`invalidate(docId)`) segue recebendo só o id —
+ * o wrapper recompõe a chave internamente.
  */
 export function useDocumentForCoding(
   projectId: string,
@@ -49,7 +54,10 @@ export function useDocumentForCoding(
   invalidate: (docId: string) => void;
 } {
   const fetcher = useCallback(
-    async (id: string): Promise<CodingDocument | null> => {
+    async (key: string): Promise<CodingDocument | null> => {
+      // `key` é `projectId:documentId`; o projectId já vem da closure, então só
+      // precisamos do id (UUID, sem `:`) à direita do primeiro separador.
+      const id = key.slice(key.indexOf(":") + 1);
       try {
         const result = await getDocumentForCoding(projectId, id);
         return {
@@ -68,8 +76,17 @@ export function useDocumentForCoding(
     [projectId],
   );
 
-  const { data, loading, invalidate } = useCachedResource(documentId, fetcher, {
+  const cacheKey = documentId ? `${projectId}:${documentId}` : documentId;
+  const {
+    data,
+    loading,
+    invalidate: invalidateKey,
+  } = useCachedResource(cacheKey, fetcher, {
     maxEntries: MAX_CACHED_DOCS,
   });
+  const invalidate = useCallback(
+    (docId: string) => invalidateKey(`${projectId}:${docId}`),
+    [invalidateKey, projectId],
+  );
   return { doc: data, loading, invalidate };
 }

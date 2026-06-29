@@ -9,7 +9,7 @@ interface DuplicateAnalysisProps {
   newCount: number;
   duplicateCount: number;
   duplicatesWithResponses: number;
-  matchType: string;
+  matchType: "external_id" | "text_hash";
   onImportNewOnly: () => void;
   onReplaceAndImport: (deleteResponses: boolean) => void;
   onImportAll: () => void;
@@ -52,7 +52,7 @@ export function DuplicateAnalysis({
           <span className="font-medium text-foreground">
             {duplicateCount} já existem
           </span>{" "}
-          (detectados por {matchType}).
+          (detectados por {matchType === "external_id" ? "ID externo" : "conteúdo (hash)"}).
         </p>
 
         {showResponseWarning && duplicatesWithResponses > 0 && (

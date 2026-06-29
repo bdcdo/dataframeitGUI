@@ -140,18 +140,16 @@ function SortableQuestion({
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
-  // Rastreia quais campos estavam visíveis no render anterior para detectar
-  // condicionais que acabaram de aparecer.
-  const prevVisibleNamesRef = useRef<Set<string>>(new Set());
-  // Mudança de schema (prop `fields`) também muda `visibleNames`; este flag
-  // evita scrollar nesse caso — só queremos scrollar em resposta do usuário.
-  const skipScrollRef = useRef(false);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- limpa os destaques ao trocar o schema (prop fields)
-    setHighlightedFields(new Set());
-    skipScrollRef.current = true;
-  }, [fields]);
+  // Conjunto de nomes visíveis no render anterior — detecta condicionais que
+  // acabaram de aparecer. `null` até o 1º effect (semeado lá dentro, nunca no
+  // corpo do render — escrita de ref durante o render não é concurrent-safe).
+  const prevVisibleNamesRef = useRef<Set<string> | null>(null);
+  // Assinatura order-independent do conjunto de TODOS os campos. Só muda quando
+  // um campo é adicionado/removido (mudança de schema). Reorder e o load
+  // assíncrono de `fieldOrder` reordenam mas não mudam o conjunto, então não
+  // suprimem um scroll legítimo (ver #252); a comparação por identidade da prop
+  // `fields` suprimia-os por engano.
+  const prevAllNamesKeyRef = useRef<string | null>(null);
 
   const visibleFields = useMemo(
     () =>
@@ -164,32 +162,30 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     () => new Set(visibleFields.map((f) => f.name)),
     [visibleFields],
   );
+  const allNamesKey = useMemo(
+    () => fields.map((f) => f.name).sort().join(","),
+    [fields],
+  );
 
-  useEffect(() => {
-    if (readOnly) return;
-    for (const f of fields) {
-      if (!f.condition) continue;
-      if (visibleNames.has(f.name)) continue;
-      const v = answers[f.name];
-      if (v !== undefined && v !== null && v !== "") {
-        onAnswer(f.name, null);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleNames]);
+  // A limpeza de respostas órfãs de condicionais que ficaram invisíveis vive no
+  // pai (`CodingPage`), aplicada no updater de `answers` ao mudar uma resposta
+  // (ver #252) — não mais num effect que empurrava dado de volta via `onAnswer`.
 
   // Quando uma resposta libera uma pergunta condicional, o DOM atualiza
   // in-place e o scroll fica parado — o pesquisador pode não perceber a nova
   // pergunta fora da viewport. Detecta o campo condicional que passou de
   // invisível para visível e rola suavemente até ele.
   useEffect(() => {
-    const prev = prevVisibleNamesRef.current;
+    const firstRun = prevVisibleNamesRef.current === null;
+    const prev = prevVisibleNamesRef.current ?? visibleNames;
     prevVisibleNamesRef.current = visibleNames;
+    const structuralChange =
+      prevAllNamesKeyRef.current !== null &&
+      prevAllNamesKeyRef.current !== allNamesKey;
+    prevAllNamesKeyRef.current = allNamesKey;
 
-    if (skipScrollRef.current) {
-      skipScrollRef.current = false;
-      return;
-    }
+    if (firstRun) return; // mount: semeia os refs e não rola
+    if (structuralChange) return; // add/remove de campo (schema), não resposta
     if (readOnly) return;
 
     const newIdx = visibleFields.findIndex(
