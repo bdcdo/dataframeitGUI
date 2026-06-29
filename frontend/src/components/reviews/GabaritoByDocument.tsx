@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useGabaritoFilters } from "@/hooks/useGabaritoFilters";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -42,12 +43,20 @@ export function GabaritoByDocument({
   fields,
   projectId,
 }: GabaritoByDocumentProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [includeStale, setIncludeStale] = useState(true);
-  const [fieldFilter, setFieldFilter] = useState("all");
-  const [respondentFilter, setRespondentFilter] = useState("all");
-  const [onlyErrors, setOnlyErrors] = useState(false);
-  const [page, setPage] = useState(0);
+  const {
+    searchQuery,
+    setSearchQuery,
+    includeStale,
+    setIncludeStale,
+    fieldFilter,
+    setFieldFilter,
+    respondentFilter,
+    setRespondentFilter,
+    onlyErrors,
+    setOnlyErrors,
+    page,
+    setPage,
+  } = useGabaritoFilters();
 
   const allRespondents = useMemo(() => {
     const map = new Map<string, { name: string; type: "humano" | "llm" }>();

@@ -27,14 +27,13 @@ import { LayoutGrid, Code, Rocket, Info, X, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SchemaBuilderGUI } from "./SchemaBuilderGUI";
 import { ValidationErrorPanel } from "./ValidationErrorPanel";
+import { useSchemaEditorUI } from "@/hooks/useSchemaEditorUI";
 import type { PydanticField } from "@/lib/types";
 
 const MonacoEditor = dynamic(
   () => import("@monaco-editor/react").then((m) => m.default),
   { ssr: false }
 );
-
-const VERSIONING_HELP_KEY = "schema-versioning-help-dismissed";
 
 interface SchemaEditorProps {
   projectId: string;
@@ -72,21 +71,17 @@ export function SchemaEditor({
           : initialCode || "",
     [mode, fields, initialCode],
   );
-  const [guiErrors, setGuiErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
-  const [majorDialogOpen, setMajorDialogOpen] = useState(false);
-  const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
-  const [helpDismissed, setHelpDismissed] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem(VERSIONING_HELP_KEY) === "1";
-  });
-
-  const dismissHelp = () => {
-    setHelpDismissed(true);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(VERSIONING_HELP_KEY, "1");
-    }
-  };
+  const {
+    guiErrors,
+    setGuiErrors,
+    majorDialogOpen,
+    setMajorDialogOpen,
+    backfillDialogOpen,
+    setBackfillDialogOpen,
+    helpDismissed,
+    dismissHelp,
+  } = useSchemaEditorUI();
 
   const handlePublishMajor = () => {
     startTransition(async () => {

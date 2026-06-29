@@ -197,8 +197,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                         <Tooltip>
                           <TooltipTrigger asChild>{cell}</TooltipTrigger>
                           <TooltipContent side="top" className="text-xs">
-                            {tooltipParts.map((p, i) => (
-                              <div key={i}>{p}</div>
+                            {tooltipParts.map((p) => (
+                              <div key={p}>{p}</div>
                             ))}
                           </TooltipContent>
                         </Tooltip>

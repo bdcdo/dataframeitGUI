@@ -73,7 +73,7 @@ export function ValidationErrorPanel({
       <CardContent className="pt-0">
         <ul className="list-disc space-y-1 pl-5 text-sm text-foreground select-text">
           {errors.map((err, i) => (
-            <li key={i} className="leading-snug">
+            <li key={`${err}|${i}`} className="leading-snug">
               {err}
             </li>
           ))}

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
+import { useDocumentsPageState } from "@/hooks/useDocumentsPageState";
 import { useRouter, usePathname } from "next/navigation";
 import { DocumentList, type DocumentSummary } from "@/components/documents/DocumentList";
 import { DocumentPreview } from "@/components/documents/DocumentPreview";
@@ -36,10 +37,6 @@ interface DocumentsPageClientProps {
   showExcluded?: boolean;
 }
 
-type ExcludeTarget = { ids: string[]; totalResponses: number };
-type RestoreTarget = { ids: string[] };
-type HardDeleteTarget = { ids: string[] };
-
 export function DocumentsPageClient({
   documents,
   projectId,
@@ -48,13 +45,20 @@ export function DocumentsPageClient({
   const { push } = useRouter();
   const pathname = usePathname();
 
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [excludeTarget, setExcludeTarget] = useState<ExcludeTarget | null>(null);
-  const [excludeReason, setExcludeReason] = useState("");
-  const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null);
-  const [hardDeleteTarget, setHardDeleteTarget] =
-    useState<HardDeleteTarget | null>(null);
+  const {
+    selectedDocId,
+    setSelectedDocId,
+    selectedIds,
+    setSelectedIds,
+    excludeTarget,
+    setExcludeTarget,
+    excludeReason,
+    setExcludeReason,
+    restoreTarget,
+    setRestoreTarget,
+    hardDeleteTarget,
+    setHardDeleteTarget,
+  } = useDocumentsPageState();
   const [isPending, startTransition] = useTransition();
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;

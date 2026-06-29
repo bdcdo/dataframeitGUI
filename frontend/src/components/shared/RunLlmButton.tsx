@@ -14,6 +14,11 @@ interface RunLlmButtonProps {
   variant?: "ghost" | "outline" | "default";
 }
 
+interface LlmStatusResponse {
+  status: string;
+  errors: string[];
+}
+
 export function RunLlmButton({
   projectId,
   documentId,
@@ -42,10 +47,9 @@ export function RunLlmButton({
       const poll = async () => {
         if (cancelledRef.current) return;
         try {
-          const status = await fetchFastAPI<{
-            status: string;
-            errors: string[];
-          }>(`/api/llm/status/${jobId}`);
+          const status = await fetchFastAPI<LlmStatusResponse>(
+            `/api/llm/status/${jobId}`,
+          );
 
           if (cancelledRef.current) return;
 

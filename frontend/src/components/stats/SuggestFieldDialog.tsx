@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
+import { useSuggestFieldState } from "@/hooks/useSuggestFieldState";
 import {
   Dialog,
   DialogContent,
@@ -44,21 +45,17 @@ export function SuggestFieldDialog({
 }: SuggestFieldDialogProps) {
   const { refresh } = useRouter();
   const field = allFields.find((f) => f.name === fieldName);
-  const [description, setDescription] = useState(field?.description ?? "");
-  const [helpText, setHelpText] = useState(field?.help_text ?? "");
-  const [options, setOptions] = useState<string[]>(field?.options ?? []);
-  const [reason, setReason] = useState("");
   const [isSaving, startSave] = useTransition();
-
-  const [prevFieldName, setPrevFieldName] = useState(fieldName);
-  if (fieldName !== prevFieldName) {
-    setPrevFieldName(fieldName);
-    const f = allFields.find((ff) => ff.name === fieldName);
-    setDescription(f?.description ?? "");
-    setHelpText(f?.help_text ?? "");
-    setOptions(f?.options ?? []);
-    setReason("");
-  }
+  const {
+    description,
+    setDescription,
+    helpText,
+    setHelpText,
+    options,
+    setOptions,
+    reason,
+    setReason,
+  } = useSuggestFieldState(fieldName, allFields);
 
   if (!field) return null;
 

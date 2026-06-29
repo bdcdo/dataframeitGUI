@@ -31,6 +31,11 @@ import type {
   LlmError,
   ReviewedEntry,
 } from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
+import {
+  useLlmInsightsFilters,
+  type DatePreset,
+  type SortBy,
+} from "@/hooks/useLlmInsightsFilters";
 
 interface LlmInsightsViewProps {
   projectId: string;
@@ -44,9 +49,6 @@ interface LlmInsightsViewProps {
     unreviewedLlmDocs?: number;
   };
 }
-
-type DatePreset = "all" | "24h" | "7d" | "30d";
-type SortBy = "default" | "field" | "document" | "recent";
 
 function presetCutoffMs(preset: DatePreset, now: number): number | null {
   if (preset === "24h") return now - 24 * 3600_000;
@@ -103,13 +105,22 @@ export function LlmInsightsView({
   }
 
   // Error filters
-  const [errorFieldFilter, setErrorFieldFilter] = useState("all");
-  const [errorSearchQuery, setErrorSearchQuery] = useState("");
-  const [errorStatusFilter, setErrorStatusFilter] = useState("open");
-  const [errorDateFilter, setErrorDateFilter] = useState<DatePreset>("all");
-  const [errorSinceDate, setErrorSinceDate] = useState("");
-  const [errorVersionFilter, setErrorVersionFilter] = useState("all");
-  const [sortBy, setSortBy] = useState<SortBy>("default");
+  const {
+    errorFieldFilter,
+    setErrorFieldFilter,
+    errorSearchQuery,
+    setErrorSearchQuery,
+    errorStatusFilter,
+    setErrorStatusFilter,
+    errorDateFilter,
+    setErrorDateFilter,
+    errorSinceDate,
+    setErrorSinceDate,
+    errorVersionFilter,
+    setErrorVersionFilter,
+    sortBy,
+    setSortBy,
+  } = useLlmInsightsFilters();
 
   // Tick the "now" reference once a minute so the "Últimas 24h/7d/30d"
   // cutoff doesn't freeze on long-open pages. State (rather than a raw

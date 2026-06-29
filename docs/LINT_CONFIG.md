@@ -110,6 +110,18 @@ A supressão é **inline e por linha** — `// react-doctor-disable-next-line re
 
 O segundo `async-await-in-loop` que existia no mesmo arquivo (o loop de `checkDuplicates`) **não** foi suprimido: como os chunks de hash são independentes e a agregação é comutativa, foi paralelizado de fato (#254, Onda 4) — com teto de concorrência via `mapWithConcurrency` (`src/lib/upload-chunking.ts`, limite `MAX_HASH_CHECK_CONCURRENCY = 6`), para que um CSV gigante não dispare centenas de Server Actions de uma vez. Se o progresso sequencial deixar de ser necessário e a revalidação migrar para fora do loop, remover esta supressão e paralelizar o upload também.
 
+## `prefer-module-scope-pure-function` suprimida em `compare/AutoReviewPage.tsx`
+
+A regra `react-doctor/prefer-module-scope-pure-function` (Maintainability) acusa, em `src/components/auto-review/AutoReviewPage.tsx`, o callback do `useMemo` que constrói `docListEntries` (`() => docs.map((d) => { ... })`). A função **não é pura para o escopo de módulo**: ela captura `docs`, `choices`, `justifications` e os helpers `choiceKey`/`isAutoReviewFieldDecided` do escopo do componente. Já está corretamente memoizada via `useMemo` com essas deps — movê-la para o módulo exigiria passar tudo por parâmetro, sem ganho. FP heurístico (a regra não distingue um factory de `useMemo` que fecha sobre estado de uma função realmente pura). Override **por arquivo** (avaliado na #238, Onda 5).
+
+Se a heurística passar a reconhecer factories de `useMemo`, remover o override.
+
+## `no-many-boolean-props` + `prefer-explicit-variants` suprimidas em `compare/ComparisonPanel.tsx`
+
+`ComparisonPanel` é genuinamente **multi-estado**, não um componente com variantes implícitas a desdobrar. As 5 props boolean (`isDivergent`, `isDocComplete`, `hasNextDoc`, `allowEquivalence`, `canManageAnyPair`) não são combinações de uma única dimensão de estilo: `isDivergent` e `isDocComplete` são discriminadores de layout independentes (parecer divergente com inputs vs. concordante read-only; rodapé de documento concluído), `hasNextDoc` é subordinado a `isDocComplete`, e `allowEquivalence`/`canManageAnyPair` repassam direto para filhos (`AgreementGroup`, `MultiOptionReview`). Tentar codificá-las como `variant`/discriminated union explodiria em 4+ casos cruzados e pioraria a legibilidade sem invariante real a ganhar. As regras `react-doctor/no-many-boolean-props` e `react-doctor/prefer-explicit-variants` (Maintainability) são FP de design aqui. Override **por arquivo** (avaliado na #238, Onda 5).
+
+> `compare/AnswerCard.tsx` **não** foi suprimida: lá 4 dos 6 booleans são afordâncias de equivalência acopladas (`selectable`/`selected`/`showGabarito`/`isGabarito`) que se beneficiam de uma discriminated union `equivalenceMode`. Esse refactor toca a UI de Comparação e ficou **deferido** em sub-issue de #238.
+
 ## Regras que deixaram de ser FP
 
 `server-no-mutable-module-state` deixou de ser FP após o uso de `Object.freeze()` em `TAG_PROFILE` (ver `actions/documents.ts` e `actions/members.ts`) e em `AUTOMATION_MODE_VALUES` (`actions/projects.ts`).

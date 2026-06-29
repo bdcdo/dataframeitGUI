@@ -21,6 +21,11 @@ interface FieldChangeDiffProps {
   defaultExpanded?: boolean;
 }
 
+const SUBFIELD_RULE_LABELS: Record<string, string> = {
+  all: "Todos obrigatórios",
+  at_least_one: "Pelo menos um",
+};
+
 export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDiffProps) {
   const kind = detectFieldChangeKind(entry);
   const diffs = diffPydanticField(entry.beforeValue, entry.afterValue);
@@ -222,15 +227,11 @@ function PropertyDiff({ diff }: { diff: FieldPropertyDiff }) {
     );
   }
   if (diff.property === "subfield_rule") {
-    const map: Record<string, string> = {
-      all: "Todos obrigatórios",
-      at_least_one: "Pelo menos um",
-    };
     return (
       <DiffSection label={label}>
         <PillDiff
-          before={map[diff.before as string] ?? "—"}
-          after={map[diff.after as string] ?? "—"}
+          before={SUBFIELD_RULE_LABELS[diff.before as string] ?? "—"}
+          after={SUBFIELD_RULE_LABELS[diff.after as string] ?? "—"}
         />
       </DiffSection>
     );

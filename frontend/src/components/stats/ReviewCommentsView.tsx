@@ -32,6 +32,7 @@ import {
   reopenProjectComment,
 } from "@/actions/project-comments";
 import { toast } from "sonner";
+import { useReviewCommentsFilters } from "@/hooks/useReviewCommentsFilters";
 import type { PydanticField } from "@/lib/types";
 
 interface ReviewCommentsViewProps {
@@ -76,10 +77,16 @@ export function ReviewCommentsView({
 }: ReviewCommentsViewProps) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [fieldFilter, setFieldFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("open");
-  const [verdictFilter, setVerdictFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const {
+    fieldFilter,
+    setFieldFilter,
+    statusFilter,
+    setStatusFilter,
+    verdictFilter,
+    setVerdictFilter,
+    searchQuery,
+    setSearchQuery,
+  } = useReviewCommentsFilters();
   const [editingField, setEditingField] = useState<string | null>(null);
   const [pendingSuggestion, setPendingSuggestion] =
     useState<PendingSuggestion | null>(null);

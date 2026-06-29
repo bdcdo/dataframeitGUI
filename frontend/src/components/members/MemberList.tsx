@@ -1,6 +1,7 @@
 "use client";
 
 import { useOptimistic, useState, useTransition } from "react";
+import { useMemberListState } from "@/hooks/useMemberListState";
 import {
   removeMember,
   changeRole,
@@ -9,7 +10,6 @@ import {
   setCanCompare,
   updatePendingMemberEmail,
   unlinkMemberEmail,
-  type UnificationPreview,
 } from "@/actions/members";
 import { LinkEmailDialog } from "@/components/members/LinkEmailDialog";
 import { UnifyMembersDialog } from "@/components/members/UnifyMembersDialog";
@@ -120,17 +120,22 @@ export function MemberList({
   // action retornar, mas o outro Switch da mesma linha e os Switches das demais
   // linhas continuam interativos. Coordenador habilitando 4 membros em
   // sequência não precisa esperar serializar.
-  const [pendingArbitrateId, setPendingArbitrateId] = useState<string | null>(null);
-  const [pendingResolveId, setPendingResolveId] = useState<string | null>(null);
-  const [pendingCompareId, setPendingCompareId] = useState<string | null>(null);
-  const [editingEmailMemberId, setEditingEmailMemberId] = useState<string | null>(null);
   // Vínculo de e-mails (US2): um único par de dialogs no root, dirigido pelo
   // membro selecionado / preview de unificação retornado pela action.
-  const [linkingMember, setLinkingMember] = useState<MemberRow | null>(null);
-  const [unify, setUnify] = useState<{
-    preview: UnificationPreview;
-    targetName: string;
-  } | null>(null);
+  const {
+    pendingArbitrateId,
+    setPendingArbitrateId,
+    pendingResolveId,
+    setPendingResolveId,
+    pendingCompareId,
+    setPendingCompareId,
+    editingEmailMemberId,
+    setEditingEmailMemberId,
+    linkingMember,
+    setLinkingMember,
+    unify,
+    setUnify,
+  } = useMemberListState();
   const [, startTransition] = useTransition();
 
   const linksByMember = new Map<string, MemberEmailLink[]>();

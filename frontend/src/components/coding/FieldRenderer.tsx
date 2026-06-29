@@ -35,6 +35,18 @@ const isOtherValue = (v: unknown): v is string =>
   typeof v === "string" && v.startsWith(OTHER_PREFIX);
 const otherText = (v: string) => v.slice(OTHER_PREFIX.length);
 
+// Pure handler (no closure over component state): jump focus to the previous
+// date part when Backspace is pressed on an empty input.
+function handleBackspaceJump(
+  e: React.KeyboardEvent<HTMLInputElement>,
+  previousRef: React.RefObject<HTMLInputElement | null>,
+) {
+  if (e.key === "Backspace" && e.currentTarget.value === "") {
+    e.preventDefault();
+    previousRef.current?.focus();
+  }
+}
+
 function DateFieldRenderer({
   value,
   onChange,
@@ -111,16 +123,6 @@ function DateFieldRenderer({
     if (target === "month") monthRef.current?.focus();
     else if (target === "year") yearRef.current?.focus();
   }, [parts]);
-
-  const handleBackspaceJump = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    previousRef: React.RefObject<HTMLInputElement | null>,
-  ) => {
-    if (e.key === "Backspace" && e.currentTarget.value === "") {
-      e.preventDefault();
-      previousRef.current?.focus();
-    }
-  };
 
   const handleBlur = (part: "day" | "month") => {
     const idx = part === "day" ? 0 : 1;

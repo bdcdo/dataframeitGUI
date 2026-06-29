@@ -225,11 +225,11 @@ export function ExportPanel({
               </tr>
             </thead>
             <tbody>
-              {previewRows.map((row, i) => (
-                <tr key={i} className="border-b last:border-0">
+              {previewRows.map((row) => (
+                <tr key={row.join("|")} className="border-b last:border-0">
                   {row.map((cell, j) => (
                     <td
-                      key={j}
+                      key={currentHeaders[j] ?? `col-${j}`}
                       className="max-w-48 truncate px-2 py-1.5 whitespace-nowrap"
                       title={cell}
                     >

@@ -46,6 +46,19 @@
         "rules": [
           "react-doctor/supabase-table-missing-rls"
         ]
+      },
+      {
+        "files": ["src/components/auto-review/AutoReviewPage.tsx"],
+        "rules": [
+          "react-doctor/prefer-module-scope-pure-function"
+        ]
+      },
+      {
+        "files": ["src/components/compare/ComparisonPanel.tsx"],
+        "rules": [
+          "react-doctor/no-many-boolean-props",
+          "react-doctor/prefer-explicit-variants"
+        ]
       }
     ]
   },

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
+import { useRulesFormState } from "@/hooks/useRulesFormState";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { updateProject } from "@/actions/projects";
@@ -44,12 +45,26 @@ export function RulesForm({
 }: RulesFormProps) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [rule, setRule] = useState(resolutionRule);
-  const [min, setMin] = useState(minResponses);
-  const [allowReview, setAllowReview] = useState(allowResearcherReview);
-  const [mode, setMode] = useState<AutomationMode>(automationMode);
-  const [includesLlm, setIncludesLlm] = useState(comparisonIncludesLlm);
-  const [saved, setSaved] = useState(false);
+  const {
+    rule,
+    setRule,
+    min,
+    setMin,
+    allowReview,
+    setAllowReview,
+    mode,
+    setMode,
+    includesLlm,
+    setIncludesLlm,
+    saved,
+    setSaved,
+  } = useRulesFormState({
+    resolutionRule,
+    minResponses,
+    allowResearcherReview,
+    automationMode,
+    comparisonIncludesLlm,
+  });
 
   const modeMeta = AUTOMATION_MODES.find((m) => m.value === mode);
 
