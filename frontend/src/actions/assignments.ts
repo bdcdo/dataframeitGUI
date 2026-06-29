@@ -495,37 +495,23 @@ export async function smartRandomize(params: LotteryParams) {
     );
   }
 
-  // Pendentes do tipo só são descartadas no modo substituir.
-  // Delete + inserts não são atômicos (sem transação via PostgREST) —
-  // os erros são verificados e expostos, mas uma falha entre o delete e
-  // os inserts ainda perde pendentes; transação via RPC é follow-up.
-  if (params.mode === "replace") {
-    const { error: deleteError } = await supabase
-      .from("assignments")
-      .delete()
-      .eq("project_id", params.projectId)
-      .eq("status", "pendente")
-      .eq("type", assignmentType);
-    if (deleteError) {
-      throw new Error(`Erro ao descartar atribuições pendentes: ${deleteError.message}`);
-    }
-  }
-
-  const chunkSize = 100;
-  for (let i = 0; i < newAssignments.length; i += chunkSize) {
-    const chunk = newAssignments.slice(i, i + chunkSize).map((a) => ({
-      project_id: params.projectId,
-      document_id: a.document_id,
-      user_id: a.user_id,
-      batch_id: batch.id,
-      type: assignmentType,
-    }));
-    const { error: insertError } = await supabase.from("assignments").insert(chunk);
-    if (insertError) {
-      throw new Error(
-        `Erro ao gravar as atribuições (${i} de ${newAssignments.length} inseridas): ${insertError.message}`
-      );
-    }
+  // Descarte das pendentes (modo substituir) + gravação das novas numa
+  // transação única via RPC (issue #181): uma falha entre o delete e o insert
+  // não perde mais as pendentes. SECURITY INVOKER — a RLS do coordenador vale
+  // dentro da função. Dispensa o chunk de 100 (era limite de payload PostgREST).
+  const assignmentRows = newAssignments.map((a) => ({
+    document_id: a.document_id,
+    user_id: a.user_id,
+  }));
+  const { error: rpcError } = await supabase.rpc("apply_lottery_assignments", {
+    p_project_id: params.projectId,
+    p_type: assignmentType,
+    p_batch_id: batch.id,
+    p_assignments: assignmentRows,
+    p_replace: params.mode === "replace",
+  });
+  if (rpcError) {
+    throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
   }
 
   // Persiste o peso/limite usado por participante (decisão: editar no diálogo,

@@ -300,84 +300,50 @@ export async function uploadDocuments(
     // Update existing duplicates + insert new ones
     const existingDocIds = duplicateMap.map((d) => d.existingDocId);
 
-    if (options?.deleteResponses && existingDocIds.length > 0) {
-      // Fail-loud: cada passo checa erro e aborta. A sequencia NAO e atomica (um
-      // delete pode ter ocorrido antes de outro falhar) — o hook avisa o usuario
-      // que respostas/revisoes podem ja ter sido removidas. Atomicidade real
-      // depende do RPC transacional (issue #284).
-
-      // Delete reviews first (FK chosen_response_id -> responses without CASCADE)
-      const { error: delReviewsErr } = await supabase
-        .from("reviews")
-        .delete()
-        .eq("project_id", projectId)
-        .in("document_id", existingDocIds);
-      if (delReviewsErr) return { error: delReviewsErr.message };
-
-      // Then delete responses
-      const { error: delResponsesErr } = await supabase
-        .from("responses")
-        .delete()
-        .eq("project_id", projectId)
-        .in("document_id", existingDocIds);
-      if (delResponsesErr) return { error: delResponsesErr.message };
-
-      // Reset assignments to 'pendente'
-      const { error: resetAssignErr } = await supabase
-        .from("assignments")
-        .update({ status: "pendente" })
-        .eq("project_id", projectId)
-        .in("document_id", existingDocIds);
-      if (resetAssignErr) return { error: resetAssignErr.message };
-    }
-
-    // Batch update duplicate documents (avoid N+1)
-    if (duplicateMap.length > 0) {
-      // Checa o erro de cada update: setar external_id num doc casado por
-      // text_hash pode colidir com outro doc ativo e violar o indice unico
-      // parcial (23505). Sem isso o erro seria resolvido e ignorado em silencio
-      // (o doc nao seria atualizado mas contaria como processado).
-      const updateResults = await Promise.all(
-        duplicateMap.map((dup) => {
-          const doc = documents[dup.csvIndex];
-          return supabase
-            .from("documents")
-            .update({
-              text: doc.text,
-              title: doc.title || null,
-              external_id: doc.external_id || null,
-              text_hash: md5(doc.text),
-              metadata: doc.metadata || null,
-            })
-            .eq("id", dup.existingDocId);
-        })
-      );
-      const failedUpdate = updateResults.find((r) => r.error);
-      if (failedUpdate?.error) return { error: failedUpdate.error.message };
-    }
-
-    // Insert new (non-duplicate) documents
-    const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
-    let skipped = 0;
-    if (newDocs.length > 0) {
-      const baseRows = newDocs.map((doc) => ({
-        project_id: projectId,
-        external_id: doc.external_id || null,
-        title: doc.title || null,
+    // Payload de atualização dos duplicados (text_hash precomputado, igual ao
+    // INSERT abaixo). Setar external_id num doc casado por text_hash pode colidir
+    // com outro doc ativo e violar o indice unico parcial (23505) — dentro da
+    // transação isso faz ROLLBACK de tudo, em vez de deixar estado parcial.
+    const duplicateUpdates = duplicateMap.map((dup) => {
+      const doc = documents[dup.csvIndex];
+      return {
+        id: dup.existingDocId,
         text: doc.text,
+        title: doc.title || null,
+        external_id: doc.external_id || null,
         text_hash: md5(doc.text),
         metadata: doc.metadata || null,
-      }));
-      // Defesa contra o indice unico (duplicateMap stale / repeticao no lote).
-      const { rows, skippedExisting, skippedInBatch } =
-        await filterActiveExternalIdConflicts(supabase, projectId, baseRows);
-      skipped = skippedExisting + skippedInBatch;
+      };
+    });
 
-      if (rows.length > 0) {
-        const { error } = await supabase.from("documents").insert(rows);
-        if (error) return { error: error.message };
-      }
-    }
+    // Novos (não-duplicados) + defesa read-only contra o indice unico parcial
+    // (duplicateMap stale / repeticao no lote). O filtro roda no TS por ser só
+    // leitura; o rollback atômico continua dentro da RPC.
+    const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
+    const baseRows = newDocs.map((doc) => ({
+      external_id: doc.external_id || null,
+      title: doc.title || null,
+      text: doc.text,
+      text_hash: md5(doc.text),
+      metadata: doc.metadata || null,
+    }));
+    const { rows, skippedExisting, skippedInBatch } =
+      await filterActiveExternalIdConflicts(supabase, projectId, baseRows);
+    const skipped = skippedExisting + skippedInBatch;
+
+    // Transação única (issue #284): delete reviews/responses + reset assignments
+    // + update duplicados + insert novos. Falha em qualquer passo faz ROLLBACK
+    // de tudo — respostas/revisões não ficam apagadas sem o upload concluir.
+    // SECURITY INVOKER: a RLS do coordenador (braço coordinator_or_creator nas
+    // policies de responses/reviews) continua valendo dentro da função.
+    const { error } = await supabase.rpc("replace_and_add_documents", {
+      p_project_id: projectId,
+      p_existing_doc_ids: existingDocIds,
+      p_delete_responses: !!options?.deleteResponses,
+      p_duplicate_updates: duplicateUpdates,
+      p_new_documents: rows,
+    });
+    if (error) return { error: error.message };
 
     if (revalidate) await revalidateProjectDocumentsCache(projectId);
     return { count: documents.length - skipped, skipped };

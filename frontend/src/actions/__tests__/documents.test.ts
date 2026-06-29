@@ -9,12 +9,16 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // consome o 1o item.
 import {
   makeSupabaseMock,
+  type TableResult,
   type TableResults,
   type WriteCall,
+  type RpcCall,
 } from "./supabase-mock";
 
 let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
 let serverTableResults: TableResults | undefined;
+let serverRpcResults: Record<string, TableResult> | undefined;
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
@@ -26,12 +30,19 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
+    makeSupabaseMock({
+      tableResults: serverTableResults,
+      writeCalls,
+      rpcCalls,
+      rpcResults: serverRpcResults,
+    }),
 }));
 
 beforeEach(() => {
   writeCalls = [];
+  rpcCalls = [];
   serverTableResults = undefined;
+  serverRpcResults = undefined;
 });
 
 async function loadUpload() {
@@ -174,18 +185,67 @@ describe("uploadDocuments — contagem em add_new_only", () => {
   });
 });
 
-describe("uploadDocuments — replace_and_add propaga erro de UPDATE", () => {
-  it("retorna error quando o UPDATE viola o indice unico (23505)", async () => {
-    // 1a query em documents = o UPDATE do duplicado, que falha com 23505.
-    serverTableResults = {
-      documents: [
-        {
-          error: {
-            message: "duplicate key value violates unique constraint",
-            code: "23505",
-          },
-        },
+describe("uploadDocuments — replace_and_add delega à RPC transacional", () => {
+  // O caminho replace_and_add deixou de fazer 5 chamadas PostgREST separadas
+  // (delete reviews/responses + reset assignments + update duplicados + insert)
+  // e passou a chamar a RPC replace_and_add_documents, que roda os 5 passos numa
+  // transação (issue #284 — falha parcial não apaga respostas/revisões). O
+  // pré-filtro read-only de external_id (SELECT em documents) continua no TS.
+  function rpcArgs(): Record<string, unknown> {
+    const call = rpcCalls.find((c) => c.fn === "replace_and_add_documents");
+    return (call?.args as Record<string, unknown>) ?? {};
+  }
+
+  it("chama a RPC com dup + novo e não emite writes diretos", async () => {
+    // O filtro do novo doc consulta documents (SELECT, sem conflito ativo).
+    serverTableResults = { documents: [{ data: [] }] };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "casa por hash com doc existente" },
+        { external_id: "DOC-2", text: "novo" },
       ],
+      false,
+      {
+        mode: "replace_and_add",
+        deleteResponses: true,
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "text_hash" },
+        ],
+      },
+    );
+
+    expect(r.error).toBeUndefined();
+    expect(r.count).toBe(2);
+    expect(r.skipped).toBe(0);
+
+    // Uma única RPC com o payload transacional; nenhum delete/update/insert solto.
+    expect(rpcCalls).toHaveLength(1);
+    expect(writeCalls).toHaveLength(0);
+
+    const args = rpcArgs();
+    expect(args.p_existing_doc_ids).toEqual(["id-1"]);
+    expect(args.p_delete_responses).toBe(true);
+    expect(args.p_duplicate_updates).toHaveLength(1);
+    expect((args.p_duplicate_updates as { id: string }[])[0].id).toBe("id-1");
+    expect((args.p_duplicate_updates as { text_hash: string }[])[0].text_hash)
+      .toBeTruthy();
+    expect(args.p_new_documents).toHaveLength(1);
+    expect((args.p_new_documents as { external_id: string }[])[0].external_id)
+      .toBe("DOC-2");
+  });
+
+  it("propaga o erro da RPC (ex.: 23505) sem fallout parcial", async () => {
+    // newDocs vazio (o único doc é duplicado) -> sem SELECT de filtro; só a RPC.
+    serverRpcResults = {
+      replace_and_add_documents: {
+        error: {
+          message: "duplicate key value violates unique constraint",
+          code: "23505",
+        },
+      },
     };
     const uploadDocuments = await loadUpload();
 
@@ -195,6 +255,7 @@ describe("uploadDocuments — replace_and_add propaga erro de UPDATE", () => {
       false,
       {
         mode: "replace_and_add",
+        deleteResponses: true,
         duplicateMap: [
           { csvIndex: 0, existingDocId: "id-1", matchType: "text_hash" },
         ],
@@ -202,40 +263,19 @@ describe("uploadDocuments — replace_and_add propaga erro de UPDATE", () => {
     );
 
     expect(r.error).toContain("duplicate key");
-    // O INSERT nao deve acontecer apos o erro do UPDATE.
-    expect(
-      writeCalls.some((c) => c.table === "documents" && c.op === "insert"),
-    ).toBe(false);
+    // Nenhuma escrita direta — a atomicidade (rollback) é responsabilidade da RPC.
+    expect(writeCalls).toHaveLength(0);
+    expect(rpcCalls).toHaveLength(1);
   });
 });
 
-describe("uploadDocuments — replace_and_add fail-loud nos deletes", () => {
-  it("retorna error quando o delete de responses falha (não segue para update/insert)", async () => {
-    // reviews.delete (sem entrada → ok), responses.delete → erro. A action deve
-    // abortar com {error} antes de tocar documents (update dos duplicados/insert).
-    serverTableResults = {
-      responses: [{ error: { message: "delete de responses falhou" } }],
-    };
-    const uploadDocuments = await loadUpload();
-
-    const r = await uploadDocuments(
-      "proj-1",
-      [{ external_id: "DOC-1", text: "substitui" }],
-      false,
-      {
-        mode: "replace_and_add",
-        deleteResponses: true,
-        duplicateMap: [
-          { csvIndex: 0, existingDocId: "id-1", matchType: "external_id" },
-        ],
-      },
-    );
-
-    expect(r.error).toContain("delete de responses falhou");
-    // Falha silenciosa evitada: não chega ao UPDATE/INSERT de documents.
-    expect(writeCalls.some((c) => c.table === "documents")).toBe(false);
-  });
-});
+// Nota (merge da main / #287): o describe "replace_and_add fail-loud nos
+// deletes" testava o caminho antigo de DELETEs PostgREST separados, abortando
+// passo a passo. Esse caminho foi substituído pela RPC transacional
+// (replace_and_add_documents): uma falha em qualquer passo faz ROLLBACK de tudo.
+// A intenção — falha não deixa estado parcial — está coberta por "propaga o erro
+// da RPC (ex.: 23505) sem fallout parcial" acima e pelo teste SQL de rollback
+// (supabase/tests/atomic_replace_rpcs.test.sql).
 
 describe("checkDuplicates — propaga erro de query (não engole silenciosamente)", () => {
   it("lança quando a query por external_id falha", async () => {

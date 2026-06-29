@@ -15,6 +15,11 @@ export type WriteCall = {
   payload: unknown;
 };
 
+export type RpcCall = {
+  fn: string;
+  args: unknown;
+};
+
 export type TableResult = {
   data?: unknown;
   error?: { message: string; code?: string } | null;
@@ -27,9 +32,25 @@ export function makeSupabaseMock(opts?: {
   tableResults?: TableResults;
   defaultResult?: TableResult;
   writeCalls?: WriteCall[];
+  rpcCalls?: RpcCall[];
+  rpcResults?: Record<string, TableResult>;
 }) {
-  const { tableResults, defaultResult, writeCalls } = opts ?? {};
+  const { tableResults, defaultResult, writeCalls, rpcCalls, rpcResults } =
+    opts ?? {};
   return {
+    // rpc(): registra a chamada e resolve { data, error } como o thenable das
+    // queries. Resultado por função em `rpcResults`; sem entrada, sucesso vazio.
+    rpc: (fn: string, args: unknown) => {
+      rpcCalls?.push({ fn, args });
+      const result = rpcResults?.[fn];
+      return {
+        then: (resolve: (v: unknown) => unknown) =>
+          resolve({
+            data: result?.data ?? null,
+            error: result?.error ?? null,
+          }),
+      };
+    },
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
       for (const m of [
