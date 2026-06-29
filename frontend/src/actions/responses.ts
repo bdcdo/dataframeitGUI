@@ -3,7 +3,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
-import { isFieldVisible } from "@/lib/conditional";
+import { dropHiddenConditionals } from "@/lib/conditional";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { createAutoReviewIfDiverges } from "@/lib/auto-review";
 import { createAutoComparisonIfDiverges } from "@/lib/auto-comparison";
@@ -77,13 +77,9 @@ export async function saveResponse(
 
     // Drop values of fields whose visibility condition is not satisfied —
     // prevents orphaned answers from earlier trigger values ending up in the
-    // persisted payload.
-    const sanitizedAnswers: Record<string, unknown> = { ...answers };
-    for (const f of fields) {
-      if (f.condition && !isFieldVisible(f, sanitizedAnswers)) {
-        delete sanitizedAnswers[f.name];
-      }
-    }
+    // persisted payload. Ponto-fixo compartilhado com o clean de leitura
+    // (getDocumentForCoding / code/page.tsx) — ver #252.
+    const sanitizedAnswers = dropHiddenConditionals(fields, answers);
 
     const roundIdToPersist =
       project?.round_strategy === "manual"

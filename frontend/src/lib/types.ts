@@ -295,3 +295,13 @@ export interface SchemaChangeEntry {
   changeType: SchemaChangeType | null;
   version: { major: number; minor: number; patch: number } | null;
 }
+
+// Configuração de execução do LLM (projects.llm_provider / llm_model /
+// llm_kwargs). Compartilhada pela orquestração `LlmConfigurePane` e pelos cards
+// `ModelConfigCard`/`RunCard` — tipo único aqui evita drift ao adicionar um
+// kwarg estrutural novo.
+export interface LlmConfig {
+  llm_provider: string;
+  llm_model: string;
+  llm_kwargs: Record<string, unknown>;
+}

@@ -1,18 +1,28 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getProjectAccessContext,
+  isProjectCoordinator,
+} from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
+import { dropHiddenConditionals } from "@/lib/conditional";
+import type { PydanticField } from "@/lib/types";
 
-interface DocumentRow {
+export interface DocumentRow {
   external_id?: string;
   title?: string;
   text: string;
   metadata?: Record<string, unknown>;
 }
+
+// Single source of truth for the CSV-upload row shape (subset of DocumentRow,
+// without the server-added `metadata`). The client hook imports this type.
+export type UploadDoc = Pick<DocumentRow, "text" | "title" | "external_id">;
 
 function md5(text: string): string {
   return createHash("md5").update(text).digest("hex");
@@ -49,7 +59,7 @@ export async function checkDuplicates(
   // 1. Match by external_id (excluidos sao ignorados — re-upload de doc
   //    excluido por engano cria um novo registro normal)
   if (externalIds.length > 0) {
-    const { data: byExtId } = await supabase
+    const { data: byExtId, error: byExtIdErr } = await supabase
       .from("documents")
       .select("id, external_id")
       .eq("project_id", projectId)
@@ -57,6 +67,10 @@ export async function checkDuplicates(
       .in(
         "external_id",
         externalIds.map((e) => e.id!)
+      );
+    if (byExtIdErr)
+      throw new Error(
+        `Falha ao verificar duplicatas por ID externo: ${byExtIdErr.message}`,
       );
 
     if (byExtId) {
@@ -82,12 +96,16 @@ export async function checkDuplicates(
 
   if (unmatchedHashes.length > 0) {
     const uniqueHashes = [...new Set(unmatchedHashes.map((h) => h.hash))];
-    const { data: byHash } = await supabase
+    const { data: byHash, error: byHashErr } = await supabase
       .from("documents")
       .select("id, text_hash")
       .eq("project_id", projectId)
       .is("excluded_at", null)
       .in("text_hash", uniqueHashes);
+    if (byHashErr)
+      throw new Error(
+        `Falha ao verificar duplicatas por hash de conteúdo: ${byHashErr.message}`,
+      );
 
     if (byHash) {
       const hashMap = new Map(byHash.map((d) => [d.text_hash, d.id]));
@@ -108,11 +126,15 @@ export async function checkDuplicates(
   let duplicatesWithResponses = 0;
   if (duplicates.length > 0) {
     const docIds = duplicates.map((d) => d.existingDocId);
-    const { data: responses } = await supabase
+    const { data: responses, error: responsesErr } = await supabase
       .from("responses")
       .select("document_id")
       .eq("project_id", projectId)
       .in("document_id", docIds);
+    if (responsesErr)
+      throw new Error(
+        `Falha ao verificar respostas das duplicatas: ${responsesErr.message}`,
+      );
 
     if (responses) {
       const docsWithResponses = new Set(responses.map((r) => r.document_id));
@@ -131,6 +153,103 @@ export interface UploadOptions {
   deleteResponses?: boolean;
 }
 
+/**
+ * Remove as linhas que violariam o indice unico parcial
+ * documents_project_external_id_active_uniq — UNIQUE(project_id, external_id)
+ * WHERE external_id IS NOT NULL AND excluded_at IS NULL (migration
+ * 20260623130000). Dois conflitos possiveis num INSERT em lote, ambos abortariam
+ * a operacao inteira (perdendo tambem as linhas novas validas):
+ *   1. external_id ja ATIVO no projeto (re-import — a causa raiz das duplicatas);
+ *   2. external_id repetido dentro do proprio lote (CSV com linhas duplicadas).
+ * Linhas sem external_id nunca sao filtradas (varios docs sem external_id sao
+ * validos). Retorna as linhas seguras + contagem do que foi pulado.
+ */
+async function filterActiveExternalIdConflicts<
+  T extends { external_id: string | null },
+>(
+  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  projectId: string,
+  rows: T[],
+): Promise<{ rows: T[]; skippedExisting: number; skippedInBatch: number }> {
+  const ids = [
+    ...new Set(rows.map((r) => r.external_id).filter((id): id is string => !!id)),
+  ];
+
+  const existing = new Set<string>();
+  if (ids.length > 0) {
+    const { data } = await supabase
+      .from("documents")
+      .select("external_id")
+      .eq("project_id", projectId)
+      .is("excluded_at", null)
+      .in("external_id", ids);
+    for (const d of data ?? []) {
+      if (d.external_id) existing.add(d.external_id);
+    }
+  }
+
+  const seen = new Set<string>();
+  let skippedExisting = 0;
+  let skippedInBatch = 0;
+  const safe = rows.filter((r) => {
+    if (!r.external_id) return true;
+    if (existing.has(r.external_id)) {
+      skippedExisting++;
+      return false;
+    }
+    if (seen.has(r.external_id)) {
+      skippedInBatch++;
+      return false;
+    }
+    seen.add(r.external_id);
+    return true;
+  });
+
+  return { rows: safe, skippedExisting, skippedInBatch };
+}
+
+// Revalida o cache de documentos do projeto: o path dinâmico de config, a tag
+// da página cacheada de assignments e a tag de progresso (contagens de docs) —
+// o mesmo conjunto que excludeDocuments/restoreDocuments/hardDeleteDocuments
+// revalidam. Fonte única usada tanto pelo último chunk de uploadDocuments quanto
+// pelo recovery do hook quando um upload em chunks falha no meio.
+// Best-effort: uma falha de revalidação de cache não pode propagar como erro da
+// action (caso contrário um INSERT já commitado seria reportado como falha, ou o
+// catch do hook ficaria preso). Um cache stale é recuperável; um upload "perdido"
+// não.
+//
+// Privada (não-exportada): os chamadores internos deste módulo já passaram pelo
+// RLS de escrita, então não pagam o custo do gate de autorização. O ponto de
+// entrada client é o wrapper `revalidateProjectDocuments` abaixo.
+async function revalidateProjectDocumentsCache(projectId: string) {
+  try {
+    revalidatePath(`/projects/${projectId}/config/documents`);
+    revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+    revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  } catch (e) {
+    console.error("[revalidateProjectDocuments] falha ao revalidar cache", e);
+  }
+}
+
+// Server action client-callable (o hook de upload chama no recovery de falha
+// parcial). Diferente dos chamadores internos — que já passaram pelo RLS de
+// escrita — esta é exposta ao client, então gateia por acesso de leitura ao
+// projeto antes de revalidar: sem o gate, qualquer usuário autenticado poderia
+// invalidar o cache de um projeto alheio. Gate permissivo (qualquer membro que
+// enxerga o projeto via RLS, não só coordenador) e fail-closed (sem acesso →
+// não revalida).
+export async function revalidateProjectDocuments(projectId: string) {
+  const user = await getAuthUser();
+  if (!user) return;
+  const { project } = await getProjectAccessContext(
+    projectId,
+    user.id,
+    user.isMaster,
+  );
+  if (!project) return;
+  await revalidateProjectDocumentsCache(projectId);
+}
+
 export async function uploadDocuments(
   projectId: string,
   documents: DocumentRow[],
@@ -146,9 +265,13 @@ export async function uploadDocuments(
   if (mode === "add_new_only") {
     // Filter out duplicates, only insert new ones
     const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
-    if (newDocs.length === 0) return { count: 0 };
+    // Duplicatas descartadas aqui (detectadas pelo duplicateMap) ja contam como
+    // ignoradas — mantem a invariante count + skipped == documents.length para
+    // o toast reportar o numero correto.
+    const skippedDuplicates = documents.length - newDocs.length;
+    if (newDocs.length === 0) return { count: 0, skipped: skippedDuplicates };
 
-    const rows = newDocs.map((doc) => ({
+    const baseRows = newDocs.map((doc) => ({
       project_id: projectId,
       external_id: doc.external_id || null,
       title: doc.title || null,
@@ -156,88 +279,80 @@ export async function uploadDocuments(
       text_hash: md5(doc.text),
       metadata: doc.metadata || null,
     }));
+    // Defesa extra contra o indice unico: duplicateMap pode estar stale e o
+    // proprio lote pode repetir external_id.
+    const { rows, skippedExisting, skippedInBatch } =
+      await filterActiveExternalIdConflicts(supabase, projectId, baseRows);
 
-    const { error } = await supabase.from("documents").insert(rows);
-    if (error) return { error: error.message };
-
-    if (revalidate) {
-      revalidatePath(`/projects/${projectId}/config/documents`);
-      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+    if (rows.length > 0) {
+      const { error } = await supabase.from("documents").insert(rows);
+      if (error) return { error: error.message };
     }
-    return { count: rows.length };
+
+    if (revalidate) await revalidateProjectDocumentsCache(projectId);
+    return {
+      count: rows.length,
+      skipped: skippedDuplicates + skippedExisting + skippedInBatch,
+    };
   }
 
   if (mode === "replace_and_add") {
     // Update existing duplicates + insert new ones
     const existingDocIds = duplicateMap.map((d) => d.existingDocId);
 
-    if (options?.deleteResponses && existingDocIds.length > 0) {
-      // Delete reviews first (FK chosen_response_id -> responses without CASCADE)
-      await supabase
-        .from("reviews")
-        .delete()
-        .eq("project_id", projectId)
-        .in("document_id", existingDocIds);
-
-      // Then delete responses
-      await supabase
-        .from("responses")
-        .delete()
-        .eq("project_id", projectId)
-        .in("document_id", existingDocIds);
-
-      // Reset assignments to 'pendente'
-      await supabase
-        .from("assignments")
-        .update({ status: "pendente" })
-        .eq("project_id", projectId)
-        .in("document_id", existingDocIds);
-    }
-
-    // Batch update duplicate documents (avoid N+1)
-    if (duplicateMap.length > 0) {
-      await Promise.all(
-        duplicateMap.map((dup) => {
-          const doc = documents[dup.csvIndex];
-          return supabase
-            .from("documents")
-            .update({
-              text: doc.text,
-              title: doc.title || null,
-              external_id: doc.external_id || null,
-              text_hash: md5(doc.text),
-              metadata: doc.metadata || null,
-            })
-            .eq("id", dup.existingDocId);
-        })
-      );
-    }
-
-    // Insert new (non-duplicate) documents
-    const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
-    if (newDocs.length > 0) {
-      const rows = newDocs.map((doc) => ({
-        project_id: projectId,
-        external_id: doc.external_id || null,
-        title: doc.title || null,
+    // Payload de atualização dos duplicados (text_hash precomputado, igual ao
+    // INSERT abaixo). Setar external_id num doc casado por text_hash pode colidir
+    // com outro doc ativo e violar o indice unico parcial (23505) — dentro da
+    // transação isso faz ROLLBACK de tudo, em vez de deixar estado parcial.
+    const duplicateUpdates = duplicateMap.map((dup) => {
+      const doc = documents[dup.csvIndex];
+      return {
+        id: dup.existingDocId,
         text: doc.text,
+        title: doc.title || null,
+        external_id: doc.external_id || null,
         text_hash: md5(doc.text),
         metadata: doc.metadata || null,
-      }));
+      };
+    });
 
-      const { error } = await supabase.from("documents").insert(rows);
-      if (error) return { error: error.message };
-    }
+    // Novos (não-duplicados) + defesa read-only contra o indice unico parcial
+    // (duplicateMap stale / repeticao no lote). O filtro roda no TS por ser só
+    // leitura; o rollback atômico continua dentro da RPC.
+    const newDocs = documents.filter((_, i) => !duplicateIndices.has(i));
+    const baseRows = newDocs.map((doc) => ({
+      external_id: doc.external_id || null,
+      title: doc.title || null,
+      text: doc.text,
+      text_hash: md5(doc.text),
+      metadata: doc.metadata || null,
+    }));
+    const { rows, skippedExisting, skippedInBatch } =
+      await filterActiveExternalIdConflicts(supabase, projectId, baseRows);
+    const skipped = skippedExisting + skippedInBatch;
 
-    if (revalidate) {
-      revalidatePath(`/projects/${projectId}/config/documents`);
-      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-    }
-    return { count: documents.length };
+    // Transação única (issue #284): delete reviews/responses + reset assignments
+    // + update duplicados + insert novos. Falha em qualquer passo faz ROLLBACK
+    // de tudo — respostas/revisões não ficam apagadas sem o upload concluir.
+    // SECURITY INVOKER: a RLS do coordenador (braço coordinator_or_creator nas
+    // policies de responses/reviews) continua valendo dentro da função.
+    const { error } = await supabase.rpc("replace_and_add_documents", {
+      p_project_id: projectId,
+      p_existing_doc_ids: existingDocIds,
+      p_delete_responses: !!options?.deleteResponses,
+      p_duplicate_updates: duplicateUpdates,
+      p_new_documents: rows,
+    });
+    if (error) return { error: error.message };
+
+    if (revalidate) await revalidateProjectDocumentsCache(projectId);
+    return { count: documents.length - skipped, skipped };
   }
 
-  // Default: add_all — current behavior + compute text_hash
-  const rows = documents.map((doc) => ({
+  // Default: add_all — insere tudo, exceto o que violaria o indice unico
+  // (external_id ja ativo no projeto ou repetido no proprio lote). Sem o filtro,
+  // o INSERT em lote falharia inteiro no primeiro conflito.
+  const allRows = documents.map((doc) => ({
     project_id: projectId,
     external_id: doc.external_id || null,
     title: doc.title || null,
@@ -245,15 +360,16 @@ export async function uploadDocuments(
     text_hash: md5(doc.text),
     metadata: doc.metadata || null,
   }));
+  const { rows, skippedExisting, skippedInBatch } =
+    await filterActiveExternalIdConflicts(supabase, projectId, allRows);
 
-  const { error } = await supabase.from("documents").insert(rows);
-  if (error) return { error: error.message };
+  if (rows.length > 0) {
+    const { error } = await supabase.from("documents").insert(rows);
+    if (error) return { error: error.message };
+  }
 
-  if (revalidate) {
-      revalidatePath(`/projects/${projectId}/config/documents`);
-      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-    }
-  return { count: rows.length };
+  if (revalidate) await revalidateProjectDocumentsCache(projectId);
+  return { count: rows.length, skipped: skippedExisting + skippedInBatch };
 }
 
 export interface BrowseDocument {
@@ -367,7 +483,16 @@ export async function getDocumentForCoding(
         clean[field.name] = val;
       }
     }
-    return { document: doc, existingAnswers: clean, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
+    // Remove condicionais órfãs (cuja condição não é satisfeita pelo próprio
+    // `clean`) — espelha a sanitização de escrita do `saveResponse` na fronteira
+    // de leitura, para um documento orfanado por mudança de schema pós-codificação
+    // não reaparecer pré-preenchido no editor (ver #252). Avalia sobre o conjunto
+    // COMPLETO de campos, pois uma condição pode referenciar qualquer campo.
+    const existingAnswers = dropHiddenConditionals(
+      project.pydantic_fields as PydanticField[],
+      clean,
+    );
+    return { document: doc, existingAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
   }
 
   return { document: doc, existingAnswers: rawAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
@@ -378,12 +503,22 @@ export async function getDocumentText(
   documentId: string,
 ): Promise<{ text: string; title: string } | null> {
   const supabase = await createSupabaseServer();
-  const { data } = await supabase
+  // Busca o texto de um doc por id (RLS aplica). Nao filtra excluded_at de
+  // proposito: a visibilidade de soft-deleted e decidida nas queries de lista
+  // (getDocumentsForBrowse, a pagina de documentos via ?show=excluded), nao no
+  // fetch de texto por id. Quem chega a pedir o texto ja escolheu o doc na lista.
+  const { data, error } = await supabase
     .from("documents")
     .select("title, text")
     .eq("id", documentId)
     .eq("project_id", projectId)
-    .single();
+    .maybeSingle();
+  // Distingue erro real (RLS/transporte/schema) de doc inexistente: sem isto,
+  // um doc que existe mas falhou na query viraria "(nao encontrado)" silencioso.
+  if (error) {
+    console.error("[getDocumentText] erro de query", { projectId, documentId, error });
+    throw error;
+  }
   if (!data) return null;
   return { text: data.text, title: data.title || documentId };
 }
@@ -416,9 +551,7 @@ export async function excludeDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  revalidatePath(`/projects/${projectId}/config/documents`);
-  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  await revalidateProjectDocumentsCache(projectId);
   return { count: documentIds.length };
 }
 
@@ -446,9 +579,7 @@ export async function restoreDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  revalidatePath(`/projects/${projectId}/config/documents`);
-  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  await revalidateProjectDocumentsCache(projectId);
   return { count: documentIds.length };
 }
 
@@ -475,8 +606,6 @@ export async function hardDeleteDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  revalidatePath(`/projects/${projectId}/config/documents`);
-  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  await revalidateProjectDocumentsCache(projectId);
   return { count: documentIds.length };
 }

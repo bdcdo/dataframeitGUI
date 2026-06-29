@@ -9,6 +9,7 @@ import {
 import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
+import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import type { CodingDocument } from "@/hooks/useDocumentForCoding";
 import type { PydanticField } from "@/lib/types";
 
@@ -76,12 +77,17 @@ export function BrowseDocCoder({
 
   const handleAnswer = useCallback(
     (fieldName: string, value: unknown) => {
-      const next = { ...draftRef.current.answers, [fieldName]: value };
+      // Ao mudar uma resposta, limpa as condicionais que ficaram órfãs —
+      // mesma invariante do modo Atribuídos (`CodingPage.handleAnswer`, #252).
+      const next = clearHiddenConditionalAnswers(fields, {
+        ...draftRef.current.answers,
+        [fieldName]: value,
+      });
       draftRef.current = { answers: next, notes: draftRef.current.notes };
       setAnswers(next);
       onDraftChange(draftRef.current);
     },
-    [onDraftChange],
+    [onDraftChange, fields],
   );
 
   const handleNotesChange = useCallback(

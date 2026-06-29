@@ -4,10 +4,11 @@ import { useCallback, useMemo, useReducer } from "react";
 import { saveResponse } from "@/actions/responses";
 import { sortByRecent } from "@/lib/coding-sort";
 import { autosaveDirtyDoc } from "@/lib/coding-autosave";
+import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import { toast } from "sonner";
 import type { AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import type { CodingSortMode } from "./CodingPage";
-import type { AssignedDoc } from "@/lib/types";
+import type { AssignedDoc, PydanticField } from "@/lib/types";
 
 interface AssignedState {
   docIndex: number;
@@ -17,24 +18,31 @@ interface AssignedState {
 }
 
 type AssignedAction =
-  | { type: "answer"; docId: string; field: string; value: unknown }
+  | { type: "answer"; docId: string; field: string; value: unknown; fields: PydanticField[] }
   | { type: "notes"; docId: string; notes: string }
   | { type: "index"; index: number }
   | { type: "allDone"; value: boolean };
 
 function reducer(state: AssignedState, action: AssignedAction): AssignedState {
   switch (action.type) {
-    case "answer":
+    case "answer": {
+      // Ao mudar uma resposta, limpa as condicionais que ficaram órfãs —
+      // invariante mantida aqui (no dono do estado) em vez de num useEffect do
+      // filho (ver #252). `fields` viaja na action para o reducer continuar
+      // puro; `clearHiddenConditionalAnswers` preserva a identidade quando
+      // nada muda.
+      const updated = {
+        ...state.allAnswers[action.docId],
+        [action.field]: action.value,
+      };
       return {
         ...state,
         allAnswers: {
           ...state.allAnswers,
-          [action.docId]: {
-            ...state.allAnswers[action.docId],
-            [action.field]: action.value,
-          },
+          [action.docId]: clearHiddenConditionalAnswers(action.fields, updated),
         },
       };
+    }
     case "notes":
       return {
         ...state,
@@ -66,6 +74,8 @@ function notesFromJustifications(
 interface UseAssignedCodingParams {
   projectId: string;
   documents: AssignedDoc[];
+  /** Schema completo — usado para limpar condicionais órfãs ao responder (#252). */
+  fields: PydanticField[];
   sortedDocuments: AssignedDoc[];
   codedAtByDoc: Record<string, string>;
   existingAnswers: Record<string, Record<string, unknown>>;
@@ -95,6 +105,7 @@ interface UseAssignedCodingParams {
 export function useAssignedCoding({
   projectId,
   documents,
+  fields,
   sortedDocuments,
   codedAtByDoc,
   existingAnswers,
@@ -126,10 +137,10 @@ export function useAssignedCoding({
     (fieldName: string, value: unknown) => {
       const docId = currentDoc?.id;
       if (!docId) return;
-      dispatch({ type: "answer", docId, field: fieldName, value });
+      dispatch({ type: "answer", docId, field: fieldName, value, fields });
       markDirty(docId);
     },
-    [currentDoc?.id, markDirty],
+    [currentDoc?.id, markDirty, fields],
   );
 
   const handleNotesChange = useCallback(

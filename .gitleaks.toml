@@ -1,0 +1,20 @@
+# Config do gitleaks (lida por padrao em .gitleaks.toml na raiz, tanto pela
+# action em .github/workflows/secret-scan.yml quanto pelo hook de pre-commit).
+#
+# Estende as regras default do gitleaks e libera falsos-positivos conhecidos.
+[extend]
+useDefault = true
+
+# As build args em frontend/fly.toml carregam a publishable/anon key do Supabase
+# (prefixo sb_publishable_) e a publishable key do Clerk (prefixo pk_test_ /
+# pk_live_). Ambas sao NEXT_PUBLIC_* — embutidas no bundle do browser em build
+# time e publicas por definicao; vao para o cliente de qualquer forma. A regra
+# generic-api-key do gitleaks as pega por entropia, mas nao sao segredos.
+# Allowlist por prefixo (nao por caminho) para nao cegar o scanner ao arquivo
+# inteiro — um segredo real ali continua sendo detectado.
+[allowlist]
+description = "Chaves publicas por design (Supabase publishable/anon, Clerk publishable)"
+regexes = [
+  '''sb_publishable_[A-Za-z0-9_-]+''',
+  '''pk_(test|live)_[A-Za-z0-9_-]+''',
+]

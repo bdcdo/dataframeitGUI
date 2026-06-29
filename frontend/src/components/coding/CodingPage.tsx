@@ -126,6 +126,7 @@ function CodingPageInner({
   const assigned = useAssignedCoding({
     projectId,
     documents,
+    fields,
     sortedDocuments,
     codedAtByDoc,
     existingAnswers,

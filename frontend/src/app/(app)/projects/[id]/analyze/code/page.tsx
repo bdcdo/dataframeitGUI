@@ -3,6 +3,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
+import { dropHiddenConditionals } from "@/lib/conditional";
 import type {
   Document,
   Assignment,
@@ -184,7 +185,8 @@ export default async function CodePage({
     );
   });
 
-  const fields = ((project?.pydantic_fields || []) as PydanticField[]).filter(
+  const allFields = (project?.pydantic_fields || []) as PydanticField[];
+  const fields = allFields.filter(
     (f) => f.target !== "llm_only" && f.target !== "none",
   );
   const fieldOptionSet = new Map<string, Set<string>>();
@@ -214,7 +216,11 @@ export default async function CodePage({
         clean[field.name] = val;
       }
     }
-    existingAnswers[d.id] = clean;
+    // Remove condicionais órfãs na fronteira de leitura — mesma primitiva do
+    // saveResponse; evita que um documento orfanado por mudança de schema
+    // pós-codificação reapareça pré-preenchido no editor (ver #252). Conjunto
+    // COMPLETO de campos: uma condição pode referenciar qualquer campo.
+    existingAnswers[d.id] = dropHiddenConditionals(allFields, clean);
     if (r.justifications) {
       existingJustifications[d.id] = r.justifications;
     }

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor, cleanup } from "@testing-library/react";
 import { saveResponse } from "@/actions/responses";
 import { useAssignedCoding } from "../useAssignedCoding";
-import type { Document, Assignment } from "@/lib/types";
+import type { Document, Assignment, PydanticField } from "@/lib/types";
 
 vi.mock("@/actions/responses", () => ({ saveResponse: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -31,11 +31,13 @@ function setup(overrides?: {
   existingAnswers?: Record<string, Record<string, unknown>>;
   existingJustifications?: Record<string, Record<string, unknown>>;
   dirty?: Set<string>;
+  fields?: PydanticField[];
 }) {
   const dirty = overrides?.dirty ?? new Set<string>();
   const params = {
     projectId: "p1",
     documents: DOCS,
+    fields: overrides?.fields ?? [],
     sortedDocuments: DOCS,
     codedAtByDoc: {},
     existingAnswers: overrides?.existingAnswers ?? {},
@@ -154,6 +156,29 @@ describe("useAssignedCoding", () => {
 
     act(() => view.result.current.handleSortChange("recent"));
     expect(view.result.current.allDone).toBe(false);
+  });
+
+  // Reconciliação com #252/#288: a limpeza de condicionais órfãs (antes no
+  // CodingPage.handleAnswer) é reaplicada no reducer do modo Atribuídos.
+  it("handleAnswer limpa a resposta de condicional órfã ao ocultar o pai (#252)", () => {
+    const fields: PydanticField[] = [
+      { name: "q1", type: "single", options: ["sim", "não"], description: "" },
+      {
+        name: "q2",
+        type: "text",
+        options: null,
+        description: "",
+        condition: { field: "q1", equals: "sim" },
+      },
+    ];
+    const { view } = setup({ fields });
+    // q1 = "sim" torna q2 visível; responde q2.
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+    act(() => view.result.current.handleAnswer("q2", "detalhe"));
+    expect(view.result.current.docAnswers).toEqual({ q1: "sim", q2: "detalhe" });
+    // q1 = "não" oculta q2 → a resposta órfã de q2 é zerada para null.
+    act(() => view.result.current.handleAnswer("q1", "não"));
+    expect(view.result.current.docAnswers).toEqual({ q1: "não", q2: null });
   });
 
   it("getPayload reflete o doc e respostas atuais", () => {
