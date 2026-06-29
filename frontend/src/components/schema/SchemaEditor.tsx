@@ -59,9 +59,18 @@ export function SchemaEditor({
   // O código é uma visualização DERIVADA dos campos, não estado próprio. Para um
   // projeto sem campos mas com código armazenado (legado), mostra o código
   // original até que os campos sejam recuperados (ver banner de recuperação).
+  //
+  // Só é computado no modo "código" (único lugar que o consome, no Monaco): em
+  // modo visual cada edição muda `fields`, e regenerar o código a cada keystroke
+  // seria trabalho desperdiçado já que o editor de código nem está montado.
   const code = useMemo(
-    () => (fields.length > 0 ? generatePydanticCode(fields) : initialCode || ""),
-    [fields, initialCode],
+    () =>
+      mode !== "code"
+        ? ""
+        : fields.length > 0
+          ? generatePydanticCode(fields)
+          : initialCode || "",
+    [mode, fields, initialCode],
   );
   const [guiErrors, setGuiErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();

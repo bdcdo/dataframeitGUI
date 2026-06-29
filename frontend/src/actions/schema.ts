@@ -139,11 +139,14 @@ export async function saveSchemaFromGUI(
     getAuthUser(),
   ]);
 
-  // Fetch old fields + current version
+  // Fetch old fields + current version. `pydantic_code` entra no select por
+  // causa da guarda anti-wipe abaixo: o caso legado a proteger tem justamente
+  // `pydantic_fields` vazio mas `pydantic_code` presente, então a guarda
+  // precisa enxergar o código para não deixar passar o wipe.
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      "pydantic_fields, pydantic_code, schema_version_major, schema_version_minor, schema_version_patch",
     )
     .eq("id", projectId)
     .single();
@@ -155,7 +158,13 @@ export async function saveSchemaFromGUI(
   // pydantic_code mas pydantic_fields não carregado) e clicar "Salvar"
   // regeneraria `class Analysis(BaseModel): pass`, apagando schema + campos em
   // silêncio. Um schema realmente vazio só é salvável quando já estava vazio.
-  if (fields.length === 0 && oldFields.length > 0) {
+  //
+  // A condição testa `pydantic_code` ALÉM de `oldFields` justamente porque o
+  // caso legado documentado acima tem `pydantic_fields` vazio (oldFields === [])
+  // mas `pydantic_code` populado: checar só `oldFields.length > 0` deixaria o
+  // wipe passar exatamente no cenário que a guarda existe para impedir.
+  const hasExistingSchema = oldFields.length > 0 || !!project?.pydantic_code;
+  if (fields.length === 0 && hasExistingSchema) {
     return {
       error:
         "Salvar com 0 campos apagaria o schema atual. Adicione ao menos um campo, ou use 'Recuperar do código' se o editor abriu vazio.",

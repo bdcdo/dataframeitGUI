@@ -139,7 +139,28 @@ describe("saveSchemaFromGUI", () => {
     expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(false);
   });
 
-  it("permite salvar [] quando o schema já estava vazio", async () => {
+  it("guarda anti-wipe (legado): 0 campos com pydantic_fields vazio mas pydantic_code presente é recusado", async () => {
+    // Caso legado: pydantic_fields vazio, mas o schema vive em pydantic_code.
+    // A guarda precisa enxergar o código — checar só oldFields.length deixaria
+    // o wipe passar exatamente neste cenário.
+    serverTableResults = {
+      projects: [
+        {
+          data: {
+            ...(PROJECT_SELECT.data as Record<string, unknown>),
+            pydantic_fields: [],
+            pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
+          },
+        },
+      ],
+    };
+
+    const r = await saveSchemaFromGUI("p1", []);
+    expect(r.error).toMatch(/0 campos|apagaria/i);
+    expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(false);
+  });
+
+  it("permite salvar [] quando o schema já estava vazio (sem campos e sem código)", async () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
     };
