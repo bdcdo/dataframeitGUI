@@ -29,3 +29,12 @@ export function isAutoReviewFieldDecided(
   if (verdictRequiresJustification(choice)) return !!justification?.trim();
   return true;
 }
+
+// Chave de escolha/justificativa por (documento, campo). O fieldName se repete
+// entre documentos; sem o prefixo do docId, escolher "q1" no doc A
+// pre-selecionaria "q1" do doc B na navegacao. O composto garante isolamento.
+// Funcao de modulo (nao recriada a cada render) compartilhada entre
+// AutoReviewPage e AutoReviewPageContent.
+export function choiceKey(docId: string, fieldName: string): string {
+  return `${docId}::${fieldName}`;
+}

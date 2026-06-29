@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   createRng,
   distributeDocs,
+  filterComparisonEligible,
   filterEligibleDocs,
+  computeCapacity,
+  resolveWeight,
+  resolveCap,
   type LotteryBalancing,
   type LotteryDocStats,
   type LotteryParticipant,
@@ -13,6 +17,7 @@ function doc(overrides: Partial<LotteryDocStats> & { id: string }): LotteryDocSt
     externalId: null,
     title: null,
     humanCodingCount: 0,
+    hasLlmResponse: false,
     activeAssignments: { codificacao: 0, comparacao: 0 },
     hasAnyAssignmentEver: false,
     batchIds: [],
@@ -216,6 +221,80 @@ describe("filterEligibleDocs", () => {
   });
 });
 
+describe("filterComparisonEligible", () => {
+  const docs = [
+    doc({ id: "h0", humanCodingCount: 0, hasLlmResponse: true }),
+    doc({ id: "h1", humanCodingCount: 1, hasLlmResponse: false }),
+    doc({ id: "h1llm", humanCodingCount: 1, hasLlmResponse: true }),
+    doc({ id: "h2", humanCodingCount: 2, hasLlmResponse: false }),
+    doc({ id: "h2llm", humanCodingCount: 2, hasLlmResponse: true }),
+  ];
+
+  describe("modo compare_llm", () => {
+    it("exige >= 1 humano E resposta do LLM", () => {
+      expect(ids(filterComparisonEligible(docs, "compare_llm", 2))).toEqual([
+        "h1llm",
+        "h2llm",
+      ]);
+    });
+
+    it("doc de 1 humano + LLM passa (independente de min_responses)", () => {
+      const d = [doc({ id: "x", humanCodingCount: 1, hasLlmResponse: true })];
+      expect(ids(filterComparisonEligible(d, "compare_llm", 2))).toEqual(["x"]);
+    });
+
+    it("doc com 2 humanos mas sem LLM é excluído", () => {
+      const d = [doc({ id: "x", humanCodingCount: 2, hasLlmResponse: false })];
+      expect(filterComparisonEligible(d, "compare_llm", 2)).toEqual([]);
+    });
+
+    it("doc com 0 humanos + LLM é excluído", () => {
+      const d = [doc({ id: "x", humanCodingCount: 0, hasLlmResponse: true })];
+      expect(filterComparisonEligible(d, "compare_llm", 2)).toEqual([]);
+    });
+  });
+
+  describe("modo compare_humans / none / null", () => {
+    it("respeita min_responses, ignorando o LLM", () => {
+      expect(ids(filterComparisonEligible(docs, "compare_humans", 2))).toEqual([
+        "h2",
+        "h2llm",
+      ]);
+    });
+
+    it("doc de 1 humano + LLM falha quando min=2", () => {
+      const d = [doc({ id: "x", humanCodingCount: 1, hasLlmResponse: true })];
+      expect(filterComparisonEligible(d, "compare_humans", 2)).toEqual([]);
+    });
+
+    it("null (projeto legado) cai no gate por humanos", () => {
+      expect(ids(filterComparisonEligible(docs, null, 1))).toEqual([
+        "h1",
+        "h1llm",
+        "h2",
+        "h2llm",
+      ]);
+    });
+
+    it("auto_review_llm (default do DB) cai no gate por humanos, ignorando o LLM", () => {
+      expect(ids(filterComparisonEligible(docs, "auto_review_llm", 2))).toEqual([
+        "h2",
+        "h2llm",
+      ]);
+    });
+
+    it("min_responses 0/inválido cai no piso de 1 humano (Math.max)", () => {
+      // sem o piso, min=0 deixaria passar docs com 0 humanos (h0)
+      expect(ids(filterComparisonEligible(docs, "compare_humans", 0))).toEqual([
+        "h1",
+        "h1llm",
+        "h2",
+        "h2llm",
+      ]);
+    });
+  });
+});
+
 describe("distributeDocs", () => {
   const docIds = (n: number) => Array.from({ length: n }, (_, i) => `doc${i}`);
 
@@ -342,6 +421,64 @@ describe("distributeDocs", () => {
     for (const c of Object.values(counts)) expect(c).toBeLessThanOrEqual(2);
   });
 
+  describe("peso por participante", () => {
+    it("weight 0.5 recebe ~metade dos pares de peso 1 (round)", () => {
+      // pesos 1, 1, 0.5 → soma 2.5; 50 docs × 1 vaga → p2 ≈ 50·(0.5/2.5) = 10
+      const participants: LotteryParticipant[] = [
+        { id: "p0", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p1", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p2", accumulatedLoad: 0, capacity: Infinity, weight: 0.5 },
+      ];
+      const counts = countByUser(run(docIds(50), participants));
+      expect(counts.p0 + counts.p1 + counts.p2).toBe(50);
+      expect(counts.p2).toBeLessThan(counts.p0);
+      expect(counts.p2).toBeLessThan(counts.p1);
+      expect(counts.p2).toBeGreaterThanOrEqual(8);
+      expect(counts.p2).toBeLessThanOrEqual(12);
+    });
+
+    it("weight escala também no modo history", () => {
+      // todos partem de 0; alvo do history é nivelar load/weight, então
+      // p2 (peso 0.5) termina com ~metade da carga dos demais
+      const participants: LotteryParticipant[] = [
+        { id: "p0", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p1", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+        { id: "p2", accumulatedLoad: 0, capacity: Infinity, weight: 0.5 },
+      ];
+      const counts = countByUser(
+        run(docIds(50), participants, { balancing: "history" }),
+      );
+      expect(counts.p2).toBeLessThan(counts.p0);
+      expect(counts.p2).toBeLessThan(counts.p1);
+      expect(counts.p2).toBeGreaterThanOrEqual(8);
+      expect(counts.p2).toBeLessThanOrEqual(12);
+    });
+
+    it("weight ausente equivale a peso 1 (regressão)", () => {
+      // mesma entrada, com e sem weight=1 explícito → mesmo resultado
+      const semWeight = makeParticipants([0, 0, 0]);
+      const comWeight: LotteryParticipant[] = semWeight.map((p) => ({
+        ...p,
+        weight: 1,
+      }));
+      const a = run(docIds(12), semWeight, { seed: 7 });
+      const b = run(docIds(12), comWeight, { seed: 7 });
+      expect(a).toEqual(b);
+    });
+  });
+
+  it("limite individual corta a carga do participante; o resto vai aos demais", () => {
+    // p0 com capacity 3 (limite individual); p1 e p2 sem limite absorvem o resto
+    const participants: LotteryParticipant[] = [
+      { id: "p0", accumulatedLoad: 0, capacity: 3, weight: 1 },
+      { id: "p1", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+      { id: "p2", accumulatedLoad: 0, capacity: Infinity, weight: 1 },
+    ];
+    const counts = countByUser(run(docIds(30), participants));
+    expect(counts.p0).toBe(3);
+    expect((counts.p1 ?? 0) + (counts.p2 ?? 0)).toBe(27);
+  });
+
   it("nunca duplica par doc+pessoa preservado (preservedPairs)", () => {
     const participants = makeParticipants([0, 0]);
     for (let seed = 0; seed < 20; seed++) {
@@ -384,5 +521,72 @@ describe("distributeDocs", () => {
     expect(coOccurrence).toEqual(snapshot);
     expect(docs).toEqual(docIds(5));
     expect(participants[0].accumulatedLoad).toBe(1);
+  });
+});
+
+describe("resolveWeight", () => {
+  it("ausente, zero, negativo ou NaN caem para 1 (neutro)", () => {
+    expect(resolveWeight(undefined)).toBe(1);
+    expect(resolveWeight(null)).toBe(1);
+    expect(resolveWeight(0)).toBe(1);
+    expect(resolveWeight(-2)).toBe(1);
+    expect(resolveWeight(NaN)).toBe(1);
+    expect(resolveWeight(Infinity)).toBe(1);
+  });
+
+  it("preserva pesos positivos finitos, inclusive fracionários", () => {
+    expect(resolveWeight(0.5)).toBe(0.5);
+    expect(resolveWeight(2)).toBe(2);
+  });
+});
+
+describe("resolveCap", () => {
+  it("ausente, zero, negativo ou NaN → null (sem limite)", () => {
+    expect(resolveCap(undefined)).toBeNull();
+    expect(resolveCap(null)).toBeNull();
+    expect(resolveCap(0)).toBeNull();
+    expect(resolveCap(-3)).toBeNull();
+    expect(resolveCap(NaN)).toBeNull();
+  });
+
+  it("trunca para inteiro (coluna INTEGER)", () => {
+    expect(resolveCap(3)).toBe(3);
+    expect(resolveCap(2.9)).toBe(2);
+  });
+});
+
+describe("computeCapacity", () => {
+  it("sem docsPerResearcher e sem cap → Infinity", () => {
+    expect(computeCapacity({ accumulatedLoad: 0 })).toBe(Infinity);
+    expect(computeCapacity({ accumulatedLoad: 4 })).toBe(Infinity);
+  });
+
+  it("docsPerResearcher é teto TOTAL: converte em slots novos restantes", () => {
+    expect(computeCapacity({ accumulatedLoad: 0, docsPerResearcher: 10 })).toBe(10);
+    expect(computeCapacity({ accumulatedLoad: 4, docsPerResearcher: 10 })).toBe(6);
+    // carga acumulada já estourou o total → 0 slots novos (sem negativo)
+    expect(computeCapacity({ accumulatedLoad: 12, docsPerResearcher: 10 })).toBe(0);
+  });
+
+  it("cap é teto direto de docs NOVOS, independente da carga acumulada", () => {
+    // o ponto central do fix: cap=3 com 4 já atribuídos ainda dá 3 NOVOS,
+    // não max(0, 3 - 4) = 0 (semântica antiga, de teto total)
+    expect(computeCapacity({ accumulatedLoad: 4, cap: 3 })).toBe(3);
+    expect(computeCapacity({ accumulatedLoad: 0, cap: 3 })).toBe(3);
+  });
+
+  it("compõe os dois limites — vence o menor", () => {
+    // total restante = 10 - 4 = 6; cap de novos = 3 → 3
+    expect(
+      computeCapacity({ accumulatedLoad: 4, docsPerResearcher: 10, cap: 3 }),
+    ).toBe(3);
+    // total restante = 10 - 8 = 2; cap de novos = 5 → 2
+    expect(
+      computeCapacity({ accumulatedLoad: 8, docsPerResearcher: 10, cap: 5 }),
+    ).toBe(2);
+  });
+
+  it("cap fracionário é truncado antes de compor", () => {
+    expect(computeCapacity({ accumulatedLoad: 0, cap: 3.9 })).toBe(3);
   });
 });

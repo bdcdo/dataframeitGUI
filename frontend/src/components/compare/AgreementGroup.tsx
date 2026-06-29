@@ -186,6 +186,39 @@ export function AgreementGroup({
     });
   }
 
+  // "Todas são similares" (issue #247, ponto 5): funde TODOS os grupos de uma
+  // vez, em vez de o revisor marcar par a par. `groups` já vem ordenado desc
+  // por nº de respostas, então `groups[0]` é a resposta mais comum.
+  //
+  // Só funde em 1 clique quando há maioria CLARA — `groups[0]` tem
+  // estritamente mais respostas que o segundo grupo, logo o gabarito é
+  // inequívoco. Quando há empate no topo (ex.: divergências 1×1 como
+  // "8 meses" vs "0 ano e 08 meses"), não existe "resposta mais comum": eleger
+  // `groups[0]` seria escolher o gabarito pela ordem do array, sem o revisor
+  // ver nem poder corrigir. Nesse caso pré-selecionamos todos os grupos e
+  // caímos no fluxo de confirmação manual abaixo, onde o gabarito fica visível
+  // e pode ser sobrescrito antes de aplicar.
+  function handleConfirmAll() {
+    if (!onConfirmEquivalent) return;
+    if (groups.length < 2) return;
+    const hasClearMajority =
+      groups[0].responses.length > groups[1].responses.length;
+    if (!hasClearMajority) {
+      setSelectionOrder(groups.map((g) => g.groupKey));
+      setGabaritoOverride(null);
+      return;
+    }
+    const gabaritoGroup = groups[0];
+    const gabaritoResponseId = gabaritoGroup.responses[0].id;
+    const responseIds = groups.map((g) => g.responses[0].id);
+    const verdictDisplay = gabaritoGroup.displayAnswer;
+    startTransition(async () => {
+      await onConfirmEquivalent(responseIds, gabaritoResponseId, verdictDisplay);
+      setSelectionOrder([]);
+      setGabaritoOverride(null);
+    });
+  }
+
   function handleUnmark(pairId: string) {
     if (!onUnmarkPair) return;
     startTransition(async () => {
@@ -208,12 +241,24 @@ export function AgreementGroup({
     <TooltipProvider delayDuration={200}>
       <div className="space-y-1.5">
         {allowEquivalence && groups.length > 1 && (
-          <div className="rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2.5 py-1.5 text-[11px] leading-tight text-muted-foreground">
-            <p>
+          <div className="flex items-center justify-between gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2.5 py-1.5 text-[11px] leading-tight text-muted-foreground">
+            <p className="min-w-0 flex-1">
               <Link2 className="mr-1 inline size-3" />
-              Texto livre: marque os cards equivalentes e indique qual fica
-              como <strong>gabarito</strong> (a resposta que será registrada).
+              Marque os cards equivalentes (ex.: NI ≡ N/A ≡ &ldquo;não
+              informado&rdquo;) e indique qual fica como{" "}
+              <strong>gabarito</strong> (a resposta que será registrada).
             </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 shrink-0 gap-1"
+              disabled={isSubmitting}
+              onClick={handleConfirmAll}
+              title="Funde todas as respostas como equivalentes; a mais comum vira o gabarito. Em caso de empate, você confirma o gabarito antes de aplicar."
+            >
+              <Link2 className="size-3.5" />
+              Todas são similares
+            </Button>
           </div>
         )}
 

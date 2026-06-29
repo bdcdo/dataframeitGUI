@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +31,10 @@ import {
 } from "@/actions/assignments";
 import type { LotteryParams, LotteryPreview } from "@/actions/assignments";
 import {
+  filterComparisonEligible,
   filterEligibleDocs,
+  resolveWeight,
+  resolveCap,
   type AssignmentFilter,
   type LotteryBalancing,
   type LotteryDocStats,
@@ -48,6 +51,10 @@ export interface LotteryMember {
   role: "pesquisador" | "coordenador";
   // Pré-registrado (spec 002): ainda não criou conta.
   pending?: boolean;
+  // Defaults de carga persistidos (último sorteio): peso relativo e limite
+  // individual de docs. Pré-preenchem os campos por participante.
+  weight?: number;
+  cap?: number | null;
 }
 
 interface LotteryDialogProps {
@@ -59,6 +66,7 @@ interface LotteryStats {
   docs: LotteryDocStats[];
   batches: { id: string; label: string | null; createdAt: string }[];
   minResponsesForComparison: number;
+  automationMode: string | null;
 }
 
 type CodingsFilterMode = "all" | "none" | "atMost";
@@ -127,8 +135,24 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     Record<string, boolean>
   >({});
 
+  // Peso/limite por participante, editados como string (inputs controlados).
+  // Ausência da chave = usar o default persistido do membro (m.weight/m.cap).
+  const [weightInputs, setWeightInputs] = useState<Record<string, string>>({});
+  const [capInputs, setCapInputs] = useState<Record<string, string>>({});
+
   const isParticipant = (m: LotteryMember) =>
     participantOverrides[m.userId] ?? m.role === "pesquisador";
+
+  // String exibida nos inputs: override local, senão default persistido.
+  const weightValue = useCallback(
+    (m: LotteryMember) => weightInputs[m.userId] ?? String(m.weight ?? 1),
+    [weightInputs],
+  );
+  const capValue = useCallback(
+    (m: LotteryMember) =>
+      capInputs[m.userId] ?? (m.cap != null ? String(m.cap) : ""),
+    [capInputs],
+  );
 
   const participantIds = useMemo(
     () =>
@@ -139,6 +163,23 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
         .map((m) => m.userId),
     [members, participantOverrides]
   );
+
+  // Peso/limite resolvido por participante ativo. Inclui TODOS os participantes
+  // (peso 1 / sem limite explícito) para que o server persista o reset de quem
+  // voltou ao default — não só quem está fora do padrão.
+  const participantSettings = useMemo(() => {
+    const out: Record<string, { weight: number; cap: number | null }> = {};
+    for (const m of members) {
+      if (!(participantOverrides[m.userId] ?? m.role === "pesquisador")) continue;
+      const cStr = capValue(m);
+      out[m.userId] = {
+        // Mesma coerção do server (resolveWeight/resolveCap) — fonte única.
+        weight: resolveWeight(parseFloat(weightValue(m))),
+        cap: resolveCap(cStr.trim() === "" ? null : parseInt(cStr, 10)),
+      };
+    }
+    return out;
+  }, [members, participantOverrides, weightValue, capValue]);
 
   // Label
   const [label, setLabel] = useState("");
@@ -184,6 +225,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     balancing,
     filters,
     participantIds,
+    participantSettings,
   });
   const [previewState, setPreviewState] = useState<{
     key: string;
@@ -197,8 +239,10 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     if (!stats) return null;
     let candidates = stats.docs;
     if (isComparacao) {
-      candidates = candidates.filter(
-        (d) => d.humanCodingCount >= stats.minResponsesForComparison
+      candidates = filterComparisonEligible(
+        candidates,
+        stats.automationMode,
+        stats.minResponsesForComparison,
       );
     }
     return filterEligibleDocs(candidates, type, filters).length;
@@ -227,6 +271,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     label: label || undefined,
     filters,
     participantIds,
+    participantSettings,
   });
 
   const handlePreview = async () => {
@@ -312,6 +357,13 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                 </Label>
               </div>
             </RadioGroup>
+            {isComparacao && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {stats?.automationMode === "compare_llm"
+                  ? "Elegíveis: documentos com ao menos 1 codificação humana e 1 resposta do LLM."
+                  : `Elegíveis: documentos com ao menos ${stats?.minResponsesForComparison ?? 2} codificações humanas.`}
+              </p>
+            )}
           </div>
 
           <Separator />
@@ -651,37 +703,91 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                 <h4 className="text-sm font-semibold">Participantes</h4>
                 <p className="text-xs text-muted-foreground">
                   Quem está ligado entra no sorteio. Pesquisadores começam
-                  ligados; coordenadores, desligados.
+                  ligados; coordenadores, desligados. O <strong>peso</strong>{" "}
+                  ajusta a carga relativa (0,5 = metade dos demais); o{" "}
+                  <strong>limite</strong> (opcional) é o teto de docs novos da
+                  pessoa neste sorteio. Os valores ficam salvos para o próximo.
                 </p>
                 {members.map((m) => (
-                  <div key={m.userId} className="flex items-center justify-between">
-                    <Label htmlFor={`member-${m.userId}`} className="font-normal">
-                      {m.name}
-                      {m.role === "coordenador" && (
-                        <span className="ml-1.5 text-xs text-muted-foreground">
-                          coordenador
-                        </span>
-                      )}
-                      {m.pending && (
-                        <Badge
-                          variant="secondary"
-                          className="ml-1.5"
-                          title="Pré-registrado: ainda não criou conta."
+                  <div key={m.userId} className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label
+                        htmlFor={`member-${m.userId}`}
+                        className="font-normal"
+                      >
+                        {m.name}
+                        {m.role === "coordenador" && (
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            coordenador
+                          </span>
+                        )}
+                        {m.pending && (
+                          <Badge
+                            variant="secondary"
+                            className="ml-1.5"
+                            title="Pré-registrado: ainda não criou conta."
+                          >
+                            Pendente
+                          </Badge>
+                        )}
+                      </Label>
+                      <Switch
+                        id={`member-${m.userId}`}
+                        checked={isParticipant(m)}
+                        onCheckedChange={(checked) =>
+                          setParticipantOverrides((prev) => ({
+                            ...prev,
+                            [m.userId]: checked,
+                          }))
+                        }
+                      />
+                    </div>
+                    {isParticipant(m) && (
+                      <div className="flex items-center gap-4 pl-1 text-xs text-muted-foreground">
+                        <label
+                          htmlFor={`weight-${m.userId}`}
+                          className="flex items-center gap-1.5"
                         >
-                          Pendente
-                        </Badge>
-                      )}
-                    </Label>
-                    <Switch
-                      id={`member-${m.userId}`}
-                      checked={isParticipant(m)}
-                      onCheckedChange={(checked) =>
-                        setParticipantOverrides((prev) => ({
-                          ...prev,
-                          [m.userId]: checked,
-                        }))
-                      }
-                    />
+                          peso
+                          <Input
+                            id={`weight-${m.userId}`}
+                            type="number"
+                            min={0.5}
+                            step={0.5}
+                            value={weightValue(m)}
+                            onChange={(e) =>
+                              setWeightInputs((prev) => ({
+                                ...prev,
+                                [m.userId]: e.target.value,
+                              }))
+                            }
+                            className="h-7 w-16"
+                            aria-label={`Peso de ${m.name}`}
+                          />
+                        </label>
+                        <label
+                          htmlFor={`cap-${m.userId}`}
+                          className="flex items-center gap-1.5"
+                        >
+                          limite
+                          <Input
+                            id={`cap-${m.userId}`}
+                            type="number"
+                            min={1}
+                            placeholder="—"
+                            value={capValue(m)}
+                            onChange={(e) =>
+                              setCapInputs((prev) => ({
+                                ...prev,
+                                [m.userId]: e.target.value,
+                              }))
+                            }
+                            className="h-7 w-16"
+                            aria-label={`Limite de docs de ${m.name}`}
+                          />
+                        </label>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

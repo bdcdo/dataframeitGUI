@@ -15,6 +15,7 @@ import {
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { fetchFastAPI } from "@/lib/api";
+import { errorMessage } from "@/lib/utils";
 import crypto from "crypto";
 
 interface RecoverResponse {
@@ -44,7 +45,7 @@ export async function recoverFieldsFromStoredCode(
     }
     return { fields: result.fields };
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao recuperar campos do código") };
+    return { error: errorMessage(e) || "Erro ao recuperar campos do código" };
   }
 }
 
@@ -52,10 +53,9 @@ export async function recoverFieldsFromStoredCode(
 // a message de erros lançados em Server Actions em produção (o client recebe
 // mensagem genérica + digest), então a copy pt-BR só chega ao toast pelo
 // retorno. Os helpers de rls-guard continuam lançando — o catch fica na
-// fronteira da action.
-function errorMessage(e: unknown, fallback: string): string {
-  return e instanceof Error ? e.message : fallback;
-}
+// fronteira da action. A extração da message usa `errorMessage` de @/lib/utils
+// (fonte única, compartilhada com o hook de upload); `|| fallback` cobre o caso
+// de `e` não ser Error/string.
 
 // Não exportada: usada apenas internamente por saveSchemaFromGUI. A edição
 // manual do código foi descontinuada, então não há Server Action que receba
@@ -86,7 +86,7 @@ async function saveSchema(
         "Não foi possível salvar o schema: sem permissão para alterar este projeto.",
     });
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao salvar o schema") };
+    return { error: errorMessage(e) || "Erro ao salvar o schema" };
   }
 
   // is_latest não é flipado para false aqui — staleness é detectada no
@@ -116,7 +116,7 @@ export async function savePrompt(
       { message: "Não foi possível salvar o prompt: sem permissão para alterar este projeto." },
     );
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao salvar o prompt") };
+    return { error: errorMessage(e) || "Erro ao salvar o prompt" };
   }
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/llm/configure`);
@@ -280,7 +280,7 @@ export async function backfillSchemaVersionHistory(
   try {
     return { stats: await runBackfill(projectId) };
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao reconstruir o histórico de versões") };
+    return { error: errorMessage(e) || "Erro ao reconstruir o histórico de versões" };
   }
 }
 
@@ -662,7 +662,7 @@ export async function publishMajorVersion(
       { message: "Não foi possível publicar a MAJOR: sem permissão para alterar este projeto." },
     );
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao publicar a MAJOR") };
+    return { error: errorMessage(e) || "Erro ao publicar a MAJOR" };
   }
 
   const { error: logErr } = await supabase.from("schema_change_log").insert({
@@ -732,7 +732,7 @@ export async function saveLlmConfig(
         "Não foi possível salvar a configuração do LLM: sem permissão para alterar este projeto.",
     });
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao salvar a configuração do LLM") };
+    return { error: errorMessage(e) || "Erro ao salvar a configuração do LLM" };
   }
   revalidatePath(`/projects/${projectId}/llm/configure`);
   revalidatePath(`/projects/${projectId}/config`);

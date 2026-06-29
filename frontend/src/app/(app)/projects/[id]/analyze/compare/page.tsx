@@ -1,14 +1,23 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
+import { coordinatorGate } from "@/lib/project-access";
 import {
   readCompareFilters,
-  type CompareFiltersValue,
+  compareDefaultsForMode,
+  assignedCompareDocIds,
 } from "@/lib/compare-filters";
+import {
+  resolveMinVersion,
+  responseQualifiesForVersion,
+  latestMajorAnchor,
+  formatVersion,
+  parseVersionStr,
+} from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 interface CompareDoc {
@@ -46,39 +55,6 @@ export interface DocCoverage {
   assignmentStatus: "pendente" | "em_andamento" | "concluido" | null;
 }
 
-// Compara (a.b.c) >= (d.e.f)
-function versionGte(
-  a: { major: number; minor: number; patch: number },
-  b: { major: number; minor: number; patch: number },
-): boolean {
-  if (a.major !== b.major) return a.major > b.major;
-  if (a.minor !== b.minor) return a.minor > b.minor;
-  return a.patch >= b.patch;
-}
-
-function parseVersionStr(
-  s: string,
-): { major: number; minor: number; patch: number } | null {
-  const m = s.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!m) return null;
-  return {
-    major: Number.parseInt(m[1], 10),
-    minor: Number.parseInt(m[2], 10),
-    patch: Number.parseInt(m[3], 10),
-  };
-}
-
-function resolveMinVersion(
-  filter: CompareFiltersValue["version"],
-  projectCurrent: { major: number; minor: number; patch: number },
-): { major: number; minor: number; patch: number } | null {
-  if (filter === "all") return null;
-  if (filter === "latest_major") {
-    return { major: projectCurrent.major, minor: 0, patch: 0 };
-  }
-  return parseVersionStr(filter);
-}
-
 export default async function ComparePageRoute({
   params,
   searchParams,
@@ -92,36 +68,32 @@ export default async function ComparePageRoute({
     getAuthUser(),
     createSupabaseServer(),
   ]);
-  const filters = readCompareFilters(sp);
   if (!user) redirect("/auth/login");
 
   const [
     { data: project },
-    { data: membership },
     { data: allResponses, error: responsesError },
     { data: versionLog },
     { data: allAssignments },
     { data: allEquivalences },
+    access,
   ] = await Promise.all([
     supabase
       .from("projects")
       .select(
-        "pydantic_hash, pydantic_fields, min_responses_for_comparison, created_by, schema_version_major, schema_version_minor, schema_version_patch",
+        "pydantic_hash, pydantic_fields, min_responses_for_comparison, schema_version_major, schema_version_minor, schema_version_patch, automation_mode",
       )
       .eq("id", id)
       .single(),
     supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", id)
-      .eq("user_id", user.id)
-      .single(),
-    supabase
       .from("responses")
+      // `documents!inner` + filtro excluded_at: documentos arquivados não
+      // entram na fila de comparação (consistente com a contagem de B4).
       .select(
-        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents(id, title, external_id)",
+        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents!inner(id, title, external_id)",
       )
       .eq("project_id", id)
+      .is("documents.excluded_at", null)
       .limit(5000),
     supabase
       .from("schema_change_log")
@@ -141,6 +113,7 @@ export default async function ComparePageRoute({
       // divergences. Revisit if it becomes a bottleneck.
       .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
       .eq("project_id", id),
+    getProjectAccessContext(id, user.id, user.isMaster),
   ]);
 
   // Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
@@ -163,8 +136,12 @@ export default async function ComparePageRoute({
     });
   }
 
-  const isCoordinator =
-    membership?.role === "coordenador" || project?.created_by === user.id || user.isMaster;
+  // Fail-CLOSED (ao contrario de comments/llm-insights): isCoordinator decide
+  // quais documentos aparecem na fila — um nao-coordenador ve so os atribuidos a
+  // si (compareAssignedDocIds). A policy RLS deixa qualquer membro ler todas as
+  // responses, entao esse recorte e so aplicacional; fail-open exporia
+  // documentos/respostas de terceiros em erro transitorio.
+  const isCoordinator = coordinatorGate(access, { failOpen: false });
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 
@@ -177,12 +154,26 @@ export default async function ComparePageRoute({
     );
   }
 
+  // Defaults da fila derivados do modo de automação do projeto. Em compare_llm
+  // o piso de humanos cai para 1 (a 2ª resposta exigida por minTotal é o LLM) —
+  // sem isso a aba ficaria vazia para documentos de 1 codificador + LLM. A
+  // revisora ainda pode estreitar a lente via o filtro `min_humans` na URL.
+  const compareDefaults = compareDefaultsForMode(
+    project?.automation_mode,
+    project?.min_responses_for_comparison ?? 2,
+  );
+  const filters = readCompareFilters(sp, compareDefaults);
+
   const projectVersion = {
     major: project?.schema_version_major ?? 0,
     minor: project?.schema_version_minor ?? 1,
     patch: project?.schema_version_patch ?? 0,
   };
   const minVersion = resolveMinVersion(filters.version, projectVersion);
+  const projectVersionCtx = {
+    pydanticHash: project?.pydantic_hash ?? null,
+    version: projectVersion,
+  };
   const sinceMs = filters.since ? new Date(filters.since).getTime() : null;
 
   // Build distinct ordered version list desc — une versões do schema_change_log
@@ -212,17 +203,14 @@ export default async function ComparePageRoute({
     if (pa.minor !== pb.minor) return pb.minor - pa.minor;
     return pb.patch - pa.patch;
   });
-  const latestMajorLabel = `${projectVersion.major}.0.0`;
+  const latestMajorLabel = formatVersion(latestMajorAnchor(projectVersion));
 
-  // Compare-type assignments filter for researchers
-  let compareAssignedDocIds: Set<string> | null = null;
-  if (!isCoordinator) {
-    compareAssignedDocIds = new Set(
-      (allAssignments ?? [])
-        .filter((a) => a.type === "comparacao" && a.user_id === user.id)
-        .map((a) => a.document_id),
-    );
-  }
+  // Compare-type assignments filter for researchers (ver assignedCompareDocIds).
+  const compareAssignedDocIds = assignedCompareDocIds(
+    isCoordinator,
+    allAssignments,
+    user.id,
+  );
 
   // Coding-type assignments map per doc (denominator for % atribuídos)
   const codingAssignedByDoc = new Map<string, Set<string>>();
@@ -277,26 +265,18 @@ export default async function ComparePageRoute({
     if (compareAssignedDocIds && !compareAssignedDocIds.has(docId)) continue;
     if (!docsMetaMap.has(docId)) continue;
 
-    // Apply version + since + respondent filters per response
+    // Apply version + since + respondent filters per response. A regra de
+    // versão (is_latest/humano, pré-versionamento, piso) é compartilhada com
+    // compare-sync.ts via responseQualifiesForVersion; aqui adicionamos só os
+    // filtros efêmeros de UI (since/respondent).
     const qualifiedResponses = docResponses.filter((r) => {
-      // Keep only active (is_latest) OR human responses — antigos (is_latest=false) do LLM ficam fora
-      if (!r.is_latest && r.respondent_type !== "humano") return false;
-
-      // Respostas pré-versionamento (pydantic_hash NULL) foram gravadas antes
-      // da migration 20260420 que introduziu schema_version_*. Elas têm
-      // `rv = {0,0,0}` via os `?? 0` abaixo e por isso passam o filtro
-      // latest_major, reaparecendo como "divergências" mesmo quando a versão
-      // atual tem consenso. Quando há filtro de versão ativo, descartamos.
-      if (minVersion && r.pydantic_hash === null) return false;
-
-      if (minVersion) {
-        const rv = {
-          major: r.schema_version_major ?? 0,
-          minor: r.schema_version_minor ?? 0,
-          patch: r.schema_version_patch ?? 0,
-        };
-        if (!versionGte(rv, minVersion)) return false;
-      }
+      // Qualificação por versão (is_latest, pré-versionamento, piso)
+      // centralizada em responseQualifiesForVersion. Após o merge do PR #213,
+      // essa regra descarta TODA resposta superseded (is_latest=false), humana
+      // ou LLM — não só a LLM. A contagem abaixo ainda agrega por respondente
+      // distinto como defesa adicional.
+      if (!responseQualifiesForVersion(r, minVersion, projectVersionCtx))
+        return false;
       if (sinceMs !== null) {
         if (new Date(r.created_at).getTime() < sinceMs) return false;
       }
@@ -306,22 +286,45 @@ export default async function ComparePageRoute({
       return true;
     });
 
-    const humanCount = qualifiedResponses.filter((r) => r.respondent_type === "humano").length;
+    // Conta respondentes humanos DISTINTOS (não linhas). Fallback para r.id
+    // quando respondent_id é null (dados legados) para não fundir respostas
+    // anônimas distintas numa só.
+    const humanCount = new Set(
+      qualifiedResponses
+        .filter((r) => r.respondent_type === "humano")
+        .map((r) => r.respondent_id ?? r.id),
+    ).size;
     const totalCount = qualifiedResponses.length;
 
     const assignedUsers = codingAssignedByDoc.get(docId) ?? new Set<string>();
     const assignedCodingCount = assignedUsers.size;
 
-    const humansFromAssigned = qualifiedResponses.filter(
-      (r) => r.respondent_type === "humano" && r.respondent_id && assignedUsers.has(r.respondent_id),
-    ).length;
+    const humansFromAssigned = new Set(
+      qualifiedResponses
+        .filter(
+          (r) =>
+            r.respondent_type === "humano" &&
+            r.respondent_id &&
+            assignedUsers.has(r.respondent_id),
+        )
+        .map((r) => r.respondent_id),
+    ).size;
 
     const pct = assignedCodingCount === 0 ? 100 : Math.round((humansFromAssigned / assignedCodingCount) * 100);
 
     // Apply coverage filters
     if (humanCount < filters.minHumans) continue;
     if (totalCount < filters.minTotal) continue;
-    if (assignedCodingCount > 0 && pct < filters.minAssignedPct) continue;
+    // O gate de "% atribuídos que responderam" só faz sentido quando se espera
+    // ≥ 2 humanos. Em compare_llm (piso de 1 humano + LLM) ele esconderia docs
+    // de 1 codificador onde há mais de um atribuído — fora do que o gatilho de
+    // comparação exige. Aplica-se só quando o piso de humanos é ≥ 2.
+    if (
+      filters.minHumans >= 2 &&
+      assignedCodingCount > 0 &&
+      pct < filters.minAssignedPct
+    )
+      continue;
 
     // Equivalence-aware divergence detection (free-text fields can have
     // responses fused via the reviewer's "marcar como equivalentes" action).
@@ -473,6 +476,7 @@ export default async function ComparePageRoute({
         existingReviews={existingReviews}
         projectPydanticHash={project?.pydantic_hash ?? null}
         respondentNames={respondentNames}
+        defaultMinHumans={compareDefaults.minHumans}
         coverageByDoc={coverageByDoc}
         commentCountsByKey={commentCountsByKey}
         suggestionCountsByField={suggestionCountsByField}

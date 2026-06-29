@@ -3,7 +3,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
-import { getResearcherProgress } from "@/actions/progress";
+import { dropHiddenConditionals } from "@/lib/conditional";
 import type {
   Document,
   Assignment,
@@ -47,7 +47,7 @@ export default async function CodePage({
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, { data: assignments }, { data: rounds }, progressResult] =
+  const [{ data: project }, { data: assignments }, { data: rounds }] =
     await Promise.all([
       supabase
         .from("projects")
@@ -69,7 +69,6 @@ export default async function CodePage({
         .select("id, project_id, label, created_at")
         .eq("project_id", id)
         .order("created_at", { ascending: true }),
-      getResearcherProgress(id, effectiveUserId).catch(() => null),
     ]);
 
   const allDocuments = (assignments || []).map((a) => ({
@@ -186,7 +185,8 @@ export default async function CodePage({
     );
   });
 
-  const fields = ((project?.pydantic_fields || []) as PydanticField[]).filter(
+  const allFields = (project?.pydantic_fields || []) as PydanticField[];
+  const fields = allFields.filter(
     (f) => f.target !== "llm_only" && f.target !== "none",
   );
   const fieldOptionSet = new Map<string, Set<string>>();
@@ -216,22 +216,14 @@ export default async function CodePage({
         clean[field.name] = val;
       }
     }
-    existingAnswers[d.id] = clean;
+    // Remove condicionais órfãs na fronteira de leitura — mesma primitiva do
+    // saveResponse; evita que um documento orfanado por mudança de schema
+    // pós-codificação reapareça pré-preenchido no editor (ver #252). Conjunto
+    // COMPLETO de campos: uma condição pode referenciar qualquer campo.
+    existingAnswers[d.id] = dropHiddenConditionals(allFields, clean);
     if (r.justifications) {
       existingJustifications[d.id] = r.justifications;
     }
-  }
-
-  let progress = null;
-  if (allDocuments.length > 0 && progressResult) {
-    progress = {
-      completed: progressResult.completed,
-      total: progressResult.total,
-      nextDeadline: progressResult.nextDeadline,
-      daysUntilDeadline: progressResult.daysUntilDeadline,
-      requiredPace: progressResult.requiredPace,
-      streak: progressResult.streak,
-    };
   }
 
   // Quando filtra por rodada anterior, painel fica readOnly para evitar
@@ -250,7 +242,6 @@ export default async function CodePage({
         existingAnswers={existingAnswers}
         existingJustifications={existingJustifications}
         hasAssignments={allDocuments.length > 0}
-        progress={progress}
         readOnly={isImpersonating || isViewingPreviousRound}
         roundFilter={{
           strategy,

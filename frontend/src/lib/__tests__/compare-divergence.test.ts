@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   computeDivergentFieldNames,
-  isFreeTextField,
   isDocComplete,
   findNextPendingDocIndex,
+  resolveCompareStatus,
 } from "@/lib/compare-divergence";
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
@@ -18,37 +18,6 @@ function field(overrides: Partial<PydanticField>): PydanticField {
     ...overrides,
   };
 }
-
-describe("isFreeTextField", () => {
-  it("true for type=text", () => {
-    expect(isFreeTextField(field({ type: "text" }))).toBe(true);
-  });
-
-  it("true for type=date", () => {
-    expect(isFreeTextField(field({ type: "date" }))).toBe(true);
-  });
-
-  it("true for type=single without options", () => {
-    expect(isFreeTextField(field({ type: "single", options: null }))).toBe(
-      true,
-    );
-    expect(isFreeTextField(field({ type: "single", options: [] }))).toBe(true);
-  });
-
-  it("false for type=single with options", () => {
-    expect(
-      isFreeTextField(field({ type: "single", options: ["a", "b"] })),
-    ).toBe(false);
-  });
-
-  it("false for type=multi (always has options conceptually)", () => {
-    expect(isFreeTextField(field({ type: "multi", options: ["a"] }))).toBe(
-      false,
-    );
-    // Even multi with empty options is not "free text" for fusion purposes
-    expect(isFreeTextField(field({ type: "multi", options: [] }))).toBe(false);
-  });
-});
 
 describe("computeDivergentFieldNames", () => {
   it("skips fields with target llm_only / human_only / none", () => {
@@ -121,6 +90,50 @@ describe("computeDivergentFieldNames", () => {
     expect(
       computeDivergentFieldNames(fields, responses, equivalencesByField),
     ).toEqual(["a"]);
+  });
+
+  it("single-com-opções: opções diferentes são divergentes sem pares", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["s"]);
+  });
+
+  it("single-com-opções: par fundindo NI ≡ N/A remove a divergência (#247, ponto 5)", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+    ];
+    const equivalencesByField = new Map<string, EquivalencePair[]>([
+      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+    ]);
+    expect(
+      computeDivergentFieldNames(fields, responses, equivalencesByField),
+    ).toEqual([]);
+  });
+
+  it("single-com-opções: par cobrindo só parte das opções deixa divergência", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+      { id: "3", answers: { s: "Sim" } },
+    ];
+    const equivalencesByField = new Map<string, EquivalencePair[]>([
+      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+    ]);
+    expect(
+      computeDivergentFieldNames(fields, responses, equivalencesByField),
+    ).toEqual(["s"]);
   });
 
   it("multi: differing selections are divergent", () => {
@@ -267,5 +280,31 @@ describe("findNextPendingDocIndex", () => {
     expect(
       findNextPendingDocIndex(["d2", "d3", "d1"], divergentFields, reviews, "d1"),
     ).toBe(-1);
+  });
+});
+
+describe("resolveCompareStatus", () => {
+  it("concluido quando todos os campos divergentes foram revisados", () => {
+    expect(resolveCompareStatus(["a", "b"], new Set(["a", "b"]))).toBe(
+      "concluido",
+    );
+  });
+
+  // #217: edge `divergentFields.length === 0` — antes ficava preso em
+  // em_andamento; um doc sem divergências (ex.: todas fundidas por equivalência)
+  // agora fecha, mesmo sem reviews (`every` é vácuo-verdadeiro).
+  it("concluido quando não há campos divergentes (lista vazia)", () => {
+    expect(resolveCompareStatus([], new Set())).toBe("concluido");
+    expect(resolveCompareStatus([], new Set(["a"]))).toBe("concluido");
+  });
+
+  it("pendente quando há divergências e nenhuma review", () => {
+    expect(resolveCompareStatus(["a", "b"], new Set())).toBe("pendente");
+  });
+
+  it("em_andamento quando há divergências não revisadas mas alguma review", () => {
+    expect(resolveCompareStatus(["a", "b"], new Set(["a"]))).toBe(
+      "em_andamento",
+    );
   });
 });

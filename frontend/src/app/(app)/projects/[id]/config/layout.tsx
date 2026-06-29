@@ -25,7 +25,7 @@ export default async function ConfigLayout({
   // derrubamos um coordenador legitimo por erro transiente — o RLS continua
   // sendo o backstop real dos dados de config.
   if (!isCoordinator && !queryFailed) {
-    redirect(`/projects/${id}/my-progress`);
+    redirect(`/projects/${id}/analyze/code`);
   }
 
   return (

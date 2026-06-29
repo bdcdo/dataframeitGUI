@@ -1,38 +1,24 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { toast } from "sonner";
 import { DocumentReader } from "@/components/coding/DocumentReader";
-import { submitAutoReview } from "@/actions/field-reviews";
 import {
   AutoReviewDocList,
   type AutoReviewDocListEntry,
 } from "./AutoReviewDocList";
-import {
-  AutoReviewFieldPanel,
-  type AutoReviewField,
-} from "./AutoReviewFieldPanel";
+import type { AutoReviewField } from "./AutoReviewFieldPanel";
+import { AutoReviewEmptyState } from "./AutoReviewEmptyState";
+import { AutoReviewPageHeader } from "./AutoReviewPageHeader";
+import { AutoReviewPageContent } from "./AutoReviewPageContent";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
-import {
-  isAutoReviewFieldDecided,
-  verdictRequiresJustification,
-} from "@/lib/auto-review-decided";
+import { choiceKey, isAutoReviewFieldDecided } from "@/lib/auto-review-decided";
+import { usePinnedDoc } from "@/hooks/usePinnedDoc";
 
 export interface AutoReviewDoc {
   docId: string;
@@ -81,32 +67,19 @@ function AutoReviewPageInner({
   reviewers,
   currentUserId,
 }: AutoReviewPageProps) {
-  const { push, refresh } = useRouter();
+  const { push } = useRouter();
   const searchParams = useSearchParams();
 
   const isOwnQueue = viewAsUserId === currentUserId;
   const readOnly = !isOwnQueue;
 
   const storageKey = `${STORAGE_KEY_PREFIX}${projectId}:${viewAsUserId}`;
-  const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
-
-  // Restore último doc visto (por projeto+fila) — espelha o padrão da Compare.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const v = window.sessionStorage.getItem(storageKey);
-    if (v) setPinnedDocId(v);
-  }, [storageKey]);
-
-  // Após refresh(), um doc totalmente resolvido sai da fila — o
-  // pinnedDocId em sessionStorage fica órfão. Limpa o storage para não
-  // restaurar um id inexistente numa sessão futura; o state em memória pode
-  // seguir intocado porque o docIndex já cai para 0 quando o id não bate.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (pinnedDocId && !docs.some((d) => d.docId === pinnedDocId)) {
-      window.sessionStorage.removeItem(storageKey);
-    }
-  }, [docs, pinnedDocId, storageKey]);
+  // Seleção persistida em sessionStorage (restore + limpeza de órfão quando um
+  // doc resolvido sai da fila) encapsulada em usePinnedDoc — ver hook.
+  const validDocIds = useMemo(() => docs.map((d) => d.docId), [docs]);
+  const [pinnedDocId, setPinnedDocId] = usePinnedDoc(storageKey, {
+    validIds: validDocIds,
+  });
 
   const docIndex = useMemo(() => {
     if (docs.length === 0) return 0;
@@ -117,34 +90,21 @@ function AutoReviewPageInner({
     return 0;
   }, [docs, pinnedDocId]);
 
-  const [fieldIndex, setFieldIndex] = useState(0);
   const [listCollapsed, setListCollapsed] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  // Keyed por `${docId}::${fieldName}` — fieldName se repete entre documentos.
-  // Sem o prefixo do docId, escolher "q1" no doc A pre-selecionaria "q1" do
-  // doc B na navegação. O composto garante isolamento por (doc, campo).
+  // Estado compartilhado entre a contagem de pendentes da sidebar
+  // (docListEntries) e a interação de campo (AutoReviewPageContent); por isso
+  // vive aqui, no pai, e não no Content. Keyed por `${docId}::${fieldName}` —
+  // o composto isola escolha/justificativa por (documento, campo).
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
-  // Justificativa por (doc, campo) — obrigatória quando a escolha é
-  // contesta_llm ou ambiguo.
   const [justifications, setJustifications] = useState<Record<string, string>>(
     {},
   );
-
-  const choiceKey = (docId: string, fieldName: string) =>
-    `${docId}::${fieldName}`;
-
-  useEffect(() => {
-    setFieldIndex(0);
-  }, [docIndex]);
 
   function handleDocNavigate(newIndex: number) {
     const clamped = Math.max(0, Math.min(newIndex, docs.length - 1));
     const target = docs[clamped];
     if (target) {
       setPinnedDocId(target.docId);
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(storageKey, target.docId);
-      }
     }
   }
 
@@ -167,11 +127,7 @@ function AutoReviewPageInner({
         const pending = d.fields.filter((f) => {
           if (f.alreadyAnswered) return false;
           const k = choiceKey(d.docId, f.fieldName);
-          return !isAutoReviewFieldDecided(
-            false,
-            choices[k],
-            justifications[k],
-          );
+          return !isAutoReviewFieldDecided(false, choices[k], justifications[k]);
         }).length;
         return {
           id: d.docId,
@@ -186,194 +142,36 @@ function AutoReviewPageInner({
 
   if (docs.length === 0) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4 px-6 py-10 text-center">
-        <h1 className="mb-4 text-2xl font-semibold">Auto-revisão</h1>
-        {readOnly ? (
-          <p className="text-muted-foreground">
-            Este pesquisador não tem auto-revisão pendente no momento.
-          </p>
-        ) : (
-          <p className="text-muted-foreground">
-            Nenhuma auto-revisão pendente. Quando você submeter uma codificação
-            que diverge do LLM, ela aparecerá aqui.
-          </p>
-        )}
-        {isCoordinator ? (
-          <div className="mt-6 space-y-3 border-t pt-4 text-left">
-            {reviewers.length > 1 ? (
-              <div>
-                <p className="mb-1 text-xs text-muted-foreground">
-                  Ver fila de outro pesquisador
-                </p>
-                <Select
-                  value={viewAsUserId}
-                  onValueChange={handleViewAsChange}
-                >
-                  <SelectTrigger className="w-full max-w-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {reviewers.map((r) => (
-                      <SelectItem key={r.userId} value={r.userId}>
-                        {r.name || r.email || r.userId.slice(0, 8)}
-                        {r.userId === currentUserId ? " (você)" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-            <p className="text-xs text-muted-foreground">
-              Coordenador: o backlog pode ser reexecutado em{" "}
-              <span className="font-medium">Reviews → Erros LLM</span>.
-            </p>
-          </div>
-        ) : null}
-      </div>
+      <AutoReviewEmptyState
+        readOnly={readOnly}
+        isCoordinator={isCoordinator}
+        reviewers={reviewers}
+        viewAsUserId={viewAsUserId}
+        currentUserId={currentUserId}
+        onViewAsChange={handleViewAsChange}
+      />
     );
   }
 
   const doc = docs[docIndex];
-  const currentField = doc.fields[fieldIndex];
-  // Classifica cada campo do doc na sessão atual:
-  //   ready      = decidido nesta sessão e completo → entra no próximo envio
-  //   incomplete = verdict que exige justificativa escolhido mas sem ela → falta algo
-  //   answered   = já enviado (alreadyAnswered) OU pronto pra enviar
-  const fieldStatus = doc.fields.map((f) => {
-    const key = choiceKey(doc.docId, f.fieldName);
-    const choice = choices[key];
-    const justification = justifications[key];
-    const incomplete =
-      !f.alreadyAnswered &&
-      verdictRequiresJustification(choice) &&
-      !justification?.trim();
-    const ready =
-      !f.alreadyAnswered &&
-      isAutoReviewFieldDecided(false, choice, justification);
-    return { answered: f.alreadyAnswered || ready, incomplete, ready };
-  });
-  const answeredFlags = fieldStatus.map((s) => s.answered);
-  const incompleteFlags = fieldStatus.map((s) => s.incomplete);
-  const readyCount = fieldStatus.filter((s) => s.ready).length;
-  const incompleteCount = fieldStatus.filter((s) => s.incomplete).length;
-  const canSubmit = readyCount > 0 && !submitting;
-
-  async function handleSubmit() {
-    if (readOnly) return;
-    const readyFieldNames = doc.fields
-      .filter((_, i) => fieldStatus[i].ready)
-      .map((f) => f.fieldName);
-    if (readyFieldNames.length === 0) return;
-    setSubmitting(true);
-    const payload = readyFieldNames.map((fieldName) => {
-      const key = choiceKey(doc.docId, fieldName);
-      return {
-        fieldName,
-        verdict: choices[key],
-        justification: justifications[key],
-      };
-    });
-    const result = await submitAutoReview(projectId, doc.docId, payload);
-    setSubmitting(false);
-    if (!result.success) {
-      toast.error(result.error ?? "Falha ao enviar");
-      return;
-    }
-    if (result.warning) {
-      toast.warning(result.warning);
-    } else {
-      toast.success(
-        result.arbitrated
-          ? `Enviado. ${result.arbitrated} campo(s) seguem para arbitragem.`
-          : `Enviado. ${readyFieldNames.length} campo(s) resolvido(s).`,
-      );
-    }
-    // Limpa só os campos enviados — escolhas incompletas (contesta_llm sem
-    // justificativa) permanecem para o usuário continuar de onde parou.
-    setChoices((c) => {
-      const next = { ...c };
-      for (const fieldName of readyFieldNames)
-        delete next[choiceKey(doc.docId, fieldName)];
-      return next;
-    });
-    setJustifications((j) => {
-      const next = { ...j };
-      for (const fieldName of readyFieldNames)
-        delete next[choiceKey(doc.docId, fieldName)];
-      return next;
-    });
-    // Recarrega o estado do servidor: os campos enviados voltam como
-    // alreadyAnswered e o doc sai da fila se todos foram resolvidos.
-    refresh();
-  }
-
   const currentReviewer = reviewers.find((r) => r.userId === viewAsUserId);
   const reviewerLabel =
     currentReviewer?.name ?? currentReviewer?.email ?? viewAsUserId.slice(0, 8);
 
   return (
     <div className="flex h-[calc(100vh-96px)] flex-col">
-      <div className="flex h-10 shrink-0 items-center justify-between border-b px-4 text-sm">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium">
-            Auto-revisão humano vs LLM
-          </span>
-          {readOnly ? (
-            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-              visualizando {reviewerLabel}
-            </Badge>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {isCoordinator && reviewers.length > 1 ? (
-            <Select value={viewAsUserId} onValueChange={handleViewAsChange}>
-              <SelectTrigger className="h-7 w-[200px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {reviewers.map((r) => (
-                  <SelectItem
-                    key={r.userId}
-                    value={r.userId}
-                    className="text-xs"
-                  >
-                    {r.name || r.email || r.userId.slice(0, 8)}
-                    {r.userId === currentUserId ? " (você)" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
-          <Badge variant="secondary" className="text-xs">
-            {docs.length} doc{docs.length === 1 ? "" : "s"}
-          </Badge>
-          <div className="flex items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              onClick={() => handleDocNavigate(docIndex - 1)}
-              disabled={docIndex === 0}
-              title="Documento anterior"
-            >
-              <ChevronLeft className="size-4" />
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {docIndex + 1}/{docs.length}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              onClick={() => handleDocNavigate(docIndex + 1)}
-              disabled={docIndex === docs.length - 1}
-              title="Próximo documento"
-            >
-              <ChevronRight className="size-4" />
-            </Button>
-          </div>
-        </div>
-      </div>
+      <AutoReviewPageHeader
+        readOnly={readOnly}
+        reviewerLabel={reviewerLabel}
+        isCoordinator={isCoordinator}
+        reviewers={reviewers}
+        viewAsUserId={viewAsUserId}
+        currentUserId={currentUserId}
+        onViewAsChange={handleViewAsChange}
+        docsCount={docs.length}
+        docIndex={docIndex}
+        onNavigate={handleDocNavigate}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <AutoReviewDocList
@@ -389,39 +187,18 @@ function AutoReviewPageInner({
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={50} minSize={25}>
-            <AutoReviewFieldPanel
-              field={currentField}
-              fieldIndex={fieldIndex}
-              totalFields={doc.fields.length}
-              answered={answeredFlags}
-              incomplete={incompleteFlags}
-              choice={
-                choices[choiceKey(doc.docId, currentField.fieldName)] ?? null
-              }
-              justification={
-                justifications[
-                  choiceKey(doc.docId, currentField.fieldName)
-                ] ?? ""
-              }
+            {/* key={doc.docId}: remonta ao trocar de doc, resetando fieldIndex
+                sem effect; o split (ResizablePanelGroup) fica fora e preserva
+                o tamanho manual entre navegacoes. */}
+            <AutoReviewPageContent
+              key={doc.docId}
+              doc={doc}
+              projectId={projectId}
               readOnly={readOnly}
-              readyCount={readyCount}
-              incompleteCount={incompleteCount}
-              submitting={submitting}
-              canSubmit={canSubmit}
-              onSubmit={handleSubmit}
-              onChoose={(v) =>
-                setChoices((c) => ({
-                  ...c,
-                  [choiceKey(doc.docId, currentField.fieldName)]: v,
-                }))
-              }
-              onJustificationChange={(value) =>
-                setJustifications((j) => ({
-                  ...j,
-                  [choiceKey(doc.docId, currentField.fieldName)]: value,
-                }))
-              }
-              onFieldNavigate={setFieldIndex}
+              choices={choices}
+              justifications={justifications}
+              setChoices={setChoices}
+              setJustifications={setJustifications}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

@@ -1,0 +1,113 @@
+# Hooks de pre-commit + pre-push. Habilite uma vez por checkout com
+# `pre-commit install` (instale antes: `uv tool install pre-commit`). O
+# default_install_hook_types abaixo instala os DOIS estagios de uma vez, entao
+# `pre-commit install` basta — voce nao precisa lembrar de rodar nada na mao.
+#
+# Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
+#   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
+#   pre-push   (todo push,  pesado / grafo):       typecheck, lint:types, fallow, semgrep
+#
+# O CI roda o mesmo gitleaks em todo PR e push para `main` via
+# .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
+default_install_hook_types: [pre-commit, pre-push]
+# Hook sem `stages:` proprio roda so no pre-commit (os leves: gitleaks, ruff,
+# react-doctor). Os pesados sobrescrevem com `stages: [pre-push]`. Sem este
+# default, o pre-commit rodaria os leves tambem no push (default = todos os
+# estagios), furando a divisao descrita abaixo.
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # ruff: lint (E/F/I/B/C901) + format do backend Python. File-scoped pelo
+  # framework (so os .py alterados), entao o debito legado fica grandfathered —
+  # so barra/formata o arquivo que voce tocar. --fix auto-corrige imports e afins.
+  # Config e per-file-ignores (complexidade legada) em backend/pyproject.toml.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.19
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^backend/.*\.py$
+      - id: ruff-format
+        files: ^backend/.*\.py$
+
+  - repo: local
+    hooks:
+      # react-doctor como gate local de qualidade React (estilo flake8/mypy).
+      #
+      # Por que --scope changed e nao --staged: o --staged escaneia o arquivo
+      # staged inteiro (file-scoped), o que quebraria o grandfathering — tocar uma
+      # linha de um arquivo com error legado em OUTRA linha barraria o commit. Ja
+      # --scope changed --base HEAD reporta so issues nas linhas alteradas vs HEAD
+      # (verificado na 0.5.8); como o pre-commit faz auto-stash dos unstaged, o
+      # working tree fica == staged, entao enxerga o que vai ser commitado.
+      #
+      # --blocking error bloqueia so diagnosticos error-level: codigo novo e
+      # barrado, o debito legado de warnings fica grandfathered. O hook invoca o
+      # binario pinado em frontend/node_modules/.bin — nao `npx`. Se ausente,
+      # falha fechado pedindo `npm install` em frontend/.
+      - id: react-doctor
+        name: react-doctor (changed lines, fail on new errors)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/react-doctor && exec ./node_modules/.bin/react-doctor . --scope changed --base HEAD --blocking error || { echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        require_serial: true
+
+      # --- pre-push: pesados, rodam uma vez por `git push` (nao por commit) ---
+
+      # tsc --noEmit no projeto inteiro. Hoje passa limpo (0 erros), entao roda
+      # full sem grandfathering — qualquer erro de tipo novo barra o push.
+      - id: typecheck
+        name: typecheck (tsc --noEmit, pre-push)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/tsc && exec ./node_modules/.bin/tsc --noEmit || { echo "tsc ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # typescript-eslint type-checked (no-floating-promises / no-misused-promises).
+      # File-scoped via sed (strip do prefixo frontend/) → grandfathers os ~59
+      # achados legados; so barra promessa nao-tratada em arquivo que voce tocar.
+      - id: lint-types
+        name: typescript-eslint type-checked (changed files, pre-push)
+        entry: bash -c 'cd frontend && files=$(printf "%s\n" "$@" | sed "s|^frontend/||"); [ -z "$files" ] && exit 0; test -x ./node_modules/.bin/eslint && exec ./node_modules/.bin/eslint --config eslint.config.typed.mjs $files || { echo "eslint ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }' --
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: true
+        require_serial: true
+        stages: [pre-push]
+
+      # fallow audit: grafo do projeto (dead-code + complexidade + duplicacao)
+      # escopado aos arquivos alterados. --gate new-only (default) so barra
+      # achados INTRODUZIDOS — o baseline legado (56 dead-code, 121 clones, 260
+      # hotspots) fica grandfathered. Sem --base: o fallow usa a merge-base com
+      # origin/main (o `main` local costuma estar defasado). Ver doc.
+      - id: fallow-audit
+        name: fallow audit (new findings block, pre-push)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/fallow && exec ./node_modules/.bin/fallow audit || { echo "fallow ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # semgrep SAST (JS/TS + Python) via uvx, engine pinado (==1.168.0) para
+      # reprodutibilidade e para fugir da regressao da serie 1.12x que retornava
+      # exit 2 em runs limpos (que, sob o fail-open, tornaria o gate um no-op).
+      # --baseline-commit limita aos achados NOVOS vs origin/main (mesma logica do
+      # fallow: o `main` local costuma estar defasado). Falha fechado em achado
+      # (exit 1); falha ABERTO em erro de infra/rede (exit>1) para nao travar push
+      # offline. Rulesets p/... exigem rede na 1a vez (depois cacheados). Ver doc.
+      - id: semgrep
+        name: semgrep SAST (new findings, pre-push)
+        entry: bash -c 'command -v uvx >/dev/null 2>&1 || { echo "uvx ausente — semgrep pulado" >&2; exit 0; }; base=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || echo main); out=$(uvx --from semgrep==1.168.0 semgrep scan --config p/typescript --config p/react --config p/python --baseline-commit "$base" --error --quiet frontend backend 2>&1); code=$?; if [ "$code" = "1" ]; then echo "$out" >&2; echo "semgrep achou problema novo — corrija ou marque com nosemgrep" >&2; exit 1; fi; if [ "$code" -gt 1 ] 2>/dev/null; then echo "semgrep nao rodou (rede/config?) — push liberado" >&2; fi; exit 0'
+        language: system
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]

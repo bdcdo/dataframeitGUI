@@ -1,0 +1,371 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Testa o filtro de conflito com o indice unico parcial
+// documents_project_external_id_active_uniq (migration 20260623130000):
+// uploadDocuments nao pode mais inserir external_id ja ATIVO no projeto nem
+// repetido no proprio lote, senao o INSERT em lote falharia inteiro. O mock de
+// documents e uma FILA: 1a query = SELECT dos external_ids ativos existentes,
+// 2a = o INSERT. Quando o lote nao tem external_id, o SELECT e pulado e o INSERT
+// consome o 1o item.
+import {
+  makeSupabaseMock,
+  type TableResult,
+  type TableResults,
+  type WriteCall,
+  type RpcCall,
+} from "./supabase-mock";
+
+let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
+let serverTableResults: TableResults | undefined;
+let serverRpcResults: Record<string, TableResult> | undefined;
+
+vi.mock("next/cache", () => ({
+  revalidatePath: () => {},
+  revalidateTag: () => {},
+}));
+vi.mock("@/lib/auth", () => ({
+  getAuthUser: async () => ({ id: "userCoord" }),
+  isProjectCoordinator: async () => true,
+}));
+vi.mock("@/lib/supabase/server", () => ({
+  createSupabaseServer: async () =>
+    makeSupabaseMock({
+      tableResults: serverTableResults,
+      writeCalls,
+      rpcCalls,
+      rpcResults: serverRpcResults,
+    }),
+}));
+
+beforeEach(() => {
+  writeCalls = [];
+  rpcCalls = [];
+  serverTableResults = undefined;
+  serverRpcResults = undefined;
+});
+
+async function loadUpload() {
+  return (await import("@/actions/documents")).uploadDocuments;
+}
+
+async function loadGetDocumentText() {
+  return (await import("@/actions/documents")).getDocumentText;
+}
+
+async function loadCheck() {
+  return (await import("@/actions/documents")).checkDuplicates;
+}
+
+function insertedExternalIds(): (string | null)[] {
+  const call = writeCalls.find(
+    (c) => c.table === "documents" && c.op === "insert",
+  );
+  return ((call?.payload as { external_id: string | null }[]) ?? []).map(
+    (r) => r.external_id,
+  );
+}
+
+describe("uploadDocuments — filtro do indice unico (add_all)", () => {
+  it("pula external_id ja ATIVO no projeto e insere os demais", async () => {
+    // SELECT devolve DOC-1 como ja existente ativo; depois o INSERT (sem erro).
+    serverTableResults = {
+      documents: [{ data: [{ external_id: "DOC-1" }] }, { error: null }],
+    };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "ja existe" },
+        { external_id: "DOC-2", text: "novo a" },
+        { external_id: "DOC-3", text: "novo b" },
+      ],
+      false,
+    );
+
+    expect(r.error).toBeUndefined();
+    expect(r.count).toBe(2);
+    expect(r.skipped).toBe(1);
+    expect(insertedExternalIds()).toEqual(["DOC-2", "DOC-3"]);
+  });
+
+  it("pula repeticao do mesmo external_id dentro do lote (mantem a 1a)", async () => {
+    serverTableResults = {
+      documents: [{ data: [] }, { error: null }],
+    };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-A", text: "primeira" },
+        { external_id: "DOC-A", text: "duplicata no arquivo" },
+        { external_id: "DOC-B", text: "outra" },
+      ],
+      false,
+    );
+
+    expect(r.count).toBe(2);
+    expect(r.skipped).toBe(1);
+    expect(insertedExternalIds()).toEqual(["DOC-A", "DOC-B"]);
+  });
+
+  it("nunca filtra documentos sem external_id", async () => {
+    // Sem external_ids no lote -> SELECT e pulado; INSERT consome o 1o item.
+    serverTableResults = { documents: [{ error: null }] };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { text: "sem id 1" },
+        { text: "sem id 2" },
+      ],
+      false,
+    );
+
+    expect(r.count).toBe(2);
+    expect(r.skipped).toBe(0);
+    expect(insertedExternalIds()).toEqual([null, null]);
+  });
+});
+
+describe("uploadDocuments — contagem em add_new_only", () => {
+  it("conta os duplicados do duplicateMap em skipped (count + skipped == total)", async () => {
+    // SELECT do filtro nao acha nada ativo; INSERT do DOC-2 ok.
+    serverTableResults = {
+      documents: [{ data: [] }, { error: null }],
+    };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "ja existe no projeto" },
+        { external_id: "DOC-2", text: "novo" },
+      ],
+      false,
+      {
+        mode: "add_new_only",
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "external_id" },
+        ],
+      },
+    );
+
+    expect(r.error).toBeUndefined();
+    expect(r.count).toBe(1);
+    expect(r.skipped).toBe(1);
+    expect(insertedExternalIds()).toEqual(["DOC-2"]);
+  });
+
+  it("todos duplicados -> 0 importados e skipped == total", async () => {
+    // Early return: nenhuma query e disparada.
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "x" },
+        { external_id: "DOC-2", text: "y" },
+      ],
+      false,
+      {
+        mode: "add_new_only",
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "external_id" },
+          { csvIndex: 1, existingDocId: "id-2", matchType: "external_id" },
+        ],
+      },
+    );
+
+    expect(r.count).toBe(0);
+    expect(r.skipped).toBe(2);
+  });
+});
+
+describe("uploadDocuments — replace_and_add delega à RPC transacional", () => {
+  // O caminho replace_and_add deixou de fazer 5 chamadas PostgREST separadas
+  // (delete reviews/responses + reset assignments + update duplicados + insert)
+  // e passou a chamar a RPC replace_and_add_documents, que roda os 5 passos numa
+  // transação (issue #284 — falha parcial não apaga respostas/revisões). O
+  // pré-filtro read-only de external_id (SELECT em documents) continua no TS.
+  function rpcArgs(): Record<string, unknown> {
+    const call = rpcCalls.find((c) => c.fn === "replace_and_add_documents");
+    return (call?.args as Record<string, unknown>) ?? {};
+  }
+
+  it("chama a RPC com dup + novo e não emite writes diretos", async () => {
+    // O filtro do novo doc consulta documents (SELECT, sem conflito ativo).
+    serverTableResults = { documents: [{ data: [] }] };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "casa por hash com doc existente" },
+        { external_id: "DOC-2", text: "novo" },
+      ],
+      false,
+      {
+        mode: "replace_and_add",
+        deleteResponses: true,
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "text_hash" },
+        ],
+      },
+    );
+
+    expect(r.error).toBeUndefined();
+    expect(r.count).toBe(2);
+    expect(r.skipped).toBe(0);
+
+    // Uma única RPC com o payload transacional; nenhum delete/update/insert solto.
+    expect(rpcCalls).toHaveLength(1);
+    expect(writeCalls).toHaveLength(0);
+
+    const args = rpcArgs();
+    expect(args.p_existing_doc_ids).toEqual(["id-1"]);
+    expect(args.p_delete_responses).toBe(true);
+    expect(args.p_duplicate_updates).toHaveLength(1);
+    expect((args.p_duplicate_updates as { id: string }[])[0].id).toBe("id-1");
+    expect((args.p_duplicate_updates as { text_hash: string }[])[0].text_hash)
+      .toBeTruthy();
+    expect(args.p_new_documents).toHaveLength(1);
+    expect((args.p_new_documents as { external_id: string }[])[0].external_id)
+      .toBe("DOC-2");
+  });
+
+  it("propaga o erro da RPC (ex.: 23505) sem fallout parcial", async () => {
+    // newDocs vazio (o único doc é duplicado) -> sem SELECT de filtro; só a RPC.
+    serverRpcResults = {
+      replace_and_add_documents: {
+        error: {
+          message: "duplicate key value violates unique constraint",
+          code: "23505",
+        },
+      },
+    };
+    const uploadDocuments = await loadUpload();
+
+    const r = await uploadDocuments(
+      "proj-1",
+      [{ external_id: "DOC-1", text: "casa por hash com outro doc" }],
+      false,
+      {
+        mode: "replace_and_add",
+        deleteResponses: true,
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "text_hash" },
+        ],
+      },
+    );
+
+    expect(r.error).toContain("duplicate key");
+    // Nenhuma escrita direta — a atomicidade (rollback) é responsabilidade da RPC.
+    expect(writeCalls).toHaveLength(0);
+    expect(rpcCalls).toHaveLength(1);
+  });
+});
+
+// Nota (merge da main / #287): o describe "replace_and_add fail-loud nos
+// deletes" testava o caminho antigo de DELETEs PostgREST separados, abortando
+// passo a passo. Esse caminho foi substituído pela RPC transacional
+// (replace_and_add_documents): uma falha em qualquer passo faz ROLLBACK de tudo.
+// A intenção — falha não deixa estado parcial — está coberta por "propaga o erro
+// da RPC (ex.: 23505) sem fallout parcial" acima e pelo teste SQL de rollback
+// (supabase/tests/atomic_replace_rpcs.test.sql).
+
+describe("checkDuplicates — propaga erro de query (não engole silenciosamente)", () => {
+  it("lança quando a query por external_id falha", async () => {
+    serverTableResults = {
+      documents: [{ error: { message: "db down" } }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    await expect(
+      checkDuplicates("proj-1", [
+        { external_id: "X", text_hash: "h1", csvIndex: 0 },
+      ]),
+    ).rejects.toThrow(/ID externo/);
+  });
+
+  it("lança quando a query por text_hash falha (docs sem external_id)", async () => {
+    // Sem external_id, o bloco 1 é pulado e a query de hash é a 1ª em documents.
+    serverTableResults = {
+      documents: [{ error: { message: "hash fail" } }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    await expect(
+      checkDuplicates("proj-1", [{ text_hash: "h1", csvIndex: 0 }]),
+    ).rejects.toThrow(/hash de conteúdo/);
+  });
+
+  it("lança quando a query de responses falha", async () => {
+    // extId acha 1 duplicata → dispara a query de responses, que falha.
+    serverTableResults = {
+      documents: [{ data: [{ id: "d1", external_id: "X" }] }],
+      responses: [{ error: { message: "resp fail" } }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    await expect(
+      checkDuplicates("proj-1", [
+        { external_id: "X", text_hash: "h1", csvIndex: 0 },
+      ]),
+    ).rejects.toThrow(/respostas das duplicatas/);
+  });
+
+  it("caminho feliz: retorna duplicatas sem lançar quando não há erro", async () => {
+    serverTableResults = {
+      documents: [{ data: [{ id: "d1", external_id: "X" }] }],
+      responses: [{ data: [] }],
+    };
+    const checkDuplicates = await loadCheck();
+
+    const r = await checkDuplicates("proj-1", [
+      { external_id: "X", text_hash: "h1", csvIndex: 0 },
+    ]);
+
+    expect(r.duplicates).toHaveLength(1);
+    expect(r.duplicatesWithResponses).toBe(0);
+  });
+});
+
+describe("getDocumentText", () => {
+  it("retorna texto e titulo quando o doc existe", async () => {
+    serverTableResults = {
+      documents: [{ data: { title: "Titulo", text: "conteudo" } }],
+    };
+    const getDocumentText = await loadGetDocumentText();
+
+    const r = await getDocumentText("proj-1", "doc-1");
+
+    expect(r).toEqual({ text: "conteudo", title: "Titulo" });
+  });
+
+  it("retorna null (sem lancar) quando o doc nao existe", async () => {
+    // maybeSingle devolve data:null em 0 linhas; nao pode lancar (era .single()).
+    serverTableResults = { documents: [{ data: null }] };
+    const getDocumentText = await loadGetDocumentText();
+
+    await expect(getDocumentText("proj-1", "missing")).resolves.toBeNull();
+  });
+
+  it("lanca quando a query retorna erro, em vez de silenciar como nao-encontrado", async () => {
+    serverTableResults = {
+      documents: [{ error: { message: "rls denied", code: "42501" } }],
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const getDocumentText = await loadGetDocumentText();
+
+    await expect(getDocumentText("proj-1", "doc-1")).rejects.toMatchObject({
+      message: "rls denied",
+    });
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
+});

@@ -2,9 +2,17 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
-import { updateOrThrow, deleteOrThrow } from "@/lib/supabase/rls-guard";
+import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import type { AutomationMode } from "@/lib/types";
+
+const AUTOMATION_MODE_VALUES: ReadonlyArray<AutomationMode> = Object.freeze([
+  "none",
+  "auto_review_llm",
+  "compare_humans",
+  "compare_llm",
+]);
 
 export async function createProject(_prev: unknown, formData: FormData) {
   const user = await getAuthUser();
@@ -14,10 +22,16 @@ export async function createProject(_prev: unknown, formData: FormData) {
 
   const name = formData.get("name") as string;
   const description = formData.get("description") as string;
+  const rawMode = formData.get("automation_mode") as string | null;
+  const automation_mode: AutomationMode = AUTOMATION_MODE_VALUES.includes(
+    rawMode as AutomationMode,
+  )
+    ? (rawMode as AutomationMode)
+    : "auto_review_llm";
 
   const { data: project, error } = await supabase
     .from("projects")
-    .insert({ name, description, created_by: user.id })
+    .insert({ name, description, created_by: user.id, automation_mode })
     .select()
     .single();
 
@@ -50,6 +64,8 @@ export async function updateProject(
     min_responses_for_comparison?: number;
     allow_researcher_review?: boolean;
     arbitration_blind?: boolean;
+    automation_mode?: AutomationMode;
+    comparison_includes_llm?: boolean;
   }
 ): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
@@ -62,17 +78,4 @@ export async function updateProject(
   }
   revalidatePath(`/projects/${projectId}`);
   return {};
-}
-
-export async function deleteProject(projectId: string): Promise<{ error?: string }> {
-  const supabase = await createSupabaseServer();
-  try {
-    await deleteOrThrow(supabase, "projects", { id: projectId }, {
-      message: "Sem permissão para excluir este projeto.",
-    });
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Erro ao excluir o projeto" };
-  }
-  revalidatePath("/dashboard");
-  redirect("/dashboard");
 }

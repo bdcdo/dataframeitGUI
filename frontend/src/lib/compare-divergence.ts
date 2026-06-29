@@ -3,16 +3,6 @@ import { isFieldVisible } from "@/lib/conditional";
 import { buildResponseGroupKeys, type EquivalencePair } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
-// A field is free-text when there is no fixed option set —
-// equivalence makes sense only here. Multi/single-with-options have
-// canonical answer keys already.
-export function isFreeTextField(field: PydanticField): boolean {
-  if (field.type === "text" || field.type === "date") return true;
-  if (field.type === "single" && (!field.options || field.options.length === 0))
-    return true;
-  return false;
-}
-
 interface ResponseLike {
   id: string;
   answers: Record<string, unknown> | null | undefined;
@@ -90,33 +80,44 @@ export function computeDivergentFieldNames(
       continue;
     }
 
-    // Scalar / free-text path. For free-text we run union-find over both
-    // explicit pairs and same-normalized-answer edges, so responses with
-    // identical text always land in the same group regardless of pairs.
-    if (isFreeTextField(field)) {
-      const pairs = equivalencesByField?.get(field.name) ?? [];
-      const items = applicable.map((r) => ({
-        id: r.id,
-        answer: (r.answers as Record<string, unknown>)?.[field.name],
-      }));
-      const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
-        normalizeForComparison(r.answer),
-      );
-      const keys = new Set<string>();
-      for (const r of applicable) keys.add(groupKeys.get(r.id) ?? r.id);
-      if (keys.size > 1) divergent.push(field.name);
-      continue;
-    }
-
+    // Non-multi path: free-text, date e single (com ou sem opções). Union-find
+    // sobre pares de equivalência explícitos + arestas de mesma-resposta-
+    // normalizada: respostas com a mesma resposta normalizada caem sempre no
+    // mesmo grupo, e o revisor pode fundir respostas distintas — ex.: NI ≡ N/A ≡
+    // "não informado" num single de opções (issue #247, ponto 5). Sem pares,
+    // é equivalente a agrupar por resposta normalizada (comportamento antigo do
+    // ramo scalar). multi tem seu próprio caminho (set de opções) acima, pois
+    // sua UI de revisão (MultiOptionReview) não tem cards de equivalência.
+    const pairs = equivalencesByField?.get(field.name) ?? [];
+    const items = applicable.map((r) => ({
+      id: r.id,
+      answer: (r.answers as Record<string, unknown>)?.[field.name],
+    }));
+    const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
+      normalizeForComparison(r.answer),
+    );
     const keys = new Set<string>();
-    for (const r of applicable) {
-      const raw = (r.answers as Record<string, unknown>)?.[field.name];
-      keys.add(normalizeForComparison(raw));
-    }
+    for (const r of applicable) keys.add(groupKeys.get(r.id) ?? r.id);
     if (keys.size > 1) divergent.push(field.name);
   }
 
   return divergent;
+}
+
+export type CompareAssignmentStatus = "pendente" | "em_andamento" | "concluido";
+
+// Pure decision for the reviewer's "comparacao" assignment status, given the
+// canonical divergent fields of the document and the set of fields the reviewer
+// already has a verdict for. `every` is vacuously true for an empty divergent
+// list, so a document with no divergences (e.g. all fused via equivalence)
+// resolves to "concluido" instead of being stuck forever (#217).
+export function resolveCompareStatus(
+  divergentFields: string[],
+  reviewedFields: Set<string>,
+): CompareAssignmentStatus {
+  if (divergentFields.every((fn) => reviewedFields.has(fn))) return "concluido";
+  if (reviewedFields.size === 0) return "pendente";
+  return "em_andamento";
 }
 
 // A document is "complete" in the Compare queue when it has at least one

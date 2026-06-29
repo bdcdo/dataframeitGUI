@@ -2,6 +2,8 @@
 
 Plataforma web para analise de conteudo de documentos. Coordenadores definem perguntas (Pydantic), atribuem documentos a pesquisadores, rodam LLM. Pesquisadores codificam e revisam. Comparacoes automaticas quando ha N+ respostas para o mesmo documento.
 
+Documento normativo do projeto: `.specify/memory/constitution.md` (constituicao v1.0.0 — principios de usabilidade, velocidade, seguranca, RLS, testes, a11y, schema e simplicidade de stack). Em conflito, a constituicao prevalece sobre este guia.
+
 ## Arquitetura
 
 ```
@@ -48,12 +50,14 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
   - (b) `compile_pydantic()` em `backend/services/pydantic_compiler.py` para le-la de volta;
   - (c) as primitivas de versionamento/auditoria em `frontend/src/lib/schema-utils.ts` — `snapshotOf`, `classifyChange`, `diffFields`, `fieldDiffIsStructural` — para que a mudanca da propriedade seja classificada (minor/patch) e registrada em `schema_change_log`. Essas primitivas sao puras e compartilhadas entre `saveSchemaFromGUI` e scripts fora do Next runtime, justamente para evitar drift (ver #63);
   - (d) o diff de historico em `frontend/src/lib/schema-change-utils.ts` (`FieldPropertyDiff`, `diffPydanticField`, `PROPERTY_LABELS`) e o renderizador `FieldChangeDiff.tsx`.
+
+  **Direcao registrada (constituicao, Principios III e VII)**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(d) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
 - Testes: **Vitest** (frontend), **pytest** (backend)
 
 ## Estrutura
 
 ```
-frontend/           # Next.js 15
+frontend/           # Next.js 16
   src/
     app/            # App Router pages
     components/     # UI components (shell, coding, compare, schema, etc.)
@@ -85,7 +89,7 @@ Para aplicar migrations pendentes: `npx supabase db push`
 
 ## Deploy
 
-Vercel faz deploy automatico a partir de merge no branch `main`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
+Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Vercel → Fly.io (app `gui-analise-sistematica-frontend`); enquanto o cutover de dominio nao ocorre, Vercel ainda e a producao. Backend: Fly.io (app `gui-analise-sistematica-api`) via workflow quando ha mudanca em `backend/**`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
 
 1. **Criar git worktree isolado** para a tarefa (ver secao "Workspace isolado" abaixo) — nao trabalhar no diretorio principal
 2. Criar branch descritiva (`feat/...`, `fix/...`, `perf/...`) na worktree
@@ -127,7 +131,26 @@ cd backend && uvicorn main:app --reload
 
 # Supabase local
 cd frontend && npx supabase start
+
+# Lint / qualidade — stack completa em docs/CODE_QUALITY_TOOLING.md
+cd frontend && npm run lint                # eslint rápido
+cd frontend && npm run typecheck           # tsc --noEmit
+cd frontend && npm run lint:types          # typescript-eslint type-checked (no-floating-promises)
+cd frontend && npm run react-doctor        # react-doctor (semântica React no arquivo)
+cd frontend && npm run fallow              # fallow (grafo: dead-code/dupes/complexidade)
+cd frontend && npm run scan                # React Scan (precisa de npm run dev rodando)
+cd backend  && uv run ruff check .         # lint + complexidade do Python (hook pina v0.15.19)
 ```
+
+A stack de qualidade cobre quatro eixos — react-doctor (React no arquivo), **fallow** (grafo do codebase), **typescript-eslint type-checked** (tipos), **React Scan** (runtime) — mais **ruff** no backend Python e **Dependabot + semgrep** (segurança, sobre o gitleaks já existente). O princípio é que **nada depende de lembrar de rodar**: os hooks de `.pre-commit-config.yaml` disparam sozinhos, divididos em dois estágios — pre-commit (leve/file-scoped: gitleaks, ruff, react-doctor) e pre-push (pesado/grafo: typecheck, lint:types, fallow audit, semgrep). Setup (1x): `cd frontend && npm install && uv tool install pre-commit && pre-commit install` (instala os dois estágios). Cada gate grandfathers o débito legado (new-only no fallow/semgrep, file-scoped no ruff/lint:types, line-scoped no react-doctor). Decisão completa, baselines e o que foi diferido (tsgo, mypy, Biome) em **`docs/CODE_QUALITY_TOOLING.md`**; baseline e regras silenciadas do react-doctor em `docs/LINT_CONFIG.md`.
+
+O **react-doctor** é um linter pinado (`react-doctor@0.5.8`, devDependency) com config em `frontend/doctor.config.json` (fonte única; na 0.5.x o nome do arquivo passou a ser `doctor.config.*`). Um hook **local de pre-commit** (`.pre-commit-config.yaml`) roda `react-doctor . --scope changed --base HEAD --blocking error` nos commits que tocam `frontend/**/*.{ts,tsx}`: **bloqueia só se a linha alterada produzir um error** (`--scope changed` é line-scoped; substituiu o `--diff` deprecado na 0.5.7); o débito legado de errors/warnings fica grandfathered. Por ser local e opt-in, é uma rede de proteção do dev — não um portão de merge no servidor. Detalhes, baseline 0.5.8 e regras silenciadas em `docs/LINT_CONFIG.md`.
+
+## Scripts one-off de dados / específicos de projeto
+
+Scripts pontuais que operam sobre os dados de **um projeto específico** (dedup, correção de import, migração de dados ad hoc, re-OCR) **não vão para o repositório geral**: vivem em `pipeline-processos/` (gitignored), junto dos outros utilitários locais do Zolgensma. Motivo: carregam IDs e suposições de um projeto/dataset, não são reutilizáveis nem revisáveis como código de produto, e versioná-los polui o repo e expõe dados do banco (backups). Quando precisar resolver o `.env.local`, use caminho canônico do `frontend/` ou a env var `SUPABASE_ENV_PATH` — nunca suba a árvore de diretórios.
+
+Vai para o repo (PR normal) só a **correção de causa raiz genérica** que decorre desse trabalho — migration, mudança de comportamento no app, teste. Exemplo concreto (2026-06-23): as duplicatas de `documents` por re-import (projetos Zolgensma `0c6394da` e Zolgensma-Judiciário `00779233`) foram resolvidas por scripts locais em `pipeline-processos/dedup/`; o que entrou no repo foi a **migration do índice único parcial** `documents_project_external_id_active_uniq` (`UNIQUE(project_id, external_id) WHERE external_id IS NOT NULL AND excluded_at IS NULL`) + o **filtro defensivo** `filterActiveExternalIdConflicts` em `uploadDocuments`, que pula external_ids já ativos ou repetidos no lote em vez de deixar o INSERT em lote falhar inteiro.
 
 ## Performance — Regras de Arquitetura
 

@@ -1,5 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
+import { scanComparisonBacklog } from "@/lib/auto-comparison";
 import { MemberList } from "@/components/members/MemberList";
 import { AddMemberDialog } from "@/components/members/AddMemberDialog";
 import type { MemberEmailLink, ProjectMember, Profile } from "@/lib/types";
@@ -15,23 +17,42 @@ export default async function MembersPage({
     createSupabaseServer(),
   ]);
 
-  const [{ data: members }, { count: orphanedReviews }, { data: emailLinks }] =
-    await Promise.all([
-      supabase
-        .from("project_members")
-        .select("id, project_id, user_id, role, can_arbitrate, can_resolve, profiles(id, email, first_name, last_name, activated_at)")
-        .eq("project_id", id),
-      supabase
-        .from("field_reviews")
-        .select("id", { count: "exact", head: true })
-        .eq("project_id", id)
-        .eq("self_verdict", "contesta_llm")
-        .is("arbitrator_id", null),
-      supabase
-        .from("member_email_links")
-        .select("id, project_id, member_user_id, email, linked_user_id, created_by, created_at")
-        .eq("project_id", id),
-    ]);
+  const [
+    { data: members },
+    { count: orphanedReviews },
+    { data: emailLinks },
+    { data: project },
+  ] = await Promise.all([
+    supabase
+      .from("project_members")
+      .select("id, project_id, user_id, role, can_arbitrate, can_resolve, can_compare, profiles(id, email, first_name, last_name, activated_at)")
+      .eq("project_id", id),
+    supabase
+      .from("field_reviews")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", id)
+      .eq("self_verdict", "contesta_llm")
+      .is("arbitrator_id", null),
+    supabase
+      .from("member_email_links")
+      .select("id, project_id, member_user_id, email, linked_user_id, created_by, created_at")
+      .eq("project_id", id),
+    supabase
+      .from("projects")
+      .select("automation_mode")
+      .eq("id", id)
+      .single(),
+  ]);
+
+  // Backlog de comparação sem revisor — só relevante nos modos de comparação.
+  // Recomputado por varredura (a comparação não materializa divergência). Página
+  // coordinator-only e de baixo tráfego, então a varredura aqui é aceitável.
+  const mode = project?.automation_mode;
+  let orphanedComparisons = 0;
+  if (mode === "compare_humans" || mode === "compare_llm") {
+    const admin = createSupabaseAdmin();
+    orphanedComparisons = (await scanComparisonBacklog(admin, id, mode)).length;
+  }
 
   const typedMembers = (members || []) as unknown as (ProjectMember & { profiles: Profile })[];
 
@@ -44,6 +65,11 @@ export default async function MembersPage({
       {orphanedReviews && orphanedReviews > 0 ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           {orphanedReviews} caso(s) aguardando arbitragem sem árbitro elegível. Marque ao menos um membro como <strong>Arbitra</strong> abaixo para alocá-los.
+        </div>
+      ) : null}
+      {orphanedComparisons > 0 ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          {orphanedComparisons} documento(s) divergente(s) sem revisor de comparação. Marque ao menos um membro como <strong>Compara</strong> abaixo para alocá-los.
         </div>
       ) : null}
       <MemberList

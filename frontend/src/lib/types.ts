@@ -10,6 +10,49 @@ export interface Profile {
 
 export type RoundStrategy = "schema_version" | "manual";
 
+// Modo de automação de revisão do projeto (projects.automation_mode). Define o
+// "mínimo necessário para liberar a revisão" + quem revê, e governa quais abas
+// de revisão aparecem. Mutuamente exclusivo. Ver lib/auto-review.ts (auto_review_llm)
+// e lib/auto-comparison.ts (compare_*).
+export type AutomationMode =
+  | "none"
+  | "auto_review_llm"
+  | "compare_humans"
+  | "compare_llm";
+
+// Fonte única dos rótulos/descrições dos modos — reaproveitada pelos seletores
+// de criação (projects/new) e de Config › Regras (RulesForm), evitando drift.
+export const AUTOMATION_MODES: ReadonlyArray<{
+  value: AutomationMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "none",
+    label: "Nenhuma automação",
+    description:
+      "Sem revisão automática. Qualquer comparação ou revisão é criada manualmente pelo coordenador.",
+  },
+  {
+    value: "auto_review_llm",
+    label: "Auto-revisão vs LLM",
+    description:
+      "Quando uma pessoa termina de codificar e diverge do LLM, ela mesma revisa os campos divergentes; contestados vão para arbitragem.",
+  },
+  {
+    value: "compare_humans",
+    label: "Comparação humano-vs-humano",
+    description:
+      "Quando duas pessoas codificam o mesmo documento e divergem, um revisor é sorteado para comparar as codificações.",
+  },
+  {
+    value: "compare_llm",
+    label: "Comparação pessoa-vs-LLM",
+    description:
+      "Quando uma pessoa codifica e diverge do LLM, um revisor é sorteado para comparar a codificação humana contra a do LLM.",
+  },
+];
+
 export interface Round {
   id: string;
   project_id: string;
@@ -36,6 +79,10 @@ export interface Project {
   round_strategy: RoundStrategy;
   current_round_id: string | null;
   arbitration_blind: boolean;
+  automation_mode: AutomationMode;
+  // Só relevante em automation_mode = "compare_humans": inclui a resposta do LLM
+  // (quando existe) no cálculo de divergência que dispara a comparação.
+  comparison_includes_llm: boolean;
 }
 
 export interface SubfieldDef {
@@ -79,6 +126,13 @@ export interface ProjectMember {
   role: "coordenador" | "pesquisador";
   can_arbitrate: boolean;
   can_resolve: boolean;
+  // Elegível para receber comparações automáticas (assignComparisonReviewer).
+  can_compare: boolean;
+  // Carga relativa no sorteio (1 = normal, 0.5 = metade). Ver distributeDocs.
+  // Opcional: nem toda query de project_members seleciona estas colunas.
+  assignment_weight?: number;
+  // Teto absoluto de docs novos por sorteio; null = sem limite individual.
+  assignment_cap?: number | null;
   profiles?: Profile;
 }
 
@@ -121,24 +175,18 @@ export interface Assignment {
   status: "pendente" | "em_andamento" | "concluido";
   type: AssignmentType;
   batch_id: string | null;
-  deadline: string | null;
   completed_at: string | null;
 }
 
-export interface AssignmentBatch {
-  id: string;
-  project_id: string;
-  created_by: string;
-  created_at: string;
-  researchers_per_doc: number;
-  docs_per_researcher: number | null;
-  doc_subset_size: number | null;
-  deadline_mode: "none" | "batch" | "recurring";
-  deadline_date: string | null;
-  recurring_count: number | null;
-  recurring_start: string | null;
-  label: string | null;
-}
+/**
+ * Documento na visão de codificação, com o subconjunto de `assignment` que o
+ * modo Atribuídos usa (id + status). Fonte única consumida por `CodingPage`,
+ * `useAssignedCoding` e `useBrowseCoding` (evita redefinir o mesmo tipo em cada
+ * arquivo).
+ */
+export type AssignedDoc = Document & {
+  assignment?: Pick<Assignment, "id" | "status">;
+};
 
 // Snapshot por-campo do schema contra o qual a response foi codificada
 // (1 chave por campo existente na época, valor = field.hash). Gravado em
@@ -246,4 +294,14 @@ export interface SchemaChangeEntry {
   createdAt: string;
   changeType: SchemaChangeType | null;
   version: { major: number; minor: number; patch: number } | null;
+}
+
+// Configuração de execução do LLM (projects.llm_provider / llm_model /
+// llm_kwargs). Compartilhada pela orquestração `LlmConfigurePane` e pelos cards
+// `ModelConfigCard`/`RunCard` — tipo único aqui evita drift ao adicionar um
+// kwarg estrutural novo.
+export interface LlmConfig {
+  llm_provider: string;
+  llm_model: string;
+  llm_kwargs: Record<string, unknown>;
 }

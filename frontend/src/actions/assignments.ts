@@ -2,18 +2,23 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import {
   createRng,
   distributeDocs,
+  filterComparisonEligible,
   filterEligibleDocs,
   shuffleWithRng,
+  computeCapacity,
+  resolveWeight,
+  resolveCap,
   type LotteryBalancing,
   type LotteryDocStats,
   type LotteryFilters,
   type LotteryMode,
   type LotteryParticipant,
 } from "@/lib/lottery-utils";
+import { MEMBERS_TAG_PROFILE, membersTag } from "@/lib/cache";
 
 /**
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
@@ -112,6 +117,13 @@ export interface LotteryParams {
   label?: string;
   filters?: LotteryFilters;
   participantIds: string[];
+  /**
+   * Peso e limite por participante (spec: carga desigual). weight escala a
+   * carga na distribuição (default 1); cap é o teto absoluto de docs novos do
+   * participante (null/ausente = sem limite individual). Persistido em
+   * project_members ao sortear para pré-preencher o próximo sorteio.
+   */
+  participantSettings?: Record<string, { weight?: number; cap?: number | null }>;
 }
 
 interface LotteryAssignment {
@@ -133,6 +145,8 @@ interface LotteryData {
   docs: LotteryDocStats[];
   batches: { id: string; label: string | null; createdAt: string }[];
   minResponsesForComparison: number;
+  /** modo de automação do projeto — governa o gate de comparação */
+  automationMode: string | null;
   assignmentRows: {
     document_id: string;
     user_id: string;
@@ -144,8 +158,14 @@ interface LotteryData {
 async function fetchLotteryData(projectId: string): Promise<LotteryData> {
   const supabase = await createSupabaseServer();
 
-  const [{ data: docs }, { data: responses }, { data: assignments }, { data: batches }, { data: project }] =
-    await Promise.all([
+  const [
+    { data: docs },
+    { data: responses },
+    { data: llmResponses },
+    { data: assignments },
+    { data: batches },
+    { data: project },
+  ] = await Promise.all([
       supabase
         .from("documents")
         .select("id, external_id, title")
@@ -158,6 +178,12 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
         .eq("is_latest", true)
         .eq("respondent_type", "humano"),
       supabase
+        .from("responses")
+        .select("document_id")
+        .eq("project_id", projectId)
+        .eq("is_latest", true)
+        .eq("respondent_type", "llm"),
+      supabase
         .from("assignments")
         .select("document_id, user_id, status, type, batch_id")
         .eq("project_id", projectId),
@@ -168,7 +194,7 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
         .order("created_at", { ascending: false }),
       supabase
         .from("projects")
-        .select("min_responses_for_comparison")
+        .select("min_responses_for_comparison, automation_mode")
         .eq("id", projectId)
         .single(),
     ]);
@@ -177,6 +203,9 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
   for (const r of responses || []) {
     (respondentsByDoc[r.document_id] ??= new Set()).add(r.respondent_id);
   }
+
+  const docsWithLlm = new Set<string>();
+  for (const r of llmResponses || []) docsWithLlm.add(r.document_id);
 
   const activeByDoc: Record<string, { codificacao: number; comparacao: number }> = {};
   const everAssigned = new Set<string>();
@@ -199,6 +228,7 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
       externalId: d.external_id,
       title: d.title,
       humanCodingCount: respondentsByDoc[d.id]?.size || 0,
+      hasLlmResponse: docsWithLlm.has(d.id),
       activeAssignments: activeByDoc[d.id] || { codificacao: 0, comparacao: 0 },
       hasAnyAssignmentEver: everAssigned.has(d.id),
       batchIds: Array.from(batchIdsByDoc[d.id] || []),
@@ -209,6 +239,7 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
       createdAt: b.created_at,
     })),
     minResponsesForComparison: project?.min_responses_for_comparison || 2,
+    automationMode: project?.automation_mode ?? null,
     assignmentRows: (assignments || []).map((a) => ({
       document_id: a.document_id,
       user_id: a.user_id,
@@ -226,12 +257,14 @@ export async function getLotteryDocStats(projectId: string): Promise<{
   docs: LotteryDocStats[];
   batches: { id: string; label: string | null; createdAt: string }[];
   minResponsesForComparison: number;
+  automationMode: string | null;
 }> {
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
-  const { docs, batches, minResponsesForComparison } = await fetchLotteryData(projectId);
-  return { docs, batches, minResponsesForComparison };
+  const { docs, batches, minResponsesForComparison, automationMode } =
+    await fetchLotteryData(projectId);
+  return { docs, batches, minResponsesForComparison, automationMode };
 }
 
 async function computeLottery(params: LotteryParams): Promise<{
@@ -271,14 +304,21 @@ async function computeLottery(params: LotteryParams): Promise<{
     throw new Error("Necessário ter documentos.");
   }
 
-  // Exigência mínima de respostas para comparação — compõe com os filtros
+  // Gate de comparação derivado do modo de automação — compõe com os filtros.
+  // compare_llm exige 1 humano + LLM; demais modos exigem N humanos.
   let candidateDocs = data.docs;
   if (assignmentType === "comparacao") {
-    candidateDocs = candidateDocs.filter(
-      (d) => d.humanCodingCount >= data.minResponsesForComparison
+    candidateDocs = filterComparisonEligible(
+      candidateDocs,
+      data.automationMode,
+      data.minResponsesForComparison,
     );
     if (!candidateDocs.length) {
-      throw new Error("Nenhum documento tem respostas suficientes para comparação.");
+      throw new Error(
+        data.automationMode === "compare_llm"
+          ? "Nenhum documento tem resposta humana e do LLM para comparação."
+          : "Nenhum documento tem respostas humanas suficientes para comparação.",
+      );
     }
   }
 
@@ -342,15 +382,23 @@ async function computeLottery(params: LotteryParams): Promise<{
     }
   }
 
-  // Carga acumulada (conjunto preservado do modo) + capacidade
+  // Carga acumulada (conjunto preservado do modo) + capacidade + peso.
+  // capacity é o teto de docs NOVOS: o limite individual (cap, teto direto de
+  // novos) compõe com o global docsPerResearcher (teto total) — vence o menor
+  // (ver computeCapacity). O peso escala a chave de distribuição (load/weight).
+  const settings = params.participantSettings ?? {};
   const participants: LotteryParticipant[] = participantIds.map((pId) => {
     const accumulatedLoad = preservedByUser[pId] || 0;
+    const cfg = settings[pId] ?? {};
     return {
       id: pId,
       accumulatedLoad,
-      capacity: params.docsPerResearcher
-        ? Math.max(0, params.docsPerResearcher - accumulatedLoad)
-        : Infinity,
+      capacity: computeCapacity({
+        accumulatedLoad,
+        docsPerResearcher: params.docsPerResearcher,
+        cap: cfg.cap,
+      }),
+      weight: resolveWeight(cfg.weight),
     };
   });
 
@@ -377,13 +425,13 @@ async function computeLottery(params: LotteryParams): Promise<{
     researchers_per_doc: params.researchersPerDoc,
     docs_per_researcher: params.docsPerResearcher || null,
     doc_subset_size: params.docSubsetSize || null,
-    deadline_mode: "none",
     label: params.label || null,
     mode: params.mode,
     balancing: params.balancing,
     filters: {
       ...filters,
       participantIds,
+      participantSettings: settings,
       docSubsetSize: params.docSubsetSize ?? null,
       seed,
     },
@@ -447,37 +495,49 @@ export async function smartRandomize(params: LotteryParams) {
     );
   }
 
-  // Pendentes do tipo só são descartadas no modo substituir.
-  // Delete + inserts não são atômicos (sem transação via PostgREST) —
-  // os erros são verificados e expostos, mas uma falha entre o delete e
-  // os inserts ainda perde pendentes; transação via RPC é follow-up.
-  if (params.mode === "replace") {
-    const { error: deleteError } = await supabase
-      .from("assignments")
-      .delete()
-      .eq("project_id", params.projectId)
-      .eq("status", "pendente")
-      .eq("type", assignmentType);
-    if (deleteError) {
-      throw new Error(`Erro ao descartar atribuições pendentes: ${deleteError.message}`);
-    }
+  // Descarte das pendentes (modo substituir) + gravação das novas numa
+  // transação única via RPC (issue #181): uma falha entre o delete e o insert
+  // não perde mais as pendentes. SECURITY INVOKER — a RLS do coordenador vale
+  // dentro da função. Dispensa o chunk de 100 (era limite de payload PostgREST).
+  const assignmentRows = newAssignments.map((a) => ({
+    document_id: a.document_id,
+    user_id: a.user_id,
+  }));
+  const { error: rpcError } = await supabase.rpc("apply_lottery_assignments", {
+    p_project_id: params.projectId,
+    p_type: assignmentType,
+    p_batch_id: batch.id,
+    p_assignments: assignmentRows,
+    p_replace: params.mode === "replace",
+  });
+  if (rpcError) {
+    throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
   }
 
-  const chunkSize = 100;
-  for (let i = 0; i < newAssignments.length; i += chunkSize) {
-    const chunk = newAssignments.slice(i, i + chunkSize).map((a) => ({
-      project_id: params.projectId,
-      document_id: a.document_id,
-      user_id: a.user_id,
-      batch_id: batch.id,
-      type: assignmentType,
-    }));
-    const { error: insertError } = await supabase.from("assignments").insert(chunk);
-    if (insertError) {
-      throw new Error(
-        `Erro ao gravar as atribuições (${i} de ${newAssignments.length} inseridas): ${insertError.message}`
+  // Persiste o peso/limite usado por participante (decisão: editar no diálogo,
+  // mas assumir continuidade no próximo sorteio). As atribuições já foram
+  // gravadas — uma falha aqui só afeta o default da próxima vez, não bloqueia.
+  const settingsEntries = Object.entries(params.participantSettings ?? {});
+  if (settingsEntries.length > 0) {
+    const results = await Promise.all(
+      settingsEntries.map(([userId, cfg]) =>
+        supabase
+          .from("project_members")
+          .update({
+            assignment_weight: resolveWeight(cfg.weight),
+            assignment_cap: resolveCap(cfg.cap),
+          })
+          .eq("project_id", params.projectId)
+          .eq("user_id", userId),
+      ),
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) {
+      console.error(
+        `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
       );
     }
+    revalidateTag(membersTag(params.projectId), MEMBERS_TAG_PROFILE);
   }
 
   revalidatePath(`/projects/${params.projectId}/analyze/assignments`);
