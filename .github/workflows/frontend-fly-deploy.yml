@@ -23,4 +23,7 @@ jobs:
       - run: flyctl deploy --remote-only -a gui-analise-sistematica-frontend
         working-directory: frontend
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          # Token app-scoped DESTE app (gui-analise-sistematica-frontend). O
+          # FLY_API_TOKEN compartilhado com o backend tem escopo do app da API
+          # e dava `unauthorized` aqui — tokens de deploy do Fly sao por app.
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
