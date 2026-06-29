@@ -7,7 +7,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml .
 RUN uv pip install --system --no-cache \
     "fastapi>=0.115" \
-    "uvicorn[standard]>=0.34" \
+    "uvicorn[standard]>=0.49.0" \
     "pydantic>=2.10" \
     "pydantic-settings>=2.7" \
     "supabase>=2.11" \
