@@ -140,6 +140,18 @@ export function ComparisonPanel({
 
   const feedbackBadge = commentCount + suggestionCount;
 
+  // "Não preencheu este campo" (issue #247, ponto 3): respostas sem valor para
+  // o campo atual ficam fora dos cards (que só mostram quem respondeu), o que
+  // fazia parecer que "só o robô respondeu". Listamos quem deixou o campo em
+  // branco para o revisor entender a ausência. Filtramos por `!isFieldStale`:
+  // assim só contam respondentes cujo schema TINHA este campo e ainda assim não
+  // o preencheram — não respondentes de um schema antigo onde o campo nem
+  // existia (esses são ruído de versão, não uma omissão real).
+  const unanswered = useMemo(
+    () => responses.filter((r) => r.answer === undefined && !r.isFieldStale),
+    [responses],
+  );
+
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 border-b px-4 py-1.5">
@@ -210,6 +222,15 @@ export function ComparisonPanel({
             currentUserId={currentUserId}
             canManageAnyPair={canManageAnyPair}
           />
+        )}
+
+        {unanswered.length > 0 && (
+          <div className="mt-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2.5 py-1.5 text-[11px] leading-tight text-muted-foreground">
+            {unanswered.length === 1
+              ? "1 respondente não preencheu este campo"
+              : `${unanswered.length} respondentes não preencheram este campo`}
+            : {unanswered.map((r) => r.respondent_name).join(", ")}
+          </div>
         )}
 
         {isDivergent ? (
