@@ -1,6 +1,14 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
+import { COMPARE_DEFAULT_VERSION } from "@/lib/compare-filters";
+import {
+  resolveMinVersion,
+  responseQualifiesForVersion,
+  type SchemaVersion,
+  type ProjectVersionContext,
+  type VersionedResponse,
+} from "@/lib/compare-version";
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
@@ -29,6 +37,13 @@ interface ResponseRow {
   respondent_id?: string | null;
   answers: Record<string, unknown> | null;
   answer_field_hashes: AnswerFieldHashes | null;
+  // Campos de versão: necessários para aplicar o piso `latest_major` (#247),
+  // o MESMO que a fila (compare/page.tsx) e o fecho (compare-sync.ts) usam.
+  is_latest?: boolean;
+  pydantic_hash?: string | null;
+  schema_version_major?: number | null;
+  schema_version_minor?: number | null;
+  schema_version_patch?: number | null;
 }
 
 function toResponseLike(r: ResponseRow) {
@@ -36,6 +51,50 @@ function toResponseLike(r: ResponseRow) {
     id: r.id,
     answers: (r.answers as Record<string, unknown>) ?? {},
     answerFieldHashes: r.answer_field_hashes as AnswerFieldHashes,
+  };
+}
+
+// Colunas SELECT comuns para as duas queries de `responses` do gatilho: além de
+// answers/hashes, traz os campos de versão para o piso `latest_major`.
+const RESPONSE_VERSION_COLS =
+  "pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch";
+
+// Monta o shape `VersionedResponse` a partir de uma linha de `responses`. As
+// linhas chegam já com `is_latest=true` da query, mas o predicado exige o campo;
+// `respondent_type` é fixado pela query (humano/llm), aqui é irrelevante para a
+// decisão de versão e entra só para satisfazer o tipo.
+function toVersioned(
+  r: ResponseRow,
+  respondentType: "humano" | "llm",
+): VersionedResponse {
+  return {
+    respondent_type: respondentType,
+    is_latest: r.is_latest ?? true,
+    pydantic_hash: r.pydantic_hash ?? null,
+    schema_version_major: r.schema_version_major ?? null,
+    schema_version_minor: r.schema_version_minor ?? null,
+    schema_version_patch: r.schema_version_patch ?? null,
+  };
+}
+
+// Contexto de versão do projeto + piso `latest_major`, derivados da linha de
+// `projects`. Mesmos fallbacks de page.tsx/compare-sync ({major 0, minor 1,
+// patch 0}) e a MESMA constante `COMPARE_DEFAULT_VERSION`, mantendo o
+// acoplamento gatilho==fila==fecho (#247).
+function versionGate(project: {
+  pydantic_hash?: string | null;
+  schema_version_major?: number | null;
+  schema_version_minor?: number | null;
+  schema_version_patch?: number | null;
+}): { minVersion: SchemaVersion | null; ctx: ProjectVersionContext } {
+  const version: SchemaVersion = {
+    major: project.schema_version_major ?? 0,
+    minor: project.schema_version_minor ?? 1,
+    patch: project.schema_version_patch ?? 0,
+  };
+  return {
+    minVersion: resolveMinVersion(COMPARE_DEFAULT_VERSION, version),
+    ctx: { pydanticHash: project.pydantic_hash ?? null, version },
   };
 }
 
@@ -153,19 +212,21 @@ export async function createAutoComparisonIfDiverges(
   ] = await Promise.all([
     admin
       .from("projects")
-      .select("pydantic_fields, min_responses_for_comparison, comparison_includes_llm")
+      .select(
+        `pydantic_fields, min_responses_for_comparison, comparison_includes_llm, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch`,
+      )
       .eq("id", projectId)
       .single(),
     admin
       .from("responses")
-      .select("id, respondent_id, answers, answer_field_hashes")
+      .select(`id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("respondent_type", "humano")
       .eq("is_latest", true),
     admin
       .from("responses")
-      .select("id, answers, answer_field_hashes")
+      .select(`id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("respondent_type", "llm")
@@ -198,18 +259,24 @@ export async function createAutoComparisonIfDiverges(
     return { assigned: false, noPool: false };
   }
 
-  // So codificacoes humanas completas contam para o gatilho (#174).
-  // NOTA (#247, follow-up): este gatilho conta toda resposta `is_latest`, sem
-  // aplicar o piso de versao do default vivo (COMPARE_DEFAULT_VERSION =
-  // "latest_major"). A fila (compare/page.tsx) e o fecho (compare-sync.ts) ja
-  // usam esse piso; aqui ainda nao. Efeito: uma divergencia que so existe entre
-  // majors antigos pode materializar um assignment que a fila nao mostra e que o
-  // fecho (latest_major) considera concluivel de imediato — fantasma cosmetico,
-  // nao a trava do #217. Alinhar exige buscar schema_version/pydantic_hash e
-  // aplicar responseQualifiesForVersion aqui; deixado como follow-up.
-  const completeHumans = (humanResponses ?? []).filter((r) =>
-    isCodingComplete(fields, (r.answers as Record<string, unknown>) ?? {}),
-  );
+  // So codificacoes humanas completas contam para o gatilho (#174), E que
+  // qualificam sob o piso `latest_major` (#247) — o MESMO que a fila
+  // (compare/page.tsx) e o fecho (compare-sync.ts) aplicam, restaurando o
+  // acoplamento gatilho==fila==fecho. Sem este filtro, uma divergencia que so
+  // existe entre rodadas antigas materializaria um assignment que a fila nao
+  // mostra e que o fecho ja considera concluivel — o "fantasma" da NOTA antiga.
+  const { minVersion, ctx: projectVersionCtx } = versionGate(project);
+  const completeHumans = (humanResponses ?? [])
+    .filter((r) =>
+      isCodingComplete(fields, (r.answers as Record<string, unknown>) ?? {}),
+    )
+    .filter((r) =>
+      responseQualifiesForVersion(
+        toVersioned(r as ResponseRow, "humano"),
+        minVersion,
+        projectVersionCtx,
+      ),
+    );
 
   const minHumans =
     mode === "compare_humans" ? (project.min_responses_for_comparison ?? 2) : 1;
@@ -223,7 +290,18 @@ export async function createAutoComparisonIfDiverges(
     });
     return { assigned: false, noPool: false };
   }
-  if (mode === "compare_llm" && !llmResponse) {
+
+  // LLM tambem passa pelo piso de versao: um LLM de schema antigo nao conta.
+  const qualifyingLlm =
+    llmResponse &&
+    responseQualifiesForVersion(
+      toVersioned(llmResponse as ResponseRow, "llm"),
+      minVersion,
+      projectVersionCtx,
+    )
+      ? llmResponse
+      : null;
+  if (mode === "compare_llm" && !qualifyingLlm) {
     log("skip_insufficient", { projectId, documentId, mode, reason: "no_llm" });
     return { assigned: false, noPool: false };
   }
@@ -235,8 +313,8 @@ export async function createAutoComparisonIfDiverges(
   const responsesForDivergence = completeHumans.map((r) =>
     toResponseLike(r as ResponseRow),
   );
-  if (includeLlm && llmResponse) {
-    responsesForDivergence.push(toResponseLike(llmResponse as ResponseRow));
+  if (includeLlm && qualifyingLlm) {
+    responsesForDivergence.push(toResponseLike(qualifyingLlm as ResponseRow));
   }
   if (responsesForDivergence.length < 2) {
     log("skip_insufficient", {
@@ -289,7 +367,9 @@ export async function scanComparisonBacklog(
     await Promise.all([
       admin
         .from("projects")
-        .select("pydantic_fields, min_responses_for_comparison, comparison_includes_llm")
+        .select(
+          `pydantic_fields, min_responses_for_comparison, comparison_includes_llm, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch`,
+        )
         .eq("id", projectId)
         .single(),
       admin
@@ -339,14 +419,14 @@ export async function scanComparisonBacklog(
     await Promise.all([
       admin
         .from("responses")
-        .select("id, document_id, respondent_id, answers, answer_field_hashes")
+        .select(`id, document_id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
         .eq("project_id", projectId)
         .eq("respondent_type", "humano")
         .eq("is_latest", true)
         .in("document_id", candidates),
       admin
         .from("responses")
-        .select("id, document_id, answers, answer_field_hashes")
+        .select(`id, document_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
         .eq("project_id", projectId)
         .eq("respondent_type", "llm")
         .eq("is_latest", true)
@@ -380,13 +460,34 @@ export async function scanComparisonBacklog(
     equivByDoc.set(docId, byField);
   }
 
+  // Piso `latest_major` (#247), aplicado por doc — mesmo gate do gatilho e do
+  // fecho. O contexto de versao do projeto e unico; so as respostas variam.
+  const { minVersion, ctx: projectVersionCtx } = versionGate(project);
+
   const result: Array<{ documentId: string; coderIds: Set<string> }> = [];
   for (const docId of candidates) {
-    const completeHumans = (humansFullByDoc.get(docId) ?? []).filter((r) =>
-      isCodingComplete(fields, (r.answers as Record<string, unknown>) ?? {}),
-    );
+    const completeHumans = (humansFullByDoc.get(docId) ?? [])
+      .filter((r) =>
+        isCodingComplete(fields, (r.answers as Record<string, unknown>) ?? {}),
+      )
+      .filter((r) =>
+        responseQualifiesForVersion(
+          toVersioned(r, "humano"),
+          minVersion,
+          projectVersionCtx,
+        ),
+      );
     if (completeHumans.length < minHumans) continue;
-    const llm = llmByDoc.get(docId);
+    const rawLlm = llmByDoc.get(docId);
+    const llm =
+      rawLlm &&
+      responseQualifiesForVersion(
+        toVersioned(rawLlm, "llm"),
+        minVersion,
+        projectVersionCtx,
+      )
+        ? rawLlm
+        : undefined;
     if (mode === "compare_llm" && !llm) continue;
 
     const includeLlm =

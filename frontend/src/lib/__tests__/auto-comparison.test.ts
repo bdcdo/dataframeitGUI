@@ -106,7 +106,17 @@ const FIELDS: PydanticField[] = [
   { name: "q1", type: "text", options: null, description: "", required: true },
 ];
 
-// Helpers de fixture
+// Hash do schema corrente do projeto. As fixtures default usam-no como
+// `pydantic_hash`, com semver NULL, para qualificar pelo fallback de hash em
+// `responseQualifiesForVersion` sob o piso vivo `latest_major` (#247). Casos de
+// versão antiga passam `pydantic_hash: "hash-antigo"` ou um semver < piso.
+const CURRENT_HASH = "hash-atual";
+
+// Helpers de fixture. Campos de versão (pydantic_hash, schema_version_*) entram
+// no shape porque o gatilho agora aplica o piso `latest_major` antes de medir
+// divergência (#247). Default = versão corrente (qualifica); `extra` sobrescreve
+// para emular rodadas antigas. Semver explícito como NULL (não undefined) para
+// espelhar o que o Postgres devolve em respostas pré-versionamento.
 const human = (
   respondent_id: string,
   q1: string,
@@ -120,9 +130,13 @@ const human = (
   is_latest: true,
   answers: { q1 },
   answer_field_hashes: null,
+  pydantic_hash: CURRENT_HASH,
+  schema_version_major: null,
+  schema_version_minor: null,
+  schema_version_patch: null,
   ...extra,
 });
-const llm = (q1: string) => ({
+const llm = (q1: string, extra: Record<string, unknown> = {}) => ({
   id: "r-llm",
   project_id: "p1",
   document_id: "doc1",
@@ -130,6 +144,11 @@ const llm = (q1: string) => ({
   is_latest: true,
   answers: { q1 },
   answer_field_hashes: null,
+  pydantic_hash: CURRENT_HASH,
+  schema_version_major: null,
+  schema_version_minor: null,
+  schema_version_patch: null,
+  ...extra,
 });
 const member = (user_id: string) => ({
   user_id,
@@ -139,9 +158,16 @@ const member = (user_id: string) => ({
 const projectRow = (over: Record<string, unknown> = {}) => ({
   id: "p1",
   pydantic_fields: FIELDS,
+  pydantic_hash: CURRENT_HASH,
   min_responses_for_comparison: 2,
   comparison_includes_llm: true,
   automation_mode: "compare_humans",
+  // Sem semver explícito: cai nos fallbacks {0,1,0} (como page.tsx/compare-sync),
+  // e o piso `latest_major` ancora em {0,1,0}. Casos que exercitam o caminho
+  // semver passam schema_version_* aqui.
+  schema_version_major: null,
+  schema_version_minor: null,
+  schema_version_patch: null,
   ...over,
 });
 
@@ -344,6 +370,111 @@ describe("createAutoComparisonIfDiverges — compare_llm", () => {
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     expect(r.assigned).toBe(false);
     expect(r.noPool).toBe(true);
+  });
+});
+
+// O gatilho aplica o MESMO piso de versão (`latest_major`) que a fila
+// (compare/page.tsx) e o fecho (compare-sync.ts) — fecha a NOTA de follow-up do
+// #286 e restaura o acoplamento gatilho==fila==fecho. Divergência que só existe
+// entre rodadas antigas NÃO materializa assignment (era o "fantasma" da NOTA).
+describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)", () => {
+  it("divergência só entre codificações de versão ANTIGA (hash) não materializa", async () => {
+    const { createAutoComparisonIfDiverges } = await loadLib();
+    // Dois humanos completos que DIVERGEM, mas ambos de um schema anterior
+    // (pydantic_hash != atual, semver NULL) → descartados pelo piso → 0 < 2.
+    tableData.responses = [
+      human("userA", "A", { pydantic_hash: "hash-antigo" }),
+      human("userB", "B", { pydantic_hash: "hash-antigo" }),
+    ];
+    tableData.project_members = [member("userC")];
+    const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
+    expect(r.assigned).toBe(false);
+    expect(upsertCallsOf("assignments")).toHaveLength(0);
+  });
+
+  it("divergência só entre codificações de MAJOR anterior (semver) não materializa", async () => {
+    const { createAutoComparisonIfDiverges } = await loadLib();
+    // Projeto na major 2; respostas divergentes da major 1 → abaixo do piso.
+    tableData.projects = [
+      projectRow({ schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+    ];
+    tableData.responses = [
+      human("userA", "A", { schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
+      human("userB", "B", { schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
+    ];
+    tableData.project_members = [member("userC")];
+    const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
+    expect(r.assigned).toBe(false);
+    expect(upsertCallsOf("assignments")).toHaveLength(0);
+  });
+
+  it("divergência na MAJOR corrente ainda materializa (semver)", async () => {
+    const { createAutoComparisonIfDiverges } = await loadLib();
+    tableData.projects = [
+      projectRow({ schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+    ];
+    tableData.responses = [
+      human("userA", "A", { schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+      human("userB", "B", { schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+    ];
+    tableData.project_members = [member("userC")];
+    const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
+    expect(r.assigned).toBe(true);
+    expect(upsertCallsOf("assignments")).toHaveLength(1);
+  });
+
+  it("mistura: 1 corrente + 1 antiga divergem → antiga descartada, sobra 1 < mínimo", async () => {
+    const { createAutoComparisonIfDiverges } = await loadLib();
+    tableData.responses = [
+      human("userA", "A"), // corrente (hash atual)
+      human("userB", "B", { pydantic_hash: "hash-antigo" }), // antiga
+    ];
+    tableData.project_members = [member("userC")];
+    const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
+    expect(r.assigned).toBe(false);
+    expect(upsertCallsOf("assignments")).toHaveLength(0);
+  });
+
+  it("compare_llm: humano corrente diverge de LLM de schema antigo → LLM descartado, sem 2ª resposta", async () => {
+    const { createAutoComparisonIfDiverges } = await loadLib();
+    tableData.projects = [projectRow({ automation_mode: "compare_llm" })];
+    tableData.responses = [
+      human("userA", "A"),
+      llm("B", { pydantic_hash: "hash-antigo" }),
+    ];
+    tableData.project_members = [member("userC")];
+    const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
+    // LLM antigo não qualifica → falta a 2ª resposta → não dispara.
+    expect(r.assigned).toBe(false);
+    expect(upsertCallsOf("assignments")).toHaveLength(0);
+  });
+});
+
+describe("scanComparisonBacklog — piso de versão latest_major (#247)", () => {
+  it("doc cuja divergência só existe em versão antiga fica fora do backlog", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.responses = [
+      human("userA", "A", { pydantic_hash: "hash-antigo" }),
+      human("userB", "B", { pydantic_hash: "hash-antigo" }),
+    ];
+    const backlog = await scanComparisonBacklog(
+      makeClient() as never,
+      "p1",
+      "compare_humans",
+    );
+    expect(backlog).toHaveLength(0);
+  });
+
+  it("doc divergente na versão corrente entra no backlog", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.responses = [human("userA", "A"), human("userB", "B")];
+    const backlog = await scanComparisonBacklog(
+      makeClient() as never,
+      "p1",
+      "compare_humans",
+    );
+    expect(backlog).toHaveLength(1);
+    expect(backlog[0].documentId).toBe("doc1");
   });
 });
 
