@@ -11,13 +11,20 @@ import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 // dispositivo" da instância, que bloqueia a estratégia password em contexto
 // headless — cada contexto Playwright é um dispositivo novo.
 
-// Roda os papéis em SÉRIE (não em paralelo). Cada signIn/signOut/currentUser
-// bate na instância de DEV do Clerk, que tem limites de uso estritos; rodar os
-// papéis em paralelo gera um burst que dispara rate-limit / `fetch failed` no
-// backend do Clerk e torna o smoke flaky (issue #198 — a falha não era
-// credencial nem o sync Clerk↔Supabase, ambos íntegros). Em série o ritmo fica
-// abaixo do limite.
-test.describe.configure({ mode: "serial" });
+// Roda os papéis EM ORDEM, num único worker (não em paralelo). Cada
+// signIn/signOut/currentUser bate na instância de DEV do Clerk, que tem limites
+// de uso estritos; rodar os papéis em paralelo gera um burst que dispara
+// rate-limit / `fetch failed` no backend do Clerk e torna o smoke flaky (issue
+// #198 — a falha não era credencial nem o sync Clerk↔Supabase, ambos íntegros).
+// Em ordem o ritmo fica abaixo do limite.
+//
+// Usamos `mode: "default"` (não `"serial"`) de propósito: ele sobrescreve o
+// `fullyParallel` do playwright.config.ts para este arquivo, rodando os papéis
+// sequencialmente, mas — ao contrário do `serial` — uma falha num papel NÃO
+// pula os demais e os retries são independentes. Os papéis são testes isolados
+// (cada um com seu próprio login), então não há dependência entre eles que
+// justifique o fail-fast do `serial`; só queremos controlar o ritmo.
+test.describe.configure({ mode: "default" });
 
 const roles = [
   { role: "coordenador", emailEnv: "E2E_COORDINATOR_EMAIL" },

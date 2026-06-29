@@ -48,13 +48,16 @@ O Playwright sobe o dev server automaticamente. Cada papel cuja credencial
 não estiver definida em `.env.e2e` tem o teste **pulado** (não falha), então
 CI sem o tenant de teste configurado continua verde.
 
-O smoke do dashboard (`dashboard.smoke.spec.ts`) roda os papéis em **série**
-(`test.describe.configure({ mode: "serial" })`). A instância de **desenvolvimento**
-do Clerk tem limites de uso estritos; rodar os papéis em paralelo gera um burst
-de `signIn`/`signOut`/`currentUser` que dispara rate-limit (`fetch failed` no
-backend do Clerk) e torna o smoke flaky — foi a causa raiz da #198 (não era
-credencial nem o sync Clerk↔Supabase). Por isso o E2E permanece **manual**
-(rodado localmente/staging), sem workflow de CI dedicado.
+O smoke do dashboard (`dashboard.smoke.spec.ts`) roda os papéis **em ordem**,
+num único worker (`test.describe.configure({ mode: "default" })`, que
+sobrescreve o `fullyParallel` da config só para este arquivo). A instância de
+**desenvolvimento** do Clerk tem limites de uso estritos; rodar os papéis em
+paralelo gera um burst de `signIn`/`signOut`/`currentUser` que dispara
+rate-limit (`fetch failed` no backend do Clerk) e torna o smoke flaky — foi a
+causa raiz da #198 (não era credencial nem o sync Clerk↔Supabase). Usamos
+`default` em vez de `serial` porque os papéis são testes isolados: queremos só
+controlar o ritmo, sem que a falha de um papel pule os demais. Por isso o E2E
+permanece **manual** (rodado localmente/staging), sem workflow de CI dedicado.
 
 ### Smoke manual de login (mitigação)
 
