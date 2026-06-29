@@ -244,8 +244,9 @@ export function AgreementGroup({
           <div className="flex items-center justify-between gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2.5 py-1.5 text-[11px] leading-tight text-muted-foreground">
             <p className="min-w-0 flex-1">
               <Link2 className="mr-1 inline size-3" />
-              Texto livre: marque os cards equivalentes e indique qual fica
-              como <strong>gabarito</strong> (a resposta que será registrada).
+              Marque os cards equivalentes (ex.: NI ≡ N/A ≡ &ldquo;não
+              informado&rdquo;) e indique qual fica como{" "}
+              <strong>gabarito</strong> (a resposta que será registrada).
             </p>
             <Button
               size="sm"
