@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -16,11 +16,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  validateSchema,
-  saveSchema,
   saveSchemaFromGUI,
   publishMajorVersion,
   backfillSchemaVersionHistory,
+  recoverFieldsFromStoredCode,
 } from "@/actions/schema";
 import { validateGUIFields, generatePydanticCode } from "@/lib/schema-utils";
 import { toast } from "sonner";
@@ -51,19 +50,28 @@ export function SchemaEditor({
   currentVersion,
 }: SchemaEditorProps) {
   const { refresh } = useRouter();
-  const defaultMode =
-    !initialFields?.length && initialCode ? "code" : "gui";
 
-  const [mode, setMode] = useState<"gui" | "code">(defaultMode);
+  // O modo "código" é somente leitura: o schema é editado no modo visual e o
+  // código Pydantic é a fonte de verdade gerada a partir dos campos. Por isso
+  // o estado inicial é sempre "gui".
+  const [mode, setMode] = useState<"gui" | "code">("gui");
   const [fields, setFields] = useState<PydanticField[]>(initialFields || []);
-  const [code, setCode] = useState(initialCode || "");
-  const [codeFields, setCodeFields] = useState<PydanticField[]>(
-    initialFields || []
+  // O código é uma visualização DERIVADA dos campos, não estado próprio. Para um
+  // projeto sem campos mas com código armazenado (legado), mostra o código
+  // original até que os campos sejam recuperados (ver banner de recuperação).
+  //
+  // Só é computado no modo "código" (único lugar que o consome, no Monaco): em
+  // modo visual cada edição muda `fields`, e regenerar o código a cada keystroke
+  // seria trabalho desperdiçado já que o editor de código nem está montado.
+  const code = useMemo(
+    () =>
+      mode !== "code"
+        ? ""
+        : fields.length > 0
+          ? generatePydanticCode(fields)
+          : initialCode || "",
+    [mode, fields, initialCode],
   );
-  const [validationStatus, setValidationStatus] = useState<
-    "idle" | "valid" | "error"
-  >("idle");
-  const [errors, setErrors] = useState<string[]>([]);
   const [guiErrors, setGuiErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
   const [majorDialogOpen, setMajorDialogOpen] = useState(false);
@@ -125,62 +133,33 @@ export function SchemaEditor({
   };
 
   // --- Troca de modo ---
+  // O modo "código" é só visualização da fonte de verdade. Alternar não
+  // recompila nada: os campos já estão no estado e o código é gerado deles.
 
-  const switchToCode = () => {
-    const generated = generatePydanticCode(fields);
-    setCode(generated);
-    setCodeFields(fields);
-    setValidationStatus("idle");
+  const switchToCode = () => setMode("code");
+
+  const switchToGUI = () => {
     setGuiErrors([]);
-    setMode("code");
+    setMode("gui");
   };
 
-  const switchToGUI = async () => {
-    if (!code.trim()) {
-      setFields([]);
-      setGuiErrors([]);
-      setMode("gui");
-      return;
-    }
-    try {
-      const result = await validateSchema(code);
-      if (result.valid) {
-        setFields(result.fields);
-        setCodeFields(result.fields);
-        setValidationStatus("valid");
-        setGuiErrors([]);
-        setMode("gui");
-      } else {
-        toast.error(
-          "Corrija os erros no código antes de trocar para o modo visual"
-        );
-        setErrors(result.errors);
-        setValidationStatus("error");
-      }
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Erro ao validar schema");
-    }
-  };
+  // --- Recuperação de campos a partir do código armazenado (projeto legado) ---
+  // Quando o projeto tem pydantic_code mas nenhum campo carregado, o editor
+  // abriria vazio e um "Salvar" apagaria o schema (barrado pela guarda em
+  // saveSchemaFromGUI). Recuperar reconstrói os campos a partir do código.
+  const canRecover =
+    !initialFields?.length && !!initialCode && fields.length === 0;
 
-  // --- Validar (modo código) ---
-
-  const handleValidate = async () => {
-    try {
-      const result = await validateSchema(code);
-      if (result.valid) {
-        setCodeFields(result.fields);
-        setValidationStatus("valid");
-        setErrors([]);
-        toast.success(`${result.fields.length} campos encontrados`);
-      } else {
-        setValidationStatus("error");
-        setErrors(result.errors);
-        toast.error("Erro na validação");
+  const handleRecover = () => {
+    startTransition(async () => {
+      const r = await recoverFieldsFromStoredCode(projectId);
+      if (r.error) {
+        toast.error(r.error);
+        return;
       }
-    } catch (e: unknown) {
-      setValidationStatus("error");
-      setErrors([e instanceof Error ? e.message : "Erro ao validar schema"]);
-    }
+      setFields(r.fields || []);
+      toast.success(`${r.fields?.length ?? 0} campos recuperados do código`);
+    });
   };
 
   // --- Salvar ---
@@ -188,31 +167,18 @@ export function SchemaEditor({
   const handleSave = () => {
     startTransition(async () => {
       try {
-        if (mode === "gui") {
-          const errs = validateGUIFields(fields);
-          if (errs.length > 0) {
-            setGuiErrors(errs);
-            return;
-          }
-          setGuiErrors([]);
-          const r = await saveSchemaFromGUI(projectId, fields);
-          if (r?.error) {
-            toast.error(r.error);
-            return;
-          }
-          toast.success("Schema salvo!");
-        } else {
-          if (validationStatus !== "valid") {
-            toast.error("Valide o schema antes de salvar");
-            return;
-          }
-          const r = await saveSchema(projectId, code, codeFields);
-          if (r?.error) {
-            toast.error(r.error);
-            return;
-          }
-          toast.success("Schema salvo!");
+        const errs = validateGUIFields(fields);
+        if (errs.length > 0) {
+          setGuiErrors(errs);
+          return;
         }
+        setGuiErrors([]);
+        const r = await saveSchemaFromGUI(projectId, fields);
+        if (r?.error) {
+          toast.error(r.error);
+          return;
+        }
+        toast.success("Schema salvo!");
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
       }
@@ -220,11 +186,8 @@ export function SchemaEditor({
   };
 
   // --- Info para badges ---
-  const currentFields = mode === "gui" ? fields : codeFields;
-  const fieldCount = currentFields.length;
-  const llmOnlyCount = currentFields.filter(
-    (f) => f.target === "llm_only"
-  ).length;
+  const fieldCount = fields.length;
+  const llmOnlyCount = fields.filter((f) => f.target === "llm_only").length;
 
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
@@ -328,26 +291,54 @@ export function SchemaEditor({
         </div>
       )}
 
+      {canRecover && (
+        <div className="flex items-start gap-2 border-b bg-amber-500/10 px-4 py-2 text-xs">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
+          <div className="flex-1 text-muted-foreground">
+            <strong className="text-foreground">Editor visual vazio.</strong>{" "}
+            Este projeto tem código Pydantic armazenado, mas nenhum campo
+            carregado no editor. Salvar agora apagaria o schema — recupere os
+            campos a partir do código.
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 text-xs"
+            onClick={handleRecover}
+            disabled={isPending}
+          >
+            Recuperar do código
+          </Button>
+        </div>
+      )}
+
       {/* Conteúdo */}
       <div className="flex-1 overflow-hidden">
         {mode === "gui" ? (
           <SchemaBuilderGUI fields={fields} onChange={setFields} />
         ) : (
-          <MonacoEditor
-            height="100%"
-            language="python"
-            theme="vs-light"
-            value={code}
-            onChange={(val) => {
-              setCode(val || "");
-              setValidationStatus("idle");
-            }}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              wordWrap: "on",
-            }}
-          />
+          <div className="flex h-full flex-col">
+            <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+              <Info className="size-3.5 shrink-0" />
+              Somente leitura — o código é gerado a partir do editor visual.
+              Para editar o schema, use o modo Visual.
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <MonacoEditor
+                height="100%"
+                language="python"
+                theme="vs-light"
+                value={code}
+                options={{
+                  readOnly: true,
+                  domReadOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  wordWrap: "on",
+                }}
+              />
+            </div>
+          </div>
         )}
       </div>
 
@@ -362,28 +353,19 @@ export function SchemaEditor({
 
       {/* Footer */}
       <div className="flex items-center gap-2 border-t px-4 py-2">
-        {mode === "code" && (
+        {mode === "gui" ? (
           <Button
-            variant="outline"
             size="sm"
-            onClick={handleValidate}
+            onClick={handleSave}
             disabled={isPending}
+            className="bg-brand hover:bg-brand/90 text-brand-foreground"
           >
-            Validar
+            Salvar
           </Button>
-        )}
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={isPending}
-          className="bg-brand hover:bg-brand/90 text-brand-foreground"
-        >
-          Salvar
-        </Button>
-        {mode === "code" && validationStatus === "error" && (
-          <Badge variant="destructive" className="text-xs">
-            {errors[0]}
-          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            Visualização somente leitura — para editar, use o modo Visual.
+          </span>
         )}
       </div>
 

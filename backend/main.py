@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import settings
-from routes.pydantic_routes import router as pydantic_router
 from routes.llm_routes import router as llm_router
+from routes.pydantic_routes import router as pydantic_router
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +93,8 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
-app.include_router(pydantic_router, prefix="/api/pydantic", tags=["pydantic"])
 app.include_router(llm_router, prefix="/api/llm", tags=["llm"])
+app.include_router(pydantic_router, prefix="/api/pydantic", tags=["pydantic"])
 
 
 @app.get("/health")

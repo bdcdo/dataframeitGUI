@@ -1,9 +1,8 @@
 """
 LLM runner service — coordinates dataframeit execution.
 
-Security note: Uses exec() to compile coordinator-provided Pydantic models.
-This is intentional — only authenticated coordinators can define schemas.
-The backend runs in an isolated container.
+Security: o schema Pydantic do projeto é reconstruído a partir do AST validado
+(`build_model_from_code`), sem exec — ver services/pydantic_compiler.
 """
 import hashlib
 import logging
@@ -17,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
 from services.supabase_client import get_supabase
-from services.pydantic_compiler import compile_pydantic, find_root_model
+from services.pydantic_compiler import build_model_from_code
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +80,12 @@ def _extract_pydantic_location(exc: Exception, tb: str) -> tuple[int | None, int
     """Best-effort line/column inside pydantic_code where the error originated."""
     if isinstance(exc, SyntaxError) and exc.filename in (None, "<pydantic_schema>"):
         return exc.lineno, exc.offset
+    # build_model_from_code envolve erros de sintaxe num SchemaError e carrega
+    # lineno/offset nele (o `compile`/exec antigo expunha um SyntaxError direto,
+    # caminho que não existe mais). getattr evita acoplar o import do SchemaError.
+    lineno = getattr(exc, "lineno", None)
+    if isinstance(lineno, int):
+        return lineno, getattr(exc, "offset", None)
     m = re.search(r'File "<pydantic_schema>", line (\d+)', tb)
     if m:
         return int(m.group(1)), None
@@ -564,17 +569,12 @@ def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
 
 
 def _compile_model(pydantic_code: str):
-    """Compile Pydantic code and return the model class."""
-    namespace: dict = {}
-    compiled = compile(pydantic_code, "<pydantic_schema>", "exec")  # noqa: S102
-    _run_compiled(compiled, namespace)
-    return find_root_model(namespace)
+    """Compile Pydantic code and return the model class.
 
-
-def _run_compiled(compiled_code: object, namespace: dict) -> None:
-    """Execute pre-compiled code. Separated for clarity."""
-    # noqa: S102 — intentional exec of coordinator-provided Pydantic code in isolated container
-    exec(compiled_code, namespace)
+    Constrói a classe a partir do AST validado (allowlist), sem exec — mesma
+    via de compile_pydantic. Ver services/pydantic_compiler.build_model_from_code.
+    """
+    return build_model_from_code(pydantic_code)
 
 
 def _build_prompt(
