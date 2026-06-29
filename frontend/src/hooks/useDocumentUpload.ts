@@ -202,10 +202,18 @@ export function useDocumentUpload(projectId: string) {
           options?.mode === "replace_and_add"
             ? "importados/atualizados"
             : "importados";
+        // Num replace destrutivo multi-chunk, este ramo (totalInserted > 0) e o
+        // ramo `else if (destructiveReplace)` não são exclusivos: um chunk
+        // anterior pode ter inserido enquanto o que falhou já apagou
+        // responses/reviews. O aviso de remoção precisa ser anexado aqui também,
+        // senão ficaria inalcançável justamente no cenário com perda de dados.
+        const destructiveWarn = destructiveReplace
+          ? " Respostas/revisões de documentos duplicados podem já ter sido removidas — confira a lista."
+          : "";
         toast.error(
           isPayloadTooLarge(msg)
-            ? `${totalInserted}/${docs.length} ${importedVerb}. ${PAYLOAD_TOO_LARGE_MESSAGE}`
-            : `${totalInserted} de ${docs.length} documentos ${importedVerb} antes de uma falha${msg ? `: ${msg}` : ""}`
+            ? `${totalInserted}/${docs.length} ${importedVerb}. ${PAYLOAD_TOO_LARGE_MESSAGE}${destructiveWarn}`
+            : `${totalInserted} de ${docs.length} documentos ${importedVerb} antes de uma falha${msg ? `: ${msg}` : ""}${destructiveWarn}`
         );
       } else if (destructiveReplace) {
         toast.error(

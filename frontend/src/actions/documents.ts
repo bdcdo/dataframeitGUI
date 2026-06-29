@@ -1,7 +1,11 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getProjectAccessContext,
+  isProjectCoordinator,
+} from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
@@ -211,7 +215,11 @@ async function filterActiveExternalIdConflicts<
 // action (caso contrário um INSERT já commitado seria reportado como falha, ou o
 // catch do hook ficaria preso). Um cache stale é recuperável; um upload "perdido"
 // não.
-export async function revalidateProjectDocuments(projectId: string) {
+//
+// Privada (não-exportada): os chamadores internos deste módulo já passaram pelo
+// RLS de escrita, então não pagam o custo do gate de autorização. O ponto de
+// entrada client é o wrapper `revalidateProjectDocuments` abaixo.
+async function revalidateProjectDocumentsCache(projectId: string) {
   try {
     revalidatePath(`/projects/${projectId}/config/documents`);
     revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
@@ -219,6 +227,25 @@ export async function revalidateProjectDocuments(projectId: string) {
   } catch (e) {
     console.error("[revalidateProjectDocuments] falha ao revalidar cache", e);
   }
+}
+
+// Server action client-callable (o hook de upload chama no recovery de falha
+// parcial). Diferente dos chamadores internos — que já passaram pelo RLS de
+// escrita — esta é exposta ao client, então gateia por acesso de leitura ao
+// projeto antes de revalidar: sem o gate, qualquer usuário autenticado poderia
+// invalidar o cache de um projeto alheio. Gate permissivo (qualquer membro que
+// enxerga o projeto via RLS, não só coordenador) e fail-closed (sem acesso →
+// não revalida).
+export async function revalidateProjectDocuments(projectId: string) {
+  const user = await getAuthUser();
+  if (!user) return;
+  const { project } = await getProjectAccessContext(
+    projectId,
+    user.id,
+    user.isMaster,
+  );
+  if (!project) return;
+  await revalidateProjectDocumentsCache(projectId);
 }
 
 export async function uploadDocuments(
@@ -260,7 +287,7 @@ export async function uploadDocuments(
       if (error) return { error: error.message };
     }
 
-    if (revalidate) await revalidateProjectDocuments(projectId);
+    if (revalidate) await revalidateProjectDocumentsCache(projectId);
     return {
       count: rows.length,
       skipped: skippedDuplicates + skippedExisting + skippedInBatch,
@@ -350,7 +377,7 @@ export async function uploadDocuments(
       }
     }
 
-    if (revalidate) await revalidateProjectDocuments(projectId);
+    if (revalidate) await revalidateProjectDocumentsCache(projectId);
     return { count: documents.length - skipped, skipped };
   }
 
@@ -373,7 +400,7 @@ export async function uploadDocuments(
     if (error) return { error: error.message };
   }
 
-  if (revalidate) await revalidateProjectDocuments(projectId);
+  if (revalidate) await revalidateProjectDocumentsCache(projectId);
   return { count: rows.length, skipped: skippedExisting + skippedInBatch };
 }
 
@@ -547,7 +574,7 @@ export async function excludeDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  await revalidateProjectDocuments(projectId);
+  await revalidateProjectDocumentsCache(projectId);
   return { count: documentIds.length };
 }
 
@@ -575,7 +602,7 @@ export async function restoreDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  await revalidateProjectDocuments(projectId);
+  await revalidateProjectDocumentsCache(projectId);
   return { count: documentIds.length };
 }
 
@@ -602,6 +629,6 @@ export async function hardDeleteDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  await revalidateProjectDocuments(projectId);
+  await revalidateProjectDocumentsCache(projectId);
   return { count: documentIds.length };
 }

@@ -283,6 +283,45 @@ describe("useDocumentUpload — replace destrutivo falhando", () => {
     );
     await waitFor(() => expect(result.current.phase.kind).toBe("analysis"));
   });
+
+  it("multi-chunk parcial (totalInserted > 0) ainda avisa da remoção destrutiva", async () => {
+    // 501 docs com duplicatas → analysis → replace destrutivo. 2 chunks: o 1º
+    // entra (count 500), o 2º falha após já ter apagado responses/reviews. Como
+    // totalInserted > 0, cai no ramo de parcial — que NÃO pode engolir o aviso de
+    // remoção (os dois ramos não são exclusivos num replace multi-chunk).
+    const rows = Array.from({ length: 501 }, (_, i) => ({ text_col: `linha ${i}` }));
+    checkDuplicates.mockResolvedValue({
+      duplicates: [{ csvIndex: 0, existingDocId: "d1", matchType: "external_id" }],
+      duplicatesWithResponses: 1,
+    });
+    uploadDocuments
+      .mockResolvedValueOnce({ count: 500 })
+      .mockResolvedValueOnce({ error: "boom" });
+
+    const { result } = renderHook(() => useDocumentUpload("p1"));
+    feedCsv(rows, ["text_col"]);
+    await act(async () => {
+      await result.current.handleFile(new File(["x"], "t.csv"));
+    });
+    act(() =>
+      result.current.setMapping({ text: "text_col", title: "", external_id: "" })
+    );
+    await act(async () => {
+      await result.current.handleCheckAndUpload();
+    });
+    expect(result.current.phase.kind).toBe("analysis");
+
+    act(() => result.current.handleReplaceAndImport(true));
+
+    await waitFor(() => expect(uploadDocuments).toHaveBeenCalledTimes(2));
+    // Reporta o parcial (500) E avisa da remoção — sem o fix, "removidas" sumiria.
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(expect.stringContaining("500"))
+    );
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(expect.stringContaining("removidas"))
+    );
+  });
 });
 
 describe("useDocumentUpload — erros de parsing do CSV", () => {
