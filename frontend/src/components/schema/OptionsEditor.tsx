@@ -4,6 +4,7 @@ import { useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Plus, X } from "lucide-react";
+import { useStableListIds } from "@/hooks/useStableListIds";
 
 interface OptionsEditorProps {
   options: string[];
@@ -20,6 +21,7 @@ export function OptionsEditor({
 }: OptionsEditorProps) {
   const lastInputRef = useRef<HTMLInputElement>(null);
   const shouldFocusLast = useRef(false);
+  const { ids, removeIdAt, appendId } = useStableListIds(options.length);
 
   useEffect(() => {
     if (shouldFocusLast.current && lastInputRef.current) {
@@ -40,18 +42,20 @@ export function OptionsEditor({
       const ok = await onBeforeRemove(opt);
       if (!ok) return;
     }
+    removeIdAt(index);
     onChange(options.filter((_, i) => i !== index));
   };
 
   const addOption = () => {
     shouldFocusLast.current = true;
+    appendId();
     onChange([...options, ""]);
   };
 
   return (
     <div className="space-y-2">
       {options.map((opt, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div key={ids[i]} className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground w-4 text-right shrink-0">
             {i + 1}.
           </span>

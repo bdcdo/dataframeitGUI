@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { OptionsEditor } from "@/components/schema/OptionsEditor";
+import { useStableListIds } from "@/hooks/useStableListIds";
 import { ConditionEditor } from "@/components/schema/ConditionEditor";
 import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "@/components/schema/RemoveOptionDialog";
@@ -99,6 +100,10 @@ function useEditFieldForm(
     conflicts: ConditionConflict[];
     resolve: (confirmed: boolean) => void;
   } | null>(null);
+
+  // Keys estáveis para a lista editável de subcampos: o `key` do subfield é
+  // digitado pelo usuário (muda a cada tecla), logo não serve como React key.
+  const subfieldKeys = useStableListIds(subfields?.length ?? 0);
 
   const handleBeforeRemoveOption = async (opt: string): Promise<boolean> => {
     const conflicts = findConditionConflicts(allFields, fieldName, opt);
@@ -389,7 +394,7 @@ export function EditFieldDialog({
                     </div>
                   </div>
                   {subfields!.map((sf, si) => (
-                    <div key={si} className="flex items-center gap-1.5">
+                    <div key={subfieldKeys.ids[si]} className="flex items-center gap-1.5">
                       <Input
                         value={sf.key}
                         onChange={(e) => {
@@ -429,6 +434,7 @@ export function EditFieldDialog({
                         className="size-6 p-0"
                         onClick={() => {
                           const sfs = subfields!.filter((_, j) => j !== si);
+                          subfieldKeys.removeIdAt(si);
                           setSubfields(sfs.length > 0 ? sfs : undefined);
                           if (sfs.length === 0) setSubfieldRule("all");
                         }}
@@ -443,6 +449,7 @@ export function EditFieldDialog({
                     className="text-xs h-6"
                     onClick={() => {
                       const idx = subfields!.length + 1;
+                      subfieldKeys.appendId();
                       setSubfields([
                         ...subfields!,
                         { key: `campo_${idx}`, label: `Campo ${idx}`, required: true },
