@@ -70,16 +70,11 @@ function verdictType(
   return "answer";
 }
 
-export function ReviewCommentsView({
-  projectId,
-  comments,
-  fields,
-  isCoordinator,
-  totalLlmDocs = 0,
-  llmDocsWithoutAmbiguities = 0,
-}: ReviewCommentsViewProps) {
-  const { refresh } = useRouter();
-  const [isPending, startTransition] = useTransition();
+// Agrupa os filtros (campo, status, tipo, busca) e os estados de dialog/split
+// view desta tela, junto dos derivados que dependem só deles (lista filtrada e
+// contagem de documentos da split view). Extrair para hook mantém o componente
+// focado em layout e tira os useState do corpo top-level.
+function useReviewCommentsFilters(comments: ReviewComment[]) {
   const [fieldFilter, setFieldFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("open");
   const [verdictFilter, setVerdictFilter] = useState("all");
@@ -106,6 +101,68 @@ export function ReviewCommentsView({
       return true;
     });
   }, [comments, fieldFilter, statusFilter, verdictFilter, searchQuery]);
+
+  // Count unique documents with review/difficulty comments (for split view button)
+  const reviewDocCount = useMemo(() => {
+    const docs = new Set<string>();
+    for (const c of comments) {
+      if (splitSources.has(c.source) && c.documentId) docs.add(c.documentId);
+    }
+    return docs.size;
+  }, [comments]);
+
+  return {
+    fieldFilter,
+    setFieldFilter,
+    statusFilter,
+    setStatusFilter,
+    verdictFilter,
+    setVerdictFilter,
+    searchQuery,
+    setSearchQuery,
+    editingField,
+    setEditingField,
+    pendingSuggestion,
+    setPendingSuggestion,
+    suggestingField,
+    setSuggestingField,
+    splitDocId,
+    setSplitDocId,
+    filtered,
+    reviewDocCount,
+  };
+}
+
+export function ReviewCommentsView({
+  projectId,
+  comments,
+  fields,
+  isCoordinator,
+  totalLlmDocs = 0,
+  llmDocsWithoutAmbiguities = 0,
+}: ReviewCommentsViewProps) {
+  const { refresh } = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const {
+    fieldFilter,
+    setFieldFilter,
+    statusFilter,
+    setStatusFilter,
+    verdictFilter,
+    setVerdictFilter,
+    searchQuery,
+    setSearchQuery,
+    editingField,
+    setEditingField,
+    pendingSuggestion,
+    setPendingSuggestion,
+    suggestingField,
+    setSuggestingField,
+    splitDocId,
+    setSplitDocId,
+    filtered,
+    reviewDocCount,
+  } = useReviewCommentsFilters(comments);
 
   const handleResolve = (comment: ReviewComment) => {
     // Sugestão: abre EditFieldDialog pré-preenchido com a proposta.
@@ -166,15 +223,6 @@ export function ReviewCommentsView({
       }
     });
   };
-
-  // Count unique documents with review/difficulty comments (for split view button)
-  const reviewDocCount = useMemo(() => {
-    const docs = new Set<string>();
-    for (const c of comments) {
-      if (splitSources.has(c.source) && c.documentId) docs.add(c.documentId);
-    }
-    return docs.size;
-  }, [comments]);
 
   if (splitDocId) {
     const reviewComments = comments.filter((c) => splitSources.has(c.source) && c.documentId);
@@ -322,6 +370,8 @@ export function ReviewCommentsView({
 
       {!isCoordinator && suggestingField && (
         <SuggestFieldDialog
+          // Remonta ao trocar de campo: o form renasce semeado pelo novo campo.
+          key={suggestingField}
           projectId={projectId}
           fieldName={suggestingField}
           allFields={fields}

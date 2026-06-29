@@ -66,6 +66,36 @@ function compareSemverDesc(a: string, b: string): number {
   return 0;
 }
 
+// Agrupa o estado dos filtros da lista de erros (6 filtros + ordenação)
+// num hook co-localizado para manter o componente abaixo do limite de
+// useState. Pura relocação de estado: nenhuma lógica muda.
+function useLlmErrorFilters() {
+  const [errorFieldFilter, setErrorFieldFilter] = useState("all");
+  const [errorSearchQuery, setErrorSearchQuery] = useState("");
+  const [errorStatusFilter, setErrorStatusFilter] = useState("open");
+  const [errorDateFilter, setErrorDateFilter] = useState<DatePreset>("all");
+  const [errorSinceDate, setErrorSinceDate] = useState("");
+  const [errorVersionFilter, setErrorVersionFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<SortBy>("default");
+
+  return {
+    errorFieldFilter,
+    setErrorFieldFilter,
+    errorSearchQuery,
+    setErrorSearchQuery,
+    errorStatusFilter,
+    setErrorStatusFilter,
+    errorDateFilter,
+    setErrorDateFilter,
+    errorSinceDate,
+    setErrorSinceDate,
+    errorVersionFilter,
+    setErrorVersionFilter,
+    sortBy,
+    setSortBy,
+  };
+}
+
 export function LlmInsightsView({
   projectId,
   errors,
@@ -103,13 +133,22 @@ export function LlmInsightsView({
   }
 
   // Error filters
-  const [errorFieldFilter, setErrorFieldFilter] = useState("all");
-  const [errorSearchQuery, setErrorSearchQuery] = useState("");
-  const [errorStatusFilter, setErrorStatusFilter] = useState("open");
-  const [errorDateFilter, setErrorDateFilter] = useState<DatePreset>("all");
-  const [errorSinceDate, setErrorSinceDate] = useState("");
-  const [errorVersionFilter, setErrorVersionFilter] = useState("all");
-  const [sortBy, setSortBy] = useState<SortBy>("default");
+  const {
+    errorFieldFilter,
+    setErrorFieldFilter,
+    errorSearchQuery,
+    setErrorSearchQuery,
+    errorStatusFilter,
+    setErrorStatusFilter,
+    errorDateFilter,
+    setErrorDateFilter,
+    errorSinceDate,
+    setErrorSinceDate,
+    errorVersionFilter,
+    setErrorVersionFilter,
+    sortBy,
+    setSortBy,
+  } = useLlmErrorFilters();
 
   // Tick the "now" reference once a minute so the "Últimas 24h/7d/30d"
   // cutoff doesn't freeze on long-open pages. State (rather than a raw

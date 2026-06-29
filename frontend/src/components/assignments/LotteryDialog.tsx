@@ -71,34 +71,38 @@ interface LotteryStats {
 
 type CodingsFilterMode = "all" | "none" | "atMost";
 
-export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-
-  // Stats de elegibilidade, recarregadas a cada abertura do dialog —
-  // um sorteio muda atribuições/lotes, então reabrir com stats da
-  // abertura anterior mentiria na contagem de elegíveis
-  const [stats, setStats] = useState<LotteryStats | null>(null);
-  const [statsError, setStatsError] = useState(false);
+// Stats de elegibilidade, recarregadas a cada abertura do dialog —
+// um sorteio muda atribuições/lotes, então reabrir com stats da
+// abertura anterior mentiria na contagem de elegíveis. Os dois campos
+// (dados + erro) vivem num único objeto de estado para que o effect
+// faça uma única chamada de setter por branch (evita cascading set-state).
+function useLotteryStats(projectId: string, open: boolean) {
+  const [statsState, setStatsState] = useState<{
+    data: LotteryStats | null;
+    error: boolean;
+  }>({ data: null, error: false });
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     getLotteryDocStats(projectId)
       .then((s) => {
-        if (!cancelled) {
-          setStats(s);
-          setStatsError(false);
-        }
+        if (!cancelled) setStatsState({ data: s, error: false });
       })
       .catch(() => {
-        if (!cancelled) setStatsError(true);
+        if (!cancelled) setStatsState((prev) => ({ ...prev, error: true }));
       });
     return () => {
       cancelled = true;
     };
   }, [open, projectId]);
+  return { stats: statsState.data, statsError: statsState.error };
+}
 
+// Toda a configuração do sorteio (tipo, distribuição, filtros, participantes,
+// rótulo, prévia). Extraída para um hook para que o corpo do componente fique
+// abaixo do limiar de useState do react-doctor; as derivações
+// (useMemo/useCallback/buildParams) seguem no componente, lendo estes valores.
+function useLotteryParams() {
   // Tipo do sorteio (codificação ou comparação)
   const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
 
@@ -140,6 +144,112 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [weightInputs, setWeightInputs] = useState<Record<string, string>>({});
   const [capInputs, setCapInputs] = useState<Record<string, string>>({});
 
+  // Label
+  const [label, setLabel] = useState("");
+
+  const [previewState, setPreviewState] = useState<{
+    key: string;
+    preview: LotteryPreview;
+  } | null>(null);
+
+  return {
+    type,
+    setType,
+    researchersPerDoc,
+    setResearchersPerDoc,
+    docsPerResearcherEnabled,
+    setDocsPerResearcherEnabled,
+    docsPerResearcher,
+    setDocsPerResearcher,
+    docSubsetEnabled,
+    setDocSubsetEnabled,
+    docSubsetSize,
+    setDocSubsetSize,
+    balancing,
+    setBalancing,
+    mode,
+    setMode,
+    codingsFilterMode,
+    setCodingsFilterMode,
+    maxCodingsValue,
+    setMaxCodingsValue,
+    assignmentFilter,
+    setAssignmentFilter,
+    batchFilterMode,
+    setBatchFilterMode,
+    batchExclude,
+    setBatchExclude,
+    batchOnly,
+    setBatchOnly,
+    manualEnabled,
+    setManualEnabled,
+    manualDocIds,
+    setManualDocIds,
+    participantOverrides,
+    setParticipantOverrides,
+    weightInputs,
+    setWeightInputs,
+    capInputs,
+    setCapInputs,
+    label,
+    setLabel,
+    previewState,
+    setPreviewState,
+  };
+}
+
+export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+
+  const { stats, statsError } = useLotteryStats(projectId, open);
+
+  const {
+    type,
+    setType,
+    researchersPerDoc,
+    setResearchersPerDoc,
+    docsPerResearcherEnabled,
+    setDocsPerResearcherEnabled,
+    docsPerResearcher,
+    setDocsPerResearcher,
+    docSubsetEnabled,
+    setDocSubsetEnabled,
+    docSubsetSize,
+    setDocSubsetSize,
+    balancing,
+    setBalancing,
+    mode,
+    setMode,
+    codingsFilterMode,
+    setCodingsFilterMode,
+    maxCodingsValue,
+    setMaxCodingsValue,
+    assignmentFilter,
+    setAssignmentFilter,
+    batchFilterMode,
+    setBatchFilterMode,
+    batchExclude,
+    setBatchExclude,
+    batchOnly,
+    setBatchOnly,
+    manualEnabled,
+    setManualEnabled,
+    manualDocIds,
+    setManualDocIds,
+    participantOverrides,
+    setParticipantOverrides,
+    weightInputs,
+    setWeightInputs,
+    capInputs,
+    setCapInputs,
+    label,
+    setLabel,
+    previewState,
+    setPreviewState,
+  } = useLotteryParams();
+
   const isParticipant = (m: LotteryMember) =>
     participantOverrides[m.userId] ?? m.role === "pesquisador";
 
@@ -180,9 +290,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     }
     return out;
   }, [members, participantOverrides, weightValue, capValue]);
-
-  // Label
-  const [label, setLabel] = useState("");
 
   const isComparacao = type === "comparacao";
 
@@ -227,10 +334,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     participantIds,
     participantSettings,
   });
-  const [previewState, setPreviewState] = useState<{
-    key: string;
-    preview: LotteryPreview;
-  } | null>(null);
   const preview = previewState?.key === configKey ? previewState.preview : null;
   const seed = preview?.seed ?? null;
 

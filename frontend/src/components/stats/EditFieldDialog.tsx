@@ -76,16 +76,12 @@ function initialFromField(
   };
 }
 
-export function EditFieldDialog({
-  projectId,
-  fieldName,
-  allFields,
-  open,
-  onOpenChange,
-  pendingSuggestion,
-}: EditFieldDialogProps) {
-  const { refresh } = useRouter();
-  const field = allFields.find((f) => f.name === fieldName);
+function useEditFieldForm(
+  field: PydanticField | undefined,
+  fieldName: string,
+  allFields: PydanticField[],
+  pendingSuggestion?: PendingSuggestion | null,
+) {
   const initial = initialFromField(field, pendingSuggestion);
   const [description, setDescription] = useState(initial.description);
   const [helpText, setHelpText] = useState(initial.helpText);
@@ -132,6 +128,65 @@ export function EditFieldDialog({
     setCondition(f?.condition);
     setJustificationPrompt(f?.justification_prompt ?? "");
   }
+
+  return {
+    description,
+    setDescription,
+    helpText,
+    setHelpText,
+    options,
+    setOptions,
+    allowOther,
+    setAllowOther,
+    subfields,
+    setSubfields,
+    subfieldRule,
+    setSubfieldRule,
+    condition,
+    setCondition,
+    justificationPrompt,
+    setJustificationPrompt,
+    isSaving,
+    startSave,
+    pendingRemoval,
+    setPendingRemoval,
+    handleBeforeRemoveOption,
+  };
+}
+
+export function EditFieldDialog({
+  projectId,
+  fieldName,
+  allFields,
+  open,
+  onOpenChange,
+  pendingSuggestion,
+}: EditFieldDialogProps) {
+  const { refresh } = useRouter();
+  const field = allFields.find((f) => f.name === fieldName);
+  const {
+    description,
+    setDescription,
+    helpText,
+    setHelpText,
+    options,
+    setOptions,
+    allowOther,
+    setAllowOther,
+    subfields,
+    setSubfields,
+    subfieldRule,
+    setSubfieldRule,
+    condition,
+    setCondition,
+    justificationPrompt,
+    setJustificationPrompt,
+    isSaving,
+    startSave,
+    pendingRemoval,
+    setPendingRemoval,
+    handleBeforeRemoveOption,
+  } = useEditFieldForm(field, fieldName, allFields, pendingSuggestion);
 
   if (!field) return null;
 
