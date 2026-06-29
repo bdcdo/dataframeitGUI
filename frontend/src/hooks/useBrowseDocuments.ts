@@ -13,14 +13,14 @@ import { useCachedResource } from "./useCachedResource";
  * então o genérico expõe `error=true` SEM cachear (não mascara como "projeto sem
  * documentos"); `retry()` limpa o erro/cache e refaz o fetch.
  *
- * `markResponded` aplica os updates otimistas pós-envio sobre uma camada local
- * de `overrides` (atualizada em handler, nunca em effect): marca o doc como
- * respondido e — só no intent `"submit"` (envio de resposta nova) e quando o
- * doc ainda não constava como respondido — incrementa `responseCount` uma única
- * vez. O intent `"autosave"` (saída via "Voltar") marca respondido sem mexer no
- * contador. Espelha exatamente a lógica anterior de `handleBrowseSubmit` (bump)
- * e `handleBrowseBack` (sem bump). O `retry()` também zera os `overrides`: um
- * refetch traz dados frescos do servidor, e overrides antigos os clobbeariam.
+ * `markResponded` aplica o update otimista pós-envio sobre uma camada local de
+ * `overrides` (atualizada em handler, nunca em effect): marca o doc como
+ * respondido por este pesquisador e — quando o doc ainda não o contava —
+ * incrementa `responseCount` uma única vez. Vale para submit e para autosave
+ * (saída via "Voltar"): ambos persistem uma resposta que `getDocumentsForBrowse`
+ * conta (respondentes distintos, sem filtrar `is_partial`). O `retry()` também
+ * zera os `overrides`: um refetch traz dados frescos do servidor, e overrides
+ * antigos os clobbeariam.
  */
 export function useBrowseDocuments(
   projectId: string,
@@ -30,7 +30,7 @@ export function useBrowseDocuments(
   loading: boolean;
   error: boolean;
   retry: () => void;
-  markResponded: (docId: string, intent: "submit" | "autosave") => void;
+  markResponded: (docId: string) => void;
 } {
   const fetcher = useCallback(
     (id: string): Promise<BrowseDocument[]> => getDocumentsForBrowse(id),
@@ -44,9 +44,11 @@ export function useBrowseDocuments(
     retry: retryResource,
   } = useCachedResource(projectId, fetcher, { enabled });
 
-  const [overrides, setOverrides] = useState<
-    Record<string, { userAlreadyResponded: boolean; responseCount: number }>
-  >({});
+  // Override guarda só a INTENÇÃO "este pesquisador respondeu", não o valor
+  // absoluto. Assim `markResponded` não precisa ler a lista já carregada — o
+  // merge abaixo aplica a intenção sobre a base de forma idempotente quando a
+  // base chega (corrige a race de deep-link em que a lista ainda não resolveu).
+  const [overrides, setOverrides] = useState<Record<string, true>>({});
 
   const retry = useCallback(() => {
     retryResource();
@@ -56,28 +58,27 @@ export function useBrowseDocuments(
   const documents = useMemo(() => {
     if (!base) return null;
     return base.map((d) => {
-      const o = overrides[d.id];
-      return o ? { ...d, ...o } : d;
+      if (!overrides[d.id]) return d;
+      return {
+        ...d,
+        userAlreadyResponded: true,
+        // +1 só quando a base ainda não contava este pesquisador. Submit e
+        // autosave persistem ambos uma resposta contável (`getDocumentsForBrowse`
+        // conta respondentes distintos sem filtrar `is_partial`), então ambos
+        // bumpam a primeira resposta deste pesquisador. Recomputado de `base` a
+        // cada render e gateado por `userAlreadyResponded` → nunca acumula.
+        responseCount: d.userAlreadyResponded
+          ? d.responseCount
+          : d.responseCount + 1,
+      };
     });
   }, [base, overrides]);
 
-  // Lê o estado mesclado atual (base + overrides anteriores) pela closure: o
-  // callback recria quando `documents` muda, então a contagem nunca é dobrada.
-  const markResponded = useCallback(
-    (docId: string, intent: "submit" | "autosave") => {
-      const cur = documents?.find((d) => d.id === docId);
-      if (!cur) return;
-      const responseCount =
-        intent === "submit" && !cur.userAlreadyResponded
-          ? cur.responseCount + 1
-          : cur.responseCount;
-      setOverrides((prev) => ({
-        ...prev,
-        [docId]: { userAlreadyResponded: true, responseCount },
-      }));
-    },
-    [documents],
-  );
+  // Registra a intenção sem ler `documents`: funciona mesmo com a lista ainda
+  // não resolvida. Idempotente — reaplicar é no-op.
+  const markResponded = useCallback((docId: string) => {
+    setOverrides((prev) => (prev[docId] ? prev : { ...prev, [docId]: true }));
+  }, []);
 
   return { documents, loading, error, retry, markResponded };
 }

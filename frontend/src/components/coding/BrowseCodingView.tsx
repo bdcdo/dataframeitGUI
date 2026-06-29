@@ -31,6 +31,25 @@ interface BrowseCodingViewProps {
   onDraftChange: (draft: CodingDraft) => void;
 }
 
+/** Estado centralizado de falha + ação de retry do modo Explorar (lista e doc
+ *  compartilham a mesma marcação). */
+function RetryState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+      <p className="text-sm text-muted-foreground">{message}</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Tentar novamente
+      </Button>
+    </div>
+  );
+}
+
 /** Corpo do modo Explorar: lista (picker) ou coder do doc selecionado. */
 export function BrowseCodingView({
   browseLoading,
@@ -55,14 +74,10 @@ export function BrowseCodingView({
 }: BrowseCodingViewProps) {
   if (browseError) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-        <p className="text-sm text-muted-foreground">
-          Não foi possível carregar os documentos.
-        </p>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Tentar novamente
-        </Button>
-      </div>
+      <RetryState
+        message="Não foi possível carregar os documentos."
+        onRetry={onRetry}
+      />
     );
   }
   if (browseLoading) {
@@ -88,14 +103,10 @@ export function BrowseCodingView({
     // browseDoc === null → o fetch do doc falhou (erro de transporte ou
     // documento ausente). Oferece retry em vez de afirmar "não encontrado".
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-        <p className="text-sm text-muted-foreground">
-          Não foi possível carregar o documento.
-        </p>
-        <Button variant="outline" size="sm" onClick={onRetryDoc}>
-          Tentar novamente
-        </Button>
-      </div>
+      <RetryState
+        message="Não foi possível carregar o documento."
+        onRetry={onRetryDoc}
+      />
     );
   }
   return (

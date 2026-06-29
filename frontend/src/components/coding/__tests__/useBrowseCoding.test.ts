@@ -101,9 +101,37 @@ describe("useBrowseCoding", () => {
 
     expect(mockSave).toHaveBeenCalledWith("p1", "b1", { q: "sim" }, { notes: "n" });
     expect(params.markClean).toHaveBeenCalledWith("b1");
-    expect(markResponded).toHaveBeenCalledWith("b1", "submit");
+    expect(markResponded).toHaveBeenCalledWith("b1");
     expect(invalidate).toHaveBeenCalledWith("b1");
     expect(params.updateDocParam).toHaveBeenCalledWith(null);
+  });
+
+  it("nº3: duplo-clique em Enviar não duplica saveResponse (guarda de reentrância)", async () => {
+    let resolveSave: (v: { success: boolean }) => void = () => {};
+    mockSave.mockReturnValue(
+      new Promise<{ success: boolean }>((r) => {
+        resolveSave = r;
+      }),
+    );
+    const { view } = setup("b1");
+
+    // Dois envios antes do primeiro save em voo resolver: o segundo é barrado
+    // pela guarda de reentrância, então saveResponse roda só uma vez.
+    const p1 = view.result.current.handleBrowseSubmit({
+      answers: { q: "sim" },
+      notes: "",
+    });
+    const p2 = view.result.current.handleBrowseSubmit({
+      answers: { q: "sim" },
+      notes: "",
+    });
+    expect(mockSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSave({ success: true });
+      await Promise.all([p1, p2]);
+    });
+    expect(mockSave).toHaveBeenCalledTimes(1);
   });
 
   it("getPayload reflete o rascunho reportado", () => {
@@ -117,7 +145,7 @@ describe("useBrowseCoding", () => {
     });
   });
 
-  it("back autosalva o doc sujo (intent autosave), invalida e limpa", async () => {
+  it("back autosalva o doc sujo, marca respondido, invalida e limpa", async () => {
     const dirty = new Set<string>();
     const { view, params } = setup("b1", dirty);
     act(() => view.result.current.handleDraftChange({ answers: { q: "x" }, notes: "nota" })); // marca sujo
@@ -130,7 +158,7 @@ describe("useBrowseCoding", () => {
       { q: "x" },
       { notes: "nota", isAutoSave: true },
     );
-    expect(markResponded).toHaveBeenCalledWith("b1", "autosave");
+    expect(markResponded).toHaveBeenCalledWith("b1");
     expect(invalidate).toHaveBeenCalledWith("b1");
     expect(params.updateDocParam).toHaveBeenCalledWith(null);
   });

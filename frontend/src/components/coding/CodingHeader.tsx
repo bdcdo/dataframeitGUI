@@ -43,6 +43,8 @@ type DocSection =
       responseCount: number;
       onBack: () => void;
       onRandom: () => void;
+      /** Save em voo: desabilita Voltar/Sortear para evitar disparo duplo. */
+      submitting?: boolean;
       parecerUrl?: string;
       projectId: string;
       documentId: string;
@@ -270,6 +272,7 @@ function BrowseDocSection({
         size="icon"
         className="size-6 shrink-0"
         onClick={doc.onBack}
+        disabled={doc.submitting}
       >
         <ArrowLeft className="size-4" />
       </Button>
@@ -291,6 +294,7 @@ function BrowseDocSection({
           size="icon"
           className="size-6"
           onClick={doc.onRandom}
+          disabled={doc.submitting}
         >
           <Shuffle className="size-4" />
         </Button>

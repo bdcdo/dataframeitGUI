@@ -296,7 +296,18 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+      <div
+        // Durante um save em voo a edição congela (os handlers a montante
+        // descartam as teclas). Sem pista visual o usuário digitaria no vazio;
+        // aqui o bloco fica esmaecido e sem resposta a mouse — `aria-busy`
+        // anuncia o estado a leitores de tela. O teclado segue barrado pelos
+        // guards a montante (`FieldRenderer` não aceita `disabled`).
+        aria-busy={submitting}
+        className={cn(
+          "flex-1 overflow-y-auto p-4 space-y-2.5",
+          submitting && "pointer-events-none opacity-60",
+        )}
+      >
         {dragEnabled ? (
           <DndContext
             sensors={sensors}
@@ -325,6 +336,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
               <Textarea
                 value={notes}
                 onChange={(e) => onNotesChange(e.target.value)}
+                disabled={submitting || readOnly}
                 placeholder="Anotações, dúvidas ou sugestões sobre este documento..."
                 className="mt-2 text-sm min-h-[80px] resize-y"
               />

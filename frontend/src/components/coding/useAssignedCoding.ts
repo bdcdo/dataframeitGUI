@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useReducer } from "react";
+import { useCallback, useMemo, useReducer, useRef } from "react";
 import { saveResponse } from "@/actions/responses";
 import { sortByRecent } from "@/lib/coding-sort";
 import { autosaveDirtyDoc } from "@/lib/coding-autosave";
@@ -133,8 +133,19 @@ export function useAssignedCoding({
   );
   const docNotes = allNotes[currentDoc?.id] ?? "";
 
+  // Guarda de reentrância dos saves: liga ANTES do `await saveResponse` e desliga
+  // no `finally`. Espelha o `browseSavingRef` do modo Explorar, mas serve a dois
+  // propósitos com um só ref síncrono: (1) impede que um duplo-clique em "Enviar"
+  // dispare `saveResponse`/`toast` duas vezes antes do re-render desabilitar o
+  // botão; (2) congela a edição enquanto o save está em voo — o container já tirou
+  // o snapshot das respostas que está salvando e, ao concluir, navega para o
+  // próximo doc; sem o guard, teclas digitadas durante o save editariam o doc já
+  // salvo com o snapshot antigo e seriam descartadas na navegação.
+  const savingRef = useRef(false);
+
   const handleAnswer = useCallback(
     (fieldName: string, value: unknown) => {
+      if (savingRef.current) return;
       const docId = currentDoc?.id;
       if (!docId) return;
       dispatch({ type: "answer", docId, field: fieldName, value, fields });
@@ -145,6 +156,7 @@ export function useAssignedCoding({
 
   const handleNotesChange = useCallback(
     (notes: string) => {
+      if (savingRef.current) return;
       const docId = currentDoc?.id;
       if (!docId) return;
       dispatch({ type: "notes", docId, notes });
@@ -155,26 +167,37 @@ export function useAssignedCoding({
 
   const handleSubmit = useCallback(async () => {
     if (!currentDoc || Object.keys(docAnswers).length === 0) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSubmitting(true);
-    const result = await saveResponse(projectId, currentDoc.id, docAnswers, {
-      notes: docNotes,
-    });
-    setSubmitting(false);
-    if (result.success) {
-      markClean(currentDoc.id);
-      toast.success("Respostas salvas!");
-      if (docIndex < sortedDocuments.length - 1) {
-        const nextIndex = docIndex + 1;
-        dispatch({ type: "index", index: nextIndex });
-        // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
-        // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
-        // o topo da lista), nao no proximo.
-        updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
+    try {
+      const result = await saveResponse(projectId, currentDoc.id, docAnswers, {
+        notes: docNotes,
+      });
+      if (result.success) {
+        markClean(currentDoc.id);
+        toast.success("Respostas salvas!");
+        if (docIndex < sortedDocuments.length - 1) {
+          const nextIndex = docIndex + 1;
+          dispatch({ type: "index", index: nextIndex });
+          // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
+          // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
+          // o topo da lista), nao no proximo.
+          updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
+        } else {
+          dispatch({ type: "allDone", value: true });
+        }
       } else {
-        dispatch({ type: "allDone", value: true });
+        toast.error(result.error || "Erro ao salvar respostas");
       }
-    } else {
-      toast.error(result.error || "Erro ao salvar respostas");
+    } finally {
+      // `saveResponse` é Server Action: uma rejeição de transporte (offline /
+      // erro de RPC) rejeita a promessa em vez de devolver `{success:false}`.
+      // O `finally` garante que `submitting`/o ref não fiquem presos `true` —
+      // como `submitting` é estado único compartilhado com o modo Explorar, isso
+      // congelaria a edição lá (guards do `BrowseDocCoder`) até um reload.
+      setSubmitting(false);
+      savingRef.current = false;
     }
   }, [
     currentDoc,

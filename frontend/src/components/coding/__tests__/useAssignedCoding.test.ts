@@ -190,4 +190,52 @@ describe("useAssignedCoding", () => {
       notes: "",
     });
   });
+
+  it("duplo-clique em Enviar não duplica saveResponse (guarda de reentrância)", async () => {
+    let resolveSave: (v: { success: boolean }) => void = () => {};
+    mockSave.mockReturnValue(
+      new Promise<{ success: boolean }>((r) => {
+        resolveSave = r;
+      }),
+    );
+    const { view } = setup({ existingAnswers: { d1: { q1: "sim" } } });
+
+    // Dois envios antes do primeiro save em voo resolver: o segundo é barrado
+    // pela guarda de reentrância, então saveResponse roda só uma vez.
+    const p1 = view.result.current.handleSubmit();
+    const p2 = view.result.current.handleSubmit();
+    expect(mockSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSave({ success: true });
+      await Promise.all([p1, p2]);
+    });
+    expect(mockSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("congela a edição enquanto submitting (não perde teclas no save em voo)", async () => {
+    let resolveSave: (v: { success: boolean }) => void = () => {};
+    mockSave.mockReturnValue(
+      new Promise<{ success: boolean }>((r) => {
+        resolveSave = r;
+      }),
+    );
+    const { view, params } = setup({ existingAnswers: { d1: { q1: "sim" } } });
+
+    // Save em voo → savingRef.current === true.
+    const p = view.result.current.handleSubmit();
+    expect(mockSave).toHaveBeenCalledTimes(1);
+
+    // Edições durante o save são ignoradas: nada muda e markDirty não é chamado.
+    act(() => view.result.current.handleAnswer("q2", "tarde demais"));
+    act(() => view.result.current.handleNotesChange("nota tardia"));
+    expect(view.result.current.docAnswers).toEqual({ q1: "sim" });
+    expect(view.result.current.docNotes).toBe("");
+    expect(params.markDirty).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSave({ success: true });
+      await p;
+    });
+  });
 });
