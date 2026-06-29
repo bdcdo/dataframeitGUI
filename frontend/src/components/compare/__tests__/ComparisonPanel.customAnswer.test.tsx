@@ -43,6 +43,7 @@ function renderPanel(
         {
           id: "r-llm",
           respondent_type: "llm",
+          respondent_id: null,
           respondent_name: "Robô",
           answer: "2021-05-10",
           is_latest: true,
