@@ -79,6 +79,36 @@ describe("AgreementGroup — 'Todas são similares' (issue #247, ponto 5)", () =
     expect(responseIds).toContain("info-1");
   });
 
+  it("sem maioria clara (empate 1×1), não funde cego: abre a confirmação manual do gabarito", async () => {
+    const user = userEvent.setup();
+    const { onConfirmEquivalent } = renderGroup({
+      responses: [
+        resp({ id: "a", respondent_name: "Ana", answer: "NI" }),
+        resp({ id: "b", respondent_name: "Bia", answer: "8 meses" }),
+      ],
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /todas são similares/i }),
+    );
+
+    // Empate no topo: não pode registrar um gabarito arbitrário sem o revisor
+    // ver. Em vez de fundir, pré-seleciona tudo e mostra a barra de confirmação.
+    expect(onConfirmEquivalent).not.toHaveBeenCalled();
+    const confirmBtn = await screen.findByRole("button", {
+      name: /confirmar .*equivalentes/i,
+    });
+
+    // O revisor confirma (aceitando o gabarito default = primeiro grupo).
+    await user.click(confirmBtn);
+    await waitFor(() => expect(onConfirmEquivalent).toHaveBeenCalledTimes(1));
+    const [responseIds, gabaritoId] = onConfirmEquivalent.mock.calls[0];
+    expect(responseIds).toHaveLength(2);
+    expect(responseIds).toContain("a");
+    expect(responseIds).toContain("b");
+    expect(gabaritoId).toBe("a");
+  });
+
   it("não mostra o botão quando há um único grupo (nada a fundir)", () => {
     renderGroup({
       responses: [

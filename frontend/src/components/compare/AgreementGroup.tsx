@@ -187,13 +187,27 @@ export function AgreementGroup({
   }
 
   // "Todas são similares" (issue #247, ponto 5): funde TODOS os grupos de uma
-  // vez, em vez de o revisor marcar par a par. O gabarito é o maior grupo —
-  // `groups` já vem ordenado desc por nº de respostas, então `groups[0]` é a
-  // resposta mais comum. Quem quiser outro gabarito usa o fluxo manual de
-  // seleção abaixo.
+  // vez, em vez de o revisor marcar par a par. `groups` já vem ordenado desc
+  // por nº de respostas, então `groups[0]` é a resposta mais comum.
+  //
+  // Só funde em 1 clique quando há maioria CLARA — `groups[0]` tem
+  // estritamente mais respostas que o segundo grupo, logo o gabarito é
+  // inequívoco. Quando há empate no topo (ex.: divergências 1×1 como
+  // "8 meses" vs "0 ano e 08 meses"), não existe "resposta mais comum": eleger
+  // `groups[0]` seria escolher o gabarito pela ordem do array, sem o revisor
+  // ver nem poder corrigir. Nesse caso pré-selecionamos todos os grupos e
+  // caímos no fluxo de confirmação manual abaixo, onde o gabarito fica visível
+  // e pode ser sobrescrito antes de aplicar.
   function handleConfirmAll() {
     if (!onConfirmEquivalent) return;
     if (groups.length < 2) return;
+    const hasClearMajority =
+      groups[0].responses.length > groups[1].responses.length;
+    if (!hasClearMajority) {
+      setSelectionOrder(groups.map((g) => g.groupKey));
+      setGabaritoOverride(null);
+      return;
+    }
     const gabaritoGroup = groups[0];
     const gabaritoResponseId = gabaritoGroup.responses[0].id;
     const responseIds = groups.map((g) => g.responses[0].id);
@@ -239,7 +253,7 @@ export function AgreementGroup({
               className="h-7 shrink-0 gap-1"
               disabled={isSubmitting}
               onClick={handleConfirmAll}
-              title="Funde todas as respostas como equivalentes; a mais comum vira o gabarito"
+              title="Funde todas as respostas como equivalentes; a mais comum vira o gabarito. Em caso de empate, você confirma o gabarito antes de aplicar."
             >
               <Link2 className="size-3.5" />
               Todas são similares
