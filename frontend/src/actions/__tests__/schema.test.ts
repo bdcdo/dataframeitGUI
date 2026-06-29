@@ -131,7 +131,7 @@ describe("saveSchemaFromGUI", () => {
   it("guarda anti-wipe: 0 campos sobre schema não-vazio é recusado sem tocar projects", async () => {
     // Projeto já tem 1 campo; salvar com [] apagaria o schema → recusa.
     serverTableResults = {
-      projects: [{ data: { ...PROJECT_SELECT.data, pydantic_fields: [FIELD] } }],
+      projects: [{ data: { ...(PROJECT_SELECT.data as Record<string, unknown>), pydantic_fields: [FIELD] } }],
     };
 
     const r = await saveSchemaFromGUI("p1", []);
