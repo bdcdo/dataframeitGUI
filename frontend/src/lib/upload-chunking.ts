@@ -21,15 +21,19 @@ export function isPayloadTooLarge(msg: string): boolean {
 // Generic over `{ text: string }` so the lib stays decoupled from UploadDoc.
 // `startIndex` is the position of each chunk's first item in the original
 // array — the caller uses it to re-base per-chunk indices (e.g. duplicateMap).
+// `sizes` (opcional) são os bytes UTF-8 por doc já medidos pelo chamador (o hook
+// mede uma vez para o check de oversize); evita re-encodar todo o array aqui.
+// Sem `sizes`, encoda sob demanda — mantém a API pura testável isoladamente.
 export function chunkByBytes<T extends { text: string }>(
-  docs: T[]
+  docs: T[],
+  sizes?: number[]
 ): { items: T[]; startIndex: number }[] {
   const chunks: { items: T[]; startIndex: number }[] = [];
   let current: T[] = [];
   let currentBytes = 0;
   let startIndex = 0;
   for (let i = 0; i < docs.length; i++) {
-    const itemBytes = utf8Bytes(docs[i].text);
+    const itemBytes = sizes ? sizes[i] : utf8Bytes(docs[i].text);
     if (
       current.length > 0 &&
       (currentBytes + itemBytes > MAX_CHUNK_BYTES ||

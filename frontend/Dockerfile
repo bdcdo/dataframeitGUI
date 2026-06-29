@@ -16,6 +16,11 @@ COPY . .
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ARG NEXT_PUBLIC_API_URL
+# Variaveis NEXT_PUBLIC_* sao embutidas no bundle em build time; sem as do
+# Clerk aqui, o cliente quebra em producao.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_CLERK_SIGN_IN_URL
+ARG NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
 
 RUN npm run build
 

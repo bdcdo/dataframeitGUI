@@ -5,6 +5,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Extrai a message de um erro desconhecido (Error ou string); "" caso contrário.
+// Fonte única compartilhada pelo hook de upload e pelas actions de schema.
+export function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : typeof e === "string" ? e : "";
+}
+
 // Normalizacao agressiva para comparar respostas de texto livre que sao
 // "iguais" para um humano mas diferem em bytes: acentos decompostos
 // (NFD vs NFC, comum em texto colado de PDF), maiusculas e espacos internos
