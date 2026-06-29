@@ -13,6 +13,7 @@ import { FullscreenNav } from "./FullscreenNav";
 import { saveResponse } from "@/actions/responses";
 import { getDocumentsForBrowse, getDocumentForCoding } from "@/actions/documents";
 import { applyFieldOrder } from "@/lib/field-order";
+import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import { useUrlState } from "@/hooks/useUrlState";
 import { useFieldOrder } from "@/hooks/useFieldOrder";
 import { useAutosaveOnExit, type AutosavePayload } from "@/hooks/useAutosaveOnExit";
@@ -263,13 +264,16 @@ function CodingPageInner({
     (fieldName: string, value: unknown) => {
       const docId = currentDoc?.id;
       if (!docId) return;
-      setAllAnswers((prev) => ({
-        ...prev,
-        [docId]: { ...prev[docId], [fieldName]: value },
-      }));
+      setAllAnswers((prev) => {
+        const updated = { ...prev[docId], [fieldName]: value };
+        // Ao mudar uma resposta, limpa as condicionais que ficaram órfãs —
+        // invariante mantida aqui (no dono do estado) em vez de num useEffect
+        // do filho (ver #252).
+        return { ...prev, [docId]: clearHiddenConditionalAnswers(fields, updated) };
+      });
       markDirty(docId);
     },
-    [currentDoc?.id, markDirty]
+    [currentDoc?.id, markDirty, fields]
   );
 
   const handleNotesChange = useCallback(
@@ -408,10 +412,12 @@ function CodingPageInner({
 
   const handleBrowseAnswer = useCallback(
     (fieldName: string, value: unknown) => {
-      setBrowseAnswers((prev) => ({ ...prev, [fieldName]: value }));
+      setBrowseAnswers((prev) =>
+        clearHiddenConditionalAnswers(fields, { ...prev, [fieldName]: value }),
+      );
       if (selectedBrowseDoc) markDirty(selectedBrowseDoc.id);
     },
-    [selectedBrowseDoc, markDirty]
+    [selectedBrowseDoc, markDirty, fields]
   );
 
   const handleBrowseSubmit = useCallback(async () => {
