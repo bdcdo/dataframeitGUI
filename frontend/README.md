@@ -48,6 +48,27 @@ O Playwright sobe o dev server automaticamente. Cada papel cuja credencial
 não estiver definida em `.env.e2e` tem o teste **pulado** (não falha), então
 CI sem o tenant de teste configurado continua verde.
 
+O smoke do dashboard (`dashboard.smoke.spec.ts`) roda os papéis em **série**
+(`test.describe.configure({ mode: "serial" })`). A instância de **desenvolvimento**
+do Clerk tem limites de uso estritos; rodar os papéis em paralelo gera um burst
+de `signIn`/`signOut`/`currentUser` que dispara rate-limit (`fetch failed` no
+backend do Clerk) e torna o smoke flaky — foi a causa raiz da #198 (não era
+credencial nem o sync Clerk↔Supabase). Por isso o E2E permanece **manual**
+(rodado localmente/staging), sem workflow de CI dedicado.
+
+### Smoke manual de login (mitigação)
+
+Como o E2E não roda no CI, antes de promover mudanças que toquem o boundary de
+auth (Clerk, middleware `proxy.ts`, `lib/auth.ts`, `lib/clerk-sync.ts`), faça um
+smoke manual de login no preview/produção:
+
+1. **Coordenador** — login com a conta de coordenador → confirmar que cai em
+   `/dashboard` com "Meus Projetos" (sem voltar para `/auth/login`).
+2. **Membro** — login com a conta de pesquisador → mesmo check.
+3. Em caso de loop login↔dashboard, abrir `/api/debug-token` autenticado e
+   conferir `metadataSupabaseUid`, `tokenSupabaseUid`, `uidMatch` e
+   `supabaseProbe` para localizar o elo quebrado (metadata, claim do JWT ou RLS).
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More
