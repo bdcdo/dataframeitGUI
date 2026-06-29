@@ -98,7 +98,7 @@ Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Ve
 5. Deixar o usuario revisar o PR
 6. Remover a worktree apos o merge
 
-Nunca fazer push direto para `main`. Merge do PR pode ser feito pelo Claude quando o usuario pedir explicitamente.
+Merge do PR pode ser feito pelo Claude quando o usuario pedir explicitamente.
 
 ## Workspace isolado (worktree)
 
