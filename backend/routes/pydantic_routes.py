@@ -25,13 +25,6 @@ class RecoverRequest(BaseModel):
     project_id: str
 
 
-class PydanticFieldOut(BaseModel):
-    name: str
-    type: str
-    options: list[str] | None
-    description: str
-
-
 class RecoverResponse(BaseModel):
     valid: bool
     fields: list[dict]
@@ -42,14 +35,18 @@ class RecoverResponse(BaseModel):
 @router.post("/recover-fields", response_model=RecoverResponse)
 async def recover_fields(req: RecoverRequest) -> dict:
     sb = get_supabase()
+    # maybe_single (não single): single() lança APIError quando nenhuma linha
+    # casa, o que viraria 500 opaco em vez do 404 abaixo. maybe_single retorna
+    # data=None para projeto inexistente, deixando o guard responder 404 claro
+    # (mesmo padrão de llm_runner.get_job_status).
     result = (
         sb.table("projects")
         .select("pydantic_code")
         .eq("id", req.project_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if not result.data:
+    if not result or not result.data:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
     code = result.data.get("pydantic_code")
     if not code:
