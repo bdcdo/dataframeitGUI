@@ -124,7 +124,7 @@ describe("DocumentSelector", () => {
     expect(onSelectionChange).not.toHaveBeenCalled();
   });
 
-  it("re-semeia o draft a partir de selectedIds a cada abertura", async () => {
+  it("re-semeia o draft a partir de selectedIds a cada abertura, descartando edições não confirmadas", async () => {
     const user = setup();
     render(
       <DocumentSelector
@@ -134,13 +134,29 @@ describe("DocumentSelector", () => {
       />
     );
 
+    // 1ª abertura: o draft reflete selectedIds (d1).
     await user.click(
       screen.getByRole("button", { name: /1 documento selecionado/i })
     );
     await screen.findByText("Documento Um");
 
-    const checkboxes = screen.getAllByRole("checkbox");
+    let checkboxes = screen.getAllByRole("checkbox");
     expect(checkboxes[0].getAttribute("aria-checked")).toBe("true"); // d1
     expect(checkboxes[1].getAttribute("aria-checked")).toBe("false"); // d2
+
+    // Edita o draft (marca d2) e cancela — sem propagar, selectedIds segue ["d1"].
+    await user.click(checkboxes[1]); // d2
+    expect(checkboxes[1].getAttribute("aria-checked")).toBe("true");
+    await user.click(screen.getByRole("button", { name: /cancelar/i }));
+
+    // Reabertura: o draft é re-semeado de selectedIds, descartando a marcação de d2.
+    await user.click(
+      screen.getByRole("button", { name: /1 documento selecionado/i })
+    );
+    await screen.findByText("Documento Um");
+
+    checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes[0].getAttribute("aria-checked")).toBe("true"); // d1
+    expect(checkboxes[1].getAttribute("aria-checked")).toBe("false"); // d2 descartado
   });
 });
