@@ -36,9 +36,18 @@ describe("compareDefaultsForMode", () => {
     expect(compareDefaultsForMode("valor_legado", 2).minHumans).toBe(2);
   });
 
-  it("preserva os demais defaults globais (só mexe em minHumans)", () => {
+  it("default vivo de versão é latest_major, não o 'all' da constante base (#247)", () => {
+    // A página foca na versão corrente por padrão; o seletor ainda oferece
+    // "all" para revisar rodadas antigas. DEFAULT_COMPARE_FILTERS.version segue
+    // "all" para os callers/testes que não passam por compareDefaultsForMode.
+    expect(compareDefaultsForMode("compare_llm", 2).version).toBe("latest_major");
+    expect(compareDefaultsForMode("compare_humans", 2).version).toBe("latest_major");
+    expect(compareDefaultsForMode(null, 2).version).toBe("latest_major");
+    expect(DEFAULT_COMPARE_FILTERS.version).toBe("all");
+  });
+
+  it("preserva os demais defaults globais (só mexe em minHumans e version)", () => {
     const d = compareDefaultsForMode("compare_llm", 2);
-    expect(d.version).toBe(DEFAULT_COMPARE_FILTERS.version);
     expect(d.minTotal).toBe(DEFAULT_COMPARE_FILTERS.minTotal);
     expect(d.minAssignedPct).toBe(DEFAULT_COMPARE_FILTERS.minAssignedPct);
     expect(d.since).toBe(DEFAULT_COMPARE_FILTERS.since);

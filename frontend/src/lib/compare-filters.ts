@@ -63,6 +63,13 @@ export function readCompareFilters(
 // `mode` é string solta (não o tipo AutomationMode) de propósito: mantém este
 // módulo de baixo nível sem depender de types.ts e tolera o valor null/legado
 // de projetos antes da migration do automation_mode.
+//
+// Versão: o default VIVO da página é "latest_major" (não o "all" de
+// DEFAULT_COMPARE_FILTERS). Pesquisadores do Natjus (issue #247) estranharam ver
+// na fila comparações de codificações feitas sob schemas anteriores; o esperado
+// é focar na versão corrente por padrão. "all" continua disponível no seletor
+// para quem precisa revisar rodadas antigas, e DEFAULT_COMPARE_FILTERS.version
+// segue "all" (usado por outros callers/testes que não passam por aqui).
 export function compareDefaultsForMode(
   mode: string | null | undefined,
   minResponsesForComparison: number,
@@ -73,7 +80,7 @@ export function compareDefaultsForMode(
   } else if (mode === "compare_humans") {
     minHumans = Math.max(1, minResponsesForComparison);
   }
-  return { ...DEFAULT_COMPARE_FILTERS, minHumans };
+  return { ...DEFAULT_COMPARE_FILTERS, minHumans, version: "latest_major" };
 }
 
 // Conjunto de document_ids que um usuário pode VER na fila de comparação.
