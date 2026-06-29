@@ -14,7 +14,39 @@ import {
   type ChangeType,
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
+import { fetchFastAPI } from "@/lib/api";
 import crypto from "crypto";
+
+interface RecoverResponse {
+  valid: boolean;
+  fields: PydanticField[];
+  model_name: string | null;
+  errors: string[];
+}
+
+// Repopula os campos a partir do `pydantic_code` ARMAZENADO do projeto (lido no
+// backend via service key, não enviado pelo cliente — logo sem vetor do #163).
+// Usado quando um projeto legado tem código mas o editor visual abre vazio.
+export async function recoverFieldsFromStoredCode(
+  projectId: string,
+): Promise<{ fields?: PydanticField[]; error?: string }> {
+  try {
+    const result = await fetchFastAPI<RecoverResponse>(
+      "/api/pydantic/recover-fields",
+      { method: "POST", body: JSON.stringify({ project_id: projectId }) },
+    );
+    if (!result.valid) {
+      return {
+        error:
+          result.errors[0] ||
+          "Não foi possível reconstruir os campos a partir do código armazenado.",
+      };
+    }
+    return { fields: result.fields };
+  } catch (e) {
+    return { error: errorMessage(e, "Erro ao recuperar campos do código") };
+  }
+}
 
 // As actions deste arquivo retornam { error } em vez de lançar: o Next mascara
 // a message de erros lançados em Server Actions em produção (o client recebe
@@ -117,6 +149,18 @@ export async function saveSchemaFromGUI(
     .single();
 
   const oldFields = (project?.pydantic_fields as PydanticField[]) || [];
+
+  // Guarda anti-wipe: nunca sobrescrever um schema existente com 0 campos. Sem
+  // isto, abrir um projeto cujo editor visual ficou vazio (ex.: legado com
+  // pydantic_code mas pydantic_fields não carregado) e clicar "Salvar"
+  // regeneraria `class Analysis(BaseModel): pass`, apagando schema + campos em
+  // silêncio. Um schema realmente vazio só é salvável quando já estava vazio.
+  if (fields.length === 0 && oldFields.length > 0) {
+    return {
+      error:
+        "Salvar com 0 campos apagaria o schema atual. Adicione ao menos um campo, ou use 'Recuperar do código' se o editor abriu vazio.",
+    };
+  }
 
   const current = {
     major: project?.schema_version_major ?? 0,

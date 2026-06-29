@@ -11,7 +11,7 @@ lambda, comprehension ou decorador é aceito.
 import ast
 import hashlib
 import typing
-from typing import Annotated, Any, Literal, Optional, Union, get_args, get_origin
+from typing import Literal, Optional, get_args, get_origin
 
 
 def compile_pydantic(code: str) -> dict:
@@ -226,12 +226,32 @@ def _sanitize_condition(raw: object) -> dict | None:
 # --------------------------------------------------------------------------
 
 class SchemaError(ValueError):
-    """Código de schema rejeitado pela allowlist ou inválido."""
+    """Código de schema rejeitado pela allowlist ou inválido.
+
+    Carrega ``lineno``/``offset`` quando a origem do erro tem posição conhecida
+    (ex.: ``SyntaxError`` do ``ast.parse``), para que o runner consiga apontar a
+    linha do schema ao coordenador (ver ``llm_runner._extract_pydantic_location``).
+    ``None`` quando a posição não é localizável (ex.: violação de allowlist sobre
+    um nó sem linha relevante).
+    """
+
+    def __init__(
+        self, *args: object, lineno: int | None = None, offset: int | None = None
+    ):
+        super().__init__(*args)
+        self.lineno = lineno
+        self.offset = offset
 
 
 # Imports tolerados no topo do schema. Nada além de pydantic/typing é
 # necessário para definir os modelos; qualquer outro import é rejeitado.
 _ALLOWED_IMPORT_MODULES = {"pydantic", "typing", "typing_extensions", "__future__"}
+
+# Tamanho máximo do código de schema. O código é gerado pela GUI
+# (`generatePydanticCode`) e nunca chega perto disso; o limite só existe como
+# defense-in-depth para barrar um `projects.pydantic_code` patológico antes de
+# `ast.parse`, evitando custo de parsing/recursão sobre entrada gigante.
+_MAX_CODE_LENGTH = 64 * 1024
 
 # Escalares aceitos como anotação de campo.
 _SCALAR_TYPES: dict[str, type] = {
@@ -273,41 +293,70 @@ _FORBIDDEN_NODES = (
     ast.Import,  # `import x` — ImportFrom permitido só p/ módulos do allowlist
 )
 
-# Profundidade máxima de aninhamento de anotações de tipo. Anotações legítimas
-# (Optional[list[Literal[...]]]) ficam muito abaixo disso; o limite só existe
-# para transformar um aninhamento patológico num SchemaError claro em vez de
-# RecursionError.
+# Profundidade máxima de aninhamento de anotações de tipo. A anotação mais
+# profunda que `generatePydanticCode` emite é `list[Literal[...]]` (profundidade
+# ~2); 20 é folgado de propósito. O limite só existe para transformar um
+# aninhamento patológico num SchemaError claro em vez de RecursionError.
 _MAX_TYPE_DEPTH = 20
 
 
 def build_model_from_code(code: str):
     """Parseia, valida e reconstrói a classe Pydantic raiz — sem executar nada.
 
-    O código aceito é o subconjunto que ``generatePydanticCode`` (frontend)
-    emite, mais variações equivalentes: classes ``BaseModel`` com campos
-    anotados por escalares (str/int/float/bool), ``Literal[...]``,
-    ``list[Literal[...]]``, ``Optional[...]``, união ``X | None``, ``dict``,
-    ``tuple`` e ``BaseModel`` aninhado; valores de ``Field(...)`` e defaults
-    são literais (avaliados por ``ast.literal_eval``, que não chama funções).
-    Imports são restritos a pydantic/typing. Qualquer outra construção
-    (import arbitrário, chamada que não ``Field``, acesso a atributo, dunder
-    estrito, lambda, comprehension, decorador) é rejeitada por
-    ``_reject_dangerous``. A edição manual do código foi descontinuada na UI;
-    o código existe apenas como fonte de verdade gerada pela GUI, mas a
-    allowlist é mantida como defense-in-depth sobre ``projects.pydantic_code``.
+    Aceita **exatamente** a grammar que ``generatePydanticCode`` (frontend)
+    emite — o único produtor legítimo de ``projects.pydantic_code`` desde que a
+    edição manual foi descontinuada na UI (#197):
 
-    Retorna a classe (equivalente ao antigo find_root_model do namespace
-    exec'd) ou None se nenhum BaseModel for definido. Levanta SchemaError em
-    código inválido ou que viole a allowlist.
+    - imports só de ``pydantic``/``typing``;
+    - classes ``BaseModel`` com herança única;
+    - anotações ``str`` (e demais escalares de ``_SCALAR_TYPES``),
+      ``Literal[...]``, ``list[Literal[...]]``, ``Optional[...]`` e ``BaseModel``
+      aninhado;
+    - ``Field(...)`` com valores literais (``ast.literal_eval``, que não chama
+      funções) — incluindo ``json_schema_extra={...}``.
+
+    Tudo fora disso — ``Annotated[...]``, ``dict``/``tuple``/``Union[...]``,
+    união ``X | None``, herança múltipla, import arbitrário, chamada que não
+    ``Field``, acesso a atributo, dunder estrito, lambda, comprehension,
+    decorador — é rejeitado com ``SchemaError`` (defense-in-depth). A allowlist
+    é deliberadamente estreita: casa só o seu produtor, sem suportar Pydantic
+    arbitrário.
+
+    Retorna a classe raiz (ver ``find_root_model``) ou ``None`` se nenhum
+    ``BaseModel`` for definido. Levanta ``SchemaError`` (sempre — nunca um
+    ``ValueError``/``TypeError`` cru) em código inválido ou que viole a
+    allowlist.
     """
+    if len(code) > _MAX_CODE_LENGTH:
+        raise SchemaError("Código de schema excede o tamanho máximo permitido")
     try:
-        tree = ast.parse(code)
+        tree = ast.parse(code, filename="<pydantic_schema>")
     except SyntaxError as e:
-        raise SchemaError(f"Código inválido: {e}") from e
+        raise SchemaError(f"Código inválido: {e}", lineno=e.lineno, offset=e.offset) from e
 
     _reject_dangerous(tree)
-    namespace = _build_models(tree)
+    # _build_models/_resolve_type só devem levantar SchemaError; qualquer
+    # exceção inesperada (ex.: TypeError de typing, ValueError de unpack) é
+    # encapsulada para honrar o contrato e dar mensagem coerente ao usuário.
+    try:
+        namespace = _build_models(tree)
+    except SchemaError:
+        raise
+    except Exception as e:  # noqa: BLE001 — converte para o tipo de erro do contrato
+        raise SchemaError(str(e) or type(e).__name__) from e
     return find_root_model(namespace)
+
+
+def _is_strict_dunder(name: str) -> bool:
+    """True para identificadores que começam E terminam com "__".
+
+    Nomes legítimos com "__" interno (ex.: my__field) ou de borda (a classe
+    aninhada _doc__fields gerada de um campo terminando em "_") são liberados;
+    só os dunders estritos (__import__, __class__, __subclasses__, ...) são
+    atributos mágicos/builtins perigosos. Espelha o `isStrictDunder` do
+    frontend (schema-utils.ts).
+    """
+    return name.startswith("__") and name.endswith("__")
 
 
 def _reject_dangerous(tree: ast.AST) -> None:
@@ -320,25 +369,29 @@ def _reject_dangerous(tree: ast.AST) -> None:
         if isinstance(node, ast.ImportFrom):
             if node.module not in _ALLOWED_IMPORT_MODULES:
                 raise SchemaError(f"Import não permitido: {node.module}")
-        if isinstance(node, ast.ClassDef) and node.decorator_list:
-            raise SchemaError("Decoradores não são permitidos em classes do schema")
+        if isinstance(node, ast.ClassDef):
+            if node.decorator_list:
+                raise SchemaError("Decoradores não são permitidos em classes do schema")
+            # Nome da classe não é um ast.Name (é str), então não passa pela
+            # checagem de Name abaixo — valida aqui (ex.: class __reduce__(...)).
+            if _is_strict_dunder(node.name):
+                raise SchemaError(f"Nome de classe não permitido: {node.name}")
         # Única chamada permitida é Field(...). Bloqueia open/eval/__import__/etc.
         if isinstance(node, ast.Call):
             if not (isinstance(node.func, ast.Name) and node.func.id == "Field"):
                 raise SchemaError("Apenas Field(...) pode ser chamado no schema")
-        # Bloqueia dunders estritos (__import__, __class__, __subclasses__, ...).
-        # Nomes de campo legítimos com "__" interno (ex.: my__field) ou de
-        # borda (a classe aninhada _doc__fields gerada de um campo terminando
-        # em "_") são liberados; só identificadores que começam E terminam com
-        # "__" são atributos mágicos/builtins perigosos.
-        if (
-            isinstance(node, ast.Name)
-            and node.id.startswith("__")
-            and node.id.endswith("__")
-        ):
+            # Nomes de kwarg também são str, não ast.Name; um dunder estrito
+            # como Field(__class__=...) ou json_schema_extra de chave dunder
+            # passaria despercebido sem esta checagem.
+            for kw in node.keywords:
+                if kw.arg is not None and _is_strict_dunder(kw.arg):
+                    raise SchemaError(f"Argumento não permitido em Field(...): {kw.arg}")
+        # Bloqueia dunders estritos escritos como identificador (ast.Name).
+        if isinstance(node, ast.Name) and _is_strict_dunder(node.id):
             raise SchemaError(f"Identificador não permitido: {node.id}")
-        # Só BitOr (X | None) é aceito como operação binária (em anotações).
-        if isinstance(node, ast.BinOp) and not isinstance(node.op, ast.BitOr):
+        # Nenhuma operação binária é válida no schema gerado (Optional[...] é
+        # usado no lugar de `X | None`). Rejeita todas.
+        if isinstance(node, ast.BinOp):
             raise SchemaError("Operação não permitida no schema")
 
 
@@ -350,14 +403,19 @@ def _build_models(tree: ast.Module) -> dict:
     """
     class_defs = [n for n in tree.body if isinstance(n, ast.ClassDef)]
     names = {cd.name for cd in class_defs}
+    # Dependências computadas uma única vez por classe (cada `_class_dependencies`
+    # faz `ast.walk` das anotações); o loop abaixo só testa pertinência contra o
+    # conjunto já construído, mantido incrementalmente — O(N) walks, não O(N²).
+    deps_by_name = {cd.name: _class_dependencies(cd, names) for cd in class_defs}
     built: dict = {}
+    built_names: set[str] = set()
     pending = list(class_defs)
     while pending:
         progressed = False
         for cd in list(pending):
-            deps = _class_dependencies(cd, names)
-            if deps <= set(built):
+            if deps_by_name[cd.name] <= built_names:
                 built[cd.name] = _build_one_class(cd, built)
+                built_names.add(cd.name)
                 pending.remove(cd)
                 progressed = True
         if not progressed:
@@ -383,18 +441,22 @@ def _class_dependencies(cd: ast.ClassDef, local_names: set[str]) -> set[str]:
 def _build_one_class(cd: ast.ClassDef, built: dict):
     from pydantic import BaseModel, create_model
 
-    base = None
-    for b in cd.bases:
-        if not isinstance(b, ast.Name):
-            raise SchemaError(f"Base de classe inválida em {cd.name}")
-        if b.id == "BaseModel":
-            base = BaseModel
-        elif b.id in built:
-            base = built[b.id]
-        else:
-            raise SchemaError(f"Base desconhecida em {cd.name}: {b.id}")
-    if base is None:
-        raise SchemaError(f"Classe {cd.name} não herda de BaseModel")
+    # O gerador só emite herança única de BaseModel (ou de uma classe aninhada).
+    # Herança múltipla não é suportada e antes era colapsada em silêncio para a
+    # última base, descartando campos — agora é rejeitada explicitamente.
+    if len(cd.bases) != 1:
+        raise SchemaError(
+            f"Classe {cd.name} deve herdar de exatamente uma base (BaseModel)"
+        )
+    b = cd.bases[0]
+    if not isinstance(b, ast.Name):
+        raise SchemaError(f"Base de classe inválida em {cd.name}")
+    if b.id == "BaseModel":
+        base = BaseModel
+    elif b.id in built:
+        base = built[b.id]
+    else:
+        raise SchemaError(f"Base desconhecida em {cd.name}: {b.id}")
 
     field_defs: dict = {}
     for stmt in cd.body:
@@ -416,17 +478,19 @@ def _build_one_class(cd: ast.ClassDef, built: dict):
     return create_model(cd.name, __base__=base, **field_defs)
 
 
-def _subscript_slice(node: ast.Subscript) -> ast.AST:
-    # Em Python 3.9+ o slice é a expressão direta (Index foi removido).
-    return node.slice
-
-
 def _slice_elements(sl: ast.AST) -> list[ast.AST]:
     return list(sl.elts) if isinstance(sl, ast.Tuple) else [sl]
 
 
 def _resolve_type(node: ast.AST, built: dict, depth: int = 0):
-    """Converte um nó de anotação de tipo num objeto de tipo real (sem eval)."""
+    """Converte um nó de anotação de tipo num objeto de tipo real (sem eval).
+
+    Suporta apenas a grammar do gerador: escalares (``_SCALAR_TYPES``), classes
+    aninhadas, ``Literal[...]``, ``list[...]`` e ``Optional[...]``. Construtores
+    como ``Annotated``/``dict``/``tuple``/``Union`` (e união ``X | None``, já
+    barrada em ``_reject_dangerous``) não são emitidos pelo gerador e viram
+    ``SchemaError`` limpo.
+    """
     if depth > _MAX_TYPE_DEPTH:
         raise SchemaError("Anotação de tipo aninhada demais")
     if isinstance(node, ast.Name):
@@ -434,8 +498,6 @@ def _resolve_type(node: ast.AST, built: dict, depth: int = 0):
             return _SCALAR_TYPES[node.id]
         if node.id in built:
             return built[node.id]
-        if node.id == "Any":
-            return Any
         raise SchemaError(f"Tipo não suportado: {node.id}")
 
     if isinstance(node, ast.Constant):
@@ -443,17 +505,11 @@ def _resolve_type(node: ast.AST, built: dict, depth: int = 0):
             return type(None)
         raise SchemaError(f"Anotação inválida: {node.value!r}")
 
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        return Union[
-            _resolve_type(node.left, built, depth + 1),
-            _resolve_type(node.right, built, depth + 1),
-        ]
-
     if isinstance(node, ast.Subscript):
         if not isinstance(node.value, ast.Name):
             raise SchemaError("Construtor de tipo inválido")
         ctor = node.value.id
-        sl = _subscript_slice(node)
+        sl = node.slice  # Python 3.9+: o slice é a expressão direta.
         if ctor == "Literal":
             values = tuple(_literal_value(e) for e in _slice_elements(sl))
             return Literal[values]
@@ -461,25 +517,6 @@ def _resolve_type(node: ast.AST, built: dict, depth: int = 0):
             return list[_resolve_type(_single_arg(sl), built, depth + 1)]
         if ctor == "Optional":
             return Optional[_resolve_type(_single_arg(sl), built, depth + 1)]
-        if ctor == "Union":
-            return Union[
-                tuple(_resolve_type(e, built, depth + 1) for e in _slice_elements(sl))
-            ]
-        if ctor == "Annotated":
-            elts = _slice_elements(sl)
-            inner = _resolve_type(elts[0], built, depth + 1)
-            meta = [_safe_literal(e) for e in elts[1:]]
-            return Annotated[tuple([inner, *meta])]
-        if ctor in ("dict", "Dict"):
-            k, v = _slice_elements(sl)
-            return dict[
-                _resolve_type(k, built, depth + 1),
-                _resolve_type(v, built, depth + 1),
-            ]
-        if ctor in ("tuple", "Tuple"):
-            return tuple[
-                tuple(_resolve_type(e, built, depth + 1) for e in _slice_elements(sl))
-            ]
         raise SchemaError(f"Construtor de tipo não suportado: {ctor}")
 
     raise SchemaError(f"Anotação de tipo inválida: {type(node).__name__}")
@@ -505,8 +542,9 @@ def _build_field(value: ast.AST | None):
     if value is None:
         return ...  # campo sem default → required
     if isinstance(value, ast.Call):
-        # _reject_dangerous já garantiu func == Field
-        args = [_field_default(a) for a in value.args]
+        # _reject_dangerous já garantiu func == Field. _safe_literal trata
+        # `...` (literal_eval retorna Ellipsis), então não há caso especial.
+        args = [_safe_literal(a) for a in value.args]
         kwargs: dict = {}
         for kw in value.keywords:
             if kw.arg is None:
@@ -515,12 +553,6 @@ def _build_field(value: ast.AST | None):
         return Field(*args, **kwargs)
     # Default literal direto (ex.: `x: int = 5`)
     return Field(default=_safe_literal(value))
-
-
-def _field_default(node: ast.AST):
-    if isinstance(node, ast.Constant) and node.value is ...:
-        return ...
-    return _safe_literal(node)
 
 
 def _safe_literal(node: ast.AST):

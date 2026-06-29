@@ -183,7 +183,13 @@ const PYTHON_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 // pela allowlist do compilador backend; barrar aqui dá feedback imediato em
 // vez de gerar código que o `llm_runner` recusaria. "__" interno (my__field)
 // é permitido.
-const STRICT_DUNDER = /^__.*__$/;
+//
+// Espelha EXATAMENTE o `_is_strict_dunder` do backend (startswith E endswith
+// "__"). A regex antiga `/^__.*__$/` exigia ≥4 chars e divergia: aceitava "__"
+// e "___" no front, mas o backend os rejeitava — gerando código que o run
+// recusaria. Usar startsWith/endsWith elimina a divergência.
+const isStrictDunder = (name: string): boolean =>
+  name.startsWith("__") && name.endsWith("__");
 
 export function validateGUIFields(fields: PydanticField[]): string[] {
   const errors: string[] = [];
@@ -202,7 +208,7 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
       errors.push(
         `${label}: nome inválido "${f.name}" (use letras minúsculas, números e _)`
       );
-    } else if (STRICT_DUNDER.test(f.name)) {
+    } else if (isStrictDunder(f.name)) {
       errors.push(
         `${label}: nome "${f.name}" não pode começar e terminar com "__" (reservado pelo Python)`
       );
@@ -224,7 +230,7 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
           errors.push(
             `${label}: subcampo ${j + 1} tem chave inválida "${sf.key}"`
           );
-        } else if (STRICT_DUNDER.test(sf.key)) {
+        } else if (isStrictDunder(sf.key)) {
           errors.push(
             `${label}: subcampo "${sf.key}" não pode começar e terminar com "__" (reservado pelo Python)`
           );

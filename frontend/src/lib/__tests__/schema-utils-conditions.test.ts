@@ -183,4 +183,17 @@ describe("validateGUIFields — nomes dunder", () => {
       'Campo 1: subcampo "__init__" não pode começar e terminar com "__" (reservado pelo Python)',
     );
   });
+
+  // Antes a regex /^__.*__$/ exigia ≥4 chars e NÃO casava "__"/"___", que o
+  // backend (startswith E endswith "__") rejeita — divergência que gerava
+  // código recusado no run. isStrictDunder espelha o backend.
+  it.each(["__", "___", "____"])(
+    "rejeita nome só de underscores %s (alinhado ao backend)",
+    (name) => {
+      const fields = [baseField({ name, type: "text", description: "x" })];
+      expect(validateGUIFields(fields)).toContain(
+        `Campo 1: nome "${name}" não pode começar e terminar com "__" (reservado pelo Python)`,
+      );
+    },
+  );
 });

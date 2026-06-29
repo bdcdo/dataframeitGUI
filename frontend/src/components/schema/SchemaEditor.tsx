@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
   saveSchemaFromGUI,
   publishMajorVersion,
   backfillSchemaVersionHistory,
+  recoverFieldsFromStoredCode,
 } from "@/actions/schema";
 import { validateGUIFields, generatePydanticCode } from "@/lib/schema-utils";
 import { toast } from "sonner";
@@ -55,7 +56,13 @@ export function SchemaEditor({
   // o estado inicial é sempre "gui".
   const [mode, setMode] = useState<"gui" | "code">("gui");
   const [fields, setFields] = useState<PydanticField[]>(initialFields || []);
-  const [code, setCode] = useState(initialCode || "");
+  // O código é uma visualização DERIVADA dos campos, não estado próprio. Para um
+  // projeto sem campos mas com código armazenado (legado), mostra o código
+  // original até que os campos sejam recuperados (ver banner de recuperação).
+  const code = useMemo(
+    () => (fields.length > 0 ? generatePydanticCode(fields) : initialCode || ""),
+    [fields, initialCode],
+  );
   const [guiErrors, setGuiErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
   const [majorDialogOpen, setMajorDialogOpen] = useState(false);
@@ -120,14 +127,30 @@ export function SchemaEditor({
   // O modo "código" é só visualização da fonte de verdade. Alternar não
   // recompila nada: os campos já estão no estado e o código é gerado deles.
 
-  const switchToCode = () => {
-    setCode(generatePydanticCode(fields));
-    setMode("code");
-  };
+  const switchToCode = () => setMode("code");
 
   const switchToGUI = () => {
     setGuiErrors([]);
     setMode("gui");
+  };
+
+  // --- Recuperação de campos a partir do código armazenado (projeto legado) ---
+  // Quando o projeto tem pydantic_code mas nenhum campo carregado, o editor
+  // abriria vazio e um "Salvar" apagaria o schema (barrado pela guarda em
+  // saveSchemaFromGUI). Recuperar reconstrói os campos a partir do código.
+  const canRecover =
+    !initialFields?.length && !!initialCode && fields.length === 0;
+
+  const handleRecover = () => {
+    startTransition(async () => {
+      const r = await recoverFieldsFromStoredCode(projectId);
+      if (r.error) {
+        toast.error(r.error);
+        return;
+      }
+      setFields(r.fields || []);
+      toast.success(`${r.fields?.length ?? 0} campos recuperados do código`);
+    });
   };
 
   // --- Salvar ---
@@ -154,11 +177,8 @@ export function SchemaEditor({
   };
 
   // --- Info para badges ---
-  const currentFields = fields;
-  const fieldCount = currentFields.length;
-  const llmOnlyCount = currentFields.filter(
-    (f) => f.target === "llm_only"
-  ).length;
+  const fieldCount = fields.length;
+  const llmOnlyCount = fields.filter((f) => f.target === "llm_only").length;
 
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
@@ -258,6 +278,27 @@ export function SchemaEditor({
             title="Dispensar"
           >
             <X className="size-3" />
+          </Button>
+        </div>
+      )}
+
+      {canRecover && (
+        <div className="flex items-start gap-2 border-b bg-amber-500/10 px-4 py-2 text-xs">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
+          <div className="flex-1 text-muted-foreground">
+            <strong className="text-foreground">Editor visual vazio.</strong>{" "}
+            Este projeto tem código Pydantic armazenado, mas nenhum campo
+            carregado no editor. Salvar agora apagaria o schema — recupere os
+            campos a partir do código.
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 text-xs"
+            onClick={handleRecover}
+            disabled={isPending}
+          >
+            Recuperar do código
           </Button>
         </div>
       )}
