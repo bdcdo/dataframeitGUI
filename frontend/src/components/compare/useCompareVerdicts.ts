@@ -25,7 +25,6 @@ interface UseCompareVerdictsParams {
   comment: string;
   recordReview: (docId: string, fieldName: string, info: VerdictInfo) => void;
   goNextField: () => void;
-  clearComment: () => void;
 }
 
 export interface CompareVerdicts {
@@ -58,6 +57,11 @@ function buildSnapshot(fieldResponses: FieldResponse[]): ResponseSnapshotEntry[]
  * linhas do container (`no-giant-component`). A escrita otimista vai por
  * `recordReview` (overrides); o avanço de campo por `goNextField` (que já faz
  * o clamp de limite).
+ *
+ * O comentário NÃO é limpo aqui após o sucesso: quando há avanço, o guard de
+ * render de `ComparePage` re-semeia a caixa do veredito do novo campo (""); se
+ * o campo permanece (filtro de campo único ou último campo divergente), o
+ * comentário recém-salvo continua visível na caixa, em vez de sumir.
  */
 export function useCompareVerdicts({
   projectId,
@@ -70,7 +74,6 @@ export function useCompareVerdicts({
   comment,
   recordReview,
   goNextField,
-  clearComment,
 }: UseCompareVerdictsParams): CompareVerdicts {
   const handleVerdict = useCallback(
     async (verdict: string, chosenResponseId?: string) => {
@@ -94,7 +97,6 @@ export function useCompareVerdicts({
         buildSnapshot(fieldResponses),
       );
 
-      clearComment();
       toast.success("Veredito salvo!");
 
       // Usa `info` recém-emitido sobre o estado atual (que o setState ainda não
@@ -123,7 +125,6 @@ export function useCompareVerdicts({
       fieldResponses,
       recordReview,
       goNextField,
-      clearComment,
     ],
   );
 
@@ -156,7 +157,6 @@ export function useCompareVerdicts({
           verdictComment,
           buildSnapshot(fieldResponses),
         );
-        clearComment();
         toast.success(
           `${responseIds.length} respostas marcadas como equivalentes.`,
         );
@@ -187,7 +187,6 @@ export function useCompareVerdicts({
       fieldResponses,
       recordReview,
       goNextField,
-      clearComment,
     ],
   );
 

@@ -113,6 +113,10 @@ export function ComparePage({
   // `no-derived-state` que o effect disparava. O prev-tracker é um `useRef`
   // (não `useState`) para não recair em `rerender-state-only-in-handlers`, e o
   // estado inicia em "" (literal, não prop) para não disparar `no-derived-useState`.
+  // A chave é só (doc, campo): trocar de campo re-semeia do veredito do novo
+  // campo; permanecer no mesmo campo (após emitir um veredito sem avanço)
+  // preserva o comentário recém-digitado/salvo — por isso `useCompareVerdicts`
+  // não limpa a caixa no sucesso.
   const [comment, setComment] = useState("");
   const commentCtxKey =
     currentDoc && currentFieldName
@@ -126,7 +130,6 @@ export function ComparePage({
     commentCtxRef.current = commentCtxKey;
     setComment(currentVerdict?.comment ?? "");
   }
-  const clearComment = useCallback(() => setComment(""), []);
 
   const {
     handleVerdict,
@@ -144,7 +147,6 @@ export function ComparePage({
     comment,
     recordReview,
     goNextField,
-    clearComment,
   });
 
   const [isFullscreen, setIsFullscreen] = useState(false);

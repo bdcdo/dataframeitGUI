@@ -254,6 +254,25 @@ describe("ComparePage — comentário (fix no-derived-state)", () => {
     expect(text("field-name")).toBe("campoB");
     expect(commentInput().value).toBe("comentário do campo B");
   });
+
+  it("preserva o comentário na caixa após emitir veredito sem avançar de campo", async () => {
+    const user = userEvent.setup();
+    render(<ComparePage {...makeProps()} />);
+
+    // Filtra para um único campo → emitir veredito não troca de campo (a fila
+    // filtrada tem só campoB), então a caixa deve manter o comentário salvo.
+    await user.click(screen.getByTestId("set-filter-b"));
+    expect(text("field-name")).toBe("campoB");
+
+    await user.type(commentInput(), "minha nota");
+    expect(commentInput().value).toBe("minha nota");
+
+    await user.click(screen.getByTestId("emit-verdict"));
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    expect(text("field-name")).toBe("campoB");
+    expect(commentInput().value).toBe("minha nota");
+  });
 });
 
 describe("ComparePage — navegação e filtro", () => {
@@ -290,6 +309,37 @@ describe("ComparePage — navegação e filtro", () => {
 
     expect(text("doc-text")).toBe("Texto do documento 2");
     expect(text("field-name")).toBe("campoA");
+  });
+
+  it("clampa o índice de campo quando divergentFields encolhe (não vira undefined)", async () => {
+    const user = userEvent.setup();
+    const fieldsABC: PydanticField[] = [
+      ...fields,
+      { name: "campoC", type: "text", options: null, description: "Campo C", hash: "hC" },
+    ];
+    const base = {
+      ...makeProps(),
+      fields: fieldsABC,
+      divergentFields: { d1: ["campoA", "campoB", "campoC"], d2: ["campoA"] },
+    };
+    const { rerender } = render(<ComparePage {...base} />);
+
+    // Navega até o último campo (campoC) → fieldIndex interno = 2.
+    await user.keyboard("n");
+    await user.keyboard("n");
+    expect(text("field-name")).toBe("campoC");
+
+    // Servidor revalida e o doc passa a ter só 2 campos divergentes; o filtro e
+    // o doc não mudaram, então fieldIndex (=2) fica fora de range.
+    rerender(
+      <ComparePage
+        {...base}
+        divergentFields={{ d1: ["campoA", "campoB"], d2: ["campoA"] }}
+      />,
+    );
+
+    // Sem o clamp, docFields[2] seria undefined; com clamp cai no último válido.
+    expect(text("field-name")).toBe("campoB");
   });
 });
 

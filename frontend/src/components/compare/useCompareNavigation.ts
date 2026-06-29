@@ -96,7 +96,13 @@ export function useCompareNavigation({
     filter === "all"
       ? allDocDivergent
       : allDocDivergent.filter((fn) => fn === filter);
-  const currentFieldName = docFields[fieldIndex];
+  // `fieldIndex` pode ficar fora de range se `docFields` encolher sob o usuário
+  // (ex.: um revalidate reduziu os campos divergentes do doc fixado) sem que o
+  // filtro ou o doc — os únicos pontos que resetam `fieldIndex` — mudem. Clampa
+  // na leitura para `currentFieldName` nunca cair em `undefined` havendo campos.
+  const clampedFieldIndex =
+    docFields.length > 0 ? Math.min(fieldIndex, docFields.length - 1) : 0;
+  const currentFieldName = docFields[clampedFieldIndex];
   const currentField = fields.find((f) => f.name === currentFieldName);
   const isCurrentFieldDivergent = divergentSet.has(currentFieldName);
 
@@ -152,13 +158,20 @@ export function useCompareNavigation({
     [documents],
   );
 
+  // Parte do índice CLAMPADO (não do `idx` cru do estado): se o estado ficou
+  // fora de range por um encolhimento de `docFields`, navegar a partir do índice
+  // exibido evita ficar preso num índice morto.
   const docFieldsLength = docFields.length;
   const goNextField = useCallback(() => {
-    setFieldIndex((idx) => (idx < docFieldsLength - 1 ? idx + 1 : idx));
-  }, [docFieldsLength]);
+    setFieldIndex(
+      clampedFieldIndex < docFieldsLength - 1
+        ? clampedFieldIndex + 1
+        : clampedFieldIndex,
+    );
+  }, [clampedFieldIndex, docFieldsLength]);
   const goPrevField = useCallback(() => {
-    setFieldIndex((idx) => (idx > 0 ? idx - 1 : idx));
-  }, []);
+    setFieldIndex(clampedFieldIndex > 0 ? clampedFieldIndex - 1 : clampedFieldIndex);
+  }, [clampedFieldIndex]);
 
   const changeFilter = useCallback((value: string) => {
     setFilter(value);
@@ -170,7 +183,7 @@ export function useCompareNavigation({
     currentDoc,
     allDocDivergent,
     docFields,
-    fieldIndex,
+    fieldIndex: clampedFieldIndex,
     setFieldIndex,
     filter,
     changeFilter,
