@@ -1,19 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback } from "react";
 import { getDocumentText } from "@/actions/documents";
+import { useCachedResource } from "./useCachedResource";
 
 const NOT_FOUND = "(Documento não encontrado)";
 
 /**
  * Lazy-load do texto de um documento, com cache por id e flag `loading`.
  *
- * O `loading` é derivado (`!!documentId && !(documentId in cache)`) em vez de
- * guardado num `useState` — isso elimina o `setState` síncrono no effect que
- * antes exigia `eslint-disable react-hooks/set-state-in-effect`. O `setCache`
- * fica no `.then` (assíncrono), que a regra não sinaliza. O `cache` entra nas
- * deps do effect com um early-return (`documentId in cache`), dispensando o
- * `eslint-disable react-hooks/exhaustive-deps`.
+ * Wrapper fino de `useCachedResource`: o texto é imutável, então não há
+ * `invalidate` no contrato público. Ausência (ou falha do fetch) vira o sentinel
+ * `NOT_FOUND` — erro como valor, tratado no próprio `fetcher`, de modo que o
+ * genérico nunca entra no estado de `error` e o `loading` sempre resolve.
  *
  * Cobre o padrão Server Action (`getDocumentText`) + cache compartilhado por
  * `MyVerdictsView` e `CommentsSplitView`. Não cobre `DocumentPreview`, que usa
@@ -23,24 +22,19 @@ export function useDocumentText(
   projectId: string,
   documentId: string | null | undefined,
 ): { text: string | undefined; loading: boolean } {
-  const [cache, setCache] = useState<Record<string, string>>({});
+  const fetcher = useCallback(
+    async (id: string): Promise<string> => {
+      try {
+        const result = await getDocumentText(projectId, id);
+        return result?.text ?? NOT_FOUND;
+      } catch (e) {
+        console.error("Failed to load document text:", e);
+        return NOT_FOUND;
+      }
+    },
+    [projectId],
+  );
 
-  useEffect(() => {
-    if (!documentId || documentId in cache) return;
-    let cancelled = false;
-    getDocumentText(projectId, documentId).then((result) => {
-      if (cancelled) return;
-      setCache((prev) => ({
-        ...prev,
-        [documentId]: result?.text ?? NOT_FOUND,
-      }));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, documentId, cache]);
-
-  const text = documentId ? cache[documentId] : undefined;
-  const loading = !!documentId && !(documentId in cache);
-  return { text, loading };
+  const { data, loading } = useCachedResource(documentId, fetcher);
+  return { text: data, loading };
 }

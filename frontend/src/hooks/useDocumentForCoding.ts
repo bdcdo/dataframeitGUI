@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { getDocumentForCoding } from "@/actions/documents";
+import { useCachedResource } from "./useCachedResource";
 
 /** Fatia de documento devolvida por `getDocumentForCoding`. Derivada da própria
  *  action para não driftar se o shape do retorno mudar. */
@@ -17,14 +18,20 @@ export interface CodingDocument {
   initialNotes: string;
 }
 
+/** Quantos docs de browse mantemos em cache por sessão. O modo Explorar percorre
+ *  um conjunto ABERTO (potencialmente centenas de docs grandes); sem teto, o
+ *  cache reteria o `text` integral de todo doc visitado pelo tempo de vida do
+ *  `CodingPage`. O teto baixo cobre o ir-e-voltar imediato e limita o heap. */
+const MAX_CACHED_DOCS = 3;
+
 /**
  * Lazy-load do payload de codificação de um documento (texto + respostas +
- * notas existentes), com cache por id e flag `loading` derivada.
+ * notas existentes), com cache por id (com teto) e flag `loading` derivada.
  *
- * Padrão de cache derivado igual ao de `useDocumentText`: o `useEffect` só faz
- * `setCache` assíncrono no `.then`/`.catch` e o `loading` é derivado no render
- * (`!!id && !(id in cache)`), sem `setState` síncrono em effect (era o
- * `eslint-disable react-hooks/set-state-in-effect` do modo Explorar).
+ * Wrapper de `useCachedResource`. O `fetcher` faz `catch → null` (erro como
+ * valor), preservando o tri-state público: `undefined` (nada pedido / em voo),
+ * `null` (fetch falhou — a UI oferece "tentar novamente" via `invalidate`), ou
+ * o objeto `CodingDocument` carregado.
  *
  * ATENÇÃO — diferença crítica em relação a `useDocumentText`: aqui o cache
  * guarda respostas/notas MUTÁVEIS (o pesquisador edita e salva via
@@ -32,13 +39,6 @@ export interface CodingDocument {
  * salva (`handleBrowseSubmit`/`handleBrowseBack`) DEVE chamar `invalidate(docId)`,
  * senão reabrir o doc na mesma sessão re-semearia o estado pré-save (stale). O
  * código antigo evitava isso re-buscando a cada seleção.
- *
- * Contrato de retorno (`doc` é tri-state, sempre lido junto de `loading`):
- *  - `undefined` + `loading=false`: nenhum doc pedido (id null/undefined);
- *  - `undefined` + `loading=true`: pedido, fetch em andamento;
- *  - `null`: o fetch falhou (erro de transporte ou documento ausente) — a UI
- *    deve oferecer "tentar novamente" chamando `invalidate(docId)`;
- *  - objeto `CodingDocument`: carregado.
  */
 export function useDocumentForCoding(
   projectId: string,
@@ -48,50 +48,28 @@ export function useDocumentForCoding(
   loading: boolean;
   invalidate: (docId: string) => void;
 } {
-  const [cache, setCache] = useState<Record<string, CodingDocument | null>>({});
-
-  useEffect(() => {
-    if (!documentId || documentId in cache) return;
-    let cancelled = false;
-    getDocumentForCoding(projectId, documentId)
-      .then((result) => {
-        if (cancelled) return;
-        setCache((prev) => ({
-          ...prev,
-          [documentId]: {
-            document: result.document,
-            initialAnswers: result.existingAnswers ?? {},
-            initialNotes:
-              typeof result.existingJustifications?._notes === "string"
-                ? (result.existingJustifications._notes as string)
-                : "",
-          },
-        }));
-      })
-      .catch((e) => {
-        if (cancelled) return;
+  const fetcher = useCallback(
+    async (id: string): Promise<CodingDocument | null> => {
+      try {
+        const result = await getDocumentForCoding(projectId, id);
+        return {
+          document: result.document,
+          initialAnswers: result.existingAnswers ?? {},
+          initialNotes:
+            typeof result.existingJustifications?._notes === "string"
+              ? (result.existingJustifications._notes as string)
+              : "",
+        };
+      } catch (e) {
         console.error("Failed to load document:", e);
-        setCache((prev) => ({ ...prev, [documentId]: null }));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, documentId, cache]);
+        return null;
+      }
+    },
+    [projectId],
+  );
 
-  // Remove a entrada do cache para que a próxima abertura do doc refaça o
-  // fetch. Dois usos: (1) após salvar (submit/back), pois o payload guarda
-  // respostas MUTÁVEIS e sem isto reabrir o doc na sessão semearia o estado
-  // antigo; (2) como "tentar novamente" quando o fetch falhou (entrada `null`).
-  const invalidate = useCallback((docId: string) => {
-    setCache((prev) => {
-      if (!(docId in prev)) return prev;
-      const next = { ...prev };
-      delete next[docId];
-      return next;
-    });
-  }, []);
-
-  const doc = documentId ? cache[documentId] : undefined;
-  const loading = !!documentId && !(documentId in cache);
-  return { doc, loading, invalidate };
+  const { data, loading, invalidate } = useCachedResource(documentId, fetcher, {
+    maxEntries: MAX_CACHED_DOCS,
+  });
+  return { doc: data, loading, invalidate };
 }

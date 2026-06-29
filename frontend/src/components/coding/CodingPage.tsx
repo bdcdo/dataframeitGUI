@@ -195,6 +195,23 @@ function CodingPageInner({
     [setParams]
   );
 
+  // Troca de modo (Atribuídos↔Explorar). Ao SAIR do Explorar, descarta o
+  // rascunho de browse não salvo: o BrowseDocCoder (keyed) desmonta e, ao voltar,
+  // re-semeia do cache pré-edição; sem zerar o draft/dirty do pai aqui, a edição
+  // sumiria da tela mas ainda seria salva no autosave-on-exit / "Voltar" (ghost
+  // save). Feito em handler (não em effect) para não reintroduzir o débito de
+  // react-doctor que o PR zerou.
+  const handleModeChange = useCallback(
+    (next: "assigned" | "browse") => {
+      if (mode === "browse" && next !== "browse" && browseDocId) {
+        browseDraftRef.current = null;
+        markClean(browseDocId);
+      }
+      setMode(next);
+    },
+    [mode, browseDocId, markClean],
+  );
+
   // Fullscreen keyboard shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -361,13 +378,16 @@ function CodingPageInner({
   // --- Browse mode handlers ---
   // Seleção = escrever o ?doc= (os hooks buscam a lista e o doc). Trocar de doc
   // descarta o rascunho do anterior — comportamento atual do Explorar — por
-  // isso reseta o browseDraftRef.
+  // isso reseta o browseDraftRef e limpa o dirty do doc deixado (senão o id
+  // ficaria "sujo" para sempre, disparando o prompt nativo de "alterações não
+  // salvas" que nenhum caminho de saída consegue mais persistir).
   const handleBrowseSelect = useCallback(
     (docId: string) => {
+      if (browseDocId) markClean(browseDocId);
       browseDraftRef.current = null;
       updateDocParam(docId);
     },
-    [updateDocParam],
+    [browseDocId, markClean, updateDocParam],
   );
 
   // Reportado pelo BrowseDocCoder a cada edição: alimenta o autosave-on-exit
@@ -392,11 +412,13 @@ function CodingPageInner({
         markClean(browseDocId);
         toast.success("Respostas salvas!");
         markResponded(browseDocId, "submit");
-        // Invalida o cache do doc para que reabri-lo na sessão refaça o fetch
-        // e reflita o que acabou de ser salvo (sem isto, o seed ficaria stale).
-        invalidateBrowseDoc(browseDocId);
         browseDraftRef.current = null;
+        // Zera o ?doc= ANTES de invalidar: com browseDocId já null, o hook não
+        // refetcha o doc que estamos deixando (evita refetch/flicker). A
+        // invalidação garante que reabri-lo na sessão reflita o que foi salvo
+        // (sem isto, o seed ficaria stale).
         updateDocParam(null);
+        invalidateBrowseDoc(browseDocId);
       } else {
         toast.error(result.error || "Erro ao salvar respostas");
       }
@@ -412,12 +434,14 @@ function CodingPageInner({
   );
 
   const handleBrowseBack = useCallback(async () => {
+    const docId = browseDocId;
+    let saved = false;
     // Com rascunho sujo, aguarda o autosave ANTES de navegar: se falhar, mantém
     // o doc aberto e o rascunho intacto (em vez de descartá-lo otimisticamente).
-    if (browseDocId && dirtyDocs.has(browseDocId) && browseDraftRef.current) {
+    if (docId && dirtyDocs.has(docId) && browseDraftRef.current) {
       const { answers, notes } = browseDraftRef.current;
       setSubmitting(true);
-      const result = await saveResponse(projectId, browseDocId, answers, {
+      const result = await saveResponse(projectId, docId, answers, {
         notes,
         isAutoSave: true,
       });
@@ -429,12 +453,15 @@ function CodingPageInner({
         );
         return;
       }
-      markClean(browseDocId);
-      markResponded(browseDocId, "autosave");
-      invalidateBrowseDoc(browseDocId);
+      markClean(docId);
+      markResponded(docId, "autosave");
+      saved = true;
     }
     browseDraftRef.current = null;
+    // Zera o ?doc= ANTES de invalidar (mesmo motivo do handleBrowseSubmit: evita
+    // refetch/flicker do doc que estamos deixando).
     updateDocParam(null);
+    if (saved && docId) invalidateBrowseDoc(docId);
   }, [
     browseDocId,
     projectId,
@@ -504,7 +531,7 @@ function CodingPageInner({
         <>
           <CodingHeader
             mode={mode}
-            onModeChange={setMode}
+            onModeChange={handleModeChange}
             assignedCount={documents.length}
             sortMode={sortMode}
             onSortChange={handleSortChange}

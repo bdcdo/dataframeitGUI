@@ -292,4 +292,76 @@ describe("CodingPage — modo Explorar (integração)", () => {
     // O doc atribuído não passa pelo fetch de codificação do modo Explorar.
     expect(getDocumentForCoding).not.toHaveBeenCalled();
   });
+
+  it("nº1: toggle de modo descarta o rascunho não salvo (sem ghost-save no exit)", async () => {
+    getDocumentsForBrowse.mockResolvedValue([browseDoc("d1")]);
+    getDocumentForCoding.mockResolvedValue(codingResult("d1", null));
+
+    render(
+      <CodingPage projectId="p1" documents={[]} fields={FIELDS} existingAnswers={{}} />,
+    );
+
+    await userEvent.click(await screen.findByText("pick-d1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("qp-answers").textContent).toBe("{}"),
+    );
+    await userEvent.click(screen.getByText("qp-set")); // edita d1 → rascunho sujo
+
+    // Antes do toggle: rascunho presente e doc sujo.
+    expect(autosaveProps.current.isDirty).toBe(true);
+    expect(autosaveProps.current.getPayload()).toEqual({
+      projectId: "p1",
+      documentId: "d1",
+      answers: { q1: "sim" },
+      notes: "",
+    });
+
+    // Sai do Explorar e volta (filho keyed desmonta e re-semeia do cache).
+    await userEvent.click(screen.getByText("to-assigned"));
+    await userEvent.click(screen.getByText("to-browse"));
+
+    // UI revertida ao último salvo (seed pré-edição)...
+    await waitFor(() =>
+      expect(screen.getByTestId("qp-answers").textContent).toBe("{}"),
+    );
+    // ...e o estado salvável concorda: nada de ghost-save no exit/Voltar.
+    expect(autosaveProps.current.activeDocId).toBe("d1");
+    expect(autosaveProps.current.isDirty).toBe(false);
+    expect(autosaveProps.current.getPayload()).toBeNull();
+    // O doc não foi re-buscado no retorno (cache não invalidado).
+    expect(getDocumentForCoding).toHaveBeenCalledTimes(1);
+  });
+
+  it("nº5: trocar de doc limpa o dirty do anterior (sem vazamento)", async () => {
+    getDocumentsForBrowse.mockResolvedValue([browseDoc("d1"), browseDoc("d2")]);
+    getDocumentForCoding.mockImplementation(async (_p: string, id: string) =>
+      codingResult(id, null),
+    );
+
+    render(
+      <CodingPage projectId="p1" documents={[]} fields={FIELDS} existingAnswers={{}} />,
+    );
+
+    await userEvent.click(await screen.findByText("pick-d1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("qp-answers").textContent).toBe("{}"),
+    );
+    await userEvent.click(screen.getByText("qp-set")); // edita d1 → sujo
+    expect(autosaveProps.current.isDirty).toBe(true);
+
+    // Random: d1 → d2 (markClean d1). Depois d2 → d1 (volta ao d1).
+    await userEvent.click(screen.getByText("hdr-random"));
+    await waitFor(() =>
+      expect(screen.getByTestId("doc-reader").textContent).toBe("texto-d2"),
+    );
+    await userEvent.click(screen.getByText("hdr-random"));
+    await waitFor(() =>
+      expect(screen.getByTestId("doc-reader").textContent).toBe("texto-d1"),
+    );
+
+    // De volta a d1: não está mais sujo (sem prompt espúrio) e sem rascunho.
+    expect(autosaveProps.current.activeDocId).toBe("d1");
+    expect(autosaveProps.current.isDirty).toBe(false);
+    expect(autosaveProps.current.getPayload()).toBeNull();
+  });
 });

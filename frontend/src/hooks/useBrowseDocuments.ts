@@ -1,25 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { getDocumentsForBrowse, type BrowseDocument } from "@/actions/documents";
+import { useCachedResource } from "./useCachedResource";
 
 /**
  * Lazy-load da lista de documentos do modo Explorar, com cache por `projectId`
- * e flag `loading` derivada — mesmo padrão de cache derivado de
- * `useDocumentText`: o `useEffect` só faz `setCache` assíncrono no
- * `.then`/`.catch`, sem `setState` síncrono em effect.
+ * e flag `loading` derivada.
  *
- * Em falha, expõe `error=true` (em vez de cachear `[]`, que mascararia a falha
- * como "projeto sem documentos") e mantém `documents` em `null`; `retry()` limpa
- * o erro e refaz o fetch. A UI deve oferecer "tentar novamente" no estado de erro.
+ * Wrapper de `useCachedResource` (cache/loading/erro/retry vêm do genérico, sem
+ * `maxEntries` — só há uma entrada, a do projeto). Em falha o `fetcher` rejeita,
+ * então o genérico expõe `error=true` SEM cachear (não mascara como "projeto sem
+ * documentos"); `retry()` limpa o erro/cache e refaz o fetch.
  *
- * `markResponded` aplica os updates otimistas pós-envio sobre uma camada de
- * `overrides` (atualizada em handler, nunca em effect): marca o doc como
+ * `markResponded` aplica os updates otimistas pós-envio sobre uma camada local
+ * de `overrides` (atualizada em handler, nunca em effect): marca o doc como
  * respondido e — só no intent `"submit"` (envio de resposta nova) e quando o
  * doc ainda não constava como respondido — incrementa `responseCount` uma única
  * vez. O intent `"autosave"` (saída via "Voltar") marca respondido sem mexer no
  * contador. Espelha exatamente a lógica anterior de `handleBrowseSubmit` (bump)
- * e `handleBrowseBack` (sem bump).
+ * e `handleBrowseBack` (sem bump). O `retry()` também zera os `overrides`: um
+ * refetch traz dados frescos do servidor, e overrides antigos os clobbeariam.
  */
 export function useBrowseDocuments(
   projectId: string,
@@ -31,51 +32,26 @@ export function useBrowseDocuments(
   retry: () => void;
   markResponded: (docId: string, intent: "submit" | "autosave") => void;
 } {
-  const [cache, setCache] = useState<Record<string, BrowseDocument[]>>({});
-  const [errors, setErrors] = useState<Record<string, true>>({});
+  const fetcher = useCallback(
+    (id: string): Promise<BrowseDocument[]> => getDocumentsForBrowse(id),
+    [],
+  );
+
+  const {
+    data: base,
+    loading,
+    error,
+    retry: retryResource,
+  } = useCachedResource(projectId, fetcher, { enabled });
+
   const [overrides, setOverrides] = useState<
     Record<string, { userAlreadyResponded: boolean; responseCount: number }>
   >({});
 
-  useEffect(() => {
-    if (!enabled || projectId in cache || errors[projectId]) return;
-    let cancelled = false;
-    getDocumentsForBrowse(projectId)
-      .then((docs) => {
-        if (cancelled) return;
-        setCache((prev) => ({ ...prev, [projectId]: docs }));
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        console.error("Failed to load browse documents:", e);
-        // Marca erro (em vez de cachear []) para não ficar em spinner infinito
-        // E não mascarar a falha como "projeto sem documentos". `retry` limpa.
-        setErrors((prev) => ({ ...prev, [projectId]: true }));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, projectId, cache, errors]);
-
-  const base = enabled ? cache[projectId] : undefined;
-  const error = enabled && !!errors[projectId];
-  const loading = enabled && !(projectId in cache) && !errors[projectId];
-
-  // Limpa o erro (e qualquer cache) do projeto para que o effect refaça o fetch.
   const retry = useCallback(() => {
-    setErrors((prev) => {
-      if (!(projectId in prev)) return prev;
-      const next = { ...prev };
-      delete next[projectId];
-      return next;
-    });
-    setCache((prev) => {
-      if (!(projectId in prev)) return prev;
-      const next = { ...prev };
-      delete next[projectId];
-      return next;
-    });
-  }, [projectId]);
+    retryResource();
+    setOverrides({});
+  }, [retryResource]);
 
   const documents = useMemo(() => {
     if (!base) return null;
