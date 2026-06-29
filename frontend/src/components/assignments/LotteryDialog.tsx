@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -24,303 +24,111 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  getLotteryDocStats,
-  smartRandomize,
-  previewLottery,
-} from "@/actions/assignments";
-import type { LotteryParams, LotteryPreview } from "@/actions/assignments";
-import {
-  filterComparisonEligible,
-  filterEligibleDocs,
-  resolveWeight,
-  resolveCap,
-  type AssignmentFilter,
-  type LotteryBalancing,
-  type LotteryDocStats,
-  type LotteryFilters,
-  type LotteryMode,
+import type {
+  AssignmentFilter,
+  LotteryBalancing,
+  LotteryMode,
 } from "@/lib/lottery-utils";
-import { toast } from "sonner";
-import { ptBR } from "date-fns/locale";
-import { format } from "date-fns";
-
-export interface LotteryMember {
-  userId: string;
-  name: string;
-  role: "pesquisador" | "coordenador";
-  // Pré-registrado (spec 002): ainda não criou conta.
-  pending?: boolean;
-  // Defaults de carga persistidos (último sorteio): peso relativo e limite
-  // individual de docs. Pré-preenchem os campos por participante.
-  weight?: number;
-  cap?: number | null;
-}
+import { BatchLabel } from "./BatchLabel";
+import type { CodingsFilterMode, LotteryMember } from "./lottery-dialog-types";
+import { useLotteryStats } from "./useLotteryStats";
+import { useLotteryDistribution } from "./useLotteryDistribution";
+import { useLotteryFilters } from "./useLotteryFilters";
+import { useLotteryParticipants } from "./useLotteryParticipants";
+import { useLotteryRun } from "./useLotteryRun";
 
 interface LotteryDialogProps {
   projectId: string;
   members: LotteryMember[];
 }
 
-interface LotteryStats {
-  docs: LotteryDocStats[];
-  batches: { id: string; label: string | null; createdAt: string }[];
-  minResponsesForComparison: number;
-  automationMode: string | null;
-}
-
-type CodingsFilterMode = "all" | "none" | "atMost";
-
 export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
 
-  // Stats de elegibilidade, recarregadas a cada abertura do dialog —
-  // um sorteio muda atribuições/lotes, então reabrir com stats da
-  // abertura anterior mentiria na contagem de elegíveis
-  const [stats, setStats] = useState<LotteryStats | null>(null);
-  const [statsError, setStatsError] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    getLotteryDocStats(projectId)
-      .then((s) => {
-        if (!cancelled) {
-          setStats(s);
-          setStatsError(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStatsError(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, projectId]);
+  const { stats, statsError } = useLotteryStats(projectId, open);
 
-  // Tipo do sorteio (codificação ou comparação)
-  const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
-
-  // Distribuição
-  const [researchersPerDoc, setResearchersPerDoc] = useState(2);
-  const [docsPerResearcherEnabled, setDocsPerResearcherEnabled] =
-    useState(false);
-  const [docsPerResearcher, setDocsPerResearcher] = useState(10);
-  const [docSubsetEnabled, setDocSubsetEnabled] = useState(false);
-  const [docSubsetSize, setDocSubsetSize] = useState(50);
-  const [balancing, setBalancing] = useState<LotteryBalancing>("round");
-
-  // Atribuições pendentes (modo)
-  const [mode, setMode] = useState<LotteryMode>("append");
-
-  // Filtros de elegibilidade
-  const [codingsFilterMode, setCodingsFilterMode] =
-    useState<CodingsFilterMode>("all");
-  const [maxCodingsValue, setMaxCodingsValue] = useState(1);
-  const [assignmentFilter, setAssignmentFilter] =
-    useState<AssignmentFilter>("any");
-  const [batchFilterMode, setBatchFilterMode] = useState<
-    "none" | "exclude" | "only"
-  >("none");
-  const [batchExclude, setBatchExclude] = useState<string[]>([]);
-  const [batchOnly, setBatchOnly] = useState<string | null>(null);
-  const [manualEnabled, setManualEnabled] = useState(false);
-  const [manualDocIds, setManualDocIds] = useState<Set<string>>(new Set());
-
-  // Participantes: default por role (pesquisador ON, coordenador OFF) +
-  // overrides dos toggles — derivar do prop em vez de snapshot garante que
-  // membro adicionado com o dialog montado entra com o default do role
-  const [participantOverrides, setParticipantOverrides] = useState<
-    Record<string, boolean>
-  >({});
-
-  // Peso/limite por participante, editados como string (inputs controlados).
-  // Ausência da chave = usar o default persistido do membro (m.weight/m.cap).
-  const [weightInputs, setWeightInputs] = useState<Record<string, string>>({});
-  const [capInputs, setCapInputs] = useState<Record<string, string>>({});
-
-  const isParticipant = (m: LotteryMember) =>
-    participantOverrides[m.userId] ?? m.role === "pesquisador";
-
-  // String exibida nos inputs: override local, senão default persistido.
-  const weightValue = useCallback(
-    (m: LotteryMember) => weightInputs[m.userId] ?? String(m.weight ?? 1),
-    [weightInputs],
-  );
-  const capValue = useCallback(
-    (m: LotteryMember) =>
-      capInputs[m.userId] ?? (m.cap != null ? String(m.cap) : ""),
-    [capInputs],
-  );
-
-  const participantIds = useMemo(
-    () =>
-      members
-        .filter(
-          (m) => participantOverrides[m.userId] ?? m.role === "pesquisador"
-        )
-        .map((m) => m.userId),
-    [members, participantOverrides]
-  );
-
-  // Peso/limite resolvido por participante ativo. Inclui TODOS os participantes
-  // (peso 1 / sem limite explícito) para que o server persista o reset de quem
-  // voltou ao default — não só quem está fora do padrão.
-  const participantSettings = useMemo(() => {
-    const out: Record<string, { weight: number; cap: number | null }> = {};
-    for (const m of members) {
-      if (!(participantOverrides[m.userId] ?? m.role === "pesquisador")) continue;
-      const cStr = capValue(m);
-      out[m.userId] = {
-        // Mesma coerção do server (resolveWeight/resolveCap) — fonte única.
-        weight: resolveWeight(parseFloat(weightValue(m))),
-        cap: resolveCap(cStr.trim() === "" ? null : parseInt(cStr, 10)),
-      };
-    }
-    return out;
-  }, [members, participantOverrides, weightValue, capValue]);
-
-  // Label
-  const [label, setLabel] = useState("");
-
-  const isComparacao = type === "comparacao";
-
-  const filters = useMemo<LotteryFilters>(() => {
-    const f: LotteryFilters = {};
-    if (codingsFilterMode === "none") f.maxHumanCodings = 0;
-    else if (codingsFilterMode === "atMost") f.maxHumanCodings = maxCodingsValue;
-    if (assignmentFilter !== "any") f.assignmentFilter = assignmentFilter;
-    if (batchFilterMode === "only" && batchOnly) {
-      f.batchFilter = { only: batchOnly };
-    } else if (batchFilterMode === "exclude" && batchExclude.length) {
-      f.batchFilter = { exclude: batchExclude };
-    }
-    if (manualEnabled) f.manualDocIds = Array.from(manualDocIds);
-    return f;
-  }, [
-    codingsFilterMode,
-    maxCodingsValue,
-    assignmentFilter,
-    batchFilterMode,
-    batchOnly,
-    batchExclude,
-    manualEnabled,
-    manualDocIds,
-  ]);
-
-  // Prévia + semente (research D13): a seed da última prévia é reaproveitada
-  // ao sortear; a prévia é guardada junto da configuração que a gerou, então
-  // qualquer mudança de configuração a invalida (e à seed) por derivação.
-  // O rótulo fica de fora: não afeta o resultado do sorteio, e é lido em
-  // buildParams na hora do submit
-  const configKey = JSON.stringify({
+  const dist = useLotteryDistribution();
+  const {
     type,
+    setType,
+    isComparacao,
     researchersPerDoc,
+    setResearchersPerDoc,
     docsPerResearcherEnabled,
+    setDocsPerResearcherEnabled,
     docsPerResearcher,
+    setDocsPerResearcher,
     docSubsetEnabled,
+    setDocSubsetEnabled,
     docSubsetSize,
-    mode,
+    setDocSubsetSize,
     balancing,
-    filters,
+    setBalancing,
+    mode,
+    setMode,
+  } = dist;
+
+  const filtersState = useLotteryFilters({ stats, type, isComparacao });
+  const {
+    codingsFilterMode,
+    setCodingsFilterMode,
+    maxCodingsValue,
+    setMaxCodingsValue,
+    assignmentFilter,
+    setAssignmentFilter,
+    batchFilterMode,
+    setBatchFilterMode,
+    batchExclude,
+    setBatchExclude,
+    batchOnly,
+    setBatchOnly,
+    manualEnabled,
+    setManualEnabled,
+    manualDocIds,
+    setManualDocIds,
+    eligibleCount,
+  } = filtersState;
+
+  const participants = useLotteryParticipants(members);
+  const {
+    isParticipant,
+    weightValue,
+    capValue,
     participantIds,
-    participantSettings,
-  });
-  const [previewState, setPreviewState] = useState<{
-    key: string;
-    preview: LotteryPreview;
-  } | null>(null);
-  const preview = previewState?.key === configKey ? previewState.preview : null;
-  const seed = preview?.seed ?? null;
+    memberName,
+    setParticipantOverrides,
+    setWeightInputs,
+    setCapInputs,
+  } = participants;
 
-  // Contagem de elegíveis ao vivo, com a mesma função pura do server
-  const eligibleCount = useMemo(() => {
-    if (!stats) return null;
-    let candidates = stats.docs;
-    if (isComparacao) {
-      candidates = filterComparisonEligible(
-        candidates,
-        stats.automationMode,
-        stats.minResponsesForComparison,
-      );
-    }
-    return filterEligibleDocs(candidates, type, filters).length;
-  }, [stats, type, isComparacao, filters]);
-
-  const blockedMessage =
-    participantIds.length === 0
-      ? "Nenhum participante selecionado."
-      : eligibleCount === 0
-        ? "Nenhum documento passa nos filtros atuais."
-        : null;
-
-  const canSubmit = !blockedMessage && stats !== null;
-
-  const buildParams = (withSeed: boolean): LotteryParams => ({
+  const run = useLotteryRun({
     projectId,
-    type,
-    mode,
-    balancing,
-    seed: withSeed && seed !== null ? seed : undefined,
-    researchersPerDoc,
-    docsPerResearcher: docsPerResearcherEnabled
-      ? docsPerResearcher
-      : undefined,
-    docSubsetSize: docSubsetEnabled ? docSubsetSize : undefined,
-    label: label || undefined,
-    filters,
-    participantIds,
-    participantSettings,
+    dist,
+    filtersState,
+    participants,
+    stats,
+    onRandomized: () => setOpen(false),
   });
-
-  const handlePreview = async () => {
-    setPreviewing(true);
-    try {
-      const result = await previewLottery(buildParams(false));
-      setPreviewState({ key: configKey, preview: result });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao calcular a prévia");
-    }
-    setPreviewing(false);
-  };
-
-  const handleRandomize = async () => {
-    setLoading(true);
-    try {
-      const result = await smartRandomize(buildParams(true));
-      toast.success(
-        `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
-      );
-      setOpen(false);
-      setPreviewState(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao sortear");
-    }
-    setLoading(false);
-  };
-
-  const docsConsidered =
-    eligibleCount === null
-      ? null
-      : docSubsetEnabled
-        ? Math.min(docSubsetSize, eligibleCount)
-        : eligibleCount;
-
-  const estimatedPerParticipant =
-    docsConsidered !== null && participantIds.length > 0
-      ? Math.ceil((docsConsidered * researchersPerDoc) / participantIds.length)
-      : 0;
-
-  const memberName = (userId: string) =>
-    members.find((m) => m.userId === userId)?.name ?? userId.slice(0, 8);
+  const {
+    label,
+    setLabel,
+    previewing,
+    loading,
+    preview,
+    blockedMessage,
+    canSubmit,
+    estimatedPerParticipant,
+    handlePreview,
+    handleRandomize,
+    clearPreview,
+  } = run;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(v) => {
         setOpen(v);
-        if (!v) setPreviewState(null);
+        if (!v) clearPreview();
       }}
     >
       <DialogTrigger asChild>
@@ -486,17 +294,11 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                             )
                           }
                         />
-                        <Label
+                        <BatchLabel
                           htmlFor={`batch-ex-${b.id}`}
-                          className="font-normal"
-                        >
-                          {b.label || "Sem rótulo"}
-                          <span className="ml-1.5 text-xs text-muted-foreground">
-                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
-                              locale: ptBR,
-                            })}
-                          </span>
-                        </Label>
+                          label={b.label}
+                          createdAt={b.createdAt}
+                        />
                       </div>
                     ))}
                   </div>
@@ -511,17 +313,11 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                     {stats.batches.map((b) => (
                       <div key={b.id} className="flex items-center gap-2">
                         <RadioGroupItem value={b.id} id={`batch-only-${b.id}`} />
-                        <Label
+                        <BatchLabel
                           htmlFor={`batch-only-${b.id}`}
-                          className="font-normal"
-                        >
-                          {b.label || "Sem rótulo"}
-                          <span className="ml-1.5 text-xs text-muted-foreground">
-                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
-                              locale: ptBR,
-                            })}
-                          </span>
-                        </Label>
+                          label={b.label}
+                          createdAt={b.createdAt}
+                        />
                       </div>
                     ))}
                   </RadioGroup>
