@@ -20,6 +20,12 @@ dependencies = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# O backend e um app FastAPI flat (sem diretorio de pacote homonimo), entao o
+# hatchling nao consegue inferir o conteudo do wheel sozinho e aborta o build
+# (quebrava `uv run ruff`/`pytest`). Listar os modulos explicitamente resolve.
+[tool.hatch.build.targets.wheel]
+only-include = ["main.py", "config.py", "routes", "services"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

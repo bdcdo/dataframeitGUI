@@ -4,6 +4,7 @@ Garante que nenhum payload malicioso executa código (sem side-effect) e que a
 classe reconstruída via create_model é um BaseModel funcional — o que o
 llm_runner precisa para validar a saída do LLM.
 """
+
 import os
 
 import pytest
@@ -11,14 +12,14 @@ from pydantic import BaseModel, ValidationError
 
 from services.pydantic_compiler import build_model_from_code, compile_pydantic
 
-VALID = '''from pydantic import BaseModel, Field
+VALID = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
     topic: Literal["a", "b"] = Field(description="Topic")
     tags: list[Literal["x", "y"]] = Field(description="Tags")
     note: Optional[str] = Field(default=None, description="Note")
-'''
+"""
 
 
 # ----------------------- payloads maliciosos -----------------------
@@ -31,26 +32,26 @@ MALICIOUS = [
     "import socket",
     'x = open("/etc/passwd").read()',
     '__import__("os").system("id")',
-    '''from pydantic import BaseModel, Field
+    """from pydantic import BaseModel, Field
 class A(BaseModel):
-    x: str = Field(default=eval("1+1"))''',
-    '''from pydantic import BaseModel, Field
+    x: str = Field(default=eval("1+1"))""",
+    """from pydantic import BaseModel, Field
 class A(BaseModel):
-    x: str = Field(default=__import__("os"))''',
-    '''from pydantic import BaseModel, Field
+    x: str = Field(default=__import__("os"))""",
+    """from pydantic import BaseModel, Field
 class A(BaseModel):
-    x: str = Field(default_factory=lambda: 1)''',
-    '''from pydantic import BaseModel, Field
+    x: str = Field(default_factory=lambda: 1)""",
+    """from pydantic import BaseModel, Field
 class A(BaseModel):
-    x: str = Field(description=().__class__.__name__)''',
+    x: str = Field(description=().__class__.__name__)""",
     "y = [i for i in range(3)]",
-    '''@staticmethod
+    """@staticmethod
 class A(BaseModel):
-    pass''',
-    '''from pydantic import BaseModel
+    pass""",
+    """from pydantic import BaseModel
 class A(BaseModel):
     def __init__(self):
-        __import__("os").system("id")''',
+        __import__("os").system("id")""",
 ]
 
 
@@ -65,10 +66,7 @@ def test_malicious_payload_rejected(code):
 def test_strix_poc_does_not_write_file(tmp_path):
     """O PoC do strix escrevia um arquivo via pathlib; aqui ele nem importa."""
     marker = tmp_path / "PWNED"
-    code = (
-        "import pathlib\n"
-        f"pathlib.Path({str(marker)!r}).write_text('owned')\n"
-    )
+    code = f"import pathlib\npathlib.Path({str(marker)!r}).write_text('owned')\n"
     result = compile_pydantic(code)
     assert result["valid"] is False
     assert not marker.exists()
@@ -104,7 +102,7 @@ def test_built_model_enforces_literal():
 
 
 def test_built_nested_model_roundtrips():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Optional
 
 class _doc_fields(BaseModel):
@@ -113,7 +111,7 @@ class _doc_fields(BaseModel):
 
 class Analysis(BaseModel):
     doc: _doc_fields = Field(description="Doc")
-'''
+"""
     model = build_model_from_code(code)
     inst = model(doc={"part_a": "x"})
     assert inst.doc.part_a == "x"
@@ -123,11 +121,11 @@ class Analysis(BaseModel):
 def test_union_pipe_syntax_rejected():
     # Após o estreitamento à grammar do gerador, `X | None` não é suportado (o
     # gerador usa Optional[...]). Deve ser rejeitado de forma limpa, não aceito.
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     x: str | None = Field(default=None, description="X")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"] is False
     assert result["errors"]
@@ -151,11 +149,11 @@ def test_no_side_effect_global_sentinel():
 def test_field_name_with_internal_double_underscore_accepted():
     # Nome legítimo com "__" interno não pode ser barrado pela guarda de
     # dunder — só dunders estritos (começam E terminam com "__") são perigosos.
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     my__field: str = Field(description="X")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
     assert result["fields"][0]["name"] == "my__field"
@@ -164,25 +162,25 @@ class Analysis(BaseModel):
 def test_nested_class_name_with_boundary_underscore_accepted():
     # O gerador nomeia a classe aninhada `_<campo>_fields`; um campo terminando
     # em "_" produz `_doc__fields` (com "__" interno), que deve compilar.
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 
 class _doc__fields(BaseModel):
     part_a: str = Field(description="A")
 
 class Analysis(BaseModel):
     doc_: _doc__fields = Field(description="Doc")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
 
 
 def test_strict_dunder_field_name_rejected():
     # Dunder estrito continua barrado (defense-in-depth).
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     __class__: str = Field(description="X")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"] is False
     assert result["errors"]
@@ -245,14 +243,14 @@ def test_build_raises_only_schema_error_on_bad_constructor():
 def test_multiple_inheritance_rejected_not_silently_collapsed():
     # Antes: herança múltipla colapsava para a última base, descartando campos
     # do mixin em silêncio. Agora é rejeitada explicitamente.
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 
 class Mixin(BaseModel):
     m: str = Field(description="m")
 
 class Analysis(Mixin, BaseModel):
     x: str = Field(description="x")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"] is False
     assert result["errors"]
@@ -260,14 +258,14 @@ class Analysis(Mixin, BaseModel):
 
 def test_strict_dunder_class_name_rejected():
     # Nome de classe dunder (ast.ClassDef.name, não ast.Name) é barrado.
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 
 class __reduce__(BaseModel):
     x: int = Field(default=1)
 
 class Analysis(BaseModel):
     x: int = Field(default=1)
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"] is False
     assert result["errors"]
@@ -275,11 +273,11 @@ class Analysis(BaseModel):
 
 def test_strict_dunder_field_kwarg_rejected():
     # Nome de kwarg de Field dunder (kw.arg é str, não ast.Name) é barrado.
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     x: int = Field(__class__=1, default=1)
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"] is False
     assert result["errors"]
@@ -300,7 +298,7 @@ def test_all_underscore_field_names_rejected(name):
 
 
 def test_oversized_code_rejected():
-    from services.pydantic_compiler import SchemaError, _MAX_CODE_LENGTH
+    from services.pydantic_compiler import _MAX_CODE_LENGTH, SchemaError
 
     code = "x = 1\n" * (_MAX_CODE_LENGTH // 2)
     assert len(code) > _MAX_CODE_LENGTH

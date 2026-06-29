@@ -6,6 +6,7 @@ silencioso quebraria o cleanup sem qualquer sinal — runs morreriam em
 'running' eternamente e o frontend religaria polling. Este teste fixa a
 sintaxe e o pipeline de chamadas.
 """
+
 import re
 from unittest.mock import MagicMock
 
@@ -77,7 +78,7 @@ def test_cleanup_heartbeat_cutoff_is_10_minutes():
     teste falhar após mudar o cutoff, atualize tambem
     frontend/src/actions/llm.ts:getRunningLlmJob.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     sb = _build_sb_chain([])
     before = datetime.now(timezone.utc)
