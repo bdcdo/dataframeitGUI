@@ -10,7 +10,6 @@ afterEach(cleanup);
 
 function renderCard(props: Partial<Parameters<typeof AnswerCard>[0]> = {}) {
   const onVote = vi.fn();
-  const onSetGabarito = vi.fn();
   render(
     <TooltipProvider>
       <AnswerCard
@@ -23,12 +22,11 @@ function renderCard(props: Partial<Parameters<typeof AnswerCard>[0]> = {}) {
         isChosen={false}
         versions={["1.0.0"]}
         onVote={onVote}
-        onSetGabarito={onSetGabarito}
         {...props}
       />
     </TooltipProvider>,
   );
-  return { onVote, onSetGabarito };
+  return { onVote };
 }
 
 describe("AnswerCard — overlay de voto", () => {
@@ -50,13 +48,42 @@ describe("AnswerCard — overlay de voto", () => {
 
   it("seleciona o gabarito sem disparar o voto (não há mais aninhamento)", async () => {
     const user = userEvent.setup();
-    const { onVote, onSetGabarito } = renderCard({
-      showGabarito: true,
-      isGabarito: false,
+    const onSetGabarito = vi.fn();
+    const { onVote } = renderCard({
+      equivalenceMode: {
+        selected: true,
+        onToggle: vi.fn(),
+        gabarito: { isGabarito: false, onSetGabarito },
+      },
     });
 
     await user.click(screen.getByRole("radio"));
     expect(onSetGabarito).toHaveBeenCalledTimes(1);
     expect(onVote).not.toHaveBeenCalled();
+  });
+
+  it("alterna a seleção pelo checkbox sem disparar o voto", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    const { onVote } = renderCard({
+      equivalenceMode: { selected: false, onToggle },
+    });
+
+    await user.click(screen.getByRole("checkbox"));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onVote).not.toHaveBeenCalled();
+  });
+
+  it("oculta o radio de gabarito quando selecionado mas gabarito é null", () => {
+    renderCard({
+      equivalenceMode: { selected: true, onToggle: vi.fn(), gabarito: null },
+    });
+
+    // Ramo selecionado: o checkbox aparece marcado...
+    expect(screen.getByRole("checkbox").getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    // ...mas sem afordância de gabarito, o radio não é renderizado.
+    expect(screen.queryByRole("radio")).toBeNull();
   });
 });
