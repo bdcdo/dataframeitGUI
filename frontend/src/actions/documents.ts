@@ -6,6 +6,8 @@ import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
+import { dropHiddenConditionals } from "@/lib/conditional";
+import type { PydanticField } from "@/lib/types";
 
 export interface DocumentRow {
   external_id?: string;
@@ -458,7 +460,16 @@ export async function getDocumentForCoding(
         clean[field.name] = val;
       }
     }
-    return { document: doc, existingAnswers: clean, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
+    // Remove condicionais órfãs (cuja condição não é satisfeita pelo próprio
+    // `clean`) — espelha a sanitização de escrita do `saveResponse` na fronteira
+    // de leitura, para um documento orfanado por mudança de schema pós-codificação
+    // não reaparecer pré-preenchido no editor (ver #252). Avalia sobre o conjunto
+    // COMPLETO de campos, pois uma condição pode referenciar qualquer campo.
+    const existingAnswers = dropHiddenConditionals(
+      project.pydantic_fields as PydanticField[],
+      clean,
+    );
+    return { document: doc, existingAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
   }
 
   return { document: doc, existingAnswers: rawAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
