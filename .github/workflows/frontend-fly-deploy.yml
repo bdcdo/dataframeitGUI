@@ -17,7 +17,8 @@ jobs:
     name: flyctl deploy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Pin a SHA por supply-chain safety (mesma politica do setup-flyctl abaixo).
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin a SHA (tag 1.6) por supply-chain safety — @master é floating ref.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - run: flyctl deploy --remote-only -a gui-analise-sistematica-frontend
