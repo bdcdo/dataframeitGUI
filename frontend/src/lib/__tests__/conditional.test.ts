@@ -260,4 +260,47 @@ describe("dropHiddenConditionals", () => {
     dropHiddenConditionals(fields, answers);
     expect(answers.q2).toBe("a"); // entrada intacta
   });
+
+  // Paridade com o `delete` incondicional do `saveResponse` antigo: uma chave de
+  // condicional oculta deve ser omitida mesmo quando o valor é vazio (`null`/`""`),
+  // senão chaves órfãs vazias sobrevivem no payload persistido / no pré-preenchimento.
+  it("omite a chave de uma condicional oculta com valor vazio (string vazia)", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    const result = dropHiddenConditionals(fields, { q1: "não", q2: "" });
+    expect("q2" in result).toBe(false);
+    expect(result.q1).toBe("não");
+  });
+
+  it("omite a chave de uma condicional oculta com valor null", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    const result = dropHiddenConditionals(fields, { q1: "não", q2: null });
+    expect("q2" in result).toBe(false);
+  });
+
+  it("preserva a chave vazia de uma condicional ainda VISÍVEL", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    // q2 visível (gatilho satisfeito) mas ainda não respondido (""): a chave fica.
+    const result = dropHiddenConditionals(fields, { q1: "sim", q2: "" });
+    expect("q2" in result).toBe(true);
+    expect(result.q2).toBe("");
+  });
+
+  it("não omite condicional cuja chave está ausente do objeto", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    const answers = { q1: "não" }; // q2 nunca respondido
+    const result = dropHiddenConditionals(fields, answers);
+    expect(result).toBe(answers); // nada a omitir → mesma referência
+  });
 });
