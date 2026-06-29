@@ -73,4 +73,17 @@ describe("AnswerCard — overlay de voto", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
     expect(onVote).not.toHaveBeenCalled();
   });
+
+  it("oculta o radio de gabarito quando selecionado mas gabarito é null", () => {
+    renderCard({
+      equivalenceMode: { selected: true, onToggle: vi.fn(), gabarito: null },
+    });
+
+    // Ramo selecionado: o checkbox aparece marcado...
+    expect(screen.getByRole("checkbox").getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    // ...mas sem afordância de gabarito, o radio não é renderizado.
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
 });
