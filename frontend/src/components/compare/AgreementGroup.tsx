@@ -298,12 +298,26 @@ export function AgreementGroup({
               isChosen={isChosen}
               versions={versions}
               onVote={() => onVote(group.displayAnswer, group.responses[0].id)}
-              selectable={allowEquivalence}
-              selected={isSelected}
-              onSelectionToggle={() => toggleSelection(group.groupKey)}
-              showGabarito={showGabarito && isSelected}
-              isGabarito={effectiveGabarito === group.groupKey}
-              onSetGabarito={() => setGabaritoOverride(group.groupKey)}
+              equivalenceMode={
+                !allowEquivalence
+                  ? undefined
+                  : isSelected
+                    ? {
+                        selected: true,
+                        onToggle: () => toggleSelection(group.groupKey),
+                        gabarito: showGabarito
+                          ? {
+                              isGabarito: effectiveGabarito === group.groupKey,
+                              onSetGabarito: () =>
+                                setGabaritoOverride(group.groupKey),
+                            }
+                          : null,
+                      }
+                    : {
+                        selected: false,
+                        onToggle: () => toggleSelection(group.groupKey),
+                      }
+              }
               equivalentVariants={
                 group.variants.length > 0 ? group.variants : undefined
               }

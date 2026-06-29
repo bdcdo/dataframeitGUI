@@ -29,6 +29,25 @@ export interface EquivalentVariant {
   answerDisplay: string;
 }
 
+interface GabaritoAffordance {
+  isGabarito: boolean;
+  onSetGabarito: () => void;
+}
+
+// Discriminated union over `selected`: encodes the invariant "gabarito never
+// without selection" in the type. The `gabarito` affordance only exists in the
+// `selected: true` branch, so an impossible state (gabarito on an unselected
+// card) is unrepresentable. `undefined` ⇒ equivalence not allowed (no checkbox).
+// Not exported: the sole consumer (AgreementGroup) builds the object inline and
+// TS checks it structurally against the prop type — exporting would be dead code.
+type EquivalenceMode =
+  | { selected: false; onToggle: () => void }
+  | {
+      selected: true;
+      onToggle: () => void;
+      gabarito: GabaritoAffordance | null;
+    };
+
 interface AnswerCardProps {
   index: number;
   displayAnswer: string;
@@ -41,13 +60,9 @@ interface AnswerCardProps {
   versions: string[];
   onVote: () => void;
 
-  // Selection / equivalence affordances (only used when allowEquivalence)
-  selectable?: boolean;
-  selected?: boolean;
-  onSelectionToggle?: () => void;
-  showGabarito?: boolean;
-  isGabarito?: boolean;
-  onSetGabarito?: () => void;
+  // Selection / equivalence affordances (only present when allowEquivalence).
+  // Discriminated union: `gabarito` is only reachable on the selected branch.
+  equivalenceMode?: EquivalenceMode;
 
   // When this card represents 2+ responses fused via equivalence pairs.
   equivalentVariants?: EquivalentVariant[];
@@ -66,12 +81,7 @@ export function AnswerCard({
   isChosen,
   versions,
   onVote,
-  selectable = false,
-  selected = false,
-  onSelectionToggle,
-  showGabarito = false,
-  isGabarito = false,
-  onSetGabarito,
+  equivalenceMode,
   equivalentVariants,
   onUnmarkPair,
   canUnmarkPair,
@@ -79,6 +89,9 @@ export function AnswerCard({
   const [showJustification, setShowJustification] = useState(false);
   const allStale = staleCount > 0 && staleCount === respondentCount;
   const fusedCount = equivalentVariants?.length ?? 0;
+  const selected = equivalenceMode?.selected === true;
+  // Gabarito radio is only reachable on the selected branch (invariant in type).
+  const gabarito = equivalenceMode?.selected ? equivalenceMode.gabarito : null;
 
   return (
     <div
@@ -110,11 +123,11 @@ export function AnswerCard({
         className="absolute inset-0 z-[1] cursor-pointer rounded-lg focus:outline-none"
       />
       <div className="flex items-start gap-2">
-        {selectable && (
+        {equivalenceMode && (
           <div className="relative z-[2] flex h-5 shrink-0 items-center">
             <Checkbox
-              checked={selected}
-              onCheckedChange={() => onSelectionToggle?.()}
+              checked={equivalenceMode.selected}
+              onCheckedChange={() => equivalenceMode.onToggle()}
               aria-label="Selecionar para marcar como equivalente"
               title="Selecionar como equivalente"
             />
@@ -249,18 +262,18 @@ export function AnswerCard({
           )}
         </div>
 
-        {showGabarito && (
+        {gabarito && (
           <label
             className="relative z-[2] flex shrink-0 cursor-pointer items-center gap-1 rounded border border-brand/30 bg-background px-1.5 py-0.5 text-[10px] hover:bg-brand/5"
             title="Esta é a resposta que será registrada como gabarito"
           >
             <input
               type="radio"
-              checked={isGabarito}
-              onChange={() => onSetGabarito?.()}
+              checked={gabarito.isGabarito}
+              onChange={() => gabarito.onSetGabarito()}
               className="size-3 accent-brand"
             />
-            <span className={cn(isGabarito && "font-medium text-brand")}>
+            <span className={cn(gabarito.isGabarito && "font-medium text-brand")}>
               Gabarito
             </span>
           </label>
