@@ -43,12 +43,12 @@ describe("useStableListIds", () => {
       initialProps: { n: 3 },
     });
     const [id0, id1, id2] = result.current.ids;
-    // Remove a posição 0 (topo da lista).
-    act(() => result.current.removeIdAt(0));
+    // Remove a posição 1 (meio da lista) — o caso crítico do no-array-index-as-key.
+    act(() => result.current.removeIdAt(1));
     rerender({ n: 2 });
-    // O id removido é o do índice 0; id1 e id2 sobrevivem e deslizam para 0/1.
-    expect(result.current.ids).toEqual([id1, id2]);
-    expect(result.current.ids).not.toContain(id0);
+    // O id removido é o do meio; id0 e id2 sobrevivem e id2 desliza para 1.
+    expect(result.current.ids).toEqual([id0, id2]);
+    expect(result.current.ids).not.toContain(id1);
   });
 
   it("reconcilia mudança externa de length (sem handler) preservando o prefixo", () => {
