@@ -1,4 +1,4 @@
-import { VERSION_FILTER_LATEST_MAJOR } from "@/lib/compare-version";
+import { COMPARE_DEFAULT_VERSION } from "@/lib/compare-version";
 
 export interface CompareFiltersValue {
   version: string; // "all" | "latest_major" | "X.Y.Z"
@@ -24,21 +24,14 @@ export const DEFAULT_COMPARE_FILTERS: CompareFiltersValue = {
   respondent: "all",
 };
 
-// Default VIVO de versão da aba Comparar — fonte única consumida pelos TRÊS
-// pontos que precisam concordar sobre "qual versão a fila reflete por padrão":
-//   1. a página (compareDefaultsForMode, via compare/page.tsx);
-//   2. o filtro do cliente (CompareFilters.effectiveDefaults, via prop
-//      defaultVersion plumbada por page → ComparePage → CompareNav);
-//   3. o fecho do parecer (compare-sync.ts, via resolveMinVersion).
-// É distinto de DEFAULT_COMPARE_FILTERS.version ("all"), que é a base para
-// callers/testes que NÃO derivam do automation_mode. Centralizar aqui evita o
-// drift silencioso em que página, filtro e fecho discordam (ver #247, e o
-// acoplamento visão==fecho do #217/#218). O default de versão é independente do
-// modo de automação — só `minHumans` varia por modo —, por isso uma constante
-// basta como fonte única, sem precisar do `mode`. O VALOR vem do sentinela
-// canônico em compare-version.ts (mesma string que `resolveMinVersion` casa e
-// que o `SelectItem` do filtro usa), então trocar o default não dessincroniza.
-export const COMPARE_DEFAULT_VERSION = VERSION_FILTER_LATEST_MAJOR;
+// Default VIVO de versão da aba Comparar (compareDefaultsForMode o aplica). É
+// distinto de DEFAULT_COMPARE_FILTERS.version ("all"), a base para callers/testes
+// que NÃO derivam do automation_mode. Re-exportado de compare-version.ts (sua
+// fonte única, ao lado do `versionGate` que o consome) para que os importadores
+// existentes — compare-sync.ts, auto-comparison.ts, testes — não precisem mudar
+// o caminho de import (importado no topo). Ver o comentário em compare-version.ts
+// (#247, #217/#218).
+export { COMPARE_DEFAULT_VERSION };
 
 export function readCompareFilters(
   params: URLSearchParams | Record<string, string | undefined>,

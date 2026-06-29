@@ -19,6 +19,22 @@
 export const VERSION_FILTER_ALL = "all";
 export const VERSION_FILTER_LATEST_MAJOR = "latest_major";
 
+// Default VIVO de versão da aba Comparar — fonte única consumida pelos TRÊS
+// pontos que precisam concordar sobre "qual versão a fila reflete por padrão":
+//   1. a página (compareDefaultsForMode, via compare/page.tsx);
+//   2. o filtro do cliente (CompareFilters.effectiveDefaults, via prop
+//      defaultVersion plumbada por page → ComparePage → CompareNav);
+//   3. o fecho do parecer (compare-sync.ts) e o gatilho (auto-comparison.ts),
+//      ambos via `versionGate` abaixo.
+// É distinto de DEFAULT_COMPARE_FILTERS.version ("all"), a base para
+// callers/testes que NÃO derivam do automation_mode. Vive aqui (e é
+// re-exportado por compare-filters.ts) para que `versionGate` o use sem import
+// circular — o VALOR é o sentinela canônico VERSION_FILTER_LATEST_MAJOR (mesma
+// string que `resolveMinVersion` casa e que o `SelectItem` do filtro usa), então
+// trocar o default não dessincroniza fila/filtro/gatilho/fecho (ver #247, e o
+// acoplamento visão==fecho do #217/#218).
+export const COMPARE_DEFAULT_VERSION = VERSION_FILTER_LATEST_MAJOR;
+
 export interface SchemaVersion {
   major: number;
   minor: number;
@@ -124,6 +140,21 @@ export function deriveProjectVersionContext(project: ProjectVersionRow): {
     version,
     ctx: { pydanticHash: project.pydantic_hash ?? null, version },
   };
+}
+
+// Gate de versão do estado DEFAULT da fila: deriva o contexto do projeto e
+// resolve o piso a partir de `COMPARE_DEFAULT_VERSION` ("latest_major"). FONTE
+// ÚNICA do par {minVersion, ctx} aplicado fora da página — o gatilho
+// (auto-comparison.ts) e o fecho (compare-sync.ts) usam ESTE helper, mantendo o
+// acoplamento gatilho==fila==fecho do #247. A página NÃO usa `versionGate`: ela
+// resolve `minVersion` a partir da URL (`filters.version`, que pode ser uma
+// lente manual), mas a partir do MESMO `deriveProjectVersionContext`.
+export function versionGate(project: ProjectVersionRow): {
+  minVersion: SchemaVersion | null;
+  ctx: ProjectVersionContext;
+} {
+  const { version, ctx } = deriveProjectVersionContext(project);
+  return { minVersion: resolveMinVersion(COMPARE_DEFAULT_VERSION, version), ctx };
 }
 
 // Predicado único de qualificação de uma resposta sob um piso de versão.

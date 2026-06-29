@@ -8,12 +8,10 @@ import {
   resolveCompareStatus,
 } from "@/lib/compare-divergence";
 import {
-  deriveProjectVersionContext,
-  resolveMinVersion,
   responseQualifiesForVersion,
+  versionGate,
   type VersionedResponse,
 } from "@/lib/compare-version";
-import { COMPARE_DEFAULT_VERSION } from "@/lib/compare-filters";
 import type { EquivalencePair } from "@/lib/equivalence";
 
 // Recomputes assignment status (pendente / em_andamento / concluido) for the
@@ -95,11 +93,11 @@ export async function syncCompareAssignment(
   // são lentes de inspeção: NÃO redefinem "concluído". Se a revisora escolher
   // uma lente mais estreita que o default, a tela pode mostrar menos do que o
   // fecho exige — comportamento esperado de uma lente, fora do fluxo "default".
-  // Contexto de versão do helper compartilhado (compare-version.ts) — a MESMA
-  // fonte e fallback {0,1,0} de page.tsx e auto-comparison.ts, sem re-hardcodar.
-  const { version: projectVersion, ctx: projectVersionCtx } =
-    deriveProjectVersionContext(project ?? {});
-  const minVersion = resolveMinVersion(COMPARE_DEFAULT_VERSION, projectVersion);
+  // Piso `latest_major` + contexto do helper compartilhado `versionGate`
+  // (compare-version.ts) — a MESMA fonte, fallback {0,1,0} e constante
+  // COMPARE_DEFAULT_VERSION que o gatilho (auto-comparison.ts) usa; a página
+  // deriva o contexto da mesma origem mas resolve o piso a partir da URL.
+  const { minVersion, ctx: projectVersionCtx } = versionGate(project ?? {});
 
   type ActiveResponse = {
     id: string;

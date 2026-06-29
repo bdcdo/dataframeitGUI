@@ -1,14 +1,9 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
-import { COMPARE_DEFAULT_VERSION } from "@/lib/compare-filters";
 import {
-  deriveProjectVersionContext,
-  resolveMinVersion,
   responseQualifiesForVersion,
-  type SchemaVersion,
-  type ProjectVersionContext,
-  type ProjectVersionRow,
+  versionGate,
   type VersionedResponse,
 } from "@/lib/compare-version";
 import type { EquivalencePair } from "@/lib/equivalence";
@@ -89,18 +84,6 @@ function toVersioned(
     schema_version_minor: r.schema_version_minor ?? null,
     schema_version_patch: r.schema_version_patch ?? null,
   };
-}
-
-// Contexto de versão do projeto + piso `latest_major`, derivados da linha de
-// `projects`. O contexto vem do helper compartilhado `deriveProjectVersionContext`
-// (compare-version.ts) — a MESMA fonte que page.tsx e compare-sync.ts usam, sem
-// re-hardcodar o fallback {0,1,0} —, e o piso da MESMA constante
-// `COMPARE_DEFAULT_VERSION`, mantendo o acoplamento gatilho==fila==fecho (#247).
-function versionGate(
-  project: ProjectVersionRow,
-): { minVersion: SchemaVersion | null; ctx: ProjectVersionContext } {
-  const { version, ctx } = deriveProjectVersionContext(project);
-  return { minVersion: resolveMinVersion(COMPARE_DEFAULT_VERSION, version), ctx };
 }
 
 function buildEquivByField(
