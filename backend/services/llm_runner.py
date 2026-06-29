@@ -80,6 +80,12 @@ def _extract_pydantic_location(exc: Exception, tb: str) -> tuple[int | None, int
     """Best-effort line/column inside pydantic_code where the error originated."""
     if isinstance(exc, SyntaxError) and exc.filename in (None, "<pydantic_schema>"):
         return exc.lineno, exc.offset
+    # build_model_from_code envolve erros de sintaxe num SchemaError e carrega
+    # lineno/offset nele (o `compile`/exec antigo expunha um SyntaxError direto,
+    # caminho que não existe mais). getattr evita acoplar o import do SchemaError.
+    lineno = getattr(exc, "lineno", None)
+    if isinstance(lineno, int):
+        return lineno, getattr(exc, "offset", None)
     m = re.search(r'File "<pydantic_schema>", line (\d+)', tb)
     if m:
         return int(m.group(1)), None

@@ -16,6 +16,8 @@ import {
 let writeCalls: WriteCall[];
 let serverTableResults: TableResults | undefined;
 
+const fetchMock = vi.hoisted(() => vi.fn());
+
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
   revalidateTag: () => {},
@@ -24,7 +26,7 @@ vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
 }));
 vi.mock("@/lib/api", () => ({
-  fetchFastAPI: async () => ({ valid: true, fields: [], model_name: null, errors: [] }),
+  fetchFastAPI: fetchMock,
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
@@ -36,6 +38,7 @@ import {
   savePrompt,
   publishMajorVersion,
   saveLlmConfig,
+  recoverFieldsFromStoredCode,
 } from "../schema";
 
 const FIELD: PydanticField = {
@@ -58,6 +61,13 @@ const PROJECT_SELECT: TableResult = {
 beforeEach(() => {
   writeCalls = [];
   serverTableResults = undefined;
+  fetchMock.mockReset();
+  fetchMock.mockResolvedValue({
+    valid: true,
+    fields: [],
+    model_name: null,
+    errors: [],
+  });
 });
 
 describe("saveSchemaFromGUI", () => {
@@ -116,6 +126,56 @@ describe("saveSchemaFromGUI", () => {
     expect(r.error).toMatch(/histórico.*log boom/);
     // O update de projects aconteceu antes da falha do log.
     expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(true);
+  });
+
+  it("guarda anti-wipe: 0 campos sobre schema não-vazio é recusado sem tocar projects", async () => {
+    // Projeto já tem 1 campo; salvar com [] apagaria o schema → recusa.
+    serverTableResults = {
+      projects: [{ data: { ...(PROJECT_SELECT.data as Record<string, unknown>), pydantic_fields: [FIELD] } }],
+    };
+
+    const r = await saveSchemaFromGUI("p1", []);
+    expect(r.error).toMatch(/0 campos|apagaria/i);
+    expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(false);
+  });
+
+  it("permite salvar [] quando o schema já estava vazio", async () => {
+    serverTableResults = {
+      projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
+    };
+    const r = await saveSchemaFromGUI("p1", []);
+    expect(r.error).toBeUndefined();
+  });
+});
+
+describe("recoverFieldsFromStoredCode", () => {
+  it("retorna os campos reconstruídos pelo backend a partir do código armazenado", async () => {
+    fetchMock.mockResolvedValueOnce({
+      valid: true,
+      fields: [FIELD],
+      model_name: "Analysis",
+      errors: [],
+    });
+    const r = await recoverFieldsFromStoredCode("p1");
+    expect(r.error).toBeUndefined();
+    expect(r.fields).toEqual([FIELD]);
+    // Envia project_id, nunca código do cliente.
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pydantic/recover-fields",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ project_id: "p1" }) }),
+    );
+  });
+
+  it("propaga erro quando o backend não consegue reconstruir", async () => {
+    fetchMock.mockResolvedValueOnce({
+      valid: false,
+      fields: [],
+      model_name: null,
+      errors: ["código inválido"],
+    });
+    const r = await recoverFieldsFromStoredCode("p1");
+    expect(r.fields).toBeUndefined();
+    expect(r.error).toBe("código inválido");
   });
 });
 

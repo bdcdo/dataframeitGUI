@@ -120,16 +120,17 @@ class Analysis(BaseModel):
     assert inst.doc.part_b is None
 
 
-def test_union_pipe_syntax_supported():
-    # Edição manual pode usar `str | None` em vez de Optional[str].
+def test_union_pipe_syntax_rejected():
+    # Após o estreitamento à grammar do gerador, `X | None` não é suportado (o
+    # gerador usa Optional[...]). Deve ser rejeitado de forma limpa, não aceito.
     code = '''from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     x: str | None = Field(default=None, description="X")
 '''
     result = compile_pydantic(code)
-    assert result["valid"], result["errors"]
-    assert result["fields"][0]["name"] == "x"
+    assert result["valid"] is False
+    assert result["errors"]
 
 
 def test_top_level_literal_assignment_allowed_but_no_model():
@@ -198,3 +199,131 @@ def test_deeply_nested_annotation_rejected_with_message():
     result = compile_pydantic(code)
     assert result["valid"] is False
     assert any("aninhada" in e for e in result["errors"])
+
+
+# ------------- estreitamento à grammar do gerador (hardening #197) -----------
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        'Annotated[str, Field(description="d")]',  # forma canônica do Annotated
+        "Annotated[str]",  # Annotated de 1 elemento (antes: TypeError cru)
+        "dict[str, str]",
+        "dict[str]",  # antes: ValueError cru de unpack
+        "tuple[str, int]",
+        "Union[str, int]",
+    ],
+)
+def test_unsupported_type_constructors_rejected_cleanly(annotation):
+    # Construtores que o gerador nunca emite são rejeitados com SchemaError
+    # (nunca ValueError/TypeError cru) — build_model_from_code honra o contrato.
+    code = (
+        "from pydantic import BaseModel, Field\n"
+        "from typing import Annotated, Union\n"
+        "class Analysis(BaseModel):\n"
+        f'    x: {annotation} = Field(description="X")\n'
+    )
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert result["errors"]
+
+
+def test_build_raises_only_schema_error_on_bad_constructor():
+    # Contrato: build_model_from_code levanta SchemaError, não ValueError/TypeError.
+    from services.pydantic_compiler import SchemaError
+
+    code = (
+        "from pydantic import BaseModel, Field\n"
+        "class Analysis(BaseModel):\n"
+        '    x: dict[str] = Field(description="X")\n'
+    )
+    with pytest.raises(SchemaError):
+        build_model_from_code(code)
+
+
+def test_multiple_inheritance_rejected_not_silently_collapsed():
+    # Antes: herança múltipla colapsava para a última base, descartando campos
+    # do mixin em silêncio. Agora é rejeitada explicitamente.
+    code = '''from pydantic import BaseModel, Field
+
+class Mixin(BaseModel):
+    m: str = Field(description="m")
+
+class Analysis(Mixin, BaseModel):
+    x: str = Field(description="x")
+'''
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert result["errors"]
+
+
+def test_strict_dunder_class_name_rejected():
+    # Nome de classe dunder (ast.ClassDef.name, não ast.Name) é barrado.
+    code = '''from pydantic import BaseModel, Field
+
+class __reduce__(BaseModel):
+    x: int = Field(default=1)
+
+class Analysis(BaseModel):
+    x: int = Field(default=1)
+'''
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert result["errors"]
+
+
+def test_strict_dunder_field_kwarg_rejected():
+    # Nome de kwarg de Field dunder (kw.arg é str, não ast.Name) é barrado.
+    code = '''from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    x: int = Field(__class__=1, default=1)
+'''
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert result["errors"]
+
+
+@pytest.mark.parametrize("name", ["__", "___", "____"])
+def test_all_underscore_field_names_rejected(name):
+    # `__`/`___`/`____` começam E terminam com "__" → dunder estrito, rejeitado.
+    # (Alinhado ao isStrictDunder do frontend, que antes divergia para __/___.)
+    code = (
+        "from pydantic import BaseModel, Field\n"
+        "class Analysis(BaseModel):\n"
+        f'    {name}: str = Field(description="X")\n'
+    )
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert result["errors"]
+
+
+def test_oversized_code_rejected():
+    from services.pydantic_compiler import SchemaError, _MAX_CODE_LENGTH
+
+    code = "x = 1\n" * (_MAX_CODE_LENGTH // 2)
+    assert len(code) > _MAX_CODE_LENGTH
+    with pytest.raises(SchemaError):
+        build_model_from_code(code)
+
+
+def test_type_depth_boundary():
+    # Fixa a fronteira de _MAX_TYPE_DEPTH: até o limite compila; acima rejeita.
+    from services.pydantic_compiler import _MAX_TYPE_DEPTH
+
+    def code_for(depth):
+        ann = "list[" * depth + "str" + "]" * depth
+        return (
+            "from pydantic import BaseModel, Field\n"
+            "class Analysis(BaseModel):\n"
+            f'    x: {ann} = Field(description="X")\n'
+        )
+
+    # Profundidade no limite é aceita (str na base conta como nível extra,
+    # então usamos _MAX_TYPE_DEPTH wrappers de list).
+    ok = compile_pydantic(code_for(_MAX_TYPE_DEPTH - 1))
+    assert ok["valid"], ok["errors"]
+    too_deep = compile_pydantic(code_for(_MAX_TYPE_DEPTH + 5))
+    assert too_deep["valid"] is False
+    assert any("aninhada" in e for e in too_deep["errors"])
