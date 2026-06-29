@@ -5,11 +5,13 @@ autorização, além da rejeição na borda das rotas (401 sem token, 403 para
 não-coordenador) — sem tocar o backend de LLM real.
 """
 
+import re
 import time
 from types import SimpleNamespace
 
 import jwt
 import pytest
+from conftest import TEST_JWT_SECRET
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -26,7 +28,10 @@ from services.auth import (
     verify_jwt,
 )
 
-SECRET = "test-secret-please-change-0123456789-abcdef"
+# Reusa o secret único do conftest em vez de redefinir um divergente: assim a
+# verificação não depende de qual fixture autouse roda por último (conftest._auth_secret
+# vs o _configure_secret deste módulo setam o MESMO valor).
+SECRET = TEST_JWT_SECRET
 USER = "11111111-1111-1111-1111-111111111111"
 
 
@@ -166,10 +171,19 @@ def test_verify_jwt_wrong_signature_rejected():
 
 
 def test_verify_jwt_expired_rejected():
-    token = make_token({"exp": int(time.time()) - 10})
+    # Expira bem além do leeway (jwt_leeway_seconds=30) para não ser absorvido.
+    token = make_token({"exp": int(time.time()) - 3600})
     with pytest.raises(HTTPException) as exc:
         verify_jwt(token)
     assert exc.value.status_code == 401
+
+
+def test_verify_jwt_within_leeway_accepted(monkeypatch):
+    # Token recém-expirado dentro do leeway é aceito: absorve skew de relógio /
+    # expiração de borda do token de ~60s, evitando derrubar run em curso.
+    monkeypatch.setattr(settings, "jwt_leeway_seconds", 30)
+    token = make_token({"exp": int(time.time()) - 5})
+    assert verify_jwt(token).id == USER
 
 
 def test_verify_jwt_unsupported_alg_rejected():
@@ -222,11 +236,71 @@ def test_verify_jwt_rs256_wrong_signature_rejected(monkeypatch, rsa_private_key)
     assert exc.value.status_code == 401
 
 
-def test_verify_jwt_rs256_not_configured_is_503(rsa_private_key):
-    # clerk_jwks_url vazio (default do _configure_secret) → 503 antes do JWKS.
+def test_verify_jwt_rs256_rejected_when_only_hs256_configured(rsa_private_key):
+    # Só HS256 configurado (default do _configure_secret: secret setado, jwks
+    # vazio) → RS256 fora da allowlist → 401 (não 503: o servidor ESTÁ
+    # configurado, só não aceita esse algoritmo).
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_rs256_token(rsa_private_key))
+    assert exc.value.status_code == 401
+
+
+def test_verify_jwt_nothing_configured_rs256_is_503(monkeypatch, rsa_private_key):
+    # Nem secret nem JWKS → allowlist vazia → 503 (fail-closed, mal configurado).
+    monkeypatch.setattr(settings, "supabase_jwt_secret", "")
+    monkeypatch.setattr(settings, "clerk_jwks_url", "")
     with pytest.raises(HTTPException) as exc:
         verify_jwt(make_rs256_token(rsa_private_key))
     assert exc.value.status_code == 503
+
+
+def test_verify_jwt_hs256_rejected_when_jwks_configured(monkeypatch):
+    # Downgrade fechado: com CLERK_JWKS_URL setado (produção RS256), um token
+    # HS256 — mesmo assinado com o secret legado ainda presente — cai fora da
+    # allowlist de algoritmos e é rejeitado (401), sem nem tentar decodificar.
+    monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
+    # supabase_jwt_secret continua setado (coexistência), mas HS256 não é aceito.
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_token())
+    assert exc.value.status_code == 401
+
+
+def _raise_jwks_outage(token):
+    raise jwt.PyJWKClientError("JWKS indisponível")
+
+
+def test_verify_jwt_rs256_jwks_outage_is_503(monkeypatch, rsa_private_key):
+    # Indisponibilidade do JWKS (rede/5xx do Clerk) é fail-closed: 503, não 401.
+    # Sem isto, um blip no upstream viraria invalidação de token em massa.
+    monkeypatch.setattr(settings, "supabase_jwt_secret", "")
+    monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
+    fake_client = SimpleNamespace(get_signing_key_from_jwt=_raise_jwks_outage)
+    monkeypatch.setattr(auth_mod, "_get_jwks_client", lambda: fake_client)
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_rs256_token(rsa_private_key))
+    assert exc.value.status_code == 503
+
+
+def test_verify_jwt_valid_audience_accepted(monkeypatch):
+    monkeypatch.setattr(settings, "clerk_jwt_audience", "authenticated")
+    user = verify_jwt(make_token({"aud": "authenticated"}))
+    assert user.id == USER
+
+
+def test_verify_jwt_wrong_audience_rejected(monkeypatch):
+    # aud configurada e diferente da do token → 401.
+    monkeypatch.setattr(settings, "clerk_jwt_audience", "authenticated")
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_token({"aud": "outra-audiencia"}))
+    assert exc.value.status_code == 401
+
+
+def test_verify_jwt_missing_audience_rejected_when_required(monkeypatch):
+    # aud configurada mas ausente no token → 401 (não passa batido).
+    monkeypatch.setattr(settings, "clerk_jwt_audience", "authenticated")
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_token())
+    assert exc.value.status_code == 401
 
 
 # ---------------------- require_authenticated_user ----------------------
@@ -339,10 +413,13 @@ def test_job_access_member_ok(monkeypatch):
             project_members=[{"id": "m1", "project_id": "p1", "user_id": USER}],
         ),
     )
-    assert require_job_access("job1", AuthUser(id=USER)) == "p1"
+    require_job_access("job1", AuthUser(id=USER))  # não levanta (retorna None)
 
 
-def test_job_access_non_member_403(monkeypatch):
+def test_job_access_non_member_is_404(monkeypatch):
+    # Job existe, mas o usuário não pertence ao projeto → 404 (mesmo código de
+    # "job inexistente") para não vazar a existência do job (oráculo de
+    # enumeração fechado).
     use_supabase(
         monkeypatch,
         FakeSupabase(
@@ -354,7 +431,7 @@ def test_job_access_non_member_403(monkeypatch):
     )
     with pytest.raises(HTTPException) as exc:
         require_job_access("job1", AuthUser(id=USER))
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 
 def test_job_access_infra_error_is_503(monkeypatch):
@@ -373,21 +450,87 @@ def client():
     return TestClient(main.app, raise_server_exceptions=False)
 
 
-@pytest.mark.parametrize(
-    "method,path,body",
-    [
-        ("post", "/api/pydantic/recover-fields", {"project_id": "p1"}),
-        ("post", "/api/llm/run", {"project_id": "p1"}),
-        ("post", "/api/llm/run-field", {"project_id": "p1", "field_names": ["a"]}),
-        ("post", "/api/llm/cleanup-stale", {"project_id": "p1"}),
-        ("post", "/api/llm/preview-prompt", {"prompt_template": "x"}),
-        ("get", "/api/llm/status/job1", None),
-    ],
-)
-def test_routes_reject_without_token(client, method, path, body):
-    kwargs = {"json": body} if body is not None else {}
-    resp = getattr(client, method)(path, **kwargs)
-    assert resp.status_code == 401
+# Rotas /api/* públicas (sem auth). Vazio hoje — TODA rota dos routers exige
+# JWT. Se uma rota pública for adicionada, listá-la aqui explicitamente.
+_PUBLIC_API_PATHS: set[str] = set()
+
+
+def test_every_api_route_rejects_without_token(client):
+    """Sem token, TODA rota sob /api/* responde 401.
+
+    Dinâmico (lê o schema OpenAPI de `main.app`) em vez de lista hardcoded: uma
+    rota nova que toque dados e esqueça o gate é pega aqui automaticamente, em
+    vez de passar batido por não estar numa lista manual.
+    """
+    schema = main.app.openapi()
+    checked = 0
+    for path, ops in schema["paths"].items():
+        if not path.startswith("/api/") or path in _PUBLIC_API_PATHS:
+            continue
+        # Substitui path params ({job_id}) por um placeholder concreto.
+        concrete = re.sub(r"\{[^}]+\}", "x", path)
+        for method in ops:
+            if method.upper() in {"HEAD", "OPTIONS", "PARAMETERS"}:
+                continue
+            resp = client.request(method.upper(), concrete, json={})
+            assert resp.status_code == 401, f"{method} {concrete} = {resp.status_code}"
+            checked += 1
+    assert checked >= 6, f"esperava cobrir >=6 endpoints, cobriu {checked}"
+
+
+def test_run_field_forbidden_for_non_coordinator(client, monkeypatch):
+    # Token válido, mas não-coordenador → 403 antes de init_job/run_llm_fields.
+    use_supabase(
+        monkeypatch,
+        FakeSupabase(
+            master_users=[],
+            projects=[{"id": "p1", "created_by": "other"}],
+            project_members=[],
+        ),
+    )
+    resp = client.post(
+        "/api/llm/run-field",
+        json={"project_id": "p1", "field_names": ["a"]},
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_cleanup_stale_forbidden_for_non_coordinator(client, monkeypatch):
+    # Token válido, mas não-coordenador → 403 antes de mark_stale_runs_as_error.
+    use_supabase(
+        monkeypatch,
+        FakeSupabase(
+            master_users=[],
+            projects=[{"id": "p1", "created_by": "other"}],
+            project_members=[],
+        ),
+    )
+    resp = client.post(
+        "/api/llm/cleanup-stale",
+        json={"project_id": "p1"},
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_status_not_found_for_non_member(client, monkeypatch):
+    # Job existe, mas o usuário não é membro do projeto → 404 (oráculo fechado),
+    # antes de get_job_status. Garante o wiring do guard na rota de status.
+    use_supabase(
+        monkeypatch,
+        FakeSupabase(
+            llm_runs=[{"job_id": "job1", "project_id": "p1"}],
+            master_users=[],
+            projects=[{"id": "p1", "created_by": "other"}],
+            project_members=[],
+        ),
+    )
+    resp = client.get(
+        "/api/llm/status/job1",
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 404
 
 
 def test_run_forbidden_for_non_coordinator(client, monkeypatch):

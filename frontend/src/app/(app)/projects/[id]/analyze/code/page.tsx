@@ -1,6 +1,10 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+import {
+  getAuthUser,
+  getEffectiveMemberId,
+  isProjectCoordinator,
+} from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
 import { dropHiddenConditionals } from "@/lib/conditional";
@@ -47,29 +51,35 @@ export default async function CodePage({
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, { data: assignments }, { data: rounds }] =
-    await Promise.all([
-      supabase
-        .from("projects")
-        .select(
-          "pydantic_fields, round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch",
-        )
-        .eq("id", id)
-        .single(),
-      supabase
-        .from("assignments")
-        .select("id, status, document_id, documents!inner(id, external_id, title, text)")
-        .eq("project_id", id)
-        .eq("user_id", effectiveUserId)
-        .eq("type", "codificacao")
-        .is("documents.excluded_at", null)
-        .order("status", { ascending: true }),
-      supabase
-        .from("rounds")
-        .select("id, project_id, label, created_at")
-        .eq("project_id", id)
-        .order("created_at", { ascending: true }),
-    ]);
+  const [
+    { data: project },
+    { data: assignments },
+    { data: rounds },
+    canRunLlm,
+  ] = await Promise.all([
+    supabase
+      .from("projects")
+      .select(
+        "pydantic_fields, round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch",
+      )
+      .eq("id", id)
+      .single(),
+    supabase
+      .from("assignments")
+      .select("id, status, document_id, documents!inner(id, external_id, title, text)")
+      .eq("project_id", id)
+      .eq("user_id", effectiveUserId)
+      .eq("type", "codificacao")
+      .is("documents.excluded_at", null)
+      .order("status", { ascending: true }),
+    supabase
+      .from("rounds")
+      .select("id, project_id, label, created_at")
+      .eq("project_id", id)
+      .order("created_at", { ascending: true }),
+    // Rodar LLM exige coordenador no backend (#195): só então mostrar o botão.
+    isProjectCoordinator(id, user),
+  ]);
 
   const allDocuments = (assignments || []).map((a) => ({
     ...(a.documents as unknown as Document),
@@ -242,6 +252,7 @@ export default async function CodePage({
         existingAnswers={existingAnswers}
         existingJustifications={existingJustifications}
         hasAssignments={allDocuments.length > 0}
+        canRunLlm={canRunLlm}
         readOnly={isImpersonating || isViewingPreviousRound}
         roundFilter={{
           strategy,

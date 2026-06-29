@@ -3,6 +3,9 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, act, waitFor, cleanup } from "@testing-library/react";
 
 const { fetchFastAPI } = vi.hoisted(() => ({ fetchFastAPI: vi.fn() }));
+const { getToken } = vi.hoisted(() => ({
+  getToken: vi.fn(async () => "test-token"),
+}));
 const { cleanupStaleLlmRuns, getRunningLlmJob } = vi.hoisted(() => ({
   cleanupStaleLlmRuns: vi.fn(async () => ({ cleaned: 0 })),
   getRunningLlmJob: vi.fn(),
@@ -13,7 +16,18 @@ const { toastSuccess, toastError } = vi.hoisted(() => ({
   toastError: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({ fetchFastAPI }));
+// requireSupabaseToken delega ao getToken passado (réplica do real): busca o
+// token do template "supabase" e lança se vier nulo.
+vi.mock("@/lib/api", () => ({
+  fetchFastAPI,
+  requireSupabaseToken: async (
+    gt: (opts: { template: string }) => Promise<string | null>,
+  ) => {
+    const t = await gt({ template: "supabase" });
+    if (!t) throw new Error("MissingAuthTokenError");
+    return t;
+  },
+}));
 vi.mock("@/actions/llm", () => ({ cleanupStaleLlmRuns, getRunningLlmJob }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("sonner", () => ({
@@ -21,7 +35,7 @@ vi.mock("sonner", () => ({
 }));
 vi.mock("@/lib/scroll", () => ({ getScrollBehavior: () => "auto" }));
 vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({ getToken: async () => "test-token" }),
+  useAuth: () => ({ getToken }),
 }));
 
 import { useLlmRunProgress } from "../useLlmRunProgress";
@@ -105,7 +119,24 @@ describe("useLlmRunProgress", () => {
     expect(result.current.errorInfo).toBeNull();
   });
 
-  it("trata erro de rede no polling como NetworkError", async () => {
+  it("não trata uma falha transitória isolada como terminal", async () => {
+    // 1ª tick falha (blip), 2ª resolve: o polling se recupera sem mostrar erro.
+    getRunningLlmJob.mockResolvedValue(null);
+    fetchFastAPI
+      .mockRejectedValueOnce(new Error("blip"))
+      .mockResolvedValue(statusRes({ status: "completed" }));
+    const { result } = renderHook(() => useLlmRunProgress("p1", null));
+    await waitFor(() => expect(getRunningLlmJob).toHaveBeenCalled());
+
+    act(() => result.current.start("job-x"));
+
+    await waitFor(() => expect(result.current.status).toBe("completed"), {
+      timeout: 5000,
+    });
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("erra após MAX falhas consecutivas no polling", async () => {
     getRunningLlmJob.mockResolvedValue(null);
     fetchFastAPI.mockRejectedValue(new Error("offline"));
     const { result } = renderHook(() => useLlmRunProgress("p1", null));
@@ -113,14 +144,16 @@ describe("useLlmRunProgress", () => {
 
     act(() => result.current.start("job-3"));
 
-    await waitFor(() => expect(result.current.status).toBe("error"));
+    await waitFor(() => expect(result.current.status).toBe("error"), {
+      timeout: 7000,
+    });
     expect(result.current.errorInfo).toMatchObject({
       message: "offline",
       type: "NetworkError",
     });
   });
 
-  it("retoma uma run em andamento ao montar", async () => {
+  it("retoma uma run em andamento ao montar com token do template supabase", async () => {
     getRunningLlmJob.mockResolvedValue({ job_id: "resumed" });
     fetchFastAPI.mockResolvedValue(statusRes({ status: "completed" }));
     renderHook(() => useLlmRunProgress("p1", null));
@@ -132,5 +165,7 @@ describe("useLlmRunProgress", () => {
         "test-token",
       ),
     );
+    // Token buscado com o template "supabase" (não o token de sessão default).
+    expect(getToken).toHaveBeenCalledWith({ template: "supabase" });
   });
 });

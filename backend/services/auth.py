@@ -44,11 +44,30 @@ def _get_jwks_client() -> jwt.PyJWKClient:
     return _jwks_client
 
 
+def _allowed_algorithms() -> list[str]:
+    """Algoritmos aceitos, derivados da config (fail-closed).
+
+    RS256 é o mecanismo de produção (JWKS do Clerk). HS256 (Supabase JWT
+    secret) só é aceito quando o JWKS NÃO está configurado — i.e., no estado
+    de rollback. Com o JWKS setado, um token forjado com `alg=HS256` (mesmo de
+    posse do secret legado vazado) cai fora da allowlist e é rejeitado, fechando
+    o downgrade de algoritmo.
+    """
+    if settings.clerk_jwks_url:
+        return ["RS256"]
+    if settings.supabase_jwt_secret:
+        return ["HS256"]
+    return []
+
+
 def _decode_kwargs() -> dict:
     # require=["exp"]: rejeita token sem claim de expiração — sem isto, um token
     # sem `exp` jamais expiraria. Vale para HS256 e RS256 (defesa em profundidade).
     options: dict = {"require": ["exp"]}
-    kwargs: dict = {}
+    # leeway absorve skew de relógio e expiração de borda: o token do template
+    # "supabase" expira em ~60s e é pollado por minutos, então uma diferença de
+    # alguns segundos entre Clerk e o backend não deve derrubar uma run em curso.
+    kwargs: dict = {"leeway": settings.jwt_leeway_seconds}
     # O template "supabase" costuma emitir aud="authenticated". Só validamos a
     # audience se ela estiver configurada; caso contrário desligamos a checagem
     # para não rejeitar tokens válidos.
@@ -76,43 +95,50 @@ def verify_jwt(token: str) -> AuthUser:
         ) from e
 
     alg = header.get("alg")
+    allowed = _allowed_algorithms()
+    if not allowed:
+        # Nenhum mecanismo de verificação configurado: fail-closed (503, não 401),
+        # distinguindo "servidor mal configurado" de "credencial inválida".
+        raise HTTPException(
+            status_code=503, detail="Autenticação não configurada no servidor"
+        )
+    if alg not in allowed:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Algoritmo de token não aceito: {alg}",
+            headers=_BEARER,
+        )
+
     try:
         if alg == "HS256":
-            if not settings.supabase_jwt_secret:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Autenticação não configurada no servidor",
-                )
             claims = jwt.decode(
                 token,
                 settings.supabase_jwt_secret,
                 algorithms=["HS256"],
                 **_decode_kwargs(),
             )
-        elif alg == "RS256":
-            if not settings.clerk_jwks_url:
+        else:  # RS256 — único outro valor possível na allowlist
+            try:
+                signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+            except jwt.PyJWKClientError as e:
+                # JWKS indisponível (rede/5xx do Clerk) ou kid não encontrado:
+                # fail-closed com 503 (não 401), igual aos guards de banco, para
+                # não disfarçar uma indisponibilidade de upstream como "token
+                # inválido" e disparar re-login inútil em massa.
+                logger.warning("Falha ao resolver signing key via JWKS: %s", e)
                 raise HTTPException(
-                    status_code=503,
-                    detail="Autenticação não configurada no servidor",
-                )
-            signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+                    status_code=503, detail="Não foi possível verificar autorização"
+                ) from e
             claims = jwt.decode(
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
                 **_decode_kwargs(),
             )
-        else:
-            raise HTTPException(
-                status_code=401,
-                detail=f"Algoritmo de token não suportado: {alg}",
-                headers=_BEARER,
-            )
     except HTTPException:
         raise
     except jwt.PyJWTError as e:
-        # Cobre assinatura inválida, expiração, issuer/audience errados e
-        # falhas do PyJWKClient (PyJWKClientError herda de PyJWTError).
+        # Cobre assinatura inválida, expiração e issuer/audience errados.
         raise HTTPException(
             status_code=401, detail="Token inválido ou expirado", headers=_BEARER
         ) from e
@@ -155,7 +181,15 @@ def _is_master(sb, user_id: str) -> bool:
     return bool(res.data)
 
 
-def _is_project_member(sb, project_id: str, user_id: str) -> bool:
+def _is_project_creator_or_master(sb, project_id: str, user_id: str) -> bool:
+    """True se o usuário é master global ou criador do projeto.
+
+    Núcleo comum a `_is_project_member` (qualquer membro) e
+    `require_project_coordinator` (só coordenador): ambos liberam master e
+    criador antes de checar a tabela `project_members`. Centralizado aqui para
+    que uma mudança nessa regra (ex.: projeto soft-deleted, segunda fonte de
+    master) valha nos dois caminhos sem divergir.
+    """
     if _is_master(sb, user_id):
         return True
     proj = (
@@ -165,7 +199,11 @@ def _is_project_member(sb, project_id: str, user_id: str) -> bool:
         .limit(1)
         .execute()
     )
-    if proj.data and proj.data[0].get("created_by") == user_id:
+    return bool(proj.data and proj.data[0].get("created_by") == user_id)
+
+
+def _is_project_member(sb, project_id: str, user_id: str) -> bool:
+    if _is_project_creator_or_master(sb, project_id, user_id):
         return True
     mem = (
         sb.table("project_members")
@@ -189,16 +227,7 @@ def require_project_coordinator(project_id: str, user: AuthUser) -> None:
     """
     try:
         sb = get_supabase()
-        if _is_master(sb, user.id):
-            return
-        proj = (
-            sb.table("projects")
-            .select("created_by")
-            .eq("id", project_id)
-            .limit(1)
-            .execute()
-        )
-        if proj.data and proj.data[0].get("created_by") == user.id:
+        if _is_project_creator_or_master(sb, project_id, user.id):
             return
         mem = (
             sb.table("project_members")
@@ -223,12 +252,14 @@ def require_project_coordinator(project_id: str, user: AuthUser) -> None:
         )
 
 
-def require_job_access(job_id: str, user: AuthUser) -> str:
-    """Autoriza qualquer membro do projeto dono do job. Retorna o project_id.
+def require_job_access(job_id: str, user: AuthUser) -> None:
+    """Autoriza qualquer membro do projeto dono do job.
 
     Usado por /status/{job_id}: ver progresso é leitura, basta ser membro
-    (criador, membro ou master). Levanta 404 se o job não existe, 403 se o
-    usuário não pertence ao projeto, 503 se a verificação no banco falhar.
+    (criador, membro ou master). Levanta **404** tanto quando o job não existe
+    quanto quando o usuário não pertence ao projeto — mesmo código nos dois
+    casos para não vazar a existência de jobs de outros projetos (oráculo de
+    enumeração). Levanta 503 se a verificação no banco falhar.
     """
     try:
         sb = get_supabase()
@@ -250,8 +281,5 @@ def require_job_access(job_id: str, user: AuthUser) -> str:
         raise HTTPException(
             status_code=503, detail="Não foi possível verificar autorização"
         ) from e
-    if is_member:
-        return project_id
-    raise HTTPException(
-        status_code=403, detail="Acesso negado: requer membro do projeto"
-    )
+    if not is_member:
+        raise HTTPException(status_code=404, detail="Job não encontrado")

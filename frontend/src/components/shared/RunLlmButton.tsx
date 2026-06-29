@@ -3,9 +3,14 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
-import { fetchFastAPI } from "@/lib/api";
+import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
 import { toast } from "sonner";
 import { Bot, Loader2 } from "lucide-react";
+
+// Tolera N falhas consecutivas de poll (token transitório, blip de rede) antes
+// de declarar a execução terminal: o job segue rodando no backend e um erro
+// isolado não deve derrubar o acompanhamento e mostrar erro falso.
+const MAX_POLL_FAILURES = 3;
 
 interface RunLlmButtonProps {
   projectId: string;
@@ -13,6 +18,11 @@ interface RunLlmButtonProps {
   onComplete?: () => void;
   size?: "icon" | "sm" | "default";
   variant?: "ghost" | "outline" | "default";
+  /** Rodar LLM exige coordenador do projeto no backend (#195). Quando false, o
+   * botão nem é renderizado — evita mostrar a um pesquisador uma ação que
+   * sempre retornaria 403. Default true para não exigir o prop de callers que
+   * já só renderizam em contexto de coordenador. */
+  canRunLlm?: boolean;
 }
 
 export function RunLlmButton({
@@ -21,11 +31,13 @@ export function RunLlmButton({
   onComplete,
   size = "icon",
   variant = "ghost",
+  canRunLlm = true,
 }: RunLlmButtonProps) {
   const { getToken } = useAuth();
   const [running, setRunning] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelledRef = useRef(false);
+  const failuresRef = useRef(0);
 
   const cleanup = useCallback(() => {
     cancelledRef.current = true;
@@ -40,19 +52,21 @@ export function RunLlmButton({
   const pollStatus = useCallback(
     (jobId: string) => {
       cancelledRef.current = false;
+      failuresRef.current = 0;
 
       const poll = async () => {
         if (cancelledRef.current) return;
         try {
           // Token fresco a cada poll: o do template expira em ~60s e o
           // polling pode durar minutos.
-          const token = await getToken({ template: "supabase" });
+          const token = await requireSupabaseToken(getToken);
           const status = await fetchFastAPI<{
             status: string;
             errors: string[];
-          }>(`/api/llm/status/${jobId}`, undefined, token ?? undefined);
+          }>(`/api/llm/status/${jobId}`, undefined, token);
 
           if (cancelledRef.current) return;
+          failuresRef.current = 0;
 
           if (status.status !== "running") {
             setRunning(false);
@@ -67,8 +81,15 @@ export function RunLlmButton({
           }
         } catch {
           if (cancelledRef.current) return;
-          setRunning(false);
-          toast.error("Erro ao verificar progresso");
+          // Falha isolada não é terminal: o job segue no backend. Só desiste
+          // após MAX_POLL_FAILURES consecutivas (token transitório/blip de rede).
+          failuresRef.current += 1;
+          if (failuresRef.current >= MAX_POLL_FAILURES) {
+            setRunning(false);
+            toast.error("Erro ao verificar progresso");
+          } else {
+            timeoutRef.current = setTimeout(poll, 2000);
+          }
         }
       };
 
@@ -82,7 +103,7 @@ export function RunLlmButton({
     setRunning(true);
 
     try {
-      const token = await getToken({ template: "supabase" });
+      const token = await requireSupabaseToken(getToken);
       const res = await fetchFastAPI<{ job_id: string }>(
         "/api/llm/run",
         {
@@ -93,7 +114,7 @@ export function RunLlmButton({
             filter_mode: "all",
           }),
         },
-        token ?? undefined
+        token
       );
 
       pollStatus(res.job_id);
@@ -102,6 +123,9 @@ export function RunLlmButton({
       toast.error(e instanceof Error ? e.message : "Erro ao iniciar execução");
     }
   };
+
+  // Gate de coordenador: não renderiza para quem receberia 403 (#195).
+  if (!canRunLlm) return null;
 
   if (size === "icon") {
     return (

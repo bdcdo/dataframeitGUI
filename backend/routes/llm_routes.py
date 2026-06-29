@@ -2,6 +2,7 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from services.auth import (
@@ -74,7 +75,9 @@ async def run(
     background_tasks: BackgroundTasks,
     user: AuthUser = Depends(require_authenticated_user),
 ):
-    require_project_coordinator(req.project_id, user)
+    # run_in_threadpool: o guard é síncrono e faz I/O bloqueante no Supabase;
+    # chamado direto aqui rodaria no thread do event loop. Tira do loop.
+    await run_in_threadpool(require_project_coordinator, req.project_id, user)
     job_id = str(uuid.uuid4())
     # Síncrono: insere a row de llm_runs ANTES do background task. Se falhar
     # (RLS, conexão, payload), a request retorna 500 e o frontend mostra o erro
@@ -98,7 +101,7 @@ async def run_field(
     background_tasks: BackgroundTasks,
     user: AuthUser = Depends(require_authenticated_user),
 ):
-    require_project_coordinator(req.project_id, user)
+    await run_in_threadpool(require_project_coordinator, req.project_id, user)
     job_id = str(uuid.uuid4())
     # filter_mode "all" porque run-field não tem semântica de subset; o
     # subset é o conjunto de fields, não de docs.
@@ -114,7 +117,7 @@ async def status(
     job_id: str,
     user: AuthUser = Depends(require_authenticated_user),
 ):
-    require_job_access(job_id, user)
+    await run_in_threadpool(require_job_access, job_id, user)
     return get_job_status(job_id)
 
 
@@ -166,6 +169,6 @@ async def cleanup_stale(
     coordenador do projeto: o backend usa a service key (bypassa RLS), então
     a autorização é checada aqui, não no banco.
     """
-    require_project_coordinator(req.project_id, user)
+    await run_in_threadpool(require_project_coordinator, req.project_id, user)
     n = mark_stale_runs_as_error(get_supabase(), req.project_id)
     return CleanupResponse(cleaned=n)

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { toast } from "sonner";
 import { saveLlmConfig, savePrompt } from "@/actions/schema";
-import { fetchFastAPI } from "@/lib/api";
+import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
 import { useLlmRunProgress } from "@/hooks/useLlmRunProgress";
 import { useEligibleDocCount } from "@/hooks/useEligibleDocCount";
 import { DocumentSelector } from "./DocumentSelector";
@@ -136,14 +136,14 @@ export function RunCard({
       if (filterMode === "max_responses")
         body.max_response_count = maxResponseCount;
 
-      const token = await getToken({ template: "supabase" });
+      const token = await requireSupabaseToken(getToken);
       const res = await fetchFastAPI<{ job_id: string }>(
         "/api/llm/run",
         {
           method: "POST",
           body: JSON.stringify(body),
         },
-        token ?? undefined,
+        token,
       );
       start(res.job_id);
     } catch (e: unknown) {

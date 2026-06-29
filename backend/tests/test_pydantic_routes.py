@@ -1,4 +1,5 @@
 """Testes do endpoint POST /api/pydantic/recover-fields."""
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,7 +17,9 @@ def client() -> TestClient:
     try:
         yield TestClient(app, raise_server_exceptions=False)
     finally:
-        app.dependency_overrides.clear()
+        # pop só o override que ESTE fixture registrou: clear() apagaria também
+        # overrides de outros fixtures no app global compartilhado.
+        app.dependency_overrides.pop(require_authenticated_user, None)
 
 
 class _FakeQuery:
@@ -55,7 +58,9 @@ def _patch_supabase(monkeypatch, response: object) -> None:
     monkeypatch.setattr(pr, "get_supabase", lambda: _FakeSupabase(response))
     # Auth coberta em test_auth.py; aqui o guard de coordenador é no-op para
     # isolar a lógica do handler.
-    monkeypatch.setattr(pr, "require_project_coordinator", lambda project_id, user: None)
+    monkeypatch.setattr(
+        pr, "require_project_coordinator", lambda project_id, user: None
+    )
 
 
 def test_recover_fields_404_quando_projeto_nao_existe(client, monkeypatch):

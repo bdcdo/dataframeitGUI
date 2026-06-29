@@ -13,7 +13,9 @@ JWT e, como lê dados de um projeto específico via service key (bypassa RLS),
 restringe ao coordenador do projeto, fechando a exposição anônima do boundary de
 rede.
 """
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from services.auth import (
@@ -43,7 +45,7 @@ async def recover_fields(
     req: RecoverRequest,
     user: AuthUser = Depends(require_authenticated_user),
 ) -> dict:
-    require_project_coordinator(req.project_id, user)
+    await run_in_threadpool(require_project_coordinator, req.project_id, user)
     sb = get_supabase()
     # maybe_single (não single): single() lança APIError quando nenhuma linha
     # casa, o que viraria 500 opaco em vez do 404 abaixo. maybe_single retorna

@@ -1,15 +1,35 @@
 import logging
 import re
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import settings
 from routes.llm_routes import router as llm_router
 from routes.pydantic_routes import router as pydantic_router
+from services.auth import require_authenticated_user
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: "FastAPI"):
+    # Readiness do gate de auth: o boot é fail-closed, mas /health sempre retorna
+    # 200. Sem este aviso, um deploy sem o secret/JWKS sobe "saudável" enquanto
+    # toda rota autenticada devolve 503, sem nada no log apontando a causa.
+    if not settings.supabase_jwt_secret and not settings.clerk_jwks_url:
+        logger.error(
+            "Auth fail-closed: nem SUPABASE_JWT_SECRET nem CLERK_JWKS_URL "
+            "configurados — toda rota autenticada retornará 503."
+        )
+    elif not settings.clerk_jwt_audience and not settings.clerk_jwt_issuer:
+        logger.warning(
+            "JWT sem validação de aud/iss (CLERK_JWT_AUDIENCE e CLERK_JWT_ISSUER "
+            "vazios) — recomendado setá-las em produção."
+        )
+    yield
 
 
 def _normalize_origin(value: str) -> str:
@@ -36,7 +56,7 @@ def _match_origin(origin: str | None) -> str | None:
     return None
 
 
-app = FastAPI(title="dataframeit API")
+app = FastAPI(title="dataframeit API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,13 +97,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     # Unlike the generic Exception handler above, HTTPException responses still
     # flow back through CORSMiddleware, so it adds Access-Control-Allow-Origin /
-    # Vary on its own. We only override `detail` to collapse 5xx bodies into an
-    # opaque payload (the original `detail` may carry internal messages); 4xx
-    # detail is preserved so clients can react to validation/auth errors.
+    # Vary on its own. We collapse the body ONLY for 500 (an explicit
+    # HTTPException(500) may carry an internal message). Deliberate 5xx signals —
+    # notably the auth gate's fail-closed 503s — preserve `detail`, which is a
+    # safe, actionable message ("Autenticação não configurada no servidor",
+    # "Não foi possível verificar autorização"); 4xx detail is preserved too so
+    # clients can react to validation/auth errors.
     if exc.status_code >= 500:
         logger.exception(
-            "HTTPException %s on %s %s", exc.status_code, request.method, request.url.path
+            "HTTPException %s on %s %s",
+            exc.status_code,
+            request.method,
+            request.url.path,
         )
+    if exc.status_code == 500:
         content = {"detail": "Internal Server Error"}
     else:
         content = {"detail": exc.detail}
@@ -93,8 +120,24 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
-app.include_router(llm_router, prefix="/api/llm", tags=["llm"])
-app.include_router(pydantic_router, prefix="/api/pydantic", tags=["pydantic"])
+# Autenticação estrutural: toda rota dos dois routers exige um JWT válido por
+# dependency de router, não só pela chamada manual no corpo do handler. Assim,
+# uma rota nova que esqueça o `Depends(require_authenticated_user)` não fica
+# anônima por omissão. A autorização (coordenador/membro) continua por rota,
+# pois depende do project_id do payload. FastAPI deduplica a dependência quando
+# o handler também a declara para receber o `AuthUser`.
+app.include_router(
+    llm_router,
+    prefix="/api/llm",
+    tags=["llm"],
+    dependencies=[Depends(require_authenticated_user)],
+)
+app.include_router(
+    pydantic_router,
+    prefix="/api/pydantic",
+    tags=["pydantic"],
+    dependencies=[Depends(require_authenticated_user)],
+)
 
 
 @app.get("/health")

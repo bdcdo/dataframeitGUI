@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { fetchFastAPI } from "@/lib/api";
+import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
 
 /**
  * Busca o preview do prompt final no backend (`/api/llm/preview-prompt`),
@@ -37,7 +37,7 @@ export function usePromptPreview(
       setPreviewError(null);
       setPreviewLoading(true);
       try {
-        const token = await getToken({ template: "supabase" });
+        const token = await requireSupabaseToken(getToken);
         const res = await fetchFastAPI<{ prompt: string }>(
           "/api/llm/preview-prompt",
           {

@@ -27,6 +27,8 @@ interface CompareNavProps {
   currentProjectVersion: string;
   projectId?: string;
   documentId?: string;
+  /** Coordenador do projeto? Gate do botão "Rodar LLM" (#195). */
+  canRunLlm?: boolean;
 }
 
 export function CompareNav({
@@ -47,6 +49,7 @@ export function CompareNav({
   currentProjectVersion,
   projectId,
   documentId,
+  canRunLlm = false,
 }: CompareNavProps) {
   return (
     <div className="flex h-10 items-center justify-between border-b px-4 text-sm shrink-0">
@@ -82,7 +85,11 @@ export function CompareNav({
           </Button>
         </div>
         {projectId && documentId && (
-          <RunLlmButton projectId={projectId} documentId={documentId} />
+          <RunLlmButton
+            projectId={projectId}
+            documentId={documentId}
+            canRunLlm={canRunLlm}
+          />
         )}
         <Button variant="ghost" size="icon" className="size-6" onClick={onToggleFullscreen} title="Tela cheia">
           <Maximize2 className="size-3.5" />
