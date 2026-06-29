@@ -38,6 +38,10 @@ async function loadUpload() {
   return (await import("@/actions/documents")).uploadDocuments;
 }
 
+async function loadGetDocumentText() {
+  return (await import("@/actions/documents")).getDocumentText;
+}
+
 function insertedExternalIds(): (string | null)[] {
   const call = writeCalls.find(
     (c) => c.table === "documents" && c.op === "insert",
@@ -198,5 +202,41 @@ describe("uploadDocuments — replace_and_add propaga erro de UPDATE", () => {
     expect(
       writeCalls.some((c) => c.table === "documents" && c.op === "insert"),
     ).toBe(false);
+  });
+});
+
+describe("getDocumentText", () => {
+  it("retorna texto e titulo quando o doc existe", async () => {
+    serverTableResults = {
+      documents: [{ data: { title: "Titulo", text: "conteudo" } }],
+    };
+    const getDocumentText = await loadGetDocumentText();
+
+    const r = await getDocumentText("proj-1", "doc-1");
+
+    expect(r).toEqual({ text: "conteudo", title: "Titulo" });
+  });
+
+  it("retorna null (sem lancar) quando o doc nao existe", async () => {
+    // maybeSingle devolve data:null em 0 linhas; nao pode lancar (era .single()).
+    serverTableResults = { documents: [{ data: null }] };
+    const getDocumentText = await loadGetDocumentText();
+
+    await expect(getDocumentText("proj-1", "missing")).resolves.toBeNull();
+  });
+
+  it("lanca quando a query retorna erro, em vez de silenciar como nao-encontrado", async () => {
+    serverTableResults = {
+      documents: [{ error: { message: "rls denied", code: "42501" } }],
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const getDocumentText = await loadGetDocumentText();
+
+    await expect(getDocumentText("proj-1", "doc-1")).rejects.toMatchObject({
+      message: "rls denied",
+    });
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
   });
 });

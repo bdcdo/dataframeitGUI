@@ -469,12 +469,22 @@ export async function getDocumentText(
   documentId: string,
 ): Promise<{ text: string; title: string } | null> {
   const supabase = await createSupabaseServer();
-  const { data } = await supabase
+  // Busca o texto de um doc por id (RLS aplica). Nao filtra excluded_at de
+  // proposito: a visibilidade de soft-deleted e decidida nas queries de lista
+  // (getDocumentsForBrowse, a pagina de documentos via ?show=excluded), nao no
+  // fetch de texto por id. Quem chega a pedir o texto ja escolheu o doc na lista.
+  const { data, error } = await supabase
     .from("documents")
     .select("title, text")
     .eq("id", documentId)
     .eq("project_id", projectId)
-    .single();
+    .maybeSingle();
+  // Distingue erro real (RLS/transporte/schema) de doc inexistente: sem isto,
+  // um doc que existe mas falhou na query viraria "(nao encontrado)" silencioso.
+  if (error) {
+    console.error("[getDocumentText] erro de query", { projectId, documentId, error });
+    throw error;
+  }
   if (!data) return null;
   return { text: data.text, title: data.title || documentId };
 }
