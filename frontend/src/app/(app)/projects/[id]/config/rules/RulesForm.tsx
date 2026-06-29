@@ -34,7 +34,11 @@ const RESOLUTION_OPTIONS = [
   { value: "coordinator", label: "Decisão do coordenador" },
 ];
 
-export function RulesForm({
+// Controlador do formulário de regras: o estado é semeado uma vez a partir dos
+// valores salvos do projeto e editado localmente (capture-once — re-sincronizar
+// com as props no meio da edição apagaria o que o usuário digitou). Extrair para
+// hook mantém o componente focado em layout e agrupa os campos do form.
+function useRulesFormState({
   projectId,
   resolutionRule,
   minResponses,
@@ -76,6 +80,42 @@ export function RulesForm({
       setTimeout(() => setSaved(false), 2000);
     });
   }
+
+  return {
+    rule,
+    setRule,
+    min,
+    setMin,
+    allowReview,
+    setAllowReview,
+    mode,
+    setMode,
+    includesLlm,
+    setIncludesLlm,
+    saved,
+    isPending,
+    modeMeta,
+    handleSave,
+  };
+}
+
+export function RulesForm(props: RulesFormProps) {
+  const {
+    rule,
+    setRule,
+    min,
+    setMin,
+    allowReview,
+    setAllowReview,
+    mode,
+    setMode,
+    includesLlm,
+    setIncludesLlm,
+    saved,
+    isPending,
+    modeMeta,
+    handleSave,
+  } = useRulesFormState(props);
 
   return (
     <Card>

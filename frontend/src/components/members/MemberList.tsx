@@ -110,12 +110,9 @@ function memberDisplayName(m: MemberRow): string {
   return m.profiles?.first_name || m.profiles?.email || "Sem perfil";
 }
 
-export function MemberList({
-  projectId,
-  members,
-  emailLinks,
-  currentUserId,
-}: MemberListProps) {
+// Agrupa os estados que controlam quais dialogs/pending actions estão abertos,
+// extraídos do corpo do componente para manter a contagem de useState baixa.
+function useMemberListDialogs() {
   // Per-row + per-switch pending: o Switch tocado fica disabled até o server
   // action retornar, mas o outro Switch da mesma linha e os Switches das demais
   // linhas continuam interativos. Coordenador habilitando 4 membros em
@@ -131,6 +128,43 @@ export function MemberList({
     preview: UnificationPreview;
     targetName: string;
   } | null>(null);
+
+  return {
+    pendingArbitrateId,
+    setPendingArbitrateId,
+    pendingResolveId,
+    setPendingResolveId,
+    pendingCompareId,
+    setPendingCompareId,
+    editingEmailMemberId,
+    setEditingEmailMemberId,
+    linkingMember,
+    setLinkingMember,
+    unify,
+    setUnify,
+  };
+}
+
+export function MemberList({
+  projectId,
+  members,
+  emailLinks,
+  currentUserId,
+}: MemberListProps) {
+  const {
+    pendingArbitrateId,
+    setPendingArbitrateId,
+    pendingResolveId,
+    setPendingResolveId,
+    pendingCompareId,
+    setPendingCompareId,
+    editingEmailMemberId,
+    setEditingEmailMemberId,
+    linkingMember,
+    setLinkingMember,
+    unify,
+    setUnify,
+  } = useMemberListDialogs();
   const [, startTransition] = useTransition();
 
   const linksByMember = new Map<string, MemberEmailLink[]>();

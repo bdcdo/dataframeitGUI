@@ -400,6 +400,9 @@ export function ComparisonPanel({
       )}
 
       <SuggestFieldDialog
+        // Remonta ao trocar de campo: o form do dialog renasce semeado pelos
+        // valores do novo campo, dispensando o reset-em-render por prop.
+        key={fieldName}
         projectId={projectId}
         fieldName={fieldName}
         allFields={fields}
