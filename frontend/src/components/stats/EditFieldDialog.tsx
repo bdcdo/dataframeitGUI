@@ -114,6 +114,10 @@ export function EditFieldDialog({
 
   // Reset state when dialog opens with a different field or suggestion
   const resetKey = `${fieldName}::${pendingSuggestion?.id ?? ""}`;
+  // `prevKey` É lido no render (comparação `resetKey !== prevKey` abaixo) — é o
+  // padrão oficial React de "adjusting state on a prop change", não state
+  // só-de-handler. A regra classifica errado; useRef quebraria o padrão.
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers
   const [prevKey, setPrevKey] = useState(resetKey);
   if (resetKey !== prevKey) {
     setPrevKey(resetKey);

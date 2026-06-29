@@ -121,11 +121,13 @@ export async function approveSchemaSuggestionWithEdits(
     return { error: "Apenas coordenadores podem aprovar sugestões de schema." };
   }
 
-  const supabase = await createSupabaseServer();
-
-  // Mesma proteção de resolveSchemaSuggestion: sugestão só vira "approved"
-  // depois que o schema persistiu de fato.
-  const saved = await saveSchemaFromGUI(projectId, editedFields);
+  // Criar o client e persistir o schema são independentes — rodam em paralelo.
+  // Mesma proteção de resolveSchemaSuggestion: a sugestão só vira "approved"
+  // depois que o schema persistiu de fato (o update abaixo aguarda ambos).
+  const [supabase, saved] = await Promise.all([
+    createSupabaseServer(),
+    saveSchemaFromGUI(projectId, editedFields),
+  ]);
   if (saved.error) return { error: saved.error };
 
   const { data: updated, error } = await supabase

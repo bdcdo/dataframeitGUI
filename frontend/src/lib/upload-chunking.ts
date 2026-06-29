@@ -70,6 +70,10 @@ export async function mapWithConcurrency<T, R>(
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
+      // O await em loop é o núcleo deste helper de concorrência limitada: cada
+      // worker processa itens em série; o paralelismo vem dos N workers. O
+      // Promise.all que a regra sugeriria é justamente o que estamos limitando.
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
       results[i] = await fn(items[i], i);
     }
   };
