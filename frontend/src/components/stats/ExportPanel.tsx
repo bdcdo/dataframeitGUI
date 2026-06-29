@@ -225,8 +225,8 @@ export function ExportPanel({
               </tr>
             </thead>
             <tbody>
-              {previewRows.map((row) => (
-                <tr key={row.join("|")} className="border-b last:border-0">
+              {previewRows.map((row, i) => (
+                <tr key={`${row.join("|")}|${i}`} className="border-b last:border-0">
                   {row.map((cell, j) => (
                     <td
                       key={currentHeaders[j] ?? `col-${j}`}
