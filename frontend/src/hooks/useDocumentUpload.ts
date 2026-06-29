@@ -5,11 +5,13 @@ import { toast } from "sonner";
 import {
   uploadDocuments,
   checkDuplicates,
+  revalidateProjectDocuments,
   type DuplicateMatch,
   type UploadDoc,
   type UploadOptions,
 } from "@/actions/documents";
 import { md5 } from "@/lib/hash";
+import { errorMessage } from "@/lib/utils";
 import {
   MAX_CHUNK_BYTES,
   MAX_HASH_CHECK_CONCURRENCY,
@@ -71,11 +73,26 @@ export function useDocumentUpload(projectId: string) {
     Papa.parse(file, {
       header: true,
       complete: (results) => {
+        // PapaParse é tolerante: popula `errors` em problemas recuperáveis
+        // (aspas, contagem de campos) mas ainda devolve linhas. Avisa e segue —
+        // linhas parciais costumam ser mapeáveis.
+        if (results.errors?.length) {
+          console.warn("[useDocumentUpload] Papa.parse avisos", results.errors);
+          toast.warning(
+            `CSV lido com ${results.errors.length} aviso(s) de parsing; confira as linhas afetadas.`
+          );
+        }
         const rows = results.data as Record<string, string>[];
         const columns = results.meta.fields || [];
         setCsv({ rows, columns });
         setMapping({ text: "", title: "", external_id: "" });
         setPhase({ kind: "mapping" });
+      },
+      // Erro fatal de leitura/parsing: aborta sem sair de `idle` (a dropzone
+      // continua visível para nova tentativa).
+      error: (err) => {
+        console.error("[useDocumentUpload] Papa.parse falhou", err);
+        toast.error(`Não foi possível ler o CSV: ${err.message}`);
       },
     });
   }, []);
@@ -96,14 +113,19 @@ export function useDocumentUpload(projectId: string) {
   const doUpload = async (
     docs: UploadDoc[],
     returnTo: UploadPhase,
-    options?: UploadOptions
+    options?: UploadOptions,
+    // Bytes UTF-8 por doc já medidos pelo chamador (handleCheckAndUpload mede uma
+    // vez no check de oversize); repassados a chunkByBytes para não re-encodar.
+    sizes?: number[]
   ) => {
     setPhase({ kind: "uploading", current: 0, total: docs.length });
 
+    // Hoisted out of the try so the catch can revalidate/report based on how many
+    // docs landed before a failure (count-based, como o caminho de sucesso).
+    let processed = 0;
+    let totalInserted = 0;
     try {
-      const chunks = chunkByBytes(docs);
-      let processed = 0;
-      let totalInserted = 0;
+      const chunks = chunkByBytes(docs, sizes);
       for (let ci = 0; ci < chunks.length; ci++) {
         const { items, startIndex } = chunks[ci];
         const endIndex = startIndex + items.length;
@@ -141,20 +163,61 @@ export function useDocumentUpload(projectId: string) {
         setPhase({ kind: "uploading", current: processed, total: docs.length });
       }
       const skipped = docs.length - totalInserted;
+      // Verbo ciente do modo: em replace_and_add, `count` conta duplicatas
+      // ATUALIZADAS (não inseridas), então "importados" sozinho superconta.
+      const savedVerb =
+        options?.mode === "replace_and_add"
+          ? "importado(s)/atualizado(s)"
+          : "importado(s)";
+      const allVerb =
+        options?.mode === "replace_and_add"
+          ? "importados/atualizados"
+          : "importados";
       toast.success(
         skipped > 0
-          ? `${totalInserted} documento(s) importado(s); ${skipped} ignorado(s) (já existiam no projeto ou repetidos no arquivo).`
-          : `${docs.length} documentos importados!`
+          ? `${totalInserted} documento(s) ${savedVerb}; ${skipped} ignorado(s) (já existiam no projeto ou repetidos no arquivo).`
+          : `${docs.length} documentos ${allVerb}!`
       );
       setCsv(null);
       setPhase({ kind: "idle" });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      toast.error(
-        isPayloadTooLarge(msg)
-          ? PAYLOAD_TOO_LARGE_MESSAGE
-          : msg || "Erro ao importar documentos"
-      );
+      console.error("[useDocumentUpload] doUpload falhou", e);
+      const msg = errorMessage(e);
+      const destructiveReplace =
+        options?.mode === "replace_and_add" && !!options?.deleteResponses;
+      // Revalida sempre que o banco pode ter mudado: algo entrou (totalInserted > 0)
+      // ou um replace destrutivo já pode ter apagado responses/reviews mesmo sem
+      // inserção. Guarda: revalidateProjectDocuments é Server Action e pode rejeitar
+      // no transporte — sem o try, setPhase(returnTo) abaixo não rodaria (UI presa).
+      if (totalInserted > 0 || destructiveReplace) {
+        try {
+          await revalidateProjectDocuments(projectId);
+        } catch (revalErr) {
+          console.error("[useDocumentUpload] revalidate no catch falhou", revalErr);
+        }
+      }
+      if (totalInserted > 0) {
+        // Chunks 0..N-1 já foram commitados; só o último chunk revalidaria.
+        const importedVerb =
+          options?.mode === "replace_and_add"
+            ? "importados/atualizados"
+            : "importados";
+        toast.error(
+          isPayloadTooLarge(msg)
+            ? `${totalInserted}/${docs.length} ${importedVerb}. ${PAYLOAD_TOO_LARGE_MESSAGE}`
+            : `${totalInserted} de ${docs.length} documentos ${importedVerb} antes de uma falha${msg ? `: ${msg}` : ""}`
+        );
+      } else if (destructiveReplace) {
+        toast.error(
+          `A importação falhou, mas respostas/revisões dos documentos duplicados podem já ter sido removidas. Confira a lista.${msg ? ` (${msg})` : ""}`
+        );
+      } else {
+        toast.error(
+          isPayloadTooLarge(msg)
+            ? PAYLOAD_TOO_LARGE_MESSAGE
+            : msg || "Erro ao importar documentos"
+        );
+      }
       setPhase(returnTo);
     }
   };
@@ -166,10 +229,14 @@ export function useDocumentUpload(projectId: string) {
       return;
     }
 
+    // Mede os bytes UTF-8 uma única vez: reusado no check de oversize e repassado
+    // a chunkByBytes (via doUpload) para não re-encodar todo o array.
+    const sizes = docs.map((d) => utf8Bytes(d.text));
+
     // Fail early if a single doc exceeds the per-chunk byte budget — chunking can't rescue it.
-    const oversizeIdx = docs.findIndex((d) => utf8Bytes(d.text) > MAX_CHUNK_BYTES);
+    const oversizeIdx = sizes.findIndex((b) => b > MAX_CHUNK_BYTES);
     if (oversizeIdx !== -1) {
-      const sizeMb = (utf8Bytes(docs[oversizeIdx].text) / 1_000_000).toFixed(2);
+      const sizeMb = (sizes[oversizeIdx] / 1_000_000).toFixed(2);
       const limitMb = (MAX_CHUNK_BYTES / 1_000_000).toFixed(1);
       toast.error(
         `Documento na linha ${oversizeIdx + 1} tem ${sizeMb} MB, acima do limite de ${limitMb} MB por documento. Remova-o ou divida o texto antes de importar.`
@@ -209,7 +276,7 @@ export function useDocumentUpload(projectId: string) {
 
       if (allDuplicates.length === 0) {
         // No duplicates — upload directly; a failure returns to mapping.
-        await doUpload(docs, { kind: "mapping" });
+        await doUpload(docs, { kind: "mapping" }, undefined, sizes);
       } else {
         // Has duplicates — show analysis panel.
         const hasExternalIdMatch = allDuplicates.some(
@@ -226,7 +293,8 @@ export function useDocumentUpload(projectId: string) {
         });
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
+      console.error("[useDocumentUpload] handleCheckAndUpload falhou", e);
+      const msg = errorMessage(e);
       toast.error(
         isPayloadTooLarge(msg)
           ? PAYLOAD_TOO_LARGE_MESSAGE

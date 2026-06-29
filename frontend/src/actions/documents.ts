@@ -53,7 +53,7 @@ export async function checkDuplicates(
   // 1. Match by external_id (excluidos sao ignorados — re-upload de doc
   //    excluido por engano cria um novo registro normal)
   if (externalIds.length > 0) {
-    const { data: byExtId } = await supabase
+    const { data: byExtId, error: byExtIdErr } = await supabase
       .from("documents")
       .select("id, external_id")
       .eq("project_id", projectId)
@@ -61,6 +61,10 @@ export async function checkDuplicates(
       .in(
         "external_id",
         externalIds.map((e) => e.id!)
+      );
+    if (byExtIdErr)
+      throw new Error(
+        `Falha ao verificar duplicatas por ID externo: ${byExtIdErr.message}`,
       );
 
     if (byExtId) {
@@ -86,12 +90,16 @@ export async function checkDuplicates(
 
   if (unmatchedHashes.length > 0) {
     const uniqueHashes = [...new Set(unmatchedHashes.map((h) => h.hash))];
-    const { data: byHash } = await supabase
+    const { data: byHash, error: byHashErr } = await supabase
       .from("documents")
       .select("id, text_hash")
       .eq("project_id", projectId)
       .is("excluded_at", null)
       .in("text_hash", uniqueHashes);
+    if (byHashErr)
+      throw new Error(
+        `Falha ao verificar duplicatas por hash de conteúdo: ${byHashErr.message}`,
+      );
 
     if (byHash) {
       const hashMap = new Map(byHash.map((d) => [d.text_hash, d.id]));
@@ -112,11 +120,15 @@ export async function checkDuplicates(
   let duplicatesWithResponses = 0;
   if (duplicates.length > 0) {
     const docIds = duplicates.map((d) => d.existingDocId);
-    const { data: responses } = await supabase
+    const { data: responses, error: responsesErr } = await supabase
       .from("responses")
       .select("document_id")
       .eq("project_id", projectId)
       .in("document_id", docIds);
+    if (responsesErr)
+      throw new Error(
+        `Falha ao verificar respostas das duplicatas: ${responsesErr.message}`,
+      );
 
     if (responses) {
       const docsWithResponses = new Set(responses.map((r) => r.document_id));
@@ -190,6 +202,25 @@ async function filterActiveExternalIdConflicts<
   return { rows: safe, skippedExisting, skippedInBatch };
 }
 
+// Revalida o cache de documentos do projeto: o path dinâmico de config, a tag
+// da página cacheada de assignments e a tag de progresso (contagens de docs) —
+// o mesmo conjunto que excludeDocuments/restoreDocuments/hardDeleteDocuments
+// revalidam. Fonte única usada tanto pelo último chunk de uploadDocuments quanto
+// pelo recovery do hook quando um upload em chunks falha no meio.
+// Best-effort: uma falha de revalidação de cache não pode propagar como erro da
+// action (caso contrário um INSERT já commitado seria reportado como falha, ou o
+// catch do hook ficaria preso). Um cache stale é recuperável; um upload "perdido"
+// não.
+export async function revalidateProjectDocuments(projectId: string) {
+  try {
+    revalidatePath(`/projects/${projectId}/config/documents`);
+    revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
+    revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  } catch (e) {
+    console.error("[revalidateProjectDocuments] falha ao revalidar cache", e);
+  }
+}
+
 export async function uploadDocuments(
   projectId: string,
   documents: DocumentRow[],
@@ -229,10 +260,7 @@ export async function uploadDocuments(
       if (error) return { error: error.message };
     }
 
-    if (revalidate) {
-      revalidatePath(`/projects/${projectId}/config/documents`);
-      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-    }
+    if (revalidate) await revalidateProjectDocuments(projectId);
     return {
       count: rows.length,
       skipped: skippedDuplicates + skippedExisting + skippedInBatch,
@@ -244,26 +272,34 @@ export async function uploadDocuments(
     const existingDocIds = duplicateMap.map((d) => d.existingDocId);
 
     if (options?.deleteResponses && existingDocIds.length > 0) {
+      // Fail-loud: cada passo checa erro e aborta. A sequencia NAO e atomica (um
+      // delete pode ter ocorrido antes de outro falhar) — o hook avisa o usuario
+      // que respostas/revisoes podem ja ter sido removidas. Atomicidade real
+      // depende do RPC transacional (issue #284).
+
       // Delete reviews first (FK chosen_response_id -> responses without CASCADE)
-      await supabase
+      const { error: delReviewsErr } = await supabase
         .from("reviews")
         .delete()
         .eq("project_id", projectId)
         .in("document_id", existingDocIds);
+      if (delReviewsErr) return { error: delReviewsErr.message };
 
       // Then delete responses
-      await supabase
+      const { error: delResponsesErr } = await supabase
         .from("responses")
         .delete()
         .eq("project_id", projectId)
         .in("document_id", existingDocIds);
+      if (delResponsesErr) return { error: delResponsesErr.message };
 
       // Reset assignments to 'pendente'
-      await supabase
+      const { error: resetAssignErr } = await supabase
         .from("assignments")
         .update({ status: "pendente" })
         .eq("project_id", projectId)
         .in("document_id", existingDocIds);
+      if (resetAssignErr) return { error: resetAssignErr.message };
     }
 
     // Batch update duplicate documents (avoid N+1)
@@ -314,10 +350,7 @@ export async function uploadDocuments(
       }
     }
 
-    if (revalidate) {
-      revalidatePath(`/projects/${projectId}/config/documents`);
-      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-    }
+    if (revalidate) await revalidateProjectDocuments(projectId);
     return { count: documents.length - skipped, skipped };
   }
 
@@ -340,10 +373,7 @@ export async function uploadDocuments(
     if (error) return { error: error.message };
   }
 
-  if (revalidate) {
-      revalidatePath(`/projects/${projectId}/config/documents`);
-      revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-    }
+  if (revalidate) await revalidateProjectDocuments(projectId);
   return { count: rows.length, skipped: skippedExisting + skippedInBatch };
 }
 
@@ -517,9 +547,7 @@ export async function excludeDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  revalidatePath(`/projects/${projectId}/config/documents`);
-  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  await revalidateProjectDocuments(projectId);
   return { count: documentIds.length };
 }
 
@@ -547,9 +575,7 @@ export async function restoreDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  revalidatePath(`/projects/${projectId}/config/documents`);
-  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  await revalidateProjectDocuments(projectId);
   return { count: documentIds.length };
 }
 
@@ -576,8 +602,6 @@ export async function hardDeleteDocuments(
     .in("id", documentIds);
 
   if (error) return { error: error.message };
-  revalidatePath(`/projects/${projectId}/config/documents`);
-  revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+  await revalidateProjectDocuments(projectId);
   return { count: documentIds.length };
 }
