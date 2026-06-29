@@ -140,13 +140,16 @@ function SortableQuestion({
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
-  // Rastreia quais campos estavam visíveis no render anterior para detectar
-  // condicionais que acabaram de aparecer. Lazy-init (null → semeado abaixo)
-  // para não realocar um Set a cada render.
+  // Conjunto de nomes visíveis no render anterior — detecta condicionais que
+  // acabaram de aparecer. `null` até o 1º effect (semeado lá dentro, nunca no
+  // corpo do render — escrita de ref durante o render não é concurrent-safe).
   const prevVisibleNamesRef = useRef<Set<string> | null>(null);
-  // Guarda a prop `fields` do render anterior. Troca de schema/reorder também
-  // muda `visibleNames`, mas não deve disparar scroll — só resposta do usuário.
-  const prevFieldsRef = useRef(fields);
+  // Assinatura order-independent do conjunto de TODOS os campos. Só muda quando
+  // um campo é adicionado/removido (mudança de schema). Reorder e o load
+  // assíncrono de `fieldOrder` reordenam mas não mudam o conjunto, então não
+  // suprimem um scroll legítimo (ver #252); a comparação por identidade da prop
+  // `fields` suprimia-os por engano.
+  const prevAllNamesKeyRef = useRef<string | null>(null);
 
   const visibleFields = useMemo(
     () =>
@@ -159,12 +162,10 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     () => new Set(visibleFields.map((f) => f.name)),
     [visibleFields],
   );
-
-  // Semeia o set anterior com o atual no 1º render: no mount `prev === current`,
-  // logo nenhuma condicional conta como "recém-visível" e não há scroll.
-  if (prevVisibleNamesRef.current === null) {
-    prevVisibleNamesRef.current = visibleNames;
-  }
+  const allNamesKey = useMemo(
+    () => fields.map((f) => f.name).sort().join(","),
+    [fields],
+  );
 
   // A limpeza de respostas órfãs de condicionais que ficaram invisíveis vive no
   // pai (`CodingPage`), aplicada no updater de `answers` ao mudar uma resposta
@@ -175,12 +176,16 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   // pergunta fora da viewport. Detecta o campo condicional que passou de
   // invisível para visível e rola suavemente até ele.
   useEffect(() => {
-    const prev = prevVisibleNamesRef.current ?? new Set<string>();
+    const firstRun = prevVisibleNamesRef.current === null;
+    const prev = prevVisibleNamesRef.current ?? visibleNames;
     prevVisibleNamesRef.current = visibleNames;
-    const fieldsChanged = prevFieldsRef.current !== fields;
-    prevFieldsRef.current = fields;
+    const structuralChange =
+      prevAllNamesKeyRef.current !== null &&
+      prevAllNamesKeyRef.current !== allNamesKey;
+    prevAllNamesKeyRef.current = allNamesKey;
 
-    if (fieldsChanged) return; // troca de schema/reorder, não resposta do usuário
+    if (firstRun) return; // mount: semeia os refs e não rola
+    if (structuralChange) return; // add/remove de campo (schema), não resposta
     if (readOnly) return;
 
     const newIdx = visibleFields.findIndex(
@@ -291,7 +296,18 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+      <div
+        // Durante um save em voo a edição congela (os handlers a montante
+        // descartam as teclas). Sem pista visual o usuário digitaria no vazio;
+        // aqui o bloco fica esmaecido e sem resposta a mouse — `aria-busy`
+        // anuncia o estado a leitores de tela. O teclado segue barrado pelos
+        // guards a montante (`FieldRenderer` não aceita `disabled`).
+        aria-busy={submitting}
+        className={cn(
+          "flex-1 overflow-y-auto p-4 space-y-2.5",
+          submitting && "pointer-events-none opacity-60",
+        )}
+      >
         {dragEnabled ? (
           <DndContext
             sensors={sensors}
@@ -320,6 +336,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
               <Textarea
                 value={notes}
                 onChange={(e) => onNotesChange(e.target.value)}
+                disabled={submitting || readOnly}
                 placeholder="Anotações, dúvidas ou sugestões sobre este documento..."
                 className="mt-2 text-sm min-h-[80px] resize-y"
               />

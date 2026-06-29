@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
+import routes.pydantic_routes as pydantic_routes_mod
 import services.auth as auth_mod
 from config import settings
 from services.auth import (
@@ -71,6 +72,7 @@ class _FakeTable:
     def __init__(self, rows):
         self._rows = rows
         self._filters: dict = {}
+        self._single = False
 
     def select(self, *a, **k):
         return self
@@ -84,12 +86,20 @@ class _FakeTable:
     def limit(self, *a, **k):
         return self
 
+    def maybe_single(self):
+        # Espelha o PostgREST: maybe_single retorna data=<dict> (a 1a linha) ou
+        # None quando nenhuma casa — não uma lista. recover_fields depende disso.
+        self._single = True
+        return self
+
     def execute(self):
         rows = [
             r
             for r in self._rows
             if all(r.get(k) == v for k, v in self._filters.items())
         ]
+        if self._single:
+            return SimpleNamespace(data=rows[0] if rows else None)
         return SimpleNamespace(data=rows)
 
 
@@ -366,7 +376,7 @@ def client():
 @pytest.mark.parametrize(
     "method,path,body",
     [
-        ("post", "/api/pydantic/validate", {"code": "x = 1"}),
+        ("post", "/api/pydantic/recover-fields", {"project_id": "p1"}),
         ("post", "/api/llm/run", {"project_id": "p1"}),
         ("post", "/api/llm/run-field", {"project_id": "p1", "field_names": ["a"]}),
         ("post", "/api/llm/cleanup-stale", {"project_id": "p1"}),
@@ -399,14 +409,47 @@ def test_run_forbidden_for_non_coordinator(client, monkeypatch):
     assert resp.status_code == 403
 
 
-def test_validate_allows_authenticated_user(client):
-    # /validate exige apenas autenticação (não há project_id). Com token válido
-    # passa o gate e compila o schema.
+def test_recover_fields_forbidden_for_non_coordinator(client, monkeypatch):
+    # Token válido, mas o usuário não é coordenador do projeto → 403 antes de
+    # qualquer leitura de pydantic_code (a guard é a primeira linha do handler).
+    use_supabase(
+        monkeypatch,
+        FakeSupabase(
+            master_users=[],
+            projects=[{"id": "p1", "created_by": "other"}],
+            project_members=[],
+        ),
+    )
     resp = client.post(
-        "/api/pydantic/validate",
-        json={
-            "code": "from pydantic import BaseModel\n\nclass Analysis(BaseModel):\n    x: str"
-        },
+        "/api/pydantic/recover-fields",
+        json={"project_id": "p1"},
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_recover_fields_allows_coordinator(client, monkeypatch):
+    # Coordenador (aqui criador) passa o gate; o handler lê o pydantic_code
+    # armazenado e o compila via AST allowlist.
+    fake = FakeSupabase(
+        master_users=[],
+        projects=[
+            {
+                "id": "p1",
+                "created_by": USER,
+                "pydantic_code": "from pydantic import BaseModel\n\nclass Analysis(BaseModel):\n    x: str",
+            }
+        ],
+        project_members=[],
+    )
+    use_supabase(monkeypatch, fake)
+    # O handler chama get_supabase pela referência do PRÓPRIO módulo da rota; a
+    # guard (require_project_coordinator) chama pela de services.auth. Patch nos
+    # dois para o caminho feliz inteiro usar o fake.
+    monkeypatch.setattr(pydantic_routes_mod, "get_supabase", lambda: fake)
+    resp = client.post(
+        "/api/pydantic/recover-fields",
+        json={"project_id": "p1"},
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 200

@@ -15,32 +15,54 @@ import {
   type ChangeType,
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
+import { errorMessage } from "@/lib/utils";
 import crypto from "crypto";
 
-interface ValidateResponse {
+interface RecoverResponse {
   valid: boolean;
   fields: PydanticField[];
   model_name: string | null;
   errors: string[];
 }
 
-export async function validateSchema(code: string): Promise<ValidateResponse> {
-  return fetchFastAPIServer<ValidateResponse>("/api/pydantic/validate", {
-    method: "POST",
-    body: JSON.stringify({ code }),
-  });
+// Repopula os campos a partir do `pydantic_code` ARMAZENADO do projeto (lido no
+// backend via service key, não enviado pelo cliente — logo sem vetor do #163).
+// Usado quando um projeto legado tem código mas o editor visual abre vazio.
+// fetchFastAPIServer (não fetchFastAPI): o endpoint /recover-fields passou a
+// exigir auth de coordenador (#195), então a server action injeta o token JWT.
+export async function recoverFieldsFromStoredCode(
+  projectId: string,
+): Promise<{ fields?: PydanticField[]; error?: string }> {
+  try {
+    const result = await fetchFastAPIServer<RecoverResponse>(
+      "/api/pydantic/recover-fields",
+      { method: "POST", body: JSON.stringify({ project_id: projectId }) },
+    );
+    if (!result.valid) {
+      return {
+        error:
+          result.errors[0] ||
+          "Não foi possível reconstruir os campos a partir do código armazenado.",
+      };
+    }
+    return { fields: result.fields };
+  } catch (e) {
+    return { error: errorMessage(e) || "Erro ao recuperar campos do código" };
+  }
 }
 
 // As actions deste arquivo retornam { error } em vez de lançar: o Next mascara
 // a message de erros lançados em Server Actions em produção (o client recebe
 // mensagem genérica + digest), então a copy pt-BR só chega ao toast pelo
 // retorno. Os helpers de rls-guard continuam lançando — o catch fica na
-// fronteira da action.
-function errorMessage(e: unknown, fallback: string): string {
-  return e instanceof Error ? e.message : fallback;
-}
+// fronteira da action. A extração da message usa `errorMessage` de @/lib/utils
+// (fonte única, compartilhada com o hook de upload); `|| fallback` cobre o caso
+// de `e` não ser Error/string.
 
-export async function saveSchema(
+// Não exportada: usada apenas internamente por saveSchemaFromGUI. A edição
+// manual do código foi descontinuada, então não há Server Action que receba
+// código Pydantic cru do cliente.
+async function saveSchema(
   projectId: string,
   code: string,
   fields: PydanticField[],
@@ -66,7 +88,7 @@ export async function saveSchema(
         "Não foi possível salvar o schema: sem permissão para alterar este projeto.",
     });
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao salvar o schema") };
+    return { error: errorMessage(e) || "Erro ao salvar o schema" };
   }
 
   // is_latest não é flipado para false aqui — staleness é detectada no
@@ -96,7 +118,7 @@ export async function savePrompt(
       { message: "Não foi possível salvar o prompt: sem permissão para alterar este projeto." },
     );
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao salvar o prompt") };
+    return { error: errorMessage(e) || "Erro ao salvar o prompt" };
   }
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/llm/configure`);
@@ -119,16 +141,37 @@ export async function saveSchemaFromGUI(
     getAuthUser(),
   ]);
 
-  // Fetch old fields + current version
+  // Fetch old fields + current version. `pydantic_code` entra no select por
+  // causa da guarda anti-wipe abaixo: o caso legado a proteger tem justamente
+  // `pydantic_fields` vazio mas `pydantic_code` presente, então a guarda
+  // precisa enxergar o código para não deixar passar o wipe.
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      "pydantic_fields, pydantic_code, schema_version_major, schema_version_minor, schema_version_patch",
     )
     .eq("id", projectId)
     .single();
 
   const oldFields = (project?.pydantic_fields as PydanticField[]) || [];
+
+  // Guarda anti-wipe: nunca sobrescrever um schema existente com 0 campos. Sem
+  // isto, abrir um projeto cujo editor visual ficou vazio (ex.: legado com
+  // pydantic_code mas pydantic_fields não carregado) e clicar "Salvar"
+  // regeneraria `class Analysis(BaseModel): pass`, apagando schema + campos em
+  // silêncio. Um schema realmente vazio só é salvável quando já estava vazio.
+  //
+  // A condição testa `pydantic_code` ALÉM de `oldFields` justamente porque o
+  // caso legado documentado acima tem `pydantic_fields` vazio (oldFields === [])
+  // mas `pydantic_code` populado: checar só `oldFields.length > 0` deixaria o
+  // wipe passar exatamente no cenário que a guarda existe para impedir.
+  const hasExistingSchema = oldFields.length > 0 || !!project?.pydantic_code;
+  if (fields.length === 0 && hasExistingSchema) {
+    return {
+      error:
+        "Salvar com 0 campos apagaria o schema atual. Adicione ao menos um campo, ou use 'Recuperar do código' se o editor abriu vazio.",
+    };
+  }
 
   const current = {
     major: project?.schema_version_major ?? 0,
@@ -239,7 +282,7 @@ export async function backfillSchemaVersionHistory(
   try {
     return { stats: await runBackfill(projectId) };
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao reconstruir o histórico de versões") };
+    return { error: errorMessage(e) || "Erro ao reconstruir o histórico de versões" };
   }
 }
 
@@ -621,7 +664,7 @@ export async function publishMajorVersion(
       { message: "Não foi possível publicar a MAJOR: sem permissão para alterar este projeto." },
     );
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao publicar a MAJOR") };
+    return { error: errorMessage(e) || "Erro ao publicar a MAJOR" };
   }
 
   const { error: logErr } = await supabase.from("schema_change_log").insert({
@@ -691,7 +734,7 @@ export async function saveLlmConfig(
         "Não foi possível salvar a configuração do LLM: sem permissão para alterar este projeto.",
     });
   } catch (e) {
-    return { error: errorMessage(e, "Erro ao salvar a configuração do LLM") };
+    return { error: errorMessage(e) || "Erro ao salvar a configuração do LLM" };
   }
   revalidatePath(`/projects/${projectId}/llm/configure`);
   revalidatePath(`/projects/${projectId}/config`);

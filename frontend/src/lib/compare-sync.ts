@@ -4,7 +4,6 @@ import type { createSupabaseServer } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import {
   computeDivergentFieldNames,
-  isFreeTextField,
   resolveCompareStatus,
 } from "@/lib/compare-divergence";
 import {
@@ -157,5 +156,3 @@ export async function syncCompareAssignment(
       .eq("id", assignment.id);
   }
 }
-
-export { isFreeTextField };

@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   computeDivergentFieldNames,
-  isFreeTextField,
   isDocComplete,
   findNextPendingDocIndex,
   resolveCompareStatus,
@@ -19,37 +18,6 @@ function field(overrides: Partial<PydanticField>): PydanticField {
     ...overrides,
   };
 }
-
-describe("isFreeTextField", () => {
-  it("true for type=text", () => {
-    expect(isFreeTextField(field({ type: "text" }))).toBe(true);
-  });
-
-  it("true for type=date", () => {
-    expect(isFreeTextField(field({ type: "date" }))).toBe(true);
-  });
-
-  it("true for type=single without options", () => {
-    expect(isFreeTextField(field({ type: "single", options: null }))).toBe(
-      true,
-    );
-    expect(isFreeTextField(field({ type: "single", options: [] }))).toBe(true);
-  });
-
-  it("false for type=single with options", () => {
-    expect(
-      isFreeTextField(field({ type: "single", options: ["a", "b"] })),
-    ).toBe(false);
-  });
-
-  it("false for type=multi (always has options conceptually)", () => {
-    expect(isFreeTextField(field({ type: "multi", options: ["a"] }))).toBe(
-      false,
-    );
-    // Even multi with empty options is not "free text" for fusion purposes
-    expect(isFreeTextField(field({ type: "multi", options: [] }))).toBe(false);
-  });
-});
 
 describe("computeDivergentFieldNames", () => {
   it("skips fields with target llm_only / human_only / none", () => {
@@ -122,6 +90,50 @@ describe("computeDivergentFieldNames", () => {
     expect(
       computeDivergentFieldNames(fields, responses, equivalencesByField),
     ).toEqual(["a"]);
+  });
+
+  it("single-com-opções: opções diferentes são divergentes sem pares", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["s"]);
+  });
+
+  it("single-com-opções: par fundindo NI ≡ N/A remove a divergência (#247, ponto 5)", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+    ];
+    const equivalencesByField = new Map<string, EquivalencePair[]>([
+      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+    ]);
+    expect(
+      computeDivergentFieldNames(fields, responses, equivalencesByField),
+    ).toEqual([]);
+  });
+
+  it("single-com-opções: par cobrindo só parte das opções deixa divergência", () => {
+    const fields = [
+      field({ name: "s", type: "single", options: ["NI", "N/A", "Sim"] }),
+    ];
+    const responses = [
+      { id: "1", answers: { s: "NI" } },
+      { id: "2", answers: { s: "N/A" } },
+      { id: "3", answers: { s: "Sim" } },
+    ];
+    const equivalencesByField = new Map<string, EquivalencePair[]>([
+      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+    ]);
+    expect(
+      computeDivergentFieldNames(fields, responses, equivalencesByField),
+    ).toEqual(["s"]);
   });
 
   it("multi: differing selections are divergent", () => {

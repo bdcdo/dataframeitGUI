@@ -1,0 +1,41 @@
+# Frontend Next.js 16 (standalone) no Fly.io.
+# Secrets de runtime (CLERK_SECRET_KEY, SUPABASE_SERVICE_ROLE_KEY,
+# CLERK_WEBHOOK_SECRET) sao setadas via `fly secrets set`, nunca aqui.
+# As NEXT_PUBLIC_* ficam em [build.args] porque precisam estar presentes em
+# build time (sao embutidas no bundle do browser) e sao todas publicas por
+# design (anon key e publishable key vao para o cliente de qualquer forma).
+app = "gui-analise-sistematica-frontend"
+primary_region = "gru"
+
+[build]
+  dockerfile = "Dockerfile"
+
+  [build.args]
+    NEXT_PUBLIC_SUPABASE_URL = "https://nryebmwlmxuwvynfuzsv.supabase.co"
+    NEXT_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_nqJGyzUd0ackkC9jSDTo3w_0xjg1hDd"
+    NEXT_PUBLIC_API_URL = "https://gui-analise-sistematica-api.fly.dev"
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_aW5ub2NlbnQtZm94aG91bmQtODguY2xlcmsuYWNjb3VudHMuZGV2JA"
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL = "/auth/login"
+    NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL = "/dashboard"
+
+[deploy]
+  # Rolling (nao bluegreen): com min_machines_running = 1 e always-on, rolling
+  # reinicia a unica maquina no lugar. Tradeoff aceito (#194 A3): blip curto
+  # possivel no deploy, em troca de manter o frontend sempre ligado.
+  strategy = "rolling"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Always-on (#194 A3): como dominio de producao, o frontend nao escala a
+  # zero — evita cold start na primeira request e espelha o backend. auto_stop
+  # = "off" + min = 1 garantem ao menos uma maquina sempre rodando.
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/health"

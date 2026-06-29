@@ -38,4 +38,4 @@ kill_timeout = "5m"
 
 [env]
   PORT = "8000"
-  CORS_ORIGINS = '["https://ac.brunodcdo.com.br", "http://localhost:3000"]'
+  CORS_ORIGINS = '["https://dataframeit.com.br", "https://gui-analise-sistematica-frontend.fly.dev", "https://ac.brunodcdo.com.br", "http://localhost:3000"]'
