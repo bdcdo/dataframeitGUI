@@ -63,6 +63,7 @@ function resp(over: Partial<Resp> & { id: string }): Resp {
   return {
     respondent_type: "humano",
     respondent_name: "Anon",
+    respondent_id: null,
     answer: undefined,
     is_latest: true,
     isFieldStale: false,
@@ -86,6 +87,24 @@ describe("ComparisonPanel — não preencheu este campo (issue #247, ponto 3)", 
       resp({ id: "bia", respondent_name: "Bia", answer: undefined, isFieldStale: true }),
     ]);
     expect(screen.queryByText(/não preencheu este campo/i)).toBeNull();
+  });
+
+  it("não lista LLM que deixou o campo em branco (a issue é sobre humanos)", () => {
+    renderPanel([
+      resp({ id: "robo", respondent_type: "llm", respondent_name: "Robô", answer: undefined }),
+      resp({ id: "ana", respondent_name: "Ana", answer: "2021-05-10" }),
+    ]);
+    expect(screen.queryByText(/não preencheu este campo/i)).toBeNull();
+  });
+
+  it("deduplica o mesmo respondente com duas respostas em branco (respondent_id)", () => {
+    renderPanel([
+      resp({ id: "llm", respondent_type: "llm", respondent_name: "Robô", answer: "2021-05-10" }),
+      resp({ id: "ana1", respondent_id: "ana", respondent_name: "Ana", answer: undefined }),
+      resp({ id: "ana2", respondent_id: "ana", respondent_name: "Ana", answer: undefined }),
+    ]);
+    expect(screen.getByText(/1 respondente não preencheu este campo/i)).toBeTruthy();
+    expect(screen.getByText(/: Ana$/)).toBeTruthy();
   });
 
   it("pluraliza quando dois ou mais deixaram em branco", () => {

@@ -153,6 +153,7 @@ function resp(
     id,
     respondent_type: type,
     respondent_name: name,
+    respondent_id: id,
     answers,
     justifications: null,
     is_latest: true,
