@@ -56,12 +56,43 @@ describe("useDocumentText", () => {
   });
 
   it("destrava loading com sentinela de erro quando a action rejeita", async () => {
-    // Sem .catch o loading derivado ficaria preso para sempre (skeleton infinito).
+    // Sem o ramo de erro o loading derivado ficaria preso para sempre (skeleton infinito).
     mockGet.mockRejectedValue(new Error("falha de transporte"));
     const { result } = renderHook(() => useDocumentText("p1", "d1"));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.text).toBe("(Erro ao carregar o documento)");
+  });
+
+  it("re-tenta ao renavegar: erro não fica memoizado no cache", async () => {
+    // A 1ª busca de d1 falha (blip transitório); ao voltar para d1, o hook deve
+    // re-buscar — o erro vai para `failed` (evictável), não para o `cache`.
+    let d1Calls = 0;
+    mockGet.mockImplementation(async (_p, id) => {
+      if (id === "d1") {
+        d1Calls += 1;
+        if (d1Calls === 1) throw new Error("blip");
+        return { text: "d1-recuperado", title: "d1" };
+      }
+      return { text: `txt-${id}`, title: id };
+    });
+
+    const { result, rerender } = renderHook(
+      ({ id }) => useDocumentText("p1", id),
+      { initialProps: { id: "d1" } },
+    );
+
+    await waitFor(() =>
+      expect(result.current.text).toBe("(Erro ao carregar o documento)"),
+    );
+
+    // Renavega para outro doc e volta — a volta dispara nova tentativa de d1.
+    rerender({ id: "d2" });
+    await waitFor(() => expect(result.current.text).toBe("txt-d2"));
+
+    rerender({ id: "d1" });
+    await waitFor(() => expect(result.current.text).toBe("d1-recuperado"));
+    expect(d1Calls).toBe(2);
   });
 
   it("não busca quando documentId é null", () => {
