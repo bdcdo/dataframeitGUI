@@ -1,30 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { toast } from "sonner";
-import { DocumentReader } from "@/components/coding/DocumentReader";
-import {
-  submitBlindVerdicts,
-  submitFinalVerdicts,
-  type BlindChoice,
-  type FinalChoice,
-} from "@/actions/field-reviews";
-import {
-  ArbitrationDocList,
-  type ArbitrationDocListEntry,
-} from "./ArbitrationDocList";
-import { BlindPhase } from "./BlindPhase";
-import { RevealPhase } from "./RevealPhase";
+import { useMemo, useState } from "react";
+import { usePinnedDoc } from "@/hooks/usePinnedDoc";
+import { useArbitrationDoc } from "@/hooks/useArbitrationDoc";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
+import { type ArbitrationDocListEntry } from "./ArbitrationDocList";
+import { ArbitrationEmptyState } from "./ArbitrationEmptyState";
+import { ArbitrationPageHeader } from "./ArbitrationPageHeader";
+import { ArbitrationPageContent } from "./ArbitrationPageContent";
 
 export interface ArbitrationField {
   fieldReviewId: string;
@@ -58,11 +41,6 @@ export interface ArbitrationPageProps {
   arbitrationBlind: boolean;
 }
 
-function computePhaseForDoc(doc: ArbitrationDoc | undefined): "blind" | "reveal" {
-  if (!doc || doc.fields.length === 0) return "blind";
-  return doc.fields.every((f) => f.blindVerdict !== null) ? "reveal" : "blind";
-}
-
 const STORAGE_KEY_PREFIX = "arbitration:docId:";
 
 export function ArbitrationPage({
@@ -71,16 +49,13 @@ export function ArbitrationPage({
   docs,
   arbitrationBlind,
 }: ArbitrationPageProps) {
-  const { refresh } = useRouter();
   const storageKey = `${STORAGE_KEY_PREFIX}${projectId}`;
-  const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const v = window.sessionStorage.getItem(storageKey);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- restaura o doc do sessionStorage (client-only)
-    if (v) setPinnedDocId(v);
-  }, [storageKey]);
+  const validDocIds = useMemo(() => docs.map((d) => d.docId), [docs]);
+  // Seleção persistida em sessionStorage (restore + limpeza de órfão) encapsulada
+  // em usePinnedDoc — o hook lê via useSyncExternalStore (sem effect de restore).
+  const [pinnedDocId, setPinnedDocId] = usePinnedDoc(storageKey, {
+    validIds: validDocIds,
+  });
 
   const docIndex = useMemo(() => {
     if (docs.length === 0) return 0;
@@ -91,64 +66,27 @@ export function ArbitrationPage({
     return 0;
   }, [docs, pinnedDocId]);
 
-  const [phase, setPhase] = useState<"blind" | "reveal">(() =>
-    computePhaseForDoc(docs[0]),
-  );
   const [listCollapsed, setListCollapsed] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  // Todos os states são keyed por fieldReviewId (UUID único globalmente), nunca
-  // por fieldName — fieldName se repete entre documentos, e chavear por ele
-  // faria uma escolha em "q1" do doc A reaparecer pre-selecionada em "q1" do
-  // doc B. fieldReviewId garante isolamento natural por (doc, campo).
-  const [blindChoices, setBlindChoices] = useState<Record<string, "a" | "b">>(
-    {},
-  );
-  const [finalChoices, setFinalChoices] = useState<
-    Record<string, ArbitrationVerdict>
-  >({});
-  const [suggestions, setSuggestions] = useState<Record<string, string>>({});
-  const [comments, setComments] = useState<Record<string, string>>({});
 
   const fieldMeta = useMemo(
     () => new Map(fields.map((f) => [f.name, f])),
     [fields],
   );
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- recalcula a fase (blind/reveal) ao trocar de documento
-    setPhase(computePhaseForDoc(docs[docIndex]));
-  }, [docIndex, docs]);
-
-  // Pre-popular finalChoices ao entrar na fase reveal: por padrão mantém a
-  // escolha cega — árbitro só precisa intervir se mudar de ideia.
-  useEffect(() => {
-    if (phase !== "reveal") return;
-    const currentDoc = docs[docIndex];
-    if (!currentDoc) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- pré-popula as escolhas finais com o verdict cego ao entrar na fase reveal
-    setFinalChoices((prev) => {
-      const merged = { ...prev };
-      let changed = false;
-      for (const f of currentDoc.fields) {
-        if (merged[f.fieldReviewId] == null && f.blindVerdict != null) {
-          merged[f.fieldReviewId] = f.blindVerdict;
-          changed = true;
-        }
-      }
-      return changed ? merged : prev;
-    });
-  }, [phase, docIndex, docs]);
-
   function handleDocNavigate(newIndex: number) {
     const clamped = Math.max(0, Math.min(newIndex, docs.length - 1));
     const target = docs[clamped];
-    if (target) {
-      setPinnedDocId(target.docId);
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(storageKey, target.docId);
-      }
-    }
+    if (target) setPinnedDocId(target.docId);
   }
+
+  const doc = docs[docIndex];
+  const arb = useArbitrationDoc({
+    doc,
+    docIndex,
+    docsLength: docs.length,
+    projectId,
+    onNavigate: handleDocNavigate,
+  });
 
   const docListEntries: ArbitrationDocListEntry[] = useMemo(
     () =>
@@ -158,225 +96,53 @@ export function ArbitrationPage({
         externalId: d.externalId,
         totalFields: d.fields.length,
         blindDecided: d.fields.filter((f) => f.blindVerdict !== null).length,
-        // Os campos vêm do server com final_verdict=NULL — o que está aqui é só
-        // a decisão local na sessão (ainda não enviada).
+        // finalDecided deriva de effectiveFinalChoices: para o doc atual inclui
+        // o piso do verdict cego (fase reveal); para os demais, só os overrides
+        // já feitos. Os campos vêm do server com final_verdict=NULL.
         finalDecided: d.fields.filter(
-          (f) => finalChoices[f.fieldReviewId] != null,
+          (f) => arb.effectiveFinalChoices[f.fieldReviewId] != null,
         ).length,
       })),
-    [docs, finalChoices],
+    [docs, arb.effectiveFinalChoices],
   );
 
   if (docs.length === 0) {
-    return (
-      <div className="mx-auto max-w-3xl space-y-4 px-6 py-10 text-center">
-        <h1 className="mb-4 text-2xl font-semibold">Arbitragem</h1>
-        <p className="text-muted-foreground">
-          Nenhuma arbitragem pendente. Quando outro pesquisador contestar o LLM
-          em uma codificação atribuída a você, ela aparecerá aqui.
-        </p>
-      </div>
-    );
-  }
-
-  const doc = docs[docIndex];
-  const allBlindChosen = doc.fields.every(
-    (f) => f.blindVerdict !== null || blindChoices[f.fieldReviewId] != null,
-  );
-  const allFinalChosen = doc.fields.every(
-    (f) => finalChoices[f.fieldReviewId] != null,
-  );
-
-  async function handleBlindSubmit() {
-    setSubmitting(true);
-    const choices: BlindChoice[] = doc.fields
-      .filter((f) => f.blindVerdict === null)
-      .map((f) => ({
-        fieldReviewId: f.fieldReviewId,
-        choice: blindChoices[f.fieldReviewId],
-      }));
-    if (choices.length > 0) {
-      const r = await submitBlindVerdicts(projectId, doc.docId, choices);
-      if (!r.success) {
-        setSubmitting(false);
-        toast.error(r.error ?? "Falha ao registrar veredito cego");
-        return;
-      }
-    }
-    // refresh() repuxa o payload com `reveal` populado para esses
-    // campos. O useEffect acima detecta blindVerdict definido e muda phase
-    // para "reveal" automaticamente.
-    refresh();
-    setSubmitting(false);
-  }
-
-  async function handleFinalSubmit() {
-    for (const f of doc.fields) {
-      if (finalChoices[f.fieldReviewId] === "llm") {
-        if (!suggestions[f.fieldReviewId]?.trim()) {
-          toast.error(
-            `Campo "${f.fieldName}": preencha a sugestão de melhoria.`,
-          );
-          return;
-        }
-      }
-    }
-    setSubmitting(true);
-    const payload: FinalChoice[] = doc.fields.map((f) => ({
-      fieldName: f.fieldName,
-      verdict: finalChoices[f.fieldReviewId],
-      questionImprovementSuggestion:
-        finalChoices[f.fieldReviewId] === "llm"
-          ? suggestions[f.fieldReviewId]
-          : undefined,
-      arbitratorComment: comments[f.fieldReviewId] || undefined,
-    }));
-    const r = await submitFinalVerdicts(projectId, doc.docId, payload);
-    setSubmitting(false);
-    if (!r.success) {
-      toast.error(r.error ?? "Falha ao enviar veredito final");
-      return;
-    }
-    toast.success("Arbitragem concluída para este documento.");
-    setBlindChoices({});
-    setFinalChoices({});
-    setSuggestions({});
-    setComments({});
-    if (docIndex < docs.length - 1) {
-      handleDocNavigate(docIndex + 1);
-    } else {
-      refresh();
-    }
+    return <ArbitrationEmptyState />;
   }
 
   return (
     <div className="flex h-[calc(100vh-96px)] flex-col">
-      <div className="flex h-10 shrink-0 items-center justify-between border-b px-4 text-sm">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium">Arbitragem humano vs LLM</span>
-          <Badge variant={phase === "blind" ? "default" : "secondary"}>
-            {phase === "blind" ? "Cega" : "Revelação"}
-          </Badge>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Badge variant="secondary" className="text-xs">
-            {docs.length} doc{docs.length === 1 ? "" : "s"}
-          </Badge>
-          <div className="flex items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              onClick={() => handleDocNavigate(docIndex - 1)}
-              disabled={docIndex === 0}
-              title="Documento anterior"
-            >
-              <ChevronLeft className="size-4" />
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              {docIndex + 1}/{docs.length}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              onClick={() => handleDocNavigate(docIndex + 1)}
-              disabled={docIndex === docs.length - 1}
-              title="Próximo documento"
-            >
-              <ChevronRight className="size-4" />
-            </Button>
-          </div>
-          {phase === "reveal" ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPhase("blind")}
-              title="Voltar à fase cega (sua decisão fica registrada)"
-            >
-              Voltar à cega
-            </Button>
-          ) : null}
-          {phase === "blind" ? (
-            <Button
-              size="sm"
-              onClick={handleBlindSubmit}
-              disabled={!allBlindChosen || submitting}
-            >
-              {submitting ? "Salvando…" : "Avançar para revelação"}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              onClick={handleFinalSubmit}
-              disabled={!allFinalChosen || submitting}
-            >
-              {submitting ? "Enviando…" : "Enviar arbitragem"}
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-1 overflow-hidden">
-        <ArbitrationDocList
-          docs={docListEntries}
-          currentIndex={docIndex}
-          onSelect={handleDocNavigate}
-          collapsed={listCollapsed}
-          onToggle={() => setListCollapsed((v) => !v)}
-        />
-        <ResizablePanelGroup className="flex-1">
-          <ResizablePanel defaultSize={50} minSize={25}>
-            <DocumentReader text={doc.text} />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={50} minSize={25}>
-            <div className="flex h-full flex-col">
-              <div className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
-                {phase === "blind"
-                  ? "Fase 1 (cega): escolha sem ver a justificativa do LLM."
-                  : "Fase 2: agora você vê a justificativa do LLM. Pode manter ou mudar sua escolha."}
-              </div>
-              <div className="flex-1 overflow-y-auto px-4 py-3">
-                {phase === "blind" ? (
-                  <BlindPhase
-                    fields={doc.fields}
-                    fieldMeta={fieldMeta}
-                    choices={blindChoices}
-                    onChoose={(fieldReviewId, choice) =>
-                      setBlindChoices((c) => ({
-                        ...c,
-                        [fieldReviewId]: choice,
-                      }))
-                    }
-                  />
-                ) : (
-                  <RevealPhase
-                    fields={doc.fields}
-                    fieldMeta={fieldMeta}
-                    arbitrationBlind={arbitrationBlind}
-                    finalChoices={finalChoices}
-                    suggestions={suggestions}
-                    comments={comments}
-                    onChooseFinal={(fieldReviewId, verdict) =>
-                      setFinalChoices((c) => ({
-                        ...c,
-                        [fieldReviewId]: verdict,
-                      }))
-                    }
-                    onSuggestion={(fieldReviewId, v) =>
-                      setSuggestions((s) => ({ ...s, [fieldReviewId]: v }))
-                    }
-                    onComment={(fieldReviewId, v) =>
-                      setComments((s) => ({ ...s, [fieldReviewId]: v }))
-                    }
-                  />
-                )}
-              </div>
-            </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
+      <ArbitrationPageHeader
+        phase={arb.phase}
+        docIndex={docIndex}
+        docsLength={docs.length}
+        submitting={arb.submitting}
+        allBlindChosen={arb.allBlindChosen}
+        allFinalChosen={arb.allFinalChosen}
+        onNavigate={handleDocNavigate}
+        onBackToBlind={arb.onBackToBlind}
+        onBlindSubmit={arb.handleBlindSubmit}
+        onFinalSubmit={arb.handleFinalSubmit}
+      />
+      <ArbitrationPageContent
+        doc={doc}
+        fieldMeta={fieldMeta}
+        phase={arb.phase}
+        arbitrationBlind={arbitrationBlind}
+        docListEntries={docListEntries}
+        docIndex={docIndex}
+        listCollapsed={listCollapsed}
+        onSelectDoc={handleDocNavigate}
+        onToggleList={() => setListCollapsed((v) => !v)}
+        blindChoices={arb.blindChoices}
+        finalChoices={arb.effectiveFinalChoices}
+        suggestions={arb.suggestions}
+        comments={arb.comments}
+        onChooseBlind={arb.onChooseBlind}
+        onChooseFinal={arb.onChooseFinal}
+        onSuggestion={arb.onSuggestion}
+        onComment={arb.onComment}
+      />
     </div>
   );
 }
