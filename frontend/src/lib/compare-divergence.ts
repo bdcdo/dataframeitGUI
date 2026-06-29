@@ -3,16 +3,6 @@ import { isFieldVisible } from "@/lib/conditional";
 import { buildResponseGroupKeys, type EquivalencePair } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
-// A field is free-text when there is no fixed option set —
-// equivalence makes sense only here. Multi/single-with-options have
-// canonical answer keys already.
-export function isFreeTextField(field: PydanticField): boolean {
-  if (field.type === "text" || field.type === "date") return true;
-  if (field.type === "single" && (!field.options || field.options.length === 0))
-    return true;
-  return false;
-}
-
 interface ResponseLike {
   id: string;
   answers: Record<string, unknown> | null | undefined;

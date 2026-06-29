@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   computeDivergentFieldNames,
-  isFreeTextField,
   isDocComplete,
   findNextPendingDocIndex,
   resolveCompareStatus,
@@ -19,37 +18,6 @@ function field(overrides: Partial<PydanticField>): PydanticField {
     ...overrides,
   };
 }
-
-describe("isFreeTextField", () => {
-  it("true for type=text", () => {
-    expect(isFreeTextField(field({ type: "text" }))).toBe(true);
-  });
-
-  it("true for type=date", () => {
-    expect(isFreeTextField(field({ type: "date" }))).toBe(true);
-  });
-
-  it("true for type=single without options", () => {
-    expect(isFreeTextField(field({ type: "single", options: null }))).toBe(
-      true,
-    );
-    expect(isFreeTextField(field({ type: "single", options: [] }))).toBe(true);
-  });
-
-  it("false for type=single with options", () => {
-    expect(
-      isFreeTextField(field({ type: "single", options: ["a", "b"] })),
-    ).toBe(false);
-  });
-
-  it("false for type=multi (always has options conceptually)", () => {
-    expect(isFreeTextField(field({ type: "multi", options: ["a"] }))).toBe(
-      false,
-    );
-    // Even multi with empty options is not "free text" for fusion purposes
-    expect(isFreeTextField(field({ type: "multi", options: [] }))).toBe(false);
-  });
-});
 
 describe("computeDivergentFieldNames", () => {
   it("skips fields with target llm_only / human_only / none", () => {
