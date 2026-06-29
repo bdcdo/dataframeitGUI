@@ -71,30 +71,69 @@ export function isFieldVisible(
   return evaluateCondition(field.condition, answers);
 }
 
-// Zera as respostas de campos condicionais que não estão mais visíveis. Aplica
-// ponto-fixo: limpar uma condicional pode esconder outra que dependia dela. Não
-// muta a entrada — clona apenas na primeira mudança real (copy-on-write) e
-// retorna o MESMO objeto quando nada muda, preservando a identidade referencial
-// que o React usa para evitar re-renders.
-export function clearHiddenConditionalAnswers(
+// Núcleo compartilhado: nomes de campos condicionais que estão ocultos E têm
+// valor não-vazio, calculados em ponto-fixo (limpar uma condicional pode
+// esconder outra que dependia dela). Trabalha sobre uma view copy-on-write
+// (clona só na primeira limpeza), marcando cada órfão como `null` para
+// reavaliar a visibilidade em cascata — `null` e chave ausente são
+// equivalentes para `isFieldVisible`, então o resultado independe de a fronteira
+// querer zerar ou omitir. Cada campo é zerado no máximo uma vez (um valor já
+// `null` falha o guard), o que garante terminação em ≤N passes. Não muta a
+// entrada.
+function hiddenConditionalNames(
   fields: PydanticField[],
   answers: Record<string, unknown>,
-): Record<string, unknown> {
-  let next = answers;
+): Set<string> {
+  const hidden = new Set<string>();
+  let view = answers;
   let changed = true;
   while (changed) {
     changed = false;
     for (const f of fields) {
       if (!f.condition) continue;
-      if (isFieldVisible(f, next)) continue;
-      const v = next[f.name];
+      if (hidden.has(f.name)) continue;
+      if (isFieldVisible(f, view)) continue;
+      const v = view[f.name];
       if (v !== undefined && v !== null && v !== "") {
-        if (next === answers) next = { ...answers };
-        next[f.name] = null;
+        if (view === answers) view = { ...answers };
+        view[f.name] = null;
+        hidden.add(f.name);
         changed = true;
       }
     }
   }
+  return hidden;
+}
+
+// Cliente (estado vivo de codificação): zera as respostas de condicionais
+// ocultas para `null`. Retorna o MESMO objeto quando nada muda, preservando a
+// identidade referencial que o React usa para evitar re-renders.
+export function clearHiddenConditionalAnswers(
+  fields: PydanticField[],
+  answers: Record<string, unknown>,
+): Record<string, unknown> {
+  const hidden = hiddenConditionalNames(fields, answers);
+  if (hidden.size === 0) return answers;
+  const next = { ...answers };
+  for (const name of hidden) next[name] = null;
+  return next;
+}
+
+// Fronteira (leitura/escrita de respostas persistidas): OMITE as chaves de
+// condicionais ocultas — mesma semântica de `delete` que o `saveResponse` usa.
+// Centraliza a invariante "respostas não contêm valor de condicional oculta"
+// numa primitiva só, aplicada tanto no clean de leitura quanto na sanitização
+// de escrita (ver #252). Avaliar visibilidade sobre o conjunto COMPLETO de
+// campos (não filtrado por `target`), pois uma condição pode referenciar
+// qualquer campo. Retorna o MESMO objeto quando nada muda.
+export function dropHiddenConditionals(
+  fields: PydanticField[],
+  answers: Record<string, unknown>,
+): Record<string, unknown> {
+  const hidden = hiddenConditionalNames(fields, answers);
+  if (hidden.size === 0) return answers;
+  const next = { ...answers };
+  for (const name of hidden) delete next[name];
   return next;
 }
 

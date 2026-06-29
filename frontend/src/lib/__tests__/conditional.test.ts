@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { clearHiddenConditionalAnswers } from "@/lib/conditional";
+import {
+  clearHiddenConditionalAnswers,
+  dropHiddenConditionals,
+} from "@/lib/conditional";
 import type { PydanticField } from "@/lib/types";
 
 // Helper: monta um PydanticField com defaults mínimos.
@@ -208,5 +211,53 @@ describe("clearHiddenConditionalAnswers", () => {
     const result = clearHiddenConditionalAnswers(fields, { x: "1", y: "2" });
     expect(result.x).toBeNull();
     expect(result.y).toBe("2");
+  });
+});
+
+// Variante de fronteira (leitura/escrita persistida): mesma lógica de ponto-fixo
+// que `clearHiddenConditionalAnswers`, mas OMITE a chave em vez de setá-la `null`
+// — alinhada à sanitização do `saveResponse`. Ver #252.
+describe("dropHiddenConditionals", () => {
+  it("omite (delete) a chave de uma condicional que ficou invisível", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    const result = dropHiddenConditionals(fields, { q1: "não", q2: "a" });
+    expect("q2" in result).toBe(false); // chave ausente, não null
+    expect(result.q1).toBe("não");
+  });
+
+  it("preserva a condicional ainda visível (identidade quando nada muda)", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    const answers = { q1: "sim", q2: "a" };
+    const result = dropHiddenConditionals(fields, answers);
+    expect(result).toBe(answers); // mesma referência
+    expect(result.q2).toBe("a");
+  });
+
+  it("aplica ponto-fixo em cascata, omitindo as chaves", () => {
+    const fields = [
+      field({ name: "a" }),
+      field({ name: "b", condition: { field: "a", equals: "sim" } }),
+      field({ name: "c", condition: { field: "b", equals: "sim" } }),
+    ];
+    const result = dropHiddenConditionals(fields, { a: "não", b: "sim", c: "x" });
+    expect("b" in result).toBe(false);
+    expect("c" in result).toBe(false);
+    expect(result.a).toBe("não");
+  });
+
+  it("não muta o objeto de entrada", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    const answers = { q1: "não", q2: "a" };
+    dropHiddenConditionals(fields, answers);
+    expect(answers.q2).toBe("a"); // entrada intacta
   });
 });
