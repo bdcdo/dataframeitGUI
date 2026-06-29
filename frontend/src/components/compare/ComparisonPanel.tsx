@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup, type FieldEquivalencePair } from "./AgreementGroup";
 import { MultiOptionReview } from "./MultiOptionReview";
+import { CustomAnswerInput } from "./CustomAnswerInput";
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -238,6 +239,16 @@ export function ComparisonPanel({
                 >
                   [S] Pular
                 </Button>
+                {/*
+                  "Nenhuma correta" + input de resposta nova (issue #247, ponto
+                  4). Keyed por doc|campo: navegar remonta e reseta o estado
+                  interno (aberto/valor) sem reset-em-effect — react-doctor só
+                  aceita key={identidade} para reset-on-prop-change.
+                */}
+                <CustomAnswerInput
+                  key={`${documentId}|${fieldName}`}
+                  onSubmit={(value) => onVerdict(value)}
+                />
               </div>
             )}
 
