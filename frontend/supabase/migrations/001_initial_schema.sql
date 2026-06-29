@@ -61,9 +61,9 @@ CREATE POLICY "Coordinators manage members" ON project_members FOR ALL USING (
     SELECT project_id FROM project_members WHERE user_id = auth.uid() AND role = 'coordenador'
   )
 );
-CREATE POLICY "Creator inserts members" ON project_members FOR INSERT WITH CHECK (
-  project_id IN (SELECT id FROM projects WHERE created_by = auth.uid())
-);
+-- A policy "Creator inserts members" é criada na migration 002 (e redefinida
+-- depois em clerk_uid_rls/master_users), não aqui: duplicá-la nesta migration
+-- quebrava o boot do zero com SQLSTATE 42710.
 
 -- projects RLS (após project_members existir)
 ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
