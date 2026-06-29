@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { useDocumentText } from "@/hooks/useDocumentText";
 
 interface DocumentPreviewProps {
@@ -19,7 +20,10 @@ export function DocumentPreview({
   onClose,
   projectId,
 }: DocumentPreviewProps) {
-  const { text, loading } = useDocumentText(projectId, open ? documentId : null);
+  const { text, loading, error, retry } = useDocumentText(
+    projectId,
+    open ? documentId : null,
+  );
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -32,6 +36,13 @@ export function DocumentPreview({
             <div className="h-4 w-full animate-pulse rounded bg-muted" />
             <div className="h-4 w-3/4 animate-pulse rounded bg-muted" />
             <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
+          </div>
+        ) : error ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">{text}</p>
+            <Button variant="outline" size="sm" onClick={retry}>
+              Tentar novamente
+            </Button>
           </div>
         ) : (
           <div className="whitespace-pre-wrap text-sm leading-relaxed">

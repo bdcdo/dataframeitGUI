@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { renderHook, waitFor, cleanup } from "@testing-library/react";
+import { renderHook, waitFor, cleanup, act } from "@testing-library/react";
 import { useDocumentText } from "../useDocumentText";
 import { getDocumentText } from "@/actions/documents";
 
@@ -62,6 +62,42 @@ describe("useDocumentText", () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.text).toBe("(Erro ao carregar o documento)");
+  });
+
+  it("expõe error e retry(): re-tenta sem renavegar e mostra skeleton em voo", async () => {
+    // Fica parado no doc que falhou: retry() limpa a marca de falha (destrava o
+    // loading) e re-busca imperativamente; o sucesso passa a exibir o texto.
+    let d1Calls = 0;
+    let resolveSecond: ((v: { text: string; title: string }) => void) | null =
+      null;
+    mockGet.mockImplementation(() => {
+      d1Calls += 1;
+      if (d1Calls === 1) return Promise.reject(new Error("blip"));
+      return new Promise((resolve) => {
+        resolveSecond = resolve;
+      });
+    });
+
+    const { result } = renderHook(() => useDocumentText("p1", "d1"));
+
+    await waitFor(() => expect(result.current.error).toBe(true));
+    expect(result.current.text).toBe("(Erro ao carregar o documento)");
+    expect(result.current.loading).toBe(false);
+
+    // Re-tentativa manual: skeleton volta enquanto a 2ª busca está em voo.
+    act(() => {
+      result.current.retry();
+    });
+    await waitFor(() => expect(result.current.loading).toBe(true));
+    expect(result.current.error).toBe(false);
+
+    // Resolve a 2ª busca → texto recuperado, sem erro.
+    await act(async () => {
+      resolveSecond!({ text: "d1-recuperado", title: "d1" });
+    });
+    await waitFor(() => expect(result.current.text).toBe("d1-recuperado"));
+    expect(result.current.error).toBe(false);
+    expect(d1Calls).toBe(2);
   });
 
   it("re-tenta ao renavegar: erro não fica memoizado no cache", async () => {
