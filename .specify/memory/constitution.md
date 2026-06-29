@@ -1,6 +1,13 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.0.0 → 1.0.1 (emenda PATCH 2026-06-29)
+Modified principles: n/a — sem mudança de princípio
+Modified sections:
+  - Restrições Adicionais → Stack fixada: removido `recharts` (dep órfã, sem
+    import em src/; componentes VerdictChart/DailyPaceChart já removidos). PR #336.
+  - Princípio II (Velocidade) → exemplo de lazy-load: removido `recharts` da lista.
+Histórico anterior (ratificação 1.0.0):
 Version change: template (sem versão) → 1.0.0 (ratificação inicial)
 Modified principles: n/a (primeira adoção)
 Added sections:
@@ -48,7 +55,7 @@ Regras de implementação não negociáveis (já praticadas no repositório, ago
 - `count()` do Supabase em vez de buscar registros só para contar.
 - Queries independentes paralelizadas com `Promise.all()`; nunca N+1 (UPDATE/INSERT em loop).
 - Fetch em 2 fases para campos pesados (metadados primeiro, `text` depois, só do necessário).
-- Lazy-load de dependências pesadas (recharts, Monaco, markdown renderers) via `dynamic()`.
+- Lazy-load de dependências pesadas (Monaco, markdown renderers) via `dynamic()`.
 - `'use client'` o mais baixo possível na árvore de componentes.
 
 **Racional**: a experiência do usuário degrada de forma desproporcional com latência; a plataforma hoje está aquém do aceitável e a recuperação de velocidade é prioridade explícita do projeto.
@@ -105,7 +112,7 @@ A arquitetura atual é suficiente e MUST ser defendida contra proliferação de 
 
 ## Restrições Adicionais
 
-- **Stack fixada**: Next.js (App Router), React, TypeScript, Tailwind CSS, Clerk (auth), Supabase (Postgres + RLS, free tier), FastAPI (Python), dataframeit, Monaco, recharts, sonner, papaparse. A *escolha* de cada tecnologia é constitucional — trocar ou remover um item exige emenda. As *versões* exatas em vigor (Next 16, React 19, TS 5.7, Tailwind v4 etc.) vivem na tabela Tech Stack do `CLAUDE.md`: bumps de versão são detalhe operacional e não exigem emenda, desde que não alterem a arquitetura descrita aqui.
+- **Stack fixada**: Next.js (App Router), React, TypeScript, Tailwind CSS, Clerk (auth), Supabase (Postgres + RLS, free tier), FastAPI (Python), dataframeit, Monaco, sonner, papaparse. A *escolha* de cada tecnologia é constitucional — trocar ou remover um item exige emenda. As *versões* exatas em vigor (Next 16, React 19, TS 5.7, Tailwind v4 etc.) vivem na tabela Tech Stack do `CLAUDE.md`: bumps de versão são detalhe operacional e não exigem emenda, desde que não alterem a arquitetura descrita aqui.
 - **Língua**: pt-BR para toda a UI (labels, mensagens, toasts) e comunicação com usuários; inglês para código (variáveis, funções, types, nomes de arquivo).
 - **Desktop-first explícito**: o alvo é desktop com mouse. Priorizar densidade de informação e alvos de clique para mouse — não aplicar mínimos de toque (44px). Não há obrigação de esforço contínuo de responsividade mobile/tablet, e features não devem ser limitadas para acomodar viewports pequenos; em contrapartida, não quebrar gratuitamente o uso em janelas menores de desktop.
 - **Brand color**: teal `#2F6868` = `oklch(0.44 0.08 185)`.
@@ -132,4 +139,4 @@ Esta constituição prevalece sobre práticas ad hoc e instruções informais; e
 
 O `CLAUDE.md` na raiz do repositório permanece como guia operacional de desenvolvimento (comandos, convenções de detalhe, performance); ele MUST manter-se consistente com esta constituição.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-10 | **Last Amended**: 2026-06-10
+**Version**: 1.0.1 | **Ratified**: 2026-06-10 | **Last Amended**: 2026-06-29

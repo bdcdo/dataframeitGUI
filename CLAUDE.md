@@ -30,7 +30,6 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
 | Backend LLM | FastAPI (Python) | latest |
 | LLM | `dataframeit` | 0.5.3 |
 | Editor | Monaco Editor (`@monaco-editor/react`) | latest |
-| Graficos | `recharts` | latest |
 | Toast | `sonner` | latest |
 | CSV | `papaparse` | latest |
 | Brand color | teal #2F6868 = `oklch(0.44 0.08 185)` | - |
@@ -166,9 +165,8 @@ Seguir estas regras para evitar regressoes de performance:
 - **Fetch em 2 fases para dados pesados** — primeiro buscar metadados leves para filtrar, depois buscar campos pesados (ex: `text`) so do que precisa
 
 ### Componentes pesados
-- **Lazy-load recharts** via `dynamic(() => import("recharts").then(...), { ssr: false })` — nunca importar recharts diretamente. Ver `VerdictChart.tsx` e `DailyPaceChart.tsx` como referencia
 - **Lazy-load Monaco** via `dynamic()` — ja feito corretamente
-- **Nao adicionar dependencias pesadas** sem lazy-load (recharts, monaco, markdown renderers)
+- **Nao adicionar dependencias pesadas** sem lazy-load (monaco, markdown renderers)
 - **Manter `'use client'` o mais baixo possivel** na arvore de componentes
 
 ### Supabase indexes
