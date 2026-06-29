@@ -154,6 +154,11 @@ export async function unmarkEquivalencePair(
     .eq("project_id", projectId)
     .maybeSingle();
 
+  // Ordem obrigatória, não awaits independentes: o select acima captura
+  // document_id/field_name ANTES de a linha ser apagada. Paralelizar com o
+  // delete criaria uma race read-after-delete (row viria null e a limpeza de
+  // reviews abaixo não rodaria).
+  // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
   const { error } = await supabase
     .from("response_equivalences")
     .delete()

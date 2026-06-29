@@ -200,6 +200,11 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
   }
 
   const names = new Set<string>();
+  // Índice incremental name -> primeiro campo com esse nome já visto. Substitui
+  // o `earlier.find()` O(n²) na checagem de condition por um lookup O(1).
+  // Preserva a primeira ocorrência (só insere se ausente) para casar com a
+  // semântica de `earlier.find` em schemas com nomes duplicados.
+  const fieldByName = new Map<string, PydanticField>();
   for (let i = 0; i < fields.length; i++) {
     const f = fields[i];
     const label = `Campo ${i + 1}`;
@@ -217,6 +222,7 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
       errors.push(`${label}: nome "${f.name}" duplicado`);
     }
     names.add(f.name);
+    if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
 
     if (!f.description.trim()) {
       errors.push(`${label}: descrição não pode ser vazia`);
@@ -269,8 +275,12 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
       } else if (trigger === f.name) {
         errors.push(`${label}: condição não pode referenciar o próprio campo`);
       } else {
-        const earlier = fields.slice(0, i);
-        const triggerField = earlier.find((g) => g.name === trigger);
+        const triggerField = fieldByName.get(trigger);
+        // Set das opções do gatilho construído uma vez e reusado nos dois
+        // branches (equals/not_equals e in/not_in) para lookups O(1).
+        const triggerOptionSet = triggerField?.options
+          ? new Set(triggerField.options)
+          : null;
         if (!triggerField) {
           errors.push(
             `${label}: campo gatilho "${trigger}" inexistente ou posterior ao campo condicional`,
@@ -281,9 +291,9 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
               ? f.condition.equals
               : f.condition.not_equals;
           if (
-            triggerField.options &&
+            triggerOptionSet &&
             typeof val === "string" &&
-            !triggerField.options.includes(val)
+            !triggerOptionSet.has(val)
           ) {
             errors.push(
               `${label}: valor "${val}" não está nas opções de "${trigger}"`,
@@ -294,8 +304,7 @@ export function validateGUIFields(fields: PydanticField[]): string[] {
             "in" in f.condition ? f.condition.in : f.condition.not_in;
           if (!Array.isArray(vals) || vals.length === 0) {
             errors.push(`${label}: lista de valores da condição vazia`);
-          } else if (triggerField.options) {
-            const triggerOptionSet = new Set(triggerField.options);
+          } else if (triggerOptionSet) {
             for (const v of vals) {
               if (typeof v === "string" && !triggerOptionSet.has(v)) {
                 errors.push(
@@ -334,15 +343,24 @@ export function findConditionConflicts(
     const c = f.condition;
     if (!c || c.field !== triggerFieldName) continue;
 
+    // Os `.includes` abaixo checam UM valor (`removedOption`) contra a lista de
+    // opções da própria condition do campo, uma vez por iteração — não há scan
+    // repetido de array estável, então um Set não acelera nada (FP da regra).
     let conditionKey: ConditionConflict["conditionKey"] | null = null;
     if ("equals" in c && c.equals === removedOption) conditionKey = "equals";
     else if ("not_equals" in c && c.not_equals === removedOption)
       conditionKey = "not_equals";
-    else if ("in" in c && Array.isArray(c.in) && c.in.includes(removedOption))
+    else if (
+      "in" in c &&
+      Array.isArray(c.in) &&
+      // react-doctor-disable-next-line react-doctor/js-set-map-lookups
+      c.in.includes(removedOption)
+    )
       conditionKey = "in";
     else if (
       "not_in" in c &&
       Array.isArray(c.not_in) &&
+      // react-doctor-disable-next-line react-doctor/js-set-map-lookups
       c.not_in.includes(removedOption)
     )
       conditionKey = "not_in";

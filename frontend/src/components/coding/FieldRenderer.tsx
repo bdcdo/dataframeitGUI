@@ -53,6 +53,11 @@ function DateFieldRenderer({
   const [parts, setParts] = useState<DateParts>(() =>
     parseDatePartsForUI(externalForUI),
   );
+  // `lastExternal` É lido no render (na comparação `externalForUI !== lastExternal`
+  // abaixo) — é o padrão oficial React de "previous render", não state só-de-handler.
+  // A regra classifica errado; useRef quebraria o padrão (set-durante-render
+  // precisa de useState para reagendar o render).
+  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers
   const [lastExternal, setLastExternal] = useState(externalForUI);
 
   // React's official "Storing information from previous renders" pattern

@@ -42,6 +42,11 @@ export function RunLlmButton({
       const poll = async () => {
         if (cancelledRef.current) return;
         try {
+          // O guard de cancelamento abaixo roda DEPOIS do await de propósito: o
+          // usuário pode cancelar enquanto a request de status está em voo, então
+          // re-checamos `cancelledRef` após a rede retornar. Mover o await para
+          // baixo do guard anularia essa semântica de cancelamento.
+          // react-doctor-disable-next-line react-doctor/async-defer-await
           const status = await fetchFastAPI<{
             status: string;
             errors: string[];
