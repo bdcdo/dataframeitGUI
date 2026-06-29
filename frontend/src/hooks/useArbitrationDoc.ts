@@ -133,7 +133,7 @@ export function useArbitrationDoc({
     if (doc) setBlindOverrideDocId(doc.docId);
   }, [doc]);
 
-  async function handleBlindSubmit() {
+  const handleBlindSubmit = useCallback(async () => {
     if (!doc) return;
     setSubmitting(true);
     const choices: BlindChoice[] = doc.fields
@@ -156,9 +156,9 @@ export function useArbitrationDoc({
     // refresh() repuxa o payload com `reveal` populado; a fase deriva sozinha.
     refresh();
     setSubmitting(false);
-  }
+  }, [doc, blindChoices, projectId, refresh]);
 
-  async function handleFinalSubmit() {
+  const handleFinalSubmit = useCallback(async () => {
     if (!doc) return;
     for (const f of doc.fields) {
       if (effectiveFinalChoices[f.fieldReviewId] === "llm") {
@@ -197,7 +197,17 @@ export function useArbitrationDoc({
     } else {
       refresh();
     }
-  }
+  }, [
+    doc,
+    effectiveFinalChoices,
+    suggestions,
+    comments,
+    projectId,
+    docIndex,
+    docsLength,
+    onNavigate,
+    refresh,
+  ]);
 
   return {
     phase,
