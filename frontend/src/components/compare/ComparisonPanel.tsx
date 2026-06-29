@@ -244,9 +244,23 @@ export function ComparisonPanel({
                   4). Keyed por doc|campo: navegar remonta e reseta o estado
                   interno (aberto/valor) sem reset-em-effect — react-doctor só
                   aceita key={identidade} para reset-on-prop-change.
+
+                  currentValue: no bloco !isMulti, um veredito de texto sem
+                  chosenResponseId que não seja marcador especial é, por
+                  construção, uma resposta custom (voto sempre carrega
+                  chosenResponseId). Passá-lo destaca o botão e re-semeia o
+                  input ao revisitar o campo — paridade com Ambíguo/Pular.
                 */}
                 <CustomAnswerInput
                   key={`${documentId}|${fieldName}`}
+                  currentValue={
+                    existingVerdict &&
+                    existingVerdict.verdict !== "ambiguo" &&
+                    existingVerdict.verdict !== "pular" &&
+                    !existingVerdict.chosenResponseId
+                      ? existingVerdict.verdict
+                      : null
+                  }
                   onSubmit={(value) => onVerdict(value)}
                 />
               </div>

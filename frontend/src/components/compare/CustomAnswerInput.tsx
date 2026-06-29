@@ -10,6 +10,10 @@ interface CustomAnswerInputProps {
   // O pai grava como verdict SEM chosenResponseId — nenhuma resposta existente
   // é o gabarito.
   onSubmit: (value: string) => void;
+  // Veredito de "resposta nova" já salvo para este doc|campo (ou null). Quando
+  // presente, o botão fica destacado e o input reabre pré-preenchido — paridade
+  // com Ambíguo/Pular, que refletem o veredito atual ao revisitar o campo.
+  currentValue?: string | null;
 }
 
 // "Nenhuma correta" (issue #247, ponto 4): quando todas as respostas dos
@@ -18,17 +22,25 @@ interface CustomAnswerInputProps {
 //
 // O estado (aberto + valor) vive aqui, e o pai remonta este componente via
 // key={doc|campo}: navegar reseta o estado sozinho, sem reset-em-effect — o
-// react-doctor só aceita key={identidade} para reset-on-prop-change.
-export function CustomAnswerInput({ onSubmit }: CustomAnswerInputProps) {
+// react-doctor só aceita key={identidade} para reset-on-prop-change. A
+// remontagem também re-semeia `value` a partir de `currentValue`, então o
+// veredito salvo reaparece ao voltar ao campo sem precisar de useEffect.
+export function CustomAnswerInput({
+  onSubmit,
+  currentValue = null,
+}: CustomAnswerInputProps) {
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(currentValue ?? "");
+  const isActive = currentValue != null;
 
   const submit = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
     onSubmit(trimmed);
     setOpen(false);
-    setValue("");
+    // Mantém o valor confirmado (não limpa): reabrir o input no mesmo campo
+    // mostra a resposta recém-salva, consistente com o destaque do botão.
+    setValue(trimmed);
   };
 
   return (
@@ -36,7 +48,7 @@ export function CustomAnswerInput({ onSubmit }: CustomAnswerInputProps) {
       <Button
         variant="outline"
         size="sm"
-        className={cn(open && "border-brand bg-brand/10 text-brand")}
+        className={cn((open || isActive) && "border-brand bg-brand/10 text-brand")}
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
       >

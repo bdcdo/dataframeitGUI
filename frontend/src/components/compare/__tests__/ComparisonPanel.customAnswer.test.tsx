@@ -116,4 +116,54 @@ describe("ComparisonPanel — resposta nova (issue #247, ponto 4)", () => {
     await user.type(input, "8 meses{Enter}");
     expect(onVerdict).toHaveBeenCalledWith("8 meses");
   });
+
+  it("ao revisitar um campo com resposta nova salva, o botão fica destacado e reabre pré-preenchido", async () => {
+    const user = userEvent.setup();
+    // Veredito custom: texto livre SEM chosenResponseId e que não é marcador.
+    renderPanel({
+      existingVerdict: {
+        verdict: "sem data no parecer",
+        chosenResponseId: null,
+        comment: null,
+      },
+    });
+
+    const button = screen.getByRole("button", { name: /nenhuma correta/i });
+    // Destaque de estado ativo, paridade com Ambíguo/Pular.
+    expect(button.className).toContain("border-brand");
+
+    // Reabre já preenchido com o valor salvo (sem precisar redigitar).
+    await user.click(button);
+    const input = screen.getByPlaceholderText(
+      "Resposta correta…",
+    ) as HTMLInputElement;
+    expect(input.value).toBe("sem data no parecer");
+  });
+
+  it("não destaca o botão quando o veredito é um voto (tem chosenResponseId)", () => {
+    // Voto numa resposta existente: verdict de texto, mas com chosenResponseId.
+    renderPanel({
+      existingVerdict: {
+        verdict: "2021-05-10",
+        chosenResponseId: "r-llm",
+        comment: null,
+      },
+    });
+    expect(
+      screen.getByRole("button", { name: /nenhuma correta/i }).className,
+    ).not.toContain("border-brand");
+  });
+
+  it("não destaca o botão quando o veredito é um marcador especial (ambiguo)", () => {
+    renderPanel({
+      existingVerdict: {
+        verdict: "ambiguo",
+        chosenResponseId: null,
+        comment: null,
+      },
+    });
+    expect(
+      screen.getByRole("button", { name: /nenhuma correta/i }).className,
+    ).not.toContain("border-brand");
+  });
 });
