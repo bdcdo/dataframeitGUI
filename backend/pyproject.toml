@@ -14,7 +14,19 @@ dependencies = [
     "langchain-google-genai>=4.2.5",
     "langchain-openai>=1.3.3",
     "langchain-anthropic>=1.4.7",
+    "pyjwt[crypto]>=2.9",
 ]
+
+# Este projeto é um app FastAPI executado via `uvicorn main:app`, não uma lib
+# instalável — não há diretório de pacote para empacotar. Sem isto, `uv sync` /
+# `uv run` falham tentando buildar um wheel. O deploy (Dockerfile) instala as
+# dependências direto via `uv pip install --system`, sem empacotar o app.
+[tool.uv]
+package = false
+# Cooldown de dependencias: aguarda 7 dias antes de resolver versoes recem
+# publicadas, reduzindo a janela de pacotes maliciosos/instaveis (semgrep
+# uv-missing-dependency-cooldown). Requer uv >= 0.9.17.
+exclude-newer = "7 days"
 
 [build-system]
 requires = ["hatchling"]
@@ -42,6 +54,16 @@ ignore = ["E501"]
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
+[tool.ruff.lint.flake8-bugbear]
+# `Depends(...)`/`Query(...)` em defaults de parametro sao o idioma do FastAPI,
+# nao o anti-padrao que o B008 visa — declaram a dependencia na assinatura.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # Grandfathering de complexidade legada (#260): refatorar estas funcoes esta
 # fora do escopo do PR de tooling. Novas funcoes complexas nos demais arquivos
@@ -52,5 +74,7 @@ max-complexity = 10
 
 [dependency-groups]
 dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
     "ruff>=0.15",
 ]

@@ -45,6 +45,8 @@ interface CodingPageProps {
   hasAssignments?: boolean;
   readOnly?: boolean;
   roundFilter?: RoundFilterData;
+  /** Coordenador do projeto? Gate do botão "Rodar LLM" no header (#195). */
+  canRunLlm?: boolean;
 }
 
 export function CodingPage(props: CodingPageProps) {
@@ -67,6 +69,7 @@ function CodingPageInner({
   hasAssignments = false,
   readOnly = false,
   roundFilter,
+  canRunLlm = false,
 }: CodingPageProps) {
   const { get: getParam, set: setParams } = useUrlState();
   const docParam = getParam("doc");
@@ -224,6 +227,7 @@ function CodingPageInner({
           sortMode={sortMode}
           onSortChange={assigned.handleSortChange}
           roundFilter={roundFilter}
+          canRunLlm={canRunLlm}
           doc={
             mode === "assigned" && assigned.currentDoc
               ? {

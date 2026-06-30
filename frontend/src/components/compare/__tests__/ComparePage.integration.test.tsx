@@ -36,6 +36,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/projects/p1/analyze/compare",
 }));
+// A árvore real monta RunCard, que usa useAuth().getToken para anexar o JWT.
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken: vi.fn(async () => "test-token") }),
+}));
 
 import { ComparePage } from "@/components/compare/ComparePage";
 import type { PydanticField } from "@/lib/types";

@@ -35,8 +35,8 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-vi.mock("@/lib/api", () => ({
-  fetchFastAPI: vi.fn(),
+vi.mock("@/lib/api-server", () => ({
+  fetchFastAPIServer: vi.fn(),
 }));
 
 async function loadLlm() {

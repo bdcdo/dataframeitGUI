@@ -264,6 +264,7 @@ export function ComparePage({
           currentProjectVersion={currentProjectVersion}
           projectId={projectId}
           documentId={currentDoc.id}
+          canRunLlm={canManageAnyPair}
         />
       )}
 

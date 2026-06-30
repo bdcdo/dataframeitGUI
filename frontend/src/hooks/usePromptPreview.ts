@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchFastAPI } from "@/lib/api";
+import { useAuth } from "@clerk/nextjs";
+import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
 
 /**
  * Busca o preview do prompt final no backend (`/api/llm/preview-prompt`),
@@ -23,6 +24,7 @@ export function usePromptPreview(
   previewLoading: boolean;
   previewError: string | null;
 } {
+  const { getToken } = useAuth();
   const [previewPrompt, setPreviewPrompt] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -35,6 +37,7 @@ export function usePromptPreview(
       setPreviewError(null);
       setPreviewLoading(true);
       try {
+        const token = await requireSupabaseToken(getToken);
         const res = await fetchFastAPI<{ prompt: string }>(
           "/api/llm/preview-prompt",
           {
@@ -44,6 +47,7 @@ export function usePromptPreview(
               prompt_template: prompt,
             }),
           },
+          token ?? undefined,
         );
         if (!cancelled) setPreviewPrompt(res.prompt);
       } catch (e) {
@@ -59,7 +63,7 @@ export function usePromptPreview(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [enabled, prompt, projectDescription]);
+  }, [enabled, prompt, projectDescription, getToken]);
 
   return { previewPrompt, previewLoading, previewError };
 }

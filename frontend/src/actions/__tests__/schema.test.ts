@@ -25,8 +25,8 @@ vi.mock("next/cache", () => ({
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
 }));
-vi.mock("@/lib/api", () => ({
-  fetchFastAPI: fetchMock,
+vi.mock("@/lib/api-server", () => ({
+  fetchFastAPIServer: fetchMock,
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>

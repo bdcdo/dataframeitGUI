@@ -1,14 +1,25 @@
 """Testes do endpoint POST /api/pydantic/recover-fields."""
+
 import pytest
 from fastapi.testclient import TestClient
 
 import routes.pydantic_routes as pr
 from main import app
+from services.auth import AuthUser, require_authenticated_user
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app, raise_server_exceptions=False)
+    # Estes testes focam a LÓGICA do handler (404/200), não a auth (#195, coberta
+    # em test_auth.py). Contorna o gate JWT via dependency_override; o no-op do
+    # require_project_coordinator fica no _patch_supabase.
+    app.dependency_overrides[require_authenticated_user] = lambda: AuthUser(id="u")
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        # pop só o override que ESTE fixture registrou: clear() apagaria também
+        # overrides de outros fixtures no app global compartilhado.
+        app.dependency_overrides.pop(require_authenticated_user, None)
 
 
 class _FakeQuery:
@@ -45,6 +56,11 @@ class _Response:
 
 def _patch_supabase(monkeypatch, response: object) -> None:
     monkeypatch.setattr(pr, "get_supabase", lambda: _FakeSupabase(response))
+    # Auth coberta em test_auth.py; aqui o guard de coordenador é no-op para
+    # isolar a lógica do handler.
+    monkeypatch.setattr(
+        pr, "require_project_coordinator", lambda project_id, user: None
+    )
 
 
 def test_recover_fields_404_quando_projeto_nao_existe(client, monkeypatch):

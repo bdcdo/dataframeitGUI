@@ -8,13 +8,21 @@ injetar código, então não há vetor de RCE. Existe para repopular o editor vi
 quando um projeto legado tem `pydantic_code` mas `pydantic_fields` vazio, e dá a
 `compile_pydantic` um chamador de produção (round-trip da regra (b) do CLAUDE.md).
 
-NOTA: quando a auth JWT de rotas (#195) estiver mergeada, este router deve herdar
-a mesma proteção das demais rotas — hoje o backend confia no boundary de rede,
-igual a `/api/llm/*`.
+Auth (#195): herda a mesma proteção das rotas `/api/llm/*` — exige autenticação
+JWT e, como lê dados de um projeto específico via service key (bypassa RLS),
+restringe ao coordenador do projeto, fechando a exposição anônima do boundary de
+rede.
 """
-from fastapi import APIRouter, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from services.auth import (
+    AuthUser,
+    require_authenticated_user,
+    require_project_coordinator,
+)
 from services.pydantic_compiler import compile_pydantic
 from services.supabase_client import get_supabase
 
@@ -33,7 +41,11 @@ class RecoverResponse(BaseModel):
 
 
 @router.post("/recover-fields", response_model=RecoverResponse)
-async def recover_fields(req: RecoverRequest) -> dict:
+async def recover_fields(
+    req: RecoverRequest,
+    user: AuthUser = Depends(require_authenticated_user),
+) -> dict:
+    await run_in_threadpool(require_project_coordinator, req.project_id, user)
     sb = get_supabase()
     # maybe_single (não single): single() lança APIError quando nenhuma linha
     # casa, o que viraria 500 opaco em vez do 404 abaixo. maybe_single retorna

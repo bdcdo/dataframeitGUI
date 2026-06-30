@@ -31,6 +31,10 @@ vi.mock("@/lib/api", () => ({
   fetchFastAPI: vi.fn(),
 }));
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken: vi.fn(async () => "test-token") }),
+}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));

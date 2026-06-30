@@ -59,6 +59,8 @@ interface CodingHeaderProps {
   roundFilter?: RoundFilterData;
   doc?: DocSection;
   onToggleFullscreen: () => void;
+  /** Coordenador do projeto? Gate do botão "Rodar LLM" (#195). */
+  canRunLlm?: boolean;
 }
 
 export function CodingHeader({
@@ -70,6 +72,7 @@ export function CodingHeader({
   roundFilter,
   doc,
   onToggleFullscreen,
+  canRunLlm = false,
 }: CodingHeaderProps) {
   const showRound = mode === "assigned" && roundFilter !== undefined;
 
@@ -115,6 +118,7 @@ export function CodingHeader({
             <BrowseDocSection
               doc={doc}
               onToggleFullscreen={onToggleFullscreen}
+              canRunLlm={canRunLlm}
             />
           )}
         </>
@@ -261,9 +265,11 @@ function AssignedDocSection({
 function BrowseDocSection({
   doc,
   onToggleFullscreen,
+  canRunLlm,
 }: {
   doc: Extract<DocSection, { variant: "browse" }>;
   onToggleFullscreen: () => void;
+  canRunLlm: boolean;
 }) {
   return (
     <>
@@ -288,6 +294,7 @@ function BrowseDocSection({
         <RunLlmButton
           projectId={doc.projectId}
           documentId={doc.documentId}
+          canRunLlm={canRunLlm}
         />
         <Button
           variant="ghost"

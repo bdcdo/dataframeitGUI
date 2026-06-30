@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { toast } from "sonner";
-import { fetchFastAPI } from "@/lib/api";
+import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
 import { getScrollBehavior } from "@/lib/scroll";
 import { cleanupStaleLlmRuns, getRunningLlmJob } from "@/actions/llm";
 import type { LlmErrorInfo } from "@/components/llm/LlmErrorCard";
@@ -118,6 +119,10 @@ function reducer(
 }
 
 const POLL_INTERVAL_MS = 2000;
+// Tolera falhas consecutivas de tick (token transitório, blip de rede) antes de
+// declarar a run terminal: o job segue no backend e um erro isolado não deve
+// derrubar o card com um erro falso.
+const MAX_TICK_FAILURES = 3;
 
 export function useLlmRunProgress(
   projectId: string,
@@ -125,16 +130,21 @@ export function useLlmRunProgress(
 ) {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
   const { refresh } = useRouter();
+  const { getToken } = useAuth();
   const { activeJobId } = state;
 
   // Lidos sempre atualizados dentro do loop de polling sem re-disparar o effect
   // (o effect só deve reiniciar quando `activeJobId` muda). Atualizados num
   // effect (após cada render), não durante o render — ver useAutosaveOnExit.
+  // `getToken` também via ref: cada tick busca um token fresco (o do template
+  // expira em ~60s e o polling dura minutos) sem religar o effect.
   const refreshRef = useRef(refresh);
   const pydanticCodeRef = useRef(pydanticCode);
+  const getTokenRef = useRef(getToken);
   useEffect(() => {
     refreshRef.current = refresh;
     pydanticCodeRef.current = pydanticCode;
+    getTokenRef.current = getToken;
   });
 
   const start = useCallback((jobId: string) => {
@@ -150,13 +160,19 @@ export function useLlmRunProgress(
     if (!activeJobId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
 
     const tick = async () => {
       try {
+        // Token fresco a cada tick: o do template expira em ~60s.
+        const token = await requireSupabaseToken(getTokenRef.current);
         const res = await fetchFastAPI<StatusResponse>(
           `/api/llm/status/${activeJobId}`,
+          undefined,
+          token,
         );
         if (cancelled) return;
+        failures = 0;
         dispatch({ type: "TICK", res });
         if (res.status === "running") {
           timer = setTimeout(tick, POLL_INTERVAL_MS);
@@ -194,6 +210,12 @@ export function useLlmRunProgress(
         }
       } catch (e: unknown) {
         if (cancelled) return;
+        // Falha isolada não é terminal: reagenda até MAX_TICK_FAILURES seguidas.
+        failures += 1;
+        if (failures < MAX_TICK_FAILURES) {
+          timer = setTimeout(tick, POLL_INTERVAL_MS);
+          return;
+        }
         const msg =
           e instanceof Error
             ? e.message

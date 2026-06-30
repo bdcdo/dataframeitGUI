@@ -3,6 +3,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
+import { fetchFastAPIServer } from "@/lib/api-server";
 import type { PydanticField } from "@/lib/types";
 import {
   generatePydanticCode,
@@ -14,7 +15,6 @@ import {
   type ChangeType,
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
-import { fetchFastAPI } from "@/lib/api";
 import { errorMessage } from "@/lib/utils";
 import crypto from "crypto";
 
@@ -28,11 +28,13 @@ interface RecoverResponse {
 // Repopula os campos a partir do `pydantic_code` ARMAZENADO do projeto (lido no
 // backend via service key, não enviado pelo cliente — logo sem vetor do #163).
 // Usado quando um projeto legado tem código mas o editor visual abre vazio.
+// fetchFastAPIServer (não fetchFastAPI): o endpoint /recover-fields passou a
+// exigir auth de coordenador (#195), então a server action injeta o token JWT.
 export async function recoverFieldsFromStoredCode(
   projectId: string,
 ): Promise<{ fields?: PydanticField[]; error?: string }> {
   try {
-    const result = await fetchFastAPI<RecoverResponse>(
+    const result = await fetchFastAPIServer<RecoverResponse>(
       "/api/pydantic/recover-fields",
       { method: "POST", body: JSON.stringify({ project_id: projectId }) },
     );

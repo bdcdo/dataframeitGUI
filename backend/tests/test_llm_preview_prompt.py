@@ -4,6 +4,7 @@ O endpoint só reusa _build_prompt; estes testes garantem que a rota
 encaminha description + template e que o resultado bate com a função
 usada na execução real (sem a cópia hardcoded do frontend defasar).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -14,8 +15,9 @@ from services.llm_runner import _build_prompt
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+def client(auth_headers: dict[str, str]) -> TestClient:
+    # preview-prompt agora exige autenticação; o client já manda o Bearer.
+    return TestClient(app, headers=auth_headers)
 
 
 def test_preview_matches_build_prompt(client: TestClient) -> None:
