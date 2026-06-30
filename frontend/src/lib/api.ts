@@ -44,8 +44,10 @@ export async function fetchFastAPI<T>(
   const res = await fetch(`${API_URL}${path}`, {
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
+      // Authorization derivado do `token` prevalece sobre options.headers: o
+      // token explícito do caller nunca deve ser sobrescrito por um header solto.
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     ...options,
   });

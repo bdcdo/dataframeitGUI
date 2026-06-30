@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
+import routes.llm_routes as llm_routes_mod
 import routes.pydantic_routes as pydantic_routes_mod
 import services.auth as auth_mod
 from config import settings
@@ -597,3 +598,57 @@ def test_recover_fields_allows_coordinator(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["valid"] is True
+
+
+def test_cleanup_stale_allows_coordinator(client, monkeypatch):
+    # Coordenador (aqui criador) passa o gate; o handler chama
+    # mark_stale_runs_as_error e devolve a contagem. Complementa o teste
+    # negativo (403) garantindo que o caminho autorizado responde 200.
+    fake = FakeSupabase(
+        master_users=[],
+        projects=[{"id": "p1", "created_by": USER}],
+        project_members=[],
+    )
+    use_supabase(monkeypatch, fake)
+    # O handler chama get_supabase pela referência do PRÓPRIO módulo da rota; a
+    # guard (require_project_coordinator) chama pela de services.auth.
+    monkeypatch.setattr(llm_routes_mod, "get_supabase", lambda: fake)
+    monkeypatch.setattr(
+        llm_routes_mod, "mark_stale_runs_as_error", lambda sb, project_id: 3
+    )
+    resp = client.post(
+        "/api/llm/cleanup-stale",
+        json={"project_id": "p1"},
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["cleaned"] == 3
+
+
+def test_status_allows_member(client, monkeypatch):
+    # Membro do projeto dono do job (aqui criador) passa o gate; o handler chama
+    # get_job_status e devolve 200. Complementa o teste negativo (404) garantindo
+    # que o caminho autorizado responde com o status da run.
+    fake = FakeSupabase(
+        llm_runs=[{"job_id": "job1", "project_id": "p1"}],
+        master_users=[],
+        projects=[{"id": "p1", "created_by": USER}],
+        project_members=[],
+    )
+    use_supabase(monkeypatch, fake)
+    monkeypatch.setattr(
+        llm_routes_mod,
+        "get_job_status",
+        lambda job_id: {
+            "status": "running",
+            "progress": 1,
+            "total": 4,
+            "errors": [],
+        },
+    )
+    resp = client.get(
+        "/api/llm/status/job1",
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
