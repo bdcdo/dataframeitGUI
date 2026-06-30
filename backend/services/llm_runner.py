@@ -4,6 +4,7 @@ LLM runner service — coordinates dataframeit execution.
 Security: o schema Pydantic do projeto é reconstruído a partir do AST validado
 (`build_model_from_code`), sem exec — ver services/pydantic_compiler.
 """
+
 import hashlib
 import logging
 import random
@@ -14,9 +15,10 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
-from services.supabase_client import get_supabase
 from services.pydantic_compiler import build_model_from_code
+from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +60,11 @@ def get_job_status(job_id: str) -> dict:
         sb = get_supabase()
         row = (
             sb.table("llm_runs")
-            .select("status, phase, progress, total, error_message, error_type, "
-                    "error_traceback, error_line, error_column, pydantic_code, "
-                    "processed_complete, processed_partial, processed_empty")
+            .select(
+                "status, phase, progress, total, error_message, error_type, "
+                "error_traceback, error_line, error_column, pydantic_code, "
+                "processed_complete, processed_partial, processed_empty"
+            )
             .eq("job_id", job_id)
             .maybe_single()
             .execute()
@@ -70,13 +74,24 @@ def get_job_status(job_id: str) -> dict:
             return _status_from_row(row)
     except Exception:
         logger.exception("Failed to fetch job status from llm_runs fallback")
-    return {"status": "error", "phase": "error", "progress": 0, "total": 0,
-            "errors": ["Job not found"], "eta_seconds": None,
-            "current_batch": 0, "total_batches": 0,
-            "processed_complete": 0, "processed_partial": 0, "processed_empty": 0}
+    return {
+        "status": "error",
+        "phase": "error",
+        "progress": 0,
+        "total": 0,
+        "errors": ["Job not found"],
+        "eta_seconds": None,
+        "current_batch": 0,
+        "total_batches": 0,
+        "processed_complete": 0,
+        "processed_partial": 0,
+        "processed_empty": 0,
+    }
 
 
-def _extract_pydantic_location(exc: Exception, tb: str) -> tuple[int | None, int | None]:
+def _extract_pydantic_location(
+    exc: Exception, tb: str
+) -> tuple[int | None, int | None]:
     """Best-effort line/column inside pydantic_code where the error originated."""
     if isinstance(exc, SyntaxError) and exc.filename in (None, "<pydantic_schema>"):
         return exc.lineno, exc.offset
@@ -100,17 +115,19 @@ def _persist_run_insert(sb, job_id: str, project_id: str, filter_mode: str) -> N
     enganou o usuário no passado. Melhor falhar a request do /run e mostrar o
     erro de cara em vez de seguir uma execução invisível.
     """
-    sb.table("llm_runs").insert({
-        "job_id": job_id,
-        "project_id": project_id,
-        "filter_mode": filter_mode,
-        "status": "running",
-        "phase": "loading",
-        # heartbeat inicial. O save loop renova a cada ~2s (ver
-        # _persist_run_progress); cleanup ativo (mark_stale_runs_as_error)
-        # marca como erro runs cujo heartbeat ficou velho.
-        "heartbeat_at": datetime.now(timezone.utc).isoformat(),
-    }).execute()
+    sb.table("llm_runs").insert(
+        {
+            "job_id": job_id,
+            "project_id": project_id,
+            "filter_mode": filter_mode,
+            "status": "running",
+            "phase": "loading",
+            # heartbeat inicial. O save loop renova a cada ~2s (ver
+            # _persist_run_progress); cleanup ativo (mark_stale_runs_as_error)
+            # marca como erro runs cujo heartbeat ficou velho.
+            "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ).execute()
 
 
 def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
@@ -121,13 +138,15 @@ def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
     atualização de progresso falhou. O próximo tick tenta de novo.
     """
     try:
-        sb.table("llm_runs").update({
-            "processed_complete": jobs_state.get("processed_complete", 0),
-            "processed_partial": jobs_state.get("processed_partial", 0),
-            "processed_empty": jobs_state.get("processed_empty", 0),
-            "progress": jobs_state.get("progress", 0),
-            "heartbeat_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("job_id", job_id).execute()
+        sb.table("llm_runs").update(
+            {
+                "processed_complete": jobs_state.get("processed_complete", 0),
+                "processed_partial": jobs_state.get("processed_partial", 0),
+                "processed_empty": jobs_state.get("processed_empty", 0),
+                "progress": jobs_state.get("progress", 0),
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("job_id", job_id).execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs progress for job %s", job_id)
 
@@ -167,12 +186,14 @@ def mark_stale_runs_as_error(sb, project_id: str) -> int:
     )
     res = (
         sb.table("llm_runs")
-        .update({
-            "status": "error",
-            "phase": "error",
-            "error_message": error_msg,
-            "completed_at": now.isoformat(),
-        })
+        .update(
+            {
+                "status": "error",
+                "phase": "error",
+                "error_message": error_msg,
+                "completed_at": now.isoformat(),
+            }
+        )
         .eq("project_id", project_id)
         .eq("status", "running")
         .or_(or_clause)
@@ -181,20 +202,20 @@ def mark_stale_runs_as_error(sb, project_id: str) -> int:
     return len(res.data or [])
 
 
-def _persist_run_snapshot(
-    sb, job_id: str, project: dict, doc_count: int
-) -> None:
+def _persist_run_snapshot(sb, job_id: str, project: dict, doc_count: int) -> None:
     """Backfill provider/model/pydantic snapshot after the project is loaded.
 
     Não engolir erro: se essa atualização falhar, a aba Execuções fica sem
     metadados da run e o usuário não consegue diagnosticar nada depois.
     """
-    sb.table("llm_runs").update({
-        "llm_provider": project.get("llm_provider"),
-        "llm_model": project.get("llm_model"),
-        "document_count": doc_count,
-        "pydantic_code": project.get("pydantic_code"),
-    }).eq("job_id", job_id).execute()
+    sb.table("llm_runs").update(
+        {
+            "llm_provider": project.get("llm_provider"),
+            "llm_model": project.get("llm_model"),
+            "document_count": doc_count,
+            "pydantic_code": project.get("pydantic_code"),
+        }
+    ).eq("job_id", job_id).execute()
 
 
 def _persist_run_completion(
@@ -653,11 +674,19 @@ def init_job(job_id: str, project_id: str, filter_mode: str) -> None:
     """
     sb = get_supabase()
     _jobs[job_id] = {
-        "status": "running", "phase": "loading", "progress": 0, "total": 0,
-        "errors": [], "started_at": time.time(), "eta_seconds": None,
-        "current_batch": 0, "total_batches": 0,
-        "error_traceback": None, "error_type": None,
-        "error_line": None, "error_column": None,
+        "status": "running",
+        "phase": "loading",
+        "progress": 0,
+        "total": 0,
+        "errors": [],
+        "started_at": time.time(),
+        "eta_seconds": None,
+        "current_batch": 0,
+        "total_batches": 0,
+        "error_traceback": None,
+        "error_type": None,
+        "error_line": None,
+        "error_column": None,
         "pydantic_code": None,
         # Counters atualizados durante a fase de saving para o frontend
         # mostrar feedback ao vivo de quantos documentos saíram completos /
@@ -699,7 +728,9 @@ async def run_llm(
         # Load project (only needed columns)
         project = (
             sb.table("projects")
-            .select("pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch")
+            .select(
+                "pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch"
+            )
             .eq("id", project_id)
             .single()
             .execute()
@@ -751,7 +782,9 @@ async def run_llm(
         docs = query.execute().data
 
         # Apply filtering
-        docs = _filter_docs(sb, docs, project_id, filter_mode, max_response_count, sample_size)
+        docs = _filter_docs(
+            sb, docs, project_id, filter_mode, max_response_count, sample_size
+        )
 
         _jobs[job_id]["total"] = len(docs)
         _jobs[job_id]["pydantic_code"] = pydantic_code
@@ -765,7 +798,9 @@ async def run_llm(
         # Compile Pydantic model
         model_class = _compile_model(pydantic_code)
         if not model_class:
-            raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
+            raise RuntimeError(
+                "Nenhuma classe BaseModel encontrada no código Pydantic."
+            )
 
         # Filter out fields that should not be sent to the LLM
         # (target="none" hides from everyone; target="human_only" hides from LLM)
@@ -801,13 +836,17 @@ async def run_llm(
             except (TypeError, ValueError):
                 logger.warning(
                     "llm_kwargs['%s']=%r não é número, usando default %s",
-                    key, raw, default,
+                    key,
+                    raw,
+                    default,
                 )
                 return default
             if not 0 <= v <= 1:
                 logger.warning(
                     "llm_kwargs['%s']=%s fora de [0,1], usando default %s",
-                    key, v, default,
+                    key,
+                    v,
+                    default,
                 )
                 return default
             return v
@@ -816,12 +855,25 @@ async def run_llm(
         run_failure_threshold = _threshold("run_failure_threshold", 0.3)
 
         DATAFRAMEIT_PARAMS = {
-            "api_key", "max_retries", "base_delay", "max_delay", "track_tokens",
-            "use_search", "search_provider", "search_per_field", "max_results",
-            "search_depth", "search_groups", "save_trace", "resume",
-            "reprocess_columns", "status_column",
+            "api_key",
+            "max_retries",
+            "base_delay",
+            "max_delay",
+            "track_tokens",
+            "use_search",
+            "search_provider",
+            "search_per_field",
+            "max_results",
+            "search_depth",
+            "search_groups",
+            "save_trace",
+            "resume",
+            "reprocess_columns",
+            "status_column",
         }
-        model_kwargs = {k: v for k, v in llm_kwargs.items() if k not in DATAFRAMEIT_PARAMS}
+        model_kwargs = {
+            k: v for k, v in llm_kwargs.items() if k not in DATAFRAMEIT_PARAMS
+        }
         dfi_kwargs = {k: v for k, v in llm_kwargs.items() if k in DATAFRAMEIT_PARAMS}
 
         # Build DataFrame
@@ -829,10 +881,11 @@ async def run_llm(
 
         # Run dataframeit in batches for granular progress
         from dataframeit import dataframeit
+
         dfi_kwargs.pop("resume", None)
 
         batch_size = max(1, parallel_requests)
-        batches = [df.iloc[i:i + batch_size] for i in range(0, len(df), batch_size)]
+        batches = [df.iloc[i : i + batch_size] for i in range(0, len(df), batch_size)]
         _jobs[job_id].update(phase="processing", total_batches=len(batches))
 
         result_frames = []
@@ -924,7 +977,9 @@ async def run_llm(
             dfi_status = row.get("_dataframeit_status")
             dfi_error_raw = row.get("_error_details")
             dfi_error: str | None = (
-                str(dfi_error_raw) if dfi_error_raw is not None and pd.notna(dfi_error_raw) else None
+                str(dfi_error_raw)
+                if dfi_error_raw is not None and pd.notna(dfi_error_raw)
+                else None
             )
 
             answers, justifications = _extract_answers_from_row(row, model_class)
@@ -971,7 +1026,8 @@ async def run_llm(
             # está satisfeita mas que não vieram do LLM. Excluímos condicionais
             # não-satisfeitas porque ausência delas é legítima.
             active_expected = {
-                name for name in expected_llm_fields
+                name
+                for name in expected_llm_fields
                 if name not in field_conditions
                 or evaluate_condition(field_conditions[name], answers, name)
             }
@@ -1004,16 +1060,21 @@ async def run_llm(
             if is_partial or is_empty or dfi_error:
                 logger.warning(
                     "LLM row diag doc=%s status=%s error=%s pre_prune=%s post_prune=%s",
-                    doc_id, dfi_status, dfi_error,
-                    answers_pre_prune_keys, sorted(answers.keys()),
+                    doc_id,
+                    dfi_status,
+                    dfi_error,
+                    answers_pre_prune_keys,
+                    sorted(answers.keys()),
                 )
 
             if dfi_error:
                 # Agrupa por hash da mensagem (não prefixo) para o RuntimeError
                 # final. Truncar 120 chars agrupava erros distintos com prefixo
                 # igual.
+                # usedforsecurity=False: chave de cache/dedup, nao uso cripto.
                 key = hashlib.md5(
-                    dfi_error.encode("utf-8", errors="replace")
+                    dfi_error.encode("utf-8", errors="replace"),
+                    usedforsecurity=False,
                 ).hexdigest()[:16]
                 if key not in dfi_error_samples:
                     dfi_error_samples[key] = f"doc={doc_id}: {dfi_error}"
@@ -1032,7 +1093,10 @@ async def run_llm(
             # mesmo após scale-to-zero o llm_runs reflete o trabalho feito,
             # e que a UI consegue distinguir run viva de zumbi.
             now_ts = time.time()
-            if now_ts - _jobs[job_id]["last_progress_persist"] >= progress_persist_interval_s:
+            if (
+                now_ts - _jobs[job_id]["last_progress_persist"]
+                >= progress_persist_interval_s
+            ):
                 _persist_run_progress(sb, job_id, _jobs[job_id])
                 _jobs[job_id]["last_progress_persist"] = now_ts
 
@@ -1056,7 +1120,9 @@ async def run_llm(
             ).execute()
 
         # Update project hash
-        sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq("id", project_id).execute()
+        sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq(
+            "id", project_id
+        ).execute()
 
         # Check de run comprometida: se uma fração grande dos docs produziu
         # resposta parcial, a run é marcada como erro para ficar visível na UI
@@ -1076,9 +1142,7 @@ async def run_llm(
                 f"Respostas gravadas com is_latest=false."
             ]
             if error_examples:
-                sections.append(
-                    "Erros do provider: " + " || ".join(error_examples)
-                )
+                sections.append("Erros do provider: " + " || ".join(error_examples))
             sections.append(
                 "Exemplos de cobertura baixa: " + " || ".join(partial_warnings[:3])
             )

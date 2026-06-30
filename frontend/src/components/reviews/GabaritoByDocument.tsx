@@ -37,17 +37,50 @@ interface GabaritoByDocumentProps {
   projectId: string;
 }
 
-export function GabaritoByDocument({
-  reviewedDocuments,
-  fields,
-  projectId,
-}: GabaritoByDocumentProps) {
+// Hook co-localizado: agrupa os 5 filtros + paginacao fora do corpo do componente.
+function useGabaritoFilters() {
   const [searchQuery, setSearchQuery] = useState("");
   const [includeStale, setIncludeStale] = useState(true);
   const [fieldFilter, setFieldFilter] = useState("all");
   const [respondentFilter, setRespondentFilter] = useState("all");
   const [onlyErrors, setOnlyErrors] = useState(false);
   const [page, setPage] = useState(0);
+
+  return {
+    searchQuery,
+    setSearchQuery,
+    includeStale,
+    setIncludeStale,
+    fieldFilter,
+    setFieldFilter,
+    respondentFilter,
+    setRespondentFilter,
+    onlyErrors,
+    setOnlyErrors,
+    page,
+    setPage,
+  };
+}
+
+export function GabaritoByDocument({
+  reviewedDocuments,
+  fields,
+  projectId,
+}: GabaritoByDocumentProps) {
+  const {
+    searchQuery,
+    setSearchQuery,
+    includeStale,
+    setIncludeStale,
+    fieldFilter,
+    setFieldFilter,
+    respondentFilter,
+    setRespondentFilter,
+    onlyErrors,
+    setOnlyErrors,
+    page,
+    setPage,
+  } = useGabaritoFilters();
 
   const allRespondents = useMemo(() => {
     const map = new Map<string, { name: string; type: "humano" | "llm" }>();

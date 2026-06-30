@@ -40,6 +40,33 @@ type ExcludeTarget = { ids: string[]; totalResponses: number };
 type RestoreTarget = { ids: string[] };
 type HardDeleteTarget = { ids: string[] };
 
+// Agrupa a selecao de documentos + os alvos dos modais de exclude/restore/delete,
+// mantendo o corpo do componente abaixo do limiar de useState do react-doctor.
+function useDocumentsSelection() {
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [excludeTarget, setExcludeTarget] = useState<ExcludeTarget | null>(null);
+  const [excludeReason, setExcludeReason] = useState("");
+  const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null);
+  const [hardDeleteTarget, setHardDeleteTarget] =
+    useState<HardDeleteTarget | null>(null);
+
+  return {
+    selectedDocId,
+    setSelectedDocId,
+    selectedIds,
+    setSelectedIds,
+    excludeTarget,
+    setExcludeTarget,
+    excludeReason,
+    setExcludeReason,
+    restoreTarget,
+    setRestoreTarget,
+    hardDeleteTarget,
+    setHardDeleteTarget,
+  };
+}
+
 export function DocumentsPageClient({
   documents,
   projectId,
@@ -48,13 +75,20 @@ export function DocumentsPageClient({
   const { push } = useRouter();
   const pathname = usePathname();
 
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [excludeTarget, setExcludeTarget] = useState<ExcludeTarget | null>(null);
-  const [excludeReason, setExcludeReason] = useState("");
-  const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null);
-  const [hardDeleteTarget, setHardDeleteTarget] =
-    useState<HardDeleteTarget | null>(null);
+  const {
+    selectedDocId,
+    setSelectedDocId,
+    selectedIds,
+    setSelectedIds,
+    excludeTarget,
+    setExcludeTarget,
+    excludeReason,
+    setExcludeReason,
+    restoreTarget,
+    setRestoreTarget,
+    hardDeleteTarget,
+    setHardDeleteTarget,
+  } = useDocumentsSelection();
   const [isPending, startTransition] = useTransition();
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;

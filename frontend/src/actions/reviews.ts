@@ -28,9 +28,12 @@ export async function submitVerdict(
   // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
   // como o membro canônico — reviewer_id, author_id e o sync do assignment
   // usam o id efetivo, casando com o onConflict do upsert.
-  const effectiveId = await getEffectiveMemberId(projectId);
-
-  const supabase = await createSupabaseServer();
+  // `getEffectiveMemberId` (admin client, cache()) e `createSupabaseServer`
+  // são independentes — rodam em paralelo.
+  const [effectiveId, supabase] = await Promise.all([
+    getEffectiveMemberId(projectId),
+    createSupabaseServer(),
+  ]);
 
   const { error } = await supabase.from("reviews").upsert(
     {
@@ -133,9 +136,11 @@ export async function markCompareDocReviewed(
   if (!user) throw new Error("Não autenticado");
 
   // Conta vinculada fecha o doc como o membro canônico (spec 002).
-  const effectiveId = await getEffectiveMemberId(projectId);
-
-  const supabase = await createSupabaseServer();
+  // Awaits independentes em paralelo.
+  const [effectiveId, supabase] = await Promise.all([
+    getEffectiveMemberId(projectId),
+    createSupabaseServer(),
+  ]);
 
   const { error } = await supabase
     .from("assignments")

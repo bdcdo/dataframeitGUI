@@ -66,6 +66,18 @@ function formatDuration(start: string, end: string | null): string {
   return `${h}h ${rm}min`;
 }
 
+// Pure projection from a run record to the error card's props (no closure).
+function errorInfoForRun(run: LlmRunRecord): LlmErrorInfo {
+  return {
+    message: run.error_message ?? "Erro sem mensagem",
+    type: run.error_type,
+    traceback: run.error_traceback,
+    line: run.error_line,
+    column: run.error_column,
+    pydanticCode: run.pydantic_code,
+  };
+}
+
 function StatusBadge({ status }: { status: LlmRunRecord["status"] }) {
   if (status === "completed")
     return (
@@ -103,15 +115,6 @@ export function LlmRunsPane({ projectId, runs, stats }: LlmRunsPaneProps) {
       </div>
     );
   }
-
-  const errorInfoForRun = (run: LlmRunRecord): LlmErrorInfo => ({
-    message: run.error_message ?? "Erro sem mensagem",
-    type: run.error_type,
-    traceback: run.error_traceback,
-    line: run.error_line,
-    column: run.error_column,
-    pydanticCode: run.pydantic_code,
-  });
 
   return (
     <div className="mx-auto max-w-4xl space-y-3 p-6">

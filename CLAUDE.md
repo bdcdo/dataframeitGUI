@@ -30,7 +30,6 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
 | Backend LLM | FastAPI (Python) | latest |
 | LLM | `dataframeit` | 0.5.3 |
 | Editor | Monaco Editor (`@monaco-editor/react`) | latest |
-| Graficos | `recharts` | latest |
 | Toast | `sonner` | latest |
 | CSV | `papaparse` | latest |
 | Brand color | teal #2F6868 = `oklch(0.44 0.08 185)` | - |
@@ -89,7 +88,7 @@ Para aplicar migrations pendentes: `npx supabase db push`
 
 ## Deploy
 
-Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Vercel → Fly.io (app `gui-analise-sistematica-frontend`); enquanto o cutover de dominio nao ocorre, Vercel ainda e a producao. Backend: Fly.io (app `gui-analise-sistematica-api`) via workflow quando ha mudanca em `backend/**`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
+Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Vercel → Fly.io (app `gui-analise-sistematica-frontend`); enquanto o cutover de dominio nao ocorre, Vercel ainda e a producao. Backend: Fly.io (app `gui-analise-sistematica-api`) via workflow quando ha mudanca em `backend/**`. A partir de 2026-04-20, **preferir branch + PR** ao push direto na main. Fluxo recomendado:
 
 1. **Criar git worktree isolado** para a tarefa (ver secao "Workspace isolado" abaixo) — nao trabalhar no diretorio principal
 2. Criar branch descritiva (`feat/...`, `fix/...`, `perf/...`) na worktree
@@ -98,7 +97,7 @@ Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Ve
 5. Deixar o usuario revisar o PR
 6. Remover a worktree apos o merge
 
-Nunca fazer push direto para `main`. Merge do PR pode ser feito pelo Claude quando o usuario pedir explicitamente.
+Merge do PR pode ser feito pelo Claude quando o usuario pedir explicitamente.
 
 ## Workspace isolado (worktree)
 
@@ -166,9 +165,8 @@ Seguir estas regras para evitar regressoes de performance:
 - **Fetch em 2 fases para dados pesados** — primeiro buscar metadados leves para filtrar, depois buscar campos pesados (ex: `text`) so do que precisa
 
 ### Componentes pesados
-- **Lazy-load recharts** via `dynamic(() => import("recharts").then(...), { ssr: false })` — nunca importar recharts diretamente. Ver `VerdictChart.tsx` e `DailyPaceChart.tsx` como referencia
 - **Lazy-load Monaco** via `dynamic()` — ja feito corretamente
-- **Nao adicionar dependencias pesadas** sem lazy-load (recharts, monaco, markdown renderers)
+- **Nao adicionar dependencias pesadas** sem lazy-load (monaco, markdown renderers)
 - **Manter `'use client'` o mais baixo possivel** na arvore de componentes
 
 ### Supabase indexes

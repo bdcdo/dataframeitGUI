@@ -28,9 +28,13 @@ interface ComparePageProps {
   existingReviews: ReviewsByDoc;
   projectPydanticHash: string | null;
   respondentNames: string[];
-  // Default de "mín. humanos" derivado do automation_mode (compareDefaultsForMode):
-  // mantém o filtro da UI coerente com o piso aplicado no servidor.
+  // Defaults VIVOS derivados do automation_mode/projeto (compareDefaultsForMode):
+  // mantêm o filtro da UI coerente com o que o servidor aplica. `defaultMinHumans`
+  // é o piso de humanos; `defaultVersion` é o default de versão da fila
+  // ("latest_major") — sem ele o seletor exibiria "all" enquanto a fila já está
+  // filtrada, e "Todas as versões" ficaria inalcançável (ver #247).
   defaultMinHumans: number;
+  defaultVersion: string;
   coverageByDoc: Record<string, DocCoverage>;
   commentCountsByKey: Record<string, number>;
   suggestionCountsByField: Record<string, number>;
@@ -55,6 +59,7 @@ export function ComparePage({
   projectPydanticHash,
   respondentNames,
   defaultMinHumans,
+  defaultVersion,
   coverageByDoc,
   commentCountsByKey,
   suggestionCountsByField,
@@ -253,6 +258,7 @@ export function ComparePage({
           parecerUrl={parecerUrl}
           respondentNames={respondentNames}
           defaultMinHumans={defaultMinHumans}
+          defaultVersion={defaultVersion}
           availableVersions={availableVersions}
           latestMajorLabel={latestMajorLabel}
           currentProjectVersion={currentProjectVersion}
@@ -284,9 +290,9 @@ export function ComparePage({
           existingVerdict: currentVerdict,
           reviewed,
           isDivergent: isCurrentFieldDivergent,
-          isDocComplete: isCurrentDocComplete,
-          hasNextDoc,
-          onNextDoc: handleNextDoc,
+          docStatus: isCurrentDocComplete
+            ? { complete: true, hasNextDoc, onNextDoc: handleNextDoc }
+            : { complete: false },
           onFieldNavigate: setFieldIndex,
           onVerdict: handleVerdict,
           onMarkReviewed: handleMarkReviewed,
@@ -294,12 +300,11 @@ export function ComparePage({
           onCommentChange: setComment,
           commentCount: fieldCommentCount,
           suggestionCount: fieldSuggestionCount,
-          allowEquivalence,
+          equivalence: { allow: allowEquivalence, canManageAnyPair },
           equivalences: currentFieldEquivalences,
           onConfirmEquivalent: handleConfirmEquivalent,
           onUnmarkEquivalencePair: handleUnmarkPair,
           currentUserId,
-          canManageAnyPair,
         }}
       />
     </div>

@@ -9,6 +9,32 @@
 // que era a causa do assignment de comparação não fechar (ver #168 e o
 // princípio anti-drift do CLAUDE.md, mesmo racional do #63 para schema-utils).
 
+// Sentinelas do filtro de versão da aba Comparar. São a FONTE ÚNICA das strings
+// mágicas: `resolveMinVersion` casa contra elas, `COMPARE_DEFAULT_VERSION`
+// (compare-filters.ts) é definido a partir delas e o `SelectItem` do filtro
+// (CompareFilters.tsx) usa-as como `value`. Sem isto, trocar o valor do default
+// num lugar (ex.: a constante) deixaria `resolveMinVersion` cair no
+// `parseVersionStr → null` e desativar o piso silenciosamente em fila/gatilho/
+// fecho, além de o `Select` controlado ficar com `value` sem option (#247).
+export const VERSION_FILTER_ALL = "all";
+export const VERSION_FILTER_LATEST_MAJOR = "latest_major";
+
+// Default VIVO de versão da aba Comparar — fonte única consumida pelos TRÊS
+// pontos que precisam concordar sobre "qual versão a fila reflete por padrão":
+//   1. a página (compareDefaultsForMode, via compare/page.tsx);
+//   2. o filtro do cliente (CompareFilters.effectiveDefaults, via prop
+//      defaultVersion plumbada por page → ComparePage → CompareNav);
+//   3. o fecho do parecer (compare-sync.ts) e o gatilho (auto-comparison.ts),
+//      ambos via `versionGate` abaixo.
+// É distinto de DEFAULT_COMPARE_FILTERS.version ("all"), a base para
+// callers/testes que NÃO derivam do automation_mode. Vive aqui (e é
+// re-exportado por compare-filters.ts) para que `versionGate` o use sem import
+// circular — o VALOR é o sentinela canônico VERSION_FILTER_LATEST_MAJOR (mesma
+// string que `resolveMinVersion` casa e que o `SelectItem` do filtro usa), então
+// trocar o default não dessincroniza fila/filtro/gatilho/fecho (ver #247, e o
+// acoplamento visão==fecho do #217/#218).
+export const COMPARE_DEFAULT_VERSION = VERSION_FILTER_LATEST_MAJOR;
+
 export interface SchemaVersion {
   major: number;
   minor: number;
@@ -71,8 +97,9 @@ export function resolveMinVersion(
   filter: string,
   projectCurrent: SchemaVersion,
 ): SchemaVersion | null {
-  if (filter === "all") return null;
-  if (filter === "latest_major") return latestMajorAnchor(projectCurrent);
+  if (filter === VERSION_FILTER_ALL) return null;
+  if (filter === VERSION_FILTER_LATEST_MAJOR)
+    return latestMajorAnchor(projectCurrent);
   return parseVersionStr(filter);
 }
 
@@ -80,6 +107,54 @@ export function resolveMinVersion(
 export interface ProjectVersionContext {
   pydanticHash: string | null;
   version: SchemaVersion;
+}
+
+// Linha de `projects` reduzida ao mínimo para derivar o contexto de versão.
+export interface ProjectVersionRow {
+  pydantic_hash?: string | null;
+  schema_version_major?: number | null;
+  schema_version_minor?: number | null;
+  schema_version_patch?: number | null;
+}
+
+// Deriva o `SchemaVersion` corrente do projeto e o `ProjectVersionContext` a
+// partir de uma linha de `projects`, com os fallbacks canônicos
+// {major 0, minor 1, patch 0}. FONTE ÚNICA dessa derivação, consumida por
+// compare/page.tsx, compare-sync.ts e auto-comparison.ts — antes ela vivia
+// copiada (verbatim) nos três, e o fallback `minor: 1` é load-bearing
+// (`latestMajorAnchor` ancora em {0,minor,0} para projetos 0.x): uma cópia
+// "corrigida" para `minor: 0` num só lugar dessincronizaria gatilho/fila/fecho,
+// a exata classe de drift que este módulo existe para evitar (ver cabeçalho e
+// #247). Cada caller resolve seu próprio `minVersion`: a página a partir da URL
+// (`filters.version`), o fecho/gatilho a partir de `COMPARE_DEFAULT_VERSION`.
+export function deriveProjectVersionContext(project: ProjectVersionRow): {
+  version: SchemaVersion;
+  ctx: ProjectVersionContext;
+} {
+  const version: SchemaVersion = {
+    major: project.schema_version_major ?? 0,
+    minor: project.schema_version_minor ?? 1,
+    patch: project.schema_version_patch ?? 0,
+  };
+  return {
+    version,
+    ctx: { pydanticHash: project.pydantic_hash ?? null, version },
+  };
+}
+
+// Gate de versão do estado DEFAULT da fila: deriva o contexto do projeto e
+// resolve o piso a partir de `COMPARE_DEFAULT_VERSION` ("latest_major"). FONTE
+// ÚNICA do par {minVersion, ctx} aplicado fora da página — o gatilho
+// (auto-comparison.ts) e o fecho (compare-sync.ts) usam ESTE helper, mantendo o
+// acoplamento gatilho==fila==fecho do #247. A página NÃO usa `versionGate`: ela
+// resolve `minVersion` a partir da URL (`filters.version`, que pode ser uma
+// lente manual), mas a partir do MESMO `deriveProjectVersionContext`.
+export function versionGate(project: ProjectVersionRow): {
+  minVersion: SchemaVersion | null;
+  ctx: ProjectVersionContext;
+} {
+  const { version, ctx } = deriveProjectVersionContext(project);
+  return { minVersion: resolveMinVersion(COMPARE_DEFAULT_VERSION, version), ctx };
 }
 
 // Predicado único de qualificação de uma resposta sob um piso de versão.

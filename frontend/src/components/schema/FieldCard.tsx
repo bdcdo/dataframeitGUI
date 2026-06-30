@@ -17,6 +17,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
+import { useStableListIds } from "@/hooks/useStableListIds";
 import { ConditionEditor } from "./ConditionEditor";
 import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "./RemoveOptionDialog";
@@ -73,6 +74,10 @@ export function FieldCard({
   const updateField = (patch: Partial<PydanticField>) => {
     onChange({ ...field, ...patch });
   };
+
+  // Keys estáveis para a lista editável de subcampos: o `key` do subfield é
+  // digitado pelo usuário (muda a cada tecla), logo não serve como React key.
+  const subfieldKeys = useStableListIds(field.subfields?.length ?? 0);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -406,7 +411,7 @@ export function FieldCard({
                       </div>
                     </div>
                     {field.subfields.map((sf, si) => (
-                      <div key={si} className="flex items-center gap-1.5">
+                      <div key={subfieldKeys.ids[si]} className="flex items-center gap-1.5">
                         <Input
                           value={sf.key}
                           onChange={(e) => {
@@ -446,6 +451,7 @@ export function FieldCard({
                           className="size-6 p-0"
                           onClick={() => {
                             const sfs = field.subfields!.filter((_, j) => j !== si);
+                            subfieldKeys.removeIdAt(si);
                             updateField({ subfields: sfs.length > 0 ? sfs : undefined, subfield_rule: sfs.length > 0 ? field.subfield_rule : undefined });
                           }}
                         >
@@ -459,6 +465,7 @@ export function FieldCard({
                       className="text-xs h-6"
                       onClick={() => {
                         const idx = field.subfields!.length + 1;
+                        subfieldKeys.appendId();
                         updateField({
                           subfields: [
                             ...field.subfields!,

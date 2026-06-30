@@ -12,6 +12,7 @@ import {
   assignedCompareDocIds,
 } from "@/lib/compare-filters";
 import {
+  deriveProjectVersionContext,
   resolveMinVersion,
   responseQualifiesForVersion,
   latestMajorAnchor,
@@ -164,16 +165,13 @@ export default async function ComparePageRoute({
   );
   const filters = readCompareFilters(sp, compareDefaults);
 
-  const projectVersion = {
-    major: project?.schema_version_major ?? 0,
-    minor: project?.schema_version_minor ?? 1,
-    patch: project?.schema_version_patch ?? 0,
-  };
+  // Contexto de versão do helper compartilhado (compare-version.ts) — a MESMA
+  // fonte e fallback {0,1,0} do fecho (compare-sync.ts) e do gatilho
+  // (auto-comparison.ts). A página resolve seu `minVersion` a partir da URL
+  // (`filters.version`, que pode ser uma lente manual), não da constante.
+  const { version: projectVersion, ctx: projectVersionCtx } =
+    deriveProjectVersionContext(project ?? {});
   const minVersion = resolveMinVersion(filters.version, projectVersion);
-  const projectVersionCtx = {
-    pydanticHash: project?.pydantic_hash ?? null,
-    version: projectVersion,
-  };
   const sinceMs = filters.since ? new Date(filters.since).getTime() : null;
 
   // Build distinct ordered version list desc — une versões do schema_change_log
@@ -477,6 +475,7 @@ export default async function ComparePageRoute({
         projectPydanticHash={project?.pydantic_hash ?? null}
         respondentNames={respondentNames}
         defaultMinHumans={compareDefaults.minHumans}
+        defaultVersion={compareDefaults.version}
         coverageByDoc={coverageByDoc}
         commentCountsByKey={commentCountsByKey}
         suggestionCountsByField={suggestionCountsByField}

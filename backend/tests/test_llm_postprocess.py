@@ -4,6 +4,7 @@ Usa o evaluator local (``services.condition_evaluator``), que espelha a
 semântica do frontend. Ver comentário no módulo sobre divergências com
 ``dataframeit.conditional``.
 """
+
 from services.condition_evaluator import evaluate_condition
 
 
@@ -87,16 +88,12 @@ def test_not_in_with_absent_trigger_hides():
 def test_exists_true_with_empty_string_hides():
     """Empty string nao deve contar como "existe"."""
     conds = {"follow": {"field": "trigger", "exists": True}}
-    assert _postprocess({"trigger": "", "follow": "orphan"}, conds) == {
-        "trigger": ""
-    }
+    assert _postprocess({"trigger": "", "follow": "orphan"}, conds) == {"trigger": ""}
 
 
 def test_exists_true_with_empty_list_hides():
     conds = {"follow": {"field": "trigger", "exists": True}}
-    assert _postprocess({"trigger": [], "follow": "orphan"}, conds) == {
-        "trigger": []
-    }
+    assert _postprocess({"trigger": [], "follow": "orphan"}, conds) == {"trigger": []}
 
 
 def test_exists_false_with_empty_string_keeps():
@@ -113,15 +110,14 @@ def test_not_equals_with_present_trigger_normal_semantics():
         "trigger": "nao",
         "follow": "x",
     }
-    assert _postprocess({"trigger": "sim", "follow": "x"}, conds) == {
-        "trigger": "sim"
-    }
+    assert _postprocess({"trigger": "sim", "follow": "x"}, conds) == {"trigger": "sim"}
 
 
 def test_extract_field_conditions_from_compiled_model():
     """extract_field_conditions deve ler de json_schema_extra, nao do JSON."""
-    from pydantic import BaseModel, Field
     from typing import Literal, Optional
+
+    from pydantic import BaseModel, Field
 
     from services.condition_evaluator import extract_field_conditions
 

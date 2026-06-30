@@ -49,6 +49,24 @@ interface ExistingVerdict {
   comment: string | null;
 }
 
+// Conclusão do documento + navegação da fila. Discriminated union: `hasNextDoc`
+// e `onNextDoc` só fazem sentido depois que a revisão do documento terminou, então
+// o tipo torna "avançar com doc incompleto" irrepresentável — mesmo idioma do
+// `equivalenceMode` do AnswerCard (#322). Também tira dois booleanos soltos
+// (`isDocComplete`, `hasNextDoc`) da interface do painel, derrubando a contagem
+// de `no-many-boolean-props` e os braços implícitos de `prefer-explicit-variants`.
+type DocStatus =
+  | { complete: false }
+  | { complete: true; hasNextDoc: boolean; onNextDoc: () => void };
+
+// Affordances de equivalência agrupadas: o painel carrega uma config estruturada
+// em vez de dois booleanos soltos (`allowEquivalence`, `canManageAnyPair`) e os
+// repassa ao AgreementGroup.
+interface EquivalenceConfig {
+  allow: boolean;
+  canManageAnyPair: boolean;
+}
+
 interface ComparisonPanelProps {
   projectId: string;
   documentId: string;
@@ -64,9 +82,7 @@ interface ComparisonPanelProps {
   existingVerdict: ExistingVerdict | null;
   reviewed: boolean[];
   isDivergent: boolean;
-  isDocComplete: boolean;
-  hasNextDoc: boolean;
-  onNextDoc: () => void;
+  docStatus: DocStatus;
   onFieldNavigate: (index: number) => void;
   onVerdict: (verdict: string, chosenResponseId?: string) => void;
   onMarkReviewed: () => void;
@@ -74,7 +90,7 @@ interface ComparisonPanelProps {
   onCommentChange: (value: string) => void;
   commentCount: number;
   suggestionCount: number;
-  allowEquivalence: boolean;
+  equivalence: EquivalenceConfig;
   equivalences: FieldEquivalencePair[];
   onConfirmEquivalent: (
     responseIds: string[],
@@ -83,7 +99,6 @@ interface ComparisonPanelProps {
   ) => Promise<void>;
   onUnmarkEquivalencePair: (pairId: string) => Promise<void>;
   currentUserId: string;
-  canManageAnyPair: boolean;
 }
 
 export function ComparisonPanel({
@@ -101,9 +116,7 @@ export function ComparisonPanel({
   existingVerdict,
   reviewed,
   isDivergent,
-  isDocComplete,
-  hasNextDoc,
-  onNextDoc,
+  docStatus,
   onFieldNavigate,
   onVerdict,
   onMarkReviewed,
@@ -111,23 +124,27 @@ export function ComparisonPanel({
   onCommentChange,
   commentCount,
   suggestionCount,
-  allowEquivalence,
+  equivalence,
   equivalences,
   onConfirmEquivalent,
   onUnmarkEquivalencePair,
   currentUserId,
-  canManageAnyPair,
 }: ComparisonPanelProps) {
   const [suggestOpen, setSuggestOpen] = useState(false);
+
+  // Primitivos derivados da union para deps estáveis do effect (o objeto
+  // `docStatus` é recriado a cada render).
+  const docComplete = docStatus.complete;
+  const docHasNext = docStatus.complete && docStatus.hasNextDoc;
 
   // Quando o documento é concluído, o botão "Próximo parecer" recebe foco
   // automático para que um único Enter avance — sem timer cego.
   const nextDocButtonRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (isDocComplete && hasNextDoc) {
+    if (docComplete && docHasNext) {
       nextDocButtonRef.current?.focus({ preventScroll: true });
     }
-  }, [isDocComplete, hasNextDoc, documentId]);
+  }, [docComplete, docHasNext, documentId]);
 
   const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
   const groupCount = useMemo(() => {
@@ -239,12 +256,12 @@ export function ComparisonPanel({
             onVote={(displayAnswer, chosenResponseId) =>
               onVerdict(displayAnswer, chosenResponseId)
             }
-            allowEquivalence={allowEquivalence}
+            allowEquivalence={equivalence.allow}
             equivalences={equivalences}
             onConfirmEquivalent={onConfirmEquivalent}
             onUnmarkPair={onUnmarkEquivalencePair}
             currentUserId={currentUserId}
-            canManageAnyPair={canManageAnyPair}
+            canManageAnyPair={equivalence.canManageAnyPair}
           />
         )}
 
@@ -367,18 +384,18 @@ export function ComparisonPanel({
         )}
       </div>
 
-      {isDocComplete && (
+      {docStatus.complete && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-green-500/20 bg-green-500/5 px-4 py-2">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <CheckCircle2 className="size-3.5 text-green-600" />
             Revisão do documento concluída.
           </span>
-          {hasNextDoc ? (
+          {docStatus.hasNextDoc ? (
             <Button
               ref={nextDocButtonRef}
               size="sm"
               className="gap-1"
-              onClick={onNextDoc}
+              onClick={docStatus.onNextDoc}
             >
               Próximo parecer
               <ArrowRight className="size-3.5" />
@@ -400,6 +417,9 @@ export function ComparisonPanel({
       )}
 
       <SuggestFieldDialog
+        // Remonta ao trocar de campo: o form do dialog renasce semeado pelos
+        // valores do novo campo, dispensando o reset-em-render por prop.
+        key={fieldName}
         projectId={projectId}
         fieldName={fieldName}
         allFields={fields}

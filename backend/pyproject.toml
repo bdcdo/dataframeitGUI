@@ -4,16 +4,16 @@ version = "0.1.0"
 description = "Backend FastAPI para dataframeit"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.137.2",
+    "fastapi>=0.138.0",
     "uvicorn[standard]>=0.49.0",
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.1",
+    "pydantic-settings>=2.14.2",
     "supabase>=2.31.0",
     "dataframeit>=0.6.0",
     "pandas>=3.0.3",
     "langchain-google-genai>=4.2.5",
-    "langchain-openai>=1.3.2",
-    "langchain-anthropic>=1.4.6",
+    "langchain-openai>=1.3.3",
+    "langchain-anthropic>=1.4.7",
     "pyjwt[crypto]>=2.9",
 ]
 
@@ -31,6 +31,12 @@ exclude-newer = "7 days"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# O backend é um app FastAPI flat (sem diretório de pacote homônimo), então o
+# hatchling não consegue inferir o conteúdo do wheel sozinho e aborta o build
+# (quebrava `uv run ruff`/`pytest`). Listar os módulos explicitamente resolve.
+[tool.hatch.build.targets.wheel]
+only-include = ["main.py", "config.py", "routes", "services"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

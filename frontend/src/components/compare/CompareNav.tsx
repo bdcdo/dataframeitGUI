@@ -22,6 +22,7 @@ interface CompareNavProps {
   parecerUrl?: string;
   respondentNames: string[];
   defaultMinHumans: number;
+  defaultVersion: string;
   availableVersions: string[];
   latestMajorLabel: string | null;
   currentProjectVersion: string;
@@ -44,6 +45,7 @@ export function CompareNav({
   parecerUrl,
   respondentNames,
   defaultMinHumans,
+  defaultVersion,
   availableVersions,
   latestMajorLabel,
   currentProjectVersion,
@@ -71,6 +73,7 @@ export function CompareNav({
         <CompareFilters
           respondentNames={respondentNames}
           defaultMinHumans={defaultMinHumans}
+          defaultVersion={defaultVersion}
           availableVersions={availableVersions}
           latestMajorLabel={latestMajorLabel}
         />

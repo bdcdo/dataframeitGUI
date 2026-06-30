@@ -5,9 +5,11 @@ em Python, entao um filtro ingenuo (`if val`) deixaria NaN passar como
 "preenchido" e a resposta seria salva com lixo. Esta funcao precisa rejeitar
 NaN explicitamente.
 """
+
 import math
 
 from pydantic import BaseModel
+
 from services.llm_runner import _extract_answers_from_row
 
 

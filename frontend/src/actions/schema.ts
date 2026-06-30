@@ -469,6 +469,9 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
   };
   const responses: ResponseRow[] = [];
   for (let from = 0; ; from += RESPONSES_PAGE) {
+    // Paginação sequencial: a próxima página depende de a anterior ter retornado
+    // uma página cheia; não há como paralelizar sem saber o total de linhas.
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop
     const { data: page, error: pageErr } = await supabase
       .from("responses")
       .select("id, created_at, answer_field_hashes, version_inferred_from")

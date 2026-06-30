@@ -92,10 +92,9 @@ export function AutoReviewFieldPanel({
     });
   }
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reabre a justificativa ao trocar de campo
-    setShowJustification(true);
-  }, [field.fieldName]);
+  // Nao ha effect para reabrir a justificativa ao trocar de campo: o pai
+  // remonta o painel via `key={currentKey}`, entao `showJustification` ja
+  // nasce no default aberto a cada (doc, campo).
 
   // Foca o textarea ao escolher um verdict que exige justificativa — sem isto,
   // teclar o atalho abre o campo mas deixa o foco para tras. Keyed so em
