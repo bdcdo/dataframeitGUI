@@ -89,7 +89,7 @@ Para aplicar migrations pendentes: `npx supabase db push`
 
 ## Deploy
 
-Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Vercel → Fly.io (app `gui-analise-sistematica-frontend`); enquanto o cutover de dominio nao ocorre, Vercel ainda e a producao. Backend: Fly.io (app `gui-analise-sistematica-api`) via workflow quando ha mudanca em `backend/**`. A partir de 2026-04-20, **sempre criar branch + PR** em vez de push direto na main. Fluxo:
+Deploy e automatico a partir de merge no branch `main`. Frontend: em migracao Vercel → Fly.io (app `gui-analise-sistematica-frontend`); enquanto o cutover de dominio nao ocorre, Vercel ainda e a producao. Backend: Fly.io (app `gui-analise-sistematica-api`) via workflow quando ha mudanca em `backend/**`. A partir de 2026-04-20, **preferir branch + PR** ao push direto na main. Fluxo recomendado:
 
 1. **Criar git worktree isolado** para a tarefa (ver secao "Workspace isolado" abaixo) — nao trabalhar no diretorio principal
 2. Criar branch descritiva (`feat/...`, `fix/...`, `perf/...`) na worktree
