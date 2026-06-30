@@ -289,9 +289,9 @@ export function ComparePage({
           existingVerdict: currentVerdict,
           reviewed,
           isDivergent: isCurrentFieldDivergent,
-          isDocComplete: isCurrentDocComplete,
-          hasNextDoc,
-          onNextDoc: handleNextDoc,
+          docStatus: isCurrentDocComplete
+            ? { complete: true, hasNextDoc, onNextDoc: handleNextDoc }
+            : { complete: false },
           onFieldNavigate: setFieldIndex,
           onVerdict: handleVerdict,
           onMarkReviewed: handleMarkReviewed,
@@ -299,12 +299,11 @@ export function ComparePage({
           onCommentChange: setComment,
           commentCount: fieldCommentCount,
           suggestionCount: fieldSuggestionCount,
-          allowEquivalence,
+          equivalence: { allow: allowEquivalence, canManageAnyPair },
           equivalences: currentFieldEquivalences,
           onConfirmEquivalent: handleConfirmEquivalent,
           onUnmarkEquivalencePair: handleUnmarkPair,
           currentUserId,
-          canManageAnyPair,
         }}
       />
     </div>
