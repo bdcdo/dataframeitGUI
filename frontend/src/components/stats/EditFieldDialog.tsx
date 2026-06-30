@@ -156,6 +156,7 @@ function useEditFieldForm(
     pendingRemoval,
     setPendingRemoval,
     handleBeforeRemoveOption,
+    subfieldKeys,
   };
 }
 
@@ -191,6 +192,7 @@ export function EditFieldDialog({
     pendingRemoval,
     setPendingRemoval,
     handleBeforeRemoveOption,
+    subfieldKeys,
   } = useEditFieldForm(field, fieldName, allFields, pendingSuggestion);
 
   if (!field) return null;
