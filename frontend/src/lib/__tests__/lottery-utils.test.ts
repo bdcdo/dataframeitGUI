@@ -515,6 +515,9 @@ describe("distributeDocs", () => {
   it("não muta os inputs (função pura)", () => {
     const participants = makeParticipants([1, 2]);
     const coOccurrence = emptyCoOccurrence(participants);
+    // Deep clone da fixture para o snapshot de imutabilidade (objeto plano;
+    // round-trip JSON é adequado). FP legítimo em arquivo de teste.
+    // react-doctor-disable-next-line react-doctor/no-json-parse-stringify-clone
     const snapshot = JSON.parse(JSON.stringify(coOccurrence));
     const docs = docIds(5);
     run(docs, participants, { researchersPerDoc: 2, coOccurrence });
