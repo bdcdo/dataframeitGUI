@@ -5,7 +5,7 @@
 #
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, lint:types, fallow, semgrep
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, lint:types, fallow, semgrep
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
@@ -65,6 +65,21 @@ repos:
       - id: typecheck
         name: typecheck (tsc --noEmit, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/tsc && exec ./node_modules/.bin/tsc --noEmit || { echo "tsc ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # vitest run: suite unitaria/integracao completa. Hoje passa limpo, entao
+      # roda full sem grandfathering — qualquer teste que quebre barra o push.
+      # E o gate de regressao de teste que nem o build da Vercel nem o `next
+      # build` do deploy Fly pegavam. Falha fechado se o binario estiver ausente.
+      # Escopo por .ts/.tsx alterado (nao por arquivo de teste): mudar codigo de
+      # producao roda a suite inteira, que e o comportamento desejado.
+      - id: vitest
+        name: vitest run (full suite, pre-push)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false
