@@ -98,7 +98,7 @@ Grid editavel (docs x pesquisadores) + botao sortear.
 
 ## Stats
 
-3 stat cards + progresso por campo + grafico barras recharts.
+3 stat cards + progresso por campo.
 
 ## Export
 

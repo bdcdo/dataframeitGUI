@@ -93,9 +93,6 @@ Modal: config sorteio (N pesq/doc, balancear, seed).
 ### FieldProgress.tsx
 Tabela progresso por campo com barra.
 
-### VerdictChart.tsx
-Grafico barras recharts: vereditos por campo.
-
 ## members/
 
 ### MemberList.tsx
