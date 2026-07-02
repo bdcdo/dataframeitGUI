@@ -134,7 +134,7 @@ export function LlmInsightsView({
           <Button
             variant="outline"
             size="sm"
-            onClick={handleRegenerateBacklog}
+            onClick={() => void handleRegenerateBacklog()}
             disabled={regenerating}
           >
             {regenerating ? "Regenerando…" : "Regenerar backlog"}
