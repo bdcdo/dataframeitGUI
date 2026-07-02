@@ -74,28 +74,33 @@ export function useCompareNavigation({
   // Mantém o pin colado no doc exibido quando ele não resolve mais: pin `null`
   // (lista estava vazia na montagem) ou doc pinado sumiu da lista (excluído,
   // filtro). Sem a re-pinagem, o fallback `documents[0]` ficaria exposto ao
-  // próximo re-sort e o parecer saltaria de novo. O toast dispara uma vez, na
-  // transição "estava lá → sumiu".
+  // próximo re-sort e o parecer saltaria de novo. Ajuste condicional de estado
+  // durante o render (padrão dos docs do React, "adjusting state when a prop
+  // changes") em vez de effect — `set-state-in-effect` proíbe o setState
+  // síncrono em effect.
+  if (
+    documents.length > 0 &&
+    (!pinnedDocId || !documents.some((d) => d.id === pinnedDocId))
+  ) {
+    setPinnedDocId(documents[0].id);
+  }
+
+  // Avisa quando o doc pinado some da lista. `lastValidPinnedRef` (atualizado
+  // só aqui) guarda o último pin válido do render anterior: se ele deixou de
+  // existir em `documents` e o pin corrente já é outro (a re-pinagem acima
+  // aconteceu), houve a transição "estava lá → sumiu" — toast uma vez.
   const lastValidPinnedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (documents.length === 0) {
-      lastValidPinnedRef.current = pinnedDocId;
-      return;
+    const prev = lastValidPinnedRef.current;
+    if (
+      prev !== null &&
+      prev !== pinnedDocId &&
+      documents.length > 0 &&
+      !documents.some((d) => d.id === prev)
+    ) {
+      toast.info("Documento removido da fila — voltando ao topo.");
     }
-    if (!pinnedDocId) {
-      setPinnedDocId(documents[0].id);
-      return;
-    }
-    const exists = documents.some((d) => d.id === pinnedDocId);
-    if (exists) {
-      lastValidPinnedRef.current = pinnedDocId;
-    } else {
-      if (lastValidPinnedRef.current === pinnedDocId) {
-        toast.info("Documento removido da fila — voltando ao topo.");
-      }
-      lastValidPinnedRef.current = null;
-      setPinnedDocId(documents[0].id);
-    }
+    lastValidPinnedRef.current = pinnedDocId;
   }, [pinnedDocId, documents]);
 
   const currentDoc = documents[docIndex];
