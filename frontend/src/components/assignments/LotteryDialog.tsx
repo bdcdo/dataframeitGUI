@@ -11,25 +11,20 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import type { LotteryMode } from "@/lib/lottery-utils";
 import type { LotteryMember } from "./lottery-dialog-types";
 import { useLotteryStats } from "./useLotteryStats";
 import { useLotteryParams } from "./useLotteryParams";
 import { useLotteryRun } from "./useLotteryRun";
-import {
-  capValue,
-  isParticipant,
-  weightValue,
-} from "./lottery-participant-values";
 import { LotteryEligibilitySection } from "./LotteryEligibilitySection";
 import {
   LotteryDistributionSection,
   type LotterySummary,
 } from "./LotteryDistributionSection";
+import { LotteryParticipantsSection } from "./LotteryParticipantsSection";
+import { LotteryPreviewSection } from "./LotteryPreviewSection";
 
 interface LotteryDialogProps {
   projectId: string;
@@ -42,21 +37,8 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const { stats, statsError } = useLotteryStats(projectId, open);
 
   const params = useLotteryParams();
-  const {
-    type,
-    setType,
-    mode,
-    setMode,
-    participantOverrides,
-    setParticipantOverrides,
-    weightInputs,
-    setWeightInputs,
-    capInputs,
-    setCapInputs,
-    label,
-    setLabel,
-    setPreviewState,
-  } = params;
+  const { type, setType, mode, setMode, label, setLabel, setPreviewState } =
+    params;
 
   const {
     isComparacao,
@@ -90,9 +72,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
           participantCount,
           estimatedPerParticipant,
         };
-
-  const memberName = (userId: string) =>
-    members.find((m) => m.userId === userId)?.name ?? userId.slice(0, 8);
 
   return (
     <Dialog
@@ -209,152 +188,23 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
           {members.length > 0 && (
             <>
               <Separator />
-
-              {/* Section: Participants (US3) */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold">Participantes</h4>
-                <p className="text-xs text-muted-foreground">
-                  Quem está ligado entra no sorteio. Pesquisadores começam
-                  ligados; coordenadores, desligados. O <strong>peso</strong>{" "}
-                  ajusta a carga relativa (0,5 = metade dos demais); o{" "}
-                  <strong>limite</strong> (opcional) é o teto de docs novos da
-                  pessoa neste sorteio. Os valores ficam salvos para o próximo.
-                </p>
-                {members.map((m) => (
-                  <div key={m.userId} className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <Label
-                        htmlFor={`member-${m.userId}`}
-                        className="font-normal"
-                      >
-                        {m.name}
-                        {m.role === "coordenador" && (
-                          <span className="ml-1.5 text-xs text-muted-foreground">
-                            coordenador
-                          </span>
-                        )}
-                        {m.pending && (
-                          <Badge
-                            variant="secondary"
-                            className="ml-1.5"
-                            title="Pré-registrado: ainda não criou conta."
-                          >
-                            Pendente
-                          </Badge>
-                        )}
-                      </Label>
-                      <Switch
-                        id={`member-${m.userId}`}
-                        checked={isParticipant(m, participantOverrides)}
-                        onCheckedChange={(checked) =>
-                          setParticipantOverrides((prev) => ({
-                            ...prev,
-                            [m.userId]: checked,
-                          }))
-                        }
-                      />
-                    </div>
-                    {isParticipant(m, participantOverrides) && (
-                      <div className="flex items-center gap-4 pl-1 text-xs text-muted-foreground">
-                        <label
-                          htmlFor={`weight-${m.userId}`}
-                          className="flex items-center gap-1.5"
-                        >
-                          peso
-                          <Input
-                            id={`weight-${m.userId}`}
-                            type="number"
-                            min={0.5}
-                            step={0.5}
-                            value={weightValue(m, weightInputs)}
-                            onChange={(e) =>
-                              setWeightInputs((prev) => ({
-                                ...prev,
-                                [m.userId]: e.target.value,
-                              }))
-                            }
-                            className="h-7 w-16"
-                            aria-label={`Peso de ${m.name}`}
-                          />
-                        </label>
-                        <label
-                          htmlFor={`cap-${m.userId}`}
-                          className="flex items-center gap-1.5"
-                        >
-                          limite
-                          <Input
-                            id={`cap-${m.userId}`}
-                            type="number"
-                            min={1}
-                            placeholder="—"
-                            value={capValue(m, capInputs)}
-                            onChange={(e) =>
-                              setCapInputs((prev) => ({
-                                ...prev,
-                                [m.userId]: e.target.value,
-                              }))
-                            }
-                            className="h-7 w-16"
-                            aria-label={`Limite de docs de ${m.name}`}
-                          />
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <LotteryParticipantsSection members={members} params={params} />
             </>
           )}
 
           <Separator />
 
-          {/* Section 3: Preview + Confirm */}
-          <div className="space-y-3">
-            <Button
-              variant="outline"
-              onClick={handlePreview}
-              disabled={previewing || !canSubmit}
-              className="w-full"
-            >              {previewing ? "Calculando..." : "Visualizar prévia"}
-            </Button>
-
-            {preview && (
-              <div className="rounded-lg border p-3 space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  {preview.totalNew} novas atribuições ·{" "}
-                  {preview.totalPreserved} preservadas
-                </p>
-                <div className="max-h-40 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b text-left">
-                        <th className="pb-1">Participante</th>
-                        <th className="pb-1 text-center">Existentes</th>
-                        <th className="pb-1 text-center">Novos</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.participants.map((r) => (
-                        <tr key={r.userId} className="border-b last:border-0">
-                          <td className="py-1">{memberName(r.userId)}</td>
-                          <td className="py-1 text-center">{r.existing}</td>
-                          <td className="py-1 text-center">{r.newDocs}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            <Button
-              onClick={handleRandomize}
-              disabled={loading || !canSubmit}
-              className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
-            >
-              {loading ? "Sorteando..." : "Sortear"}
-            </Button>
-          </div>
+          <LotteryPreviewSection
+            preview={preview}
+            members={members}
+            run={{
+              previewing,
+              loading,
+              canSubmit,
+              onPreview: handlePreview,
+              onRandomize: handleRandomize,
+            }}
+          />
         </div>
       </DialogContent>
     </Dialog>
