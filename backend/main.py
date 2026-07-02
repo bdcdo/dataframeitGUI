@@ -56,18 +56,6 @@ def _match_origin(origin: str | None) -> str | None:
     return None
 
 
-app = FastAPI(title="dataframeit API", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_origin_regex=settings.cors_origin_regex,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 def _cors_headers_for(request: Request) -> dict[str, str]:
     headers: dict[str, str] = {"Vary": "Origin"}
     allowed = _match_origin(request.headers.get("origin"))
@@ -77,7 +65,6 @@ def _cors_headers_for(request: Request) -> dict[str, str]:
     return headers
 
 
-@app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     # CORSMiddleware sits below ServerErrorMiddleware in Starlette's stack, so
     # 500s from unhandled exceptions never pass back through it. Without this
@@ -93,7 +80,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
-@app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     # Unlike the generic Exception handler above, HTTPException responses still
     # flow back through CORSMiddleware, so it adds Access-Control-Allow-Origin /
@@ -120,26 +106,60 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
-# Autenticação estrutural: toda rota dos dois routers exige um JWT válido por
-# dependency de router, não só pela chamada manual no corpo do handler. Assim,
-# uma rota nova que esqueça o `Depends(require_authenticated_user)` não fica
-# anônima por omissão. A autorização (coordenador/membro) continua por rota,
-# pois depende do project_id do payload. FastAPI deduplica a dependência quando
-# o handler também a declara para receber o `AuthUser`.
-app.include_router(
-    llm_router,
-    prefix="/api/llm",
-    tags=["llm"],
-    dependencies=[Depends(require_authenticated_user)],
-)
-app.include_router(
-    pydantic_router,
-    prefix="/api/pydantic",
-    tags=["pydantic"],
-    dependencies=[Depends(require_authenticated_user)],
-)
-
-
-@app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# Docs (/docs, /redoc, /openapi.json) desligados por padrão — fail-safe. Num
+# serviço internet-facing, /openapi.json anônimo enumera o schema de todas as
+# rotas protegidas. Ligar só em dev com ENABLE_DOCS=true (ver config.py).
+#
+# A construção do app é uma factory para que o gate de docs seja testável sem
+# depender do ambiente do processo: o `app` de módulo (produção) usa o default
+# `settings.enable_docs`, enquanto os testes passam `enable_docs` explícito.
+def create_app(*, enable_docs: bool = settings.enable_docs) -> FastAPI:
+    app = FastAPI(
+        title="dataframeit API",
+        lifespan=lifespan,
+        docs_url="/docs" if enable_docs else None,
+        redoc_url="/redoc" if enable_docs else None,
+        openapi_url="/openapi.json" if enable_docs else None,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_origin_regex=settings.cors_origin_regex,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+    app.add_exception_handler(HTTPException, http_exception_handler)
+
+    # Autenticação estrutural: toda rota dos dois routers exige um JWT válido por
+    # dependency de router, não só pela chamada manual no corpo do handler. Assim,
+    # uma rota nova que esqueça o `Depends(require_authenticated_user)` não fica
+    # anônima por omissão. A autorização (coordenador/membro) continua por rota,
+    # pois depende do project_id do payload. FastAPI deduplica a dependência quando
+    # o handler também a declara para receber o `AuthUser`.
+    app.include_router(
+        llm_router,
+        prefix="/api/llm",
+        tags=["llm"],
+        dependencies=[Depends(require_authenticated_user)],
+    )
+    app.include_router(
+        pydantic_router,
+        prefix="/api/pydantic",
+        tags=["pydantic"],
+        dependencies=[Depends(require_authenticated_user)],
+    )
+
+    app.get("/health")(health)
+
+    return app
+
+
+app = create_app()

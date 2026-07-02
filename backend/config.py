@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # do JWT. O token do template expira em ~60s e é pollado por minutos.
     jwt_leeway_seconds: int = 30
 
+    # Endpoints de documentação (/docs, /redoc, /openapi.json). Fechados por
+    # padrão (fail-safe): num serviço internet-facing, /openapi.json anônimo
+    # vaza o schema de todas as rotas protegidas. Ligar só em dev via
+    # ENABLE_DOCS=true no .env. Produção (Fly) mantém o default fechado — nada
+    # a setar no fly.toml.
+    enable_docs: bool = False
+
     model_config = {"env_file": ".env"}
 
 
