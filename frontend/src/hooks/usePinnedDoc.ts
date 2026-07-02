@@ -66,3 +66,17 @@ export function usePinnedDoc(
 
   return [pinnedDocId, setPinnedDocId];
 }
+
+/**
+ * Índice do doc fixado numa lista de ids, com fallback ao topo: quando o pin
+ * é `null` ou não está na lista (inclui lista vazia), retorna 0 — a posição
+ * exibida por padrão. Derivação compartilhada pelos consumidores de seleção
+ * fixada (Comparação, Auto-revisão, Arbitragem) para não triplicar o memo.
+ */
+export function pinnedDocIndex(
+  ids: readonly string[],
+  pinnedId: string | null,
+): number {
+  const i = ids.findIndex((id) => id === pinnedId);
+  return i >= 0 ? i : 0;
+}

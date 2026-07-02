@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, act, cleanup, waitFor } from "@testing-library/react";
-import { usePinnedDoc } from "../usePinnedDoc";
+import { usePinnedDoc, pinnedDocIndex } from "../usePinnedDoc";
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -67,5 +67,23 @@ describe("usePinnedDoc", () => {
     act(() => a.result.current[1]("dx"));
     expect(a.result.current[0]).toBe("dx");
     expect(b.result.current[0]).toBe("dx");
+  });
+});
+
+describe("pinnedDocIndex", () => {
+  it("retorna o índice do id fixado quando presente", () => {
+    expect(pinnedDocIndex(["a", "b", "c"], "b")).toBe(1);
+  });
+
+  it("cai para 0 quando o id fixado não está na lista", () => {
+    expect(pinnedDocIndex(["a", "b"], "x")).toBe(0);
+  });
+
+  it("cai para 0 com pin null", () => {
+    expect(pinnedDocIndex(["a", "b"], null)).toBe(0);
+  });
+
+  it("cai para 0 com lista vazia", () => {
+    expect(pinnedDocIndex([], "a")).toBe(0);
   });
 });

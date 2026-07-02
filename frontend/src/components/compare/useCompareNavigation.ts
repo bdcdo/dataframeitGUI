@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isDocComplete, findNextPendingDocIndex } from "@/lib/compare-divergence";
+import { pinnedDocIndex } from "@/hooks/usePinnedDoc";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { CompareDocument } from "./compare-types";
@@ -46,40 +47,59 @@ export function useCompareNavigation({
   fields,
   localReviews,
 }: UseCompareNavigationParams): CompareNavigation {
-  const [pinnedDocId, setPinnedDocId] = useState<string | null>(null);
+  // O pin nasce já apontando para o doc exibido: se ficasse `null` até a
+  // primeira navegação explícita (bug #73, caso residual), o fallback
+  // "posição 0" faria o re-sort do servidor trocar o parecer sob o usuário
+  // enquanto ele revisa o primeiro da fila.
+  const [pinnedDocId, setPinnedDocId] = useState<string | null>(
+    () => documents[0]?.id ?? null,
+  );
   const [fieldIndex, setFieldIndex] = useState(0);
   const [filter, setFilter] = useState("all");
 
-  // O parecer atual é derivado de `pinnedDocId` (última escolha explícita do
-  // usuário). `documents` é reordenado pelo Server Component a cada
-  // `revalidatePath` (sort por pendências); rastrear por índice numérico faria
-  // o parecer mudar sob o usuário a cada veredito. Quando o ID atual some da
-  // lista (filtro mudou, etc.) caímos para `documents[0]`.
-  const docIndex = useMemo(() => {
-    if (documents.length === 0) return 0;
-    if (pinnedDocId) {
-      const i = documents.findIndex((d) => d.id === pinnedDocId);
-      if (i >= 0) return i;
-    }
-    return 0;
-  }, [documents, pinnedDocId]);
+  // O parecer atual é derivado de `pinnedDocId` (o doc exibido, atualizado a
+  // cada escolha explícita do usuário). `documents` é reordenado pelo Server
+  // Component a cada `revalidatePath` (sort por pendências); rastrear por
+  // índice numérico faria o parecer mudar sob o usuário a cada veredito.
+  // Quando o ID atual some da lista (filtro mudou, etc.) caímos para
+  // `documents[0]`.
+  const docIndex = useMemo(
+    () =>
+      pinnedDocIndex(
+        documents.map((d) => d.id),
+        pinnedDocId,
+      ),
+    [documents, pinnedDocId],
+  );
 
-  // Avisa quando o doc pinado some da lista (ex.: foi excluído). O `docIndex`
-  // memo já cai para `documents[0]` automaticamente; aqui só disparamos o toast
-  // uma vez, na transição "estava lá → sumiu".
+  // Mantém o pin colado no doc exibido quando ele não resolve mais: pin `null`
+  // (lista estava vazia na montagem) ou doc pinado sumiu da lista (excluído,
+  // filtro) — nos dois casos `docIndex` caiu para o fallback 0 e o doc exibido
+  // deixou de ser o pinado. Sem a re-pinagem, esse fallback ficaria exposto ao
+  // próximo re-sort e o parecer saltaria de novo. Ajuste condicional de estado
+  // durante o render (padrão dos docs do React, "adjusting state when a prop
+  // changes") em vez de effect — `set-state-in-effect` proíbe o setState
+  // síncrono em effect.
+  if (documents.length > 0 && documents[docIndex]?.id !== pinnedDocId) {
+    setPinnedDocId(documents[0].id);
+  }
+
+  // Avisa quando o doc pinado some da lista. `lastValidPinnedRef` (atualizado
+  // só aqui) guarda o último pin válido do render anterior: se ele deixou de
+  // existir em `documents` e o pin corrente já é outro (a re-pinagem acima
+  // aconteceu), houve a transição "estava lá → sumiu" — toast uma vez.
   const lastValidPinnedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!pinnedDocId || documents.length === 0) {
-      lastValidPinnedRef.current = pinnedDocId;
-      return;
-    }
-    const exists = documents.some((d) => d.id === pinnedDocId);
-    if (exists) {
-      lastValidPinnedRef.current = pinnedDocId;
-    } else if (lastValidPinnedRef.current === pinnedDocId) {
+    const prev = lastValidPinnedRef.current;
+    if (
+      prev !== null &&
+      prev !== pinnedDocId &&
+      documents.length > 0 &&
+      !documents.some((d) => d.id === prev)
+    ) {
       toast.info("Documento removido da fila — voltando ao topo.");
-      lastValidPinnedRef.current = null;
     }
+    lastValidPinnedRef.current = pinnedDocId;
   }, [pinnedDocId, documents]);
 
   const currentDoc = documents[docIndex];

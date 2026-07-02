@@ -7,6 +7,7 @@ import { CompareDocList, type DocListEntry } from "./CompareDocList";
 import { CompareWorkspace } from "./CompareWorkspace";
 import { useCompareReviews } from "./useCompareReviews";
 import { useCompareNavigation } from "./useCompareNavigation";
+import { useStableDocOrder } from "./useStableDocOrder";
 import { useCompareFieldData } from "./useCompareFieldData";
 import { useCompareVerdicts } from "./useCompareVerdicts";
 import { useCompareKeyboard } from "./useCompareKeyboard";
@@ -51,7 +52,7 @@ interface ComparePageProps {
 
 export function ComparePage({
   projectId,
-  documents,
+  documents: serverDocuments,
   responses,
   divergentFields,
   fields,
@@ -70,6 +71,11 @@ export function ComparePage({
   currentUserId,
   canManageAnyPair,
 }: ComparePageProps) {
+  // Ordem estável de montagem: o re-sort por pendências do servidor (a cada
+  // veredito) não remexe a fila nem a sidebar — só mudança de composição
+  // (filtro/exclusão) altera a ordem. Ver useStableDocOrder.
+  const documents = useStableDocOrder(serverDocuments);
+
   const { localReviews, recordReview } = useCompareReviews(existingReviews);
 
   const {
