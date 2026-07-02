@@ -164,5 +164,3 @@ export function useLlmErrorFiltering<
     openErrorCount,
   };
 }
-
-export type LlmErrorFiltering = ReturnType<typeof useLlmErrorFiltering>;
