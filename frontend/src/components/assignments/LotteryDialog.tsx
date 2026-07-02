@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -24,19 +24,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { smartRandomize, previewLottery } from "@/actions/assignments";
-import type { LotteryParams } from "@/actions/assignments";
-import {
-  filterComparisonEligible,
-  filterEligibleDocs,
-  resolveWeight,
-  resolveCap,
-  type AssignmentFilter,
-  type LotteryBalancing,
-  type LotteryFilters,
-  type LotteryMode,
+import type {
+  AssignmentFilter,
+  LotteryBalancing,
+  LotteryMode,
 } from "@/lib/lottery-utils";
-import { toast } from "sonner";
 import { ptBR } from "date-fns/locale";
 import { format } from "date-fns";
 import type {
@@ -45,6 +37,12 @@ import type {
 } from "./lottery-dialog-types";
 import { useLotteryStats } from "./useLotteryStats";
 import { useLotteryParams } from "./useLotteryParams";
+import { useLotteryRun } from "./useLotteryRun";
+import {
+  capValue,
+  isParticipant,
+  weightValue,
+} from "./lottery-participant-values";
 
 interface LotteryDialogProps {
   projectId: string;
@@ -53,11 +51,10 @@ interface LotteryDialogProps {
 
 export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
 
   const { stats, statsError } = useLotteryStats(projectId, open);
 
+  const params = useLotteryParams();
   const {
     type,
     setType,
@@ -99,174 +96,28 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     setCapInputs,
     label,
     setLabel,
-    previewState,
     setPreviewState,
-  } = useLotteryParams();
+  } = params;
 
-  const isParticipant = (m: LotteryMember) =>
-    participantOverrides[m.userId] ?? m.role === "pesquisador";
-
-  // String exibida nos inputs: override local, senão default persistido.
-  const weightValue = useCallback(
-    (m: LotteryMember) => weightInputs[m.userId] ?? String(m.weight ?? 1),
-    [weightInputs],
-  );
-  const capValue = useCallback(
-    (m: LotteryMember) =>
-      capInputs[m.userId] ?? (m.cap != null ? String(m.cap) : ""),
-    [capInputs],
-  );
-
-  const participantIds = useMemo(
-    () =>
-      members
-        .filter(
-          (m) => participantOverrides[m.userId] ?? m.role === "pesquisador"
-        )
-        .map((m) => m.userId),
-    [members, participantOverrides]
-  );
-
-  // Peso/limite resolvido por participante ativo. Inclui TODOS os participantes
-  // (peso 1 / sem limite explícito) para que o server persista o reset de quem
-  // voltou ao default — não só quem está fora do padrão.
-  const participantSettings = useMemo(() => {
-    const out: Record<string, { weight: number; cap: number | null }> = {};
-    for (const m of members) {
-      if (!(participantOverrides[m.userId] ?? m.role === "pesquisador")) continue;
-      const cStr = capValue(m);
-      out[m.userId] = {
-        // Mesma coerção do server (resolveWeight/resolveCap) — fonte única.
-        weight: resolveWeight(parseFloat(weightValue(m))),
-        cap: resolveCap(cStr.trim() === "" ? null : parseInt(cStr, 10)),
-      };
-    }
-    return out;
-  }, [members, participantOverrides, weightValue, capValue]);
-
-  const isComparacao = type === "comparacao";
-
-  const filters = useMemo<LotteryFilters>(() => {
-    const f: LotteryFilters = {};
-    if (codingsFilterMode === "none") f.maxHumanCodings = 0;
-    else if (codingsFilterMode === "atMost") f.maxHumanCodings = maxCodingsValue;
-    if (assignmentFilter !== "any") f.assignmentFilter = assignmentFilter;
-    if (batchFilterMode === "only" && batchOnly) {
-      f.batchFilter = { only: batchOnly };
-    } else if (batchFilterMode === "exclude" && batchExclude.length) {
-      f.batchFilter = { exclude: batchExclude };
-    }
-    if (manualEnabled) f.manualDocIds = Array.from(manualDocIds);
-    return f;
-  }, [
-    codingsFilterMode,
-    maxCodingsValue,
-    assignmentFilter,
-    batchFilterMode,
-    batchOnly,
-    batchExclude,
-    manualEnabled,
-    manualDocIds,
-  ]);
-
-  // Prévia + semente (research D13): a seed da última prévia é reaproveitada
-  // ao sortear; a prévia é guardada junto da configuração que a gerou, então
-  // qualquer mudança de configuração a invalida (e à seed) por derivação.
-  // O rótulo fica de fora: não afeta o resultado do sorteio, e é lido em
-  // buildParams na hora do submit
-  const configKey = JSON.stringify({
-    type,
-    researchersPerDoc,
-    docsPerResearcherEnabled,
-    docsPerResearcher,
-    docSubsetEnabled,
-    docSubsetSize,
-    mode,
-    balancing,
-    filters,
-    participantIds,
-    participantSettings,
-  });
-  const preview = previewState?.key === configKey ? previewState.preview : null;
-  const seed = preview?.seed ?? null;
-
-  // Contagem de elegíveis ao vivo, com a mesma função pura do server
-  const eligibleCount = useMemo(() => {
-    if (!stats) return null;
-    let candidates = stats.docs;
-    if (isComparacao) {
-      candidates = filterComparisonEligible(
-        candidates,
-        stats.automationMode,
-        stats.minResponsesForComparison,
-      );
-    }
-    return filterEligibleDocs(candidates, type, filters).length;
-  }, [stats, type, isComparacao, filters]);
-
-  const blockedMessage =
-    participantIds.length === 0
-      ? "Nenhum participante selecionado."
-      : eligibleCount === 0
-        ? "Nenhum documento passa nos filtros atuais."
-        : null;
-
-  const canSubmit = !blockedMessage && stats !== null;
-
-  const buildParams = (withSeed: boolean): LotteryParams => ({
+  const {
+    isComparacao,
+    participantCount,
+    eligibleCount,
+    blockedMessage,
+    canSubmit,
+    preview,
+    estimatedPerParticipant,
+    previewing,
+    loading,
+    handlePreview,
+    handleRandomize,
+  } = useLotteryRun({
     projectId,
-    type,
-    mode,
-    balancing,
-    seed: withSeed && seed !== null ? seed : undefined,
-    researchersPerDoc,
-    docsPerResearcher: docsPerResearcherEnabled
-      ? docsPerResearcher
-      : undefined,
-    docSubsetSize: docSubsetEnabled ? docSubsetSize : undefined,
-    label: label || undefined,
-    filters,
-    participantIds,
-    participantSettings,
+    members,
+    stats,
+    params,
+    onLotteryDone: () => setOpen(false),
   });
-
-  const handlePreview = async () => {
-    setPreviewing(true);
-    try {
-      const result = await previewLottery(buildParams(false));
-      setPreviewState({ key: configKey, preview: result });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao calcular a prévia");
-    }
-    setPreviewing(false);
-  };
-
-  const handleRandomize = async () => {
-    setLoading(true);
-    try {
-      const result = await smartRandomize(buildParams(true));
-      toast.success(
-        `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
-      );
-      setOpen(false);
-      setPreviewState(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao sortear");
-    }
-    setLoading(false);
-  };
-
-  const docsConsidered =
-    eligibleCount === null
-      ? null
-      : docSubsetEnabled
-        ? Math.min(docSubsetSize, eligibleCount)
-        : eligibleCount;
-
-  const estimatedPerParticipant =
-    docsConsidered !== null && participantIds.length > 0
-      ? Math.ceil((docsConsidered * researchersPerDoc) / participantIds.length)
-      : 0;
 
   const memberName = (userId: string) =>
     members.find((m) => m.userId === userId)?.name ?? userId.slice(0, 8);
@@ -641,7 +492,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                   ? statsError
                     ? "Não foi possível carregar os documentos."
                     : "Carregando documentos..."
-                  : `${eligibleCount} documentos elegíveis, ${participantIds.length} participantes. ${
+                  : `${eligibleCount} documentos elegíveis, ${participantCount} participantes. ${
                       balancing === "round"
                         ? `Estimativa: ~${estimatedPerParticipant} docs por participante.`
                         : `Média: ~${estimatedPerParticipant} docs por participante — quem tem menos carga recebe mais.`
@@ -689,7 +540,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                       </Label>
                       <Switch
                         id={`member-${m.userId}`}
-                        checked={isParticipant(m)}
+                        checked={isParticipant(m, participantOverrides)}
                         onCheckedChange={(checked) =>
                           setParticipantOverrides((prev) => ({
                             ...prev,
@@ -698,7 +549,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                         }
                       />
                     </div>
-                    {isParticipant(m) && (
+                    {isParticipant(m, participantOverrides) && (
                       <div className="flex items-center gap-4 pl-1 text-xs text-muted-foreground">
                         <label
                           htmlFor={`weight-${m.userId}`}
@@ -710,7 +561,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                             type="number"
                             min={0.5}
                             step={0.5}
-                            value={weightValue(m)}
+                            value={weightValue(m, weightInputs)}
                             onChange={(e) =>
                               setWeightInputs((prev) => ({
                                 ...prev,
@@ -731,7 +582,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                             type="number"
                             min={1}
                             placeholder="—"
-                            value={capValue(m)}
+                            value={capValue(m, capInputs)}
                             onChange={(e) =>
                               setCapInputs((prev) => ({
                                 ...prev,
