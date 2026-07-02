@@ -76,5 +76,5 @@ extend-immutable-calls = [
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
-    "ruff>=0.15",
+    "ruff>=0.15.19",
 ]
