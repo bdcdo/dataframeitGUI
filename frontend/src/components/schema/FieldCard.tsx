@@ -1,31 +1,27 @@
 "use client";
 
-import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
   Collapsible,
   CollapsibleContent,
-  CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
-import { GripVertical, Trash2 } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
-import { useStableListIds } from "@/hooks/useStableListIds";
 import { ConditionEditor } from "./ConditionEditor";
 import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "./RemoveOptionDialog";
-import {
-  findConditionConflicts,
-  stripOptionFromConditions,
-  type ConditionConflict,
-} from "@/lib/schema-utils";
+import { FieldCardHeader } from "./FieldCardHeader";
+import { TYPE_LABELS } from "./field-labels";
+import { SubfieldsEditor } from "./SubfieldsEditor";
+import { JustificationPromptField } from "./JustificationPromptField";
+import { useOptionRemovalGuard } from "./useOptionRemovalGuard";
+import { stripOptionFromConditions } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
 interface FieldCardProps {
@@ -41,26 +37,6 @@ interface FieldCardProps {
   onAllFieldsChange?: (fields: PydanticField[]) => void;
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  single: "Escolha única",
-  multi: "Múltipla escolha",
-  text: "Texto livre",
-  date: "Data",
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  single: "bg-blue-500/10 text-blue-700",
-  multi: "bg-purple-500/10 text-purple-700",
-  text: "bg-green-500/10 text-green-700",
-  date: "bg-amber-500/10 text-amber-700",
-};
-
-const TARGET_LABELS: Record<string, string> = {
-  llm_only: "Apenas LLM",
-  human_only: "Apenas humano",
-  none: "Oculto",
-};
-
 export function FieldCard({
   id,
   field,
@@ -75,10 +51,6 @@ export function FieldCard({
     onChange({ ...field, ...patch });
   };
 
-  // Keys estáveis para a lista editável de subcampos: o `key` do subfield é
-  // digitado pelo usuário (muda a cada tecla), logo não serve como React key.
-  const subfieldKeys = useStableListIds(field.subfields?.length ?? 0);
-
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
   const sortableStyle = {
@@ -87,21 +59,15 @@ export function FieldCard({
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const [pendingRemoval, setPendingRemoval] = useState<{
-    option: string;
-    conflicts: ConditionConflict[];
-    resolve: (confirmed: boolean) => void;
-  } | null>(null);
+  const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
+    allFields,
+    field.name,
+  );
 
   const handleBeforeRemoveOption = async (opt: string): Promise<boolean> => {
     if (!onAllFieldsChange) return true;
-    const conflicts = findConditionConflicts(allFields, field.name, opt);
+    const { confirmed, conflicts } = await confirmRemoval(opt);
     if (conflicts.length === 0) return true;
-
-    const confirmed = await new Promise<boolean>((resolve) => {
-      setPendingRemoval({ option: opt, conflicts, resolve });
-    });
-
     if (!confirmed) return false;
 
     const stripped = stripOptionFromConditions(allFields, field.name, opt);
@@ -140,55 +106,12 @@ export function FieldCard({
           isExpanded ? "border-brand/40 bg-card" : "border-border bg-card"
         )}
       >
-        {/* Header */}
-        <div className="flex items-center gap-2 px-3 py-2">
-          {/* Drag handle */}
-          <button
-            type="button"
-            className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
-              isDragging ? "cursor-grabbing" : "cursor-grab"
-            )}
-            aria-label="Arrastar para reordenar"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="size-4" />
-          </button>
-
-          {/* Nome + badges */}
-          <CollapsibleTrigger asChild>
-            <button type="button" className="flex flex-1 items-center gap-2 text-left min-w-0">
-              <code className="text-sm font-mono truncate">{field.name}</code>
-              <Badge className={cn("text-xs shrink-0", TYPE_COLORS[field.type])}>
-                {TYPE_LABELS[field.type]}
-              </Badge>
-              {field.target && field.target !== "all" && (
-                <Badge className="text-xs shrink-0 bg-amber-500/10 text-amber-700">
-                  {TARGET_LABELS[field.target]}
-                </Badge>
-              )}
-              {field.required === false && (
-                <Badge className="text-xs shrink-0 bg-muted text-muted-foreground">
-                  Opcional
-                </Badge>
-              )}
-              <span className="text-xs text-muted-foreground truncate ml-auto">
-                {field.description}
-              </span>
-            </button>
-          </CollapsibleTrigger>
-
-          {/* Remover */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={onRemove}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
+        <FieldCardHeader
+          field={field}
+          isDragging={isDragging}
+          dragHandleProps={{ ...attributes, ...listeners }}
+          onRemove={onRemove}
+        />
 
         {/* Body expandido */}
         <CollapsibleContent>
@@ -360,137 +283,13 @@ export function FieldCard({
               </div>
             )}
             {field.type === "text" && (
-              <div className="space-y-3">
-                {/* Toggle subcampos */}
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={!!field.subfields && field.subfields.length > 0}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        updateField({
-                          subfields: [
-                            { key: "campo_1", label: "Campo 1", required: true },
-                            { key: "campo_2", label: "Campo 2", required: true },
-                          ],
-                          subfield_rule: "all",
-                          options: null,
-                        });
-                      } else {
-                        updateField({ subfields: undefined, subfield_rule: undefined });
-                      }
-                    }}
-                  />
-                  <Label className="text-xs">Dividir em subcampos</Label>
-                </div>
-
-                {field.subfields && field.subfields.length > 0 ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Label className="text-xs">Regra</Label>
-                      <div className="flex gap-1">
-                        {(
-                          [
-                            ["all", "Todos os obrigatórios"],
-                            ["at_least_one", "Pelo menos um"],
-                          ] as const
-                        ).map(([value, label]) => (
-                          <Button
-                            key={value}
-                            variant="outline"
-                            size="sm"
-                            className={cn(
-                              "text-xs h-6",
-                              (field.subfield_rule || "all") === value &&
-                                "bg-brand/10 text-brand border-brand/40"
-                            )}
-                            onClick={() => updateField({ subfield_rule: value })}
-                          >
-                            {label}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                    {field.subfields.map((sf, si) => (
-                      <div key={subfieldKeys.ids[si]} className="flex items-center gap-1.5">
-                        <Input
-                          value={sf.key}
-                          onChange={(e) => {
-                            const sfs = [...field.subfields!];
-                            sfs[si] = { ...sfs[si], key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") };
-                            updateField({ subfields: sfs });
-                          }}
-                          className="w-28 font-mono text-xs h-7"
-                          placeholder="chave"
-                        />
-                        <Input
-                          value={sf.label}
-                          onChange={(e) => {
-                            const sfs = [...field.subfields!];
-                            sfs[si] = { ...sfs[si], label: e.target.value };
-                            updateField({ subfields: sfs });
-                          }}
-                          className="flex-1 text-xs h-7"
-                          placeholder="Label visível"
-                        />
-                        {field.subfield_rule !== "at_least_one" && (
-                          <div className="flex items-center gap-1">
-                            <Switch
-                              checked={sf.required !== false}
-                              onCheckedChange={(checked) => {
-                                const sfs = [...field.subfields!];
-                                sfs[si] = { ...sfs[si], required: checked };
-                                updateField({ subfields: sfs });
-                              }}
-                            />
-                            <span className="text-[10px] text-muted-foreground">Obrig.</span>
-                          </div>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="size-6 p-0"
-                          onClick={() => {
-                            const sfs = field.subfields!.filter((_, j) => j !== si);
-                            subfieldKeys.removeIdAt(si);
-                            updateField({ subfields: sfs.length > 0 ? sfs : undefined, subfield_rule: sfs.length > 0 ? field.subfield_rule : undefined });
-                          }}
-                        >
-                          <Trash2 className="size-3" />
-                        </Button>
-                      </div>
-                    ))}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs h-6"
-                      onClick={() => {
-                        const idx = field.subfields!.length + 1;
-                        subfieldKeys.appendId();
-                        updateField({
-                          subfields: [
-                            ...field.subfields!,
-                            { key: `campo_${idx}`, label: `Campo ${idx}`, required: true },
-                          ],
-                        });
-                      }}
-                    >
-                      + Adicionar subcampo
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Respostas padronizadas (opcional)</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Botões de atalho para respostas comuns. Garantem consistência na comparação.
-                    </p>
-                    <OptionsEditor
-                      options={field.options || []}
-                      onChange={(opts) => updateField({ options: opts.length > 0 ? opts : null })}
-                      onBeforeRemove={handleBeforeRemoveOption}
-                    />
-                  </div>
-                )}
-              </div>
+              <SubfieldsEditor
+                subfields={field.subfields}
+                subfieldRule={field.subfield_rule}
+                options={field.options || []}
+                onChange={updateField}
+                onBeforeRemoveOption={handleBeforeRemoveOption}
+              />
             )}
 
             <ConditionEditor
@@ -504,57 +303,21 @@ export function FieldCard({
                 é enviado ao LLM. Vazio = backend usa o default exigente. */}
             {(field.target || "all") !== "human_only" &&
               field.target !== "none" && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">
-                    Prompt de justificativa do LLM (opcional)
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    Texto-base que o LLM recebe ao justificar este campo. Em
-                    branco, usa o default que exige citação textual do trecho
-                    do documento. <code>{"{name}"}</code> é a única chave
-                    substituída (vira o nome do campo); qualquer outra chave
-                    entre chaves faz o texto ser usado literalmente, sem
-                    substituição.
-                  </p>
-                  <Textarea
-                    value={field.justification_prompt || ""}
-                    onChange={(e) =>
-                      updateField({
-                        justification_prompt: e.target.value || undefined,
-                      })
-                    }
-                    onBlur={(e) =>
-                      updateField({
-                        justification_prompt:
-                          e.target.value.trim() || undefined,
-                      })
-                    }
-                    placeholder="Ex.: Cite o trecho do parecer e explique como ele leva à resposta."
-                    className="text-sm min-h-[60px] resize-y"
-                  />
-                </div>
+                <JustificationPromptField
+                  value={field.justification_prompt || ""}
+                  onChange={(v) =>
+                    updateField({ justification_prompt: v || undefined })
+                  }
+                  onBlur={(v) =>
+                    updateField({ justification_prompt: v.trim() || undefined })
+                  }
+                />
               )}
           </div>
         </CollapsibleContent>
       </div>
 
-      {pendingRemoval && (
-        <RemoveOptionDialog
-          open
-          onOpenChange={(open) => {
-            if (!open && pendingRemoval) {
-              pendingRemoval.resolve(false);
-              setPendingRemoval(null);
-            }
-          }}
-          option={pendingRemoval.option}
-          conflicts={pendingRemoval.conflicts}
-          onConfirm={() => {
-            pendingRemoval.resolve(true);
-            setPendingRemoval(null);
-          }}
-        />
-      )}
+      {dialogProps && <RemoveOptionDialog open {...dialogProps} />}
       </Collapsible>
     </div>
   );
