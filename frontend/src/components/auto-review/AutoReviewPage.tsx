@@ -18,7 +18,7 @@ import { AutoReviewPageHeader } from "./AutoReviewPageHeader";
 import { AutoReviewPageContent } from "./AutoReviewPageContent";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
 import { choiceKey, isAutoReviewFieldDecided } from "@/lib/auto-review-decided";
-import { usePinnedDoc } from "@/hooks/usePinnedDoc";
+import { usePinnedDoc, pinnedDocIndex } from "@/hooks/usePinnedDoc";
 
 export interface AutoReviewDoc {
   docId: string;
@@ -81,14 +81,10 @@ function AutoReviewPageInner({
     validIds: validDocIds,
   });
 
-  const docIndex = useMemo(() => {
-    if (docs.length === 0) return 0;
-    if (pinnedDocId) {
-      const i = docs.findIndex((d) => d.docId === pinnedDocId);
-      if (i >= 0) return i;
-    }
-    return 0;
-  }, [docs, pinnedDocId]);
+  const docIndex = useMemo(
+    () => pinnedDocIndex(validDocIds, pinnedDocId),
+    [validDocIds, pinnedDocId],
+  );
 
   const [listCollapsed, setListCollapsed] = useState(false);
   // Estado compartilhado entre a contagem de pendentes da sidebar

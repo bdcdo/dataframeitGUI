@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isDocComplete, findNextPendingDocIndex } from "@/lib/compare-divergence";
+import { pinnedDocIndex } from "@/hooks/usePinnedDoc";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { CompareDocument } from "./compare-types";
@@ -62,26 +63,24 @@ export function useCompareNavigation({
   // índice numérico faria o parecer mudar sob o usuário a cada veredito.
   // Quando o ID atual some da lista (filtro mudou, etc.) caímos para
   // `documents[0]`.
-  const docIndex = useMemo(() => {
-    if (documents.length === 0) return 0;
-    if (pinnedDocId) {
-      const i = documents.findIndex((d) => d.id === pinnedDocId);
-      if (i >= 0) return i;
-    }
-    return 0;
-  }, [documents, pinnedDocId]);
+  const docIndex = useMemo(
+    () =>
+      pinnedDocIndex(
+        documents.map((d) => d.id),
+        pinnedDocId,
+      ),
+    [documents, pinnedDocId],
+  );
 
   // Mantém o pin colado no doc exibido quando ele não resolve mais: pin `null`
   // (lista estava vazia na montagem) ou doc pinado sumiu da lista (excluído,
-  // filtro). Sem a re-pinagem, o fallback `documents[0]` ficaria exposto ao
+  // filtro) — nos dois casos `docIndex` caiu para o fallback 0 e o doc exibido
+  // deixou de ser o pinado. Sem a re-pinagem, esse fallback ficaria exposto ao
   // próximo re-sort e o parecer saltaria de novo. Ajuste condicional de estado
   // durante o render (padrão dos docs do React, "adjusting state when a prop
   // changes") em vez de effect — `set-state-in-effect` proíbe o setState
   // síncrono em effect.
-  if (
-    documents.length > 0 &&
-    (!pinnedDocId || !documents.some((d) => d.id === pinnedDocId))
-  ) {
+  if (documents.length > 0 && documents[docIndex]?.id !== pinnedDocId) {
     setPinnedDocId(documents[0].id);
   }
 

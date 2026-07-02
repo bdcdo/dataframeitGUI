@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { usePinnedDoc } from "@/hooks/usePinnedDoc";
+import { usePinnedDoc, pinnedDocIndex } from "@/hooks/usePinnedDoc";
 import { useArbitrationDoc } from "@/hooks/useArbitrationDoc";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 import { type ArbitrationDocListEntry } from "./ArbitrationDocList";
@@ -57,14 +57,10 @@ export function ArbitrationPage({
     validIds: validDocIds,
   });
 
-  const docIndex = useMemo(() => {
-    if (docs.length === 0) return 0;
-    if (pinnedDocId) {
-      const i = docs.findIndex((d) => d.docId === pinnedDocId);
-      if (i >= 0) return i;
-    }
-    return 0;
-  }, [docs, pinnedDocId]);
+  const docIndex = useMemo(
+    () => pinnedDocIndex(validDocIds, pinnedDocId),
+    [validDocIds, pinnedDocId],
+  );
 
   const [listCollapsed, setListCollapsed] = useState(false);
 
