@@ -56,7 +56,16 @@ def _match_origin(origin: str | None) -> str | None:
     return None
 
 
-app = FastAPI(title="dataframeit API", lifespan=lifespan)
+# Docs (/docs, /redoc, /openapi.json) desligados por padrão — fail-safe. Num
+# serviço internet-facing, /openapi.json anônimo enumera o schema de todas as
+# rotas protegidas. Ligar só em dev com ENABLE_DOCS=true (ver config.py).
+app = FastAPI(
+    title="dataframeit API",
+    lifespan=lifespan,
+    docs_url="/docs" if settings.enable_docs else None,
+    redoc_url="/redoc" if settings.enable_docs else None,
+    openapi_url="/openapi.json" if settings.enable_docs else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
