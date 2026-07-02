@@ -12,29 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
-import { DocumentPickerList } from "@/components/assignments/DocumentPickerList";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import type {
-  AssignmentFilter,
-  LotteryBalancing,
-  LotteryMode,
-} from "@/lib/lottery-utils";
-import { ptBR } from "date-fns/locale";
-import { format } from "date-fns";
-import type {
-  CodingsFilterMode,
-  LotteryMember,
-} from "./lottery-dialog-types";
+import type { LotteryMode } from "@/lib/lottery-utils";
+import type { LotteryMember } from "./lottery-dialog-types";
 import { useLotteryStats } from "./useLotteryStats";
 import { useLotteryParams } from "./useLotteryParams";
 import { useLotteryRun } from "./useLotteryRun";
@@ -43,6 +25,11 @@ import {
   isParticipant,
   weightValue,
 } from "./lottery-participant-values";
+import { LotteryEligibilitySection } from "./LotteryEligibilitySection";
+import {
+  LotteryDistributionSection,
+  type LotterySummary,
+} from "./LotteryDistributionSection";
 
 interface LotteryDialogProps {
   projectId: string;
@@ -58,36 +45,8 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const {
     type,
     setType,
-    researchersPerDoc,
-    setResearchersPerDoc,
-    docsPerResearcherEnabled,
-    setDocsPerResearcherEnabled,
-    docsPerResearcher,
-    setDocsPerResearcher,
-    docSubsetEnabled,
-    setDocSubsetEnabled,
-    docSubsetSize,
-    setDocSubsetSize,
-    balancing,
-    setBalancing,
     mode,
     setMode,
-    codingsFilterMode,
-    setCodingsFilterMode,
-    maxCodingsValue,
-    setMaxCodingsValue,
-    assignmentFilter,
-    setAssignmentFilter,
-    batchFilterMode,
-    setBatchFilterMode,
-    batchExclude,
-    setBatchExclude,
-    batchOnly,
-    setBatchOnly,
-    manualEnabled,
-    setManualEnabled,
-    manualDocIds,
-    setManualDocIds,
     participantOverrides,
     setParticipantOverrides,
     weightInputs,
@@ -118,6 +77,19 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     params,
     onLotteryDone: () => setOpen(false),
   });
+
+  const summary: LotterySummary = blockedMessage
+    ? { kind: "blocked", message: blockedMessage }
+    : stats === null
+      ? statsError
+        ? { kind: "error" }
+        : { kind: "loading" }
+      : {
+          kind: "ready",
+          eligibleCount: eligibleCount ?? 0,
+          participantCount,
+          estimatedPerParticipant,
+        };
 
   const memberName = (userId: string) =>
     members.find((m) => m.userId === userId)?.name ?? userId.slice(0, 8);
@@ -189,176 +161,11 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
 
           <Separator />
 
-          {/* Section: Eligible documents (US1) */}
-          <div className="space-y-4">
-            <h4 className="text-sm font-semibold">Documentos elegíveis</h4>
-
-            <div>
-              <Label>Codificações humanas</Label>
-              <RadioGroup
-                value={codingsFilterMode}
-                onValueChange={(v) =>
-                  setCodingsFilterMode(v as CodingsFilterMode)
-                }
-                className="mt-2 space-y-1"
-              >
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="all" id="cod-all" />
-                  <Label htmlFor="cod-all" className="font-normal">
-                    Todos os documentos
-                  </Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="none" id="cod-none" />
-                  <Label htmlFor="cod-none" className="font-normal">
-                    Sem nenhuma codificação
-                  </Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="atMost" id="cod-atmost" />
-                  <Label htmlFor="cod-atmost" className="font-normal">
-                    No máximo
-                  </Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={maxCodingsValue}
-                    onChange={(e) =>
-                      setMaxCodingsValue(parseInt(e.target.value) || 1)
-                    }
-                    onFocus={() => setCodingsFilterMode("atMost")}
-                    className="h-7 w-16"
-                    aria-label="Número máximo de codificações"
-                  />
-                  <span className="text-sm font-normal">codificações</span>
-                </div>
-              </RadioGroup>
-            </div>
-
-            <div>
-              <Label htmlFor="assignment-filter">Status de atribuição</Label>
-              <Select
-                value={assignmentFilter}
-                onValueChange={(v) =>
-                  setAssignmentFilter(v as AssignmentFilter)
-                }
-              >
-                <SelectTrigger id="assignment-filter" className="mt-1 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="any">Qualquer</SelectItem>
-                  <SelectItem value="noActiveOfType">
-                    Sem atribuição ativa de{" "}
-                    {isComparacao ? "comparação" : "codificação"}
-                  </SelectItem>
-                  <SelectItem value="neverAssigned">
-                    Nunca atribuído
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {stats !== null && stats.batches.length > 0 && (
-              <div>
-                <Label htmlFor="batch-filter-mode">Lotes anteriores</Label>
-                <Select
-                  value={batchFilterMode}
-                  onValueChange={(v) =>
-                    setBatchFilterMode(v as "none" | "exclude" | "only")
-                  }
-                >
-                  <SelectTrigger id="batch-filter-mode" className="mt-1 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Todos os lotes</SelectItem>
-                    <SelectItem value="exclude">Excluir lotes</SelectItem>
-                    <SelectItem value="only">Somente de um lote</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {batchFilterMode === "exclude" && (
-                  <div className="mt-2 max-h-32 space-y-2 overflow-y-auto rounded-md border p-2">
-                    {stats.batches.map((b) => (
-                      <div key={b.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`batch-ex-${b.id}`}
-                          checked={batchExclude.includes(b.id)}
-                          onCheckedChange={(checked) =>
-                            setBatchExclude((prev) =>
-                              checked
-                                ? [...prev, b.id]
-                                : prev.filter((id) => id !== b.id)
-                            )
-                          }
-                        />
-                        <Label
-                          htmlFor={`batch-ex-${b.id}`}
-                          className="font-normal"
-                        >
-                          {b.label || "Sem rótulo"}
-                          <span className="ml-1.5 text-xs text-muted-foreground">
-                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
-                              locale: ptBR,
-                            })}
-                          </span>
-                        </Label>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {batchFilterMode === "only" && (
-                  <RadioGroup
-                    value={batchOnly ?? ""}
-                    onValueChange={setBatchOnly}
-                    className="mt-2 max-h-32 space-y-1 overflow-y-auto rounded-md border p-2"
-                  >
-                    {stats.batches.map((b) => (
-                      <div key={b.id} className="flex items-center gap-2">
-                        <RadioGroupItem value={b.id} id={`batch-only-${b.id}`} />
-                        <Label
-                          htmlFor={`batch-only-${b.id}`}
-                          className="font-normal"
-                        >
-                          {b.label || "Sem rótulo"}
-                          <span className="ml-1.5 text-xs text-muted-foreground">
-                            {format(new Date(b.createdAt), "dd/MM/yyyy", {
-                              locale: ptBR,
-                            })}
-                          </span>
-                        </Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
-                )}
-
-                <p className="mt-1 text-xs text-muted-foreground">
-                  O vínculo com o lote vem das atribuições existentes dos
-                  documentos.
-                </p>
-              </div>
-            )}
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="manual-switch">
-                Selecionar documentos manualmente
-              </Label>
-              <Switch
-                id="manual-switch"
-                checked={manualEnabled}
-                onCheckedChange={setManualEnabled}
-              />
-            </div>
-            {manualEnabled && stats !== null && (
-              <DocumentPickerList
-                docs={stats.docs}
-                selected={manualDocIds}
-                onChange={setManualDocIds}
-              />
-            )}
-          </div>
+          <LotteryEligibilitySection
+            params={params}
+            stats={stats}
+            isComparacao={isComparacao}
+          />
 
           <Separator />
 
@@ -392,114 +199,12 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
 
           <Separator />
 
-          {/* Section 1: Distribution */}
-          <div className="space-y-4">
-            <h4 className="text-sm font-semibold">Distribuição</h4>
-
-            <div>
-              <Label htmlFor="per-doc">
-                {isComparacao ? "Revisores por documento" : "Pesquisadores por documento"}
-              </Label>
-              <Input
-                id="per-doc"
-                type="number"
-                min={1}
-                max={Math.max(1, Math.min(10, members.length))}
-                value={researchersPerDoc}
-                onChange={(e) =>
-                  setResearchersPerDoc(parseInt(e.target.value) || 1)
-                }
-                className="mt-1 w-24"
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="docs-per-switch">
-                Limite de docs por pesquisador
-              </Label>
-              <Switch
-                id="docs-per-switch"
-                checked={docsPerResearcherEnabled}
-                onCheckedChange={setDocsPerResearcherEnabled}
-              />
-            </div>
-            {docsPerResearcherEnabled && (
-              <Input
-                type="number"
-                min={1}
-                value={docsPerResearcher}
-                onChange={(e) =>
-                  setDocsPerResearcher(parseInt(e.target.value) || 1)
-                }
-                className="w-24"
-              />
-            )}
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="subset-switch">
-                Subconjunto de documentos
-              </Label>
-              <Switch
-                id="subset-switch"
-                checked={docSubsetEnabled}
-                onCheckedChange={setDocSubsetEnabled}
-              />
-            </div>
-            {docSubsetEnabled && (
-              <Input
-                type="number"
-                min={1}
-                value={docSubsetSize}
-                onChange={(e) =>
-                  setDocSubsetSize(parseInt(e.target.value) || 1)
-                }
-                className="w-24"
-              />
-            )}
-
-            <div>
-              <Label>Equilíbrio</Label>
-              <RadioGroup
-                value={balancing}
-                onValueChange={(v) => setBalancing(v as LotteryBalancing)}
-                className="mt-2 space-y-1"
-              >
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="round" id="bal-round" />
-                  <Label htmlFor="bal-round" className="font-normal">
-                    Equilibrar só esta rodada
-                  </Label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <RadioGroupItem value="history" id="bal-history" />
-                  <Label htmlFor="bal-history" className="font-normal">
-                    Equilibrar considerando rodadas anteriores
-                  </Label>
-                </div>
-              </RadioGroup>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {balancing === "round"
-                  ? "Cada participante recebe a mesma quantidade de atribuições novas (±1)."
-                  : "Quem tem menos atribuições acumuladas recebe mais, até nivelar."}
-              </p>
-            </div>
-
-            {blockedMessage ? (
-              <p className="text-xs text-destructive">{blockedMessage}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {stats === null
-                  ? statsError
-                    ? "Não foi possível carregar os documentos."
-                    : "Carregando documentos..."
-                  : `${eligibleCount} documentos elegíveis, ${participantCount} participantes. ${
-                      balancing === "round"
-                        ? `Estimativa: ~${estimatedPerParticipant} docs por participante.`
-                        : `Média: ~${estimatedPerParticipant} docs por participante — quem tem menos carga recebe mais.`
-                    }`}
-              </p>
-            )}
-          </div>
+          <LotteryDistributionSection
+            params={params}
+            membersCount={members.length}
+            isComparacao={isComparacao}
+            summary={summary}
+          />
 
           {members.length > 0 && (
             <>
