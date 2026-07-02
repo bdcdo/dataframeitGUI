@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useTransition } from "react";
 import {
   Dialog,
   DialogContent,
@@ -14,38 +13,25 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { OptionsEditor } from "@/components/schema/OptionsEditor";
-import { useStableListIds } from "@/hooks/useStableListIds";
 import { ConditionEditor } from "@/components/schema/ConditionEditor";
 import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "@/components/schema/RemoveOptionDialog";
-import {
-  findConditionConflicts,
-  stripOptionFromConditions,
-  type ConditionConflict,
-} from "@/lib/schema-utils";
+import { SubfieldsEditor } from "@/components/schema/SubfieldsEditor";
+import { JustificationPromptField } from "@/components/schema/JustificationPromptField";
+import { useOptionRemovalGuard } from "@/components/schema/useOptionRemovalGuard";
+import { TYPE_LABELS } from "@/components/schema/field-labels";
+import { stripOptionFromConditions } from "@/lib/schema-utils";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import type { FieldCondition, PydanticField, SubfieldDef } from "@/lib/types";
+import { useEditFieldForm } from "./useEditFieldForm";
+import type { PydanticField } from "@/lib/types";
 
-const TYPE_LABELS: Record<string, string> = {
-  single: "Escolha única",
-  multi: "Múltipla escolha",
-  text: "Texto livre",
-  date: "Data",
-};
-
-export interface PendingSuggestion {
-  id: string;
-  changes: {
-    description?: string;
-    help_text?: string | null;
-    options?: string[] | null;
-  };
-}
+export type { PendingSuggestion } from "./useEditFieldForm";
+import type { PendingSuggestion } from "./useEditFieldForm";
 
 interface EditFieldDialogProps {
   projectId: string;
@@ -54,110 +40,6 @@ interface EditFieldDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pendingSuggestion?: PendingSuggestion | null;
-}
-
-function initialFromField(
-  field: PydanticField | undefined,
-  suggestion?: PendingSuggestion | null,
-) {
-  const ch = suggestion?.changes ?? {};
-  // Distinguish "no change" (undefined) from "clear" (null) in suggestions:
-  // null in suggested_changes means the suggestion explicitly wants to empty
-  // the field, so ?? against the current field value would mask that intent.
-  return {
-    description: ch.description ?? field?.description ?? "",
-    helpText:
-      ch.help_text !== undefined
-        ? (ch.help_text ?? "")
-        : (field?.help_text ?? ""),
-    options:
-      ch.options !== undefined
-        ? (ch.options ?? [])
-        : (field?.options ?? []),
-  };
-}
-
-function useEditFieldForm(
-  field: PydanticField | undefined,
-  fieldName: string,
-  allFields: PydanticField[],
-  pendingSuggestion?: PendingSuggestion | null,
-) {
-  const initial = initialFromField(field, pendingSuggestion);
-  const [description, setDescription] = useState(initial.description);
-  const [helpText, setHelpText] = useState(initial.helpText);
-  const [options, setOptions] = useState<string[]>(initial.options);
-  const [allowOther, setAllowOther] = useState<boolean>(field?.allow_other ?? false);
-  const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
-  const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
-  const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);
-  const [justificationPrompt, setJustificationPrompt] = useState<string>(
-    field?.justification_prompt ?? "",
-  );
-  const [isSaving, startSave] = useTransition();
-  const [pendingRemoval, setPendingRemoval] = useState<{
-    option: string;
-    conflicts: ConditionConflict[];
-    resolve: (confirmed: boolean) => void;
-  } | null>(null);
-
-  // Keys estáveis para a lista editável de subcampos: o `key` do subfield é
-  // digitado pelo usuário (muda a cada tecla), logo não serve como React key.
-  const subfieldKeys = useStableListIds(subfields?.length ?? 0);
-
-  const handleBeforeRemoveOption = async (opt: string): Promise<boolean> => {
-    const conflicts = findConditionConflicts(allFields, fieldName, opt);
-    if (conflicts.length === 0) return true;
-    return await new Promise<boolean>((resolve) => {
-      setPendingRemoval({ option: opt, conflicts, resolve });
-    });
-  };
-
-  // Reset state when dialog opens with a different field or suggestion
-  const resetKey = `${fieldName}::${pendingSuggestion?.id ?? ""}`;
-  // `prevKey` É lido no render (comparação `resetKey !== prevKey` abaixo) — é o
-  // padrão oficial React de "adjusting state on a prop change", não state
-  // só-de-handler. A regra classifica errado; useRef quebraria o padrão.
-  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers
-  const [prevKey, setPrevKey] = useState(resetKey);
-  if (resetKey !== prevKey) {
-    setPrevKey(resetKey);
-    const f = allFields.find((ff) => ff.name === fieldName);
-    const init = initialFromField(f, pendingSuggestion);
-    setDescription(init.description);
-    setHelpText(init.helpText);
-    setOptions(init.options);
-    setAllowOther(f?.allow_other ?? false);
-    setSubfields(f?.subfields);
-    setSubfieldRule(f?.subfield_rule ?? "all");
-    setCondition(f?.condition);
-    setJustificationPrompt(f?.justification_prompt ?? "");
-  }
-
-  return {
-    description,
-    setDescription,
-    helpText,
-    setHelpText,
-    options,
-    setOptions,
-    allowOther,
-    setAllowOther,
-    subfields,
-    setSubfields,
-    subfieldRule,
-    setSubfieldRule,
-    condition,
-    setCondition,
-    justificationPrompt,
-    setJustificationPrompt,
-    isSaving,
-    startSave,
-    pendingRemoval,
-    setPendingRemoval,
-    handleBeforeRemoveOption,
-    subfieldKeys,
-  };
 }
 
 export function EditFieldDialog({
@@ -189,11 +71,14 @@ export function EditFieldDialog({
     setJustificationPrompt,
     isSaving,
     startSave,
-    pendingRemoval,
-    setPendingRemoval,
-    handleBeforeRemoveOption,
-    subfieldKeys,
   } = useEditFieldForm(field, fieldName, allFields, pendingSuggestion);
+
+  const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
+    allFields,
+    fieldName,
+  );
+  const handleBeforeRemoveOption = async (opt: string): Promise<boolean> =>
+    (await confirmRemoval(opt)).confirmed;
 
   if (!field) return null;
 
@@ -347,134 +232,18 @@ export function EditFieldDialog({
           )}
 
           {field.type === "text" && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={!!hasSubfields}
-                  onCheckedChange={(checked) => {
-                    if (checked) {
-                      setSubfields([
-                        { key: "campo_1", label: "Campo 1", required: true },
-                        { key: "campo_2", label: "Campo 2", required: true },
-                      ]);
-                      setSubfieldRule("all");
-                      setOptions([]);
-                    } else {
-                      setSubfields(undefined);
-                      setSubfieldRule("all");
-                    }
-                  }}
-                />
-                <Label className="text-xs">Dividir em subcampos</Label>
-              </div>
-
-              {hasSubfields ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Label className="text-xs">Regra</Label>
-                    <div className="flex gap-1">
-                      {(
-                        [
-                          ["all", "Todos os obrigatórios"],
-                          ["at_least_one", "Pelo menos um"],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <Button
-                          key={value}
-                          variant="outline"
-                          size="sm"
-                          className={`text-xs h-6 ${
-                            subfieldRule === value
-                              ? "bg-brand/10 text-brand border-brand/40"
-                              : ""
-                          }`}
-                          onClick={() => setSubfieldRule(value)}
-                        >
-                          {label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                  {subfields!.map((sf, si) => (
-                    <div key={subfieldKeys.ids[si]} className="flex items-center gap-1.5">
-                      <Input
-                        value={sf.key}
-                        onChange={(e) => {
-                          const sfs = [...subfields!];
-                          sfs[si] = { ...sfs[si], key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") };
-                          setSubfields(sfs);
-                        }}
-                        className="w-28 font-mono text-xs h-7"
-                        placeholder="chave"
-                      />
-                      <Input
-                        value={sf.label}
-                        onChange={(e) => {
-                          const sfs = [...subfields!];
-                          sfs[si] = { ...sfs[si], label: e.target.value };
-                          setSubfields(sfs);
-                        }}
-                        className="flex-1 text-xs h-7"
-                        placeholder="Label visível"
-                      />
-                      {subfieldRule !== "at_least_one" && (
-                        <div className="flex items-center gap-1">
-                          <Switch
-                            checked={sf.required !== false}
-                            onCheckedChange={(checked) => {
-                              const sfs = [...subfields!];
-                              sfs[si] = { ...sfs[si], required: checked };
-                              setSubfields(sfs);
-                            }}
-                          />
-                          <span className="text-[10px] text-muted-foreground">Obrig.</span>
-                        </div>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="size-6 p-0"
-                        onClick={() => {
-                          const sfs = subfields!.filter((_, j) => j !== si);
-                          subfieldKeys.removeIdAt(si);
-                          setSubfields(sfs.length > 0 ? sfs : undefined);
-                          if (sfs.length === 0) setSubfieldRule("all");
-                        }}
-                      >
-                        <Trash2 className="size-3" />
-                      </Button>
-                    </div>
-                  ))}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs h-6"
-                    onClick={() => {
-                      const idx = subfields!.length + 1;
-                      subfieldKeys.appendId();
-                      setSubfields([
-                        ...subfields!,
-                        { key: `campo_${idx}`, label: `Campo ${idx}`, required: true },
-                      ]);
-                    }}
-                  >
-                    + Adicionar subcampo
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Respostas padronizadas (opcional)</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Botões de atalho para consistência na comparação
-                  </p>
-                  <OptionsEditor
-                    options={options}
-                    onChange={setOptions}
-                    onBeforeRemove={handleBeforeRemoveOption}
-                  />
-                </div>
-              )}
-            </div>
+            <SubfieldsEditor
+              subfields={subfields}
+              subfieldRule={subfieldRule}
+              options={options}
+              onChange={(patch) => {
+                if ("subfields" in patch) setSubfields(patch.subfields);
+                if ("subfield_rule" in patch)
+                  setSubfieldRule(patch.subfield_rule ?? "all");
+                if ("options" in patch) setOptions(patch.options ?? []);
+              }}
+              onBeforeRemoveOption={handleBeforeRemoveOption}
+            />
           )}
 
           <ConditionEditor
@@ -488,23 +257,10 @@ export function EditFieldDialog({
               é enviado ao LLM. Vazio = backend usa o default exigente. */}
           {(field.target || "all") !== "human_only" &&
             field.target !== "none" && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">
-                  Prompt de justificativa do LLM (opcional)
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Em branco, usa o default que exige citação textual do trecho
-                  do documento. <code>{"{name}"}</code> é a única chave
-                  substituída (vira o nome do campo); qualquer outra chave entre
-                  chaves faz o texto ser usado literalmente, sem substituição.
-                </p>
-                <Textarea
-                  value={justificationPrompt}
-                  onChange={(e) => setJustificationPrompt(e.target.value)}
-                  placeholder="Ex.: Cite o trecho do parecer e explique como ele leva à resposta."
-                  className="text-sm min-h-[60px] resize-y"
-                />
-              </div>
+              <JustificationPromptField
+                value={justificationPrompt}
+                onChange={setJustificationPrompt}
+              />
             )}
         </div>
 
@@ -524,23 +280,7 @@ export function EditFieldDialog({
       </DialogContent>
     </Dialog>
 
-    {pendingRemoval && (
-      <RemoveOptionDialog
-        open
-        onOpenChange={(open) => {
-          if (!open && pendingRemoval) {
-            pendingRemoval.resolve(false);
-            setPendingRemoval(null);
-          }
-        }}
-        option={pendingRemoval.option}
-        conflicts={pendingRemoval.conflicts}
-        onConfirm={() => {
-          pendingRemoval.resolve(true);
-          setPendingRemoval(null);
-        }}
-      />
-    )}
+    {dialogProps && <RemoveOptionDialog open {...dialogProps} />}
     </>
   );
 }
