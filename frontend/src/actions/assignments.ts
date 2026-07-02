@@ -19,6 +19,7 @@ import {
   type LotteryParticipant,
 } from "@/lib/lottery-utils";
 import { MEMBERS_TAG_PROFILE, membersTag } from "@/lib/cache";
+import { errorMessage } from "@/lib/utils";
 
 /**
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
@@ -31,7 +32,7 @@ export async function cycleAssignment(
   projectId: string,
   documentId: string,
   userId: string,
-) {
+): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
 
   const { data: existing } = await supabase
@@ -44,57 +45,66 @@ export async function cycleAssignment(
 
   // Bloquear ciclo se houver assignment não-pendente de qualquer tipo
   const hasNonPending = rows.some((r) => r.status !== "pendente");
-  if (hasNonPending) return;
+  if (hasNonPending) return {};
 
   const pendingCod = rows.find((r) => r.type === "codificacao");
   const pendingComp = rows.find((r) => r.type === "comparacao");
 
-  if (!pendingCod && !pendingComp) {
-    // vazio → codificacao
-    const { error } = await supabase.from("assignments").insert({
-      project_id: projectId,
-      document_id: documentId,
-      user_id: userId,
-      type: "codificacao",
-    });
-    if (error) throw new Error(error.message);
-  } else if (pendingCod && !pendingComp) {
-    // codificacao → comparacao (UPDATE atômico, preserva id e metadados)
-    const { error } = await supabase
-      .from("assignments")
-      .update({ type: "comparacao" })
-      .eq("id", pendingCod.id);
-    if (error) throw new Error(error.message);
-  } else if (pendingComp && !pendingCod) {
-    // comparacao → vazio
-    const { error } = await supabase.from("assignments").delete().eq("id", pendingComp.id);
-    if (error) throw new Error(error.message);
-  } else if (pendingCod && pendingComp) {
-    // "ambos" (vindo de sorteio): remover tudo para voltar ao vazio
-    const { error } = await supabase
-      .from("assignments")
-      .delete()
-      .in("id", [pendingCod.id, pendingComp.id]);
-    if (error) throw new Error(error.message);
+  try {
+    if (!pendingCod && !pendingComp) {
+      // vazio → codificacao
+      const { error } = await supabase.from("assignments").insert({
+        project_id: projectId,
+        document_id: documentId,
+        user_id: userId,
+        type: "codificacao",
+      });
+      if (error) throw new Error(error.message);
+    } else if (pendingCod && !pendingComp) {
+      // codificacao → comparacao (UPDATE atômico, preserva id e metadados)
+      const { error } = await supabase
+        .from("assignments")
+        .update({ type: "comparacao" })
+        .eq("id", pendingCod.id);
+      if (error) throw new Error(error.message);
+    } else if (pendingComp && !pendingCod) {
+      // comparacao → vazio
+      const { error } = await supabase.from("assignments").delete().eq("id", pendingComp.id);
+      if (error) throw new Error(error.message);
+    } else if (pendingCod && pendingComp) {
+      // "ambos" (vindo de sorteio): remover tudo para voltar ao vazio
+      const { error } = await supabase
+        .from("assignments")
+        .delete()
+        .in("id", [pendingCod.id, pendingComp.id]);
+      if (error) throw new Error(error.message);
+    }
+  } catch (e) {
+    return { error: errorMessage(e) || "Erro ao alterar a atribuição" };
   }
 
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
+  return {};
 }
 
 export async function clearPendingAssignments(
   projectId: string,
   type: "codificacao" | "comparacao" = "codificacao"
-) {
+): Promise<{ deleted?: number; error?: string }> {
   const supabase = await createSupabaseServer();
 
-  const { count } = await supabase
+  const { count, error } = await supabase
     .from("assignments")
     .delete({ count: "exact" })
     .eq("project_id", projectId)
     .eq("status", "pendente")
     .eq("type", type);
+
+  if (error) {
+    return { error: error.message || "Erro ao limpar as atribuições pendentes" };
+  }
 
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
@@ -254,17 +264,22 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
  * O client reaplica filterEligibleDocs sobre elas para contagem ao vivo.
  */
 export async function getLotteryDocStats(projectId: string): Promise<{
-  docs: LotteryDocStats[];
-  batches: { id: string; label: string | null; createdAt: string }[];
-  minResponsesForComparison: number;
-  automationMode: string | null;
+  docs?: LotteryDocStats[];
+  batches?: { id: string; label: string | null; createdAt: string }[];
+  minResponsesForComparison?: number;
+  automationMode?: string | null;
+  error?: string;
 }> {
   const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
+  if (!user) return { error: "Não autenticado" };
 
-  const { docs, batches, minResponsesForComparison, automationMode } =
-    await fetchLotteryData(projectId);
-  return { docs, batches, minResponsesForComparison, automationMode };
+  try {
+    const { docs, batches, minResponsesForComparison, automationMode } =
+      await fetchLotteryData(projectId);
+    return { docs, batches, minResponsesForComparison, automationMode };
+  } catch (e) {
+    return { error: errorMessage(e) || "Erro ao carregar as estatísticas do sorteio" };
+  }
 }
 
 async function computeLottery(params: LotteryParams): Promise<{
@@ -447,101 +462,115 @@ async function computeLottery(params: LotteryParams): Promise<{
   };
 }
 
-export async function previewLottery(params: LotteryParams): Promise<LotteryPreview> {
+export async function previewLottery(
+  params: LotteryParams,
+): Promise<{ preview?: LotteryPreview; error?: string }> {
   const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
+  if (!user) return { error: "Não autenticado" };
 
-  const { newAssignments, preservedCount, preservedByUser, eligibleCount, seed } =
-    await computeLottery(params);
+  try {
+    const { newAssignments, preservedCount, preservedByUser, eligibleCount, seed } =
+      await computeLottery(params);
 
-  const newCounts: Record<string, number> = {};
-  for (const a of newAssignments) {
-    newCounts[a.user_id] = (newCounts[a.user_id] || 0) + 1;
+    const newCounts: Record<string, number> = {};
+    for (const a of newAssignments) {
+      newCounts[a.user_id] = (newCounts[a.user_id] || 0) + 1;
+    }
+
+    return {
+      preview: {
+        participants: [...new Set(params.participantIds)].map((userId) => ({
+          userId,
+          existing: preservedByUser[userId] || 0,
+          newDocs: newCounts[userId] || 0,
+        })),
+        totalNew: newAssignments.length,
+        totalPreserved: preservedCount,
+        eligibleDocs: eligibleCount,
+        seed,
+      },
+    };
+  } catch (e) {
+    return { error: errorMessage(e) || "Erro ao calcular a prévia" };
   }
-
-  return {
-    participants: [...new Set(params.participantIds)].map((userId) => ({
-      userId,
-      existing: preservedByUser[userId] || 0,
-      newDocs: newCounts[userId] || 0,
-    })),
-    totalNew: newAssignments.length,
-    totalPreserved: preservedCount,
-    eligibleDocs: eligibleCount,
-    seed,
-  };
 }
 
-export async function smartRandomize(params: LotteryParams) {
+export async function smartRandomize(
+  params: LotteryParams,
+): Promise<{ count?: number; preserved?: number; error?: string }> {
   const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
+  if (!user) return { error: "Não autenticado" };
 
   const supabase = await createSupabaseServer();
   const assignmentType = params.type || "codificacao";
 
-  const { newAssignments, preservedCount, batchData } = await computeLottery(params);
+  try {
+    const { newAssignments, preservedCount, batchData } = await computeLottery(params);
 
-  // O batch é criado antes de qualquer mudança em assignments: se falhar
-  // (ex.: migration ausente), nada foi deletado ainda
-  const { data: batch, error: batchError } = await supabase
-    .from("assignment_batches")
-    .insert({ ...batchData, created_by: user.id })
-    .select("id")
-    .single();
+    // O batch é criado antes de qualquer mudança em assignments: se falhar
+    // (ex.: migration ausente), nada foi deletado ainda
+    const { data: batch, error: batchError } = await supabase
+      .from("assignment_batches")
+      .insert({ ...batchData, created_by: user.id })
+      .select("id")
+      .single();
 
-  if (batchError || !batch) {
-    throw new Error(
-      `Erro ao registrar o lote do sorteio: ${batchError?.message ?? "resposta vazia"}`
-    );
-  }
-
-  // Descarte das pendentes (modo substituir) + gravação das novas numa
-  // transação única via RPC (issue #181): uma falha entre o delete e o insert
-  // não perde mais as pendentes. SECURITY INVOKER — a RLS do coordenador vale
-  // dentro da função. Dispensa o chunk de 100 (era limite de payload PostgREST).
-  const assignmentRows = newAssignments.map((a) => ({
-    document_id: a.document_id,
-    user_id: a.user_id,
-  }));
-  const { error: rpcError } = await supabase.rpc("apply_lottery_assignments", {
-    p_project_id: params.projectId,
-    p_type: assignmentType,
-    p_batch_id: batch.id,
-    p_assignments: assignmentRows,
-    p_replace: params.mode === "replace",
-  });
-  if (rpcError) {
-    throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
-  }
-
-  // Persiste o peso/limite usado por participante (decisão: editar no diálogo,
-  // mas assumir continuidade no próximo sorteio). As atribuições já foram
-  // gravadas — uma falha aqui só afeta o default da próxima vez, não bloqueia.
-  const settingsEntries = Object.entries(params.participantSettings ?? {});
-  if (settingsEntries.length > 0) {
-    const results = await Promise.all(
-      settingsEntries.map(([userId, cfg]) =>
-        supabase
-          .from("project_members")
-          .update({
-            assignment_weight: resolveWeight(cfg.weight),
-            assignment_cap: resolveCap(cfg.cap),
-          })
-          .eq("project_id", params.projectId)
-          .eq("user_id", userId),
-      ),
-    );
-    const failed = results.find((r) => r.error);
-    if (failed?.error) {
-      console.error(
-        `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
+    if (batchError || !batch) {
+      throw new Error(
+        `Erro ao registrar o lote do sorteio: ${batchError?.message ?? "resposta vazia"}`
       );
     }
-    revalidateTag(membersTag(params.projectId), MEMBERS_TAG_PROFILE);
-  }
 
-  revalidatePath(`/projects/${params.projectId}/analyze/assignments`);
-  revalidatePath(`/projects/${params.projectId}/analyze/code`);
-  revalidatePath(`/projects/${params.projectId}/analyze/compare`);
-  return { count: newAssignments.length, preserved: preservedCount };
+    // Descarte das pendentes (modo substituir) + gravação das novas numa
+    // transação única via RPC (issue #181): uma falha entre o delete e o insert
+    // não perde mais as pendentes. SECURITY INVOKER — a RLS do coordenador vale
+    // dentro da função. Dispensa o chunk de 100 (era limite de payload PostgREST).
+    const assignmentRows = newAssignments.map((a) => ({
+      document_id: a.document_id,
+      user_id: a.user_id,
+    }));
+    const { error: rpcError } = await supabase.rpc("apply_lottery_assignments", {
+      p_project_id: params.projectId,
+      p_type: assignmentType,
+      p_batch_id: batch.id,
+      p_assignments: assignmentRows,
+      p_replace: params.mode === "replace",
+    });
+    if (rpcError) {
+      throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
+    }
+
+    // Persiste o peso/limite usado por participante (decisão: editar no diálogo,
+    // mas assumir continuidade no próximo sorteio). As atribuições já foram
+    // gravadas — uma falha aqui só afeta o default da próxima vez, não bloqueia.
+    const settingsEntries = Object.entries(params.participantSettings ?? {});
+    if (settingsEntries.length > 0) {
+      const results = await Promise.all(
+        settingsEntries.map(([userId, cfg]) =>
+          supabase
+            .from("project_members")
+            .update({
+              assignment_weight: resolveWeight(cfg.weight),
+              assignment_cap: resolveCap(cfg.cap),
+            })
+            .eq("project_id", params.projectId)
+            .eq("user_id", userId),
+        ),
+      );
+      const failed = results.find((r) => r.error);
+      if (failed?.error) {
+        console.error(
+          `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
+        );
+      }
+      revalidateTag(membersTag(params.projectId), MEMBERS_TAG_PROFILE);
+    }
+
+    revalidatePath(`/projects/${params.projectId}/analyze/assignments`);
+    revalidatePath(`/projects/${params.projectId}/analyze/code`);
+    revalidatePath(`/projects/${params.projectId}/analyze/compare`);
+    return { count: newAssignments.length, preserved: preservedCount };
+  } catch (e) {
+    return { error: errorMessage(e) || "Erro ao sortear" };
+  }
 }

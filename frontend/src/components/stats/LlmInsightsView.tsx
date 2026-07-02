@@ -274,18 +274,18 @@ export function LlmInsightsView({
   const handleMarkEquivalent = (e: LlmError) => {
     if (!e.chosenResponseId) return;
     startTransition(async () => {
-      try {
-        await markLlmEquivalent(
-          projectId,
-          e.documentId,
-          e.fieldName,
-          e.llmResponseId,
-          e.chosenResponseId!,
-        );
+      const result = await markLlmEquivalent(
+        projectId,
+        e.documentId,
+        e.fieldName,
+        e.llmResponseId,
+        e.chosenResponseId!,
+      );
+      if (result.error) {
+        toast.error(result.error);
+      } else {
         toast.success("Respostas marcadas como equivalentes");
         refresh();
-      } catch (err) {
-        toast.error((err as Error).message);
       }
     });
   };

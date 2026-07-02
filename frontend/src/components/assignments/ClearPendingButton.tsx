@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface ClearPendingButtonProps {
   projectId: string;
@@ -42,7 +43,8 @@ export function ClearPendingButton({ projectId, pendingByType }: ClearPendingBut
     const type = target;
     setTarget(null);
     startTransition(async () => {
-      await clearPendingAssignments(projectId, type);
+      const result = await clearPendingAssignments(projectId, type);
+      if (result?.error) toast.error(result.error);
     });
   };
 

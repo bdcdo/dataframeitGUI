@@ -87,7 +87,7 @@ export function useCompareVerdicts({
       };
       recordReview(currentDoc.id, currentFieldName, info);
 
-      await submitVerdict(
+      const result = await submitVerdict(
         projectId,
         currentDoc.id,
         currentFieldName,
@@ -96,6 +96,10 @@ export function useCompareVerdicts({
         verdictComment,
         buildSnapshot(fieldResponses),
       );
+      if (result?.error) {
+        toast.error(result.error);
+        return;
+      }
 
       toast.success("Veredito salvo!");
 
@@ -146,34 +150,32 @@ export function useCompareVerdicts({
       };
       recordReview(docId, fieldName, info);
 
-      try {
-        await confirmEquivalentVerdict(
-          projectId,
-          docId,
-          fieldName,
-          responseIds,
-          gabaritoId,
-          verdictDisplay,
-          verdictComment,
-          buildSnapshot(fieldResponses),
-        );
-        toast.success(
-          `${responseIds.length} respostas marcadas como equivalentes.`,
-        );
+      const result = await confirmEquivalentVerdict(
+        projectId,
+        docId,
+        fieldName,
+        responseIds,
+        gabaritoId,
+        verdictDisplay,
+        verdictComment,
+        buildSnapshot(fieldResponses),
+      );
+      if (result?.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(
+        `${responseIds.length} respostas marcadas como equivalentes.`,
+      );
 
-        const nextDocReviews = { ...localReviews[docId], [fieldName]: info };
-        const allFieldsReviewed = allDocDivergent.every(
-          (fn) => !!nextDocReviews[fn],
-        );
-        if (allFieldsReviewed) {
-          toast.success("Revisão do documento concluída!");
-        } else {
-          goNextField();
-        }
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Falha ao marcar equivalentes.",
-        );
+      const nextDocReviews = { ...localReviews[docId], [fieldName]: info };
+      const allFieldsReviewed = allDocDivergent.every(
+        (fn) => !!nextDocReviews[fn],
+      );
+      if (allFieldsReviewed) {
+        toast.success("Revisão do documento concluída!");
+      } else {
+        goNextField();
       }
     },
     [
@@ -192,22 +194,22 @@ export function useCompareVerdicts({
 
   const handleMarkReviewed = useCallback(async () => {
     if (!currentDoc) return;
-    await markCompareDocReviewed(projectId, currentDoc.id);
+    const result = await markCompareDocReviewed(projectId, currentDoc.id);
+    if (result?.error) {
+      toast.error(result.error);
+      return;
+    }
     toast.success("Documento marcado como revisado.");
   }, [projectId, currentDoc]);
 
   const handleUnmarkPair = useCallback(
     async (pairId: string) => {
-      try {
-        await unmarkEquivalencePair(projectId, pairId);
-        toast.success("Equivalência removida.");
-      } catch (err) {
-        toast.error(
-          err instanceof Error
-            ? err.message
-            : "Falha ao desfazer equivalência.",
-        );
+      const result = await unmarkEquivalencePair(projectId, pairId);
+      if (result?.error) {
+        toast.error(result.error);
+        return;
       }
+      toast.success("Equivalência removida.");
     },
     [projectId],
   );
