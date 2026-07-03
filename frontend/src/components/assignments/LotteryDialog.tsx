@@ -86,7 +86,20 @@ function useLotteryStats(projectId: string, open: boolean) {
     let cancelled = false;
     getLotteryDocStats(projectId)
       .then((s) => {
-        if (!cancelled) setStatsState({ data: s, error: false });
+        if (cancelled) return;
+        if (s.error || !s.docs) {
+          setStatsState((prev) => ({ ...prev, error: true }));
+        } else {
+          setStatsState({
+            data: {
+              docs: s.docs,
+              batches: s.batches ?? [],
+              minResponsesForComparison: s.minResponsesForComparison ?? 2,
+              automationMode: s.automationMode ?? null,
+            },
+            error: false,
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setStatsState((prev) => ({ ...prev, error: true }));
@@ -381,26 +394,32 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
     setPreviewing(true);
     try {
       const result = await previewLottery(buildParams(false));
-      setPreviewState({ key: configKey, preview: result });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao calcular a prévia");
+      if (result.error) {
+        toast.error(result.error);
+      } else if (result.preview) {
+        setPreviewState({ key: configKey, preview: result.preview });
+      }
+    } finally {
+      setPreviewing(false);
     }
-    setPreviewing(false);
   };
 
   const handleRandomize = async () => {
     setLoading(true);
     try {
       const result = await smartRandomize(buildParams(true));
-      toast.success(
-        `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
-      );
-      setOpen(false);
-      setPreviewState(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao sortear");
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success(
+          `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
+        );
+        setOpen(false);
+        setPreviewState(null);
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const docsConsidered =

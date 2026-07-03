@@ -3,6 +3,7 @@
 import { useOptimistic, useTransition } from "react";
 import { cycleAssignment } from "@/actions/assignments";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import {
   Tooltip,
   TooltipContent,
@@ -88,7 +89,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
   const handleCycle = (documentId: string, userId: string) => {
     startTransition(async () => {
       applyOptimistic({ docId: documentId, userId });
-      await cycleAssignment(projectId, documentId, userId);
+      const result = await cycleAssignment(projectId, documentId, userId);
+      if (result?.error) toast.error(result.error);
     });
   };
 
