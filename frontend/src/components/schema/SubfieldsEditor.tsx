@@ -10,14 +10,14 @@ import { OptionsEditor } from "./OptionsEditor";
 import { useStableListIds } from "@/hooks/useStableListIds";
 import type { SubfieldDef } from "@/lib/types";
 
-// Patch neutro com as mesmas chaves de PydanticField: o FieldCard repassa
-// direto ao updateField; o EditFieldDialog mapeia cada chave presente para o
-// setter correspondente. Chave ausente = "não mexer" (por isso `in patch`
-// nos consumidores, não `!== undefined`).
+// Estado completo (não um patch parcial): toda emissão inclui os 3 campos,
+// com os que não mudaram preenchidos com o valor atual. O FieldCard repassa
+// direto ao updateField; o EditFieldDialog aplica os 3 setters sem precisar
+// distinguir "chave ausente" (não mexer) de "chave alterada".
 export interface SubfieldsPatch {
-  subfields?: SubfieldDef[] | undefined;
-  subfield_rule?: "all" | "at_least_one" | undefined;
-  options?: string[] | null;
+  subfields: SubfieldDef[] | undefined;
+  subfield_rule: "all" | "at_least_one" | undefined;
+  options: string[] | null;
 }
 
 interface SubfieldsEditorProps {
@@ -47,6 +47,14 @@ export function SubfieldsEditor({
   const subfieldKeys = useStableListIds(subfields?.length ?? 0);
   const hasSubfields = !!subfields && subfields.length > 0;
 
+  const emit = (change: Partial<SubfieldsPatch>) =>
+    onChange({
+      subfields,
+      subfield_rule: subfieldRule,
+      options: options.length > 0 ? options : null,
+      ...change,
+    });
+
   return (
     <div className="space-y-3">
       {/* Toggle subcampos */}
@@ -55,7 +63,7 @@ export function SubfieldsEditor({
           checked={hasSubfields}
           onCheckedChange={(checked) => {
             if (checked) {
-              onChange({
+              emit({
                 subfields: [
                   { key: "campo_1", label: "Campo 1", required: true },
                   { key: "campo_2", label: "Campo 2", required: true },
@@ -64,7 +72,7 @@ export function SubfieldsEditor({
                 options: null,
               });
             } else {
-              onChange({ subfields: undefined, subfield_rule: undefined });
+              emit({ subfields: undefined, subfield_rule: undefined });
             }
           }}
         />
@@ -91,7 +99,7 @@ export function SubfieldsEditor({
                     (subfieldRule || "all") === value &&
                       "bg-brand/10 text-brand border-brand/40"
                   )}
-                  onClick={() => onChange({ subfield_rule: value })}
+                  onClick={() => emit({ subfield_rule: value })}
                 >
                   {label}
                 </Button>
@@ -105,7 +113,7 @@ export function SubfieldsEditor({
                 onChange={(e) => {
                   const sfs = [...subfields];
                   sfs[si] = { ...sfs[si], key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") };
-                  onChange({ subfields: sfs });
+                  emit({ subfields: sfs });
                 }}
                 className="w-28 font-mono text-xs h-7"
                 placeholder="chave"
@@ -115,7 +123,7 @@ export function SubfieldsEditor({
                 onChange={(e) => {
                   const sfs = [...subfields];
                   sfs[si] = { ...sfs[si], label: e.target.value };
-                  onChange({ subfields: sfs });
+                  emit({ subfields: sfs });
                 }}
                 className="flex-1 text-xs h-7"
                 placeholder="Label visível"
@@ -127,7 +135,7 @@ export function SubfieldsEditor({
                     onCheckedChange={(checked) => {
                       const sfs = [...subfields];
                       sfs[si] = { ...sfs[si], required: checked };
-                      onChange({ subfields: sfs });
+                      emit({ subfields: sfs });
                     }}
                   />
                   <span className="text-[10px] text-muted-foreground">Obrig.</span>
@@ -140,7 +148,7 @@ export function SubfieldsEditor({
                 onClick={() => {
                   const sfs = subfields.filter((_, j) => j !== si);
                   subfieldKeys.removeIdAt(si);
-                  onChange(
+                  emit(
                     sfs.length > 0
                       ? { subfields: sfs }
                       : { subfields: undefined, subfield_rule: undefined },
@@ -158,7 +166,7 @@ export function SubfieldsEditor({
             onClick={() => {
               const idx = subfields.length + 1;
               subfieldKeys.appendId();
-              onChange({
+              emit({
                 subfields: [
                   ...subfields,
                   { key: `campo_${idx}`, label: `Campo ${idx}`, required: true },
@@ -177,7 +185,7 @@ export function SubfieldsEditor({
           </p>
           <OptionsEditor
             options={options}
-            onChange={(opts) => onChange({ options: opts.length > 0 ? opts : null })}
+            onChange={(opts) => emit({ options: opts.length > 0 ? opts : null })}
             onBeforeRemove={onBeforeRemoveOption}
           />
         </div>

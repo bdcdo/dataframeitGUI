@@ -30,20 +30,7 @@ import {
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import type { ReviewComment, ResponseSnapshotEntry } from "./CommentCard";
-
-const TYPE_LABELS: Record<string, string> = {
-  single: "Escolha única",
-  multi: "Múltipla escolha",
-  text: "Texto livre",
-  date: "Data",
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  single: "bg-blue-500/10 text-blue-700",
-  multi: "bg-purple-500/10 text-purple-700",
-  text: "bg-green-500/10 text-green-700",
-  date: "bg-amber-500/10 text-amber-700",
-};
+import { TYPE_LABELS, TYPE_COLORS } from "@/lib/field-labels";
 
 function formatAnswer(answer: unknown): string {
   if (answer === null || answer === undefined) return "(sem resposta)";

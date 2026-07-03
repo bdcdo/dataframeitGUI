@@ -41,12 +41,11 @@ function ControlledEditor({
       options={state.options}
       onChange={(patch) => {
         onPatch?.(patch);
-        setState((prev) => ({
-          subfields: "subfields" in patch ? patch.subfields : prev.subfields,
-          subfieldRule:
-            "subfield_rule" in patch ? patch.subfield_rule : prev.subfieldRule,
-          options: "options" in patch ? (patch.options ?? []) : prev.options,
-        }));
+        setState({
+          subfields: patch.subfields,
+          subfieldRule: patch.subfield_rule,
+          options: patch.options ?? [],
+        });
       }}
     />
   );
@@ -99,6 +98,7 @@ describe("SubfieldsEditor — toggle", () => {
     expect(onPatch).toHaveBeenCalledWith({
       subfields: undefined,
       subfield_rule: undefined,
+      options: null,
     });
     // Sem subcampos, o modo "Respostas padronizadas" aparece.
     await waitFor(() =>
@@ -152,6 +152,7 @@ describe("SubfieldsEditor — lista de subcampos (keys estáveis)", () => {
     expect(onPatch).toHaveBeenCalledWith({
       subfields: undefined,
       subfield_rule: undefined,
+      options: null,
     });
   });
 
@@ -172,6 +173,8 @@ describe("SubfieldsEditor — lista de subcampos (keys estáveis)", () => {
 
     expect(onPatch).toHaveBeenCalledWith({
       subfields: [sf("a", "A"), sf("campo_2", "Campo 2")],
+      subfield_rule: "all",
+      options: null,
     });
     await waitFor(() => expect(keyInputs()).toHaveLength(2));
   });
@@ -211,7 +214,11 @@ describe("SubfieldsEditor — regra", () => {
 
     await user.click(screen.getByRole("button", { name: /pelo menos um/i }));
 
-    expect(onPatch).toHaveBeenCalledWith({ subfield_rule: "at_least_one" });
+    expect(onPatch).toHaveBeenCalledWith({
+      subfields: [sf("a", "A")],
+      subfield_rule: "at_least_one",
+      options: null,
+    });
     await waitFor(() =>
       // Só resta o toggle "Dividir em subcampos".
       expect(screen.getAllByRole("switch")).toHaveLength(1),
@@ -233,7 +240,11 @@ describe("SubfieldsEditor — respostas padronizadas", () => {
     await user.click(removeButtons[0]);
 
     await waitFor(() =>
-      expect(onPatch).toHaveBeenCalledWith({ options: null }),
+      expect(onPatch).toHaveBeenCalledWith({
+        subfields: undefined,
+        subfield_rule: undefined,
+        options: null,
+      }),
     );
   });
 });

@@ -12,14 +12,15 @@ import { Switch } from "@/components/ui/switch";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
-import { OptionsEditor } from "./OptionsEditor";
 import { ConditionEditor } from "./ConditionEditor";
 import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "./RemoveOptionDialog";
 import { FieldCardHeader } from "./FieldCardHeader";
-import { TYPE_LABELS } from "./field-labels";
+import { TYPE_LABELS } from "@/lib/field-labels";
 import { SubfieldsEditor } from "./SubfieldsEditor";
 import { JustificationPromptField } from "./JustificationPromptField";
+import { OptionsAllowOtherEditor } from "./OptionsAllowOtherEditor";
+import { DateSentinelEditor } from "./DateSentinelEditor";
 import { useOptionRemovalGuard } from "./useOptionRemovalGuard";
 import { stripOptionFromConditions } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
@@ -242,45 +243,24 @@ export function FieldCard({
 
             {/* Opções (single/multi) ou Respostas padronizadas (text) */}
             {(field.type === "single" || field.type === "multi") && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">Opções</Label>
-                <OptionsEditor
-                  options={field.options || []}
-                  onChange={(opts) => updateField({ options: opts })}
-                  onBeforeRemove={handleBeforeRemoveOption}
-                />
-              </div>
+              <OptionsAllowOtherEditor
+                options={field.options || []}
+                onChange={(opts) => updateField({ options: opts })}
+                onBeforeRemoveOption={handleBeforeRemoveOption}
+                allowOther={field.allow_other === true}
+                onAllowOtherChange={(checked) =>
+                  updateField({ allow_other: checked ? true : undefined })
+                }
+              />
             )}
             {field.type === "date" && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">Valores sentinela (opcional)</Label>
-                <p className="text-xs text-muted-foreground">
-                  Aparecem como botões ao lado do campo de data (ex: &quot;Não identificável&quot;).
-                </p>
-                <OptionsEditor
-                  options={field.options || []}
-                  onChange={(opts) =>
-                    updateField({ options: opts.length > 0 ? opts : null })
-                  }
-                  onBeforeRemove={handleBeforeRemoveOption}
-                />
-              </div>
-            )}
-            {(field.type === "single" || field.type === "multi") && (
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-xs">Permitir &quot;Outro: ...&quot;</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Pesquisador pode digitar um valor livre além das opções acima
-                  </p>
-                </div>
-                <Switch
-                  checked={field.allow_other === true}
-                  onCheckedChange={(checked) =>
-                    updateField({ allow_other: checked ? true : undefined })
-                  }
-                />
-              </div>
+              <DateSentinelEditor
+                options={field.options || []}
+                onChange={(opts) =>
+                  updateField({ options: opts.length > 0 ? opts : null })
+                }
+                onBeforeRemoveOption={handleBeforeRemoveOption}
+              />
             )}
             {field.type === "text" && (
               <SubfieldsEditor

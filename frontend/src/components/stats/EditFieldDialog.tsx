@@ -12,26 +12,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { OptionsEditor } from "@/components/schema/OptionsEditor";
 import { ConditionEditor } from "@/components/schema/ConditionEditor";
 import { candidateTriggersFor } from "@/lib/conditional";
 import { RemoveOptionDialog } from "@/components/schema/RemoveOptionDialog";
 import { SubfieldsEditor } from "@/components/schema/SubfieldsEditor";
 import { JustificationPromptField } from "@/components/schema/JustificationPromptField";
+import { OptionsAllowOtherEditor } from "@/components/schema/OptionsAllowOtherEditor";
+import { DateSentinelEditor } from "@/components/schema/DateSentinelEditor";
 import { useOptionRemovalGuard } from "@/components/schema/useOptionRemovalGuard";
-import { TYPE_LABELS } from "@/components/schema/field-labels";
+import { TYPE_LABELS } from "@/lib/field-labels";
 import { stripOptionFromConditions } from "@/lib/schema-utils";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
-import { useEditFieldForm } from "./useEditFieldForm";
+import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
 import type { PydanticField } from "@/lib/types";
 
-export type { PendingSuggestion } from "./useEditFieldForm";
-import type { PendingSuggestion } from "./useEditFieldForm";
+export type { PendingSuggestion };
 
 interface EditFieldDialogProps {
   projectId: string;
@@ -196,39 +195,21 @@ export function EditFieldDialog({
           </div>
 
           {(field.type === "single" || field.type === "multi") && (
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Opções</Label>
-                <OptionsEditor
-                  options={options}
-                  onChange={setOptions}
-                  onBeforeRemove={handleBeforeRemoveOption}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-xs">Permitir &quot;Outro: ...&quot;</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Pesquisador pode digitar um valor livre além das opções acima
-                  </p>
-                </div>
-                <Switch checked={allowOther} onCheckedChange={setAllowOther} />
-              </div>
-            </div>
+            <OptionsAllowOtherEditor
+              options={options}
+              onChange={setOptions}
+              onBeforeRemoveOption={handleBeforeRemoveOption}
+              allowOther={allowOther}
+              onAllowOtherChange={setAllowOther}
+            />
           )}
 
           {field.type === "date" && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">Valores sentinela (opcional)</Label>
-              <p className="text-xs text-muted-foreground">
-                Aparecem como botões ao lado do campo de data (ex: &quot;Não identificável&quot;).
-              </p>
-              <OptionsEditor
-                options={options}
-                onChange={setOptions}
-                onBeforeRemove={handleBeforeRemoveOption}
-              />
-            </div>
+            <DateSentinelEditor
+              options={options}
+              onChange={setOptions}
+              onBeforeRemoveOption={handleBeforeRemoveOption}
+            />
           )}
 
           {field.type === "text" && (
@@ -237,10 +218,9 @@ export function EditFieldDialog({
               subfieldRule={subfieldRule}
               options={options}
               onChange={(patch) => {
-                if ("subfields" in patch) setSubfields(patch.subfields);
-                if ("subfield_rule" in patch)
-                  setSubfieldRule(patch.subfield_rule ?? "all");
-                if ("options" in patch) setOptions(patch.options ?? []);
+                setSubfields(patch.subfields);
+                setSubfieldRule(patch.subfield_rule ?? "all");
+                setOptions(patch.options ?? []);
               }}
               onBeforeRemoveOption={handleBeforeRemoveOption}
             />

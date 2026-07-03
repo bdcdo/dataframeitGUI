@@ -19,13 +19,7 @@ import { createSchemaSuggestion } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import type { PydanticField } from "@/lib/types";
-
-const TYPE_LABELS: Record<string, string> = {
-  single: "Escolha única",
-  multi: "Múltipla escolha",
-  text: "Texto livre",
-  date: "Data",
-};
+import { TYPE_LABELS } from "@/lib/field-labels";
 
 interface SuggestFieldDialogProps {
   projectId: string;

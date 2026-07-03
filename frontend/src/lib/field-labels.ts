@@ -1,5 +1,6 @@
 // Labels e cores dos tipos/destinos de campo, compartilhados entre o editor
-// de schema (FieldCard) e o editor inline (EditFieldDialog).
+// de schema (FieldCard), o editor inline (EditFieldDialog) e as visões de
+// comentários/sugestões que precisam exibir o tipo do campo.
 
 export const TYPE_LABELS: Record<string, string> = {
   single: "Escolha única",

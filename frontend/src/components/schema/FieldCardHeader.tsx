@@ -7,7 +7,7 @@ import { CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GripVertical, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
-import { TYPE_LABELS, TYPE_COLORS, TARGET_LABELS } from "./field-labels";
+import { TYPE_LABELS, TYPE_COLORS, TARGET_LABELS } from "@/lib/field-labels";
 
 interface FieldCardHeaderProps {
   field: PydanticField;
