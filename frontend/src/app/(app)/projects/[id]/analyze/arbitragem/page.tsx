@@ -1,5 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, resolveEffectiveUserId } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ArbitrationPage } from "@/components/arbitration/ArbitrationPage";
 import { assignOrder } from "@/lib/arbitration-order";
@@ -12,15 +12,23 @@ import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 
 export default async function ArbitrationRoute({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ viewAsUser?: string }>;
 }) {
-  const [{ id }, user, supabase] = await Promise.all([
+  const [{ id }, sp, user, supabase] = await Promise.all([
     params,
+    searchParams,
     getAuthUser(),
     createSupabaseServer(),
   ]);
   if (!user) redirect("/auth/login");
+
+  // Fila 100% pessoal: pertence à identidade EFETIVA (impersonação master via
+  // ?viewAsUser= ou conta-alias da spec 002), como no Codificar/Comparação.
+  // Com user.id cru, o master "visualizando como" via a própria fila (vazia).
+  const { effectiveUserId } = await resolveEffectiveUserId(id, user, sp.viewAsUser);
 
   const [{ data: project }, { data: assignments }] = await Promise.all([
     supabase
@@ -32,7 +40,7 @@ export default async function ArbitrationRoute({
       .from("assignments")
       .select("document_id, status")
       .eq("project_id", id)
-      .eq("user_id", user.id)
+      .eq("user_id", effectiveUserId)
       .eq("type", "arbitragem")
       .neq("status", "concluido"),
   ]);
@@ -63,7 +71,7 @@ export default async function ArbitrationRoute({
         "id, document_id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict, self_justification",
       )
       .in("document_id", docIds)
-      .eq("arbitrator_id", user.id)
+      .eq("arbitrator_id", effectiveUserId)
       .eq("self_verdict", "contesta_llm")
       .is("final_verdict", null),
   ]);

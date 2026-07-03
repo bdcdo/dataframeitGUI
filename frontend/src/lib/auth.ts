@@ -120,6 +120,27 @@ export const getEffectiveMemberId = cache(
   },
 );
 
+// Identidade efetiva das páginas de fila pessoal (Codificar, Comparação,
+// Arbitragem, Meus vereditos): a impersonação master (?viewAsUser=) tem
+// precedência; sem ela, contas vinculadas resolvem para o membro canônico do
+// projeto via getEffectiveMemberId (spec 002). Fonte única da precedência —
+// antes cada página reimplementava o par isMaster && viewAsUser, e as que não
+// o fizeram (Comparação/Arbitragem) filtravam a fila pelo id do master logado,
+// mostrando fila vazia durante a impersonação.
+export async function resolveEffectiveUserId(
+  projectId: string,
+  user: Pick<AuthUser, "id" | "isMaster">,
+  viewAsUser: string | undefined,
+): Promise<{ effectiveUserId: string; isImpersonating: boolean }> {
+  if (user.isMaster && viewAsUser) {
+    return { effectiveUserId: viewAsUser, isImpersonating: true };
+  }
+  return {
+    effectiveUserId: await getEffectiveMemberId(projectId),
+    isImpersonating: false,
+  };
+}
+
 interface ProjectAccessContext {
   project: { id: string; name: string; created_by: string } | null;
   membershipRole: string | null;

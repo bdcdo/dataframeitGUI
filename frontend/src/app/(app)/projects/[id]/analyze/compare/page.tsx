@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext, resolveEffectiveUserId } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
 import { coordinatorGate } from "@/lib/project-access";
@@ -48,6 +48,16 @@ export default async function ComparePageRoute({
     createSupabaseServer(),
   ]);
   if (!user) redirect("/auth/login");
+
+  // Fila pessoal pertence à identidade EFETIVA: impersonação master
+  // (?viewAsUser=, mesmo param do Codificar) ou conta-alias (spec 002).
+  // Filtrar por user.id cru mostrava a fila do master (vazia) durante a
+  // impersonação — foi o "não tem documento atribuído" da Mariana.
+  const { effectiveUserId, isImpersonating } = await resolveEffectiveUserId(
+    id,
+    user,
+    sp.viewAsUser,
+  );
 
   const [
     { data: project },
@@ -152,7 +162,11 @@ export default async function ComparePageRoute({
   const latestMajorLabel = formatVersion(latestMajorAnchor(projectVersion));
 
   // Compare-type assignments filter (ver assignedCompareDocIds).
-  const compareAssignedDocIds = assignedCompareDocIds(showAllQueue, allAssignments, user.id);
+  const compareAssignedDocIds = assignedCompareDocIds(
+    showAllQueue,
+    allAssignments,
+    effectiveUserId,
+  );
 
   // Distingue "sem nada atribuído" de "tem atribuído, mas foi filtrado por
   // cobertura/divergência" — usado só pela mensagem de estado vazio em
@@ -168,7 +182,7 @@ export default async function ComparePageRoute({
   const compareAssignmentStatusByDoc = buildCompareAssignmentStatusByDoc(
     allAssignments,
     showAllQueue,
-    user.id,
+    effectiveUserId,
   );
 
   const { responsesByDoc, docsMetaMap } = indexResponsesByDoc(allResponses);
@@ -223,10 +237,11 @@ export default async function ComparePageRoute({
   // completo, nao apenas com texto vazio.
   const documentsForCompareUnsorted = buildDocumentsForCompare(qualifiedDocIds, textMap, docsMetaMap);
 
-  // Track reviews do user atual para preencher reviewedCount
+  // Track reviews da identidade efetiva para preencher reviewedCount — na
+  // impersonação, o progresso exibido é o do dono da fila, não o do master.
   const { existingReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
     reviews,
-    user.id,
+    effectiveUserId,
     qualifiedDocIds,
     divergentFields,
   );
@@ -271,6 +286,7 @@ export default async function ComparePageRoute({
         currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
         equivalencesByDocField={equivalencesByDocField}
         currentUserId={user.id}
+        isImpersonating={isImpersonating}
         canManageAnyPair={isCoordinator}
         isCoordinator={isCoordinator}
         showingAllQueue={showAllQueue}
