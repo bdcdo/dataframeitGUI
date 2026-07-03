@@ -42,6 +42,52 @@ only-include = ["main.py", "config.py", "routes", "services"]
 pythonpath = ["."]
 testpaths = ["tests"]
 
+# ignore_missing_imports: as libs de LLM (langchain-*, dataframeit) nao tem
+# stubs publicados; sem isso o mypy so reportaria "import-untyped" em cascata
+# e mascararia os erros de tipo reais. Sem strict de cara — mesmo raciocinio
+# do lint:types no frontend (#260): comecar com o subset que pega o footgun
+# real (tipos incompativeis, atributos inexistentes) sem exigir refatorar a
+# base toda para satisfazer strict mode.
+#
+# python_version = 3.12 (nao 3.11, o piso de requires-python): o runtime real
+# e o Dockerfile fixam 3.12. Simular 3.11 faz o mypy recusar parsear stubs que
+# usam sintaxe 3.12+ (ex.: `type` statement do PEP 695 no stub do numpy) e
+# abortar com "errors prevented further checking" em vez de reportar um erro
+# de tipo normal.
+#
+# follow_imports = "silent": sem isso, checar um unico arquivo (como o hook de
+# pre-push faz, file-scoped) tambem reporta os erros de qualquer modulo que
+# esse arquivo importe — inclusive os 10 erros grandfathered em auth.py/
+# pydantic_routes.py/pydantic_compiler.py/main.py (ver baixo). Como
+# services/auth.py e importado por praticamente toda rota, isso bloquearia
+# pushes que nao tocam nenhum dos 4 arquivos do baseline. "silent" mantem o
+# modulo importado sendo checado (a inferencia de tipo continua correta) mas
+# suprime os diagnosticos dele quando ele nao foi passado explicitamente na
+# linha de comando.
+#
+# exclude = ["tests/"]: so tem efeito quando o mypy descobre arquivos sozinho
+# (`uv run mypy .`); e ignorado quando arquivos sao passados explicitamente,
+# que e como o hook de pre-push invoca. A protecao real de tests/ no hook vem
+# do `exclude: ^backend/tests/.*\.py$` em .pre-commit-config.yaml — os dois
+# precisam ficar em sincronia manualmente, nao ha enforcement cruzado.
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+follow_imports = "silent"
+exclude = ["tests/"]
+
+# Grandfathering (#260, mesmo espirito do per-file-ignores do ruff acima):
+# llm_runner.py concentra 103 dos 113 erros do baseline inicial, quase todos
+# union-attr da explosao do alias JSON recursivo em torno de dict cru vindo
+# do LLM. E o mesmo arquivo ja isento de C901 no ruff (run_llm, CCN 35) --
+# tipar corretamente exige o mesmo refactor maior, fora do escopo do PR de
+# tooling. Sem isso, qualquer push que toque o arquivo bloquearia nos 103
+# erros pre-existentes (o hook e file-scoped, nao line-scoped). Ver
+# docs/CODE_QUALITY_TOOLING.md.
+[[tool.mypy.overrides]]
+module = "services.llm_runner"
+ignore_errors = true
+
 [tool.ruff]
 target-version = "py311"
 
@@ -77,4 +123,5 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
     "ruff>=0.15.19",
+    "mypy>=1.15",
 ]
