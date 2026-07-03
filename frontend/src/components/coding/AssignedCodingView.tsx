@@ -6,35 +6,42 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { DocumentReader } from "./DocumentReader";
-import { QuestionsPanel, type OutOfScopeConfig } from "./QuestionsPanel";
+import { QuestionsPanel, type QuestionsPanelProps } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
-import type { PydanticField } from "@/lib/types";
+import { CodingEmptyStates } from "./CodingEmptyStates";
+import type { RoundFilterData } from "./CodingPage";
+import type { AssignedDoc } from "@/lib/types";
 
-interface AssignedCodingViewProps {
-  docId: string;
-  text: string;
+interface AssignedCodingViewProps
+  extends Omit<QuestionsPanelProps, "submitting" | "notes" | "onNotesChange" | "readOnly" | "onReorder"> {
+  /** Doc atribuído atual — `undefined` quando não há nenhum a mostrar
+   *  (lista vazia ou filtro de rodada sem pendências). */
+  doc: AssignedDoc | undefined;
   title: string;
   docIndex: number;
   total: number;
   isFullscreen: boolean;
   onNavigate: (index: number) => void;
   onExitFullscreen: () => void;
-  fields: PydanticField[];
-  answers: Record<string, unknown>;
-  onAnswer: (fieldName: string, value: unknown) => void;
-  onSubmit: () => void;
   submitting: boolean;
   notes: string;
   onNotesChange: (notes: string) => void;
   readOnly: boolean;
   onReorder: (newOrder: string[]) => void;
-  outOfScope?: OutOfScopeConfig;
+  /** Todos os docs atribuídos foram codificados nesta sessão. */
+  allDone: boolean;
+  onExploreMore: () => void;
+  hasAssignments: boolean;
+  roundFilter?: RoundFilterData;
 }
 
-/** Painel de codificação do modo Atribuídos (leitor + perguntas). */
+/**
+ * Corpo do modo Atribuídos: cascata de estados (tudo concluído / sem doc /
+ * leitor + perguntas), espelhando o padrão já usado por `BrowseCodingView`
+ * para o modo Explorar — decidir aqui em vez de no container (#389).
+ */
 export function AssignedCodingView({
-  docId,
-  text,
+  doc,
   title,
   docIndex,
   total,
@@ -51,7 +58,36 @@ export function AssignedCodingView({
   readOnly,
   onReorder,
   outOfScope,
+  allDone,
+  onExploreMore,
+  hasAssignments,
+  roundFilter,
 }: AssignedCodingViewProps) {
+  // Diferente do container anterior (#389), este componente agora fica montado
+  // o tempo todo em mode==="assigned" — a cascata abaixo decide o retorno via
+  // early-return, em vez de o pai desmontar/remontar `AssignedCodingView` entre
+  // os estados. Hoje isso não tem efeito porque o componente não guarda estado
+  // próprio (sem useState/useRef/useEffect aqui). Se algum for adicionado
+  // diretamente neste componente, ele sobreviverá indevidamente entre as
+  // transições allDone -> no-doc -> doc normal — revisar este ponto nesse caso.
+  if (allDone) {
+    return (
+      <CodingEmptyStates
+        kind="all-done"
+        count={total}
+        onExploreMore={onExploreMore}
+      />
+    );
+  }
+  if (!doc) {
+    return (
+      <CodingEmptyStates
+        kind="no-doc"
+        hasAssignments={hasAssignments}
+        roundFilter={roundFilter}
+      />
+    );
+  }
   return (
     <>
       {isFullscreen && (
@@ -65,12 +101,12 @@ export function AssignedCodingView({
       )}
       <ResizablePanelGroup className="flex-1">
         <ResizablePanel defaultSize={55} minSize={25}>
-          <DocumentReader text={text} />
+          <DocumentReader text={doc.text} />
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={45} minSize={25}>
           <QuestionsPanel
-            key={docId}
+            key={doc.id}
             fields={fields}
             answers={answers}
             onAnswer={onAnswer}

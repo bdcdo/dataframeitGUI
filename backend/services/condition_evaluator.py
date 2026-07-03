@@ -12,7 +12,10 @@ pruning de respostas no backend concorde com a visibilidade do campo na UI. O
 Manter as semânticas alinhadas evita respostas órfãs (armazenadas no banco,
 invisíveis na UI de coding).
 """
+
 from typing import Any
+
+from services.pydantic_compiler import CONDITION_OPERATORS, extract_json_schema_extra
 
 
 def _get_nested(data: dict, path: str) -> Any:
@@ -48,9 +51,58 @@ def _matches_scalar(value: Any, target: Any) -> bool:
     return _scalar_equals(value, target)
 
 
-def evaluate_condition(
-    condition: Any, field_data: dict, field_name: str = ""
-) -> bool:
+def _eval_equals(value: Any, condition: dict) -> bool:
+    return _matches_scalar(value, condition["equals"])
+
+
+def _eval_not_equals(value: Any, condition: dict) -> bool:
+    if value is None:
+        return False
+    return not _matches_scalar(value, condition["not_equals"])
+
+
+def _eval_in(value: Any, condition: dict) -> bool:
+    targets = condition["in"]
+    if not isinstance(targets, list):
+        return False
+    return any(_matches_scalar(value, t) for t in targets)
+
+
+def _eval_not_in(value: Any, condition: dict) -> bool:
+    if value is None:
+        return False
+    targets = condition["not_in"]
+    if not isinstance(targets, list):
+        return False
+    return not any(_matches_scalar(value, t) for t in targets)
+
+
+def _eval_exists(value: Any, condition: dict) -> bool:
+    exists = (
+        value is not None
+        and not (isinstance(value, str) and value == "")
+        and not (isinstance(value, list) and len(value) == 0)
+    )
+    return exists == bool(condition["exists"])
+
+
+# Ordem importa: replica a prioridade do antigo if/elif quando mais de uma
+# chave de operador aparece no mesmo dict de condicao (nao deveria acontecer,
+# mas a primeira chave presente ganha, igual antes). A ordem vem de
+# CONDITION_OPERATORS (pydantic_compiler.py) para não manter uma segunda
+# lista independente do mesmo vocabulário de operadores (achado da revisão
+# do PR #379).
+_HANDLER_BY_OPERATOR = {
+    "equals": _eval_equals,
+    "not_equals": _eval_not_equals,
+    "in": _eval_in,
+    "not_in": _eval_not_in,
+    "exists": _eval_exists,
+}
+_CONDITION_HANDLERS = {op: _HANDLER_BY_OPERATOR[op] for op in CONDITION_OPERATORS}
+
+
+def evaluate_condition(condition: Any, field_data: dict, field_name: str = "") -> bool:
     """True se o campo deve estar visível dadas as respostas atuais."""
     if condition is None:
         return True
@@ -63,31 +115,9 @@ def evaluate_condition(
 
     value = _get_nested(field_data, field_path)
 
-    if "equals" in condition:
-        return _matches_scalar(value, condition["equals"])
-    if "not_equals" in condition:
-        if value is None:
-            return False
-        return not _matches_scalar(value, condition["not_equals"])
-    if "in" in condition:
-        targets = condition["in"]
-        if not isinstance(targets, list):
-            return False
-        return any(_matches_scalar(value, t) for t in targets)
-    if "not_in" in condition:
-        if value is None:
-            return False
-        targets = condition["not_in"]
-        if not isinstance(targets, list):
-            return False
-        return not any(_matches_scalar(value, t) for t in targets)
-    if "exists" in condition:
-        exists = (
-            value is not None
-            and not (isinstance(value, str) and value == "")
-            and not (isinstance(value, list) and len(value) == 0)
-        )
-        return exists == bool(condition["exists"])
+    for operator, handler in _CONDITION_HANDLERS.items():
+        if operator in condition:
+            return handler(value, condition)
     return False
 
 
@@ -100,9 +130,7 @@ def extract_field_conditions(model_class) -> dict:
     """
     result: dict = {}
     for field_name, field_info in model_class.model_fields.items():
-        extra = field_info.json_schema_extra
-        if callable(extra) or not isinstance(extra, dict):
-            continue
+        extra = extract_json_schema_extra(field_info)
         cond = extra.get("condition")
         if isinstance(cond, dict):
             result[field_name] = cond

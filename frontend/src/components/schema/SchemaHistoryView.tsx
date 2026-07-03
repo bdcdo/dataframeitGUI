@@ -16,7 +16,7 @@ import { SchemaChangeGroup } from "./SchemaChangeGroup";
 import {
   groupChangesByCommit,
   type ChangeGroup,
-} from "@/lib/schema-change-utils";
+} from "@/lib/schema-change-grouping";
 import type { SchemaChangeEntry, SchemaChangeType } from "@/lib/types";
 
 interface SchemaHistoryViewProps {

@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext, requireCoordinator } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
@@ -163,7 +163,7 @@ export interface UploadOptions {
 async function filterActiveExternalIdConflicts<
   T extends { external_id: string | null },
 >(
-  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  supabase: SupabaseServerClient,
   projectId: string,
   rows: T[],
 ): Promise<{ rows: T[]; skippedExisting: number; skippedInBatch: number }> {

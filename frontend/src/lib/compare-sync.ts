@@ -1,11 +1,9 @@
 import "server-only";
 
-import type { createSupabaseServer } from "@/lib/supabase/server";
+import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import {
-  computeDivergentFieldNames,
-  resolveCompareStatus,
-} from "@/lib/compare-divergence";
+import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { resolveCompareStatus } from "@/lib/compare-assignment-status";
 import {
   responseQualifiesForVersion,
   versionGate,
@@ -17,7 +15,7 @@ import type { EquivalencePair } from "@/lib/equivalence";
 // reviewer's "comparacao" assignment on this document, taking into account
 // any equivalences registered between responses for free-text fields.
 export async function syncCompareAssignment(
-  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  supabase: SupabaseServerClient,
   projectId: string,
   documentId: string,
   userId: string,

@@ -22,12 +22,15 @@ function entry(
   };
 }
 
-describe("ArbitrationDocList — colapsada", () => {
-  it("mostra só o botão de expandir e dispara onToggle", () => {
+describe("ArbitrationDocList — integração com DocListPanel", () => {
+  // Comportamento genérico de colapsar/expandir/estado-vazio/onToggle já é
+  // coberto em DocListPanel.test.tsx; aqui só confirmamos que este
+  // consumidor wireia collapsed/onToggle/docs corretamente.
+  it("colapsada mostra só o botão de expandir; expandida e vazia mostra mensagem; recolher dispara onToggle", () => {
     const onToggle = vi.fn();
-    render(
+    const { rerender } = render(
       <ArbitrationDocList
-        docs={[entry()]}
+        docs={[]}
         currentIndex={0}
         onSelect={vi.fn()}
         collapsed
@@ -35,41 +38,25 @@ describe("ArbitrationDocList — colapsada", () => {
       />,
     );
     expect(screen.queryByText("Fila de arbitragem")).toBeNull();
-    const btn = screen.getByTitle("Mostrar lista de documentos");
-    fireEvent.click(btn);
+    fireEvent.click(screen.getByTitle("Mostrar lista de documentos"));
     expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-});
 
-describe("ArbitrationDocList — expandida", () => {
-  it("lista vazia exibe mensagem dedicada", () => {
-    render(
+    rerender(
       <ArbitrationDocList
         docs={[]}
-        currentIndex={0}
-        onSelect={vi.fn()}
-        collapsed={false}
-        onToggle={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Nenhum documento na fila.")).toBeTruthy();
-  });
-
-  it("recolher dispara onToggle", () => {
-    const onToggle = vi.fn();
-    render(
-      <ArbitrationDocList
-        docs={[entry()]}
         currentIndex={0}
         onSelect={vi.fn()}
         collapsed={false}
         onToggle={onToggle}
       />,
     );
+    expect(screen.getByText("Nenhum documento na fila.")).toBeTruthy();
     fireEvent.click(screen.getByTitle("Recolher lista"));
-    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onToggle).toHaveBeenCalledTimes(2);
   });
+});
 
+describe("ArbitrationDocList — expandida", () => {
   it("título cai para externalId e depois para os 8 primeiros chars do id", () => {
     render(
       <ArbitrationDocList
