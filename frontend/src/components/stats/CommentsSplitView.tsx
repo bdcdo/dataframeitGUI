@@ -1,43 +1,19 @@
 "use client";
 
-import { useState, useTransition, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { DocumentReader } from "@/components/coding/DocumentReader";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
-  CheckCircle2,
-  RotateCcw,
-  Loader2,
-  Check,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Loader2 } from "lucide-react";
 import { useDocumentText } from "@/hooks/useDocumentText";
-import {
-  resolveReviewComment,
-  reopenReviewComment,
-  resolveDifficulty,
-  reopenDifficulty,
-} from "@/actions/stats";
-import { toast } from "sonner";
-import { Switch } from "@/components/ui/switch";
-import { formatAnswer } from "@/lib/reviews/verdict-format";
-import {
-  type ReviewComment,
-  type ResponseSnapshotEntry,
-  TYPE_LABELS,
-  TYPE_COLORS,
-  formatVerdictLabel,
-  verdictVariant,
-} from "./comment-card-utils";
+import { useDocGroupNavigation } from "./useDocGroupNavigation";
+import { useCommentResolution } from "./useCommentResolution";
+import { SplitViewNavBar } from "./SplitViewNavBar";
+import { CommentListPanel } from "./CommentListPanel";
+import type { ReviewComment } from "./comment-card-utils";
 
 interface CommentsSplitViewProps {
   projectId: string;
@@ -52,117 +28,28 @@ export function CommentsSplitView({
   initialDocId,
   onBack,
 }: CommentsSplitViewProps) {
-  const { refresh } = useRouter();
-  const [isPending, startTransition] = useTransition();
   const [showResolved, setShowResolved] = useState(false);
-
-  // Group comments by document, preserving order of first occurrence
-  const docGroups = useMemo(() => {
-    const map = new Map<string, { title: string; comments: ReviewComment[] }>();
-    for (const c of comments) {
-      if (!map.has(c.documentId)) {
-        map.set(c.documentId, { title: c.documentTitle, comments: [] });
-      }
-      map.get(c.documentId)!.comments.push(c);
-    }
-    return [...map.entries()].map(([docId, data]) => ({
-      docId,
-      ...data,
-    }));
-  }, [comments]);
-
-  const initialIdx = Math.max(
-    docGroups.findIndex((g) => g.docId === initialDocId),
-    0,
-  );
-  const [docIndex, setDocIndex] = useState(initialIdx);
-
-  const currentGroup = docGroups[docIndex];
-  const currentDocId = currentGroup?.docId;
+  const { docGroups, docIndex, setDocIndex, currentGroup, currentDocId } =
+    useDocGroupNavigation(comments, initialDocId);
+  const { isPending, handleResolve, handleReopen } = useCommentResolution(projectId);
   const { text: currentText, loading: loadingText } = useDocumentText(
     projectId,
     currentDocId,
   );
 
-  const handleResolve = (comment: ReviewComment) => {
-    startTransition(async () => {
-      let result;
-      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
-        result = await resolveDifficulty(
-          projectId,
-          comment.difficultyResponseId,
-          comment.difficultyDocumentId!,
-        );
-      } else {
-        result = await resolveReviewComment(comment.id, projectId);
-      }
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Comentário resolvido");
-        refresh();
-      }
-    });
-  };
-
-  const handleReopen = (comment: ReviewComment) => {
-    startTransition(async () => {
-      let result;
-      if (comment.source === "dificuldade" && comment.difficultyResponseId) {
-        result = await reopenDifficulty(projectId, comment.difficultyResponseId);
-      } else {
-        result = await reopenReviewComment(comment.id, projectId);
-      }
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Comentário reaberto");
-        refresh();
-      }
-    });
-  };
-
   if (!currentGroup) return null;
 
   return (
     <div className="flex h-[calc(100vh-12rem)] flex-col">
-      {/* Navigation bar */}
-      <div className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onBack} className="gap-1">
-            <ArrowLeft className="size-3.5" />
-            Voltar à lista
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            {currentGroup.title}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            disabled={docIndex === 0}
-            onClick={() => setDocIndex((i) => i - 1)}
-          >
-            <ChevronLeft className="size-4" />
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {docIndex + 1}/{docGroups.length}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            disabled={docIndex === docGroups.length - 1}
-            onClick={() => setDocIndex((i) => i + 1)}
-          >
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
-      </div>
+      <SplitViewNavBar
+        title={currentGroup.title}
+        onBack={onBack}
+        docIndex={docIndex}
+        docCount={docGroups.length}
+        onPrev={() => setDocIndex((i) => i - 1)}
+        onNext={() => setDocIndex((i) => i + 1)}
+      />
 
-      {/* Split panels */}
       <ResizablePanelGroup className="flex-1">
         <ResizablePanel defaultSize={55} minSize={25}>
           {loadingText || !currentText ? (
@@ -175,170 +62,14 @@ export function CommentsSplitView({
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={45} minSize={25}>
-          <div className="h-full overflow-y-auto p-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                {(() => {
-                  const visible = showResolved
-                    ? currentGroup.comments
-                    : currentGroup.comments.filter((c) => !c.resolvedAt);
-                  const hidden = currentGroup.comments.length - visible.length;
-                  return (
-                    <>
-                      {visible.length} comentário{visible.length !== 1 && "s"}
-                      {!showResolved && hidden > 0 && (
-                        <span className="ml-1 text-muted-foreground/60">
-                          ({hidden} resolvido{hidden !== 1 ? "s" : ""} oculto{hidden !== 1 ? "s" : ""})
-                        </span>
-                      )}
-                    </>
-                  );
-                })()}
-              </p>
-              <div className="flex items-center gap-1.5">
-                <Switch
-                  checked={showResolved}
-                  onCheckedChange={setShowResolved}
-                  className="scale-75"
-                />
-                <span className="text-xs text-muted-foreground">Mostrar resolvidos</span>
-              </div>
-            </div>
-            {(showResolved
-              ? currentGroup.comments
-              : currentGroup.comments.filter((c) => !c.resolvedAt)
-            ).map((comment) => {
-              const isResolved = !!comment.resolvedAt;
-              const snapshot = comment.responseSnapshot;
-
-              return (
-                <div
-                  key={comment.id}
-                  className={cn(
-                    "space-y-2 rounded-lg border p-3",
-                    isResolved && "opacity-60",
-                  )}
-                >
-                  {/* Field name + verdict */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <code className="text-xs font-mono text-muted-foreground/70">
-                        {comment.fieldName}
-                      </code>
-                      {comment.fieldType && (
-                        <Badge className={cn("text-[10px] px-1 py-0 shrink-0", TYPE_COLORS[comment.fieldType])}>
-                          {TYPE_LABELS[comment.fieldType]}
-                        </Badge>
-                      )}
-                    </div>
-                    <Badge
-                      variant={verdictVariant(comment.verdict)}
-                      className="shrink-0 text-xs"
-                    >
-                      {formatVerdictLabel(comment.verdict)}
-                    </Badge>
-                  </div>
-
-                  {/* Descricao + metadados do campo */}
-                  {comment.fieldDescription && comment.fieldDescription !== comment.fieldName && (
-                    <p className="text-xs text-muted-foreground">{comment.fieldDescription}</p>
-                  )}
-                  {(comment.fieldHelpText || (comment.fieldOptions && comment.fieldOptions.length > 0)) && (
-                    <div className="space-y-1 rounded-md bg-muted/30 px-2 py-1.5">
-                      {comment.fieldHelpText && (
-                        <p className="text-[11px] italic text-muted-foreground">{comment.fieldHelpText}</p>
-                      )}
-                      {comment.fieldOptions && comment.fieldOptions.length > 0 && (
-                        <div className="flex flex-wrap gap-0.5">
-                          {comment.fieldOptions.map((opt) => (
-                            <Badge key={opt} variant="outline" className="text-[10px] px-1 py-0 font-normal">
-                              {opt}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Responses (inline, from snapshot) */}
-                  {snapshot && snapshot.length > 0 && (
-                    <div className="space-y-0.5 rounded-md bg-muted/50 p-2">
-                      {snapshot.map((r: ResponseSnapshotEntry) => (
-                        <div
-                          key={r.id}
-                          className={cn(
-                            "flex items-start gap-2 rounded px-2 py-1 text-xs",
-                            r.id === comment.chosenResponseId && "bg-brand/5",
-                          )}
-                        >
-                          {r.id === comment.chosenResponseId && (
-                            <Check className="mt-0.5 size-3 shrink-0 text-brand" />
-                          )}
-                          <div className="min-w-0">
-                            <span className="font-medium">
-                              {r.respondent_name}
-                            </span>
-                            <Badge
-                              variant="outline"
-                              className="ml-1.5 text-[10px] px-1 py-0"
-                            >
-                              {r.respondent_type === "humano" ? "Humano" : "LLM"}
-                            </Badge>
-                            <span className="ml-2 text-muted-foreground">
-                              {formatAnswer(r.answer)}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Comment text */}
-                  <blockquote className="border-l-2 pl-3 text-sm text-foreground">
-                    {comment.comment}
-                  </blockquote>
-
-                  {/* Footer */}
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground" suppressHydrationWarning>
-                      {comment.reviewerName} &middot;{" "}
-                      {new Date(comment.createdAt).toLocaleDateString("pt-BR")}
-                      {isResolved && (
-                        <span className="ml-2 text-green-600">
-                          (resolvido em{" "}
-                          {new Date(comment.resolvedAt!).toLocaleDateString(
-                            "pt-BR",
-                          )}
-                          )
-                        </span>
-                      )}
-                    </p>
-                    {isResolved ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={isPending}
-                        onClick={() => handleReopen(comment)}
-                        title="Reabrir"
-                      >
-                        <RotateCcw className="size-3.5" />
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={isPending}
-                        onClick={() => handleResolve(comment)}
-                        title="Resolver"
-                      >
-                        <CheckCircle2 className="size-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <CommentListPanel
+            comments={currentGroup.comments}
+            showResolved={showResolved}
+            onShowResolvedChange={setShowResolved}
+            isPending={isPending}
+            onResolve={handleResolve}
+            onReopen={handleReopen}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
