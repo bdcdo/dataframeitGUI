@@ -7,13 +7,7 @@ vi.mock("sonner", () => ({ toast: { info: toastInfo } }));
 
 import { useCompareNavigation } from "@/components/compare/useCompareNavigation";
 import type { CompareDocument } from "@/components/compare/compare-types";
-
-const doc = (id: string): CompareDocument => ({
-  id,
-  title: `Doc ${id}`,
-  external_id: null,
-  text: "",
-});
+import { doc } from "./compare-test-helpers";
 
 function renderNav(documents: CompareDocument[]) {
   return renderHook(
