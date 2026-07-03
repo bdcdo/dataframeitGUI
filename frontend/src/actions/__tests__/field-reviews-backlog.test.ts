@@ -1,9 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  indexEquivalences,
   computeBacklogRows,
   diffReviewsToRemove,
-  type EquivalenceRow,
   type HumanResponseRow,
   type LlmResponseRow,
   type ExistingFieldReviewRow,
@@ -12,7 +10,10 @@ import {
 import type { PydanticField } from "@/lib/types";
 
 // Testes das funções puras extraídas de regenerateAutoReviewBacklog (issue
-// #392) — sem I/O, então não precisam do mock de Supabase.
+// #392) — sem I/O, então não precisam do mock de Supabase. O agrupamento de
+// equivalências em si (buildEquivalenceMap) já é testado em
+// lib/__tests__/compare-queue.test.ts — reaproveitado aqui em vez de
+// reimplementado (revisão do PR #404).
 
 const field: PydanticField = {
   name: "campo1",
@@ -20,27 +21,6 @@ const field: PydanticField = {
   options: null,
   description: "Campo de teste",
 };
-
-describe("indexEquivalences", () => {
-  it("agrupa pares de equivalência por documento e campo", () => {
-    const rows: EquivalenceRow[] = [
-      { document_id: "doc1", field_name: "campo1", response_a_id: "a", response_b_id: "b" },
-      { document_id: "doc1", field_name: "campo1", response_a_id: "c", response_b_id: "d" },
-      { document_id: "doc2", field_name: "campo1", response_a_id: "e", response_b_id: "f" },
-    ];
-
-    const equivByDoc = indexEquivalences(rows);
-
-    expect(equivByDoc.get("doc1")?.get("campo1")).toHaveLength(2);
-    expect(equivByDoc.get("doc2")?.get("campo1")).toEqual([
-      { response_a_id: "e", response_b_id: "f" },
-    ]);
-  });
-
-  it("lista vazia retorna mapa vazio", () => {
-    expect(indexEquivalences([]).size).toBe(0);
-  });
-});
 
 describe("computeBacklogRows", () => {
   function human(overrides: Partial<HumanResponseRow>): HumanResponseRow {
@@ -119,7 +99,10 @@ describe("computeBacklogRows", () => {
       [
         "doc1",
         new Map([
-          ["campo1", [{ response_a_id: "human1", response_b_id: "llm1" }]],
+          [
+            "campo1",
+            [{ id: "eq1", response_a_id: "human1", response_b_id: "llm1", reviewer_id: null }],
+          ],
         ]),
       ],
     ]);

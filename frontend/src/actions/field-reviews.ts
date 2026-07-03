@@ -7,7 +7,12 @@ import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
-import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
+import { canonicalPair } from "@/lib/equivalence";
+import {
+  buildEquivalenceMap,
+  type EquivalenceByDocField,
+  type EquivalenceRow,
+} from "@/lib/compare-queue";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
@@ -812,13 +817,6 @@ export interface LlmResponseRow {
   answer_field_hashes: AnswerFieldHashes;
 }
 
-export interface EquivalenceRow {
-  document_id: string;
-  field_name: string;
-  response_a_id: string;
-  response_b_id: string;
-}
-
 export interface ExistingFieldReviewRow {
   id: string;
   document_id: string;
@@ -884,7 +882,7 @@ async function fetchBacklogInputs(
       .eq("is_latest", true),
     admin
       .from("response_equivalences")
-      .select("document_id, field_name, response_a_id, response_b_id")
+      .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
       .eq("project_id", projectId),
     // Estado atual de field_reviews — usado no reconcile abaixo. Independe
     // do conjunto recem-computado, entao buscamos junto do batch inicial.
@@ -909,33 +907,13 @@ async function fetchBacklogInputs(
   };
 }
 
-// Index equivalencias por document_id → (field_name → pares). Respeitar
-// equivalencias ja marcadas evita recriar divergencias resolvidas. Puro.
-export function indexEquivalences(
-  equivalences: EquivalenceRow[],
-): Map<string, Map<string, EquivalencePair[]>> {
-  const equivByDoc = new Map<string, Map<string, EquivalencePair[]>>();
-  for (const eq of equivalences) {
-    const byField =
-      equivByDoc.get(eq.document_id) ?? new Map<string, EquivalencePair[]>();
-    const list = byField.get(eq.field_name) ?? [];
-    list.push({
-      response_a_id: eq.response_a_id,
-      response_b_id: eq.response_b_id,
-    });
-    byField.set(eq.field_name, list);
-    equivByDoc.set(eq.document_id, byField);
-  }
-  return equivByDoc;
-}
-
 // Varre as respostas humanas completas e calcula quais divergem do LLM —
 // puro, sem I/O (opera só sobre dados já pré-carregados por fetchBacklogInputs).
 export function computeBacklogRows(
   projectId: string,
   humanResponses: HumanResponseRow[],
   llmByDocId: Map<string, LlmResponseRow>,
-  equivByDoc: Map<string, Map<string, EquivalencePair[]>>,
+  equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
 ): { assignmentRows: AssignmentRow[]; fieldReviewRows: FieldReviewRow[]; regenerated: number } {
   const assignmentRows: AssignmentRow[] = [];
@@ -1002,6 +980,13 @@ export function computeBacklogRows(
   return { assignmentRows, fieldReviewRows, regenerated };
 }
 
+// Compartilhado entre diffReviewsToRemove e removeOrphanAssignments: as duas
+// reconciliam uma coleção recém-computada contra uma existente via chave
+// composta document_id+algo. Puro.
+function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
+  return new Set(rows.map(keyFn));
+}
+
 // --- Reconcile: quais field_reviews não deveriam mais existir ---
 // O conjunto correto é o que acabou de ser computado em fieldReviewRows.
 // Linhas pendentes (self_verdict IS NULL) fora desse conjunto sao espurias
@@ -1011,8 +996,9 @@ export function diffReviewsToRemove(
   existingReviews: ExistingFieldReviewRow[],
   fieldReviewRows: FieldReviewRow[],
 ): { idsToDelete: string[]; keptResolved: number } {
-  const correctKeys = new Set(
-    fieldReviewRows.map((r) => `${r.document_id}|${r.field_name}`),
+  const correctKeys = compositeKeySet(
+    fieldReviewRows,
+    (r) => `${r.document_id}|${r.field_name}`,
   );
 
   const idsToDelete: string[] = [];
@@ -1053,10 +1039,9 @@ async function removeOrphanAssignments(
   ]);
   if (remainingErr) throw new Error(remainingErr.message);
   if (autoErr) throw new Error(autoErr.message);
-  const docUserWithReviews = new Set(
-    (remainingReviews ?? []).map(
-      (r) => `${r.document_id}|${r.self_reviewer_id}`,
-    ),
+  const docUserWithReviews = compositeKeySet(
+    remainingReviews ?? [],
+    (r) => `${r.document_id}|${r.self_reviewer_id}`,
   );
 
   const orphanAssignmentIds = (autoAssignments ?? []).flatMap((a) =>
@@ -1098,7 +1083,7 @@ export async function regenerateAutoReviewBacklog(
 
     // Index LLM por document_id para lookup O(1) no loop in-memory
     const llmByDocId = new Map(llmResponses.map((r) => [r.document_id, r]));
-    const equivByDoc = indexEquivalences(equivalences);
+    const equivByDoc = buildEquivalenceMap(equivalences);
 
     const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
       projectId,

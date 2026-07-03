@@ -14,6 +14,7 @@ import {
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { errorMessage } from "@/lib/utils";
+import type { SchemaVersion } from "@/lib/compare-version";
 import crypto from "crypto";
 
 interface RecoverResponse {
@@ -283,7 +284,7 @@ export async function backfillSchemaVersionHistory(
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
 
-export type Version = { major: number; minor: number; patch: number };
+export type Version = SchemaVersion;
 
 export type EnrichedEntry = {
   id: string;
@@ -504,6 +505,9 @@ export function matchResponsesToVersions(
   // Bucket updates by (version, method)
   const updates = new Map<string, UpdateBucket>();
   let countLiveSave = 0;
+  let countHashes = 0;
+  let countCreatedAt = 0;
+  let countFallback = 0;
 
   for (const r of responses) {
     // Preserve live_save entries as-is (precisão total)
@@ -560,15 +564,10 @@ export function matchResponsesToVersions(
       updates.set(bucketKey, { version: v, method: chosenMethod, ids: [] });
     }
     updates.get(bucketKey)!.ids.push(r.id);
-  }
 
-  let countHashes = 0;
-  let countCreatedAt = 0;
-  let countFallback = 0;
-  for (const bucket of updates.values()) {
-    if (bucket.method === "hashes") countHashes += bucket.ids.length;
-    else if (bucket.method === "created_at") countCreatedAt += bucket.ids.length;
-    else if (bucket.method === "fallback_created_at") countFallback += bucket.ids.length;
+    if (chosenMethod === "hashes") countHashes++;
+    else if (chosenMethod === "created_at") countCreatedAt++;
+    else if (chosenMethod === "fallback_created_at") countFallback++;
   }
 
   return {
