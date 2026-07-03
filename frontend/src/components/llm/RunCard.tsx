@@ -257,13 +257,13 @@ export function RunCard({
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={handleSaveConfig}
+            onClick={() => void handleSaveConfig()}
             disabled={status === "running"}
           >
             Salvar configuração
           </Button>
           <Button
-            onClick={handleRun}
+            onClick={() => void handleRun()}
             className="bg-brand hover:bg-brand/90 text-brand-foreground"
             disabled={
               isStartingRun || status === "running" || displayEligible === 0

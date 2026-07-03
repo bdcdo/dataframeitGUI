@@ -157,7 +157,7 @@ function VerdictCard({
     reviewId: string,
     status: "accepted" | "questioned",
     comment?: string,
-  ) => void;
+  ) => void | Promise<void>;
 }) {
   const isSpecialVerdict = item.verdict === "ambiguo" || item.verdict === "pular";
   const otherResponses = item.responseSnapshot?.filter(
@@ -264,7 +264,7 @@ function VerdictCard({
                   size="sm"
                   className="h-6 text-xs"
                   disabled={isPending}
-                  onClick={() => onAcknowledge(item.reviewId, "accepted")}
+                  onClick={() => void onAcknowledge(item.reviewId, "accepted")}
                 >
                   <Check className="mr-1 size-3" />
                   Aceitar correção
@@ -309,7 +309,7 @@ function VerdictCard({
             className="h-7 text-xs shrink-0"
             disabled={isPending || !questionComment.trim()}
             onClick={() =>
-              onAcknowledge(item.reviewId, "questioned", questionComment)
+              void onAcknowledge(item.reviewId, "questioned", questionComment)
             }
           >
             Enviar

@@ -175,7 +175,7 @@ export function useLlmRunProgress(
         failures = 0;
         dispatch({ type: "TICK", res });
         if (res.status === "running") {
-          timer = setTimeout(tick, POLL_INTERVAL_MS);
+          timer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
           return;
         }
         // Terminal: refresca o layout para o badge de execução desaparecer.
@@ -213,7 +213,7 @@ export function useLlmRunProgress(
         // Falha isolada não é terminal: reagenda até MAX_TICK_FAILURES seguidas.
         failures += 1;
         if (failures < MAX_TICK_FAILURES) {
-          timer = setTimeout(tick, POLL_INTERVAL_MS);
+          timer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
           return;
         }
         const msg =
@@ -235,7 +235,7 @@ export function useLlmRunProgress(
       }
     };
 
-    tick();
+    void tick();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
@@ -260,7 +260,7 @@ export function useLlmRunProgress(
         console.error("Falha ao retomar run em andamento:", e);
       }
     }
-    resume();
+    void resume();
     return () => {
       cancelled = true;
     };
