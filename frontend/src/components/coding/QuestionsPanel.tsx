@@ -1,46 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useMemo, useRef } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { FieldRenderer } from "./FieldRenderer";
+import { SortableQuestion } from "./SortableQuestion";
+import { SubmitBar } from "./SubmitBar";
 import { OutOfScopeToggle, type OutOfScopeState } from "./OutOfScopeToggle";
-import { Check, GripVertical, Loader2, MessageSquare } from "lucide-react";
+import { useOutOfScopeState } from "./useOutOfScopeState";
+import { useScrollToRevealedField } from "./useScrollToRevealedField";
+import { useQuestionReorder } from "./useQuestionReorder";
+import { useQuestionValidation } from "./useQuestionValidation";
+import { MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
 import { isFieldVisible } from "@/lib/conditional";
-import { isIncompleteOther } from "@/lib/other-option";
-import { reorderFullList } from "@/lib/field-order";
-import { getScrollBehavior } from "@/lib/scroll";
-import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { PydanticField } from "@/lib/types";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-
-const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
-  if (val === undefined || val === null || val === "") return false;
-  if (field.type === "single" && isIncompleteOther(val)) return false;
-  if (field.type === "multi" && Array.isArray(val)) {
-    if (val.length === 0) return false;
-    if (val.some(isIncompleteOther)) return false;
-  }
-  return true;
-};
+import { DndContext, closestCenter } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
 /** Config da pergunta "fora do escopo" no topo do painel. O estado vivo fica
  *  em estado local do painel (semeado daqui) — o painel é keyed por docId nas
@@ -52,7 +27,7 @@ export interface OutOfScopeConfig {
   initialState: OutOfScopeState;
 }
 
-interface QuestionsPanelProps {
+export interface QuestionsPanelProps {
   fields: PydanticField[];
   answers: Record<string, unknown>;
   onAnswer: (fieldName: string, value: unknown) => void;
@@ -66,110 +41,10 @@ interface QuestionsPanelProps {
   outOfScope?: OutOfScopeConfig;
 }
 
-interface SortableQuestionProps {
-  field: PydanticField;
-  index: number;
-  isHighlighted: boolean;
-  isAnswered: boolean;
-  answerValue: unknown;
-  onAnswerChange: (val: unknown) => void;
-  setRef: (el: HTMLDivElement | null) => void;
-  draggable: boolean;
-}
-
-function SortableQuestion({
-  field,
-  index,
-  isHighlighted,
-  isAnswered,
-  answerValue,
-  onAnswerChange,
-  setRef,
-  draggable,
-}: SortableQuestionProps) {
-  const sortable = useSortable({ id: field.name, disabled: !draggable });
-  const style = draggable
-    ? {
-        transform: CSS.Transform.toString(sortable.transform),
-        transition: sortable.transition,
-        opacity: sortable.isDragging ? 0.5 : 1,
-      }
-    : undefined;
-
-  return (
-    <div
-      ref={(el) => {
-        setRef(el);
-        if (draggable) sortable.setNodeRef(el);
-      }}
-      style={style}
-      className={cn(
-        "border-l-2 pl-4 py-1.5 rounded-r-md transition-colors",
-        isHighlighted
-          ? "border-l-destructive bg-destructive/10"
-          : isAnswered
-            ? "border-brand"
-            : "border-muted",
-      )}
-    >
-      <div className="flex items-start gap-1.5">
-        {draggable && (
-          <button
-            type="button"
-            className={cn(
-              "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground touch-none",
-              sortable.isDragging ? "cursor-grabbing" : "cursor-grab",
-            )}
-            aria-label="Arrastar para reordenar pergunta"
-            {...sortable.attributes}
-            {...sortable.listeners}
-          >
-            <GripVertical className="size-3.5" />
-          </button>
-        )}
-        <div className="flex-1 min-w-0">
-          <FieldHeaderLabel
-            prefix={`${index + 1}.`}
-            helpText={field.help_text}
-            className="mb-1.5"
-          >
-            {field.description}
-            {field.required === false && (
-              <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
-            )}
-            {isAnswered && <Check className="size-3.5 text-brand shrink-0" />}
-          </FieldHeaderLabel>
-          <FieldRenderer
-            field={field}
-            value={answerValue ?? null}
-            onChange={onAnswerChange}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder, outOfScope }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
-  // Estado vivo da sinalização "fora do escopo" — semeado uma vez do server
-  // (capture-once; o painel é keyed por docId, então remonta a cada doc).
-  const [outOfScopeState, setOutOfScopeState] = useState<OutOfScopeState>(
-    () => outOfScope?.initialState ?? { status: "normal" },
-  );
-  const outOfScopeBlocked =
-    !!outOfScope && outOfScopeState.status !== "normal";
-  // Conjunto de nomes visíveis no render anterior — detecta condicionais que
-  // acabaram de aparecer. `null` até o 1º effect (semeado lá dentro, nunca no
-  // corpo do render — escrita de ref durante o render não é concurrent-safe).
-  const prevVisibleNamesRef = useRef<Set<string> | null>(null);
-  // Assinatura order-independent do conjunto de TODOS os campos. Só muda quando
-  // um campo é adicionado/removido (mudança de schema). Reorder e o load
-  // assíncrono de `fieldOrder` reordenam mas não mudam o conjunto, então não
-  // suprimem um scroll legítimo (ver #252); a comparação por identidade da prop
-  // `fields` suprimia-os por engano.
-  const prevAllNamesKeyRef = useRef<string | null>(null);
+
+  const { outOfScopeState, setOutOfScopeState, outOfScopeBlocked } = useOutOfScopeState(outOfScope);
 
   const visibleFields = useMemo(
     () =>
@@ -190,102 +65,30 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   // A limpeza de respostas órfãs de condicionais que ficaram invisíveis vive no
   // pai (`CodingPage`), aplicada no updater de `answers` ao mudar uma resposta
   // (ver #252) — não mais num effect que empurrava dado de volta via `onAnswer`.
+  useScrollToRevealedField(visibleFields, visibleNames, allNamesKey, readOnly, questionRefs);
 
-  // Quando uma resposta libera uma pergunta condicional, o DOM atualiza
-  // in-place e o scroll fica parado — o pesquisador pode não perceber a nova
-  // pergunta fora da viewport. Detecta o campo condicional que passou de
-  // invisível para visível e rola suavemente até ele.
-  useEffect(() => {
-    const firstRun = prevVisibleNamesRef.current === null;
-    const prev = prevVisibleNamesRef.current ?? visibleNames;
-    prevVisibleNamesRef.current = visibleNames;
-    const structuralChange =
-      prevAllNamesKeyRef.current !== null &&
-      prevAllNamesKeyRef.current !== allNamesKey;
-    prevAllNamesKeyRef.current = allNamesKey;
-
-    if (firstRun) return; // mount: semeia os refs e não rola
-    if (structuralChange) return; // add/remove de campo (schema), não resposta
-    if (readOnly) return;
-
-    const newIdx = visibleFields.findIndex(
-      (f) => f.condition && !prev.has(f.name),
-    );
-    if (newIdx < 0) return;
-
-    questionRefs.current[newIdx]?.scrollIntoView({
-      behavior: getScrollBehavior(),
-      block: "center",
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleNames]);
-
-  const requiredFields = visibleFields.filter((f) => f.required !== false);
-  const answeredRequiredCount = requiredFields.filter((f) =>
-    isAnsweredValue(f, answers[f.name]),
-  ).length;
-
-  const isAnswered = useCallback(
-    (field: PydanticField) => isAnsweredValue(field, answers[field.name]),
-    [answers]
+  const {
+    highlightedFields,
+    isAnswered,
+    handleAnswerWithClear,
+    handleSubmitWithValidation,
+    requiredFields,
+    answeredRequiredCount,
+  } = useQuestionValidation(
+    visibleFields,
+    answers,
+    onAnswer,
+    onSubmit,
+    submitting,
+    outOfScopeBlocked,
+    questionRefs,
   );
 
-  const handleAnswerWithClear = useCallback(
-    (fieldName: string, value: unknown) => {
-      onAnswer(fieldName, value);
-      setHighlightedFields((prev) => {
-        if (!prev.has(fieldName)) return prev;
-        const next = new Set(prev);
-        next.delete(fieldName);
-        return next;
-      });
-    },
-    [onAnswer]
-  );
-
-  const handleSubmitWithValidation = useCallback(() => {
-    if (submitting || outOfScopeBlocked) return;
-
-    const unanswered = visibleFields
-      .filter((f) => (f.target || "all") !== "llm_only" && f.required !== false && !isAnswered(f))
-      .map((f) => f.name);
-
-    if (unanswered.length > 0) {
-      setHighlightedFields(new Set(unanswered));
-      const firstIdx = visibleFields.findIndex((f) => unanswered.includes(f.name));
-      questionRefs.current[firstIdx]?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
-      toast.warning("Preencha todas as perguntas obrigatórias");
-      return;
-    }
-
-    onSubmit();
-  }, [visibleFields, isAnswered, onSubmit, submitting, outOfScopeBlocked]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const dragEnabled = !!onReorder && !readOnly;
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      if (!onReorder) return;
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      const visibleNamesArr = visibleFields.map((f) => f.name);
-      const from = visibleNamesArr.indexOf(String(active.id));
-      const to = visibleNamesArr.indexOf(String(over.id));
-      if (from < 0 || to < 0) return;
-      const newOrder = reorderFullList(
-        fields.map((f) => f.name),
-        visibleNamesArr,
-        from,
-        to,
-      );
-      onReorder(newOrder);
-    },
-    [fields, visibleFields, onReorder],
+  const { dragEnabled, sensors, handleDragEnd } = useQuestionReorder(
+    fields,
+    visibleFields,
+    onReorder,
+    readOnly,
   );
 
   const questionItems = (
@@ -386,26 +189,12 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         </div>
       </div>
 
-      <div className="border-t px-4 py-3 shrink-0">
-        <Button
-          onClick={handleSubmitWithValidation}
-          disabled={submitting || readOnly || outOfScopeBlocked}
-          className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
-        >
-          {outOfScopeBlocked ? (
-            "Aguardando revisão do coordenador"
-          ) : readOnly ? (
-            "Somente leitura"
-          ) : submitting ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              Salvando…
-            </>
-          ) : (
-            "Enviar respostas"
-          )}
-        </Button>
-      </div>
+      <SubmitBar
+        outOfScopeBlocked={outOfScopeBlocked}
+        readOnly={readOnly}
+        submitting={submitting}
+        onClick={handleSubmitWithValidation}
+      />
     </div>
   );
 }
