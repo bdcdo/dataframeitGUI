@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import {
   excludeDocuments,
   revalidateProjectDocumentsCache,
@@ -166,12 +166,12 @@ export async function approveExclusionRequest(
   commentId: string,
   projectId: string,
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode aprovar sugestões de exclusão" };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode aprovar sugestões de exclusão",
+  );
+  if (!gate.ok) return { error: gate.error };
+  const user = gate.user;
 
   const supabase = await createSupabaseServer();
 
@@ -232,14 +232,17 @@ export async function rejectExclusionRequest(
   projectId: string,
   rejectionReason: string,
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  // Gate de coordenador roda antes da validação de motivo — mesma ordem
+  // adotada em excludeDocuments (documents.ts) ao migrar para
+  // requireCoordinator, que empacota auth+coordenador como unidade atômica.
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode rejeitar sugestões de exclusão",
+  );
+  if (!gate.ok) return { error: gate.error };
+  const user = gate.user;
   if (!rejectionReason?.trim())
     return { error: "Informe o motivo da rejeição" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode rejeitar sugestões de exclusão" };
-  }
 
   const supabase = await createSupabaseServer();
 

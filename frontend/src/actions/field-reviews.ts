@@ -314,7 +314,7 @@ export async function submitAutoReview(
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true, arbitrated, warning };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
@@ -546,7 +546,7 @@ export async function submitBlindVerdicts(
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
@@ -811,7 +811,7 @@ export async function submitFinalVerdicts(
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
@@ -1104,7 +1104,7 @@ export async function regenerateAutoReviewBacklog(
       keptResolved,
     };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
