@@ -201,8 +201,8 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
               previewing,
               loading,
               canSubmit,
-              onPreview: handlePreview,
-              onRandomize: handleRandomize,
+              onPreview: () => void handlePreview(),
+              onRandomize: () => void handleRandomize(),
             }}
           />
         </div>
