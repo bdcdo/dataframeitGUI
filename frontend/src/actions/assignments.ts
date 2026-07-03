@@ -151,12 +151,15 @@ export interface LotteryPreview {
   seed: number;
 }
 
-interface LotteryData {
+interface LotteryDocStatsResult {
   docs: LotteryDocStats[];
   batches: { id: string; label: string | null; createdAt: string }[];
   minResponsesForComparison: number;
   /** modo de automação do projeto — governa o gate de comparação */
   automationMode: string | null;
+}
+
+interface LotteryData extends LotteryDocStatsResult {
   assignmentRows: {
     document_id: string;
     user_id: string;
@@ -165,84 +168,47 @@ interface LotteryData {
   }[];
 }
 
-async function fetchLotteryData(projectId: string): Promise<LotteryData> {
+/**
+ * Stats por documento a partir da view `lottery_doc_stats` (issue #182):
+ * agrega humanCodingCount/hasLlmResponse/activeAssignments/hasAnyAssignmentEver/
+ * batchIds em Postgres, bounded pelo nº de documentos ativos do projeto — sem
+ * tocar responses/assignments crus.
+ */
+async function fetchLotteryDocStats(projectId: string): Promise<LotteryDocStatsResult> {
   const supabase = await createSupabaseServer();
 
-  const [
-    { data: docs },
-    { data: responses },
-    { data: llmResponses },
-    { data: assignments },
-    { data: batches },
-    { data: project },
-  ] = await Promise.all([
-      supabase
-        .from("documents")
-        .select("id, external_id, title")
-        .eq("project_id", projectId)
-        .is("excluded_at", null)
-        .is("exclusion_pending_at", null),
-      supabase
-        .from("responses")
-        .select("document_id, respondent_id")
-        .eq("project_id", projectId)
-        .eq("is_latest", true)
-        .eq("respondent_type", "humano"),
-      supabase
-        .from("responses")
-        .select("document_id")
-        .eq("project_id", projectId)
-        .eq("is_latest", true)
-        .eq("respondent_type", "llm"),
-      supabase
-        .from("assignments")
-        .select("document_id, user_id, status, type, batch_id")
-        .eq("project_id", projectId),
-      supabase
-        .from("assignment_batches")
-        .select("id, label, created_at")
-        .eq("project_id", projectId)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("projects")
-        .select("min_responses_for_comparison, automation_mode")
-        .eq("id", projectId)
-        .single(),
-    ]);
-
-  const respondentsByDoc: Record<string, Set<string>> = {};
-  for (const r of responses || []) {
-    (respondentsByDoc[r.document_id] ??= new Set()).add(r.respondent_id);
-  }
-
-  const docsWithLlm = new Set<string>();
-  for (const r of llmResponses || []) docsWithLlm.add(r.document_id);
-
-  const activeByDoc: Record<string, { codificacao: number; comparacao: number }> = {};
-  const everAssigned = new Set<string>();
-  const batchIdsByDoc: Record<string, Set<string>> = {};
-  for (const a of assignments || []) {
-    everAssigned.add(a.document_id);
-    if (a.batch_id) (batchIdsByDoc[a.document_id] ??= new Set()).add(a.batch_id);
-    if (
-      (a.type === "codificacao" || a.type === "comparacao") &&
-      (a.status === "pendente" || a.status === "em_andamento")
-    ) {
-      const counts = (activeByDoc[a.document_id] ??= { codificacao: 0, comparacao: 0 });
-      counts[a.type as "codificacao" | "comparacao"]++;
-    }
-  }
+  const [{ data: docs }, { data: batches }, { data: project }] = await Promise.all([
+    supabase
+      .from("lottery_doc_stats")
+      .select(
+        "id, external_id, title, human_coding_count, has_llm_response, active_codificacao, active_comparacao, has_any_assignment_ever, batch_ids"
+      )
+      .eq("project_id", projectId),
+    supabase
+      .from("assignment_batches")
+      .select("id, label, created_at")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("projects")
+      .select("min_responses_for_comparison, automation_mode")
+      .eq("id", projectId)
+      .single(),
+  ]);
 
   return {
     docs: (docs || []).map((d) => ({
       id: d.id,
       externalId: d.external_id,
       title: d.title,
-      humanCodingCount: respondentsByDoc[d.id]?.size || 0,
-      hasLlmResponse: docsWithLlm.has(d.id),
-      activeAssignments: activeByDoc[d.id] || { codificacao: 0, comparacao: 0 },
-      hasAnyAssignmentEver: everAssigned.has(d.id),
-      batchIds: Array.from(batchIdsByDoc[d.id] || []),
+      humanCodingCount: d.human_coding_count,
+      hasLlmResponse: d.has_llm_response,
+      activeAssignments: {
+        codificacao: d.active_codificacao,
+        comparacao: d.active_comparacao,
+      },
+      hasAnyAssignmentEver: d.has_any_assignment_ever,
+      batchIds: d.batch_ids || [],
     })),
     batches: (batches || []).map((b) => ({
       id: b.id,
@@ -251,6 +217,29 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
     })),
     minResponsesForComparison: project?.min_responses_for_comparison || 2,
     automationMode: project?.automation_mode ?? null,
+  };
+}
+
+/**
+ * Stats agregadas (via fetchLotteryDocStats) + linhas brutas de assignments,
+ * necessárias em computeLottery para o conjunto preservado e a matriz de
+ * coocorrência entre participantes — aritmética por par documento×usuário
+ * que a view não resolve. Esse fetch bruto segue sem teto (issue de
+ * acompanhamento da #182).
+ */
+async function fetchLotteryData(projectId: string): Promise<LotteryData> {
+  const supabase = await createSupabaseServer();
+
+  const [stats, { data: assignments }] = await Promise.all([
+    fetchLotteryDocStats(projectId),
+    supabase
+      .from("assignments")
+      .select("document_id, user_id, status, type")
+      .eq("project_id", projectId),
+  ]);
+
+  return {
+    ...stats,
     assignmentRows: (assignments || []).map((a) => ({
       document_id: a.document_id,
       user_id: a.user_id,
@@ -276,7 +265,7 @@ export async function getLotteryDocStats(projectId: string): Promise<{
 
   try {
     const { docs, batches, minResponsesForComparison, automationMode } =
-      await fetchLotteryData(projectId);
+      await fetchLotteryDocStats(projectId);
     return { docs, batches, minResponsesForComparison, automationMode };
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao carregar as estatísticas do sorteio" };
