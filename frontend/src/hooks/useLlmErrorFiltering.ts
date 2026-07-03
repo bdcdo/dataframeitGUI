@@ -1,9 +1,34 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { compareVersions } from "@/lib/compare-version";
 
 export type DatePreset = "all" | "24h" | "7d" | "30d";
 export type SortBy = "default" | "field" | "document" | "recent";
+
+// Subconjunto não-genérico do retorno do hook consumido pela toolbar de
+// filtros (ErrorFiltersToolbar): controles + contagens. Uma prop única
+// `filtering` no lugar de re-plumbar cada membro evita edições em três
+// lugares (retorno do hook, props, wiring) a cada filtro novo.
+export interface LlmErrorFilteringControls {
+  errorSearchQuery: string;
+  setErrorSearchQuery: (v: string) => void;
+  errorFieldFilter: string;
+  setErrorFieldFilter: (v: string) => void;
+  errorStatusFilter: string;
+  setErrorStatusFilter: (v: string) => void;
+  errorDateFilter: DatePreset;
+  setErrorDateFilter: (v: DatePreset) => void;
+  errorSinceDate: string;
+  setErrorSinceDate: (v: string) => void;
+  availableVersions: string[];
+  effectiveVersionFilter: string;
+  setErrorVersionFilter: (v: string) => void;
+  sortBy: SortBy;
+  setSortBy: (v: SortBy) => void;
+  sortedCount: number;
+  openErrorCount: number;
+}
 
 // Campos mínimos que os filtros de escopo consultam (numerador e denominador).
 interface ScopeFilterable {
@@ -23,17 +48,6 @@ function presetCutoffMs(preset: DatePreset, now: number): number | null {
   if (preset === "7d") return now - 7 * 24 * 3600_000;
   if (preset === "30d") return now - 30 * 24 * 3600_000;
   return null;
-}
-
-function compareSemverDesc(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    const da = pa[i] ?? 0;
-    const db = pb[i] ?? 0;
-    if (da !== db) return db - da;
-  }
-  return 0;
 }
 
 // Estado dos 6 filtros + ordenação da lista de erros do LLM, junto com toda a
@@ -65,7 +79,7 @@ export function useLlmErrorFiltering<
   const availableVersions = useMemo(() => {
     const set = new Set<string>();
     for (const r of reviewedEntries) if (r.schemaVersion) set.add(r.schemaVersion);
-    return Array.from(set).toSorted(compareSemverDesc);
+    return Array.from(set).toSorted((a, b) => compareVersions(b, a));
   }, [reviewedEntries]);
 
   // Derive the effective version filter: if the selected version is no
@@ -161,6 +175,7 @@ export function useLlmErrorFiltering<
     filteredErrors,
     filteredErrorRate,
     sortedErrors,
+    sortedCount: sortedErrors.length,
     openErrorCount,
   };
 }

@@ -14,11 +14,11 @@ import {
   fetchGabaritoForComment,
   type GabaritoRespondentAnswer,
 } from "@/actions/stats";
-import type { ReviewComment } from "./CommentCard";
+import { formatAnswer } from "@/lib/reviews/verdict-format";
 import {
+  type ReviewComment,
   formatVerdictLabel,
   verdictVariant,
-  formatAnswer,
 } from "./comment-card-utils";
 
 interface GabaritoSectionProps {
@@ -37,6 +37,7 @@ export function GabaritoSection({ comment, projectId }: GabaritoSectionProps) {
   const snapshotAsGabarito: GabaritoRespondentAnswer[] | null =
     comment.responseSnapshot
       ? comment.responseSnapshot.map((r) => ({
+          id: r.id,
           respondentName: r.respondent_name,
           respondentType: r.respondent_type,
           answer: r.answer,
@@ -101,7 +102,7 @@ export function GabaritoSection({ comment, projectId }: GabaritoSectionProps) {
               </span>
               {gabaritoEntries.map((a) => (
                 <div
-                  key={a.respondentName}
+                  key={a.id}
                   className={cn(
                     "flex items-start gap-2 rounded px-2 py-1 text-xs",
                     a.isChosen && "bg-brand/5",

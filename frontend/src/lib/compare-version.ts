@@ -74,6 +74,17 @@ export function formatVersion(v: SchemaVersion): string {
   return `${v.major}.${v.minor}.${v.patch}`;
 }
 
+// Comparador 3-way ascendente para strings "X.Y.Z" (ordem major > minor >
+// patch). Strings malformadas (parseVersionStr → null) ordenam como {0,0,0},
+// isto é, antes de qualquer versão válida — determinístico, sem lançar.
+export function compareVersions(a: string, b: string): number {
+  const va = parseVersionStr(a) ?? { major: 0, minor: 0, patch: 0 };
+  const vb = parseVersionStr(b) ?? { major: 0, minor: 0, patch: 0 };
+  if (va.major !== vb.major) return va.major - vb.major;
+  if (va.minor !== vb.minor) return va.minor - vb.minor;
+  return va.patch - vb.patch;
+}
+
 // Piso de versão para o filtro "última grande versão".
 //
 // Em projetos major ≥ 1 a fronteira de rodada é o MAJOR corrente

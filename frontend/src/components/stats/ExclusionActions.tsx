@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,13 +28,6 @@ export function ExclusionActions({
   const [isPending, startAction] = useTransition();
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
-  const rejectTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    if (showRejectInput) {
-      rejectTextareaRef.current?.focus();
-    }
-  }, [showRejectInput]);
 
   if (status === "approved") {
     return (
@@ -69,8 +62,10 @@ export function ExclusionActions({
   if (showRejectInput) {
     return (
       <div className="flex flex-col gap-2">
+        {/* autoFocus vale aqui: a Textarea só monta quando showRejectInput
+            vira true, então o foco dispara exatamente no clique em Rejeitar. */}
         <Textarea
-          ref={rejectTextareaRef}
+          autoFocus
           className="text-xs"
           placeholder="Motivo da rejeição"
           value={rejectReason}

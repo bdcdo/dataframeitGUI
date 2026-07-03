@@ -1,3 +1,58 @@
+export interface ResponseSnapshotEntry {
+  id: string;
+  respondent_name: string;
+  respondent_type: "humano" | "llm";
+  answer: unknown;
+  justification?: string;
+}
+
+export interface ReviewComment {
+  id: string;
+  documentId: string;
+  documentTitle: string;
+  fieldName: string;
+  fieldDescription: string;
+  fieldHelpText?: string;
+  fieldOptions?: string[] | null;
+  fieldType?: "single" | "multi" | "text" | "date";
+  verdict: string;
+  comment: string;
+  reviewerName: string;
+  resolvedAt: string | null;
+  createdAt: string;
+  chosenResponseId: string | null;
+  source:
+    | "review"
+    | "nota"
+    | "sugestao"
+    | "dificuldade"
+    | "anotacao"
+    | "duvida"
+    | "exclusao";
+  responseSnapshot: ResponseSnapshotEntry[] | null;
+  suggestionId?: string;
+  suggestionStatus?: "pending" | "approved" | "rejected";
+  suggestionChanges?: {
+    description?: string;
+    help_text?: string | null;
+    options?: string[] | null;
+  };
+  fieldSnapshot?: {
+    description: string;
+    help_text: string | null;
+    options: string[] | null;
+  };
+  difficultyResponseId?: string;
+  difficultyDocumentId?: string;
+  duvidaReviewId?: string;
+  duvidaRespondentId?: string;
+  /** Para exclusao_request — id do project_comment, status e document_id alvo. */
+  exclusionCommentId?: string;
+  exclusionDocumentId?: string;
+  exclusionStatus?: "pending" | "approved" | "rejected";
+  exclusionRejectedReason?: string | null;
+}
+
 export const TYPE_LABELS: Record<string, string> = {
   single: "Escolha única",
   multi: "Múltipla escolha",
@@ -47,10 +102,4 @@ export function verdictVariant(
   if (verdict === "ambiguo") return "secondary";
   if (verdict === "pular") return "outline";
   return "default";
-}
-
-export function formatAnswer(answer: unknown): string {
-  if (answer === null || answer === undefined) return "(sem resposta)";
-  if (Array.isArray(answer)) return answer.join(", ");
-  return String(answer);
 }

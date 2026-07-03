@@ -3,6 +3,7 @@ import {
   versionGte,
   parseVersionStr,
   formatVersion,
+  compareVersions,
   latestMajorAnchor,
   resolveMinVersion,
   responseQualifiesForVersion,
@@ -62,6 +63,28 @@ describe("versionGte", () => {
     expect(versionGte(v(0, 20, 0), v(0, 20, 0))).toBe(true);
     expect(versionGte(v(0, 19, 9), v(0, 20, 0))).toBe(false);
     expect(versionGte(v(1, 0, 0), v(0, 99, 99))).toBe(true);
+  });
+});
+
+describe("compareVersions", () => {
+  it("ordena strings X.Y.Z em major > minor > patch", () => {
+    expect(compareVersions("0.20.3", "0.20.0")).toBeGreaterThan(0);
+    expect(compareVersions("0.19.9", "0.20.0")).toBeLessThan(0);
+    expect(compareVersions("1.0.0", "0.99.99")).toBeGreaterThan(0);
+    expect(compareVersions("0.20.0", "0.20.0")).toBe(0);
+  });
+  it("ordena descendente via sort((a, b) => compareVersions(b, a))", () => {
+    const versions = ["0.2.0", "1.0.0", "0.10.0", "0.2.1"];
+    expect(versions.toSorted((a, b) => compareVersions(b, a))).toEqual([
+      "1.0.0",
+      "0.10.0",
+      "0.2.1",
+      "0.2.0",
+    ]);
+  });
+  it("malformadas ordenam como {0,0,0}, antes de versões válidas", () => {
+    expect(compareVersions("lixo", "0.0.1")).toBeLessThan(0);
+    expect(compareVersions("lixo", "0.0.0")).toBe(0);
   });
 });
 

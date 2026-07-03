@@ -50,30 +50,38 @@ export function LlmInsightsView({
 
   async function handleRegenerateBacklog() {
     setRegenerating(true);
-    const result = await regenerateAutoReviewBacklog(projectId);
-    setRegenerating(false);
-    if (!result.success) {
-      toast.error(result.error ?? "Falha ao regenerar backlog");
-      return;
+    // try/finally: uma rejeição da action (queda de rede, erro não capturado
+    // no servidor) não pode deixar o botão preso em "Regenerando…".
+    try {
+      const result = await regenerateAutoReviewBacklog(projectId);
+      if (!result.success) {
+        toast.error(result.error ?? "Falha ao regenerar backlog");
+        return;
+      }
+      const parts = [
+        `${result.scanned ?? 0} resposta(s) escaneada(s)`,
+        `${result.regenerated ?? 0} doc(s) com divergência`,
+      ];
+      if (result.removed) {
+        parts.push(`${result.removed} revisão(ões) obsoleta(s) removida(s)`);
+      }
+      if (result.keptResolved) {
+        parts.push(`${result.keptResolved} já resolvida(s) mantida(s)`);
+      }
+      toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
+      refresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Falha ao regenerar backlog",
+      );
+    } finally {
+      setRegenerating(false);
     }
-    const parts = [
-      `${result.scanned ?? 0} resposta(s) escaneada(s)`,
-      `${result.regenerated ?? 0} doc(s) com divergência`,
-    ];
-    if (result.removed) {
-      parts.push(`${result.removed} revisão(ões) obsoleta(s) removida(s)`);
-    }
-    if (result.keptResolved) {
-      parts.push(`${result.keptResolved} já resolvida(s) mantida(s)`);
-    }
-    toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
-    refresh();
   }
 
   // Error filters + derivation (filtered population, rate, sorting, counts)
   const filtering = useLlmErrorFiltering(errors, reviewedEntries);
-  const { filteredErrors, filteredErrorRate, sortedErrors, openErrorCount } =
-    filtering;
+  const { filteredErrors, filteredErrorRate, sortedErrors } = filtering;
 
   // Error handlers
   const handleResolveError = (documentId: string, fieldName: string) => {
@@ -149,26 +157,7 @@ export function LlmInsightsView({
         unreviewedLlmDocs={summary.unreviewedLlmDocs}
       />
 
-      <ErrorFiltersToolbar
-        fields={fields}
-        errorSearchQuery={filtering.errorSearchQuery}
-        setErrorSearchQuery={filtering.setErrorSearchQuery}
-        errorFieldFilter={filtering.errorFieldFilter}
-        setErrorFieldFilter={filtering.setErrorFieldFilter}
-        errorStatusFilter={filtering.errorStatusFilter}
-        setErrorStatusFilter={filtering.setErrorStatusFilter}
-        errorDateFilter={filtering.errorDateFilter}
-        setErrorDateFilter={filtering.setErrorDateFilter}
-        errorSinceDate={filtering.errorSinceDate}
-        setErrorSinceDate={filtering.setErrorSinceDate}
-        availableVersions={filtering.availableVersions}
-        effectiveVersionFilter={filtering.effectiveVersionFilter}
-        setErrorVersionFilter={filtering.setErrorVersionFilter}
-        sortBy={filtering.sortBy}
-        setSortBy={filtering.setSortBy}
-        sortedCount={sortedErrors.length}
-        openErrorCount={openErrorCount}
-      />
+      <ErrorFiltersToolbar fields={fields} filtering={filtering} />
 
       {sortedErrors.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">

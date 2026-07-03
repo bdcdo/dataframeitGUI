@@ -9,61 +9,11 @@ import { CommentCardHeader } from "./CommentCardHeader";
 import { GabaritoSection } from "./GabaritoSection";
 import { SuggestionActions } from "./SuggestionActions";
 import { ExclusionActions } from "./ExclusionActions";
+import type { ReviewComment } from "./comment-card-utils";
 
-export interface ResponseSnapshotEntry {
-  id: string;
-  respondent_name: string;
-  respondent_type: "humano" | "llm";
-  answer: unknown;
-  justification?: string;
-}
-
-export interface ReviewComment {
-  id: string;
-  documentId: string;
-  documentTitle: string;
-  fieldName: string;
-  fieldDescription: string;
-  fieldHelpText?: string;
-  fieldOptions?: string[] | null;
-  fieldType?: "single" | "multi" | "text" | "date";
-  verdict: string;
-  comment: string;
-  reviewerName: string;
-  resolvedAt: string | null;
-  createdAt: string;
-  chosenResponseId: string | null;
-  source:
-    | "review"
-    | "nota"
-    | "sugestao"
-    | "dificuldade"
-    | "anotacao"
-    | "duvida"
-    | "exclusao";
-  responseSnapshot: ResponseSnapshotEntry[] | null;
-  suggestionId?: string;
-  suggestionStatus?: "pending" | "approved" | "rejected";
-  suggestionChanges?: {
-    description?: string;
-    help_text?: string | null;
-    options?: string[] | null;
-  };
-  fieldSnapshot?: {
-    description: string;
-    help_text: string | null;
-    options: string[] | null;
-  };
-  difficultyResponseId?: string;
-  difficultyDocumentId?: string;
-  duvidaReviewId?: string;
-  duvidaRespondentId?: string;
-  /** Para exclusao_request — id do project_comment, status e document_id alvo. */
-  exclusionCommentId?: string;
-  exclusionDocumentId?: string;
-  exclusionStatus?: "pending" | "approved" | "rejected";
-  exclusionRejectedReason?: string | null;
-}
+// Tipos vivem em comment-card-utils.ts (evita ciclo pai↔filho com os
+// componentes extraídos); re-export mantém os consumidores externos intactos.
+export type { ReviewComment, ResponseSnapshotEntry } from "./comment-card-utils";
 
 interface CommentCardProps {
   comment: ReviewComment;
@@ -116,7 +66,8 @@ export function CommentCard({
 
         {comment.source === "sugestao" && comment.suggestionId && (
           <SuggestionActions
-            comment={comment}
+            suggestionId={comment.suggestionId}
+            suggestionStatus={comment.suggestionStatus}
             projectId={projectId}
             isPending={isPending}
             isCoordinator={isCoordinator}

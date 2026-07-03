@@ -4,8 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ReviewComment } from "./CommentCard";
 import {
+  type ReviewComment,
   TYPE_LABELS,
   TYPE_COLORS,
   formatVerdictLabel,

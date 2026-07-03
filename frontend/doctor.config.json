@@ -50,8 +50,7 @@
       {
         "files": [
           "src/components/auto-review/AutoReviewFieldPanel.tsx",
-          "src/components/compare/ComparisonPanel.tsx",
-          "src/components/stats/ExclusionActions.tsx"
+          "src/components/compare/ComparisonPanel.tsx"
         ],
         "rules": [
           "react-doctor/no-event-handler"

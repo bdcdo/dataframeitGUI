@@ -9,49 +9,41 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import type { DatePreset, SortBy } from "@/hooks/useLlmErrorFiltering";
+import type {
+  DatePreset,
+  LlmErrorFilteringControls,
+  SortBy,
+} from "@/hooks/useLlmErrorFiltering";
 
 interface ErrorFiltersToolbarProps {
   fields: { name: string; description: string }[];
-  errorSearchQuery: string;
-  setErrorSearchQuery: (v: string) => void;
-  errorFieldFilter: string;
-  setErrorFieldFilter: (v: string) => void;
-  errorStatusFilter: string;
-  setErrorStatusFilter: (v: string) => void;
-  errorDateFilter: DatePreset;
-  setErrorDateFilter: (v: DatePreset) => void;
-  errorSinceDate: string;
-  setErrorSinceDate: (v: string) => void;
-  availableVersions: string[];
-  effectiveVersionFilter: string;
-  setErrorVersionFilter: (v: string) => void;
-  sortBy: SortBy;
-  setSortBy: (v: SortBy) => void;
-  sortedCount: number;
-  openErrorCount: number;
+  /** Retorno de useLlmErrorFiltering — controles + contagens, numa prop só. */
+  filtering: LlmErrorFilteringControls;
 }
 
 export function ErrorFiltersToolbar({
   fields,
-  errorSearchQuery,
-  setErrorSearchQuery,
-  errorFieldFilter,
-  setErrorFieldFilter,
-  errorStatusFilter,
-  setErrorStatusFilter,
-  errorDateFilter,
-  setErrorDateFilter,
-  errorSinceDate,
-  setErrorSinceDate,
-  availableVersions,
-  effectiveVersionFilter,
-  setErrorVersionFilter,
-  sortBy,
-  setSortBy,
-  sortedCount,
-  openErrorCount,
+  filtering,
 }: ErrorFiltersToolbarProps) {
+  const {
+    errorSearchQuery,
+    setErrorSearchQuery,
+    errorFieldFilter,
+    setErrorFieldFilter,
+    errorStatusFilter,
+    setErrorStatusFilter,
+    errorDateFilter,
+    setErrorDateFilter,
+    errorSinceDate,
+    setErrorSinceDate,
+    availableVersions,
+    effectiveVersionFilter,
+    setErrorVersionFilter,
+    sortBy,
+    setSortBy,
+    sortedCount,
+    openErrorCount,
+  } = filtering;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Input
