@@ -4,24 +4,26 @@ import type { MemberRow } from "./member-list-utils";
 
 type RetryInfo = { assigned: number; stillNoPool: number };
 
-type ToggleAction = (
+type ToggleAction<TRetried> = (
   memberId: string,
   value: boolean,
   projectId: string
-) => Promise<{ error?: string; retried?: RetryInfo }>;
+) => Promise<{ error?: string; retried?: TRetried }>;
 
 // arbitrate/resolve/compare compartilham a mesma forma (optimistic update →
 // server action → toast condicional em `retried` → cleanup no finally); só
-// diferem na action chamada e na mensagem. setCanResolve nunca retorna
-// `retried`, então buildSuccessMessage degrada para a mensagem simples nesse
-// caso (branches de `retried.assigned > 0` nunca disparam).
-export function useTogglePermission(
+// diferem na action chamada e na mensagem. `TRetried` é inferido da própria
+// `action`: setCanResolve não declara `retried` no retorno, então o TS já
+// sabe estaticamente (não só por comentário) que buildSuccessMessage recebe
+// `undefined` nessa variante — um swap de action por engano quebraria a
+// inferência em vez de degradar silenciosamente em runtime.
+export function useTogglePermission<TRetried = undefined>(
   projectId: string,
-  action: ToggleAction,
+  action: ToggleAction<TRetried>,
   patch: (
     value: boolean
   ) => Partial<Pick<MemberRow, "can_arbitrate" | "can_resolve" | "can_compare">>,
-  buildSuccessMessage: (value: boolean, retried?: RetryInfo) => string,
+  buildSuccessMessage: (value: boolean, retried?: TRetried) => string,
   applyOptimistic: (update: {
     memberId: string;
     patch: Partial<Pick<MemberRow, "can_arbitrate" | "can_resolve" | "can_compare">>;
