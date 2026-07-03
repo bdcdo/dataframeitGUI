@@ -72,6 +72,16 @@ export interface ProjectCommentRow {
 
 /* ── Mapping functions ── */
 
+function resolveFieldMeta(fieldMap: Map<string, PydanticField>, fieldName: string) {
+  const field = fieldMap.get(fieldName);
+  return {
+    fieldDescription: field?.description || fieldName,
+    fieldHelpText: field?.help_text,
+    fieldOptions: field?.options,
+    fieldType: field?.type,
+  };
+}
+
 export function mapReviewComments(
   reviews: ReviewRow[],
   docMap: Map<string, string>,
@@ -83,10 +93,7 @@ export function mapReviewComments(
     documentId: r.document_id,
     documentTitle: docMap.get(r.document_id) || r.document_id,
     fieldName: r.field_name,
-    fieldDescription: fieldMap.get(r.field_name)?.description || r.field_name,
-    fieldHelpText: fieldMap.get(r.field_name)?.help_text,
-    fieldOptions: fieldMap.get(r.field_name)?.options,
-    fieldType: fieldMap.get(r.field_name)?.type,
+    ...resolveFieldMeta(fieldMap, r.field_name),
     verdict: r.verdict,
     comment: r.comment!,
     reviewerName: r.reviewer_id
@@ -234,10 +241,7 @@ export function mapDuvidaComments(
       documentId: r.document_id,
       documentTitle: docMap.get(r.document_id) || r.document_id,
       fieldName: r.field_name,
-      fieldDescription: fieldMap.get(r.field_name)?.description || r.field_name,
-      fieldHelpText: fieldMap.get(r.field_name)?.help_text,
-      fieldOptions: fieldMap.get(r.field_name)?.options,
-      fieldType: fieldMap.get(r.field_name)?.type,
+      ...resolveFieldMeta(fieldMap, r.field_name),
       verdict: "duvida",
       comment: q.comment,
       reviewerName: reviewerMap.get(q.respondent_id) || "Anônimo",
