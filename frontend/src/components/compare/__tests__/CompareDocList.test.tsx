@@ -1,35 +1,34 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import {
-  ArbitrationDocList,
-  type ArbitrationDocListEntry,
-} from "../ArbitrationDocList";
+import { CompareDocList, type DocListEntry } from "../CompareDocList";
 
 afterEach(cleanup);
 
-function entry(
-  over: Partial<ArbitrationDocListEntry> = {},
-): ArbitrationDocListEntry {
+function entry(over: Partial<DocListEntry> = {}): DocListEntry {
   return {
     id: "doc-id-abcdefgh-rest",
     title: "Documento Um",
-    externalId: null,
-    totalFields: 3,
-    blindDecided: 0,
-    finalDecided: 0,
+    external_id: null,
+    humanCount: 0,
+    totalCount: 0,
+    assignedCodingCount: 0,
+    humansFromAssigned: 0,
+    divergentCount: 0,
+    reviewedCount: 0,
+    assignmentStatus: null,
     ...over,
   };
 }
 
-describe("ArbitrationDocList — integração com DocListPanel", () => {
+describe("CompareDocList — integração com DocListPanel", () => {
   // Comportamento genérico de colapsar/expandir/estado-vazio/onToggle já é
   // coberto em DocListPanel.test.tsx; aqui só confirmamos que este
   // consumidor wireia collapsed/onToggle/docs corretamente.
   it("colapsada mostra só o botão de expandir; expandida e vazia mostra mensagem; recolher dispara onToggle", () => {
     const onToggle = vi.fn();
     const { rerender } = render(
-      <ArbitrationDocList
+      <CompareDocList
         docs={[]}
         currentIndex={0}
         onSelect={vi.fn()}
@@ -37,12 +36,12 @@ describe("ArbitrationDocList — integração com DocListPanel", () => {
         onToggle={onToggle}
       />,
     );
-    expect(screen.queryByText("Fila de arbitragem")).toBeNull();
+    expect(screen.queryByText("Fila de revisão")).toBeNull();
     fireEvent.click(screen.getByTitle("Mostrar lista de documentos"));
     expect(onToggle).toHaveBeenCalledTimes(1);
 
     rerender(
-      <ArbitrationDocList
+      <CompareDocList
         docs={[]}
         currentIndex={0}
         onSelect={vi.fn()}
@@ -56,14 +55,14 @@ describe("ArbitrationDocList — integração com DocListPanel", () => {
   });
 });
 
-describe("ArbitrationDocList — expandida", () => {
-  it("título cai para externalId e depois para os 8 primeiros chars do id", () => {
+describe("CompareDocList — expandida", () => {
+  it("título cai para external_id e depois para os 8 primeiros chars do id", () => {
     render(
-      <ArbitrationDocList
+      <CompareDocList
         docs={[
           entry({ id: "a", title: "Tem título" }),
-          entry({ id: "b", title: null, externalId: "EXT-9" }),
-          entry({ id: "abcdefgh-XXXX", title: null, externalId: null }),
+          entry({ id: "b", title: null, external_id: "EXT-9" }),
+          entry({ id: "abcdefgh-XXXX", title: null, external_id: null }),
         ]}
         currentIndex={0}
         onSelect={vi.fn()}
@@ -76,12 +75,17 @@ describe("ArbitrationDocList — expandida", () => {
     expect(screen.getByText("abcdefgh")).toBeTruthy();
   });
 
-  it("badge de fase: 'Revelação' quando blindDecided==total, senão 'Cega'", () => {
+  it("badges de humanos, respostas totais e revisados/divergentes", () => {
     render(
-      <ArbitrationDocList
+      <CompareDocList
         docs={[
-          entry({ id: "a", title: "Cega ainda", blindDecided: 1, totalFields: 3 }),
-          entry({ id: "b", title: "Revelado", blindDecided: 2, totalFields: 2 }),
+          entry({
+            humansFromAssigned: 2,
+            assignedCodingCount: 3,
+            totalCount: 5,
+            reviewedCount: 1,
+            divergentCount: 2,
+          }),
         ]}
         currentIndex={0}
         onSelect={vi.fn()}
@@ -89,27 +93,46 @@ describe("ArbitrationDocList — expandida", () => {
         onToggle={vi.fn()}
       />,
     );
-    expect(screen.getByText("Cega")).toBeTruthy();
-    expect(screen.getByText("Revelação")).toBeTruthy();
+    expect(screen.getByText(/2\/3/)).toBeTruthy();
+    expect(screen.getByText("5 resp.")).toBeTruthy();
+    expect(screen.getByText(/1\/2/)).toBeTruthy();
   });
 
-  it("badge de progresso mostra finalDecided/total", () => {
+  it("badge de humanos omite o denominador quando assignedCodingCount é 0", () => {
     render(
-      <ArbitrationDocList
-        docs={[entry({ finalDecided: 2, totalFields: 3 })]}
+      <CompareDocList
+        docs={[entry({ humansFromAssigned: 1, assignedCodingCount: 0 })]}
         currentIndex={0}
         onSelect={vi.fn()}
         collapsed={false}
         onToggle={vi.fn()}
       />,
     );
-    expect(screen.getByText(/2\/3/)).toBeTruthy();
+    expect(screen.getByText("👤 1")).toBeTruthy();
+  });
+
+  it.each([
+    ["concluido", "text-green-600"],
+    ["em_andamento", "text-amber-600"],
+    [null, "text-muted-foreground/50"],
+  ] as const)("StatusDot reflete o estado %s", (status, expectedClass) => {
+    const { container } = render(
+      <CompareDocList
+        docs={[entry({ assignmentStatus: status })]}
+        currentIndex={0}
+        onSelect={vi.fn()}
+        collapsed={false}
+        onToggle={vi.fn()}
+      />,
+    );
+    const icon = container.querySelector("ul svg");
+    expect(icon?.getAttribute("class")).toContain(expectedClass);
   });
 
   it("clicar num documento chama onSelect com o índice", () => {
     const onSelect = vi.fn();
     render(
-      <ArbitrationDocList
+      <CompareDocList
         docs={[
           entry({ id: "a", title: "Primeiro" }),
           entry({ id: "b", title: "Segundo" }),

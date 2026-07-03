@@ -2,34 +2,33 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import {
-  ArbitrationDocList,
-  type ArbitrationDocListEntry,
-} from "../ArbitrationDocList";
+  AutoReviewDocList,
+  type AutoReviewDocListEntry,
+} from "../AutoReviewDocList";
 
 afterEach(cleanup);
 
 function entry(
-  over: Partial<ArbitrationDocListEntry> = {},
-): ArbitrationDocListEntry {
+  over: Partial<AutoReviewDocListEntry> = {},
+): AutoReviewDocListEntry {
   return {
     id: "doc-id-abcdefgh-rest",
     title: "Documento Um",
     externalId: null,
     totalFields: 3,
-    blindDecided: 0,
-    finalDecided: 0,
+    pendingFields: 0,
     ...over,
   };
 }
 
-describe("ArbitrationDocList — integração com DocListPanel", () => {
+describe("AutoReviewDocList — integração com DocListPanel", () => {
   // Comportamento genérico de colapsar/expandir/estado-vazio/onToggle já é
   // coberto em DocListPanel.test.tsx; aqui só confirmamos que este
   // consumidor wireia collapsed/onToggle/docs corretamente.
   it("colapsada mostra só o botão de expandir; expandida e vazia mostra mensagem; recolher dispara onToggle", () => {
     const onToggle = vi.fn();
     const { rerender } = render(
-      <ArbitrationDocList
+      <AutoReviewDocList
         docs={[]}
         currentIndex={0}
         onSelect={vi.fn()}
@@ -37,12 +36,12 @@ describe("ArbitrationDocList — integração com DocListPanel", () => {
         onToggle={onToggle}
       />,
     );
-    expect(screen.queryByText("Fila de arbitragem")).toBeNull();
+    expect(screen.queryByText("Fila de auto-revisão")).toBeNull();
     fireEvent.click(screen.getByTitle("Mostrar lista de documentos"));
     expect(onToggle).toHaveBeenCalledTimes(1);
 
     rerender(
-      <ArbitrationDocList
+      <AutoReviewDocList
         docs={[]}
         currentIndex={0}
         onSelect={vi.fn()}
@@ -56,10 +55,10 @@ describe("ArbitrationDocList — integração com DocListPanel", () => {
   });
 });
 
-describe("ArbitrationDocList — expandida", () => {
+describe("AutoReviewDocList — expandida", () => {
   it("título cai para externalId e depois para os 8 primeiros chars do id", () => {
     render(
-      <ArbitrationDocList
+      <AutoReviewDocList
         docs={[
           entry({ id: "a", title: "Tem título" }),
           entry({ id: "b", title: null, externalId: "EXT-9" }),
@@ -76,27 +75,10 @@ describe("ArbitrationDocList — expandida", () => {
     expect(screen.getByText("abcdefgh")).toBeTruthy();
   });
 
-  it("badge de fase: 'Revelação' quando blindDecided==total, senão 'Cega'", () => {
+  it("badge de progresso mostra (total - pendentes)/total", () => {
     render(
-      <ArbitrationDocList
-        docs={[
-          entry({ id: "a", title: "Cega ainda", blindDecided: 1, totalFields: 3 }),
-          entry({ id: "b", title: "Revelado", blindDecided: 2, totalFields: 2 }),
-        ]}
-        currentIndex={0}
-        onSelect={vi.fn()}
-        collapsed={false}
-        onToggle={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Cega")).toBeTruthy();
-    expect(screen.getByText("Revelação")).toBeTruthy();
-  });
-
-  it("badge de progresso mostra finalDecided/total", () => {
-    render(
-      <ArbitrationDocList
-        docs={[entry({ finalDecided: 2, totalFields: 3 })]}
+      <AutoReviewDocList
+        docs={[entry({ totalFields: 3, pendingFields: 1 })]}
         currentIndex={0}
         onSelect={vi.fn()}
         collapsed={false}
@@ -109,7 +91,7 @@ describe("ArbitrationDocList — expandida", () => {
   it("clicar num documento chama onSelect com o índice", () => {
     const onSelect = vi.fn();
     render(
-      <ArbitrationDocList
+      <AutoReviewDocList
         docs={[
           entry({ id: "a", title: "Primeiro" }),
           entry({ id: "b", title: "Segundo" }),

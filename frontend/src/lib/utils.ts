@@ -40,6 +40,17 @@ export function normalizeText(s: string): string {
     .trim();
 }
 
+// Título de exibição de um documento na fila: título > id externo > 8
+// primeiros chars do id interno. Compartilhado por ArbitrationDocList,
+// AutoReviewDocList e CompareDocList.
+export function resolveDocTitle(
+  title: string | null,
+  externalId: string | null,
+  id: string,
+): string {
+  return title || externalId || id.slice(0, 8);
+}
+
 export function normalizeForComparison(answer: unknown): string {
   if (typeof answer === "string") return JSON.stringify(normalizeText(answer));
   if (Array.isArray(answer))
