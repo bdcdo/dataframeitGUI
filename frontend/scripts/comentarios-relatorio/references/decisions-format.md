@@ -45,6 +45,8 @@ Todas as resoluções são validadas contra o `projectId` (ids de outro projeto 
 
 Sem `--yes`, **nada é gravado**: schema e resoluções rodam como preview (o output mostra o que seria feito). `--dry-run` é o alias explícito do mesmo comportamento. Só `--yes` (sem `--dry-run`) executa os writes — schema, resoluções e `summaryNote`.
 
+O preview roda os mesmos guards de posse (`projectId`) e checagens de existência que o `--yes` — só a escrita em si (UPDATE/INSERT/UPSERT) é trocada por um SELECT equivalente. Isso significa que `exclusao` já aparece como erro no preview (idêntico ao que `--yes` faria), e um `rawId`/`reviewId`/`respondentId` de outro projeto ou malformado também falha no preview, em vez de aparecer como "sucesso" e só falhar quando rodado com `--yes`.
+
 ## Cache da GUI após uma mudança de schema
 
 Este script roda fora do runtime Next (processo `tsx` standalone) e por isso não pode chamar `revalidatePath`/`revalidateTag` como `saveSchemaFromGUI` faz. Depois de um `--yes` que aplica mudança de schema, a GUI pode continuar mostrando o schema/versão anteriores por até ~60s (TTL do cache de `project-{id}-progress`) até o cache expirar naturalmente ou outra mutação pela própria GUI revalidar as mesmas rotas/tag. Se precisar ver o resultado imediatamente numa página específica, recarregue com Ctrl+Shift+R.

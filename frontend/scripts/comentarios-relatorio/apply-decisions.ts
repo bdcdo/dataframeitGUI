@@ -99,6 +99,18 @@ interface ResolutionResult {
   detail?: string;
 }
 
+// review_id/respondent_id de "duvida" entram num filtro .or() construído por
+// template string (verdict_acknowledgments tem chave composta, sem coluna
+// `id` única — batchResolveUpdate/.in() não se aplicam). .in() escapa valores
+// com vírgula/parênteses automaticamente; .or() com string crua não escapa
+// nada. reviewId chega implicitamente validado por já ter passado pelo guard
+// de posse (buildOwnershipMaps via .in(), só combina com uma review real),
+// mas respondentId nunca é comparado contra o banco — sem este check, um
+// respondentId malformado (decisions.json malformado ou mal extraído por LLM)
+// quebraria a sintaxe do filtro ou ampliaria o UPDATE para pares fora do
+// validado pelo guard.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ----------------------- Schema apply -----------------------
 
 async function applySchemaChanges(
@@ -254,36 +266,49 @@ async function buildOwnershipMaps(supabase: SupabaseClient, resolutions: Resolut
 }
 
 // UPDATE em lote restrito ao projeto; devolve, por id pedido, sucesso ou
-// "not found" (id inexistente ou de outro projeto).
+// "not found" (id inexistente ou de outro projeto). Em preview (`write=false`),
+// faz o SELECT equivalente em vez do UPDATE — reporta o mesmo resultado
+// (existe e pertence ao projeto vs. não encontrado) sem gravar nada, para que
+// o preview não afirme sucesso para ids que na verdade falhariam em --yes.
 async function batchResolveUpdate(
   supabase: SupabaseClient,
   table: string,
   projectId: string,
   ids: string[],
   payload: Record<string, unknown>,
+  write: boolean,
 ): Promise<Map<string, ResolutionResult>> {
   const results = new Map<string, ResolutionResult>();
   if (ids.length === 0) return results;
-  const { data, error } = await supabase
-    .from(table)
-    .update(payload)
-    .in("id", ids)
-    .eq("project_id", projectId)
-    .select("id");
+  const { data, error } = write
+    ? await supabase.from(table).update(payload).in("id", ids).eq("project_id", projectId).select("id")
+    : await supabase.from(table).select("id").in("id", ids).eq("project_id", projectId);
   if (error) {
     for (const id of ids) results.set(id, { success: false, error: error.message });
     return results;
   }
-  const updated = new Set((data ?? []).map((d) => d.id as string));
+  const matched = new Set((data ?? []).map((d) => d.id as string));
   for (const id of ids) {
     results.set(
       id,
-      updated.has(id) ? { success: true } : { success: false, error: "not found" },
+      matched.has(id)
+        ? {
+            success: true,
+            ...(write ? {} : { detail: "PREVIEW: encontrado no projeto — seria resolvido" }),
+          }
+        : { success: false, error: "not found" },
     );
   }
   return results;
 }
 
+// Roda os mesmos guards de posse e checagens de existência em preview
+// (write=false) e em --yes: só as chamadas que gravam (UPDATE/INSERT/UPSERT)
+// são puladas em preview, substituídas por SELECTs equivalentes. Antes, o
+// preview retornava `success: true` cego para toda resolução — inclusive
+// `exclusao` (que SEMPRE falha em --yes, ver mapeamento final) e rawIds de
+// outro projeto (que o guard de posse sempre rejeitaria) — fazendo o preview
+// prometer sucesso que o `--yes` seguinte não entregava.
 async function resolveComments(
   supabase: SupabaseClient,
   projectId: string,
@@ -291,16 +316,6 @@ async function resolveComments(
   resolutions: Resolution[],
   write: boolean,
 ): Promise<Array<{ item: Resolution; result: ResolutionResult }>> {
-  if (!write) {
-    return resolutions.map((r) => ({
-      item: r,
-      result: {
-        success: true,
-        detail: `PREVIEW: would resolve ${r.source} ${JSON.stringify(r)}`,
-      },
-    }));
-  }
-
   const nowIso = new Date().toISOString();
   const { responseProject, reviewProject } = await buildOwnershipMaps(
     supabase,
@@ -423,13 +438,14 @@ async function resolveComments(
         projectId,
         anotacaoIds,
         resolvedPayload,
+        write,
       ),
-      batchResolveUpdate(supabase, "reviews", projectId, reviewIds, resolvedPayload),
+      batchResolveUpdate(supabase, "reviews", projectId, reviewIds, resolvedPayload, write),
       batchResolveUpdate(supabase, "schema_suggestions", projectId, approvedIds, {
         status: "approved",
         ...resolvedPayload,
-      }),
-      notaRows.length > 0
+      }, write),
+      notaRows.length > 0 && write
         ? supabase
             .from("note_resolutions")
             .upsert(notaRows, {
@@ -437,7 +453,7 @@ async function resolveComments(
               ignoreDuplicates: true,
             })
         : Promise.resolve({ error: null }),
-      difRows.length > 0
+      difRows.length > 0 && write
         ? supabase
             .from("difficulty_resolutions")
             .upsert(difRows, {
@@ -450,7 +466,7 @@ async function resolveComments(
           status: "rejected",
           ...resolvedPayload,
           ...(reason ? { rejection_reason: reason } : {}),
-        }),
+        }, write),
       ),
     ]);
 
@@ -494,13 +510,17 @@ async function resolveComments(
     }
   }
 
-  // --- duvida: guard batched acima; 1 único UPDATE em lote via .or(), não
-  // 1 UPDATE por par. verdict_acknowledgments tem chave composta
+  // --- duvida: guard batched acima; 1 único UPDATE (ou SELECT em preview) em
+  // lote via .or(), não 1 por par. verdict_acknowledgments tem chave composta
   // (review_id, respondent_id) sem coluna `id` única, então batchResolveUpdate
-  // (.in("id", ids)) não se aplica direto — mas o filtro .or() do PostgREST
-  // combina os pares já validados pelo guard numa única query. review_id/
-  // respondent_id são UUIDs (sem vírgula/parênteses), então não precisam de
-  // escaping na string do filtro.
+  // (.in("id", ids)) não se aplica direto — o filtro .or() combina os pares
+  // já validados numa única query. reviewId chega implicitamente validado por
+  // só passar no guard quando bate com uma review real (buildOwnershipMaps
+  // via .in(), que escapa vírgula/parênteses); respondentId nunca é
+  // comparado contra o banco, então precisa do check de formato explícito
+  // (UUID_RE) antes de entrar cru no filtro .or() — sem isso, um
+  // respondentId malformado quebraria a sintaxe do filtro ou ampliaria o
+  // UPDATE para pares fora do validado.
   const duvidas = resolutions.filter((r) => r.source === "duvida") as Array<
     Extract<Resolution, { source: "duvida" }>
   >;
@@ -515,17 +535,26 @@ async function resolveComments(
       resultFor.set(r, { success: false, error: "review pertence a outro projeto" });
       continue;
     }
+    if (!UUID_RE.test(r.respondentId)) {
+      resultFor.set(r, { success: false, error: "respondentId com formato inválido" });
+      continue;
+    }
     eligibleDuvidas.push(r);
   }
   if (eligibleDuvidas.length > 0) {
     const orFilter = eligibleDuvidas
       .map((r) => `and(review_id.eq.${r.reviewId},respondent_id.eq.${r.respondentId})`)
       .join(",");
-    const { data, error } = await supabase
-      .from("verdict_acknowledgments")
-      .update(resolvedPayload)
-      .or(orFilter)
-      .select("review_id, respondent_id");
+    const { data, error } = write
+      ? await supabase
+          .from("verdict_acknowledgments")
+          .update(resolvedPayload)
+          .or(orFilter)
+          .select("review_id, respondent_id")
+      : await supabase
+          .from("verdict_acknowledgments")
+          .select("review_id, respondent_id")
+          .or(orFilter);
     if (error) {
       for (const r of eligibleDuvidas) {
         resultFor.set(r, { success: false, error: error.message });
@@ -540,7 +569,10 @@ async function resolveComments(
         resultFor.set(
           r,
           matched.has(`${r.reviewId}|${r.respondentId}`)
-            ? { success: true }
+            ? {
+                success: true,
+                ...(write ? {} : { detail: "PREVIEW: encontrado — seria resolvido" }),
+              }
             : { success: false, error: "not found" },
         );
       }
