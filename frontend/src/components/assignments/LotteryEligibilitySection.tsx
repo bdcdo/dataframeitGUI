@@ -25,16 +25,40 @@ import type { LotteryParamsState } from "./useLotteryParams";
 // Seção "Documentos elegíveis" do LotteryDialog (US1): filtros de
 // codificações humanas, status de atribuição, lotes anteriores e seleção
 // manual de documentos.
+// Formata a data de criação de um lote no rodapé dos filtros (batch-exclude
+// e batch-only compartilham o mesmo formato).
+function formatBatchDate(iso: string): string {
+  return format(new Date(iso), "dd/MM/yyyy", { locale: ptBR });
+}
+
 export function LotteryEligibilitySection({
   params,
   stats,
-  isComparacao,
 }: {
-  params: LotteryParamsState;
+  params: Pick<
+    LotteryParamsState,
+    | "type"
+    | "codingsFilterMode"
+    | "setCodingsFilterMode"
+    | "maxCodingsValue"
+    | "setMaxCodingsValue"
+    | "assignmentFilter"
+    | "setAssignmentFilter"
+    | "batchFilterMode"
+    | "setBatchFilterMode"
+    | "batchExclude"
+    | "setBatchExclude"
+    | "batchOnly"
+    | "setBatchOnly"
+    | "manualEnabled"
+    | "setManualEnabled"
+    | "manualDocIds"
+    | "setManualDocIds"
+  >;
   stats: LotteryStats | null;
-  isComparacao: boolean;
 }) {
   const {
+    type,
     codingsFilterMode,
     setCodingsFilterMode,
     maxCodingsValue,
@@ -52,6 +76,7 @@ export function LotteryEligibilitySection({
     manualDocIds,
     setManualDocIds,
   } = params;
+  const isComparacao = type === "comparacao";
 
   return (
     <div className="space-y-4">
@@ -163,9 +188,7 @@ export function LotteryEligibilitySection({
                   >
                     {b.label || "Sem rótulo"}
                     <span className="ml-1.5 text-xs text-muted-foreground">
-                      {format(new Date(b.createdAt), "dd/MM/yyyy", {
-                        locale: ptBR,
-                      })}
+                      {formatBatchDate(b.createdAt)}
                     </span>
                   </Label>
                 </div>
@@ -188,9 +211,7 @@ export function LotteryEligibilitySection({
                   >
                     {b.label || "Sem rótulo"}
                     <span className="ml-1.5 text-xs text-muted-foreground">
-                      {format(new Date(b.createdAt), "dd/MM/yyyy", {
-                        locale: ptBR,
-                      })}
+                      {formatBatchDate(b.createdAt)}
                     </span>
                   </Label>
                 </div>

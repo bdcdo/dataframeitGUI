@@ -19,7 +19,15 @@ export function LotteryParticipantsSection({
   params,
 }: {
   members: LotteryMember[];
-  params: LotteryParamsState;
+  params: Pick<
+    LotteryParamsState,
+    | "participantOverrides"
+    | "setParticipantOverrides"
+    | "weightInputs"
+    | "setWeightInputs"
+    | "capInputs"
+    | "setCapInputs"
+  >;
 }) {
   const {
     participantOverrides,

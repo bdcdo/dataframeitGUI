@@ -140,11 +140,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
 
           <Separator />
 
-          <LotteryEligibilitySection
-            params={params}
-            stats={stats}
-            isComparacao={isComparacao}
-          />
+          <LotteryEligibilitySection params={params} stats={stats} />
 
           <Separator />
 
@@ -181,7 +177,6 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
           <LotteryDistributionSection
             params={params}
             membersCount={members.length}
-            isComparacao={isComparacao}
             summary={summary}
           />
 

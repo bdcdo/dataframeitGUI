@@ -26,15 +26,29 @@ export type LotterySummary =
 export function LotteryDistributionSection({
   params,
   membersCount,
-  isComparacao,
   summary,
 }: {
-  params: LotteryParamsState;
+  params: Pick<
+    LotteryParamsState,
+    | "type"
+    | "researchersPerDoc"
+    | "setResearchersPerDoc"
+    | "docsPerResearcherEnabled"
+    | "setDocsPerResearcherEnabled"
+    | "docsPerResearcher"
+    | "setDocsPerResearcher"
+    | "docSubsetEnabled"
+    | "setDocSubsetEnabled"
+    | "docSubsetSize"
+    | "setDocSubsetSize"
+    | "balancing"
+    | "setBalancing"
+  >;
   membersCount: number;
-  isComparacao: boolean;
   summary: LotterySummary;
 }) {
   const {
+    type,
     researchersPerDoc,
     setResearchersPerDoc,
     docsPerResearcherEnabled,
@@ -48,6 +62,7 @@ export function LotteryDistributionSection({
     balancing,
     setBalancing,
   } = params;
+  const isComparacao = type === "comparacao";
 
   return (
     <div className="space-y-4">
