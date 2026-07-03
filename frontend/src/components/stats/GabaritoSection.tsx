@@ -14,7 +14,7 @@ import {
   fetchGabaritoForComment,
   type GabaritoRespondentAnswer,
 } from "@/actions/stats";
-import { formatAnswer } from "@/lib/reviews/verdict-format";
+import { formatVerdictAnswer } from "@/lib/reviews/verdict-format";
 import {
   type ReviewComment,
   formatVerdictLabel,
@@ -122,7 +122,7 @@ export function GabaritoSection({ comment, projectId }: GabaritoSectionProps) {
                       {a.respondentType === "humano" ? "Humano" : "LLM"}
                     </Badge>
                     <span className="ml-2 text-muted-foreground">
-                      {formatAnswer(a.answer)}
+                      {formatVerdictAnswer(a.answer)}
                     </span>
                   </div>
                 </div>

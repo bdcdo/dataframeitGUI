@@ -6,13 +6,14 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { DocumentReader } from "./DocumentReader";
-import { QuestionsPanel, type OutOfScopeConfig } from "./QuestionsPanel";
+import { QuestionsPanel, type QuestionsPanelProps } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
 import { CodingEmptyStates } from "./CodingEmptyStates";
 import type { RoundFilterData } from "./CodingPage";
-import type { AssignedDoc, PydanticField } from "@/lib/types";
+import type { AssignedDoc } from "@/lib/types";
 
-interface AssignedCodingViewProps {
+interface AssignedCodingViewProps
+  extends Omit<QuestionsPanelProps, "submitting" | "notes" | "onNotesChange" | "readOnly" | "onReorder"> {
   /** Doc atribuído atual — `undefined` quando não há nenhum a mostrar
    *  (lista vazia ou filtro de rodada sem pendências). */
   doc: AssignedDoc | undefined;
@@ -22,16 +23,11 @@ interface AssignedCodingViewProps {
   isFullscreen: boolean;
   onNavigate: (index: number) => void;
   onExitFullscreen: () => void;
-  fields: PydanticField[];
-  answers: Record<string, unknown>;
-  onAnswer: (fieldName: string, value: unknown) => void;
-  onSubmit: () => void;
   submitting: boolean;
   notes: string;
   onNotesChange: (notes: string) => void;
   readOnly: boolean;
   onReorder: (newOrder: string[]) => void;
-  outOfScope?: OutOfScopeConfig;
   /** Todos os docs atribuídos foram codificados nesta sessão. */
   allDone: boolean;
   onExploreMore: () => void;

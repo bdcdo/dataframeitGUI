@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef } from "react";
+import { useState } from "react";
+import { useResetOnKeyChange } from "./useResetOnKeyChange";
 
 // crypto.randomUUID is only exposed in secure contexts (HTTPS/localhost); fall
 // back so a dev server reached over a plain-http LAN IP doesn't crash editing.
@@ -25,30 +26,28 @@ export interface StableListIds {
  *
  * Mutations go through the caller's own handlers: call `removeIdAt`/`appendId`
  * together with the value mutation + `onChange`, so ids and values stay aligned
- * before the next render. The render-time reconcile below only kicks in for
- * *external* length changes (field switch, toggling subfields, schema reset),
- * preserving the ids of positions that remain.
+ * before the next render. The `useResetOnKeyChange` reconcile below only kicks
+ * in for *external* length changes (field switch, toggling subfields, schema
+ * reset), preserving the ids of positions that remain — it can't run on every
+ * mutation, because `removeIdAt`/`appendId` themselves call `setIds`, which
+ * (unlike a ref write) triggers its own re-render: for one render, `ids`
+ * already reflects the mutation while the caller's `length` prop hasn't
+ * caught up yet. Comparing `ids.length` directly against `length` in that
+ * window would fabricate/drop an id; keying the reconcile on `length` itself
+ * only re-fires on a real external length change.
  */
 export function useStableListIds(length: number): StableListIds {
-  const idsRef = useRef<string[]>([]);
+  const [ids, setIds] = useState<string[]>(() =>
+    Array.from({ length }, () => makeId())
+  );
 
-  if (idsRef.current.length !== length) {
-    const cur = idsRef.current;
-    idsRef.current = Array.from({ length }, (_, i) => cur[i] ?? makeId());
-  }
-
-  const handlers = useRef<Pick<StableListIds, "removeIdAt" | "appendId">>({
-    removeIdAt: (index) => {
-      idsRef.current = idsRef.current.filter((_, i) => i !== index);
-    },
-    appendId: () => {
-      idsRef.current = [...idsRef.current, makeId()];
-    },
+  useResetOnKeyChange(length, () => {
+    setIds((cur) => Array.from({ length }, (_, i) => cur[i] ?? makeId()));
   });
 
   return {
-    ids: idsRef.current,
-    removeIdAt: handlers.current.removeIdAt,
-    appendId: handlers.current.appendId,
+    ids,
+    removeIdAt: (index) => setIds((cur) => cur.filter((_, i) => i !== index)),
+    appendId: () => setIds((cur) => [...cur, makeId()]),
   };
 }

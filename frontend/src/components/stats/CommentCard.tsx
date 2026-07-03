@@ -11,9 +11,9 @@ import { SuggestionActions } from "./SuggestionActions";
 import { ExclusionActions } from "./ExclusionActions";
 import type { ReviewComment } from "./comment-card-utils";
 
-// Tipos vivem em comment-card-utils.ts (evita ciclo pai↔filho com os
+// Tipo vive em comment-card-utils.ts (evita ciclo pai↔filho com os
 // componentes extraídos); re-export mantém os consumidores externos intactos.
-export type { ReviewComment, ResponseSnapshotEntry } from "./comment-card-utils";
+export type { ReviewComment } from "./comment-card-utils";
 
 interface CommentCardProps {
   comment: ReviewComment;

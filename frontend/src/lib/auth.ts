@@ -120,7 +120,7 @@ export const getEffectiveMemberId = cache(
   },
 );
 
-export interface ProjectAccessContext {
+interface ProjectAccessContext {
   project: { id: string; name: string; created_by: string } | null;
   membershipRole: string | null;
   isCoordinator: boolean;

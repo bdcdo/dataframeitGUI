@@ -3,6 +3,7 @@
 Espelha LlmResponseRow.classifyResponse no frontend; divergencia aqui leva a
 counters live (LlmConfigurePane) inconsistentes com badges (LlmResponseRow).
 """
+
 from services.llm_runner import _answers_have_content
 
 
