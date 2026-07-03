@@ -273,6 +273,24 @@ describe("qualifyDocumentsForCompare", () => {
     expect(result.qualifiedDocIds).toEqual(["doc1"]);
   });
 
+  it("minHumans>=2: pct de atribuídos abaixo do piso rejeita o doc mesmo com humanCount/totalCount suficientes", () => {
+    // humanCount=2 e totalCount=2 passam os pisos, mas só 1 dos 4 atribuídos
+    // respondeu (25% < minAssignedPct=50) — diferente do caso compare_llm
+    // acima (minHumans=1), aqui o gate de % atribuídos se aplica e rejeita.
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", respondent_id: "u1", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u5", respondent_name: "Bia", answers: { a: "beta" } }),
+    );
+    const codingAssignedByDoc = new Map([["doc1", new Set(["u1", "u2", "u3", "u4"])]]);
+
+    const result = qualifyDocumentsForCompare(
+      responsesByDoc,
+      doc1Meta(),
+      baseCtx({ codingAssignedByDoc }),
+    );
+    expect(result.qualifiedDocIds).toEqual([]);
+  });
+
   it("filtro since descarta respostas anteriores à data", () => {
     const responsesByDoc = doc1Responses(
       response({ id: "r1", answers: { a: "alpha" }, created_at: "2026-01-01T00:00:00.000Z" }),

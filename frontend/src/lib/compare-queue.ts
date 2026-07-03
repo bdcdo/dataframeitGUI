@@ -150,7 +150,11 @@ export function indexResponsesByDoc(allResponses: readonly RawResponseRow[] | nu
     const docId = r.document_id;
     if (!responsesByDoc.has(docId)) responsesByDoc.set(docId, []);
     responsesByDoc.get(docId)!.push(r as unknown as CompareResponse);
-    if (r.documents) docsMetaMap.set(docId, r.documents as unknown as Omit<CompareDoc, "text">);
+    // `documents` é 1:1 por doc (join pela FK document_id) — grava só na
+    // primeira ocorrência em vez de sobrescrever a cada resposta do mesmo doc.
+    if (r.documents && !docsMetaMap.has(docId)) {
+      docsMetaMap.set(docId, r.documents as unknown as Omit<CompareDoc, "text">);
+    }
   });
 
   return { responsesByDoc, docsMetaMap };
@@ -258,14 +262,21 @@ export interface QualifiedDocumentsResult {
 // (is_latest/humano, pré-versionamento, piso) é compartilhada com
 // compare-sync.ts via responseQualifiesForVersion; aqui adicionamos só os
 // filtros efêmeros de UI (since/respondent).
+interface ResponseFilterParams {
+  minVersion: SchemaVersion | null;
+  projectVersionCtx: ProjectVersionContext;
+  sinceMs: number | null;
+  respondentFilter: string;
+}
+
 function filterQualifiedResponses(
   docResponses: CompareResponse[],
-  ctx: QualifyDocumentsContext,
+  params: ResponseFilterParams,
 ): CompareResponse[] {
   return docResponses.filter((r) => {
-    if (!responseQualifiesForVersion(r, ctx.minVersion, ctx.projectVersionCtx)) return false;
-    if (ctx.sinceMs !== null && new Date(r.created_at).getTime() < ctx.sinceMs) return false;
-    if (ctx.filters.respondent !== "all" && r.respondent_name !== ctx.filters.respondent) {
+    if (!responseQualifiesForVersion(r, params.minVersion, params.projectVersionCtx)) return false;
+    if (params.sinceMs !== null && new Date(r.created_at).getTime() < params.sinceMs) return false;
+    if (params.respondentFilter !== "all" && r.respondent_name !== params.respondentFilter) {
       return false;
     }
     return true;
@@ -332,7 +343,12 @@ function qualifyDocument(
   docResponses: CompareResponse[],
   ctx: QualifyDocumentsContext,
 ): QualifiedDocument | null {
-  const qualifiedResponses = filterQualifiedResponses(docResponses, ctx);
+  const qualifiedResponses = filterQualifiedResponses(docResponses, {
+    minVersion: ctx.minVersion,
+    projectVersionCtx: ctx.projectVersionCtx,
+    sinceMs: ctx.sinceMs,
+    respondentFilter: ctx.filters.respondent,
+  });
   const assignedUsers = ctx.codingAssignedByDoc.get(docId) ?? new Set<string>();
   const metrics = computeCoverageMetrics(qualifiedResponses, assignedUsers);
 
