@@ -48,9 +48,32 @@ testpaths = ["tests"]
 # do lint:types no frontend (#260): comecar com o subset que pega o footgun
 # real (tipos incompativeis, atributos inexistentes) sem exigir refatorar a
 # base toda para satisfazer strict mode.
+#
+# python_version = 3.12 (nao 3.11, o piso de requires-python): o runtime real
+# e o Dockerfile fixam 3.12. Simular 3.11 faz o mypy recusar parsear stubs que
+# usam sintaxe 3.12+ (ex.: `type` statement do PEP 695 no stub do numpy) e
+# abortar com "errors prevented further checking" em vez de reportar um erro
+# de tipo normal.
+#
+# follow_imports = "silent": sem isso, checar um unico arquivo (como o hook de
+# pre-push faz, file-scoped) tambem reporta os erros de qualquer modulo que
+# esse arquivo importe — inclusive os 10 erros grandfathered em auth.py/
+# pydantic_routes.py/pydantic_compiler.py/main.py (ver baixo). Como
+# services/auth.py e importado por praticamente toda rota, isso bloquearia
+# pushes que nao tocam nenhum dos 4 arquivos do baseline. "silent" mantem o
+# modulo importado sendo checado (a inferencia de tipo continua correta) mas
+# suprime os diagnosticos dele quando ele nao foi passado explicitamente na
+# linha de comando.
+#
+# exclude = ["tests/"]: so tem efeito quando o mypy descobre arquivos sozinho
+# (`uv run mypy .`); e ignorado quando arquivos sao passados explicitamente,
+# que e como o hook de pre-push invoca. A protecao real de tests/ no hook vem
+# do `exclude: ^backend/tests/.*\.py$` em .pre-commit-config.yaml — os dois
+# precisam ficar em sincronia manualmente, nao ha enforcement cruzado.
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
+follow_imports = "silent"
 exclude = ["tests/"]
 
 # Grandfathering (#260, mesmo espirito do per-file-ignores do ruff acima):
