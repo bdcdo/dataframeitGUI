@@ -91,6 +91,10 @@ const human = (respondent_id: string, q1: string, document_id = "doc1") => ({
   schema_version_major: null,
   schema_version_minor: null,
   schema_version_patch: null,
+  // Chaves do filtro de embed `documents!inner` (fora-de-escopo): o mock
+  // filter-aware compara r["documents.excluded_at"] literalmente.
+  "documents.excluded_at": null,
+  "documents.exclusion_pending_at": null,
 });
 const projectRow = (over: Record<string, unknown> = {}) => ({
   id: "p1",
@@ -113,6 +117,11 @@ beforeEach(() => {
     assignments: [],
     responses: [],
     response_equivalences: [],
+    // Docs ativos e fora de revisão de escopo — o gatilho consulta `documents`.
+    documents: [
+      { id: "doc1", project_id: "p1", excluded_at: null, exclusion_pending_at: null },
+      { id: "doc2", project_id: "p1", excluded_at: null, exclusion_pending_at: null },
+    ],
   };
   hoisted.isCoord.mockResolvedValue(true);
 });

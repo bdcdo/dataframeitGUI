@@ -18,7 +18,8 @@ export async function getEligibleDocCount(
       .from("documents")
       .select("id", { count: "exact", head: true })
       .eq("project_id", projectId)
-      .is("excluded_at", null),
+      .is("excluded_at", null)
+      .is("exclusion_pending_at", null),
     // `documents!inner` + `.is("documents.excluded_at", null)` restringe a
     // respostas de documentos NÃO arquivados — alinhando com a contagem de
     // `total` acima. Sem isso, docs excluídos com resposta LLM inflavam
@@ -29,7 +30,8 @@ export async function getEligibleDocCount(
       .eq("project_id", projectId)
       .eq("respondent_type", "llm")
       .eq("is_latest", true)
-      .is("documents.excluded_at", null),
+      .is("documents.excluded_at", null)
+      .is("documents.exclusion_pending_at", null),
   ]);
 
   if (totalError) throw new Error(totalError.message);
@@ -310,6 +312,7 @@ export async function getDocumentsForSelection(
       .select("id, title, external_id")
       .eq("project_id", projectId)
       .is("excluded_at", null)
+      .is("exclusion_pending_at", null)
       .order("external_id"),
     supabase
       .from("responses")

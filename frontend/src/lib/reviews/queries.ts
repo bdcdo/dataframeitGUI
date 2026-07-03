@@ -225,6 +225,7 @@ export async function fetchReviewBaseData(
       .select("id, title, external_id")
       .eq("project_id", projectId)
       .is("excluded_at", null)
+      .is("exclusion_pending_at", null)
       .limit(REVIEW_BASE_DATA_LIMIT),
   ]);
 

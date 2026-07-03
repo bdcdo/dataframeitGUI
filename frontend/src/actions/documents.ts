@@ -218,10 +218,13 @@ async function filterActiveExternalIdConflicts<
 // catch do hook ficaria preso). Um cache stale é recuperável; um upload "perdido"
 // não.
 //
-// Privada (não-exportada): os chamadores internos deste módulo já passaram pelo
-// RLS de escrita, então não pagam o custo do gate de autorização. O ponto de
-// entrada client é o wrapper `revalidateProjectDocuments` abaixo.
-async function revalidateProjectDocumentsCache(projectId: string) {
+// Exportada (não client-callable — é uma "use server" function, mas seu uso
+// pretendido é só server-to-server) para outras actions deste app que já
+// fizeram o próprio gate de autorização (ex: project-comments.ts) reusarem a
+// mesma invalidação em vez de duplicar revalidatePath/revalidateTag. Chamadas
+// client-side desautenticadas ainda passam pelo wrapper `revalidateProjectDocuments`
+// abaixo, que faz o gate de acesso antes de delegar aqui.
+export async function revalidateProjectDocumentsCache(projectId: string) {
   try {
     revalidatePath(`/projects/${projectId}/config/documents`);
     revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);
@@ -379,6 +382,10 @@ export interface BrowseDocument {
   created_at: string;
   responseCount: number;
   userAlreadyResponded: boolean;
+  /** Sinalização "fora do escopo" pendente do PRÓPRIO usuário — o doc fica
+   *  visível (bloqueado) para ele poder desfazer; pendências de outros somem
+   *  da lista. */
+  exclusionPendingMine: boolean;
 }
 
 export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDocument[]> {
@@ -387,21 +394,31 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
 
   const supabase = await createSupabaseServer();
 
-  const { data: docs } = await supabase
-    .from("documents")
-    .select("id, external_id, title, created_at")
-    .eq("project_id", projectId)
-    .is("excluded_at", null)
-    .order("created_at", { ascending: true });
+  const [{ data: docs }, { data: responses }, { data: myPending }] =
+    await Promise.all([
+      supabase
+        .from("documents")
+        .select("id, external_id, title, created_at, exclusion_pending_at")
+        .eq("project_id", projectId)
+        .is("excluded_at", null)
+        .order("created_at", { ascending: true }),
+      // Get human response counts
+      supabase
+        .from("responses")
+        .select("document_id, respondent_id")
+        .eq("project_id", projectId)
+        .eq("respondent_type", "humano"),
+      supabase
+        .from("project_comments")
+        .select("document_id")
+        .eq("project_id", projectId)
+        .eq("author_id", user.id)
+        .eq("kind", "exclusion_request")
+        .is("resolved_at", null)
+        .is("rejected_at", null),
+    ]);
 
   if (!docs || docs.length === 0) return [];
-
-  // Get human response counts
-  const { data: responses } = await supabase
-    .from("responses")
-    .select("document_id, respondent_id")
-    .eq("project_id", projectId)
-    .eq("respondent_type", "humano");
 
   const countMap = new Map<string, Set<string>>();
   const userRespondedSet = new Set<string>();
@@ -412,41 +429,86 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
     if (r.respondent_id === user.id) userRespondedSet.add(r.document_id);
   });
 
-  return docs.map((d) => ({
-    id: d.id,
-    external_id: d.external_id,
-    title: d.title,
-    created_at: d.created_at,
-    responseCount: countMap.get(d.id)?.size ?? 0,
-    userAlreadyResponded: userRespondedSet.has(d.id),
-  }));
+  const minePendingSet = new Set(
+    (myPending ?? []).map((p) => p.document_id as string),
+  );
+
+  return docs
+    // Doc em revisão de escopo some da lista, exceto para quem sinalizou
+    // (que precisa vê-lo bloqueado para poder desfazer).
+    .filter((d) => !d.exclusion_pending_at || minePendingSet.has(d.id))
+    .map((d) => ({
+      id: d.id,
+      external_id: d.external_id,
+      title: d.title,
+      created_at: d.created_at,
+      responseCount: countMap.get(d.id)?.size ?? 0,
+      userAlreadyResponded: userRespondedSet.has(d.id),
+      exclusionPendingMine:
+        !!d.exclusion_pending_at && minePendingSet.has(d.id),
+    }));
+}
+
+export interface DocumentExclusionPending {
+  /** O pedido pendente é do próprio usuário? (permite desfazer) */
+  mine: boolean;
+  /** Justificativa do próprio usuário (null quando o pedido é de outro). */
+  reason: string | null;
 }
 
 export async function getDocumentForCoding(
   projectId: string,
   documentId: string
-): Promise<{ document: { id: string; external_id: string | null; title: string | null; text: string }; existingAnswers: Record<string, unknown> | null; existingJustifications: Record<string, unknown> | null }> {
+): Promise<{ document: { id: string; external_id: string | null; title: string | null; text: string; exclusionPending: DocumentExclusionPending | null }; existingAnswers: Record<string, unknown> | null; existingJustifications: Record<string, unknown> | null }> {
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: doc }, { data: project }] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("id, external_id, title, text")
-      .eq("id", documentId)
-      .eq("project_id", projectId)
-      .is("excluded_at", null)
-      .single(),
-    supabase
-      .from("projects")
-      .select("pydantic_fields")
-      .eq("id", projectId)
-      .single(),
-  ]);
+  // Sem filtro de exclusion_pending_at: quem sinalizou precisa continuar
+  // abrindo o doc (bloqueado) para poder desfazer; deep-link de terceiro
+  // mostra o estado "pendente por outro".
+  const [{ data: rawDoc }, { data: project }, { data: myPending }] =
+    await Promise.all([
+      supabase
+        .from("documents")
+        .select("id, external_id, title, text, exclusion_pending_at")
+        .eq("id", documentId)
+        .eq("project_id", projectId)
+        .is("excluded_at", null)
+        .single(),
+      supabase
+        .from("projects")
+        .select("pydantic_fields")
+        .eq("id", projectId)
+        .single(),
+      supabase
+        .from("project_comments")
+        .select("body")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("author_id", user.id)
+        .eq("kind", "exclusion_request")
+        .is("resolved_at", null)
+        .is("rejected_at", null)
+        .maybeSingle(),
+    ]);
 
-  if (!doc) throw new Error("Documento não encontrado");
+  if (!rawDoc) throw new Error("Documento não encontrado");
+
+  const exclusionPending: DocumentExclusionPending | null =
+    rawDoc.exclusion_pending_at
+      ? myPending
+        ? { mine: true, reason: myPending.body as string }
+        : { mine: false, reason: null }
+      : null;
+  const doc = {
+    id: rawDoc.id,
+    external_id: rawDoc.external_id,
+    title: rawDoc.title,
+    text: rawDoc.text,
+    exclusionPending,
+  };
 
   const { data: response } = await supabase
     .from("responses")

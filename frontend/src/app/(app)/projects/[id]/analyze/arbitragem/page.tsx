@@ -55,7 +55,8 @@ export default async function ArbitrationRoute({
       .from("documents")
       .select("id, title, external_id, text")
       .in("id", docIds)
-      .is("excluded_at", null),
+      .is("excluded_at", null)
+      .is("exclusion_pending_at", null),
     supabase
       .from("field_reviews")
       .select(

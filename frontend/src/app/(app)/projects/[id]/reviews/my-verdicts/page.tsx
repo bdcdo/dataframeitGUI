@@ -110,7 +110,8 @@ export default async function MyVerdictsPage({
       .from("documents")
       .select("id, title, external_id")
       .in("id", myDocIds)
-      .is("excluded_at", null),
+      .is("excluded_at", null)
+      .is("exclusion_pending_at", null),
     supabase
       .from("verdict_acknowledgments")
       .select("review_id, status, comment")

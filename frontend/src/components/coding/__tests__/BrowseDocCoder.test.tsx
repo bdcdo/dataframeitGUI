@@ -46,7 +46,7 @@ import type { CodingDocument } from "@/hooks/useDocumentForCoding";
 
 function makeDoc(overrides?: Partial<CodingDocument>): CodingDocument {
   return {
-    document: { id: "d1", external_id: "ext-d1", title: "Doc Um", text: "texto do doc" },
+    document: { id: "d1", external_id: "ext-d1", title: "Doc Um", text: "texto do doc", exclusionPending: null },
     initialAnswers: { q0: "x" },
     initialNotes: "nota0",
     ...overrides,

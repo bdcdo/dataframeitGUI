@@ -193,6 +193,7 @@ export async function createAutoComparisonIfDiverges(
 
   const [
     { data: project },
+    { data: doc },
     { data: humanResponses },
     { data: llmResponse },
     { data: equivalences },
@@ -205,6 +206,12 @@ export async function createAutoComparisonIfDiverges(
       )
       .eq("id", projectId)
       .single(),
+    admin
+      .from("documents")
+      .select("excluded_at, exclusion_pending_at")
+      .eq("id", documentId)
+      .eq("project_id", projectId)
+      .maybeSingle(),
     admin
       .from("responses")
       .select(`id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
@@ -240,6 +247,13 @@ export async function createAutoComparisonIfDiverges(
     return { assigned: false, noPool: false };
   }
   const fields = project.pydantic_fields as PydanticField[];
+
+  // Doc arquivado ou em revisão de escopo não dispara comparação — alinha o
+  // gatilho automático com a fila (compare/page.tsx), que filtra ambos.
+  if (!doc || doc.excluded_at || doc.exclusion_pending_at) {
+    log("skip_doc_out_of_scope", { projectId, documentId, mode });
+    return { assigned: false, noPool: false };
+  }
 
   // Idempotencia: ja existe comparacao ativa para este doc → nao re-sorteia.
   if (activeAssignments && activeAssignments.length > 0) {
@@ -360,12 +374,17 @@ export async function scanComparisonBacklog(
         )
         .eq("id", projectId)
         .single(),
+      // `documents!inner` + filtros: docs arquivados ou em revisão de escopo
+      // não entram no backlog (gap pré-existente: este scan não filtrava nem
+      // excluded_at, re-atribuindo comparações de docs arquivados).
       admin
         .from("responses")
-        .select(`document_id, respondent_id, ${RESPONSE_VERSION_COLS}`)
+        .select(`document_id, respondent_id, ${RESPONSE_VERSION_COLS}, documents!inner(id)`)
         .eq("project_id", projectId)
         .eq("respondent_type", "humano")
-        .eq("is_latest", true),
+        .eq("is_latest", true)
+        .is("documents.excluded_at", null)
+        .is("documents.exclusion_pending_at", null),
       admin
         .from("assignments")
         .select("document_id")

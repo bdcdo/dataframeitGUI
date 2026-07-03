@@ -134,6 +134,10 @@ const human = (
   schema_version_major: null,
   schema_version_minor: null,
   schema_version_patch: null,
+  // Chaves do filtro de embed `documents!inner` (fora-de-escopo): o mock
+  // filter-aware compara r["documents.excluded_at"] literalmente.
+  "documents.excluded_at": null,
+  "documents.exclusion_pending_at": null,
   ...extra,
 });
 const llm = (q1: string, extra: Record<string, unknown> = {}) => ({
@@ -179,6 +183,16 @@ beforeEach(() => {
     assignments: [],
     responses: [],
     response_equivalences: [],
+    // Doc ativo e fora de revisão de escopo — o gatilho agora consulta
+    // `documents` antes de disparar (fora-de-escopo).
+    documents: [
+      {
+        id: "doc1",
+        project_id: "p1",
+        excluded_at: null,
+        exclusion_pending_at: null,
+      },
+    ],
   };
   hoisted.isCoord.mockResolvedValue(true);
 });

@@ -16,6 +16,7 @@ function getCachedDocuments(projectId: string) {
         .select("id, external_id, title")
         .eq("project_id", projectId)
         .is("excluded_at", null)
+        .is("exclusion_pending_at", null)
         .order("created_at", { ascending: true });
       if (error) {
         console.error(

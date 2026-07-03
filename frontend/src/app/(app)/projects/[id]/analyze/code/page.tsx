@@ -55,12 +55,13 @@ export default async function CodePage({
     { data: project },
     { data: assignments },
     { data: rounds },
+    { data: pendingExclusions },
     canRunLlm,
   ] = await Promise.all([
     supabase
       .from("projects")
       .select(
-        "pydantic_fields, round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch",
+        "pydantic_fields, round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch, out_of_scope_enabled",
       )
       .eq("id", id)
       .single(),
@@ -77,14 +78,42 @@ export default async function CodePage({
       .select("id, project_id, label, created_at")
       .eq("project_id", id)
       .order("created_at", { ascending: true }),
+    // Sinalizações "fora do escopo" pendentes do projeto: as do próprio
+    // usuário mantêm o doc na fila (bloqueado, com opção de desfazer);
+    // as de outros escondem o doc até o coordenador decidir.
+    supabase
+      .from("project_comments")
+      .select("document_id, author_id, body")
+      .eq("project_id", id)
+      .eq("kind", "exclusion_request")
+      .is("resolved_at", null)
+      .is("rejected_at", null),
     // Rodar LLM exige coordenador no backend (#195): só então mostrar o botão.
     isProjectCoordinator(id, user),
   ]);
 
-  const allDocuments = (assignments || []).map((a) => ({
-    ...(a.documents as unknown as Document),
-    assignment: { id: a.id, status: a.status } as Pick<Assignment, "id" | "status">,
-  }));
+  const pendingExclusionByDoc: Record<string, string> = {};
+  const pendingByOthers = new Set<string>();
+  for (const pc of pendingExclusions ?? []) {
+    if (!pc.document_id) continue;
+    // Autor pode ser a conta autenticada ou o membro canônico (spec 002).
+    if (pc.author_id === user.id || pc.author_id === effectiveUserId) {
+      pendingExclusionByDoc[pc.document_id] = pc.body as string;
+    } else {
+      pendingByOthers.add(pc.document_id);
+    }
+  }
+
+  const allDocuments = (assignments || [])
+    .map((a) => ({
+      ...(a.documents as unknown as Document),
+      assignment: { id: a.id, status: a.status } as Pick<Assignment, "id" | "status">,
+    }))
+    // Doc em revisão de escopo por OUTRO pesquisador sai da fila; com pedido
+    // do próprio usuário permanece (o formulário fica bloqueado).
+    .filter(
+      (d) => !pendingByOthers.has(d.id) || pendingExclusionByDoc[d.id] !== undefined,
+    );
 
   // Responses incluem agora round_id e schema_version para classificacao por rodada.
   // Filtra respondent_type=humano: respostas LLM têm respondent_id distinto, mas o
@@ -253,6 +282,8 @@ export default async function CodePage({
         existingJustifications={existingJustifications}
         hasAssignments={allDocuments.length > 0}
         canRunLlm={canRunLlm}
+        outOfScopeEnabled={project?.out_of_scope_enabled ?? true}
+        pendingExclusionByDoc={pendingExclusionByDoc}
         readOnly={isImpersonating || isViewingPreviousRound}
         roundFilter={{
           strategy,

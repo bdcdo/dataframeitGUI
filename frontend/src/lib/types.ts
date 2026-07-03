@@ -83,6 +83,10 @@ export interface Project {
   // Só relevante em automation_mode = "compare_humans": inclui a resposta do LLM
   // (quando existe) no cálculo de divergência que dispara a comparação.
   comparison_includes_llm: boolean;
+  // Mostra a pergunta "Documento fora do escopo?" no topo do formulário de
+  // codificação. Desligar só esconde a pergunta; pedidos pendentes continuam
+  // valendo até decisão do coordenador.
+  out_of_scope_enabled: boolean;
 }
 
 export interface SubfieldDef {
@@ -159,6 +163,9 @@ export interface Document {
   excluded_at: string | null;
   excluded_reason: string | null;
   excluded_by: string | null;
+  // Pedido de exclusão pendente (fora de escopo aguardando coordenador);
+  // derivado dos exclusion_requests por trigger no banco.
+  exclusion_pending_at: string | null;
 }
 
 type AssignmentType =

@@ -27,6 +27,7 @@ interface State {
     target?: string;
   }>;
   schemaVersion: { major: number; minor: number; patch: number };
+  documentExcludedAt: string | null;
 }
 
 let state: State;
@@ -42,6 +43,7 @@ beforeEach(() => {
       { name: "q1", type: "single", required: true, options: ["a", "b"] },
     ],
     schemaVersion: { major: 1, minor: 0, patch: 0 },
+    documentExcludedAt: null,
   };
   vi.mocked(revalidatePath).mockClear();
   vi.mocked(revalidateTag).mockClear();
@@ -107,6 +109,18 @@ vi.mock("@/lib/supabase/server", () => ({
           update: (payload: Record<string, unknown>) => {
             state.responseUpdatePayload = payload;
             return thenableOk();
+          },
+        };
+      }
+      if (table === "documents") {
+        return {
+          select: () => {
+            const c: Record<string, unknown> = {};
+            c.eq = () => c;
+            c.maybeSingle = async () => ({
+              data: { excluded_at: state.documentExcludedAt },
+            });
+            return c;
           },
         };
       }
@@ -246,5 +260,25 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.responseInsertPayload?.justifications).toEqual({
       _notes: "comentario",
     });
+  });
+});
+
+describe("saveResponse — documento excluído (fora do escopo aprovado)", () => {
+  it("rejeita save quando o doc tem excluded_at", async () => {
+    state.documentExcludedAt = "2026-07-01T00:00:00Z";
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("removido do escopo");
+    expect(state.responseInsertPayload).toBeNull();
+    expect(state.responseUpdatePayload).toBeNull();
+  });
+
+  it("pedido apenas PENDENTE não bloqueia o save (reversível)", async () => {
+    // O guard olha só excluded_at; pendência não impede persistir dado humano.
+    state.documentExcludedAt = null;
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
+    expect(r.success).toBe(true);
   });
 });
