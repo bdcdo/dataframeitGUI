@@ -1,67 +1,23 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { PydanticField } from "@/lib/types";
+import {
+  callsOf,
+  makeFilterAwareSupabaseMock,
+  type WriteCall,
+} from "@/test-utils/supabase-mock";
+import { CURRENT_HASH } from "@/test-utils/comparison-fixtures";
 
 // compare-sync.ts abre com `import "server-only"`, que LANÇA fora de um Server
 // Component. Mocká-lo para no-op deixa o módulo importável no Vitest (node).
 vi.mock("server-only", () => ({}));
 
-// Mock supabase chainable e FILTER-AWARE (mesmo padrão de auto-comparison.test.ts):
-// aplica .eq/.neq/.in às linhas e registra os writes (.update) para asserção.
-// syncCompareAssignment recebe o client como argumento, então basta passá-lo.
-type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown[]>;
 
-const updateCallsOf = (table?: string) =>
-  writeCalls.filter((c) => c.op === "update" && (!table || c.table === table));
+const updateCallsOf = (table?: string) => callsOf(writeCalls, "update", table);
 
 function makeClient() {
-  return {
-    from: (table: string) => {
-      const eqs: Array<[string, unknown]> = [];
-      const neqs: Array<[string, unknown]> = [];
-      const ins: Array<[string, unknown[]]> = [];
-      let op = "select";
-
-      const builder: Record<string, unknown> = {};
-      builder.select = () => builder;
-      builder.eq = (c: string, v: unknown) => {
-        eqs.push([c, v]);
-        return builder;
-      };
-      builder.neq = (c: string, v: unknown) => {
-        neqs.push([c, v]);
-        return builder;
-      };
-      builder.in = (c: string, v: unknown[]) => {
-        ins.push([c, v]);
-        return builder;
-      };
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        op = "update";
-        return builder;
-      };
-
-      const rows = () => {
-        const data = (tableData[table] ?? []) as Array<Record<string, unknown>>;
-        return data.filter((r) => {
-          for (const [c, v] of eqs) if (r[c] !== v) return false;
-          for (const [c, v] of neqs) if (r[c] === v) return false;
-          for (const [c, vals] of ins) if (!vals.includes(r[c])) return false;
-          return true;
-        });
-      };
-
-      builder.single = () =>
-        Promise.resolve({ data: rows()[0] ?? null, error: null });
-      builder.maybeSingle = () =>
-        Promise.resolve({ data: rows()[0] ?? null, error: null });
-      builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({ data: op === "update" ? null : rows(), error: null });
-      return builder;
-    },
-  };
+  return makeFilterAwareSupabaseMock({ tableData, writeCalls });
 }
 
 const FIELDS: PydanticField[] = [
@@ -73,8 +29,6 @@ const FIELDS: PydanticField[] = [
     target: "all",
   },
 ];
-
-const CURRENT_HASH = "hash-atual";
 
 // Resposta da MAJOR corrente (qualifica sob o piso latest_major). `extra`
 // sobrescreve para emular rodadas antigas / pré-versionamento.
