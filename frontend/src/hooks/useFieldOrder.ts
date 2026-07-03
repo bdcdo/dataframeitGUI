@@ -29,13 +29,18 @@ export function useFieldOrder(projectId: string): {
 
   useEffect(() => {
     let cancelled = false;
-    getResearcherFieldOrder(projectId).then(({ order }) => {
-      // Se o pesquisador ja arrastou antes da load resolver, o drag tem
-      // prioridade — descartamos o valor vindo do banco para nao sobrescrever
-      // a intencao recente do usuario.
-      if (cancelled || pendingOrderRef.current) return;
-      setFieldOrder(order);
-    });
+    getResearcherFieldOrder(projectId)
+      .then(({ order }) => {
+        // Se o pesquisador ja arrastou antes da load resolver, o drag tem
+        // prioridade — descartamos o valor vindo do banco para nao sobrescrever
+        // a intencao recente do usuario.
+        if (cancelled || pendingOrderRef.current) return;
+        setFieldOrder(order);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        console.error("[field-order load]", e);
+      });
     return () => {
       cancelled = true;
     };
@@ -43,12 +48,17 @@ export function useFieldOrder(projectId: string): {
 
   const doSave = useCallback(
     (order: string[]) => {
-      saveResearcherFieldOrder(projectId, order).then((r) => {
-        if (!r.success) {
-          console.error("[field-order save]", r.error);
+      saveResearcherFieldOrder(projectId, order)
+        .then((r) => {
+          if (!r.success) {
+            console.error("[field-order save]", r.error);
+            toast.error("Não foi possível salvar a ordem das perguntas");
+          }
+        })
+        .catch((e: unknown) => {
+          console.error("[field-order save]", e);
           toast.error("Não foi possível salvar a ordem das perguntas");
-        }
-      });
+        });
     },
     [projectId],
   );

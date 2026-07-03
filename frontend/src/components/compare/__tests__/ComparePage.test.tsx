@@ -74,7 +74,11 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
       <button
         data-testid="confirm-equiv"
         onClick={() =>
-          comparisonPanel.onConfirmEquivalent(["r1", "r2"], "r1", "Equivalentes")
+          void comparisonPanel.onConfirmEquivalent(
+            ["r1", "r2"],
+            "r1",
+            "Equivalentes",
+          )
         }
       >
         equiv

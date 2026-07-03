@@ -85,7 +85,7 @@ export function UnifyMembersDialog({
                 Cancelar
               </Button>
               <Button
-                onClick={handleUnify}
+                onClick={() => void handleUnify()}
                 disabled={loading}
                 className="bg-brand hover:bg-brand/90 text-brand-foreground"
               >

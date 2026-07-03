@@ -179,7 +179,8 @@ export function ComparePage({
     onExitFullscreen: exitFullscreen,
     onNextField: goNextField,
     onPrevField: goPrevField,
-    onVerdict: handleVerdict,
+    onVerdict: (verdict, chosenResponseId) =>
+      void handleVerdict(verdict, chosenResponseId),
   });
 
   const reviewed = docFields.map(
@@ -301,8 +302,9 @@ export function ComparePage({
             ? { complete: true, hasNextDoc, onNextDoc: handleNextDoc }
             : { complete: false },
           onFieldNavigate: setFieldIndex,
-          onVerdict: handleVerdict,
-          onMarkReviewed: handleMarkReviewed,
+          onVerdict: (verdict, chosenResponseId) =>
+      void handleVerdict(verdict, chosenResponseId),
+          onMarkReviewed: () => void handleMarkReviewed(),
           comment,
           onCommentChange: setComment,
           commentCount: fieldCommentCount,

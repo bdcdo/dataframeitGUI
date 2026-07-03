@@ -54,7 +54,7 @@ export function PromptCard({
         <CardTitle className="text-base">Prompt</CardTitle>
         <Button
           size="sm"
-          onClick={handleSavePrompt}
+          onClick={() => void handleSavePrompt()}
           disabled={savingPrompt}
           className="bg-brand hover:bg-brand/90 text-brand-foreground"
         >

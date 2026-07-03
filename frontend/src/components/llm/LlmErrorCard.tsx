@@ -173,7 +173,7 @@ export function LlmErrorCard({ id, error, onDismiss }: LlmErrorCardProps) {
         )}
 
         <div className="flex gap-2 pt-1">
-          <Button size="sm" variant="outline" onClick={handleCopy}>
+          <Button size="sm" variant="outline" onClick={() => void handleCopy()}>
             {copied ? (
               <>
                 <Check className="mr-1.5 size-3.5" /> Copiado

@@ -147,7 +147,7 @@ export function AutoReviewPageContent({
       incompleteCount={incompleteCount}
       submitting={submitting}
       canSubmit={canSubmit}
-      onSubmit={handleSubmit}
+      onSubmit={() => void handleSubmit()}
       onChoose={(v) => setChoices((c) => ({ ...c, [currentKey]: v }))}
       onJustificationChange={(value) =>
         setJustifications((j) => ({ ...j, [currentKey]: value }))

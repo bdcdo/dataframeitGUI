@@ -70,7 +70,7 @@ export function OptionsEditor({
             variant="ghost"
             size="icon"
             className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={() => removeOption(i)}
+            onClick={() => void removeOption(i)}
           >
             <X className="size-3.5" />
           </Button>

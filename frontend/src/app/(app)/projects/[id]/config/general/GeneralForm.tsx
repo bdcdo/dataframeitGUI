@@ -97,7 +97,7 @@ export function GeneralForm({
       </div>
 
       <Button
-        onClick={handleSave}
+        onClick={() => void handleSave()}
         disabled={saving || !name.trim()}
         className="bg-brand hover:bg-brand/90 text-brand-foreground"
       >

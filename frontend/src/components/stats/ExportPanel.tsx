@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Download } from "lucide-react";
+import { toast } from "sonner";
 
 interface ExportPanelProps {
   projectName: string;
@@ -62,6 +63,14 @@ export function ExportPanel({
   const previewRows = currentRows.slice(0, 10);
 
   const handleDownload = async () => {
+    try {
+      await doDownload();
+    } catch {
+      toast.error("Não foi possível gerar o arquivo de exportação.");
+    }
+  };
+
+  const doDownload = async () => {
     const timestamp = new Date().toISOString().slice(0, 10);
     const suffix =
       dataset === "individual"
@@ -195,7 +204,7 @@ export function ExportPanel({
         </div>
 
         <Button
-          onClick={handleDownload}
+          onClick={() => void handleDownload()}
           className="bg-brand text-brand-foreground hover:bg-brand/90"
         >
           <Download className="mr-1.5 size-4" />

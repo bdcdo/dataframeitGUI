@@ -86,7 +86,7 @@ export function RunLlmButton({
               toast.error(status.errors[0] || "Erro na execução");
             }
           } else {
-            timeoutRef.current = setTimeout(poll, 2000);
+            timeoutRef.current = setTimeout(() => void poll(), 2000);
           }
         } catch {
           if (cancelledRef.current) return;
@@ -97,12 +97,12 @@ export function RunLlmButton({
             setRunning(false);
             toast.error("Erro ao verificar progresso");
           } else {
-            timeoutRef.current = setTimeout(poll, 2000);
+            timeoutRef.current = setTimeout(() => void poll(), 2000);
           }
         }
       };
 
-      timeoutRef.current = setTimeout(poll, 2000);
+      timeoutRef.current = setTimeout(() => void poll(), 2000);
     },
     [onComplete, getToken]
   );
@@ -142,7 +142,7 @@ export function RunLlmButton({
         variant={variant}
         size="icon"
         className="size-6"
-        onClick={handleRun}
+        onClick={() => void handleRun()}
         disabled={running}
         title="Rodar LLM neste documento"
       >
@@ -159,7 +159,7 @@ export function RunLlmButton({
     <Button
       variant={variant}
       size={size}
-      onClick={handleRun}
+      onClick={() => void handleRun()}
       disabled={running}
       className="gap-1.5"
     >

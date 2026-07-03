@@ -94,7 +94,7 @@ function EditPendingEmailDialog({
             placeholder="novo-email@exemplo.com"
           />
           <Button
-            onClick={handleSave}
+            onClick={() => void handleSave()}
             disabled={saving || !email}
             className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
           >
@@ -323,7 +323,7 @@ export function MemberList({
                 {!link.linked_user_id && <span className="italic">(sem conta)</span>}
                 <button
                   type="button"
-                  onClick={() => handleUnlink(link.id)}
+                  onClick={() => void handleUnlink(link.id)}
                   className="ml-1 text-destructive hover:underline"
                 >
                   desvincular
@@ -396,7 +396,7 @@ export function MemberList({
             </span>
             <Select
               value={m.role}
-              onValueChange={(v) => handleChangeRole(m.id, v as "coordenador" | "pesquisador")}
+              onValueChange={(v) => void handleChangeRole(m.id, v as "coordenador" | "pesquisador")}
               disabled={m.user_id === currentUserId}
             >
               <SelectTrigger className="h-8 w-[140px] text-xs">
@@ -408,7 +408,7 @@ export function MemberList({
               </SelectContent>
             </Select>
             {m.user_id !== currentUserId && (
-              <Button variant="ghost" size="sm" onClick={() => handleRemove(m.id)} className="text-destructive">
+              <Button variant="ghost" size="sm" onClick={() => void handleRemove(m.id)} className="text-destructive">
                 Remover
               </Button>
             )}

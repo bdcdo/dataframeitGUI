@@ -16,11 +16,16 @@ export function CopyLinkButton({ url, className }: CopyLinkButtonProps) {
   const handleCopy = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      navigator.clipboard.writeText(url).then(() => {
-        toast.success("Link copiado!");
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
+      navigator.clipboard
+        .writeText(url)
+        .then(() => {
+          toast.success("Link copiado!");
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        })
+        .catch(() => {
+          toast.error("Não foi possível copiar o link.");
+        });
     },
     [url]
   );
