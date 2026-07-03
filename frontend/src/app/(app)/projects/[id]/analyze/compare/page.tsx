@@ -20,6 +20,7 @@ import {
   parseVersionStr,
 } from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+import { respondentKey } from "@/components/compare/compare-types";
 
 interface CompareDoc {
   id: string;
@@ -284,13 +285,12 @@ export default async function ComparePageRoute({
       return true;
     });
 
-    // Conta respondentes humanos DISTINTOS (não linhas). Fallback para r.id
-    // quando respondent_id é null (dados legados) para não fundir respostas
-    // anônimas distintas numa só.
+    // Conta respondentes humanos DISTINTOS (não linhas) — `respondentKey`
+    // compartilha a regra de dedup com o aviso "não preencheu" do painel.
     const humanCount = new Set(
       qualifiedResponses
         .filter((r) => r.respondent_type === "humano")
-        .map((r) => r.respondent_id ?? r.id),
+        .map(respondentKey),
     ).size;
     const totalCount = qualifiedResponses.length;
 
