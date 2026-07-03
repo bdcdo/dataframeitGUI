@@ -4,9 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { dropHiddenConditionals } from "@/lib/conditional";
-import { isCodingComplete } from "@/lib/coding-completeness";
-import { createAutoReviewIfDiverges } from "@/lib/auto-review";
-import { createAutoComparisonIfDiverges } from "@/lib/auto-comparison";
+import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import type { PydanticField } from "@/lib/types";
 
 export interface SaveResponseOpts {
@@ -14,29 +12,20 @@ export interface SaveResponseOpts {
   isAutoSave?: boolean;
 }
 
-export async function saveResponse(
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
+
+// Fetch profile, existing response, and project config in parallel.
+// O lookup de existing filtra is_latest: após uma unificação de membros o
+// conjunto fundido pode ter respostas antigas (is_latest=false) no mesmo
+// documento — .single() sem o filtro erraria com múltiplas linhas.
+async function fetchSaveContext(
+  supabase: SupabaseServerClient,
   projectId: string,
   documentId: string,
-  answers: Record<string, unknown>,
-  opts: SaveResponseOpts = {},
-): Promise<{ success: boolean; error?: string }> {
-  const { notes, isAutoSave = false } = opts;
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    // Identidade de trabalho no projeto (spec 002): conta vinculada codifica
-    // como o membro canônico — respondent_id, assignments e auto-review usam
-    // sempre o id efetivo.
-    const effectiveId = await getEffectiveMemberId(projectId);
-
-    const supabase = await createSupabaseServer();
-
-    // Fetch profile, existing response, and project config in parallel.
-    // O lookup de existing filtra is_latest: após uma unificação de membros o
-    // conjunto fundido pode ter respostas antigas (is_latest=false) no mesmo
-    // documento — .single() sem o filtro erraria com múltiplas linhas.
-    const [{ data: profile }, { data: existing }, { data: project, error: projErr }, { data: doc }] = await Promise.all([
+  effectiveId: string,
+) {
+  const [{ data: profile }, { data: existing }, { data: project, error: projErr }, { data: doc }] =
+    await Promise.all([
       supabase
         .from("profiles")
         .select("first_name, last_name")
@@ -65,6 +54,149 @@ export async function saveResponse(
         .eq("project_id", projectId)
         .maybeSingle(),
     ]);
+  return { profile, existing, project, projErr, doc };
+}
+
+function buildAnswerFieldHashes(fields: PydanticField[]): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const f of fields) {
+    if (f.hash) hashes[f.name] = f.hash;
+  }
+  return hashes;
+}
+
+interface BuildResponsePayloadParams {
+  fields: PydanticField[];
+  answers: Record<string, unknown>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- shape vem do select() sem generics do supabase-js, igual ao resto do arquivo
+  project: any;
+  existing: { is_partial: boolean | null } | null | undefined;
+  isAutoSave: boolean;
+  notes?: string;
+}
+
+function buildResponsePayload({
+  fields,
+  answers,
+  project,
+  existing,
+  isAutoSave,
+  notes,
+}: BuildResponsePayloadParams) {
+  const justifications = notes ? { _notes: notes } : null;
+
+  // Drop values of fields whose visibility condition is not satisfied —
+  // prevents orphaned answers from earlier trigger values ending up in the
+  // persisted payload. Ponto-fixo compartilhado com o clean de leitura
+  // (getDocumentForCoding / code/page.tsx) — ver #252.
+  const sanitizedAnswers = dropHiddenConditionals(fields, answers);
+
+  const roundIdToPersist =
+    project?.round_strategy === "manual" ? (project?.current_round_id ?? null) : null;
+
+  // Para humanos is_partial e mutavel: auto-save grava true (segue como
+  // current_pending em classifyDocStatus) e submit explicito grava false.
+  // Excecao: auto-save em response ja submetida (is_partial=false) NAO
+  // rebaixa o sinal — combinado com o guard que preserva assignment.status
+  // = "concluido", esse rebaixamento faria um doc ja concluido reaparecer
+  // como pendente em classifyDocStatus. A imutabilidade descrita na migration
+  // 20260425000000 vale so para o fluxo LLM.
+  const isPartialToWrite = isAutoSave && existing?.is_partial !== false;
+
+  const payload = {
+    answers: sanitizedAnswers,
+    justifications,
+    pydantic_hash: project?.pydantic_hash ?? null,
+    answer_field_hashes: buildAnswerFieldHashes(fields),
+    schema_version_major: project?.schema_version_major ?? 0,
+    schema_version_minor: project?.schema_version_minor ?? 1,
+    schema_version_patch: project?.schema_version_patch ?? 0,
+    version_inferred_from: "live_save",
+    round_id: roundIdToPersist,
+    is_partial: isPartialToWrite,
+    // Marca a codificacao do pesquisador no tempo — alimenta a ordenacao
+    // "codificados recentemente" da navegacao da aba Codificar (issue #108).
+    updated_at: new Date().toISOString(),
+  };
+
+  return { payload, sanitizedAnswers };
+}
+
+interface UpsertResponseRowParams {
+  supabase: SupabaseServerClient;
+  existing: { id: string } | null | undefined;
+  projectId: string;
+  documentId: string;
+  effectiveId: string;
+  respondentName: string;
+  payload: Record<string, unknown>;
+}
+
+async function upsertResponseRow({
+  supabase,
+  existing,
+  projectId,
+  documentId,
+  effectiveId,
+  respondentName,
+  payload,
+}: UpsertResponseRowParams): Promise<{ error?: string }> {
+  if (existing) {
+    const { error } = await supabase.from("responses").update(payload).eq("id", existing.id);
+    if (error) return { error: error.message };
+    return {};
+  }
+  const { error } = await supabase.from("responses").insert({
+    project_id: projectId,
+    document_id: documentId,
+    respondent_id: effectiveId,
+    respondent_type: "humano",
+    respondent_name: respondentName,
+    is_latest: true,
+    ...payload,
+  });
+  if (error) return { error: error.message };
+  return {};
+}
+
+// Auto-save nao revalida o RSC tree — evita re-fetch do servidor a cada
+// troca de aba / navegacao entre docs e qualquer flicker residual no
+// formulario. Submit explicito (handleSubmit / handleBrowseSubmit) revalida
+// normalmente, propagando o efeito para Compare, Reviews e o progresso.
+function revalidateAfterSave(projectId: string, isAutoSave: boolean): void {
+  if (isAutoSave) return;
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
+  revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
+  revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
+  revalidatePath(`/projects/${projectId}/reviews`);
+  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
+}
+
+export async function saveResponse(
+  projectId: string,
+  documentId: string,
+  answers: Record<string, unknown>,
+  opts: SaveResponseOpts = {},
+): Promise<{ success: boolean; error?: string }> {
+  const { notes, isAutoSave = false } = opts;
+  try {
+    const user = await getAuthUser();
+    if (!user) return { success: false, error: "Não autenticado" };
+
+    // Identidade de trabalho no projeto (spec 002): conta vinculada codifica
+    // como o membro canônico — respondent_id, assignments e auto-review usam
+    // sempre o id efetivo.
+    const effectiveId = await getEffectiveMemberId(projectId);
+
+    const supabase = await createSupabaseServer();
+
+    const { profile, existing, project, projErr, doc } = await fetchSaveContext(
+      supabase,
+      projectId,
+      documentId,
+      effectiveId,
+    );
 
     if (projErr) return { success: false, error: projErr.message };
 
@@ -78,158 +210,45 @@ export async function saveResponse(
       };
     }
 
-    const respondentName = [profile?.first_name, profile?.last_name]
-      .filter(Boolean)
-      .join(" ") || user.email;
+    const respondentName =
+      [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || user.email;
 
-    const justifications = notes ? { _notes: notes } : null;
-
-    // Build per-field hash snapshot for staleness detection
     const fields = (project?.pydantic_fields as PydanticField[]) || [];
-    const answerFieldHashes: Record<string, string> = {};
-    for (const f of fields) {
-      if (f.hash) answerFieldHashes[f.name] = f.hash;
-    }
 
-    // Drop values of fields whose visibility condition is not satisfied —
-    // prevents orphaned answers from earlier trigger values ending up in the
-    // persisted payload. Ponto-fixo compartilhado com o clean de leitura
-    // (getDocumentForCoding / code/page.tsx) — ver #252.
-    const sanitizedAnswers = dropHiddenConditionals(fields, answers);
+    const { payload, sanitizedAnswers } = buildResponsePayload({
+      fields,
+      answers,
+      project,
+      existing,
+      isAutoSave,
+      notes,
+    });
 
-    const roundIdToPersist =
-      project?.round_strategy === "manual"
-        ? (project?.current_round_id ?? null)
-        : null;
-
-    // Para humanos is_partial e mutavel: auto-save grava true (segue como
-    // current_pending em classifyDocStatus) e submit explicito grava false.
-    // Excecao: auto-save em response ja submetida (is_partial=false) NAO
-    // rebaixa o sinal — combinado com o guard que preserva assignment.status
-    // = "concluido", esse rebaixamento faria um doc ja concluido reaparecer
-    // como pendente em classifyDocStatus. A imutabilidade descrita na migration
-    // 20260425000000 vale so para o fluxo LLM.
-    const isPartialToWrite =
-      isAutoSave && existing?.is_partial !== false;
-
-    const responsePayload = {
-      answers: sanitizedAnswers,
-      justifications,
-      pydantic_hash: project?.pydantic_hash ?? null,
-      answer_field_hashes: answerFieldHashes,
-      schema_version_major: project?.schema_version_major ?? 0,
-      schema_version_minor: project?.schema_version_minor ?? 1,
-      schema_version_patch: project?.schema_version_patch ?? 0,
-      version_inferred_from: "live_save",
-      round_id: roundIdToPersist,
-      is_partial: isPartialToWrite,
-      // Marca a codificacao do pesquisador no tempo — alimenta a ordenacao
-      // "codificados recentemente" da navegacao da aba Codificar (issue #108).
-      updated_at: new Date().toISOString(),
-    };
-
-    if (existing) {
-      const { error: updateErr } = await supabase
-        .from("responses")
-        .update(responsePayload)
-        .eq("id", existing.id);
-      if (updateErr) return { success: false, error: updateErr.message };
-    } else {
-      const { error: insertErr } = await supabase.from("responses").insert({
-        project_id: projectId,
-        document_id: documentId,
-        respondent_id: effectiveId,
-        respondent_type: "humano",
-        respondent_name: respondentName,
-        is_latest: true,
-        ...responsePayload,
-      });
-      if (insertErr) return { success: false, error: insertErr.message };
-    }
+    const { error: upsertErr } = await upsertResponseRow({
+      supabase,
+      existing,
+      projectId,
+      documentId,
+      effectiveId,
+      respondentName,
+      payload,
+    });
+    if (upsertErr) return { success: false, error: upsertErr };
 
     if (fields.length > 0) {
-      // Definição única de "codificação completa" — ver lib/coding-completeness.
-      // O mesmo helper gateia o backlog de auto-revisão (issue #174).
-      const allAnswered = isCodingComplete(fields, sanitizedAnswers);
-
-      // Auto-save nunca promove para "concluido" — mesmo que todos os campos
-      // estejam preenchidos, o pesquisador ainda nao clicou em Enviar. Sem essa
-      // guarda, sair da pagina dispara visibilitychange -> saveResponse -> doc
-      // some da lista no filtro padrao por virar current_done.
-      if (allAnswered && !isAutoSave) {
-        const { error: assignErr } = await supabase
-          .from("assignments")
-          .update({ status: "concluido", completed_at: new Date().toISOString() })
-          .eq("project_id", projectId)
-          .eq("document_id", documentId)
-          .eq("user_id", effectiveId)
-          .eq("type", "codificacao");
-        if (assignErr) return { success: false, error: assignErr.message };
-
-        // Dispara a automacao do projeto ao submeter, conforme automation_mode.
-        // Falhas nao bloqueiam o submit do pesquisador — o coordenador pode
-        // regenerar o backlog manualmente (regenerateAutoReviewBacklog /
-        // retryPendingComparisons). "none" nao dispara nada.
-        const mode = project?.automation_mode;
-        try {
-          if (mode === "auto_review_llm") {
-            await createAutoReviewIfDiverges(projectId, documentId, effectiveId);
-          } else if (mode === "compare_humans") {
-            await createAutoComparisonIfDiverges(projectId, documentId, "compare_humans");
-          } else if (mode === "compare_llm") {
-            await createAutoComparisonIfDiverges(projectId, documentId, "compare_llm");
-          }
-        } catch (err) {
-          // Log estruturado JSON — mesmo formato dos demais eventos das libs de
-          // automacao, facilita grep "[auto-review]" / "[auto-compare]" nos logs.
-          const prefix = mode === "auto_review_llm" ? "[auto-review]" : "[auto-compare]";
-          console.error(
-            `${prefix} ${JSON.stringify({
-              event: "inline_call_failed",
-              mode,
-              projectId,
-              documentId,
-              userId: effectiveId,
-              error: err instanceof Error ? err.message : String(err),
-            })}`,
-          );
-        }
-      } else {
-        // So regredir se NAO esta concluido (evita desfazer progresso por auto-save)
-        const { data: currentAssignment } = await supabase
-          .from("assignments")
-          .select("status")
-          .eq("project_id", projectId)
-          .eq("document_id", documentId)
-          .eq("user_id", effectiveId)
-          .eq("type", "codificacao")
-          .maybeSingle();
-
-        if (currentAssignment && currentAssignment.status !== "concluido") {
-          const { error: assignErr } = await supabase
-            .from("assignments")
-            .update({ status: "em_andamento", completed_at: null })
-            .eq("project_id", projectId)
-            .eq("document_id", documentId)
-            .eq("user_id", effectiveId)
-            .eq("type", "codificacao");
-          if (assignErr) return { success: false, error: assignErr.message };
-        }
-      }
+      const { error: syncErr } = await syncCodingAssignmentStatus(supabase, {
+        projectId,
+        documentId,
+        userId: effectiveId,
+        fields,
+        sanitizedAnswers,
+        isAutoSave,
+        automationMode: project?.automation_mode,
+      });
+      if (syncErr) return { success: false, error: syncErr };
     }
 
-    // Auto-save nao revalida o RSC tree — evita re-fetch do servidor a cada
-    // troca de aba / navegacao entre docs e qualquer flicker residual no
-    // formulario. Submit explicito (handleSubmit / handleBrowseSubmit) revalida
-    // normalmente, propagando o efeito para Compare, Reviews e o progresso.
-    if (!isAutoSave) {
-      revalidatePath(`/projects/${projectId}/analyze/code`);
-      revalidatePath(`/projects/${projectId}/analyze/compare`);
-      revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
-      revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
-      revalidatePath(`/projects/${projectId}/reviews`);
-      revalidateTag(`project-${projectId}-progress`, { expire: 60 });
-    }
+    revalidateAfterSave(projectId, isAutoSave);
     return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
