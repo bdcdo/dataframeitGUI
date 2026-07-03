@@ -8,6 +8,7 @@ fornecido pelo coordenador é parseado via AST com uma allowlist estrita
 import, chamada de função (exceto `Field(...)`), acesso a atributo, dunder,
 lambda, comprehension ou decorador é aceito.
 """
+
 import ast
 import hashlib
 import typing
@@ -58,9 +59,7 @@ def compile_pydantic(code: str) -> dict:
             if isinstance(raw_opts, (list, tuple)) and raw_opts:
                 options = [str(o) for o in raw_opts]
         description = field_info.description or field_name
-        allow_other = (
-            bool(extra.get("allowOther", False)) if is_dict_extra else False
-        )
+        allow_other = bool(extra.get("allowOther", False)) if is_dict_extra else False
         help_text_raw = extra.get("help_text") if is_dict_extra else None
         help_text = help_text_raw.strip() if isinstance(help_text_raw, str) else None
         if not help_text:
@@ -188,7 +187,9 @@ def find_root_model(namespace: dict):
     return candidates[-1]
 
 
-def _field_hash(name: str, field_type: str, options: list[str] | None, description: str) -> str:
+def _field_hash(
+    name: str, field_type: str, options: list[str] | None, description: str
+) -> str:
     """Stable hash for a field, excluding target."""
     content = f"{name}|{field_type}|{sorted(options) if options else ''}|{description}"
     return hashlib.sha256(content.encode()).hexdigest()[:12]
@@ -224,6 +225,7 @@ def _sanitize_condition(raw: object) -> dict | None:
 # --------------------------------------------------------------------------
 # Construção da classe a partir do AST (sem exec) — allowlist estrita.
 # --------------------------------------------------------------------------
+
 
 class SchemaError(ValueError):
     """Código de schema rejeitado pela allowlist ou inválido.
@@ -332,7 +334,9 @@ def build_model_from_code(code: str):
     try:
         tree = ast.parse(code, filename="<pydantic_schema>")
     except SyntaxError as e:
-        raise SchemaError(f"Código inválido: {e}", lineno=e.lineno, offset=e.offset) from e
+        raise SchemaError(
+            f"Código inválido: {e}", lineno=e.lineno, offset=e.offset
+        ) from e
 
     _reject_dangerous(tree)
     # _build_models/_resolve_type só devem levantar SchemaError; qualquer
@@ -385,7 +389,9 @@ def _reject_dangerous(tree: ast.AST) -> None:
             # passaria despercebido sem esta checagem.
             for kw in node.keywords:
                 if kw.arg is not None and _is_strict_dunder(kw.arg):
-                    raise SchemaError(f"Argumento não permitido em Field(...): {kw.arg}")
+                    raise SchemaError(
+                        f"Argumento não permitido em Field(...): {kw.arg}"
+                    )
         # Bloqueia dunders estritos escritos como identificador (ast.Name).
         if isinstance(node, ast.Name) and _is_strict_dunder(node.id):
             raise SchemaError(f"Identificador não permitido: {node.id}")
@@ -472,8 +478,7 @@ def _build_one_class(cd: ast.ClassDef, built: dict):
             continue  # docstring
         else:
             raise SchemaError(
-                f"Statement não permitido no corpo de {cd.name}: "
-                f"{type(stmt).__name__}"
+                f"Statement não permitido no corpo de {cd.name}: {type(stmt).__name__}"
             )
     return create_model(cd.name, __base__=base, **field_defs)
 
@@ -596,7 +601,12 @@ def _parse_annotation(annotation: type) -> tuple[str, list[str] | None]:
 
     # Nested BaseModel -> composite text field
     from pydantic import BaseModel
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel) and annotation is not BaseModel:
+
+    if (
+        isinstance(annotation, type)
+        and issubclass(annotation, BaseModel)
+        and annotation is not BaseModel
+    ):
         return "text", None  # type stays "text"; subfields extracted separately
 
     return "text", None
@@ -605,7 +615,12 @@ def _parse_annotation(annotation: type) -> tuple[str, list[str] | None]:
 def _extract_subfields(annotation: type) -> list[dict] | None:
     """Extract subfield definitions from a nested BaseModel annotation."""
     from pydantic import BaseModel
-    if not (isinstance(annotation, type) and issubclass(annotation, BaseModel) and annotation is not BaseModel):
+
+    if not (
+        isinstance(annotation, type)
+        and issubclass(annotation, BaseModel)
+        and annotation is not BaseModel
+    ):
         return None
     subfields = []
     for sf_name, sf_info in annotation.model_fields.items():
@@ -616,9 +631,11 @@ def _extract_subfields(annotation: type) -> list[dict] | None:
         if sf_origin is typing.Union:
             sf_args = get_args(sf_ann)
             is_optional = type(None) in sf_args
-        subfields.append({
-            "key": sf_name,
-            "label": sf_info.description or sf_name,
-            "required": not is_optional,
-        })
+        subfields.append(
+            {
+                "key": sf_name,
+                "label": sf_info.description or sf_name,
+                "required": not is_optional,
+            }
+        )
     return subfields if subfields else None

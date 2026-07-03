@@ -12,6 +12,7 @@ pruning de respostas no backend concorde com a visibilidade do campo na UI. O
 Manter as semânticas alinhadas evita respostas órfãs (armazenadas no banco,
 invisíveis na UI de coding).
 """
+
 from typing import Any
 
 
@@ -48,9 +49,7 @@ def _matches_scalar(value: Any, target: Any) -> bool:
     return _scalar_equals(value, target)
 
 
-def evaluate_condition(
-    condition: Any, field_data: dict, field_name: str = ""
-) -> bool:
+def evaluate_condition(condition: Any, field_data: dict, field_name: str = "") -> bool:
     """True se o campo deve estar visível dadas as respostas atuais."""
     if condition is None:
         return True
