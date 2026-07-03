@@ -5,7 +5,7 @@
 #
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, lint:types, fallow, semgrep, mypy
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, mypy
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
@@ -80,6 +80,30 @@ repos:
       - id: vitest
         name: vitest run (full suite, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # Playwright e2e smoke: fecha o loop aberto pela #107 (agent/CI travava
+      # no login do Clerk sem Testing Tokens) fazendo esses specs rodarem sem
+      # depender de alguem lembrar de digitar `npm run test:e2e` (issue #306).
+      # Nao ha CI bloqueante (sem branch protection no free tier — ver
+      # docs/CODE_QUALITY_TOOLING.md), entao pre-push e o unico lugar onde
+      # "testar antes do PR" pode ser automatico de verdade.
+      #
+      # Os specs (frontend/e2e/*.smoke.spec.ts) fazem test.skip() quando as
+      # env vars de .env.e2e (E2E_COORDINATOR_EMAIL etc.) nao estao definidas
+      # — entao checkouts/worktrees sem credenciais de teste (inclusive as
+      # worktrees efemeras que agentes criam) so pulam o hook, sem falhar. O
+      # custo real (subir o dev server via webServer do playwright.config.ts +
+      # autenticar 3 papeis no Clerk dev) so e pago onde .env.e2e existe. Para
+      # pular pontualmente mesmo com .env.e2e presente: `SKIP=e2e-smoke git
+      # push` (mesmo mecanismo ja usado pelos outros hooks pesados).
+      - id: e2e-smoke
+        name: playwright e2e smoke (pre-push)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false

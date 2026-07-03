@@ -138,6 +138,7 @@ cd frontend && npm run lint:types          # typescript-eslint type-checked (no-
 cd frontend && npm run react-doctor        # react-doctor (semântica React no arquivo)
 cd frontend && npm run fallow              # fallow (grafo: dead-code/dupes/complexidade)
 cd frontend && npm run scan                # React Scan (precisa de npm run dev rodando)
+cd frontend && npm run test:e2e            # Playwright smoke (auth Clerk); roda sozinho no pre-push
 cd backend  && uv run ruff check .         # lint + complexidade do Python (hook pina v0.15.19)
 ```
 
