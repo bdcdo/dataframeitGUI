@@ -7,7 +7,12 @@ import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
-import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
+import { canonicalPair } from "@/lib/equivalence";
+import {
+  buildEquivalenceMap,
+  type EquivalenceByDocField,
+  type EquivalenceRow,
+} from "@/lib/compare-queue";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
@@ -795,6 +800,262 @@ export async function submitFinalVerdicts(
 //
 // Bulk-otimizado: queries em batch + upserts/deletes em batch, independente do
 // numero de respostas.
+type SupabaseAdminClient = ReturnType<typeof createSupabaseAdmin>;
+
+export interface HumanResponseRow {
+  id: string;
+  document_id: string;
+  respondent_id: string;
+  answers: Record<string, unknown>;
+  answer_field_hashes: AnswerFieldHashes;
+}
+
+export interface LlmResponseRow {
+  id: string;
+  document_id: string;
+  answers: Record<string, unknown>;
+  answer_field_hashes: AnswerFieldHashes;
+}
+
+export interface ExistingFieldReviewRow {
+  id: string;
+  document_id: string;
+  field_name: string;
+  self_verdict: string | null;
+}
+
+export interface AssignmentRow {
+  project_id: string;
+  document_id: string;
+  user_id: string;
+  type: "auto_revisao";
+  status: "pendente";
+}
+
+export interface FieldReviewRow {
+  project_id: string;
+  document_id: string;
+  field_name: string;
+  human_response_id: string;
+  llm_response_id: string;
+  self_reviewer_id: string;
+}
+
+interface BacklogInputs {
+  fields: PydanticField[];
+  humanResponses: HumanResponseRow[];
+  llmResponses: LlmResponseRow[];
+  equivalences: EquivalenceRow[];
+  existingReviews: ExistingFieldReviewRow[];
+}
+
+// Batch de leitura inicial do backlog — lança em qualquer erro de query,
+// convertido em { success: false, error } pelo try/catch de
+// regenerateAutoReviewBacklog.
+async function fetchBacklogInputs(
+  admin: SupabaseAdminClient,
+  projectId: string,
+): Promise<BacklogInputs> {
+  const [
+    { data: project, error: projErr },
+    { data: humanResponses, error: humanErr },
+    { data: llmResponses, error: llmErr },
+    { data: equivalences, error: equivErr },
+    { data: existingReviews, error: existingErr },
+  ] = await Promise.all([
+    admin
+      .from("projects")
+      .select("pydantic_fields")
+      .eq("id", projectId)
+      .single(),
+    admin
+      .from("responses")
+      .select("id, document_id, respondent_id, answers, answer_field_hashes")
+      .eq("project_id", projectId)
+      .eq("respondent_type", "humano")
+      .eq("is_partial", false),
+    admin
+      .from("responses")
+      .select("id, document_id, answers, answer_field_hashes")
+      .eq("project_id", projectId)
+      .eq("respondent_type", "llm")
+      .eq("is_latest", true),
+    admin
+      .from("response_equivalences")
+      .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
+      .eq("project_id", projectId),
+    // Estado atual de field_reviews — usado no reconcile abaixo. Independe
+    // do conjunto recem-computado, entao buscamos junto do batch inicial.
+    admin
+      .from("field_reviews")
+      .select("id, document_id, field_name, self_verdict")
+      .eq("project_id", projectId),
+  ]);
+
+  if (projErr) throw new Error(projErr.message);
+  if (humanErr) throw new Error(humanErr.message);
+  if (llmErr) throw new Error(llmErr.message);
+  if (equivErr) throw new Error(equivErr.message);
+  if (existingErr) throw new Error(existingErr.message);
+
+  return {
+    fields: (project?.pydantic_fields as PydanticField[]) ?? [],
+    humanResponses: (humanResponses ?? []) as HumanResponseRow[],
+    llmResponses: (llmResponses ?? []) as LlmResponseRow[],
+    equivalences: (equivalences ?? []) as EquivalenceRow[],
+    existingReviews: (existingReviews ?? []) as ExistingFieldReviewRow[],
+  };
+}
+
+// Varre as respostas humanas completas e calcula quais divergem do LLM —
+// puro, sem I/O (opera só sobre dados já pré-carregados por fetchBacklogInputs).
+export function computeBacklogRows(
+  projectId: string,
+  humanResponses: HumanResponseRow[],
+  llmByDocId: Map<string, LlmResponseRow>,
+  equivByDoc: EquivalenceByDocField,
+  fields: PydanticField[],
+): { assignmentRows: AssignmentRow[]; fieldReviewRows: FieldReviewRow[]; regenerated: number } {
+  const assignmentRows: AssignmentRow[] = [];
+  const fieldReviewRows: FieldReviewRow[] = [];
+  let regenerated = 0;
+
+  for (const human of humanResponses) {
+    const llm = llmByDocId.get(human.document_id);
+    if (!llm) continue;
+
+    // #174: só arbitrar codificações completas. is_partial é sinal inútil de
+    // completude para o humano (quase sempre false), então o filtro de query
+    // não basta: aqui pulamos respostas humanas cuja codificação não está
+    // completa. Espelha o gate inline de saveResponse (allAnswered) via o
+    // mesmo helper. Sem isto, codificações em andamento eram varridas para a
+    // arbitragem e apareciam como "(vazio)" em diversos campos.
+    //
+    // Staleness-aware: passamos answer_field_hashes porque a avaliação é
+    // RETROATIVA (schema atual vs. codificações antigas). Sem isto, um campo
+    // obrigatório adicionado depois (ex.: `medicamento`) tornaria toda
+    // codificação anterior "incompleta", varrendo arbitragens legítimas.
+    if (!isCodingComplete(fields, human.answers ?? {}, human.answer_field_hashes)) {
+      continue;
+    }
+
+    const divergent = computeDivergentFieldNames(
+      fields,
+      [
+        {
+          id: human.id,
+          answers: human.answers ?? {},
+          answerFieldHashes: human.answer_field_hashes,
+        },
+        {
+          id: llm.id,
+          answers: llm.answers ?? {},
+          answerFieldHashes: llm.answer_field_hashes,
+        },
+      ],
+      equivByDoc.get(human.document_id),
+    );
+    if (divergent.length === 0) continue;
+
+    regenerated++;
+    assignmentRows.push({
+      project_id: projectId,
+      document_id: human.document_id,
+      user_id: human.respondent_id,
+      type: "auto_revisao",
+      status: "pendente",
+    });
+    for (const fieldName of divergent) {
+      fieldReviewRows.push({
+        project_id: projectId,
+        document_id: human.document_id,
+        field_name: fieldName,
+        human_response_id: human.id,
+        llm_response_id: llm.id,
+        self_reviewer_id: human.respondent_id,
+      });
+    }
+  }
+
+  return { assignmentRows, fieldReviewRows, regenerated };
+}
+
+// Compartilhado entre diffReviewsToRemove e removeOrphanAssignments: as duas
+// reconciliam uma coleção recém-computada contra uma existente via chave
+// composta document_id+algo. Puro.
+function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
+  return new Set(rows.map(keyFn));
+}
+
+// --- Reconcile: quais field_reviews não deveriam mais existir ---
+// O conjunto correto é o que acabou de ser computado em fieldReviewRows.
+// Linhas pendentes (self_verdict IS NULL) fora desse conjunto sao espurias
+// — tipicamente campos que ficaram "stale" apos edicao de schema — e podem
+// ser apagadas. Linhas ja resolvidas pelo pesquisador sao preservadas. Puro.
+export function diffReviewsToRemove(
+  existingReviews: ExistingFieldReviewRow[],
+  fieldReviewRows: FieldReviewRow[],
+): { idsToDelete: string[]; keptResolved: number } {
+  const correctKeys = compositeKeySet(
+    fieldReviewRows,
+    (r) => `${r.document_id}|${r.field_name}`,
+  );
+
+  const idsToDelete: string[] = [];
+  let keptResolved = 0;
+  for (const fr of existingReviews) {
+    if (correctKeys.has(`${fr.document_id}|${fr.field_name}`)) continue;
+    if (fr.self_verdict == null) {
+      idsToDelete.push(fr.id);
+    } else {
+      keptResolved++;
+    }
+  }
+  return { idsToDelete, keptResolved };
+}
+
+// Remove assignments auto_revisao orfaos: sem nenhum field_review restante
+// para o doc+pesquisador e ainda `pendente`. Assignments ja iniciados ou
+// concluidos sao preservados. As duas leituras refletem o estado pos-
+// delete/upsert e sao independentes entre si — buscadas em paralelo.
+async function removeOrphanAssignments(
+  admin: SupabaseAdminClient,
+  projectId: string,
+): Promise<void> {
+  const [
+    { data: remainingReviews, error: remainingErr },
+    { data: autoAssignments, error: autoErr },
+  ] = await Promise.all([
+    admin
+      .from("field_reviews")
+      .select("document_id, self_reviewer_id")
+      .eq("project_id", projectId),
+    admin
+      .from("assignments")
+      .select("id, document_id, user_id")
+      .eq("project_id", projectId)
+      .eq("type", "auto_revisao")
+      .eq("status", "pendente"),
+  ]);
+  if (remainingErr) throw new Error(remainingErr.message);
+  if (autoErr) throw new Error(autoErr.message);
+  const docUserWithReviews = compositeKeySet(
+    remainingReviews ?? [],
+    (r) => `${r.document_id}|${r.self_reviewer_id}`,
+  );
+
+  const orphanAssignmentIds = (autoAssignments ?? []).flatMap((a) =>
+    docUserWithReviews.has(`${a.document_id}|${a.user_id}`) ? [] : [a.id],
+  );
+  if (orphanAssignmentIds.length > 0) {
+    const { error } = await admin
+      .from("assignments")
+      .delete()
+      .in("id", orphanAssignmentIds);
+    if (error) throw new Error(error.message);
+  }
+}
+
 export async function regenerateAutoReviewBacklog(
   projectId: string,
 ): Promise<{
@@ -813,177 +1074,32 @@ export async function regenerateAutoReviewBacklog(
     if (!gate.ok) return { success: false, error: gate.error };
 
     const admin = createSupabaseAdmin();
+    const { fields, humanResponses, llmResponses, equivalences, existingReviews } =
+      await fetchBacklogInputs(admin, projectId);
 
-    const [
-      { data: project, error: projErr },
-      { data: humanResponses, error: humanErr },
-      { data: llmResponses, error: llmErr },
-      { data: equivalences, error: equivErr },
-      { data: existingReviews, error: existingErr },
-    ] = await Promise.all([
-      admin
-        .from("projects")
-        .select("pydantic_fields")
-        .eq("id", projectId)
-        .single(),
-      admin
-        .from("responses")
-        .select("id, document_id, respondent_id, answers, answer_field_hashes")
-        .eq("project_id", projectId)
-        .eq("respondent_type", "humano")
-        .eq("is_partial", false),
-      admin
-        .from("responses")
-        .select("id, document_id, answers, answer_field_hashes")
-        .eq("project_id", projectId)
-        .eq("respondent_type", "llm")
-        .eq("is_latest", true),
-      admin
-        .from("response_equivalences")
-        .select("document_id, field_name, response_a_id, response_b_id")
-        .eq("project_id", projectId),
-      // Estado atual de field_reviews — usado no reconcile abaixo. Independe
-      // do conjunto recem-computado, entao buscamos junto do batch inicial.
-      admin
-        .from("field_reviews")
-        .select("id, document_id, field_name, self_verdict")
-        .eq("project_id", projectId),
-    ]);
-
-    if (projErr) return { success: false, error: projErr.message };
-    if (humanErr) return { success: false, error: humanErr.message };
-    if (llmErr) return { success: false, error: llmErr.message };
-    if (equivErr) return { success: false, error: equivErr.message };
-    if (existingErr) return { success: false, error: existingErr.message };
-
-    const fields = (project?.pydantic_fields as PydanticField[]) ?? [];
     if (fields.length === 0) {
       return { success: true, scanned: 0, regenerated: 0 };
     }
 
     // Index LLM por document_id para lookup O(1) no loop in-memory
-    const llmByDocId = new Map(
-      (llmResponses ?? []).map((r) => [r.document_id as string, r]),
+    const llmByDocId = new Map(llmResponses.map((r) => [r.document_id, r]));
+    const equivByDoc = buildEquivalenceMap(equivalences);
+
+    const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
+      projectId,
+      humanResponses,
+      llmByDocId,
+      equivByDoc,
+      fields,
     );
 
-    // Index equivalencias por document_id → (field_name → pares). Respeitar
-    // equivalencias ja marcadas evita recriar divergencias resolvidas.
-    const equivByDoc = new Map<string, Map<string, EquivalencePair[]>>();
-    for (const eq of equivalences ?? []) {
-      const byField =
-        equivByDoc.get(eq.document_id) ?? new Map<string, EquivalencePair[]>();
-      const list = byField.get(eq.field_name) ?? [];
-      list.push({
-        response_a_id: eq.response_a_id,
-        response_b_id: eq.response_b_id,
-      });
-      byField.set(eq.field_name, list);
-      equivByDoc.set(eq.document_id, byField);
-    }
-
-    const assignmentRows: Array<{
-      project_id: string;
-      document_id: string;
-      user_id: string;
-      type: "auto_revisao";
-      status: "pendente";
-    }> = [];
-    const fieldReviewRows: Array<{
-      project_id: string;
-      document_id: string;
-      field_name: string;
-      human_response_id: string;
-      llm_response_id: string;
-      self_reviewer_id: string;
-    }> = [];
-
-    let regenerated = 0;
-    const queue = humanResponses ?? [];
-    for (const human of queue) {
-      const llm = llmByDocId.get(human.document_id);
-      if (!llm) continue;
-
-      // #174: só arbitrar codificações completas. is_partial é sinal inútil de
-      // completude para o humano (quase sempre false), então o filtro de query
-      // não basta: aqui pulamos respostas humanas cuja codificação não está
-      // completa. Espelha o gate inline de saveResponse (allAnswered) via o
-      // mesmo helper. Sem isto, codificações em andamento eram varridas para a
-      // arbitragem e apareciam como "(vazio)" em diversos campos.
-      //
-      // Staleness-aware: passamos answer_field_hashes porque a avaliação é
-      // RETROATIVA (schema atual vs. codificações antigas). Sem isto, um campo
-      // obrigatório adicionado depois (ex.: `medicamento`) tornaria toda
-      // codificação anterior "incompleta", varrendo arbitragens legítimas.
-      if (
-        !isCodingComplete(
-          fields,
-          (human.answers as Record<string, unknown>) ?? {},
-          human.answer_field_hashes as AnswerFieldHashes,
-        )
-      ) {
-        continue;
-      }
-
-      const divergent = computeDivergentFieldNames(
-        fields,
-        [
-          {
-            id: human.id,
-            answers: (human.answers as Record<string, unknown>) ?? {},
-            answerFieldHashes: human.answer_field_hashes as AnswerFieldHashes,
-          },
-          {
-            id: llm.id,
-            answers: (llm.answers as Record<string, unknown>) ?? {},
-            answerFieldHashes: llm.answer_field_hashes as AnswerFieldHashes,
-          },
-        ],
-        equivByDoc.get(human.document_id),
-      );
-      if (divergent.length === 0) continue;
-
-      regenerated++;
-      assignmentRows.push({
-        project_id: projectId,
-        document_id: human.document_id,
-        user_id: human.respondent_id,
-        type: "auto_revisao",
-        status: "pendente",
-      });
-      for (const fieldName of divergent) {
-        fieldReviewRows.push({
-          project_id: projectId,
-          document_id: human.document_id,
-          field_name: fieldName,
-          human_response_id: human.id,
-          llm_response_id: llm.id,
-          self_reviewer_id: human.respondent_id,
-        });
-      }
-    }
-
-    // --- Reconcile: remove field_reviews que nao deveriam mais existir ---
-    // O conjunto correto e o que acabou de ser computado em fieldReviewRows.
-    // Linhas pendentes (self_verdict IS NULL) fora desse conjunto sao espurias
-    // — tipicamente campos que ficaram "stale" apos edicao de schema — e podem
-    // ser apagadas. Linhas ja resolvidas pelo pesquisador sao preservadas.
-    const correctKeys = new Set(
-      fieldReviewRows.map((r) => `${r.document_id}|${r.field_name}`),
+    const { idsToDelete, keptResolved } = diffReviewsToRemove(
+      existingReviews,
+      fieldReviewRows,
     );
-
-    const idsToDelete: string[] = [];
-    let keptResolved = 0;
-    for (const fr of existingReviews ?? []) {
-      if (correctKeys.has(`${fr.document_id}|${fr.field_name}`)) continue;
-      if (fr.self_verdict == null) {
-        idsToDelete.push(fr.id);
-      } else {
-        keptResolved++;
-      }
-    }
 
     // Defesa em profundidade: `.is("self_verdict", null)` fecha a janela TOCTOU
-    // entre a leitura de `existingReviews` (Promise.all inicial) e este DELETE.
+    // entre a leitura de `existingReviews` (fetchBacklogInputs) e este DELETE.
     // Se um pesquisador resolver um campo nesse intervalo, o DB recusa a linha
     // mesmo que o id esteja em `idsToDelete`. `.select("id")` devolve as linhas
     // efetivamente apagadas, fonte da contagem `removed` retornada.
@@ -1020,49 +1136,13 @@ export async function regenerateAutoReviewBacklog(
       if (error) return { success: false, error: error.message };
     }
 
-    // Remove assignments auto_revisao orfaos: sem nenhum field_review restante
-    // para o doc+pesquisador e ainda `pendente`. Assignments ja iniciados ou
-    // concluidos sao preservados. As duas leituras refletem o estado pos-
-    // delete/upsert e sao independentes entre si — buscadas em paralelo.
-    const [
-      { data: remainingReviews, error: remainingErr },
-      { data: autoAssignments, error: autoErr },
-    ] = await Promise.all([
-      admin
-        .from("field_reviews")
-        .select("document_id, self_reviewer_id")
-        .eq("project_id", projectId),
-      admin
-        .from("assignments")
-        .select("id, document_id, user_id")
-        .eq("project_id", projectId)
-        .eq("type", "auto_revisao")
-        .eq("status", "pendente"),
-    ]);
-    if (remainingErr) return { success: false, error: remainingErr.message };
-    if (autoErr) return { success: false, error: autoErr.message };
-    const docUserWithReviews = new Set(
-      (remainingReviews ?? []).map(
-        (r) => `${r.document_id}|${r.self_reviewer_id}`,
-      ),
-    );
-
-    const orphanAssignmentIds = (autoAssignments ?? []).flatMap((a) =>
-      docUserWithReviews.has(`${a.document_id}|${a.user_id}`) ? [] : [a.id],
-    );
-    if (orphanAssignmentIds.length > 0) {
-      const { error } = await admin
-        .from("assignments")
-        .delete()
-        .in("id", orphanAssignmentIds);
-      if (error) return { success: false, error: error.message };
-    }
+    await removeOrphanAssignments(admin, projectId);
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return {
       success: true,
-      scanned: queue.length,
+      scanned: humanResponses.length,
       regenerated,
       removed: actuallyRemoved,
       keptResolved,
