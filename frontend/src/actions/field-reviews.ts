@@ -2,11 +2,9 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import {
-  getAuthUser,
-  getEffectiveMemberId,
-  isProjectCoordinator,
-} from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId, requireCoordinator } from "@/lib/auth";
+import { buildLoadMap } from "@/lib/load-balancing";
+import { errorMessage } from "@/lib/utils";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
@@ -401,10 +399,7 @@ async function assignArbitrator(
     .eq("type", "arbitragem")
     .neq("status", "concluido");
 
-  const loadByUser = new Map<string, number>();
-  for (const r of openCounts ?? []) {
-    loadByUser.set(r.user_id, (loadByUser.get(r.user_id) ?? 0) + 1);
-  }
+  const loadByUser = buildLoadMap(openCounts ?? []);
 
   // Carga minima entre candidatos
   let minLoad = Infinity;
@@ -847,16 +842,11 @@ export async function regenerateAutoReviewBacklog(
   keptResolved?: number;
 }> {
   try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const isCoord = await isProjectCoordinator(projectId, user);
-    if (!isCoord) {
-      return {
-        success: false,
-        error: "Apenas coordenadores podem regenerar o backlog.",
-      };
-    }
+    const gate = await requireCoordinator(
+      projectId,
+      "Apenas coordenadores podem regenerar o backlog.",
+    );
+    if (!gate.ok) return { success: false, error: gate.error };
 
     const admin = createSupabaseAdmin();
 
@@ -1135,22 +1125,12 @@ export async function retryPendingArbitrations(
   stillNoPool: number;
 }> {
   try {
-    const user = await getAuthUser();
-    if (!user)
-      return {
-        success: false,
-        error: "Não autenticado",
-        assigned: 0,
-        stillNoPool: 0,
-      };
-    const isCoord = await isProjectCoordinator(projectId, user);
-    if (!isCoord)
-      return {
-        success: false,
-        error: "Apenas coordenadores podem reprocessar arbitragens.",
-        assigned: 0,
-        stillNoPool: 0,
-      };
+    const gate = await requireCoordinator(
+      projectId,
+      "Apenas coordenadores podem reprocessar arbitragens.",
+    );
+    if (!gate.ok)
+      return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
     const admin = createSupabaseAdmin();
     const { data: pending, error } = await admin
@@ -1239,7 +1219,7 @@ export async function retryPendingArbitrations(
   } catch (e) {
     return {
       success: false,
-      error: e instanceof Error ? e.message : "Erro",
+      error: errorMessage(e) || "Erro",
       assigned: 0,
       stillNoPool: 0,
     };

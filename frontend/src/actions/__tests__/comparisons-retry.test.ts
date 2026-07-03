@@ -66,6 +66,10 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
   isProjectCoordinator: () => hoisted.isCoord(),
+  requireCoordinator: async (_projectId: string, deniedMessage: string) => {
+    if (!(await hoisted.isCoord())) return { ok: false, error: deniedMessage };
+    return { ok: true, user: { id: "userCoord" } };
+  },
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdmin: () => makeClient(),

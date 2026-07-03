@@ -1,11 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import {
-  getAuthUser,
-  getProjectAccessContext,
-  isProjectCoordinator,
-} from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext, requireCoordinator } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
@@ -609,13 +605,17 @@ export async function excludeDocuments(
   documentIds: string[],
   reason: string,
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  // Nota: o gate de coordenador roda antes da validação de `reason` (antes
+  // era auth → reason → coordenador). requireCoordinator empacota auth+
+  // coordenador como unidade atômica; checar permissão antes de validar
+  // input é ordem defensável e o caminho só é alcançável via chamada direta
+  // da action (a UI já esconde a ação de não-coordenadores).
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode excluir documentos",
+  );
+  if (!gate.ok) return { error: gate.error };
   if (!reason?.trim()) return { error: "Motivo da exclusão é obrigatório" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode excluir documentos" };
-  }
 
   const supabase = await createSupabaseServer();
 
@@ -624,7 +624,7 @@ export async function excludeDocuments(
     .update({
       excluded_at: new Date().toISOString(),
       excluded_reason: reason.trim(),
-      excluded_by: user.id,
+      excluded_by: gate.user.id,
     })
     .eq("project_id", projectId)
     .in("id", documentIds);
@@ -636,12 +636,11 @@ export async function restoreDocuments(
   projectId: string,
   documentIds: string[],
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode restaurar documentos" };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode restaurar documentos",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const supabase = await createSupabaseServer();
 
@@ -665,12 +664,11 @@ export async function hardDeleteDocuments(
   projectId: string,
   documentIds: string[],
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode apagar documentos permanentemente" };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode apagar documentos permanentemente",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const supabase = await createSupabaseServer();
 

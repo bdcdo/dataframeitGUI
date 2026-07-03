@@ -59,6 +59,10 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
   isProjectCoordinator: () => hoisted.isCoord(),
+  requireCoordinator: async (_projectId: string, deniedMessage: string) => {
+    if (!(await hoisted.isCoord())) return { ok: false, error: deniedMessage };
+    return { ok: true, user: { id: "userCoord" } };
+  },
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
@@ -343,5 +347,25 @@ describe("retryPendingArbitrations — batch de responses agrupado por doc", () 
     // veriam o conjunto union {userB, userC} e cairiam no fallback,
     // sorteando qualquer um — quebrando a isolação por documento.
     expect(arbitrators).toEqual(["userB", "userC"]);
+  });
+});
+
+// regenerateAutoReviewBacklog não tinha nenhum teste antes do #385 — passou a
+// reusar o mesmo requireCoordinator de retryPendingArbitrations (mesmo
+// arquivo), então o gap real a fechar é o guard.
+async function loadRegenerate() {
+  return (await import("@/actions/field-reviews")).regenerateAutoReviewBacklog;
+}
+
+describe("regenerateAutoReviewBacklog — guard", () => {
+  it("não-coordenador → erro, sem efeito colateral", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const regenerate = await loadRegenerate();
+
+    const r = await regenerate("p1");
+
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("coordenadores");
+    expect(writeCalls).toHaveLength(0);
   });
 });

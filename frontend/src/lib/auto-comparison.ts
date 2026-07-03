@@ -1,4 +1,5 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { buildLoadMap } from "@/lib/load-balancing";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import {
@@ -134,10 +135,7 @@ export async function assignComparisonReviewer(
       .eq("project_id", projectId)
       .eq("type", "comparacao")
       .neq("status", "concluido");
-    loadByUser = new Map<string, number>();
-    for (const r of openCounts ?? []) {
-      loadByUser.set(r.user_id, (loadByUser.get(r.user_id) ?? 0) + 1);
-    }
+    loadByUser = buildLoadMap(openCounts ?? []);
   }
 
   let minLoad = Infinity;

@@ -36,6 +36,15 @@ vi.mock("next/cache", () => ({
 vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
   isProjectCoordinator: () => hoisted.isCoord(),
+  // Reimplementa a lógica real de requireCoordinator sobre os mesmos mocks
+  // hoisted, para excludeDocuments/restoreDocuments/hardDeleteDocuments
+  // (que passaram a chamá-lo em vez de getAuthUser+isProjectCoordinator soltos).
+  requireCoordinator: async (_projectId: string, deniedMessage: string) => {
+    const user = await hoisted.getUser();
+    if (!user) return { ok: false, error: "Não autenticado" };
+    if (!(await hoisted.isCoord())) return { ok: false, error: deniedMessage };
+    return { ok: true, user };
+  },
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
@@ -407,21 +416,30 @@ describe("excludeDocuments", () => {
     expect(writeCalls).toHaveLength(0);
   });
 
-  it("motivo vazio → error, sem checar coordenador nem UPDATE", async () => {
+  it("motivo vazio (coordenador) → error de motivo, sem UPDATE", async () => {
     const excludeDocuments = await loadExclude();
 
     const r = await excludeDocuments("proj-1", ["doc1"], "   ");
 
     expect(r).toEqual({ error: "Motivo da exclusão é obrigatório" });
-    expect(hoisted.isCoord).not.toHaveBeenCalled();
     expect(writeCalls).toHaveLength(0);
   });
 
-  it("não-coordenador → error, sem UPDATE", async () => {
+  it("não-coordenador → error de coordenador, sem UPDATE", async () => {
     hoisted.isCoord.mockResolvedValueOnce(false);
     const excludeDocuments = await loadExclude();
 
     const r = await excludeDocuments("proj-1", ["doc1"], "motivo");
+
+    expect(r).toEqual({ error: "Apenas coordenador pode excluir documentos" });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("não-coordenador COM motivo vazio → error de coordenador (gate roda antes da validação de motivo)", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const excludeDocuments = await loadExclude();
+
+    const r = await excludeDocuments("proj-1", ["doc1"], "   ");
 
     expect(r).toEqual({ error: "Apenas coordenador pode excluir documentos" });
     expect(writeCalls).toHaveLength(0);
