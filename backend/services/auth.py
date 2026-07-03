@@ -274,7 +274,7 @@ def require_job_access(job_id: str, user: AuthUser) -> None:
         if not run.data:
             raise HTTPException(status_code=404, detail="Job não encontrado")
         row = cast(dict[str, Any], run.data[0])
-        project_id = cast(str, row["project_id"])
+        project_id = row["project_id"]
         is_member = _is_project_member(sb, project_id, user.id)
     except HTTPException:
         raise

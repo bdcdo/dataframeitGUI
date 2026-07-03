@@ -68,4 +68,4 @@ async def recover_fields(
         raise HTTPException(
             status_code=404, detail="Projeto não possui código Pydantic armazenado"
         )
-    return compile_pydantic(cast(str, code))
+    return compile_pydantic(code)
