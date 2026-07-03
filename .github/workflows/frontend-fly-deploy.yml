@@ -21,10 +21,27 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin a SHA (tag 1.6) por supply-chain safety — @master é floating ref.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      - run: flyctl deploy --remote-only -a gui-analise-sistematica-frontend
+      - name: flyctl deploy
         working-directory: frontend
         env:
           # Token app-scoped DESTE app (gui-analise-sistematica-frontend). O
           # FLY_API_TOKEN compartilhado com o backend tem escopo do app da API
           # e dava `unauthorized` aqui — tokens de deploy do Fly sao por app.
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
+        run: |
+          # Retry: o builder remoto (Depot, via --remote-only) as vezes encerra
+          # a conexao no meio do build (rpc "goaway"/"graceful_stop") por causa
+          # transitoria do lado do provedor, sem relacao com o codigo do app.
+          for attempt in 1 2 3; do
+            if flyctl deploy --remote-only -a gui-analise-sistematica-frontend; then
+              exit 0
+            fi
+            echo "flyctl deploy falhou (tentativa $attempt/3)"
+            if [ "$attempt" -lt 3 ]; then
+              sleep_time=$((attempt * 30))
+              echo "Tentando novamente em ${sleep_time}s..."
+              sleep "$sleep_time"
+            fi
+          done
+          echo "flyctl deploy falhou apos 3 tentativas"
+          exit 1
