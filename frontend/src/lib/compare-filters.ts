@@ -96,6 +96,21 @@ export function compareDefaultsForMode(
   return { ...DEFAULT_COMPARE_FILTERS, minHumans, version: COMPARE_DEFAULT_VERSION };
 }
 
+// Resolve se a fila de Comparação mostra TODOS os documentos do projeto
+// (showAll=true) ou só os atribuídos ao usuário (showAll=false). SEGURANÇA:
+// mesma fronteira fail-closed de assignedCompareDocIds — só coordenador pode
+// pedir "todos"; o param de URL sozinho nunca basta, e um não-coordenador
+// nunca alcança showAll=true mesmo editando a URL. Extraída como função pura
+// testável (em vez de inline em page.tsx) porque é a MESMA classe de
+// expressão booleana que já causou o bug original desta página: tratar
+// "é coordenador" como sinônimo de "vê tudo".
+export function resolveShowAllQueue(
+  isCoordinator: boolean,
+  queueParam: string | undefined,
+): boolean {
+  return isCoordinator && queueParam === "all";
+}
+
 // Conjunto de document_ids que um usuário pode VER na fila de comparação.
 // showAll → null (sem restrição: vê todos os documentos). false → apenas os
 // docs com assignment de comparação atribuído a ele (vale para coordenador

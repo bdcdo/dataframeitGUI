@@ -8,11 +8,13 @@ import { doc } from "./compare-test-helpers";
 
 const ids = (docs: CompareDocument[]) => docs.map((d) => d.id);
 
-function renderOrder(documents: CompareDocument[]) {
+type OrderHookProps = { documents: CompareDocument[]; resetKey?: boolean };
+
+function renderOrder(documents: CompareDocument[], resetKey = false) {
   return renderHook(
-    (props: { documents: CompareDocument[] }) =>
-      useStableDocOrder(props.documents),
-    { initialProps: { documents } },
+    (props: OrderHookProps) =>
+      useStableDocOrder(props.documents, props.resetKey ?? false),
+    { initialProps: { documents, resetKey } as OrderHookProps },
   );
 }
 
@@ -78,5 +80,30 @@ describe("useStableDocOrder — ordem estável da fila", () => {
 
     rerender({ documents: [B, A] });
     expect(ids(result.current)).toEqual(["B", "A"]);
+  });
+
+  // Regressão: alternar a fila de Comparação entre "Meus atribuídos" e
+  // "Todos" (mesmo componente, sem remount) não pode deixar os docs da fila
+  // pessoal presos no topo da fila "Todos", fora da ordem de prioridade do
+  // servidor — resetKey trata essa troca como composição totalmente nova.
+  it("resetKey muda: ordem nasce do zero, mesmo com docs sobrepostos", () => {
+    const [A, B, C] = [doc("A"), doc("B"), doc("C")];
+    const { result, rerender } = renderOrder([A, B, C], false);
+
+    // Servidor devolve os ~500 docs do projeto (aqui simulados por D, E),
+    // com A-C espalhados fora do topo — a troca de resetKey (mesma composição
+    // OU não) não deve preservar a ordem antiga.
+    rerender({ documents: [doc("D"), A, doc("E"), C, B], resetKey: true });
+
+    expect(ids(result.current)).toEqual(["D", "A", "E", "C", "B"]);
+  });
+
+  it("resetKey igual: comportamento normal de composição é preservado", () => {
+    const [A, B, C] = [doc("A"), doc("B"), doc("C")];
+    const { result, rerender } = renderOrder([A, B, C], true);
+
+    // Mesmo resetKey, servidor reordenou (revalidate) — não deve remexer.
+    rerender({ documents: [C, A, B], resetKey: true });
+    expect(ids(result.current)).toEqual(["A", "B", "C"]);
   });
 });

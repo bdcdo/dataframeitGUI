@@ -13,6 +13,11 @@ interface UseCompareNavigationParams {
   divergentFields: Record<string, string[]>;
   fields: PydanticField[];
   localReviews: ReviewsByDoc;
+  // Muda quando o usuário troca deliberadamente de ESCOPO de fila (ex.:
+  // "Meus atribuídos" ↔ "Todos" na Comparação), não quando um doc some por
+  // exclusão/filtro real. Usado só para silenciar o toast de "documento
+  // removido" nessa transição específica — ver o useEffect abaixo.
+  resetKey: boolean;
 }
 
 export interface CompareNavigation {
@@ -46,6 +51,7 @@ export function useCompareNavigation({
   divergentFields,
   fields,
   localReviews,
+  resetKey,
 }: UseCompareNavigationParams): CompareNavigation {
   // O pin nasce já apontando para o doc exibido: se ficasse `null` até a
   // primeira navegação explícita (bug #73, caso residual), o fallback
@@ -88,10 +94,21 @@ export function useCompareNavigation({
   // só aqui) guarda o último pin válido do render anterior: se ele deixou de
   // existir em `documents` e o pin corrente já é outro (a re-pinagem acima
   // aconteceu), houve a transição "estava lá → sumiu" — toast uma vez.
+  //
+  // Exceção: se a transição coincide com uma troca de `resetKey` (o usuário
+  // trocou de ESCOPO de fila, ex. "Meus atribuídos" → "Todos"), o doc pinado
+  // não foi excluído/filtrado de verdade — só saiu do recorte que o usuário
+  // estava olhando, e continua visível no outro escopo. `prevResetKeyRef`
+  // rastreia essa troca pra silenciar o toast só nesse ciclo específico; uma
+  // exclusão real dentro do MESMO escopo continua avisando normalmente.
   const lastValidPinnedRef = useRef<string | null>(null);
+  const prevResetKeyRef = useRef(resetKey);
   useEffect(() => {
     const prev = lastValidPinnedRef.current;
+    const scopeChanged = prevResetKeyRef.current !== resetKey;
+    prevResetKeyRef.current = resetKey;
     if (
+      !scopeChanged &&
       prev !== null &&
       prev !== pinnedDocId &&
       documents.length > 0 &&
@@ -100,7 +117,7 @@ export function useCompareNavigation({
       toast.info("Documento removido da fila — voltando ao topo.");
     }
     lastValidPinnedRef.current = pinnedDocId;
-  }, [pinnedDocId, documents]);
+  }, [pinnedDocId, documents, resetKey]);
 
   const currentDoc = documents[docIndex];
   const allDocDivergent = useMemo(

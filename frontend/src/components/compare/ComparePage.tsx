@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { FullscreenNav } from "../coding/FullscreenNav";
 import { CompareNav } from "./CompareNav";
-import { CompareQueueTabs } from "./CompareQueueTabs";
+import { CompareQueueTabs, type CompareQueueScope } from "./CompareQueueTabs";
 import { CompareDocList, type DocListEntry } from "./CompareDocList";
 import { CompareWorkspace } from "./CompareWorkspace";
 import { useCompareReviews } from "./useCompareReviews";
@@ -12,6 +12,7 @@ import { useStableDocOrder } from "./useStableDocOrder";
 import { useCompareFieldData } from "./useCompareFieldData";
 import { useCompareVerdicts } from "./useCompareVerdicts";
 import { useCompareKeyboard } from "./useCompareKeyboard";
+import { useUrlState } from "@/hooks/useUrlState";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
@@ -54,10 +55,15 @@ interface ComparePageProps {
   // "Meus atribuídos" / "Todos" — coordenador também compara documentos, por
   // isso o padrão é a fila pessoal dele, igual pesquisador.
   isCoordinator: boolean;
-  // Valor efetivo (resolvido no servidor) da aba de fila atual — usado só
-  // para escolher a mensagem do estado vazio; a aba em si é controlada pela
-  // própria CompareQueueTabs via URL.
+  // Valor efetivo (resolvido no servidor) da aba de fila atual — fonte única
+  // pro valor exibido em CompareQueueTabs (evita reler a URL no cliente) e
+  // pra mensagem do estado vazio.
   showingAllQueue: boolean;
+  // Se o coordenador TEM documentos atribuídos a ele para comparação (mesmo
+  // que nenhum tenha passado nos filtros de cobertura/divergência) — usado só
+  // pra diferenciar a mensagem de estado vazio: "sem nada atribuído" (trocar
+  // de aba resolve) vs. "atribuído mas filtrado" (trocar de aba não resolve).
+  hasAssignedDocs: boolean;
 }
 
 export function ComparePage({
@@ -82,13 +88,28 @@ export function ComparePage({
   canManageAnyPair,
   isCoordinator,
   showingAllQueue,
+  hasAssignedDocs,
 }: ComparePageProps) {
   // Ordem estável de montagem: o re-sort por pendências do servidor (a cada
   // veredito) não remexe a fila nem a sidebar — só mudança de composição
-  // (filtro/exclusão) altera a ordem. Ver useStableDocOrder.
-  const documents = useStableDocOrder(serverDocuments);
+  // (filtro/exclusão) altera a ordem. `showingAllQueue` como resetKey: ao
+  // trocar de ESCOPO de fila (Meus↔Todos), a ordem nasce do zero em vez de
+  // manter os docs da fila pessoal presos no topo. Ver useStableDocOrder.
+  const documents = useStableDocOrder(serverDocuments, showingAllQueue);
 
   const { localReviews, recordReview } = useCompareReviews(existingReviews);
+
+  // Única leitura/escrita da URL pro toggle de fila — CompareQueueTabs é só
+  // JSX controlado (mesmo padrão de CodingHeader). O valor exibido vem
+  // direto de `showingAllQueue` (já resolvido no servidor, fail-closed) em
+  // vez de re-derivar `queue === "all"` no cliente.
+  const { set: setUrlState } = useUrlState();
+  const queueValue: CompareQueueScope = showingAllQueue ? "all" : "mine";
+  const handleQueueChange = useCallback(
+    (value: CompareQueueScope) =>
+      setUrlState({ queue: value === "all" ? "all" : null }),
+    [setUrlState],
+  );
 
   const {
     docIndex,
@@ -109,7 +130,13 @@ export function ComparePage({
     handleNextDoc,
     goNextField,
     goPrevField,
-  } = useCompareNavigation({ documents, divergentFields, fields, localReviews });
+  } = useCompareNavigation({
+    documents,
+    divergentFields,
+    fields,
+    localReviews,
+    resetKey: showingAllQueue,
+  });
 
   const {
     fieldResponses,
@@ -219,14 +246,34 @@ export function ComparePage({
     };
   });
 
+  // Bar do toggle de fila, compartilhada pelos dois branches de return
+  // abaixo (estado vazio e visão completa) — só coordenador vê.
+  const queueTabsBar = isCoordinator ? (
+    <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+      <CompareQueueTabs value={queueValue} onValueChange={handleQueueChange} />
+    </div>
+  ) : null;
+
   if (!currentDoc || docFields.length === 0) {
+    // documents.length===0 na aba "Meus" pode ter duas causas bem diferentes:
+    // (a) o coordenador não tem NENHUM documento atribuído — trocar pra
+    // "Todos" resolve; (b) ele TEM documentos atribuídos, mas nenhum passou
+    // nos filtros de cobertura/divergência (minHumans/minTotal/versão/etc.)
+    // — trocar de aba não muda nada, o filtro de cobertura é ortogonal ao
+    // de assignment. `hasAssignedDocs` (calculado em page.tsx a partir do
+    // mesmo Set que já filtra a fila) diferencia os dois casos.
+    const emptyMessage =
+      documents.length === 0
+        ? isCoordinator && !showingAllQueue
+          ? hasAssignedDocs
+            ? "Seus documentos atribuídos não atendem aos filtros atuais (respostas mínimas, versão, etc.). Ajuste os filtros ou use a aba \"Todos\" para ver a fila completa."
+            : 'Você não tem documentos atribuídos para comparação. Use a aba "Todos" acima para ver a fila completa do projeto.'
+          : "Nenhum documento na fila com os filtros atuais."
+        : "Nenhuma divergência neste documento.";
+
     return (
       <div className="flex h-[calc(100vh-96px)] flex-col">
-        {isCoordinator && (
-          <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
-            <CompareQueueTabs />
-          </div>
-        )}
+        {queueTabsBar}
         <div className="flex flex-1 w-full">
           <CompareDocList
             docs={docListEntries}
@@ -236,11 +283,7 @@ export function ComparePage({
             onToggle={toggleList}
           />
           <div className="flex flex-1 items-center justify-center text-muted-foreground">
-            {documents.length === 0
-              ? isCoordinator && !showingAllQueue
-                ? 'Você não tem documentos atribuídos para comparação. Use a aba "Todos" acima para ver a fila completa do projeto.'
-                : "Nenhum documento na fila com os filtros atuais."
-              : "Nenhuma divergência neste documento."}
+            {emptyMessage}
           </div>
         </div>
       </div>
@@ -264,11 +307,7 @@ export function ComparePage({
           : "flex h-[calc(100vh-96px)] flex-col"
       }
     >
-      {!isFullscreen && isCoordinator && (
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
-          <CompareQueueTabs />
-        </div>
-      )}
+      {!isFullscreen && queueTabsBar}
 
       {isFullscreen ? (
         <FullscreenNav

@@ -8,6 +8,7 @@ import {
   readCompareFilters,
   compareDefaultsForMode,
   assignedCompareDocIds,
+  resolveShowAllQueue,
 } from "@/lib/compare-filters";
 import {
   deriveProjectVersionContext,
@@ -110,8 +111,9 @@ export default async function ComparePageRoute({
   // padrão é a fila pessoal dele, igual pesquisador. "Todos" é uma escolha
   // explícita via aba/param `queue=all`, só alcançável por coordenador (um
   // não-coordenador nunca chega a showAllQueue=true, mesmo editando a URL).
-  const queueParam = sp.queue;
-  const showAllQueue = isCoordinator && queueParam === "all";
+  // resolveShowAllQueue é testada isoladamente (ver compare-filters.test.ts) —
+  // é a mesma classe de expressão que já causou o bug original desta página.
+  const showAllQueue = resolveShowAllQueue(isCoordinator, sp.queue);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 
@@ -151,6 +153,13 @@ export default async function ComparePageRoute({
 
   // Compare-type assignments filter (ver assignedCompareDocIds).
   const compareAssignedDocIds = assignedCompareDocIds(showAllQueue, allAssignments, user.id);
+
+  // Distingue "sem nada atribuído" de "tem atribuído, mas foi filtrado por
+  // cobertura/divergência" — usado só pela mensagem de estado vazio em
+  // ComparePage (trocar de aba não resolve o segundo caso). Só é não-null
+  // quando showAllQueue=false (aba "Meus"), que é justamente quando a
+  // mensagem é exibida.
+  const hasAssignedDocs = (compareAssignedDocIds?.size ?? 0) > 0;
 
   // Coding-type assignments map per doc (denominator for % atribuídos)
   const codingAssignedByDoc = buildCodingAssignedByDoc(allAssignments);
@@ -265,6 +274,7 @@ export default async function ComparePageRoute({
         canManageAnyPair={isCoordinator}
         isCoordinator={isCoordinator}
         showingAllQueue={showAllQueue}
+        hasAssignedDocs={hasAssignedDocs}
       />
     </Suspense>
   );
