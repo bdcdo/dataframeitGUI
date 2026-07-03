@@ -11,16 +11,18 @@ const HINTS_DISMISSED_KEY = "autoReview:hintsDismissed";
 // colapsável, persistido em localStorage) e o status/botão de envio.
 export function AutoReviewFooter({
   readOnly,
-  submitState,
+  readyCount,
+  incompleteCount,
+  submitting,
+  canSubmit,
+  onSubmit,
 }: {
   readOnly: boolean;
-  submitState: {
-    readyCount: number;
-    incompleteCount: number;
-    submitting: boolean;
-    canSubmit: boolean;
-    onSubmit: () => void;
-  };
+  readyCount: number;
+  incompleteCount: number;
+  submitting: boolean;
+  canSubmit: boolean;
+  onSubmit: () => void;
 }) {
   // Hints começam abertos até o usuário fechar uma vez (persistido em localStorage).
   // Lazy initializer roda só uma vez no mount, lê do localStorage sem flicker.
@@ -38,9 +40,6 @@ export function AutoReviewFooter({
       return next;
     });
   }
-
-  const { readyCount, incompleteCount, submitting, canSubmit, onSubmit } =
-    submitState;
 
   return (
     <div className="border-t px-4 py-2">

@@ -6,8 +6,7 @@ import {
 } from "@/actions/documents";
 import type { DocumentSummary } from "@/components/documents/DocumentList";
 import { toast } from "sonner";
-
-type DocSummary = DocumentSummary & { created_at?: string };
+import { toggleInSet } from "@/lib/utils";
 
 export type ExcludeTarget = { ids: string[]; totalResponses: number };
 export type RestoreTarget = { ids: string[] };
@@ -19,7 +18,7 @@ export type HardDeleteTarget = { ids: string[] };
 // limiar de useState do react-doctor.
 export function useDocumentActions(
   projectId: string | undefined,
-  documents: DocSummary[],
+  documents: DocumentSummary[],
 ) {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -31,12 +30,7 @@ export function useDocumentActions(
   const [isPending, startTransition] = useTransition();
 
   function toggleSelect(docId: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(docId)) next.delete(docId);
-      else next.add(docId);
-      return next;
-    });
+    setSelectedIds((prev) => toggleInSet(prev, docId));
   }
 
   function toggleAll(checked: boolean) {

@@ -183,13 +183,11 @@ export function AutoReviewFieldPanel({
 
       <AutoReviewFooter
         readOnly={readOnly}
-        submitState={{
-          readyCount,
-          incompleteCount,
-          submitting,
-          canSubmit,
-          onSubmit,
-        }}
+        readyCount={readyCount}
+        incompleteCount={incompleteCount}
+        submitting={submitting}
+        canSubmit={canSubmit}
+        onSubmit={onSubmit}
       />
     </div>
   );
