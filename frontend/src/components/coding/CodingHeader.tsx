@@ -25,7 +25,7 @@ import { RunLlmButton } from "@/components/shared/RunLlmButton";
 import { CURRENT_FILTER_VALUE, isCurrentFilter } from "@/lib/rounds";
 import type { RoundFilterData, CodingSortMode } from "./CodingPage";
 
-type DocSection =
+export type DocSection =
   | {
       variant: "assigned";
       title: string;
