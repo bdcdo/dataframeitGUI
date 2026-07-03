@@ -15,6 +15,8 @@ invisíveis na UI de coding).
 
 from typing import Any
 
+from services.pydantic_compiler import CONDITION_OPERATORS, extract_json_schema_extra
+
 
 def _get_nested(data: dict, path: str) -> Any:
     if not path:
@@ -86,14 +88,18 @@ def _eval_exists(value: Any, condition: dict) -> bool:
 
 # Ordem importa: replica a prioridade do antigo if/elif quando mais de uma
 # chave de operador aparece no mesmo dict de condicao (nao deveria acontecer,
-# mas a primeira chave presente ganha, igual antes).
-_CONDITION_HANDLERS = {
+# mas a primeira chave presente ganha, igual antes). A ordem vem de
+# CONDITION_OPERATORS (pydantic_compiler.py) para não manter uma segunda
+# lista independente do mesmo vocabulário de operadores (achado da revisão
+# do PR #379).
+_HANDLER_BY_OPERATOR = {
     "equals": _eval_equals,
     "not_equals": _eval_not_equals,
     "in": _eval_in,
     "not_in": _eval_not_in,
     "exists": _eval_exists,
 }
+_CONDITION_HANDLERS = {op: _HANDLER_BY_OPERATOR[op] for op in CONDITION_OPERATORS}
 
 
 def evaluate_condition(condition: Any, field_data: dict, field_name: str = "") -> bool:
@@ -124,9 +130,7 @@ def extract_field_conditions(model_class) -> dict:
     """
     result: dict = {}
     for field_name, field_info in model_class.model_fields.items():
-        extra = field_info.json_schema_extra
-        if callable(extra) or not isinstance(extra, dict):
-            continue
+        extra = extract_json_schema_extra(field_info)
         cond = extra.get("condition")
         if isinstance(cond, dict):
             result[field_name] = cond

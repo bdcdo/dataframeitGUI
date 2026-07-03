@@ -51,8 +51,14 @@ def compile_pydantic(code: str) -> dict:
     }
 
 
-def _extract_extra(field_info) -> dict:
-    """Normaliza `json_schema_extra` para sempre ser um dict (nunca callable)."""
+def extract_json_schema_extra(field_info) -> dict:
+    """Normaliza `json_schema_extra` para sempre ser um dict (nunca callable).
+
+    Público de propósito: compartilhado com `condition_evaluator.py` e
+    `llm_runner.py`, que faziam a mesma checagem `callable`/`isinstance(dict)`
+    de forma independente (achado da revisão do PR #379) — este é o único
+    lugar que deve fazer essa normalização.
+    """
     extra = field_info.json_schema_extra or {}
     if callable(extra) or not isinstance(extra, dict):
         return {}
@@ -153,10 +159,12 @@ def _assemble_field_dict(
 def _build_field_dict(field_name: str, field_info) -> dict:
     """Reconstitui o dict de metadata de `PydanticField` para um campo compilado."""
     annotation = field_info.annotation
-    field_type, options = _parse_annotation(annotation)
-    extra = _extract_extra(field_info)
+    parsed_type, parsed_options = _parse_annotation(annotation)
+    extra = extract_json_schema_extra(field_info)
 
-    field_type, options = _resolve_field_type_and_options(field_type, options, extra)
+    field_type, options = _resolve_field_type_and_options(
+        parsed_type, parsed_options, extra
+    )
     description = field_info.description or field_name
     help_text = _normalize_optional_str(extra.get("help_text"))
     description = _strip_description_suffixes(
@@ -231,7 +239,14 @@ def _field_hash(
     return hashlib.sha256(content.encode()).hexdigest()[:12]
 
 
-_CONDITION_OPS = ("equals", "not_equals", "in", "not_in", "exists")
+CONDITION_OPERATORS = ("equals", "not_equals", "in", "not_in", "exists")
+"""Lista canônica de operadores de condição suportados.
+
+Público de propósito: é a única fonte de verdade para o vocabulário de
+operadores — `condition_evaluator._CONDITION_HANDLERS` deriva sua ordem de
+dispatch daqui em vez de manter uma segunda lista independente (achado da
+revisão do PR #379).
+"""
 
 
 def _sanitize_condition(raw: object) -> dict | None:
@@ -245,7 +260,7 @@ def _sanitize_condition(raw: object) -> dict | None:
     field = raw.get("field")
     if not isinstance(field, str) or not field:
         return None
-    for op in _CONDITION_OPS:
+    for op in CONDITION_OPERATORS:
         if op in raw:
             value = raw[op]
             if op in ("in", "not_in"):
@@ -403,10 +418,13 @@ def _reject_dangerous(tree: ast.AST) -> None:  # noqa: C901
     """Varre a árvore inteira e rejeita qualquer construção fora da allowlist.
 
     Isenta de C901 (14 > 10) de propósito: é o vetor de segurança contra
-    execução arbitrária no schema editável pelo usuário — cada `if` é uma
-    checagem de allowlist independente e extrair sub-funções fragmentaria a
-    varredura de um único `ast.walk`, sem reduzir o risco real. Refactor
-    dedicado (não de tooling) exigiria revisão de segurança à parte. Ver #376.
+    execução arbitrária no schema editável pelo usuário. Cada `if` é uma
+    checagem de allowlist independente dentro do mesmo `ast.walk` — extrair
+    sub-funções não fragmentaria o walk (cada checagem viraria uma função
+    chamada por iteração), mas a isenção se mantém porque decompor um trecho
+    de segurança fora de uma revisão dedicada arrisca introduzir uma brecha
+    sem reduzir o risco real. Refactor dedicado (não de tooling) exigiria
+    revisão de segurança à parte. Ver #376.
     """
     for node in ast.walk(tree):
         if isinstance(node, _FORBIDDEN_NODES):
@@ -539,9 +557,14 @@ def _resolve_type(node: ast.AST, built: dict, depth: int = 0):  # noqa: C901
     barrada em ``_reject_dangerous``) não são emitidos pelo gerador e viram
     ``SchemaError`` limpo.
 
-    Isenta de C901 (12 > 10) de propósito, mesmo motivo de `_reject_dangerous`:
-    é dispatch por tipo de nó AST na allowlist do schema, não lógica de
-    negócio acidental. Ver #376.
+    Isenta de C901 (12 > 10) de propósito. Diferente de `_reject_dangerous`,
+    aqui não há um único `ast.walk` cuja fragmentação seja o argumento
+    central: é dispatch recursivo por tipo de nó AST, e alguns ramos (ex.:
+    Literal/list/Optional em `ast.Subscript`) poderiam em tese virar funções
+    auxiliares sem quebrar a recursão. A isenção existe pela mesma cautela de
+    `_reject_dangerous` — é a allowlist de tipos aceitos no schema editável
+    pelo usuário, e decompor esse trecho fora de uma revisão de segurança
+    dedicada arrisca introduzir uma brecha sem reduzir o risco real. Ver #376.
     """
     if depth > _MAX_TYPE_DEPTH:
         raise SchemaError("Anotação de tipo aninhada demais")
