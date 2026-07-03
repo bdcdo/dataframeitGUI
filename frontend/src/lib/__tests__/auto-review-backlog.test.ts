@@ -6,7 +6,7 @@ import {
   type LlmResponseRow,
   type ExistingFieldReviewRow,
   type FieldReviewRow,
-} from "@/actions/field-reviews";
+} from "@/lib/auto-review-backlog";
 import type { PydanticField } from "@/lib/types";
 
 // Testes das funções puras extraídas de regenerateAutoReviewBacklog (issue

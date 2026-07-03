@@ -6,7 +6,7 @@ import {
   type LogEntryRow,
   type EnrichedEntry,
   type ResponseRow,
-} from "@/actions/schema";
+} from "@/lib/schema-backfill";
 import type { PydanticField } from "@/lib/types";
 
 // Testes das funções puras extraídas de runBackfill (issue #392) — sem
