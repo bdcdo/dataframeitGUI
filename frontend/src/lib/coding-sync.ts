@@ -1,12 +1,10 @@
 import "server-only";
 
-import type { createSupabaseServer } from "@/lib/supabase/server";
+import type { SupabaseServerClient } from "@/lib/supabase/server";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { createAutoReviewIfDiverges } from "@/lib/auto-review";
 import { createAutoComparisonIfDiverges } from "@/lib/auto-comparison";
 import type { PydanticField } from "@/lib/types";
-
-type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
 
 async function runCodingAutomation(
   mode: string | null | undefined,

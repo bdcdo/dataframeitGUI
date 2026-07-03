@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { dropHiddenConditionals } from "@/lib/conditional";
@@ -11,8 +11,6 @@ export interface SaveResponseOpts {
   notes?: string;
   isAutoSave?: boolean;
 }
-
-type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
 
 // Fetch profile, existing response, and project config in parallel.
 // O lookup de existing filtra is_latest: após uma unificação de membros o
@@ -65,11 +63,19 @@ function buildAnswerFieldHashes(fields: PydanticField[]): Record<string, string>
   return hashes;
 }
 
+interface SaveResponseProjectFields {
+  pydantic_hash: string | null;
+  schema_version_major: number | null;
+  schema_version_minor: number | null;
+  schema_version_patch: number | null;
+  round_strategy: string | null;
+  current_round_id: string | null;
+}
+
 interface BuildResponsePayloadParams {
   fields: PydanticField[];
-  answers: Record<string, unknown>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- shape vem do select() sem generics do supabase-js, igual ao resto do arquivo
-  project: any;
+  sanitizedAnswers: Record<string, unknown>;
+  project: SaveResponseProjectFields | null | undefined;
   existing: { is_partial: boolean | null } | null | undefined;
   isAutoSave: boolean;
   notes?: string;
@@ -77,19 +83,13 @@ interface BuildResponsePayloadParams {
 
 function buildResponsePayload({
   fields,
-  answers,
+  sanitizedAnswers,
   project,
   existing,
   isAutoSave,
   notes,
 }: BuildResponsePayloadParams) {
   const justifications = notes ? { _notes: notes } : null;
-
-  // Drop values of fields whose visibility condition is not satisfied —
-  // prevents orphaned answers from earlier trigger values ending up in the
-  // persisted payload. Ponto-fixo compartilhado com o clean de leitura
-  // (getDocumentForCoding / code/page.tsx) — ver #252.
-  const sanitizedAnswers = dropHiddenConditionals(fields, answers);
 
   const roundIdToPersist =
     project?.round_strategy === "manual" ? (project?.current_round_id ?? null) : null;
@@ -119,7 +119,7 @@ function buildResponsePayload({
     updated_at: new Date().toISOString(),
   };
 
-  return { payload, sanitizedAnswers };
+  return payload;
 }
 
 interface UpsertResponseRowParams {
@@ -215,9 +215,15 @@ export async function saveResponse(
 
     const fields = (project?.pydantic_fields as PydanticField[]) || [];
 
-    const { payload, sanitizedAnswers } = buildResponsePayload({
+    // Drop values of fields whose visibility condition is not satisfied —
+    // prevents orphaned answers from earlier trigger values ending up in the
+    // persisted payload. Ponto-fixo compartilhado com o clean de leitura
+    // (getDocumentForCoding / code/page.tsx) — ver #252.
+    const sanitizedAnswers = dropHiddenConditionals(fields, answers);
+
+    const payload = buildResponsePayload({
       fields,
-      answers,
+      sanitizedAnswers,
       project,
       existing,
       isAutoSave,
