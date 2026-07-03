@@ -4,6 +4,7 @@ Regressão do B1 (mistura de versões na Comparar): o payload era inline e
 gravava pydantic_hash mas NÃO a versão semver, deixando toda resposta LLM com
 schema_version NULL e cegando o filtro de versão da aba Comparar.
 """
+
 from services.llm_runner import _build_llm_response_row
 
 

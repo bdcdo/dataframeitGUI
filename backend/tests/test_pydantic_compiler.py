@@ -1,4 +1,5 @@
 """Round-trip and robustness tests for services.pydantic_compiler."""
+
 from pydantic import BaseModel, Field
 
 from services.pydantic_compiler import compile_pydantic, find_root_model
@@ -14,12 +15,12 @@ def _field(result: dict, name: str) -> dict:
 
 
 def test_single_literal_field_round_trip():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
     topic: Literal["a", "b"] = Field(description="Topic of the decision")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
     f = _field(result, "topic")
@@ -31,12 +32,12 @@ class Analysis(BaseModel):
 
 
 def test_multi_literal_field_round_trip():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
     tags: list[Literal["x", "y", "z"]] = Field(description="Tags")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
     f = _field(result, "tags")
@@ -45,7 +46,7 @@ class Analysis(BaseModel):
 
 
 def test_help_text_is_stripped_from_description():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -53,7 +54,7 @@ class Analysis(BaseModel):
         description="Outcome. Instrucoes: Considere apenas o dispositivo",
         json_schema_extra={"help_text": "Considere apenas o dispositivo"},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "verdict")
     assert f["description"] == "Outcome"
@@ -61,7 +62,7 @@ class Analysis(BaseModel):
 
 
 def test_help_text_whitespace_is_ignored():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -69,7 +70,7 @@ class Analysis(BaseModel):
         description="Outcome",
         json_schema_extra={"help_text": "   "},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "verdict")
     assert f["description"] == "Outcome"
@@ -77,7 +78,7 @@ class Analysis(BaseModel):
 
 
 def test_subfield_rule_defaults_to_all():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class _doc_fields(BaseModel):
@@ -86,7 +87,7 @@ class _doc_fields(BaseModel):
 
 class Analysis(BaseModel):
     doc: _doc_fields = Field(description="Document breakdown")
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "doc")
     assert f["type"] == "text"
@@ -98,7 +99,7 @@ class Analysis(BaseModel):
 
 
 def test_subfield_rule_at_least_one_preserved():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class _doc_fields(BaseModel):
@@ -110,14 +111,14 @@ class Analysis(BaseModel):
         description="Doc",
         json_schema_extra={"subfield_rule": "at_least_one"},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "doc")
     assert f["subfield_rule"] == "at_least_one"
 
 
 def test_allow_other_preserved_for_single():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -125,14 +126,14 @@ class Analysis(BaseModel):
         description="Court",
         json_schema_extra={"allowOther": True},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "court")
     assert f.get("allow_other") is True
 
 
 def test_date_field_type_override():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -140,14 +141,14 @@ class Analysis(BaseModel):
         description="Judgment date. Formato: DD/MM/AAAA (use XX para partes desconhecidas)",
         json_schema_extra={"field_type": "date"},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "judged_on")
     assert f["type"] == "date"
 
 
 def test_target_preserved():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -155,7 +156,7 @@ class Analysis(BaseModel):
         description="Ementa",
         json_schema_extra={"target": "ementa"},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "headline")
     assert f["target"] == "ementa"
@@ -164,13 +165,13 @@ class Analysis(BaseModel):
 def test_field_hash_stable_across_whitespace_help_text_and_none():
     """Hash should stay the same whether help_text is absent or empty/whitespace,
     because in both cases the effective description is identical."""
-    plain = '''from pydantic import BaseModel, Field
+    plain = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
     x: Literal["a"] = Field(description="Pure description")
-'''
-    whitespace = '''from pydantic import BaseModel, Field
+"""
+    whitespace = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
@@ -178,7 +179,7 @@ class Analysis(BaseModel):
         description="Pure description",
         json_schema_extra={"help_text": "   "},
     )
-'''
+"""
     h1 = _field(compile_pydantic(plain), "x")["hash"]
     h2 = _field(compile_pydantic(whitespace), "x")["hash"]
     assert h1 == h2
@@ -187,7 +188,7 @@ class Analysis(BaseModel):
 def test_field_hash_matches_description_without_suffix():
     """When help_text is emitted structurally, description returned is pure,
     and hash is computed over the pure description (not the ". Instrucoes: ..." form)."""
-    with_help = '''from pydantic import BaseModel, Field
+    with_help = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
@@ -195,13 +196,13 @@ class Analysis(BaseModel):
         description="Pure. Instrucoes: extra",
         json_schema_extra={"help_text": "extra"},
     )
-'''
-    without_help = '''from pydantic import BaseModel, Field
+"""
+    without_help = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
     x: Literal["a"] = Field(description="Pure")
-'''
+"""
     h1 = _field(compile_pydantic(with_help), "x")["hash"]
     h2 = _field(compile_pydantic(without_help), "x")["hash"]
     assert h1 == h2
@@ -283,7 +284,7 @@ def test_no_basemodel_returns_error():
 
 
 def test_condition_equals_round_trips():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -292,7 +293,7 @@ class Analysis(BaseModel):
         description="Provimento foi parcial?",
         json_schema_extra={"condition": {"field": "houve_provimento", "equals": "sim"}},
     )
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
     f = _field(result, "provimento_parcial")
@@ -300,7 +301,7 @@ class Analysis(BaseModel):
 
 
 def test_condition_in_list_round_trips():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -309,14 +310,14 @@ class Analysis(BaseModel):
         description="Follow-up",
         json_schema_extra={"condition": {"field": "tipo", "in": ["a", "b"]}},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "follow")
     assert f["condition"] == {"field": "tipo", "in": ["a", "b"]}
 
 
 def test_condition_exists_round_trips():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -325,7 +326,7 @@ class Analysis(BaseModel):
         description="extra",
         json_schema_extra={"condition": {"field": "note", "exists": True}},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "extra")
     assert f["condition"] == {"field": "note", "exists": True}
@@ -334,13 +335,13 @@ class Analysis(BaseModel):
 def test_condition_hash_exclusion():
     """Adding or changing a condition must not change the field hash —
     it would invalidate existing responses whose value is still valid."""
-    without = '''from pydantic import BaseModel, Field
+    without = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
     x: Literal["a"] = Field(description="desc")
-'''
-    with_cond = '''from pydantic import BaseModel, Field
+"""
+    with_cond = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -348,14 +349,14 @@ class Analysis(BaseModel):
         description="desc",
         json_schema_extra={"condition": {"field": "other", "equals": "a"}},
     )
-'''
+"""
     h1 = _field(compile_pydantic(without), "x")["hash"]
     h2 = _field(compile_pydantic(with_cond), "x")["hash"]
     assert h1 == h2
 
 
 def test_malformed_condition_is_dropped():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class Analysis(BaseModel):
@@ -363,7 +364,7 @@ class Analysis(BaseModel):
         description="desc",
         json_schema_extra={"condition": {"wrong": "shape"}},
     )
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "x")
     assert "condition" not in f
@@ -391,7 +392,7 @@ def test_target_none_round_trips():
     """target="none" is preserved by the compiler (used to hide fields from
     both humans and LLM while keeping them in pydantic_code as source of
     truth)."""
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
@@ -400,7 +401,7 @@ class Analysis(BaseModel):
         json_schema_extra={"target": "none"},
     )
     visible: Literal["x"] = Field(description="Visible")
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
     hidden = _field(result, "hidden_field")
@@ -412,7 +413,7 @@ class Analysis(BaseModel):
 def test_justification_prompt_round_trips():
     """justification_prompt (texto-base do prompt da justificativa do LLM, #88)
     é lido de volta de json_schema_extra."""
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
@@ -420,7 +421,7 @@ class Analysis(BaseModel):
         description="Houve provimento?",
         json_schema_extra={"justification_prompt": "Cite o dispositivo do acórdão."},
     )
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
     f = _field(result, "verdict")
@@ -428,12 +429,12 @@ class Analysis(BaseModel):
 
 
 def test_justification_prompt_absent_when_not_set():
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
     verdict: Literal["sim", "nao"] = Field(description="Houve provimento?")
-'''
+"""
     result = compile_pydantic(code)
     f = _field(result, "verdict")
     assert "justification_prompt" not in f
@@ -442,7 +443,7 @@ class Analysis(BaseModel):
 def test_date_field_with_sentinel_options_round_trips():
     """Date fields carry sentinel options (ex: 'Não identificável') via
     json_schema_extra because the annotation itself is `str`, not Literal."""
-    code = '''from pydantic import BaseModel, Field
+    code = """from pydantic import BaseModel, Field
 from typing import Literal
 
 class Analysis(BaseModel):
@@ -453,7 +454,7 @@ class Analysis(BaseModel):
             "options": ["Não identificável"],
         },
     )
-'''
+"""
     result = compile_pydantic(code)
     assert result["valid"], result["errors"]
     f = _field(result, "birth_date")
@@ -468,14 +469,14 @@ def test_date_description_strips_generated_suffixes():
     both suffixes so the description round-trips cleanly (otherwise each
     UI -> compile -> UI cycle accumulates the suffix)."""
     # Date without options: only the format suffix
-    code_no_opts = '''from pydantic import BaseModel, Field
+    code_no_opts = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     d: str = Field(
         description="Data da decisão. Formato: DD/MM/AAAA (use XX para partes desconhecidas)",
         json_schema_extra={"field_type": "date"},
     )
-'''
+"""
     result = compile_pydantic(code_no_opts)
     assert result["valid"], result["errors"]
     f = _field(result, "d")
@@ -483,7 +484,7 @@ class Analysis(BaseModel):
     assert f["type"] == "date"
 
     # Date with options: both suffixes, stripped in reverse order
-    code_with_opts = '''from pydantic import BaseModel, Field
+    code_with_opts = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     d: str = Field(
@@ -493,7 +494,7 @@ class Analysis(BaseModel):
             "options": ["Não identificável", "Não aplicável"],
         },
     )
-'''
+"""
     result = compile_pydantic(code_with_opts)
     assert result["valid"], result["errors"]
     f = _field(result, "d")
@@ -501,7 +502,7 @@ class Analysis(BaseModel):
     assert f["options"] == ["Não identificável", "Não aplicável"]
 
     # Date with options AND help_text: all three suffixes combined
-    code_full = '''from pydantic import BaseModel, Field
+    code_full = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
     d: str = Field(
@@ -512,7 +513,7 @@ class Analysis(BaseModel):
             "help_text": "Use a data da publicação",
         },
     )
-'''
+"""
     result = compile_pydantic(code_full)
     assert result["valid"], result["errors"]
     f = _field(result, "d")

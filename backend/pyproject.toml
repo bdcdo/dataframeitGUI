@@ -111,12 +111,14 @@ extend-immutable-calls = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Grandfathering de complexidade legada (#260): refatorar estas funcoes esta
-# fora do escopo do PR de tooling. Novas funcoes complexas nos demais arquivos
-# continuam disparando C901. Ver docs/CODE_QUALITY_TOOLING.md.
-"services/condition_evaluator.py" = ["C901"]  # evaluate_condition (13 > 10)
-"services/llm_runner.py" = ["C901"]           # run_llm (35 > 10)
-"services/pydantic_compiler.py" = ["C901"]    # compile_pydantic (20 > 10)
+# Grandfathering de complexidade legada (#260/#376). evaluate_condition e
+# compile_pydantic foram extraidas para complexidade < 10 na #376; so
+# run_llm segue isenta. Motivo (#377): a funcao esta sob desenvolvimento
+# ativo e nao tem nenhum teste de integracao direto, so dos helpers ja
+# extraidos — extrair agora seria as cegas. Pre-requisito documentado em
+# #377: escrever teste de integracao de run_llm antes de qualquer extracao.
+# Ver docs/CODE_QUALITY_TOOLING.md.
+"services/llm_runner.py" = ["C901"]  # run_llm (35 > 10)
 
 [dependency-groups]
 dev = [
