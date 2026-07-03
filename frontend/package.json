@@ -48,7 +48,8 @@
     "tailwind-merge": "^3.6.0"
   },
   "overrides": {
-    "react-is": "$react"
+    "react-is": "$react",
+    "dompurify": "^3.4.11"
   },
   "devDependencies": {
     "@clerk/testing": "^2.1.6",
