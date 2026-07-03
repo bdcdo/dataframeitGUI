@@ -8,11 +8,14 @@ import {
 import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel, type OutOfScopeConfig } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
-import type { PydanticField } from "@/lib/types";
+import { CodingEmptyStates } from "./CodingEmptyStates";
+import type { RoundFilterData } from "./CodingPage";
+import type { AssignedDoc, PydanticField } from "@/lib/types";
 
 interface AssignedCodingViewProps {
-  docId: string;
-  text: string;
+  /** Doc atribuído atual — `undefined` quando não há nenhum a mostrar
+   *  (lista vazia ou filtro de rodada sem pendências). */
+  doc: AssignedDoc | undefined;
   title: string;
   docIndex: number;
   total: number;
@@ -29,12 +32,20 @@ interface AssignedCodingViewProps {
   readOnly: boolean;
   onReorder: (newOrder: string[]) => void;
   outOfScope?: OutOfScopeConfig;
+  /** Todos os docs atribuídos foram codificados nesta sessão. */
+  allDone: boolean;
+  onExploreMore: () => void;
+  hasAssignments: boolean;
+  roundFilter?: RoundFilterData;
 }
 
-/** Painel de codificação do modo Atribuídos (leitor + perguntas). */
+/**
+ * Corpo do modo Atribuídos: cascata de estados (tudo concluído / sem doc /
+ * leitor + perguntas), espelhando o padrão já usado por `BrowseCodingView`
+ * para o modo Explorar — decidir aqui em vez de no container (#389).
+ */
 export function AssignedCodingView({
-  docId,
-  text,
+  doc,
   title,
   docIndex,
   total,
@@ -51,7 +62,29 @@ export function AssignedCodingView({
   readOnly,
   onReorder,
   outOfScope,
+  allDone,
+  onExploreMore,
+  hasAssignments,
+  roundFilter,
 }: AssignedCodingViewProps) {
+  if (allDone) {
+    return (
+      <CodingEmptyStates
+        kind="all-done"
+        count={total}
+        onExploreMore={onExploreMore}
+      />
+    );
+  }
+  if (!doc) {
+    return (
+      <CodingEmptyStates
+        kind="no-doc"
+        hasAssignments={hasAssignments}
+        roundFilter={roundFilter}
+      />
+    );
+  }
   return (
     <>
       {isFullscreen && (
@@ -65,12 +98,12 @@ export function AssignedCodingView({
       )}
       <ResizablePanelGroup className="flex-1">
         <ResizablePanel defaultSize={55} minSize={25}>
-          <DocumentReader text={text} />
+          <DocumentReader text={doc.text} />
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={45} minSize={25}>
           <QuestionsPanel
-            key={docId}
+            key={doc.id}
             fields={fields}
             answers={answers}
             onAnswer={onAnswer}
