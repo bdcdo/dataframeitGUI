@@ -152,7 +152,7 @@ function browseDoc(id: string, responseCount = 0, userAlreadyResponded = false) 
 
 function codingResult(id: string, answers: Record<string, unknown> | null) {
   return {
-    document: { id, external_id: `ext-${id}`, title: `Doc ${id}`, text: `texto-${id}` },
+    document: { id, external_id: `ext-${id}`, title: `Doc ${id}`, text: `texto-${id}`, exclusionPending: null },
     existingAnswers: answers,
     existingJustifications: null,
   };
@@ -170,6 +170,7 @@ function assignedDoc(id: string): Document {
     excluded_at: null,
     excluded_reason: null,
     excluded_by: null,
+    exclusion_pending_at: null,
   };
 }
 

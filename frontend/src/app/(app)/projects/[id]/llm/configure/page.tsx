@@ -22,7 +22,8 @@ export default async function LlmConfigurePage({
         .from("documents")
         .select("id", { count: "exact", head: true })
         .eq("project_id", id)
-        .is("excluded_at", null),
+        .is("excluded_at", null)
+        .is("exclusion_pending_at", null),
       // `documents!inner` + filtro excluded_at: conta só respostas de docs não
       // arquivados, alinhado com totalDocs acima (B4 — evita docsWithLlm >
       // totalDocs e pendentes negativo).
@@ -32,7 +33,8 @@ export default async function LlmConfigurePage({
         .eq("project_id", id)
         .eq("respondent_type", "llm")
         .eq("is_latest", true)
-        .is("documents.excluded_at", null),
+        .is("documents.excluded_at", null)
+        .is("documents.exclusion_pending_at", null),
     ]);
 
   const docsWithLlm = Math.min(

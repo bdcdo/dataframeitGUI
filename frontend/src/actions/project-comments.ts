@@ -33,8 +33,10 @@ export async function createProjectComment(
   return { success: true };
 }
 
-// Pesquisador sinaliza documento como fora de escopo. Coordenador resolve em
-// /reviews/comments aprovando (soft delete) ou rejeitando.
+// Pesquisador sinaliza documento como fora de escopo. O pedido pendente já
+// esconde o doc das filas de todos (documents.exclusion_pending_at, mantido
+// por trigger no banco); o coordenador resolve em /reviews/comments aprovando
+// (soft delete) ou rejeitando (doc volta às filas).
 export async function requestDocumentExclusion(
   projectId: string,
   documentId: string,
@@ -47,21 +49,39 @@ export async function requestDocumentExclusion(
 
   const supabase = await createSupabaseServer();
 
-  // Evita duplicata: ja existe pedido pendente do mesmo autor para o mesmo doc?
-  const { data: existing } = await supabase
-    .from("project_comments")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .eq("author_id", user.id)
-    .eq("kind", "exclusion_request")
-    .is("resolved_at", null)
-    .is("rejected_at", null)
-    .maybeSingle();
+  // Guardas em paralelo: doc já excluído/em revisão e pedido duplicado do
+  // mesmo autor.
+  const [{ data: doc }, { data: existing }] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("excluded_at, exclusion_pending_at")
+      .eq("id", documentId)
+      .eq("project_id", projectId)
+      .maybeSingle(),
+    supabase
+      .from("project_comments")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("author_id", user.id)
+      .eq("kind", "exclusion_request")
+      .is("resolved_at", null)
+      .is("rejected_at", null)
+      .maybeSingle(),
+  ]);
 
+  if (!doc) return { error: "Documento não encontrado" };
+  if (doc.excluded_at)
+    return { error: "Documento já foi removido do escopo do projeto" };
   if (existing) {
     return {
       error: "Você já tem uma sugestão pendente para este documento",
+    };
+  }
+  if (doc.exclusion_pending_at) {
+    return {
+      error:
+        "Documento já está em revisão de escopo, sinalizado por outro pesquisador",
     };
   }
 
@@ -78,6 +98,44 @@ export async function requestDocumentExclusion(
   if (error) return { error: error.message };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
+  // O doc some imediatamente das filas de codificação e da Comparação.
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
+  return { success: true };
+}
+
+// Autor desfaz o próprio pedido pendente (toggle desligado). DELETE, e não
+// auto-resolve: resolved_at setado renderizaria como "aprovado" na fila do
+// coordenador. A policy "Authors can delete own pending exclusion requests"
+// garante que só o autor apaga, e só enquanto pendente; o trigger de
+// recompute devolve o doc às filas.
+export async function cancelExclusionRequest(
+  projectId: string,
+  documentId: string,
+) {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+
+  const supabase = await createSupabaseServer();
+
+  const { data, error } = await supabase
+    .from("project_comments")
+    .delete()
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("author_id", user.id)
+    .eq("kind", "exclusion_request")
+    .is("resolved_at", null)
+    .is("rejected_at", null)
+    .select("id");
+
+  if (error) return { error: error.message };
+  if (!data || data.length === 0)
+    return { error: "Nenhuma sugestão pendente sua para este documento" };
+
+  revalidatePath(`/projects/${projectId}/reviews/comments`);
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
   return { success: true };
 }
 
@@ -124,15 +182,21 @@ export async function approveExclusionRequest(
   );
   if ("error" in docResult) return { error: docResult.error };
 
-  // 2. resolver comment
+  // 2. resolver TODOS os pedidos pendentes do doc (não só o commentId) —
+  //    a decisão de escopo é do documento; pedidos de outros autores
+  //    (legado, anterior à guarda de duplicata) não podem ficar pendentes
+  //    para sempre na fila.
   const { error: commentError } = await supabase
     .from("project_comments")
     .update({
       resolved_at: new Date().toISOString(),
       resolved_by: user.id,
     })
-    .eq("id", commentId)
-    .eq("project_id", projectId);
+    .eq("project_id", projectId)
+    .eq("document_id", comment.document_id)
+    .eq("kind", "exclusion_request")
+    .is("resolved_at", null)
+    .is("rejected_at", null);
 
   if (commentError) return { error: commentError.message };
 
@@ -158,23 +222,44 @@ export async function rejectExclusionRequest(
 
   const supabase = await createSupabaseServer();
 
-  const { data, error } = await supabase
+  // A decisão de escopo é do documento: rejeitar cascateia para todos os
+  // pedidos pendentes do mesmo doc (legado pode ter mais de um autor), e o
+  // trigger de recompute limpa exclusion_pending_at quando o último some —
+  // o doc volta às filas de todos.
+  const { data: target } = await supabase
+    .from("project_comments")
+    .select("id, document_id")
+    .eq("id", commentId)
+    .eq("project_id", projectId)
+    .eq("kind", "exclusion_request")
+    .maybeSingle();
+
+  if (!target) return { error: "Sugestão não encontrada" };
+
+  let query = supabase
     .from("project_comments")
     .update({
       rejected_at: new Date().toISOString(),
       rejected_reason: rejectionReason.trim(),
       resolved_by: user.id,
     })
-    .eq("id", commentId)
     .eq("project_id", projectId)
     .eq("kind", "exclusion_request")
-    .select("id");
+    .is("resolved_at", null)
+    .is("rejected_at", null);
+  // Pedido órfão (doc apagado, document_id SET NULL): rejeita só o alvo.
+  query = target.document_id
+    ? query.eq("document_id", target.document_id)
+    : query.eq("id", target.id);
+  const { data, error } = await query.select("id");
 
   if (error) return { error: error.message };
   if (!data || data.length === 0)
     return { error: "Sem permissão para rejeitar esta sugestão" };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
+  revalidatePath(`/projects/${projectId}/analyze/code`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
   return { success: true };
 }
 

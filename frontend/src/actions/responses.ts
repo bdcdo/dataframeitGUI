@@ -36,7 +36,7 @@ export async function saveResponse(
     // O lookup de existing filtra is_latest: após uma unificação de membros o
     // conjunto fundido pode ter respostas antigas (is_latest=false) no mesmo
     // documento — .single() sem o filtro erraria com múltiplas linhas.
-    const [{ data: profile }, { data: existing }, { data: project, error: projErr }] = await Promise.all([
+    const [{ data: profile }, { data: existing }, { data: project, error: projErr }, { data: doc }] = await Promise.all([
       supabase
         .from("profiles")
         .select("first_name, last_name")
@@ -58,9 +58,25 @@ export async function saveResponse(
         )
         .eq("id", projectId)
         .single(),
+      supabase
+        .from("documents")
+        .select("excluded_at")
+        .eq("id", documentId)
+        .eq("project_id", projectId)
+        .maybeSingle(),
     ]);
 
     if (projErr) return { success: false, error: projErr.message };
+
+    // Doc já excluído (soft delete) não aceita mais respostas. Pedido de
+    // exclusão apenas PENDENTE não bloqueia: é reversível e o dado humano
+    // digitado é preservado.
+    if (doc?.excluded_at) {
+      return {
+        success: false,
+        error: "Documento removido do escopo do projeto",
+      };
+    }
 
     const respondentName = [profile?.first_name, profile?.last_name]
       .filter(Boolean)

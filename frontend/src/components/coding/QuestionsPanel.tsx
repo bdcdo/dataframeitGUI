@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { FieldRenderer } from "./FieldRenderer";
+import { OutOfScopeToggle, type OutOfScopeState } from "./OutOfScopeToggle";
 import { Check, GripVertical, Loader2, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -40,6 +41,16 @@ const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
   return true;
 };
 
+/** Config da pergunta "fora do escopo" no topo do painel. O estado vivo fica
+ *  em estado local do painel (semeado daqui) — o painel é keyed por docId nas
+ *  duas views, então reseta sozinho na troca de documento. */
+export interface OutOfScopeConfig {
+  projectId: string;
+  documentId: string;
+  documentTitle?: string;
+  initialState: OutOfScopeState;
+}
+
 interface QuestionsPanelProps {
   fields: PydanticField[];
   answers: Record<string, unknown>;
@@ -50,6 +61,8 @@ interface QuestionsPanelProps {
   onNotesChange?: (notes: string) => void;
   readOnly?: boolean;
   onReorder?: (newOrder: string[]) => void;
+  /** Presente = renderiza a pergunta "Documento fora do escopo?" primeiro. */
+  outOfScope?: OutOfScopeConfig;
 }
 
 interface SortableQuestionProps {
@@ -137,9 +150,16 @@ function SortableQuestion({
   );
 }
 
-export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder }: QuestionsPanelProps) {
+export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder, outOfScope }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
+  // Estado vivo da sinalização "fora do escopo" — semeado uma vez do server
+  // (capture-once; o painel é keyed por docId, então remonta a cada doc).
+  const [outOfScopeState, setOutOfScopeState] = useState<OutOfScopeState>(
+    () => outOfScope?.initialState ?? { status: "normal" },
+  );
+  const outOfScopeBlocked =
+    !!outOfScope && outOfScopeState.status !== "normal";
   // Conjunto de nomes visíveis no render anterior — detecta condicionais que
   // acabaram de aparecer. `null` até o 1º effect (semeado lá dentro, nunca no
   // corpo do render — escrita de ref durante o render não é concurrent-safe).
@@ -224,7 +244,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
   );
 
   const handleSubmitWithValidation = useCallback(() => {
-    if (submitting) return;
+    if (submitting || outOfScopeBlocked) return;
 
     const unanswered = visibleFields
       .filter((f) => (f.target || "all") !== "llm_only" && f.required !== false && !isAnswered(f))
@@ -239,7 +259,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     }
 
     onSubmit();
-  }, [visibleFields, isAnswered, onSubmit, submitting]);
+  }, [visibleFields, isAnswered, onSubmit, submitting, outOfScopeBlocked]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -308,50 +328,73 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
           submitting && "pointer-events-none opacity-60",
         )}
       >
-        {dragEnabled ? (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={visibleFields.map((f) => f.name)}
-              strategy={verticalListSortingStrategy}
-            >
-              {questionItems}
-            </SortableContext>
-          </DndContext>
-        ) : (
-          questionItems
+        {outOfScope && (
+          <OutOfScopeToggle
+            projectId={outOfScope.projectId}
+            documentId={outOfScope.documentId}
+            documentTitle={outOfScope.documentTitle}
+            state={outOfScopeState}
+            onStateChange={setOutOfScopeState}
+            disabled={readOnly}
+          />
         )}
 
-        {onNotesChange && (
-          <Collapsible defaultOpen={!!notes}>
-            <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-              <MessageSquare className="size-3.5" />
-              Notas e sugestões (opcional)
-              {notes && <span className="size-1.5 rounded-full bg-brand" />}
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <Textarea
-                value={notes}
-                onChange={(e) => onNotesChange(e.target.value)}
-                disabled={submitting || readOnly}
-                placeholder="Anotações, dúvidas ou sugestões sobre este documento..."
-                className="mt-2 text-sm min-h-[80px] resize-y"
-              />
-            </CollapsibleContent>
-          </Collapsible>
-        )}
+        {/* Doc sinalizado: perguntas esmaecidas e inertes, mas o toggle acima
+            fica FORA do bloco — quem sinalizou precisa conseguir desfazer. */}
+        <div
+          aria-disabled={outOfScopeBlocked}
+          className={cn(
+            "space-y-2.5",
+            outOfScopeBlocked && "pointer-events-none opacity-60",
+          )}
+        >
+          {dragEnabled ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={visibleFields.map((f) => f.name)}
+                strategy={verticalListSortingStrategy}
+              >
+                {questionItems}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            questionItems
+          )}
+
+          {onNotesChange && (
+            <Collapsible defaultOpen={!!notes}>
+              <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                <MessageSquare className="size-3.5" />
+                Notas e sugestões (opcional)
+                {notes && <span className="size-1.5 rounded-full bg-brand" />}
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <Textarea
+                  value={notes}
+                  onChange={(e) => onNotesChange(e.target.value)}
+                  disabled={submitting || readOnly || outOfScopeBlocked}
+                  placeholder="Anotações, dúvidas ou sugestões sobre este documento..."
+                  className="mt-2 text-sm min-h-[80px] resize-y"
+                />
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+        </div>
       </div>
 
       <div className="border-t px-4 py-3 shrink-0">
         <Button
           onClick={handleSubmitWithValidation}
-          disabled={submitting || readOnly}
+          disabled={submitting || readOnly || outOfScopeBlocked}
           className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
         >
-          {readOnly ? (
+          {outOfScopeBlocked ? (
+            "Aguardando revisão do coordenador"
+          ) : readOnly ? (
             "Somente leitura"
           ) : submitting ? (
             <>

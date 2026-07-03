@@ -30,6 +30,7 @@ function browseDoc(id: string, overrides?: Partial<BrowseDocument>): BrowseDocum
     created_at: "2026-01-01",
     responseCount: 2,
     userAlreadyResponded: false,
+    exclusionPendingMine: false,
     ...overrides,
   };
 }

@@ -170,7 +170,8 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
         .from("documents")
         .select("id, external_id, title")
         .eq("project_id", projectId)
-        .is("excluded_at", null),
+        .is("excluded_at", null)
+        .is("exclusion_pending_at", null),
       supabase
         .from("responses")
         .select("document_id, respondent_id")

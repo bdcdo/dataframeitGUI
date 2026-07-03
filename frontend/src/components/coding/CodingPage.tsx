@@ -34,6 +34,7 @@ export type CodingSortMode = "default" | "recent";
 
 const EMPTY_CODED_AT: Record<string, string> = {};
 const EMPTY_JUSTIFICATIONS: Record<string, Record<string, unknown>> = {};
+const EMPTY_PENDING_EXCLUSIONS: Record<string, string> = {};
 
 interface CodingPageProps {
   projectId: string;
@@ -47,6 +48,11 @@ interface CodingPageProps {
   roundFilter?: RoundFilterData;
   /** Coordenador do projeto? Gate do botão "Rodar LLM" no header (#195). */
   canRunLlm?: boolean;
+  /** projects.out_of_scope_enabled — mostra a pergunta "fora do escopo?". */
+  outOfScopeEnabled?: boolean;
+  /** Sinalizações pendentes DO PRÓPRIO usuário (docId → justificativa) nos
+   *  docs atribuídos; pendências de outros já saem filtradas no servidor. */
+  pendingExclusionByDoc?: Record<string, string>;
 }
 
 export function CodingPage(props: CodingPageProps) {
@@ -70,6 +76,8 @@ function CodingPageInner({
   readOnly = false,
   roundFilter,
   canRunLlm = false,
+  outOfScopeEnabled = false,
+  pendingExclusionByDoc = EMPTY_PENDING_EXCLUSIONS,
 }: CodingPageProps) {
   const { get: getParam, set: setParams } = useUrlState();
   const docParam = getParam("doc");
@@ -211,6 +219,42 @@ function CodingPageInner({
     assigned.resetAllDone();
   };
 
+  // Config da pergunta "fora do escopo?" (QuestionsPanel). Renderiza quando o
+  // recurso está ligado no projeto OU quando o doc já tem sinalização pendente
+  // (setting desligado não anula pendências existentes).
+  const assignedPendingReason = assigned.currentDoc
+    ? pendingExclusionByDoc[assigned.currentDoc.id]
+    : undefined;
+  const assignedOutOfScope =
+    assigned.currentDoc &&
+    (outOfScopeEnabled || assignedPendingReason !== undefined)
+      ? {
+          projectId,
+          documentId: assigned.currentDoc.id,
+          documentTitle: assignedTitle,
+          initialState:
+            assignedPendingReason !== undefined
+              ? ({ status: "pending_mine", reason: assignedPendingReason } as const)
+              : ({ status: "normal" } as const),
+        }
+      : undefined;
+
+  const browsePending = browse.browseDoc?.document.exclusionPending ?? null;
+  const browseOutOfScope =
+    browse.browseDocId && browse.browseDoc && (outOfScopeEnabled || browsePending)
+      ? {
+          projectId,
+          documentId: browse.browseDocId,
+          documentTitle: browseTitle,
+          initialState: browsePending
+            ? ({
+                status: browsePending.mine ? "pending_mine" : "pending_other",
+                reason: browsePending.reason ?? undefined,
+              } as const)
+            : ({ status: "normal" } as const),
+        }
+      : undefined;
+
   return (
     <div
       className={
@@ -237,8 +281,6 @@ function CodingPageInner({
                   total: documents.length,
                   onNavigate: assigned.handleDocNavigate,
                   parecerUrl: assignedParecerUrl,
-                  projectId,
-                  documentId: assigned.currentDoc.id,
                 }
               : mode === "browse" && browse.browseDocId
               ? {
@@ -290,6 +332,7 @@ function CodingPageInner({
             onNotesChange={assigned.handleNotesChange}
             readOnly={readOnly}
             onReorder={handleReorder}
+            outOfScope={assignedOutOfScope}
           />
         ))}
 
@@ -314,6 +357,7 @@ function CodingPageInner({
           onReorder={handleReorder}
           onSubmit={browse.handleBrowseSubmit}
           onDraftChange={browse.handleDraftChange}
+          outOfScope={browseOutOfScope}
         />
       )}
     </div>

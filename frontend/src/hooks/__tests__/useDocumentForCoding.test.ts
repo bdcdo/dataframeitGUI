@@ -12,7 +12,7 @@ const mockGet = vi.mocked(getDocumentForCoding);
 
 function makeResult(id: string, answers: Record<string, unknown> | null, notes?: string) {
   return {
-    document: { id, external_id: `ext-${id}`, title: `Título ${id}`, text: `texto-${id}` },
+    document: { id, external_id: `ext-${id}`, title: `Título ${id}`, text: `texto-${id}`, exclusionPending: null },
     existingAnswers: answers,
     existingJustifications: notes !== undefined ? { _notes: notes } : null,
   };

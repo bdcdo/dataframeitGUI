@@ -26,6 +26,7 @@ interface RulesFormProps {
   allowResearcherReview: boolean;
   automationMode: AutomationMode;
   comparisonIncludesLlm: boolean;
+  outOfScopeEnabled: boolean;
 }
 
 const RESOLUTION_OPTIONS = [
@@ -45,6 +46,7 @@ function useRulesFormState({
   allowResearcherReview,
   automationMode,
   comparisonIncludesLlm,
+  outOfScopeEnabled,
 }: RulesFormProps) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -53,6 +55,7 @@ function useRulesFormState({
   const [allowReview, setAllowReview] = useState(allowResearcherReview);
   const [mode, setMode] = useState<AutomationMode>(automationMode);
   const [includesLlm, setIncludesLlm] = useState(comparisonIncludesLlm);
+  const [outOfScope, setOutOfScope] = useState(outOfScopeEnabled);
   const [saved, setSaved] = useState(false);
 
   const modeMeta = AUTOMATION_MODES.find((m) => m.value === mode);
@@ -66,6 +69,7 @@ function useRulesFormState({
           allow_researcher_review: allowReview,
           automation_mode: mode,
           comparison_includes_llm: includesLlm,
+          out_of_scope_enabled: outOfScope,
         });
         if (r?.error) {
           toast.error(r.error);
@@ -92,6 +96,8 @@ function useRulesFormState({
     setMode,
     includesLlm,
     setIncludesLlm,
+    outOfScope,
+    setOutOfScope,
     saved,
     isPending,
     modeMeta,
@@ -111,6 +117,8 @@ export function RulesForm(props: RulesFormProps) {
     setMode,
     includesLlm,
     setIncludesLlm,
+    outOfScope,
+    setOutOfScope,
     saved,
     isPending,
     modeMeta,
@@ -206,6 +214,27 @@ export function RulesForm(props: RulesFormProps) {
           <Label htmlFor="allowReview" className="text-sm">
             Permitir revisão por pesquisadores
           </Label>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <Switch
+            id="outOfScope"
+            checked={outOfScope}
+            onCheckedChange={setOutOfScope}
+            aria-label="Permitir sinalizar documento fora do escopo"
+          />
+          <div className="space-y-1">
+            <Label htmlFor="outOfScope" className="text-sm">
+              Permitir sinalizar documento fora do escopo
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Mostra a pergunta &quot;Documento fora do escopo?&quot; no topo do
+              formulário de codificação. Documento sinalizado sai das filas de
+              todos até o coordenador aprovar (remoção) ou rejeitar (retorno) em
+              Comentários. Desligar só esconde a pergunta; sinalizações
+              pendentes continuam valendo.
+            </p>
+          </div>
         </div>
 
         <Button onClick={handleSave} disabled={isPending} className="w-full">

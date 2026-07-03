@@ -66,6 +66,7 @@ export async function updateProject(
     arbitration_blind?: boolean;
     automation_mode?: AutomationMode;
     comparison_includes_llm?: boolean;
+    out_of_scope_enabled?: boolean;
   }
 ): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();

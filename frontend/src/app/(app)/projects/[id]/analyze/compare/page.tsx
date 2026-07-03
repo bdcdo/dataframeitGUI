@@ -95,6 +95,7 @@ export default async function ComparePageRoute({
       )
       .eq("project_id", id)
       .is("documents.excluded_at", null)
+      .is("documents.exclusion_pending_at", null)
       .limit(5000),
     supabase
       .from("schema_change_log")
@@ -364,6 +365,7 @@ export default async function ComparePageRoute({
             .select("id, text")
             .in("id", qualifiedDocIds)
             .is("excluded_at", null)
+            .is("exclusion_pending_at", null)
         : Promise.resolve({ data: [] as { id: string; text: string }[] }),
       supabase
         .from("reviews")

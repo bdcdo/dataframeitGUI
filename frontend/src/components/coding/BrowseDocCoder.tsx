@@ -7,7 +7,7 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { DocumentReader } from "./DocumentReader";
-import { QuestionsPanel } from "./QuestionsPanel";
+import { QuestionsPanel, type OutOfScopeConfig } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
 import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import type { CodingDocument } from "@/hooks/useDocumentForCoding";
@@ -38,6 +38,7 @@ interface BrowseDocCoderProps {
   onSubmit: (draft: CodingDraft) => void;
   /** Reporta o rascunho atual para cima (autosave-on-exit + dirty tracking). */
   onDraftChange: (draft: CodingDraft) => void;
+  outOfScope?: OutOfScopeConfig;
 }
 
 /**
@@ -63,6 +64,7 @@ export function BrowseDocCoder({
   onReorder,
   onSubmit,
   onDraftChange,
+  outOfScope,
 }: BrowseDocCoderProps) {
   const [answers, setAnswers] = useState<Record<string, unknown>>(
     () => doc.initialAnswers,
@@ -134,6 +136,7 @@ export function BrowseDocCoder({
             onNotesChange={handleNotesChange}
             readOnly={readOnly}
             onReorder={onReorder}
+            outOfScope={outOfScope}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

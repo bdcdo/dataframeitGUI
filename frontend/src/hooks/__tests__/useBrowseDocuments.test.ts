@@ -18,6 +18,7 @@ function doc(id: string, overrides?: Partial<BrowseDocument>): BrowseDocument {
     created_at: "2026-01-01",
     responseCount: 0,
     userAlreadyResponded: false,
+    exclusionPendingMine: false,
     ...overrides,
   };
 }

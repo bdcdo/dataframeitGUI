@@ -1,8 +1,18 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { render, screen, cleanup } from "@testing-library/react";
 import { QuestionsPanel } from "@/components/coding/QuestionsPanel";
 import type { PydanticField } from "@/lib/types";
+
+// Dependências do OutOfScopeToggle (renderizado quando a prop `outOfScope`
+// está presente) — inertes nos demais testes.
+vi.mock("@/actions/project-comments", () => ({
+  requestDocumentExclusion: vi.fn(),
+  cancelExclusionRequest: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 afterEach(cleanup);
 
@@ -159,5 +169,79 @@ describe("QuestionsPanel — scroll automático em condicional (issue #71)", () 
     );
 
     expect(scrolledInto).toHaveLength(0);
+  });
+});
+
+describe("QuestionsPanel — pergunta fora do escopo", () => {
+  const outOfScopeBase = {
+    projectId: "p1",
+    documentId: "d1",
+    documentTitle: "Doc Um",
+  };
+
+  it("sem a prop outOfScope não renderiza o toggle", () => {
+    renderPanel({ answers: {} });
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+
+  it("renderiza o toggle como primeiro elemento do painel", () => {
+    render(
+      <QuestionsPanel
+        fields={baseFields}
+        answers={{}}
+        onAnswer={vi.fn()}
+        onSubmit={vi.fn()}
+        outOfScope={{ ...outOfScopeBase, initialState: { status: "normal" } }}
+      />,
+    );
+    expect(screen.getByRole("switch")).toBeTruthy();
+    // Formulário não bloqueado: botão de envio normal.
+    expect(screen.getByRole("button", { name: /Enviar respostas/ })).toBeTruthy();
+  });
+
+  it("pendente: perguntas inertes e envio substituído por aviso", () => {
+    const onSubmit = vi.fn();
+    render(
+      <QuestionsPanel
+        fields={baseFields}
+        answers={{ q1: "sim" }}
+        onAnswer={vi.fn()}
+        onSubmit={onSubmit}
+        outOfScope={{
+          ...outOfScopeBase,
+          initialState: { status: "pending_mine", reason: "fora do tema" },
+        }}
+      />,
+    );
+    const submit = screen.getByRole("button", {
+      name: /Aguardando revisão do coordenador/,
+    }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    // Bloco de perguntas esmaecido e sem resposta a mouse.
+    const blocked = document.querySelector('[aria-disabled="true"]');
+    expect(blocked?.className).toContain("pointer-events-none");
+    // O toggle segue interativo (fora do bloco) para permitir desfazer.
+    expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("pendente por outro pesquisador: toggle desabilitado e envio bloqueado", () => {
+    render(
+      <QuestionsPanel
+        fields={baseFields}
+        answers={{}}
+        onAnswer={vi.fn()}
+        onSubmit={vi.fn()}
+        outOfScope={{
+          ...outOfScopeBase,
+          initialState: { status: "pending_other" },
+        }}
+      />,
+    );
+    expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", {
+        name: /Aguardando revisão do coordenador/,
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });

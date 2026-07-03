@@ -6,7 +6,7 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 import { DocumentReader } from "./DocumentReader";
-import { QuestionsPanel } from "./QuestionsPanel";
+import { QuestionsPanel, type OutOfScopeConfig } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
 import type { PydanticField } from "@/lib/types";
 
@@ -28,6 +28,7 @@ interface AssignedCodingViewProps {
   onNotesChange: (notes: string) => void;
   readOnly: boolean;
   onReorder: (newOrder: string[]) => void;
+  outOfScope?: OutOfScopeConfig;
 }
 
 /** Painel de codificação do modo Atribuídos (leitor + perguntas). */
@@ -49,6 +50,7 @@ export function AssignedCodingView({
   onNotesChange,
   readOnly,
   onReorder,
+  outOfScope,
 }: AssignedCodingViewProps) {
   return (
     <>
@@ -78,6 +80,7 @@ export function AssignedCodingView({
             onNotesChange={onNotesChange}
             readOnly={readOnly}
             onReorder={onReorder}
+            outOfScope={outOfScope}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

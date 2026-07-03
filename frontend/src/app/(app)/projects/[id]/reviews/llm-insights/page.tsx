@@ -79,7 +79,8 @@ export default async function LlmInsightsPage({
       .from("documents")
       .select("id, title, external_id")
       .eq("project_id", id)
-      .is("excluded_at", null),
+      .is("excluded_at", null)
+      .is("exclusion_pending_at", null),
     supabase
       .from("error_resolutions")
       .select("document_id, field_name, resolved_at")

@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { DocumentPicker } from "./DocumentPicker";
 import { BrowseDocCoder, type CodingDraft } from "./BrowseDocCoder";
+import type { OutOfScopeConfig } from "./QuestionsPanel";
 import type { CodingDocument } from "@/hooks/useDocumentForCoding";
 import type { BrowseDocument } from "@/actions/documents";
 import type { PydanticField } from "@/lib/types";
@@ -29,6 +30,7 @@ interface BrowseCodingViewProps {
   onReorder: (newOrder: string[]) => void;
   onSubmit: (draft: CodingDraft) => void;
   onDraftChange: (draft: CodingDraft) => void;
+  outOfScope?: OutOfScopeConfig;
 }
 
 /** Estado centralizado de falha + ação de retry do modo Explorar (lista e doc
@@ -71,6 +73,7 @@ export function BrowseCodingView({
   onReorder,
   onSubmit,
   onDraftChange,
+  outOfScope,
 }: BrowseCodingViewProps) {
   if (browseError) {
     return (
@@ -123,6 +126,7 @@ export function BrowseCodingView({
       onReorder={onReorder}
       onSubmit={onSubmit}
       onDraftChange={onDraftChange}
+      outOfScope={outOfScope}
     />
   );
 }

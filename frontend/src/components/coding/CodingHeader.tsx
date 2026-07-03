@@ -22,7 +22,6 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
-import { SuggestExclusionDialog } from "./SuggestExclusionDialog";
 import { CURRENT_FILTER_VALUE, isCurrentFilter } from "@/lib/rounds";
 import type { RoundFilterData, CodingSortMode } from "./CodingPage";
 
@@ -34,8 +33,6 @@ type DocSection =
       total: number;
       onNavigate: (index: number) => void;
       parecerUrl?: string;
-      projectId: string;
-      documentId: string;
     }
   | {
       variant: "browse";
@@ -243,12 +240,6 @@ function AssignedDocSection({
         >
           <ChevronRight className="size-4" />
         </Button>
-        <SuggestExclusionDialog
-          projectId={doc.projectId}
-          documentId={doc.documentId}
-          documentTitle={doc.title}
-          iconOnly
-        />
         <Button
           variant="ghost"
           size="icon"
@@ -305,12 +296,6 @@ function BrowseDocSection({
         >
           <Shuffle className="size-4" />
         </Button>
-        <SuggestExclusionDialog
-          projectId={doc.projectId}
-          documentId={doc.documentId}
-          documentTitle={doc.title}
-          iconOnly
-        />
         <Button
           variant="ghost"
           size="icon"
