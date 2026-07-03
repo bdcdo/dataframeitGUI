@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+
 import {
   AutoReviewFieldPanel,
   type AutoReviewField,
@@ -11,6 +12,7 @@ afterEach(cleanup);
 const field: AutoReviewField = {
   fieldName: "diagnostico",
   fieldDescription: "Diagnóstico principal",
+  fieldHelpText: null,
   humanAnswer: "Sim",
   llmAnswer: "Não",
   llmJustification: null,
@@ -60,5 +62,24 @@ describe("AutoReviewFieldPanel", () => {
     expect(
       screen.queryByText(/Obrigatória: sem ela este campo não é enviado\./),
     ).not.toBeNull();
+  });
+});
+
+describe("AutoReviewFieldPanel — help_text (#373)", () => {
+  it("shows the help text when the field has one", () => {
+    renderPanel({
+      field: {
+        ...field,
+        fieldHelpText: "Considere apenas o dispositivo final da decisão.",
+      },
+    });
+    expect(
+      screen.getByText("Considere apenas o dispositivo final da decisão."),
+    ).toBeTruthy();
+  });
+
+  it("renders nothing extra when the field has no help text", () => {
+    renderPanel();
+    expect(screen.queryByText(/Considere apenas/)).toBeNull();
   });
 });

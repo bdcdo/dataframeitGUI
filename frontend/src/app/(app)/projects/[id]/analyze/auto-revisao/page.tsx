@@ -125,6 +125,9 @@ export default async function AutoReviewRoute({
 
   const fieldsMeta = (project?.pydantic_fields as PydanticField[]) ?? [];
   const fieldDescById = new Map(fieldsMeta.map((f) => [f.name, f.description]));
+  const fieldHelpTextById = new Map(
+    fieldsMeta.map((f) => [f.name, f.help_text ?? null]),
+  );
 
   const docMap = new Map<string, AutoReviewDoc>();
   for (const d of docs ?? []) {
@@ -145,6 +148,7 @@ export default async function AutoReviewRoute({
     payload.fields.push({
       fieldName: fr.field_name,
       fieldDescription: fieldDescById.get(fr.field_name) ?? null,
+      fieldHelpText: fieldHelpTextById.get(fr.field_name) ?? null,
       humanAnswer:
         (human?.answers as Record<string, unknown>)?.[fr.field_name] ?? null,
       llmAnswer:

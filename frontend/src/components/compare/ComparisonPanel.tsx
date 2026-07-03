@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { normalizeForComparison } from "@/lib/utils";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
 import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
+import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 
@@ -51,6 +52,7 @@ interface ComparisonPanelProps {
   documentTitle: string;
   fieldName: string;
   fieldDescription: string;
+  fieldHelpText?: string;
   fieldType?: "single" | "multi" | "text" | "date";
   fieldOptions?: string[] | null;
   fields: PydanticField[];
@@ -85,6 +87,7 @@ export function ComparisonPanel({
   documentTitle,
   fieldName,
   fieldDescription,
+  fieldHelpText,
   fieldType,
   fieldOptions,
   fields,
@@ -144,13 +147,14 @@ export function ComparisonPanel({
           answered={reviewed}
           onNavigate={onFieldNavigate}
         />
-        <div className="mt-1.5 flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-sm font-medium">
-            <span className="text-muted-foreground">
-              Campo {fieldIndex + 1}/{totalFields}:
-            </span>{" "}
+        <div className="mt-1.5 flex items-start justify-between gap-2">
+          <FieldHeaderLabel
+            prefix={`Campo ${fieldIndex + 1}/${totalFields}:`}
+            helpText={fieldHelpText}
+            helpTextClassName="max-h-24 overflow-y-auto pr-1"
+          >
             {fieldDescription || fieldName}
-          </p>
+          </FieldHeaderLabel>
           <div className="flex shrink-0 items-center gap-1">
             {feedbackBadge > 0 && (
               <Badge
