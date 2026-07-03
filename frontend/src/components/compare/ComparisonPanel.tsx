@@ -73,6 +73,7 @@ interface ComparisonPanelProps {
   documentTitle: string;
   fieldName: string;
   fieldDescription: string;
+  fieldHelpText?: string;
   fieldType?: "single" | "multi" | "text" | "date";
   fieldOptions?: string[] | null;
   fields: PydanticField[];
@@ -107,6 +108,7 @@ export function ComparisonPanel({
   documentTitle,
   fieldName,
   fieldDescription,
+  fieldHelpText,
   fieldType,
   fieldOptions,
   fields,
@@ -202,13 +204,20 @@ export function ComparisonPanel({
           answered={reviewed}
           onNavigate={onFieldNavigate}
         />
-        <div className="mt-1.5 flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-sm font-medium">
-            <span className="text-muted-foreground">
-              Campo {fieldIndex + 1}/{totalFields}:
-            </span>{" "}
-            {fieldDescription || fieldName}
-          </p>
+        <div className="mt-1.5 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">
+              <span className="text-muted-foreground">
+                Campo {fieldIndex + 1}/{totalFields}:
+              </span>{" "}
+              {fieldDescription || fieldName}
+            </p>
+            {fieldHelpText && (
+              <p className="mt-1 text-xs text-muted-foreground whitespace-pre-line">
+                {fieldHelpText}
+              </p>
+            )}
+          </div>
           <div className="flex shrink-0 items-center gap-1">
             {feedbackBadge > 0 && (
               <Badge

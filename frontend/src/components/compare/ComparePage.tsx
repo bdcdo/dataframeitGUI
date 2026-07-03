@@ -287,6 +287,7 @@ export function ComparePage({
           documentTitle: docTitle,
           fieldName: currentFieldName,
           fieldDescription: currentField?.description || currentFieldName,
+          fieldHelpText: currentField?.help_text,
           fieldType: currentField?.type,
           fieldOptions: currentField?.options,
           fields,
