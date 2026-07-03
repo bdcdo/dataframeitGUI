@@ -86,10 +86,19 @@ export async function confirmEquivalentVerdict(
       },
     );
     if (reviewErr) throw new Error(reviewErr.message);
-
-    await syncCompareAssignment(supabase, projectId, documentId, user.id);
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
+  }
+
+  // Pós-commit best-effort: as equivalências e o review já foram gravados. Uma
+  // falha do sync não deve virar { error } (o client refaria uma escrita já
+  // persistida). Loga e segue para a revalidação.
+  try {
+    await syncCompareAssignment(supabase, projectId, documentId, user.id);
+  } catch (e) {
+    console.error(
+      `[confirmEquivalentVerdict] falha ao sincronizar o assignment: ${errorMessage(e)}`,
+    );
   }
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);

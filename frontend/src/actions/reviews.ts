@@ -121,15 +121,25 @@ export async function submitVerdict(
       }
     }
 
-    revalidatePath(`/projects/${projectId}/reviews/comments`);
-
-    await syncCompareAssignment(supabase, projectId, documentId, effectiveId);
-
-    revalidatePath(`/projects/${projectId}/analyze/compare`);
-    revalidatePath(`/projects/${projectId}/analyze/assignments`);
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao salvar o veredito" };
   }
+
+  // Efeitos pós-commit best-effort: o veredito já foi gravado. Uma falha no
+  // sync do assignment ou na revalidação NÃO deve virar { error } — o revisor
+  // veria "falha ao salvar" e tentaria de novo, reescrevendo o mesmo dado (e o
+  // estado local em ComparePage já reflete o veredito). Loga e segue.
+  try {
+    await syncCompareAssignment(supabase, projectId, documentId, effectiveId);
+  } catch (e) {
+    console.error(
+      `[submitVerdict] falha ao sincronizar o assignment pós-veredito: ${errorMessage(e)}`,
+    );
+  }
+
+  revalidatePath(`/projects/${projectId}/reviews/comments`);
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
+  revalidatePath(`/projects/${projectId}/analyze/assignments`);
 
   return {};
 }

@@ -85,8 +85,6 @@ export function useCompareVerdicts({
         chosenResponseId: chosenResponseId ?? null,
         comment: verdictComment ?? null,
       };
-      recordReview(currentDoc.id, currentFieldName, info);
-
       const result = await submitVerdict(
         projectId,
         currentDoc.id,
@@ -100,6 +98,11 @@ export function useCompareVerdicts({
         toast.error(result.error);
         return;
       }
+
+      // Escrita otimista só após o sucesso: `recordReview` grava em `overrides`
+      // (estado da sessão, não auto-revertido). Gravar antes deixaria o campo
+      // exibido como revisado mesmo quando o save falha, até um reload.
+      recordReview(currentDoc.id, currentFieldName, info);
 
       toast.success("Veredito salvo!");
 
@@ -148,8 +151,6 @@ export function useCompareVerdicts({
         chosenResponseId: gabaritoId,
         comment: verdictComment ?? null,
       };
-      recordReview(docId, fieldName, info);
-
       const result = await confirmEquivalentVerdict(
         projectId,
         docId,
@@ -164,6 +165,11 @@ export function useCompareVerdicts({
         toast.error(result.error);
         return;
       }
+
+      // Escrita otimista só após o sucesso (ver handleVerdict): não deixar o
+      // campo/doc exibido como revisado quando a marcação de equivalência falha.
+      recordReview(docId, fieldName, info);
+
       toast.success(
         `${responseIds.length} respostas marcadas como equivalentes.`,
       );

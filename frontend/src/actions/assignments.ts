@@ -504,6 +504,11 @@ export async function smartRandomize(
   const supabase = await createSupabaseServer();
   const assignmentType = params.type || "codificacao";
 
+  let count: number;
+  let preserved: number;
+
+  // Operação crítica: computeLottery + registro do lote + RPC transacional. Só
+  // um erro aqui (nada gravado, ou gravação abortada) deve virar { error }.
   try {
     const { newAssignments, preservedCount, batchData } = await computeLottery(params);
 
@@ -540,9 +545,19 @@ export async function smartRandomize(
       throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
     }
 
+    count = newAssignments.length;
+    preserved = preservedCount;
+  } catch (e) {
+    return { error: errorMessage(e) || "Erro ao sortear" };
+  }
+
+  // Pós-commit best-effort: as atribuições já foram gravadas pelo RPC. Uma falha
+  // daqui pra baixo NÃO pode virar { error } — reportar levaria o coordenador a
+  // re-sortear em modo "replace" e reescrever o que já foi gravado com sucesso.
+  try {
     // Persiste o peso/limite usado por participante (decisão: editar no diálogo,
-    // mas assumir continuidade no próximo sorteio). As atribuições já foram
-    // gravadas — uma falha aqui só afeta o default da próxima vez, não bloqueia.
+    // mas assumir continuidade no próximo sorteio). Uma falha aqui só afeta o
+    // default da próxima vez.
     const settingsEntries = Object.entries(params.participantSettings ?? {});
     if (settingsEntries.length > 0) {
       const results = await Promise.all(
@@ -569,8 +584,9 @@ export async function smartRandomize(
     revalidatePath(`/projects/${params.projectId}/analyze/assignments`);
     revalidatePath(`/projects/${params.projectId}/analyze/code`);
     revalidatePath(`/projects/${params.projectId}/analyze/compare`);
-    return { count: newAssignments.length, preserved: preservedCount };
   } catch (e) {
-    return { error: errorMessage(e) || "Erro ao sortear" };
+    console.error(`[lottery] falha nos efeitos pós-sorteio: ${errorMessage(e)}`);
   }
+
+  return { count, preserved };
 }

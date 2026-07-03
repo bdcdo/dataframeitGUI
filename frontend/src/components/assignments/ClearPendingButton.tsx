@@ -44,7 +44,13 @@ export function ClearPendingButton({ projectId, pendingByType }: ClearPendingBut
     setTarget(null);
     startTransition(async () => {
       const result = await clearPendingAssignments(projectId, type);
-      if (result?.error) toast.error(result.error);
+      if (result?.error) {
+        toast.error(result.error);
+      } else {
+        toast.success(
+          `${result?.deleted ?? 0} atribuição(ões) pendente(s) removida(s).`,
+        );
+      }
     });
   };
 
