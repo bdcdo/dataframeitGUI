@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { FullscreenNav } from "../coding/FullscreenNav";
 import { CompareNav } from "./CompareNav";
+import { CompareQueueTabs } from "./CompareQueueTabs";
 import { CompareDocList, type DocListEntry } from "./CompareDocList";
 import { CompareWorkspace } from "./CompareWorkspace";
 import { useCompareReviews } from "./useCompareReviews";
@@ -48,6 +49,15 @@ interface ComparePageProps {
   >;
   currentUserId: string;
   canManageAnyPair: boolean;
+  // Distinto de canManageAnyPair (permissão de ação sobre pares de
+  // equivalência): isCoordinator só gateia a exibição do toggle de fila
+  // "Meus atribuídos" / "Todos" — coordenador também compara documentos, por
+  // isso o padrão é a fila pessoal dele, igual pesquisador.
+  isCoordinator: boolean;
+  // Valor efetivo (resolvido no servidor) da aba de fila atual — usado só
+  // para escolher a mensagem do estado vazio; a aba em si é controlada pela
+  // própria CompareQueueTabs via URL.
+  showingAllQueue: boolean;
 }
 
 export function ComparePage({
@@ -70,6 +80,8 @@ export function ComparePage({
   equivalencesByDocField,
   currentUserId,
   canManageAnyPair,
+  isCoordinator,
+  showingAllQueue,
 }: ComparePageProps) {
   // Ordem estável de montagem: o re-sort por pendências do servidor (a cada
   // veredito) não remexe a fila nem a sidebar — só mudança de composição
@@ -209,18 +221,27 @@ export function ComparePage({
 
   if (!currentDoc || docFields.length === 0) {
     return (
-      <div className="flex h-[calc(100vh-96px)] w-full">
-        <CompareDocList
-          docs={docListEntries}
-          currentIndex={docIndex}
-          onSelect={handleDocNavigate}
-          collapsed={listCollapsed}
-          onToggle={toggleList}
-        />
-        <div className="flex flex-1 items-center justify-center text-muted-foreground">
-          {documents.length === 0
-            ? "Nenhum documento na fila com os filtros atuais."
-            : "Nenhuma divergência neste documento."}
+      <div className="flex h-[calc(100vh-96px)] flex-col">
+        {isCoordinator && (
+          <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+            <CompareQueueTabs />
+          </div>
+        )}
+        <div className="flex flex-1 w-full">
+          <CompareDocList
+            docs={docListEntries}
+            currentIndex={docIndex}
+            onSelect={handleDocNavigate}
+            collapsed={listCollapsed}
+            onToggle={toggleList}
+          />
+          <div className="flex flex-1 items-center justify-center text-muted-foreground">
+            {documents.length === 0
+              ? isCoordinator && !showingAllQueue
+                ? 'Você não tem documentos atribuídos para comparação. Use a aba "Todos" acima para ver a fila completa do projeto.'
+                : "Nenhum documento na fila com os filtros atuais."
+              : "Nenhuma divergência neste documento."}
+          </div>
         </div>
       </div>
     );
@@ -243,6 +264,12 @@ export function ComparePage({
           : "flex h-[calc(100vh-96px)] flex-col"
       }
     >
+      {!isFullscreen && isCoordinator && (
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
+          <CompareQueueTabs />
+        </div>
+      )}
+
       {isFullscreen ? (
         <FullscreenNav
           title={docTitle}

@@ -99,12 +99,19 @@ export default async function ComparePageRoute({
   // detection on the server and for fusing answer cards on the client.
   const equivByDocField = buildEquivalenceMap(allEquivalences);
 
-  // Fail-CLOSED (ao contrario de comments/llm-insights): isCoordinator decide
-  // quais documentos aparecem na fila — um nao-coordenador ve so os atribuidos a
-  // si (compareAssignedDocIds). A policy RLS deixa qualquer membro ler todas as
-  // responses, entao esse recorte e so aplicacional; fail-open exporia
-  // documentos/respostas de terceiros em erro transitorio.
+  // Fail-CLOSED (ao contrario de comments/llm-insights): showAllQueue decide
+  // quais documentos aparecem na fila — quem não pediu "todos" ve so os
+  // atribuidos a si (compareAssignedDocIds). A policy RLS deixa qualquer
+  // membro ler todas as responses, entao esse recorte e so aplicacional;
+  // fail-open exporia documentos/respostas de terceiros em erro transitorio.
   const isCoordinator = coordinatorGate(access, { failOpen: false });
+
+  // Coordenador também compara documentos (não só supervisiona) — por isso o
+  // padrão é a fila pessoal dele, igual pesquisador. "Todos" é uma escolha
+  // explícita via aba/param `queue=all`, só alcançável por coordenador (um
+  // não-coordenador nunca chega a showAllQueue=true, mesmo editando a URL).
+  const queueParam = sp.queue;
+  const showAllQueue = isCoordinator && queueParam === "all";
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 
@@ -142,8 +149,8 @@ export default async function ComparePageRoute({
   const availableVersions = buildAvailableVersions(versionLog, allResponses);
   const latestMajorLabel = formatVersion(latestMajorAnchor(projectVersion));
 
-  // Compare-type assignments filter for researchers (ver assignedCompareDocIds).
-  const compareAssignedDocIds = assignedCompareDocIds(isCoordinator, allAssignments, user.id);
+  // Compare-type assignments filter (ver assignedCompareDocIds).
+  const compareAssignedDocIds = assignedCompareDocIds(showAllQueue, allAssignments, user.id);
 
   // Coding-type assignments map per doc (denominator for % atribuídos)
   const codingAssignedByDoc = buildCodingAssignedByDoc(allAssignments);
@@ -151,7 +158,7 @@ export default async function ComparePageRoute({
   // Status per user-doc for compare assignment (used in list and panel)
   const compareAssignmentStatusByDoc = buildCompareAssignmentStatusByDoc(
     allAssignments,
-    isCoordinator,
+    showAllQueue,
     user.id,
   );
 
@@ -256,6 +263,8 @@ export default async function ComparePageRoute({
         equivalencesByDocField={equivalencesByDocField}
         currentUserId={user.id}
         canManageAnyPair={isCoordinator}
+        isCoordinator={isCoordinator}
+        showingAllQueue={showAllQueue}
       />
     </Suspense>
   );

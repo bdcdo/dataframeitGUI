@@ -97,20 +97,21 @@ export function compareDefaultsForMode(
 }
 
 // Conjunto de document_ids que um usuário pode VER na fila de comparação.
-// Coordenador → null (sem restrição: vê todos os documentos). Não-coordenador
-// → apenas os docs com assignment de comparação atribuído a ele.
+// showAll → null (sem restrição: vê todos os documentos). false → apenas os
+// docs com assignment de comparação atribuído a ele (vale para coordenador
+// na aba "Meus atribuídos" e para não-coordenador, que nunca alcança showAll).
 // SEGURANÇA: a policy RLS "Members view responses" deixa qualquer membro ler
 // todas as responses do projeto, então este recorte é a única barreira de
-// visibilidade — por isso o `isCoordinator` que o alimenta é fail-closed (não
-// incorpora queryFailed). Ver analyze/compare/page.tsx.
+// visibilidade — por isso `showAll` (isCoordinator && aba/param "todos") é
+// resolvido no servidor de forma fail-closed. Ver analyze/compare/page.tsx.
 export function assignedCompareDocIds(
-  isCoordinator: boolean,
+  showAll: boolean,
   assignments:
     | ReadonlyArray<{ document_id: string; user_id: string; type: string }>
     | null,
   userId: string,
 ): Set<string> | null {
-  if (isCoordinator) return null;
+  if (showAll) return null;
   return new Set(
     (assignments ?? [])
       .filter((a) => a.type === "comparacao" && a.user_id === userId)

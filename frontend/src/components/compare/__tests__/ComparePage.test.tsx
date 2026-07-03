@@ -210,6 +210,8 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
     equivalencesByDocField: {},
     currentUserId: "u1",
     canManageAnyPair: false,
+    isCoordinator: false,
+    showingAllQueue: false,
   };
 }
 

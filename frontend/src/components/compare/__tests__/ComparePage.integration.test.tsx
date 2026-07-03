@@ -113,6 +113,8 @@ const props = {
   equivalencesByDocField: {},
   currentUserId: "u1",
   canManageAnyPair: false,
+  isCoordinator: false,
+  showingAllQueue: false,
 };
 
 const renderReal = () =>
