@@ -3,6 +3,7 @@
 import { FieldRenderer } from "./FieldRenderer";
 import { Check, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { PydanticField } from "@/lib/types";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -69,18 +70,17 @@ export function SortableQuestion({
           </button>
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium mb-1.5 flex items-center gap-1.5">
-            <span className="text-muted-foreground">{index + 1}.</span> {field.description}
+          <FieldHeaderLabel
+            prefix={`${index + 1}.`}
+            helpText={field.help_text}
+            className="mb-1.5"
+          >
+            {field.description}
             {field.required === false && (
               <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
             )}
             {isAnswered && <Check className="size-3.5 text-brand shrink-0" />}
-          </p>
-          {field.help_text && (
-            <p className="text-xs text-muted-foreground mb-1.5 whitespace-pre-line">
-              {field.help_text}
-            </p>
-          )}
+          </FieldHeaderLabel>
           <FieldRenderer
             field={field}
             value={answerValue ?? null}

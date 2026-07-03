@@ -9,7 +9,8 @@ import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel, type QuestionsPanelProps } from "./QuestionsPanel";
 import { FullscreenNav } from "./FullscreenNav";
 
-interface AssignedCodingViewProps extends QuestionsPanelProps {
+interface AssignedCodingViewProps
+  extends Omit<QuestionsPanelProps, "submitting" | "notes" | "onNotesChange" | "readOnly" | "onReorder"> {
   docId: string;
   text: string;
   title: string;
@@ -18,6 +19,11 @@ interface AssignedCodingViewProps extends QuestionsPanelProps {
   isFullscreen: boolean;
   onNavigate: (index: number) => void;
   onExitFullscreen: () => void;
+  submitting: boolean;
+  notes: string;
+  onNotesChange: (notes: string) => void;
+  readOnly: boolean;
+  onReorder: (newOrder: string[]) => void;
 }
 
 /** Painel de codificação do modo Atribuídos (leitor + perguntas). */

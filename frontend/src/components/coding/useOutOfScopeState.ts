@@ -1,6 +1,15 @@
 import { useState } from "react";
 import type { OutOfScopeState } from "./OutOfScopeToggle";
-import type { OutOfScopeConfig } from "./QuestionsPanel";
+
+/** Config da pergunta "fora do escopo" no topo do painel. O estado vivo fica
+ *  em estado local do painel (semeado daqui) — o painel é keyed por docId nas
+ *  duas views, então reseta sozinho na troca de documento. */
+export interface OutOfScopeConfig {
+  projectId: string;
+  documentId: string;
+  documentTitle?: string;
+  initialState: OutOfScopeState;
+}
 
 /**
  * Estado vivo da sinalização "fora do escopo", semeado uma vez do server

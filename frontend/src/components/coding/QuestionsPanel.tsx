@@ -5,8 +5,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SortableQuestion } from "./SortableQuestion";
 import { SubmitBar } from "./SubmitBar";
-import { OutOfScopeToggle, type OutOfScopeState } from "./OutOfScopeToggle";
-import { useOutOfScopeState } from "./useOutOfScopeState";
+import { OutOfScopeToggle } from "./OutOfScopeToggle";
+import { useOutOfScopeState, type OutOfScopeConfig } from "./useOutOfScopeState";
 import { useScrollToRevealedField } from "./useScrollToRevealedField";
 import { useQuestionReorder } from "./useQuestionReorder";
 import { useQuestionValidation } from "./useQuestionValidation";
@@ -17,15 +17,7 @@ import type { PydanticField } from "@/lib/types";
 import { DndContext, closestCenter } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
-/** Config da pergunta "fora do escopo" no topo do painel. O estado vivo fica
- *  em estado local do painel (semeado daqui) — o painel é keyed por docId nas
- *  duas views, então reseta sozinho na troca de documento. */
-export interface OutOfScopeConfig {
-  projectId: string;
-  documentId: string;
-  documentTitle?: string;
-  initialState: OutOfScopeState;
-}
+export type { OutOfScopeConfig };
 
 export interface QuestionsPanelProps {
   fields: PydanticField[];
