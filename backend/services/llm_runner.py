@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
-from services.pydantic_compiler import build_model_from_code
+from services.pydantic_compiler import build_model_from_code, extract_json_schema_extra
 from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -492,9 +492,7 @@ def _extend_model_with_justifications(model_class):
 
     extra_fields = {}
     for name, info in model_class.model_fields.items():
-        extra = info.json_schema_extra
-        if not isinstance(extra, dict):
-            extra = {}
+        extra = extract_json_schema_extra(info)
         custom = extra.get("justification_prompt")
         if isinstance(custom, str) and custom.strip():
             base = custom.strip()

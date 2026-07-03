@@ -2,6 +2,7 @@
 
 Cobre #88 — prompt de justificativa exigente e parametrizável.
 """
+
 from pydantic import BaseModel, Field
 
 from services.llm_runner import (

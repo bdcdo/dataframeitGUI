@@ -204,44 +204,6 @@ export type AssignedDoc = Document & {
 // não dá para inferir staleness.
 export type AnswerFieldHashes = Record<string, string> | null;
 
-export interface Response {
-  id: string;
-  project_id: string;
-  document_id: string;
-  respondent_id: string | null;
-  respondent_type: "humano" | "llm";
-  respondent_name: string | null;
-  answers: Record<string, unknown>;
-  justifications: Record<string, string> | null;
-  is_latest: boolean;
-  pydantic_hash: string | null;
-  answer_field_hashes: AnswerFieldHashes;
-  created_at: string;
-}
-
-export interface Review {
-  id: string;
-  project_id: string;
-  document_id: string;
-  field_name: string;
-  reviewer_id: string | null;
-  verdict: string;
-  chosen_response_id: string | null;
-  comment: string | null;
-  created_at: string;
-}
-
-export interface ResponseEquivalence {
-  id: string;
-  project_id: string;
-  document_id: string;
-  field_name: string;
-  response_a_id: string;
-  response_b_id: string;
-  reviewer_id: string | null;
-  created_at: string;
-}
-
 // Vereditos da auto-revisao. Todos resolvem o campo; só `contesta_llm` abre
 // arbitragem. `equivalente` registra o par humano↔LLM em response_equivalences;
 // `ambiguo` gera um project_comments para discussão.
@@ -251,42 +213,6 @@ export type SelfVerdict =
   | "equivalente"
   | "ambiguo";
 export type ArbitrationVerdict = "humano" | "llm";
-
-export interface FieldReview {
-  id: string;
-  project_id: string;
-  document_id: string;
-  field_name: string;
-  human_response_id: string;
-  llm_response_id: string;
-  self_reviewer_id: string;
-  self_verdict: SelfVerdict | null;
-  self_justification: string | null;
-  self_reviewed_at: string | null;
-  arbitrator_id: string | null;
-  blind_verdict: ArbitrationVerdict | null;
-  blind_decided_at: string | null;
-  final_verdict: ArbitrationVerdict | null;
-  final_decided_at: string | null;
-  changed_after_justification: boolean | null;
-  question_improvement_suggestion: string | null;
-  arbitrator_comment: string | null;
-  created_at: string;
-}
-
-export interface QuestionMeta {
-  id: string;
-  project_id: string;
-  field_name: string;
-  priority: "ALTA" | "MEDIA" | "BAIXA";
-}
-
-export interface ResearcherFieldOrder {
-  project_id: string;
-  user_id: string;
-  field_order: string[];
-  updated_at: string;
-}
 
 export type SchemaChangeType = "major" | "minor" | "patch" | "initial";
 

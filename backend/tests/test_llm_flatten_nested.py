@@ -4,6 +4,7 @@ O flatten existe para evitar que providers (Gemini em particular) achatem
 silenciosamente subfields de BaseModel aninhado no topo do JSON de saída.
 Ver services/llm_runner.py.
 """
+
 from typing import Optional
 
 from pydantic import BaseModel, Field

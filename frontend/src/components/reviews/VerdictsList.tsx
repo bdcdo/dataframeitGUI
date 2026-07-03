@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isAnswerCorrect } from "@/lib/reviews/queries";
-import { formatAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
+import { formatVerdictAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import type { VerdictItem } from "@/app/(app)/projects/[id]/reviews/my-verdicts/page";
 import type { PydanticField } from "@/lib/types";
@@ -159,7 +159,7 @@ function VerdictCard({
     reviewId: string,
     status: "accepted" | "questioned",
     comment?: string,
-  ) => void;
+  ) => void | Promise<void>;
 }) {
   const isSpecialVerdict = item.verdict === "ambiguo" || item.verdict === "pular";
   const otherResponses = item.responseSnapshot?.filter(
@@ -199,7 +199,7 @@ function VerdictCard({
             "text-sm font-medium mt-0.5",
             !item.isCorrect && !isSpecialVerdict && "text-red-600 dark:text-red-400",
           )}>
-            {formatAnswer(item.myAnswer)}
+            {formatVerdictAnswer(item.myAnswer)}
           </p>
         </div>
         <div
@@ -266,7 +266,7 @@ function VerdictCard({
                   size="sm"
                   className="h-6 text-xs"
                   disabled={isPending}
-                  onClick={() => onAcknowledge(item.reviewId, "accepted")}
+                  onClick={() => void onAcknowledge(item.reviewId, "accepted")}
                 >
                   <Check className="mr-1 size-3" />
                   Aceitar correção
@@ -311,7 +311,7 @@ function VerdictCard({
             className="h-7 text-xs shrink-0"
             disabled={isPending || !questionComment.trim()}
             onClick={() =>
-              onAcknowledge(item.reviewId, "questioned", questionComment)
+              void onAcknowledge(item.reviewId, "questioned", questionComment)
             }
           >
             Enviar
@@ -364,7 +364,7 @@ function RespondentRow({
             !isSpecialVerdict && !correct && "text-red-600 dark:text-red-400",
           )}
         >
-          {formatAnswer(respondent.answer) || (
+          {formatVerdictAnswer(respondent.answer) || (
             <span className="italic text-muted-foreground">sem resposta</span>
           )}
         </span>
