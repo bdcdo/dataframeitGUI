@@ -1,53 +1,23 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  callsOf,
+  makeSimpleSupabaseMock,
+  type WriteCall,
+} from "@/test-utils/supabase-mock";
+import { authModuleMock } from "@/test-utils/auth-mock";
 
 // Mock supabase chainable — mesmo padrão de field-reviews.test.ts. Captura
 // payloads de write para validar o comportamento de retryPendingArbitrations
 // e assignArbitrator sem subir Postgres.
-type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown>;
 
-const updateCallsOf = (table?: string) =>
-  writeCalls.filter((c) => c.op === "update" && (!table || c.table === table));
-const upsertCallsOf = (table?: string) =>
-  writeCalls.filter((c) => c.op === "upsert" && (!table || c.table === table));
+const updateCallsOf = (table?: string) => callsOf(writeCalls, "update", table);
+const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
+const deleteCallsOf = (table?: string) => callsOf(writeCalls, "delete", table);
 
 function makeClient() {
-  return {
-    from: (table: string) => {
-      const builder: Record<string, unknown> = {};
-      let op = "select";
-      for (const m of ["select", "eq", "is", "in", "neq", "limit"]) {
-        builder[m] = () => builder;
-      }
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        op = "update";
-        return builder;
-      };
-      builder.upsert = (payload: unknown) => {
-        writeCalls.push({ table, op: "upsert", payload });
-        op = "upsert";
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        writeCalls.push({ table, op: "insert", payload });
-        op = "insert";
-        return builder;
-      };
-      builder.delete = () => {
-        writeCalls.push({ table, op: "delete", payload: null });
-        op = "delete";
-        return builder;
-      };
-      builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({
-          data: tableData[`${table}:${op}`] ?? tableData[table] ?? null,
-          error: tableData[`__error:${table}:${op}`] ?? null,
-        });
-      return builder;
-    },
-  };
+  return makeSimpleSupabaseMock({ tableData, writeCalls });
 }
 
 // isProjectCoordinator: hoisted para permitir override por teste.
@@ -56,10 +26,7 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "userCoord" }),
-  isProjectCoordinator: () => hoisted.isCoord(),
-}));
+vi.mock("@/lib/auth", () => authModuleMock(hoisted.isCoord));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
 }));
@@ -243,9 +210,6 @@ async function loadRelease() {
   return (await import("@/actions/field-reviews")).releaseArbitrationsFromUser;
 }
 
-const deleteCallsOf = (table?: string) =>
-  writeCalls.filter((c) => c.op === "delete" && (!table || c.table === table));
-
 describe("releaseArbitrationsFromUser", () => {
   it("sem field_reviews afetados → released 0, nenhum write", async () => {
     tableData.field_reviews = [];
@@ -343,5 +307,25 @@ describe("retryPendingArbitrations — batch de responses agrupado por doc", () 
     // veriam o conjunto union {userB, userC} e cairiam no fallback,
     // sorteando qualquer um — quebrando a isolação por documento.
     expect(arbitrators).toEqual(["userB", "userC"]);
+  });
+});
+
+// regenerateAutoReviewBacklog não tinha nenhum teste antes do #385 — passou a
+// reusar o mesmo requireCoordinator de retryPendingArbitrations (mesmo
+// arquivo), então o gap real a fechar é o guard.
+async function loadRegenerate() {
+  return (await import("@/actions/field-reviews")).regenerateAutoReviewBacklog;
+}
+
+describe("regenerateAutoReviewBacklog — guard", () => {
+  it("não-coordenador → erro, sem efeito colateral", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const regenerate = await loadRegenerate();
+
+    const r = await regenerate("p1");
+
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("coordenadores");
+    expect(writeCalls).toHaveLength(0);
   });
 });

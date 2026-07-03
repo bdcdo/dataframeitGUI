@@ -1,11 +1,7 @@
 "use server";
 
-import { createSupabaseServer } from "@/lib/supabase/server";
-import {
-  getAuthUser,
-  getProjectAccessContext,
-  isProjectCoordinator,
-} from "@/lib/auth";
+import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
+import { getAuthUser, getProjectAccessContext, requireCoordinator } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
@@ -167,7 +163,7 @@ export interface UploadOptions {
 async function filterActiveExternalIdConflicts<
   T extends { external_id: string | null },
 >(
-  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  supabase: SupabaseServerClient,
   projectId: string,
   rows: T[],
 ): Promise<{ rows: T[]; skippedExisting: number; skippedInBatch: number }> {
@@ -585,6 +581,23 @@ export async function getDocumentText(
   return { text: data.text, title: data.title || documentId };
 }
 
+// Rodapé comum às mutações de exclusão/restauração de documents: as 3 funções
+// abaixo só divergem na query em si (update com payloads opostos vs delete),
+// não no que fazem depois dela.
+// Sem anotação de retorno explícita (de propósito): os 3 callers dependem da
+// inferência "solta" que o TS produz a partir de returns de object literal
+// (equivalente a {error?, count?}), não de uma união discriminada estrita —
+// os call sites em useDocumentActions.ts fazem `result?.error` sem narrowing.
+async function finishDocumentsMutation(
+  projectId: string,
+  error: { message: string } | null,
+  count: number,
+) {
+  if (error) return { error: error.message };
+  await revalidateProjectDocumentsCache(projectId);
+  return { count };
+}
+
 // Soft delete: marca documents.excluded_at. Reads default filtram excluidos.
 // Coordenador pode visualizar/restaurar via toggle "Mostrar excluidos".
 export async function excludeDocuments(
@@ -592,13 +605,17 @@ export async function excludeDocuments(
   documentIds: string[],
   reason: string,
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  // Nota: o gate de coordenador roda antes da validação de `reason` (antes
+  // era auth → reason → coordenador). requireCoordinator empacota auth+
+  // coordenador como unidade atômica; checar permissão antes de validar
+  // input é ordem defensável e o caminho só é alcançável via chamada direta
+  // da action (a UI já esconde a ação de não-coordenadores).
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode excluir documentos",
+  );
+  if (!gate.ok) return { error: gate.error };
   if (!reason?.trim()) return { error: "Motivo da exclusão é obrigatório" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode excluir documentos" };
-  }
 
   const supabase = await createSupabaseServer();
 
@@ -607,26 +624,23 @@ export async function excludeDocuments(
     .update({
       excluded_at: new Date().toISOString(),
       excluded_reason: reason.trim(),
-      excluded_by: user.id,
+      excluded_by: gate.user.id,
     })
     .eq("project_id", projectId)
     .in("id", documentIds);
 
-  if (error) return { error: error.message };
-  await revalidateProjectDocumentsCache(projectId);
-  return { count: documentIds.length };
+  return finishDocumentsMutation(projectId, error, documentIds.length);
 }
 
 export async function restoreDocuments(
   projectId: string,
   documentIds: string[],
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode restaurar documentos" };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode restaurar documentos",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const supabase = await createSupabaseServer();
 
@@ -640,9 +654,7 @@ export async function restoreDocuments(
     .eq("project_id", projectId)
     .in("id", documentIds);
 
-  if (error) return { error: error.message };
-  await revalidateProjectDocumentsCache(projectId);
-  return { count: documentIds.length };
+  return finishDocumentsMutation(projectId, error, documentIds.length);
 }
 
 // Hard delete: remove DB permanente (CASCADE em responses/reviews/assignments).
@@ -652,12 +664,11 @@ export async function hardDeleteDocuments(
   projectId: string,
   documentIds: string[],
 ) {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenador pode apagar documentos permanentemente" };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenador pode apagar documentos permanentemente",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const supabase = await createSupabaseServer();
 
@@ -667,7 +678,5 @@ export async function hardDeleteDocuments(
     .eq("project_id", projectId)
     .in("id", documentIds);
 
-  if (error) return { error: error.message };
-  await revalidateProjectDocumentsCache(projectId);
-  return { count: documentIds.length };
+  return finishDocumentsMutation(projectId, error, documentIds.length);
 }

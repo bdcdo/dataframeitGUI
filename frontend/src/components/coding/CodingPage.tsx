@@ -8,12 +8,13 @@ import { useFieldOrder } from "@/hooks/useFieldOrder";
 import { useAutosaveOnExit } from "@/hooks/useAutosaveOnExit";
 import { useFullscreen } from "@/hooks/useFullscreen";
 import { useDirtyDocs } from "@/hooks/useDirtyDocs";
-import { CodingHeader } from "./CodingHeader";
+import { CodingHeader, type DocSection } from "./CodingHeader";
 import { CodingEmptyStates } from "./CodingEmptyStates";
 import { AssignedCodingView } from "./AssignedCodingView";
 import { BrowseCodingView } from "./BrowseCodingView";
 import { useAssignedCoding } from "./useAssignedCoding";
 import { useBrowseCoding } from "./useBrowseCoding";
+import type { OutOfScopeConfig } from "./QuestionsPanel";
 import type {
   PydanticField,
   AssignedDoc,
@@ -32,9 +33,112 @@ export interface RoundFilterData {
 
 export type CodingSortMode = "default" | "recent";
 
+interface InitialCodingState {
+  mode: "assigned" | "browse";
+  docIndex: number;
+}
+
+/** Estado inicial derivado do `?doc=` da URL (mount apenas — ver comentário no
+ *  `useState` que chama esta função). */
+function computeInitialCodingState(
+  docParam: string | null,
+  sortedDocuments: AssignedDoc[],
+  hasAssignments: boolean,
+): InitialCodingState {
+  if (docParam) {
+    const assignedIdx = sortedDocuments.findIndex((d) => d.id === docParam);
+    if (assignedIdx >= 0) {
+      return { mode: "assigned", docIndex: assignedIdx };
+    }
+    return { mode: "browse", docIndex: 0 };
+  }
+  return { mode: hasAssignments ? "assigned" : "browse", docIndex: 0 };
+}
+
 const EMPTY_CODED_AT: Record<string, string> = {};
 const EMPTY_JUSTIFICATIONS: Record<string, Record<string, unknown>> = {};
 const EMPTY_PENDING_EXCLUSIONS: Record<string, string> = {};
+
+/** Config da pergunta "fora do escopo?" (QuestionsPanel), compartilhada pelos
+ *  dois modos. Renderiza quando o recurso está ligado no projeto OU quando o
+ *  doc já tem sinalização pendente (setting desligado não anula pendências
+ *  existentes). `documentExists` cobre o caso do modo Explorar, em que o
+ *  `documentId` (da URL) pode existir antes do conteúdo do doc carregar. */
+function buildOutOfScopeConfig({
+  documentId,
+  documentExists,
+  outOfScopeEnabled,
+  projectId,
+  documentTitle,
+  pending,
+}: {
+  documentId: string | null | undefined;
+  documentExists: boolean;
+  outOfScopeEnabled: boolean;
+  projectId: string;
+  documentTitle: string;
+  pending: { mine: boolean; reason?: string } | undefined;
+}): OutOfScopeConfig | undefined {
+  if (!documentId || !documentExists) return undefined;
+  if (!outOfScopeEnabled && !pending) return undefined;
+  return {
+    projectId,
+    documentId,
+    documentTitle,
+    initialState: pending
+      ? { status: pending.mine ? "pending_mine" : "pending_other", reason: pending.reason }
+      : { status: "normal" },
+  };
+}
+
+/** Prop `doc` do `CodingHeader`: qual variante mostrar (atribuído/Explorar) e
+ *  com quais dados, conforme o modo ativo. */
+function buildHeaderDocSection(
+  mode: "assigned" | "browse",
+  assigned: {
+    doc: AssignedDoc | undefined;
+    title: string;
+    docIndex: number;
+    total: number;
+    onNavigate: (index: number) => void;
+    parecerUrl?: string;
+  },
+  browse: {
+    docId: string | null;
+    title: string;
+    responseCount: number;
+    onBack: () => void;
+    onRandom: () => void;
+    submitting: boolean;
+    parecerUrl?: string;
+    projectId: string;
+  },
+): DocSection | undefined {
+  if (mode === "assigned" && assigned.doc) {
+    return {
+      variant: "assigned",
+      title: assigned.title,
+      index: assigned.docIndex,
+      total: assigned.total,
+      onNavigate: assigned.onNavigate,
+      parecerUrl: assigned.parecerUrl,
+    };
+  }
+  if (mode === "browse" && browse.docId) {
+    return {
+      variant: "browse",
+      title: browse.title,
+      responseCount: browse.responseCount,
+      onBack: browse.onBack,
+      onRandom: browse.onRandom,
+      submitting: browse.submitting,
+      parecerUrl: browse.parecerUrl,
+      projectId: browse.projectId,
+      documentId: browse.docId,
+    };
+  }
+  return undefined;
+}
 
 interface CodingPageProps {
   projectId: string;
@@ -94,23 +198,12 @@ function CodingPageInner({
     [documents, sortMode, codedAtByDoc],
   );
 
-  // Estado inicial derivado do ?doc= da URL. O lazy initializer do useState
-  // roda só no mount, capturando docParam/sortedDocuments/hasAssignments
-  // iniciais — intencional: navegação posterior não deve recomputar o estado
-  // inicial (era um useCallback com deps [] + eslint-disable).
-  const [initial] = useState(() => {
-    if (docParam) {
-      const assignedIdx = sortedDocuments.findIndex((d) => d.id === docParam);
-      if (assignedIdx >= 0) {
-        return { mode: "assigned" as const, docIndex: assignedIdx };
-      }
-      return { mode: "browse" as const, docIndex: 0 };
-    }
-    return {
-      mode: (hasAssignments ? "assigned" : "browse") as "assigned" | "browse",
-      docIndex: 0,
-    };
-  });
+  // Lazy initializer: roda só no mount, capturando docParam/sortedDocuments/
+  // hasAssignments iniciais — intencional: navegação posterior não deve
+  // recomputar o estado inicial (era um useCallback com deps [] + eslint-disable).
+  const [initial] = useState(() =>
+    computeInitialCodingState(docParam, sortedDocuments, hasAssignments),
+  );
 
   const [mode, setMode] = useState<"assigned" | "browse">(initial.mode);
   const [submitting, setSubmitting] = useState(false);
@@ -219,41 +312,34 @@ function CodingPageInner({
     assigned.resetAllDone();
   };
 
-  // Config da pergunta "fora do escopo?" (QuestionsPanel). Renderiza quando o
-  // recurso está ligado no projeto OU quando o doc já tem sinalização pendente
-  // (setting desligado não anula pendências existentes).
+  // Sinalização pendente DO PRÓPRIO usuário no doc atribuído atual (pendências
+  // de outros já saem filtradas no servidor — por isso sempre "mine" aqui).
   const assignedPendingReason = assigned.currentDoc
     ? pendingExclusionByDoc[assigned.currentDoc.id]
     : undefined;
-  const assignedOutOfScope =
-    assigned.currentDoc &&
-    (outOfScopeEnabled || assignedPendingReason !== undefined)
-      ? {
-          projectId,
-          documentId: assigned.currentDoc.id,
-          documentTitle: assignedTitle,
-          initialState:
-            assignedPendingReason !== undefined
-              ? ({ status: "pending_mine", reason: assignedPendingReason } as const)
-              : ({ status: "normal" } as const),
-        }
-      : undefined;
+  const assignedOutOfScope = buildOutOfScopeConfig({
+    documentId: assigned.currentDoc?.id,
+    documentExists: !!assigned.currentDoc,
+    outOfScopeEnabled,
+    projectId,
+    documentTitle: assignedTitle,
+    pending:
+      assignedPendingReason !== undefined
+        ? { mine: true, reason: assignedPendingReason }
+        : undefined,
+  });
 
   const browsePending = browse.browseDoc?.document.exclusionPending ?? null;
-  const browseOutOfScope =
-    browse.browseDocId && browse.browseDoc && (outOfScopeEnabled || browsePending)
-      ? {
-          projectId,
-          documentId: browse.browseDocId,
-          documentTitle: browseTitle,
-          initialState: browsePending
-            ? ({
-                status: browsePending.mine ? "pending_mine" : "pending_other",
-                reason: browsePending.reason ?? undefined,
-              } as const)
-            : ({ status: "normal" } as const),
-        }
-      : undefined;
+  const browseOutOfScope = buildOutOfScopeConfig({
+    documentId: browse.browseDocId,
+    documentExists: !!browse.browseDoc,
+    outOfScopeEnabled,
+    projectId,
+    documentTitle: browseTitle,
+    pending: browsePending
+      ? { mine: browsePending.mine, reason: browsePending.reason ?? undefined }
+      : undefined,
+  });
 
   return (
     <div
@@ -272,69 +358,56 @@ function CodingPageInner({
           onSortChange={assigned.handleSortChange}
           roundFilter={roundFilter}
           canRunLlm={canRunLlm}
-          doc={
-            mode === "assigned" && assigned.currentDoc
-              ? {
-                  variant: "assigned",
-                  title: assignedTitle,
-                  index: assigned.docIndex,
-                  total: documents.length,
-                  onNavigate: assigned.handleDocNavigate,
-                  parecerUrl: assignedParecerUrl,
-                }
-              : mode === "browse" && browse.browseDocId
-              ? {
-                  variant: "browse",
-                  title: browseTitle,
-                  responseCount: browse.browseDocInfo?.responseCount ?? 0,
-                  onBack: () => void browse.handleBrowseBack(),
-                  onRandom: browse.handleBrowseRandom,
-                  submitting,
-                  parecerUrl: browseParecerUrl,
-                  projectId,
-                  documentId: browse.browseDocId,
-                }
-              : undefined
-          }
+          doc={buildHeaderDocSection(
+            mode,
+            {
+              doc: assigned.currentDoc,
+              title: assignedTitle,
+              docIndex: assigned.docIndex,
+              total: documents.length,
+              onNavigate: assigned.handleDocNavigate,
+              parecerUrl: assignedParecerUrl,
+            },
+            {
+              docId: browse.browseDocId,
+              title: browseTitle,
+              responseCount: browse.browseDocInfo?.responseCount ?? 0,
+              onBack: () => void browse.handleBrowseBack(),
+              onRandom: browse.handleBrowseRandom,
+              submitting,
+              parecerUrl: browseParecerUrl,
+              projectId,
+            },
+          )}
           onToggleFullscreen={toggleFullscreen}
         />
       )}
 
-      {mode === "assigned" &&
-        (assigned.allDone ? (
-          <CodingEmptyStates
-            kind="all-done"
-            count={documents.length}
-            onExploreMore={handleExploreMore}
-          />
-        ) : !assigned.currentDoc ? (
-          <CodingEmptyStates
-            kind="no-doc"
-            hasAssignments={hasAssignments}
-            roundFilter={roundFilter}
-          />
-        ) : (
-          <AssignedCodingView
-            docId={assigned.currentDoc.id}
-            text={assigned.currentDoc.text}
-            title={assignedTitle}
-            docIndex={assigned.docIndex}
-            total={documents.length}
-            isFullscreen={isFullscreen}
-            onNavigate={assigned.handleDocNavigate}
-            onExitFullscreen={toggleFullscreen}
-            fields={orderedFields}
-            answers={assigned.docAnswers}
-            onAnswer={assigned.handleAnswer}
-            onSubmit={() => void assigned.handleSubmit()}
-            submitting={submitting}
-            notes={assigned.docNotes}
-            onNotesChange={assigned.handleNotesChange}
-            readOnly={readOnly}
-            onReorder={handleReorder}
-            outOfScope={assignedOutOfScope}
-          />
-        ))}
+      {mode === "assigned" && (
+        <AssignedCodingView
+          doc={assigned.currentDoc}
+          title={assignedTitle}
+          docIndex={assigned.docIndex}
+          total={documents.length}
+          isFullscreen={isFullscreen}
+          onNavigate={assigned.handleDocNavigate}
+          onExitFullscreen={toggleFullscreen}
+          fields={orderedFields}
+          answers={assigned.docAnswers}
+          onAnswer={assigned.handleAnswer}
+          onSubmit={() => void assigned.handleSubmit()}
+          submitting={submitting}
+          notes={assigned.docNotes}
+          onNotesChange={assigned.handleNotesChange}
+          readOnly={readOnly}
+          onReorder={handleReorder}
+          outOfScope={assignedOutOfScope}
+          allDone={assigned.allDone}
+          onExploreMore={handleExploreMore}
+          hasAssignments={hasAssignments}
+          roundFilter={roundFilter}
+        />
+      )}
 
       {mode === "browse" && (
         <BrowseCodingView

@@ -2,7 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import { preregisterSupabaseUser } from "@/lib/clerk-sync";
 import type { MemberEmailLink } from "@/lib/types";
 import {
@@ -432,11 +432,12 @@ export async function linkMemberEmail(
   requiresUnification?: UnificationPreview;
   error?: string;
 }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenadores podem vincular e-mails." };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem vincular e-mails.",
+  );
+  if (!gate.ok) return { error: gate.error };
+  const user = gate.user;
 
   const email = normalizeEmail(rawEmail);
   if (!email) return { error: "E-mail inválido." };
@@ -574,11 +575,12 @@ export async function unifyMembers(
   sourceUserId: string,
   targetUserId: string
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenadores podem unificar membros." };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem unificar membros.",
+  );
+  if (!gate.ok) return { error: gate.error };
+  const user = gate.user;
 
   const admin = createSupabaseAdmin();
   const { error } = await admin.rpc("unify_project_members", {
@@ -604,11 +606,11 @@ export async function unlinkMemberEmail(
   projectId: string,
   linkId: string
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenadores podem desvincular e-mails." };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem desvincular e-mails.",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const admin = createSupabaseAdmin();
   const { error } = await admin

@@ -1,145 +1,39 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { PydanticField } from "@/lib/types";
+import {
+  callsOf,
+  makeFilterAwareSupabaseMock,
+  type WriteCall,
+} from "@/test-utils/supabase-mock";
+import {
+  CURRENT_HASH,
+  makeHumanResponse,
+  makeProjectMember,
+  makeProjectRow,
+} from "@/test-utils/comparison-fixtures";
 
 // Mock supabase chainable e FILTER-AWARE: diferente do mock de
 // arbitration-retry.test.ts, aplica os filtros .eq/.neq/.in às linhas, porque a
 // comparação consulta `responses` duas vezes na mesma chamada (humano vs LLM) —
 // um mock que ignora filtros devolveria o mesmo array para ambas.
-type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown[]>;
 
-const upsertCallsOf = (table?: string) =>
-  writeCalls.filter((c) => c.op === "upsert" && (!table || c.table === table));
-const deleteCallsOf = (table?: string) =>
-  writeCalls.filter((c) => c.op === "delete" && (!table || c.table === table));
+const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
+const deleteCallsOf = (table?: string) => callsOf(writeCalls, "delete", table);
 
 function makeClient() {
-  return {
-    from: (table: string) => {
-      const eqs: Array<[string, unknown]> = [];
-      const neqs: Array<[string, unknown]> = [];
-      const ins: Array<[string, unknown[]]> = [];
-      let op = "select";
-      let limitN: number | null = null;
-
-      const builder: Record<string, unknown> = {};
-      builder.select = () => builder;
-      builder.eq = (c: string, v: unknown) => {
-        eqs.push([c, v]);
-        return builder;
-      };
-      builder.neq = (c: string, v: unknown) => {
-        neqs.push([c, v]);
-        return builder;
-      };
-      builder.is = (c: string, v: unknown) => {
-        eqs.push([c, v]);
-        return builder;
-      };
-      builder.in = (c: string, v: unknown[]) => {
-        ins.push([c, v]);
-        return builder;
-      };
-      builder.limit = (n: number) => {
-        limitN = n;
-        return builder;
-      };
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        op = "update";
-        return builder;
-      };
-      builder.upsert = (payload: unknown) => {
-        writeCalls.push({ table, op: "upsert", payload });
-        op = "upsert";
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        writeCalls.push({ table, op: "insert", payload });
-        op = "insert";
-        return builder;
-      };
-      builder.delete = () => {
-        writeCalls.push({ table, op: "delete", payload: null });
-        op = "delete";
-        return builder;
-      };
-
-      const rows = () => {
-        const data = (tableData[table] ?? []) as Array<Record<string, unknown>>;
-        const filtered = data.filter((r) => {
-          for (const [c, v] of eqs) if (r[c] !== v) return false;
-          for (const [c, v] of neqs) if (r[c] === v) return false;
-          for (const [c, vals] of ins) if (!vals.includes(r[c])) return false;
-          return true;
-        });
-        return limitN != null ? filtered.slice(0, limitN) : filtered;
-      };
-      const err = () => tableData[`__error:${table}:${op}`] ?? null;
-
-      builder.single = () =>
-        Promise.resolve({ data: rows()[0] ?? null, error: err() });
-      builder.maybeSingle = () =>
-        Promise.resolve({ data: rows()[0] ?? null, error: err() });
-      builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({ data: rows(), error: err() });
-      return builder;
-    },
-  };
+  return makeFilterAwareSupabaseMock({ tableData, writeCalls });
 }
 
-const hoisted = vi.hoisted(() => ({
-  isCoord: vi.fn<() => Promise<boolean>>(async () => true),
-}));
-
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "userCoord" }),
-  isProjectCoordinator: () => hoisted.isCoord(),
-}));
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdmin: () => makeClient(),
 }));
 
-const FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "", required: true },
-];
+// `@/lib/auto-comparison.ts` não importa `@/lib/auth` — o mock de
+// `@/lib/auth`/`isCoord` que existia antes era boilerplate copiado sem
+// efeito (nenhum teste deste arquivo exercitava o guard) — removido no #387.
 
-// Hash do schema corrente do projeto. As fixtures default usam-no como
-// `pydantic_hash`, com semver NULL, para qualificar pelo fallback de hash em
-// `responseQualifiesForVersion` sob o piso vivo `latest_major` (#247). Casos de
-// versão antiga passam `pydantic_hash: "hash-antigo"` ou um semver < piso.
-const CURRENT_HASH = "hash-atual";
-
-// Helpers de fixture. Campos de versão (pydantic_hash, schema_version_*) entram
-// no shape porque o gatilho agora aplica o piso `latest_major` antes de medir
-// divergência (#247). Default = versão corrente (qualifica); `extra` sobrescreve
-// para emular rodadas antigas. Semver explícito como NULL (não undefined) para
-// espelhar o que o Postgres devolve em respostas pré-versionamento.
-const human = (
-  respondent_id: string,
-  q1: string,
-  extra: Record<string, unknown> = {},
-) => ({
-  id: `r-${respondent_id}`,
-  project_id: "p1",
-  document_id: "doc1",
-  respondent_id,
-  respondent_type: "humano",
-  is_latest: true,
-  answers: { q1 },
-  answer_field_hashes: null,
-  pydantic_hash: CURRENT_HASH,
-  schema_version_major: null,
-  schema_version_minor: null,
-  schema_version_patch: null,
-  // Chaves do filtro de embed `documents!inner` (fora-de-escopo): o mock
-  // filter-aware compara r["documents.excluded_at"] literalmente.
-  "documents.excluded_at": null,
-  "documents.exclusion_pending_at": null,
-  ...extra,
-});
 const llm = (q1: string, extra: Record<string, unknown> = {}) => ({
   id: "r-llm",
   project_id: "p1",
@@ -154,31 +48,11 @@ const llm = (q1: string, extra: Record<string, unknown> = {}) => ({
   schema_version_patch: null,
   ...extra,
 });
-const member = (user_id: string) => ({
-  user_id,
-  project_id: "p1",
-  can_compare: true,
-});
-const projectRow = (over: Record<string, unknown> = {}) => ({
-  id: "p1",
-  pydantic_fields: FIELDS,
-  pydantic_hash: CURRENT_HASH,
-  min_responses_for_comparison: 2,
-  comparison_includes_llm: true,
-  automation_mode: "compare_humans",
-  // Sem semver explícito: cai nos fallbacks {0,1,0} (como page.tsx/compare-sync),
-  // e o piso `latest_major` ancora em {0,1,0}. Casos que exercitam o caminho
-  // semver passam schema_version_* aqui.
-  schema_version_major: null,
-  schema_version_minor: null,
-  schema_version_patch: null,
-  ...over,
-});
 
 beforeEach(() => {
   writeCalls = [];
   tableData = {
-    projects: [projectRow()],
+    projects: [makeProjectRow()],
     project_members: [],
     assignments: [],
     responses: [],
@@ -194,7 +68,6 @@ beforeEach(() => {
       },
     ],
   };
-  hoisted.isCoord.mockResolvedValue(true);
 });
 
 async function loadLib() {
@@ -204,7 +77,7 @@ async function loadLib() {
 describe("assignComparisonReviewer — pool e balanceamento", () => {
   it("exclui TODOS os codificadores do pool", async () => {
     const { assignComparisonReviewer } = await loadLib();
-    tableData.project_members = [member("userA"), member("userB"), member("userC")];
+    tableData.project_members = [makeProjectMember("userA"), makeProjectMember("userB"), makeProjectMember("userC")];
     const r = await assignComparisonReviewer(
       makeClient() as never,
       "p1",
@@ -223,7 +96,7 @@ describe("assignComparisonReviewer — pool e balanceamento", () => {
 
   it("pool vazio (todos codificaram) → noPool, sem upsert", async () => {
     const { assignComparisonReviewer } = await loadLib();
-    tableData.project_members = [member("userA"), member("userB")];
+    tableData.project_members = [makeProjectMember("userA"), makeProjectMember("userB")];
     const r = await assignComparisonReviewer(
       makeClient() as never,
       "p1",
@@ -249,7 +122,7 @@ describe("assignComparisonReviewer — pool e balanceamento", () => {
 
   it("escolhe o revisor de menor carga de comparações abertas", async () => {
     const { assignComparisonReviewer } = await loadLib();
-    tableData.project_members = [member("userB"), member("userC")];
+    tableData.project_members = [makeProjectMember("userB"), makeProjectMember("userC")];
     // userB já tem 2 comparações abertas; userC nenhuma → escolhe userC.
     tableData.assignments = [
       { user_id: "userB", project_id: "p1", type: "comparacao", status: "pendente" },
@@ -271,8 +144,8 @@ describe("assignComparisonReviewer — pool e balanceamento", () => {
 describe("createAutoComparisonIfDiverges — compare_humans", () => {
   it("2 humanos divergentes → atribui comparacao", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.responses = [human("userA", "A"), human("userB", "B")];
-    tableData.project_members = [member("userC")];
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(true);
     expect(upsertCallsOf("assignments")).toHaveLength(1);
@@ -284,8 +157,8 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
 
   it("2 humanos em consenso → não atribui", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.responses = [human("userA", "A"), human("userB", "A")];
-    tableData.project_members = [member("userC")];
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "A")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
     expect(upsertCallsOf("assignments")).toHaveLength(0);
@@ -293,8 +166,8 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
 
   it("abaixo do mínimo (1 humano) → não dispara", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.responses = [human("userA", "A")];
-    tableData.project_members = [member("userC")];
+    tableData.responses = [makeHumanResponse("userA", "A")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
     expect(upsertCallsOf("assignments")).toHaveLength(0);
@@ -304,18 +177,18 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
     // userB tem resposta vazia (incompleta) → só 1 humano completo.
     tableData.responses = [
-      human("userA", "A"),
-      { ...human("userB", "B"), answers: {} },
+      makeHumanResponse("userA", "A"),
+      { ...makeHumanResponse("userB", "B"), answers: {} },
     ];
-    tableData.project_members = [member("userC")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
   });
 
   it("já existe comparacao ativa → idempotente, não re-sorteia", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.responses = [human("userA", "A"), human("userB", "B")];
-    tableData.project_members = [member("userC")];
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
+    tableData.project_members = [makeProjectMember("userC")];
     tableData.assignments = [
       { document_id: "doc1", project_id: "p1", type: "comparacao", status: "pendente" },
     ];
@@ -326,18 +199,18 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
 
   it("comparison_includes_llm=true: humanos concordam mas LLM diverge → dispara", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.projects = [projectRow({ comparison_includes_llm: true })];
-    tableData.responses = [human("userA", "A"), human("userB", "A"), llm("Z")];
-    tableData.project_members = [member("userC")];
+    tableData.projects = [makeProjectRow({ comparison_includes_llm: true })];
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "A"), llm("Z")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(true);
   });
 
   it("comparison_includes_llm=false: humanos concordam e só LLM diverge → NÃO dispara", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.projects = [projectRow({ comparison_includes_llm: false })];
-    tableData.responses = [human("userA", "A"), human("userB", "A"), llm("Z")];
-    tableData.project_members = [member("userC")];
+    tableData.projects = [makeProjectRow({ comparison_includes_llm: false })];
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "A"), llm("Z")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
   });
@@ -346,9 +219,9 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
 describe("createAutoComparisonIfDiverges — compare_llm", () => {
   it("1 humano + LLM divergentes → atribui comparacao", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.projects = [projectRow({ automation_mode: "compare_llm" })];
-    tableData.responses = [human("userA", "A"), llm("B")];
-    tableData.project_members = [member("userC")];
+    tableData.projects = [makeProjectRow({ automation_mode: "compare_llm" })];
+    tableData.responses = [makeHumanResponse("userA", "A"), llm("B")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     expect(r.assigned).toBe(true);
     expect(upsertCallsOf("assignments")[0].payload).toMatchObject({
@@ -359,28 +232,28 @@ describe("createAutoComparisonIfDiverges — compare_llm", () => {
 
   it("1 humano + LLM em consenso → não dispara", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.projects = [projectRow({ automation_mode: "compare_llm" })];
-    tableData.responses = [human("userA", "A"), llm("A")];
-    tableData.project_members = [member("userC")];
+    tableData.projects = [makeProjectRow({ automation_mode: "compare_llm" })];
+    tableData.responses = [makeHumanResponse("userA", "A"), llm("A")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     expect(r.assigned).toBe(false);
   });
 
   it("sem resposta do LLM → não dispara", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.projects = [projectRow({ automation_mode: "compare_llm" })];
-    tableData.responses = [human("userA", "A")];
-    tableData.project_members = [member("userC")];
+    tableData.projects = [makeProjectRow({ automation_mode: "compare_llm" })];
+    tableData.responses = [makeHumanResponse("userA", "A")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     expect(r.assigned).toBe(false);
   });
 
   it("codificador do doc não entra no pool (LLM compara, mas humano que codificou não revisa)", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.projects = [projectRow({ automation_mode: "compare_llm" })];
-    tableData.responses = [human("userA", "A"), llm("B")];
+    tableData.projects = [makeProjectRow({ automation_mode: "compare_llm" })];
+    tableData.responses = [makeHumanResponse("userA", "A"), llm("B")];
     // userA é o único can_compare, mas codificou o doc → noPool.
-    tableData.project_members = [member("userA")];
+    tableData.project_members = [makeProjectMember("userA")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     expect(r.assigned).toBe(false);
     expect(r.noPool).toBe(true);
@@ -397,10 +270,10 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     // Dois humanos completos que DIVERGEM, mas ambos de um schema anterior
     // (pydantic_hash != atual, semver NULL) → descartados pelo piso → 0 < 2.
     tableData.responses = [
-      human("userA", "A", { pydantic_hash: "hash-antigo" }),
-      human("userB", "B", { pydantic_hash: "hash-antigo" }),
+      makeHumanResponse("userA", "A", { pydantic_hash: "hash-antigo" }),
+      makeHumanResponse("userB", "B", { pydantic_hash: "hash-antigo" }),
     ];
-    tableData.project_members = [member("userC")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
     expect(upsertCallsOf("assignments")).toHaveLength(0);
@@ -415,13 +288,13 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     // o fallback por hash também recusaria (hash != atual) — não depende da ordem
     // dos branches em responseQualifiesForVersion.
     tableData.projects = [
-      projectRow({ schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+      makeProjectRow({ schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
     ];
     tableData.responses = [
-      human("userA", "A", { pydantic_hash: "hash-antigo", schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
-      human("userB", "B", { pydantic_hash: "hash-antigo", schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
+      makeHumanResponse("userA", "A", { pydantic_hash: "hash-antigo", schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
+      makeHumanResponse("userB", "B", { pydantic_hash: "hash-antigo", schema_version_major: 1, schema_version_minor: 0, schema_version_patch: 0 }),
     ];
-    tableData.project_members = [member("userC")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
     expect(upsertCallsOf("assignments")).toHaveLength(0);
@@ -430,13 +303,13 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
   it("divergência na MAJOR corrente ainda materializa (semver)", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
     tableData.projects = [
-      projectRow({ schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+      makeProjectRow({ schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
     ];
     tableData.responses = [
-      human("userA", "A", { schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
-      human("userB", "B", { schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+      makeHumanResponse("userA", "A", { schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
+      makeHumanResponse("userB", "B", { schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0 }),
     ];
-    tableData.project_members = [member("userC")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(true);
     expect(upsertCallsOf("assignments")).toHaveLength(1);
@@ -445,10 +318,10 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
   it("mistura: 1 corrente + 1 antiga divergem → antiga descartada, sobra 1 < mínimo", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
     tableData.responses = [
-      human("userA", "A"), // corrente (hash atual)
-      human("userB", "B", { pydantic_hash: "hash-antigo" }), // antiga
+      makeHumanResponse("userA", "A"), // corrente (hash atual)
+      makeHumanResponse("userB", "B", { pydantic_hash: "hash-antigo" }), // antiga
     ];
-    tableData.project_members = [member("userC")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
     expect(upsertCallsOf("assignments")).toHaveLength(0);
@@ -456,12 +329,12 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
 
   it("compare_llm: humano corrente diverge de LLM de schema antigo → LLM descartado, sem 2ª resposta", async () => {
     const { createAutoComparisonIfDiverges } = await loadLib();
-    tableData.projects = [projectRow({ automation_mode: "compare_llm" })];
+    tableData.projects = [makeProjectRow({ automation_mode: "compare_llm" })];
     tableData.responses = [
-      human("userA", "A"),
+      makeHumanResponse("userA", "A"),
       llm("B", { pydantic_hash: "hash-antigo" }),
     ];
-    tableData.project_members = [member("userC")];
+    tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     // LLM antigo não qualifica → falta a 2ª resposta → não dispara.
     expect(r.assigned).toBe(false);
@@ -473,8 +346,8 @@ describe("scanComparisonBacklog — piso de versão latest_major (#247)", () => 
   it("doc cuja divergência só existe em versão antiga fica fora do backlog", async () => {
     const { scanComparisonBacklog } = await loadLib();
     tableData.responses = [
-      human("userA", "A", { pydantic_hash: "hash-antigo" }),
-      human("userB", "B", { pydantic_hash: "hash-antigo" }),
+      makeHumanResponse("userA", "A", { pydantic_hash: "hash-antigo" }),
+      makeHumanResponse("userB", "B", { pydantic_hash: "hash-antigo" }),
     ];
     const backlog = await scanComparisonBacklog(
       makeClient() as never,
@@ -486,7 +359,7 @@ describe("scanComparisonBacklog — piso de versão latest_major (#247)", () => 
 
   it("doc divergente na versão corrente entra no backlog", async () => {
     const { scanComparisonBacklog } = await loadLib();
-    tableData.responses = [human("userA", "A"), human("userB", "B")];
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
     const backlog = await scanComparisonBacklog(
       makeClient() as never,
       "p1",

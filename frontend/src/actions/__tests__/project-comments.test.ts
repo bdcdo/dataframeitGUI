@@ -22,6 +22,11 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: vi.fn(async () => hoisted.user),
   isProjectCoordinator: () => hoisted.isCoord(),
+  requireCoordinator: async (_projectId: string, deniedMessage: string) => {
+    if (!hoisted.user) return { ok: false, error: "Não autenticado" };
+    if (!(await hoisted.isCoord())) return { ok: false, error: deniedMessage };
+    return { ok: true, user: hoisted.user };
+  },
 }));
 vi.mock("@/actions/documents", () => ({
   excludeDocuments: (...args: unknown[]) =>
@@ -229,6 +234,14 @@ describe("rejectExclusionRequest", () => {
     hoisted.isCoord.mockResolvedValueOnce(false);
     const { rejectExclusionRequest } = await loadActions();
     const r = await rejectExclusionRequest("c1", "p1", "está no escopo");
+    expect(r.error).toContain("coordenador");
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("não-coordenador COM motivo vazio → erro de coordenador (gate roda antes da validação de motivo)", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const { rejectExclusionRequest } = await loadActions();
+    const r = await rejectExclusionRequest("c1", "p1", " ");
     expect(r.error).toContain("coordenador");
     expect(writeCalls).toHaveLength(0);
   });

@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { saveSchemaFromGUI } from "./schema";
 import type { PydanticField } from "@/lib/types";
@@ -36,11 +36,12 @@ export async function resolveSchemaSuggestion(
   action: "approved" | "rejected",
   rejectionReason?: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenadores podem resolver sugestões de schema." };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem resolver sugestões de schema.",
+  );
+  if (!gate.ok) return { error: gate.error };
+  const user = gate.user;
 
   const supabase = await createSupabaseServer();
 
@@ -115,11 +116,12 @@ export async function approveSchemaSuggestionWithEdits(
   projectId: string,
   editedFields: PydanticField[],
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-  if (!(await isProjectCoordinator(projectId, user))) {
-    return { error: "Apenas coordenadores podem aprovar sugestões de schema." };
-  }
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem aprovar sugestões de schema.",
+  );
+  if (!gate.ok) return { error: gate.error };
+  const user = gate.user;
 
   // Criar o client e persistir o schema são independentes — rodam em paralelo.
   // Mesma proteção de resolveSchemaSuggestion: a sugestão só vira "approved"

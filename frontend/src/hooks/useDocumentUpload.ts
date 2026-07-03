@@ -4,39 +4,37 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import {
   uploadDocuments,
-  checkDuplicates,
   revalidateProjectDocuments,
   type DuplicateMatch,
   type UploadDoc,
   type UploadOptions,
 } from "@/actions/documents";
-import { md5 } from "@/lib/hash";
 import { errorMessage } from "@/lib/utils";
 import {
   MAX_CHUNK_BYTES,
-  MAX_HASH_CHECK_CONCURRENCY,
+  PAYLOAD_TOO_LARGE_MESSAGE,
+  buildDocs,
+  buildUploadErrorMessage,
+  buildUploadSuccessMessage,
   chunkByBytes,
   isPayloadTooLarge,
-  mapWithConcurrency,
+  remapDuplicateMapToChunk,
   utf8Bytes,
+  type ColumnMapping,
+  type Csv,
 } from "@/lib/upload-chunking";
+import { checkDuplicatesInChunks } from "./document-upload-helpers";
 
-export interface ColumnMapping {
-  text: string;
-  title: string;
-  external_id: string;
-}
+// Re-exportado para não quebrar `import type { ColumnMapping } from
+// "@/hooks/useDocumentUpload"` em MappingStep.tsx — a definição canônica
+// agora vive em lib/upload-chunking.ts, junto de buildDocs (que a consome).
+export type { ColumnMapping };
 
 interface AnalysisResult {
   docs: UploadDoc[];
   duplicates: DuplicateMatch[];
   duplicatesWithResponses: number;
   matchType: "external_id" | "text_hash";
-}
-
-interface Csv {
-  rows: Record<string, string>[];
-  columns: string[];
 }
 
 // The upload flow is one discriminated `phase`: each variant carries exactly the
@@ -48,12 +46,6 @@ type UploadPhase =
   | { kind: "checking" }
   | { kind: "analysis"; analysis: AnalysisResult }
   | { kind: "uploading"; current: number; total: number };
-
-// checkDuplicates payload is small (~50B/doc), but we still chunk to bound request size on huge CSVs.
-const MAX_HASH_DOCS_PER_CHUNK = 5_000;
-
-const PAYLOAD_TOO_LARGE_MESSAGE =
-  "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores.";
 
 export function useDocumentUpload(projectId: string) {
   const [phase, setPhase] = useState<UploadPhase>({ kind: "idle" });
@@ -97,17 +89,6 @@ export function useDocumentUpload(projectId: string) {
     });
   }, []);
 
-  const buildDocs = (): UploadDoc[] => {
-    if (!csv || !mapping.text) return [];
-    return csv.rows
-      .filter((row) => row[mapping.text]?.trim())
-      .map((row) => ({
-        text: row[mapping.text],
-        title: mapping.title ? row[mapping.title] : undefined,
-        external_id: mapping.external_id ? row[mapping.external_id] : undefined,
-      }));
-  };
-
   // `returnTo` is the phase to restore if the upload fails, so a failure on the
   // no-duplicates path lands back on mapping (retryable) instead of a blank panel.
   const doUpload = async (
@@ -131,19 +112,7 @@ export function useDocumentUpload(projectId: string) {
         const endIndex = startIndex + items.length;
         const isLast = ci === chunks.length - 1;
 
-        // Localize duplicateMap indices to the chunk so uploadDocuments can index
-        // into `items` directly (csvIndex must be relative to the array sent).
-        const localOptions: UploadOptions | undefined = options
-          ? {
-              mode: options.mode,
-              deleteResponses: options.deleteResponses,
-              duplicateMap: options.duplicateMap
-                ?.filter(
-                  (d) => d.csvIndex >= startIndex && d.csvIndex < endIndex
-                )
-                .map((d) => ({ ...d, csvIndex: d.csvIndex - startIndex })),
-            }
-          : undefined;
+        const localOptions = remapDuplicateMapToChunk(options, startIndex, endIndex);
 
         // Serial on purpose: progress is reported sequentially, and `isLast` is the
         // `revalidate` arg — true only on the last chunk revalidates the documents
@@ -162,22 +131,7 @@ export function useDocumentUpload(projectId: string) {
         processed += items.length;
         setPhase({ kind: "uploading", current: processed, total: docs.length });
       }
-      const skipped = docs.length - totalInserted;
-      // Verbo ciente do modo: em replace_and_add, `count` conta duplicatas
-      // ATUALIZADAS (não inseridas), então "importados" sozinho superconta.
-      const savedVerb =
-        options?.mode === "replace_and_add"
-          ? "importado(s)/atualizado(s)"
-          : "importado(s)";
-      const allVerb =
-        options?.mode === "replace_and_add"
-          ? "importados/atualizados"
-          : "importados";
-      toast.success(
-        skipped > 0
-          ? `${totalInserted} documento(s) ${savedVerb}; ${skipped} ignorado(s) (já existiam no projeto ou repetidos no arquivo).`
-          : `${docs.length} documentos ${allVerb}!`
-      );
+      toast.success(buildUploadSuccessMessage(totalInserted, docs.length, options?.mode));
       setCsv(null);
       setPhase({ kind: "idle" });
     } catch (e) {
@@ -196,42 +150,21 @@ export function useDocumentUpload(projectId: string) {
           console.error("[useDocumentUpload] revalidate no catch falhou", revalErr);
         }
       }
-      if (totalInserted > 0) {
-        // Chunks 0..N-1 já foram commitados; só o último chunk revalidaria.
-        const importedVerb =
-          options?.mode === "replace_and_add"
-            ? "importados/atualizados"
-            : "importados";
-        // Num replace destrutivo multi-chunk, este ramo (totalInserted > 0) e o
-        // ramo `else if (destructiveReplace)` não são exclusivos: um chunk
-        // anterior pode ter inserido enquanto o que falhou já apagou
-        // responses/reviews. O aviso de remoção precisa ser anexado aqui também,
-        // senão ficaria inalcançável justamente no cenário com perda de dados.
-        const destructiveWarn = destructiveReplace
-          ? " Respostas/revisões de documentos duplicados podem já ter sido removidas — confira a lista."
-          : "";
-        toast.error(
-          isPayloadTooLarge(msg)
-            ? `${totalInserted}/${docs.length} ${importedVerb}. ${PAYLOAD_TOO_LARGE_MESSAGE}${destructiveWarn}`
-            : `${totalInserted} de ${docs.length} documentos ${importedVerb} antes de uma falha${msg ? `: ${msg}` : ""}${destructiveWarn}`
-        );
-      } else if (destructiveReplace) {
-        toast.error(
-          `A importação falhou, mas respostas/revisões dos documentos duplicados podem já ter sido removidas. Confira a lista.${msg ? ` (${msg})` : ""}`
-        );
-      } else {
-        toast.error(
-          isPayloadTooLarge(msg)
-            ? PAYLOAD_TOO_LARGE_MESSAGE
-            : msg || "Erro ao importar documentos"
-        );
-      }
+      toast.error(
+        buildUploadErrorMessage({
+          totalInserted,
+          totalDocs: docs.length,
+          mode: options?.mode,
+          deleteResponses: options?.deleteResponses,
+          msg,
+        })
+      );
       setPhase(returnTo);
     }
   };
 
   const handleCheckAndUpload = async () => {
-    const docs = buildDocs();
+    const docs = buildDocs(csv, mapping);
     if (docs.length === 0) {
       toast.error("Nenhum documento válido encontrado");
       return;
@@ -255,46 +188,24 @@ export function useDocumentUpload(projectId: string) {
     setPhase({ kind: "checking" });
 
     try {
-      // Hash client-side so the request payload stays small (Vercel ~4.5MB limit).
-      const docsWithHash = docs.map((d, i) => ({
-        external_id: d.external_id,
-        text_hash: md5(d.text),
-        csvIndex: i,
-      }));
-
-      // Chunks are independent and the aggregation below is commutative, so run
-      // them concurrently — but bounded, so a huge CSV doesn't fire hundreds of
-      // Server Action requests at once.
-      const hashChunks: (typeof docsWithHash)[] = [];
-      for (let i = 0; i < docsWithHash.length; i += MAX_HASH_DOCS_PER_CHUNK) {
-        hashChunks.push(docsWithHash.slice(i, i + MAX_HASH_DOCS_PER_CHUNK));
-      }
-      const results = await mapWithConcurrency(
-        hashChunks,
-        MAX_HASH_CHECK_CONCURRENCY,
-        (chunk) => checkDuplicates(projectId, chunk)
+      const { duplicates, duplicatesWithResponses } = await checkDuplicatesInChunks(
+        projectId,
+        docs
       );
 
-      const allDuplicates: DuplicateMatch[] = [];
-      let duplicatesWithResponses = 0;
-      for (const r of results) {
-        allDuplicates.push(...r.duplicates);
-        duplicatesWithResponses += r.duplicatesWithResponses;
-      }
-
-      if (allDuplicates.length === 0) {
+      if (duplicates.length === 0) {
         // No duplicates — upload directly; a failure returns to mapping.
         await doUpload(docs, { kind: "mapping" }, undefined, sizes);
       } else {
         // Has duplicates — show analysis panel.
-        const hasExternalIdMatch = allDuplicates.some(
+        const hasExternalIdMatch = duplicates.some(
           (d) => d.matchType === "external_id"
         );
         setPhase({
           kind: "analysis",
           analysis: {
             docs,
-            duplicates: allDuplicates,
+            duplicates,
             duplicatesWithResponses,
             matchType: hasExternalIdMatch ? "external_id" : "text_hash",
           },

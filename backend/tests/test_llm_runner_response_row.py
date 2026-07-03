@@ -5,25 +5,33 @@ gravava pydantic_hash mas NÃO a versão semver, deixando toda resposta LLM com
 schema_version NULL e cegando o filtro de versão da aba Comparar.
 """
 
-from services.llm_runner import _build_llm_response_row
+from services.llm_runner import _build_llm_response_row, _RunMetadata
+
+
+def _run(**overrides) -> _RunMetadata:
+    base = dict(
+        project_id="proj-1",
+        llm_provider="google_genai",
+        llm_model="gemini-3-flash-preview",
+        pydantic_hash="3c5e901f76547135",
+        answer_field_hashes={"q1": "h1"},
+        schema_version_major=0,
+        schema_version_minor=20,
+        schema_version_patch=0,
+    )
+    base.update(overrides)
+    return _RunMetadata(**base)
 
 
 def _kwargs(**overrides):
     base = dict(
-        project_id="proj-1",
+        run=_run(),
         doc_id="doc-1",
-        llm_provider="google_genai",
-        llm_model="gemini-3-flash-preview",
         answers={"q1": "Sim"},
         justifications={"q1": "porque sim"},
         is_partial=False,
-        pydantic_hash="3c5e901f76547135",
-        answer_field_hashes={"q1": "h1"},
         job_id="job-1",
         llm_error_msg=None,
-        schema_version_major=0,
-        schema_version_minor=20,
-        schema_version_patch=0,
     )
     base.update(overrides)
     return base
@@ -70,9 +78,11 @@ def test_justifications_vazio_vira_none():
 def test_aceita_versao_diferente_de_zero():
     row = _build_llm_response_row(
         **_kwargs(
-            schema_version_major=1,
-            schema_version_minor=2,
-            schema_version_patch=3,
+            run=_run(
+                schema_version_major=1,
+                schema_version_minor=2,
+                schema_version_patch=3,
+            )
         )
     )
     assert (

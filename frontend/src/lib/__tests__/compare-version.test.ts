@@ -15,10 +15,8 @@ import {
   COMPARE_DEFAULT_VERSION,
   compareDefaultsForMode,
 } from "@/lib/compare-filters";
-import {
-  computeDivergentFieldNames,
-  resolveCompareStatus,
-} from "@/lib/compare-divergence";
+import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { resolveCompareStatus } from "@/lib/compare-assignment-status";
 import type { PydanticField } from "@/lib/types";
 
 const v = (major: number, minor: number, patch: number): SchemaVersion => ({

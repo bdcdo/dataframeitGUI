@@ -22,6 +22,7 @@ vi.mock("next/cache", () => ({
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
   isProjectCoordinator: async () => true,
+  requireCoordinator: async () => ({ ok: true, user: { id: "userCoord" } }),
 }));
 vi.mock("@/lib/api-server", () => ({
   fetchFastAPIServer: async () => ({ valid: true, fields: [], model_name: null, errors: [] }),

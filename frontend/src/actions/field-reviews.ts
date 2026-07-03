@@ -2,17 +2,17 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import {
-  getAuthUser,
-  getEffectiveMemberId,
-  isProjectCoordinator,
-} from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId, requireCoordinator } from "@/lib/auth";
+import { buildLoadMap } from "@/lib/load-balancing";
+import { errorMessage } from "@/lib/utils";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { canonicalPair, type EquivalencePair } from "@/lib/equivalence";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
+import { syncAutoRevisaoAssignmentStatus } from "@/lib/auto-revisao-sync";
+import { syncArbitragemAssignmentStatus } from "@/lib/arbitragem-sync";
 import { revalidatePath } from "next/cache";
 import type {
   AnswerFieldHashes,
@@ -112,27 +112,8 @@ export async function submitAutoReview(
       }
     }
 
-    // Marca o assignment auto_revisao como concluido APENAS quando nao sobra
-    // nenhum field_review pendente do doc — o envio e parcial, entao um submit
-    // de subconjunto nao pode tirar o doc da fila.
-    const { data: stillPending } = await admin
-      .from("field_reviews")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("self_reviewer_id", effectiveId)
-      .is("self_verdict", null)
-      .limit(1);
-
-    if (!stillPending || stillPending.length === 0) {
-      await admin
-        .from("assignments")
-        .update({ status: "concluido", completed_at: now })
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("user_id", effectiveId)
-        .eq("type", "auto_revisao");
-    }
+    // Sync do assignment auto_revisao — ver lib/auto-revisao-sync.ts.
+    await syncAutoRevisaoAssignmentStatus(admin, projectId, documentId, effectiveId, now);
 
     // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
     // campos recem-atualizados quanto para os que JA estavam com o verdict
@@ -316,7 +297,7 @@ export async function submitAutoReview(
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true, arbitrated, warning };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
@@ -401,10 +382,7 @@ async function assignArbitrator(
     .eq("type", "arbitragem")
     .neq("status", "concluido");
 
-  const loadByUser = new Map<string, number>();
-  for (const r of openCounts ?? []) {
-    loadByUser.set(r.user_id, (loadByUser.get(r.user_id) ?? 0) + 1);
-  }
+  const loadByUser = buildLoadMap(openCounts ?? []);
 
   // Carga minima entre candidatos
   let minLoad = Infinity;
@@ -551,7 +529,7 @@ export async function submitBlindVerdicts(
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
@@ -791,32 +769,13 @@ export async function submitFinalVerdicts(
       }
     }
 
-    // 5) Pending check + assignment update via supabase: SELECT cabe na policy
-    // "Members view own field_reviews" e UPDATE cabe na "Researchers update
-    // own assignments". Sem admin aqui.
-    const { data: pending } = await supabase
-      .from("field_reviews")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("arbitrator_id", effectiveId)
-      .is("final_verdict", null)
-      .limit(1);
-
-    if (!pending || pending.length === 0) {
-      await supabase
-        .from("assignments")
-        .update({ status: "concluido", completed_at: now })
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("user_id", effectiveId)
-        .eq("type", "arbitragem");
-    }
+    // 5) Sync do assignment arbitragem — ver lib/arbitragem-sync.ts.
+    await syncArbitragemAssignmentStatus(supabase, projectId, documentId, effectiveId, now);
 
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
@@ -1123,16 +1082,11 @@ export async function regenerateAutoReviewBacklog(
   keptResolved?: number;
 }> {
   try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const isCoord = await isProjectCoordinator(projectId, user);
-    if (!isCoord) {
-      return {
-        success: false,
-        error: "Apenas coordenadores podem regenerar o backlog.",
-      };
-    }
+    const gate = await requireCoordinator(
+      projectId,
+      "Apenas coordenadores podem regenerar o backlog.",
+    );
+    if (!gate.ok) return { success: false, error: gate.error };
 
     const admin = createSupabaseAdmin();
     const { fields, humanResponses, llmResponses, equivalences, existingReviews } =
@@ -1209,7 +1163,7 @@ export async function regenerateAutoReviewBacklog(
       keptResolved,
     };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro" };
+    return { success: false, error: errorMessage(e) || "Erro" };
   }
 }
 
@@ -1230,22 +1184,12 @@ export async function retryPendingArbitrations(
   stillNoPool: number;
 }> {
   try {
-    const user = await getAuthUser();
-    if (!user)
-      return {
-        success: false,
-        error: "Não autenticado",
-        assigned: 0,
-        stillNoPool: 0,
-      };
-    const isCoord = await isProjectCoordinator(projectId, user);
-    if (!isCoord)
-      return {
-        success: false,
-        error: "Apenas coordenadores podem reprocessar arbitragens.",
-        assigned: 0,
-        stillNoPool: 0,
-      };
+    const gate = await requireCoordinator(
+      projectId,
+      "Apenas coordenadores podem reprocessar arbitragens.",
+    );
+    if (!gate.ok)
+      return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
     const admin = createSupabaseAdmin();
     const { data: pending, error } = await admin
@@ -1334,7 +1278,7 @@ export async function retryPendingArbitrations(
   } catch (e) {
     return {
       success: false,
-      error: e instanceof Error ? e.message : "Erro",
+      error: errorMessage(e) || "Erro",
       assigned: 0,
       stillNoPool: 0,
     };

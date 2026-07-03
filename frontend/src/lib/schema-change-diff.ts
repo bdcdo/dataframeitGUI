@@ -1,23 +1,7 @@
 import { stableStringify } from "./schema-utils";
-import type {
-  FieldCondition,
-  SchemaChangeEntry,
-  SchemaChangeType,
-  SubfieldDef,
-} from "./types";
-import { TYPE_LABELS } from "./field-labels";
+import type { FieldCondition, SchemaChangeEntry, SubfieldDef } from "./types";
 
 export type FieldChangeKind = "added" | "removed" | "renamed" | "modified";
-
-export interface ChangeGroup {
-  key: string;
-  changeType: SchemaChangeType | null;
-  version: { major: number; minor: number; patch: number } | null;
-  changedBy: string;
-  userId: string;
-  createdAt: string;
-  entries: SchemaChangeEntry[];
-}
 
 export interface FieldPropertyDiff {
   property:
@@ -36,8 +20,6 @@ export interface FieldPropertyDiff {
   before: unknown;
   after: unknown;
 }
-
-const GROUPING_WINDOW_MS = 5_000;
 
 function isEmptySnapshot(v: Record<string, unknown> | null | undefined): boolean {
   if (!v) return true;
@@ -200,119 +182,4 @@ export function diffPydanticField(
   }
 
   return diffs;
-}
-
-export function groupChangesByCommit(entries: SchemaChangeEntry[]): ChangeGroup[] {
-  const sorted = entries.toSorted(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-  const groups: ChangeGroup[] = [];
-  for (const entry of sorted) {
-    const ts = new Date(entry.createdAt).getTime();
-    const last = groups[groups.length - 1];
-    const versionMatches =
-      (last?.version === null && entry.version === null) ||
-      (last?.version &&
-        entry.version &&
-        last.version.major === entry.version.major &&
-        last.version.minor === entry.version.minor &&
-        last.version.patch === entry.version.patch);
-    // Janela deslizante: compara contra a entry mais antiga já incluída.
-    // sorted está em DESC, então o último elemento de `last.entries` é o mais antigo.
-    const tail = last?.entries[last.entries.length - 1];
-    if (
-      last &&
-      tail &&
-      last.userId === entry.userId &&
-      versionMatches &&
-      Math.abs(new Date(tail.createdAt).getTime() - ts) <= GROUPING_WINDOW_MS
-    ) {
-      last.entries.push(entry);
-    } else {
-      groups.push({
-        key: entry.id,
-        changeType: entry.changeType,
-        version: entry.version,
-        changedBy: entry.changedBy,
-        userId: entry.userId,
-        createdAt: entry.createdAt,
-        entries: [entry],
-      });
-    }
-  }
-  return groups;
-}
-
-export function formatRelativeDate(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const diffMs = now - then;
-  if (diffMs < 60_000) return "agora";
-  const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `há ${minutes} ${minutes === 1 ? "minuto" : "minutos"}`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `há ${hours} ${hours === 1 ? "hora" : "horas"}`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "ontem";
-  if (days < 7) return `há ${days} dias`;
-  return new Date(iso).toLocaleDateString("pt-BR");
-}
-
-export function formatVersion(
-  v: { major: number; minor: number; patch: number } | null,
-): string {
-  if (!v) return "—";
-  return `v${v.major}.${v.minor}.${v.patch}`;
-}
-
-export function formatCondition(c: FieldCondition | null | undefined): string {
-  if (!c) return "sem condição";
-  if ("equals" in c) return `${c.field} = ${formatScalar(c.equals)}`;
-  if ("not_equals" in c) return `${c.field} ≠ ${formatScalar(c.not_equals)}`;
-  if ("in" in c) return `${c.field} ∈ [${c.in.map(formatScalar).join(", ")}]`;
-  if ("not_in" in c) return `${c.field} ∉ [${c.not_in.map(formatScalar).join(", ")}]`;
-  if ("exists" in c) return c.exists ? `${c.field} existe` : `${c.field} ausente`;
-  return "sem condição";
-}
-
-function formatScalar(v: unknown): string {
-  if (v === null || v === undefined) return "∅";
-  if (typeof v === "string") return `"${v}"`;
-  return String(v);
-}
-
-const TARGET_LABELS: Record<string, string> = {
-  all: "Todos",
-  llm_only: "Só LLM",
-  human_only: "Só humano",
-  none: "Nenhum",
-};
-
-export function formatTarget(t: unknown): string {
-  if (typeof t !== "string") return "—";
-  return TARGET_LABELS[t] ?? t;
-}
-
-export function formatType(t: unknown): string {
-  if (typeof t !== "string") return "—";
-  return TYPE_LABELS[t] ?? t;
-}
-
-const PROPERTY_LABELS: Record<FieldPropertyDiff["property"], string> = {
-  name: "nome",
-  description: "descrição",
-  help_text: "instruções",
-  options: "opções",
-  type: "tipo",
-  target: "alvo",
-  required: "obrigatoriedade",
-  allow_other: "permite outro",
-  subfield_rule: "regra de subcampos",
-  subfields: "subcampos",
-  condition: "condição",
-  justification_prompt: "prompt de justificativa",
-};
-
-export function propertyLabel(p: FieldPropertyDiff["property"]): string {
-  return PROPERTY_LABELS[p];
 }
