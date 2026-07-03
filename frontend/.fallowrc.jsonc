@@ -8,7 +8,34 @@
     // Primitivas shadcn/Radix exportam a API completa do primitive kit por
     // convencao do gerador shadcn; a maior parte nao tem consumidor hoje sem
     // ser dead code de verdade (mesmo raciocinio do #230 no react-doctor,
-    // ver docs/LINT_CONFIG.md).
-    { "file": "src/components/ui/**", "exports": ["*"] }
+    // ver docs/LINT_CONFIG.md e docs/CODE_QUALITY_TOOLING.md).
+    //
+    // Enumerado arquivo a arquivo (em vez de src/components/ui/**) para nao
+    // encobrir os dois componentes proprios do projeto que vivem no mesmo
+    // diretorio por convencao shadcn de import path, mas nao sao gerados:
+    // confirm-action-dialog.tsx e CopyLinkButton.tsx continuam sob checagem
+    // normal de dead-code.
+    { "file": "src/components/ui/alert-dialog.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/badge.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/button.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/card.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/checkbox.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/collapsible.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/command.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/dialog.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/dropdown-menu.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/input.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/label.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/popover.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/progress.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/radio-group.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/resizable.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/select.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/separator.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/sonner.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/switch.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/tabs.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/textarea.tsx", "exports": ["*"] },
+    { "file": "src/components/ui/tooltip.tsx", "exports": ["*"] }
   ]
 }

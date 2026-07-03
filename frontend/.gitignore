@@ -51,6 +51,9 @@ next-env.d.ts
 /.clerk/
 
 # scripts de migracao pontual (one-off, ja executados) - nunca versionar.
-# nao afeta scripts/comentarios-relatorio/**, que e reutilizado pela skill (#352)
+# so ignora arquivos direto em scripts/ (glob nao recursivo); nao afeta
+# scripts/comentarios-relatorio/**, que e reutilizado pela skill (#352).
+# Um script novo REUTILIZAVEL (nao one-off) tambem precisa ir numa subpasta
+# propria - senao cai neste ignore e fica destravado do git sem aviso.
 /scripts/*.mjs
 /scripts/*.ts
