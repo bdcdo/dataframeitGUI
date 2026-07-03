@@ -7,7 +7,7 @@
  *
  * Uso:
  *   cd frontend
- *   npx tsx ../.claude/skills/comentarios-relatorio/scripts/fetch-open-comments.ts \
+ *   npx tsx scripts/comentarios-relatorio/fetch-open-comments.ts \
  *     [--project-id <uuid>] [--project-name <fragmento>] [--list]
  *
  * Sem argumentos: imprime lista de projetos disponíveis (JSON).
@@ -15,46 +15,15 @@
  *
  * Espelha a lógica de frontend/src/app/(app)/projects/[id]/reviews/comments/page.tsx
  * mas filtrando apenas abertos. Requer SUPABASE_SERVICE_ROLE_KEY no .env.local.
+ *
+ * Qualquer query que falhe aborta com exit 1 — um relatório parcial silencioso
+ * faria itens já resolvidos reaparecerem como abertos (Sets de resolução vazios).
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
-function loadEnv() {
-  // Carrega frontend/.env.local se variáveis não vierem do ambiente.
-  // Honra SUPABASE_ENV_PATH explícito; caso contrário usa os caminhos
-  // canônicos relativos ao cwd (raiz do repo ou frontend/). Nunca subir a
-  // árvore de diretórios (../.env.local) — ver CLAUDE.md.
-  const cwd = process.cwd();
-  const candidates = [
-    process.env.SUPABASE_ENV_PATH,
-    resolve(cwd, ".env.local"),
-    resolve(cwd, "frontend/.env.local"),
-  ].filter((p): p is string => Boolean(p));
-  for (const path of candidates) {
-    try {
-      const content = readFileSync(path, "utf-8");
-      for (const line of content.split("\n")) {
-        const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-        if (!m) continue;
-        const key = m[1];
-        if (process.env[key]) continue;
-        let val = m[2].trim();
-        if (
-          (val.startsWith('"') && val.endsWith('"')) ||
-          (val.startsWith("'") && val.endsWith("'"))
-        ) {
-          val = val.slice(1, -1);
-        }
-        process.env[key] = val;
-      }
-      return;
-    } catch {
-      /* try next */
-    }
-  }
-}
+import type { PydanticField } from "../../src/lib/types";
+import { loadEnv } from "./load-env";
 
 loadEnv();
 
@@ -75,25 +44,28 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-// ----------------------- Tipos -----------------------
-
-interface PydanticField {
-  name: string;
-  type: "single" | "multi" | "text" | "date";
-  options: string[] | null;
-  description: string;
-  help_text?: string;
-  target?: "all" | "llm_only" | "human_only";
-  required?: boolean;
-  hash?: string;
-  subfields?: Array<{ key: string; label: string; required?: boolean }>;
-  subfield_rule?: "all" | "at_least_one";
-  allow_other?: boolean;
+// Lança em vez de deixar `data=null` virar `[]` silencioso — supabase-js não
+// rejeita a promise em erro de query.
+function must<T>(
+  label: string,
+  res: { data: T | null; error: { message: string } | null },
+): T {
+  if (res.error) throw new Error(`query ${label}: ${res.error.message}`);
+  return (res.data ?? []) as T;
 }
+
+// ----------------------- Tipos -----------------------
 
 interface OpenComment {
   id: string;
-  source: "review" | "nota" | "sugestao" | "dificuldade" | "duvida" | "anotacao";
+  source:
+    | "review"
+    | "nota"
+    | "sugestao"
+    | "dificuldade"
+    | "duvida"
+    | "anotacao"
+    | "exclusao";
   rawId: string;
   fieldName: string;
   documentId: string | null;
@@ -172,15 +144,15 @@ async function resolveProject(args: Record<string, string | boolean>) {
 
 async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
   const [
-    { data: reviews },
-    { data: documents },
-    { data: responsesWithNotes },
-    { data: suggestions },
-    { data: llmResponses },
-    { data: difficultyResolutions },
-    { data: projectComments },
-    { data: verdictQuestions },
-    { data: noteResolutions },
+    reviews,
+    documents,
+    responsesWithNotes,
+    suggestions,
+    llmResponses,
+    difficultyResolutions,
+    projectComments,
+    verdictQuestions,
+    noteResolutions,
   ] = await Promise.all([
     // Reviews abertos (com comentário e não resolvidos)
     supabase
@@ -191,18 +163,24 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       .eq("project_id", projectId)
       .not("comment", "is", null)
       .is("resolved_at", null)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .then((r) => must<Record<string, unknown>[]>("reviews", r)),
     supabase
       .from("documents")
       .select("id, title, external_id")
-      .eq("project_id", projectId),
-    // Notas de pesquisador (humano)
+      .eq("project_id", projectId)
+      .then((r) => must<Record<string, unknown>[]>("documents", r)),
+    // Notas de pesquisador (humano) — só a chave _notes do jsonb, não o
+    // objeto de justificativas inteiro
     supabase
       .from("responses")
-      .select("id, document_id, respondent_id, respondent_name, justifications, created_at")
+      .select(
+        "id, document_id, respondent_id, respondent_name, created_at, notes:justifications->>_notes",
+      )
       .eq("project_id", projectId)
       .eq("respondent_type", "humano")
-      .not("justifications", "is", null),
+      .not("justifications->>_notes", "is", null)
+      .then((r) => must<Record<string, unknown>[]>("responses (notas)", r)),
     // Sugestões pendentes
     supabase
       .from("schema_suggestions")
@@ -211,29 +189,36 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       )
       .eq("project_id", projectId)
       .eq("status", "pending")
-      .order("created_at", { ascending: false }),
-    // Respostas LLM ativas (para extrair llm_ambiguidades)
+      .order("created_at", { ascending: false })
+      .then((r) => must<Record<string, unknown>[]>("schema_suggestions", r)),
+    // Respostas LLM ativas — só a chave llm_ambiguidades do answers
     supabase
       .from("responses")
-      .select("id, document_id, answers, respondent_name, created_at")
+      .select(
+        "id, document_id, respondent_name, created_at, llm_ambiguidades:answers->>llm_ambiguidades",
+      )
       .eq("project_id", projectId)
       .eq("respondent_type", "llm")
-      .eq("is_latest", true),
+      .eq("is_latest", true)
+      .then((r) => must<Record<string, unknown>[]>("responses (llm)", r)),
     // Dificuldades já resolvidas → filtrar fora
     supabase
       .from("difficulty_resolutions")
       .select("response_id")
-      .eq("project_id", projectId),
-    // project_comments abertos (root, não resolvidos)
+      .eq("project_id", projectId)
+      .then((r) => must<Record<string, unknown>[]>("difficulty_resolutions", r)),
+    // project_comments abertos (root, não resolvidos) — `kind` separa anotação
+    // comum de pedido de exclusão de documento
     supabase
       .from("project_comments")
       .select(
-        "id, document_id, field_name, author_id, body, parent_id, resolved_at, created_at, profiles!author_id(email)",
+        "id, document_id, field_name, author_id, body, parent_id, kind, resolved_at, created_at, profiles!author_id(email)",
       )
       .eq("project_id", projectId)
       .is("parent_id", null)
       .is("resolved_at", null)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .then((r) => must<Record<string, unknown>[]>("project_comments", r)),
     // Dúvidas abertas
     supabase
       .from("verdict_acknowledgments")
@@ -244,12 +229,14 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       .is("resolved_at", null)
       .not("comment", "is", null)
       .eq("reviews.project_id", projectId)
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .then((r) => must<Record<string, unknown>[]>("verdict_acknowledgments", r)),
     // Notas já resolvidas → filtrar fora
     supabase
       .from("note_resolutions")
       .select("response_id")
-      .eq("project_id", projectId),
+      .eq("project_id", projectId)
+      .then((r) => must<Record<string, unknown>[]>("note_resolutions", r)),
   ]);
 
   const fieldMap = new Map(fields.map((f) => [f.name, f]));
@@ -265,24 +252,27 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
 
   // Coletar ids de profiles para resolver nomes
   const profileIds = new Set<string>();
-  (reviews ?? []).forEach((r) => r.reviewer_id && profileIds.add(r.reviewer_id));
+  (reviews ?? []).forEach((r) => r.reviewer_id && profileIds.add(r.reviewer_id as string));
   (responsesWithNotes ?? []).forEach(
-    (r) => r.respondent_id && profileIds.add(r.respondent_id),
+    (r) => r.respondent_id && profileIds.add(r.respondent_id as string),
   );
   (verdictQuestions ?? []).forEach(
-    (q) => q.respondent_id && profileIds.add(q.respondent_id),
+    (q) => q.respondent_id && profileIds.add(q.respondent_id as string),
   );
 
   const profileMap = new Map<string, string>();
   if (profileIds.size > 0) {
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, email, first_name, last_name")
-      .in("id", Array.from(profileIds));
+    const profiles = must<Record<string, unknown>[]>(
+      "profiles",
+      await supabase
+        .from("profiles")
+        .select("id, email, first_name, last_name")
+        .in("id", Array.from(profileIds)),
+    );
     (profiles ?? []).forEach((p) => {
       const name =
         [p.first_name, p.last_name].filter(Boolean).join(" ") ||
-        p.email?.split("@")[0] ||
+        (p.email as string | null)?.split("@")[0] ||
         "Anônimo";
       profileMap.set(p.id as string, name);
     });
@@ -299,7 +289,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       rawId: r.id as string,
       fieldName: r.field_name as string,
       documentId: r.document_id as string,
-      documentTitle: docMap.get(r.document_id as string) ?? null,
+      documentTitle: (docMap.get(r.document_id as string) as string) ?? null,
       text: (r.comment as string) ?? "",
       author: r.reviewer_id
         ? profileMap.get(r.reviewer_id as string) ?? "Anônimo"
@@ -318,8 +308,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
   // nota (humano, não resolvida)
   for (const r of responsesWithNotes ?? []) {
     if (resolvedNoteIds.has(r.id as string)) continue;
-    const j = r.justifications as Record<string, string> | null;
-    const note = j && typeof j._notes === "string" ? j._notes.trim() : "";
+    const note = typeof r.notes === "string" ? r.notes.trim() : "";
     if (!note) continue;
     comments.push({
       id: `nota-${r.id}`,
@@ -327,13 +316,14 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       rawId: r.id as string,
       fieldName: "(geral)",
       documentId: r.document_id as string,
-      documentTitle: docMap.get(r.document_id as string) ?? null,
+      documentTitle: (docMap.get(r.document_id as string) as string) ?? null,
       text: note,
       author:
-        (r.respondent_id &&
-          (profileMap.get(r.respondent_id as string) ||
-            (r.respondent_name as string))) ||
-        (r.respondent_name as string) ||
+        (r.respondent_id
+          ? profileMap.get(r.respondent_id as string) ||
+            (r.respondent_name as string | null)
+          : null) ||
+        (r.respondent_name as string | null) ||
         "Anônimo",
       createdAt: r.created_at as string,
       extra: {
@@ -378,10 +368,8 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
   // dificuldade (LLM, não resolvida)
   for (const r of llmResponses ?? []) {
     if (resolvedDiffIds.has(r.id as string)) continue;
-    const ambiguidades = (r.answers as Record<string, unknown>)
-      ?.llm_ambiguidades;
     const txt =
-      typeof ambiguidades === "string" ? ambiguidades.trim() : "";
+      typeof r.llm_ambiguidades === "string" ? r.llm_ambiguidades.trim() : "";
     if (!txt) continue;
     comments.push({
       id: `dificuldade-${r.id}`,
@@ -389,7 +377,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       rawId: r.id as string,
       fieldName: "(geral)",
       documentId: r.document_id as string,
-      documentTitle: docMap.get(r.document_id as string) ?? null,
+      documentTitle: (docMap.get(r.document_id as string) as string) ?? null,
       text: txt,
       author: (r.respondent_name as string) || "LLM",
       createdAt: r.created_at as string,
@@ -425,7 +413,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       rawId: `${q.review_id}|${q.respondent_id}`,
       fieldName: r.field_name,
       documentId: r.document_id,
-      documentTitle: docMap.get(r.document_id) ?? null,
+      documentTitle: (docMap.get(r.document_id) as string) ?? null,
       text: q.comment,
       author: profileMap.get(q.respondent_id) ?? "Anônimo",
       createdAt: q.created_at,
@@ -439,25 +427,30 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
     });
   }
 
-  // anotacao (project_comments root, não resolvidos)
+  // anotacao (project_comments root, não resolvidos) + exclusao
+  // (kind='exclusion_request' — pedido de exclusão de documento, que NÃO é
+  // resolvível pelo apply-decisions: aprovação exige excludeDocuments, fluxo
+  // da plataforma; entra no relatório como item informativo)
   for (const c of projectComments ?? []) {
     const p = c.profiles as unknown as { email: string | null } | null;
     const field = c.field_name
       ? fieldMap.get(c.field_name as string)
       : undefined;
+    const isExclusion = c.kind === "exclusion_request";
     comments.push({
-      id: `anotacao-${c.id}`,
-      source: "anotacao",
+      id: `${isExclusion ? "exclusao" : "anotacao"}-${c.id}`,
+      source: isExclusion ? "exclusao" : "anotacao",
       rawId: c.id as string,
       fieldName: (c.field_name as string | null) ?? "(geral)",
       documentId: (c.document_id as string | null) ?? null,
       documentTitle: c.document_id
-        ? docMap.get(c.document_id as string) ?? null
+        ? (docMap.get(c.document_id as string) as string) ?? null
         : null,
       text: c.body as string,
       author: p?.email?.split("@")[0] ?? "Anônimo",
       createdAt: c.created_at as string,
       extra: {
+        kind: c.kind,
         fieldType: field?.type,
         fieldOptions: field?.options,
       },

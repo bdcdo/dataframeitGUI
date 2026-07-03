@@ -8,8 +8,9 @@ import {
   diffFields,
   fieldDiffIsStructural,
   generatePydanticCode,
+  stableStringify,
 } from "@/lib/schema-utils";
-import type { PydanticField } from "@/lib/types";
+import type { FieldCondition, PydanticField } from "@/lib/types";
 
 const baseField = (over: Partial<PydanticField>): PydanticField => ({
   name: "x",
@@ -103,6 +104,57 @@ describe("classifyChange", () => {
       baseField({ name: "q1", options: ["A"], justification_prompt: "cite o trecho" }),
     ];
     expect(classifyChange(oldF, newF)).toBe("patch");
+  });
+});
+
+// O jsonb do Postgres normaliza a ordem das chaves; condition/subfields lidos
+// do banco voltam com chaves reordenadas em relação ao objeto autorado no
+// cliente. As comparações precisam ser insensíveis a isso.
+describe("stableStringify (round-trip jsonb)", () => {
+  // Mesma condição com as chaves em ordens opostas, como o jsonb devolveria.
+  const condA = { field: "q0", equals: "Sim" } as FieldCondition;
+  const condB = JSON.parse('{"equals":"Sim","field":"q0"}') as FieldCondition;
+
+  it("é insensível à ordem das chaves, inclusive aninhadas", () => {
+    expect(stableStringify(condA)).toBe(stableStringify(condB));
+    expect(
+      stableStringify([{ key: "a", label: "A" }, { label: "B", key: "b" }]),
+    ).toBe(stableStringify([{ label: "A", key: "a" }, { key: "b", label: "B" }]));
+  });
+
+  it("distingue valores realmente diferentes e omite undefined", () => {
+    expect(stableStringify({ field: "q0", equals: "Sim" })).not.toBe(
+      stableStringify({ field: "q0", equals: "Não" }),
+    );
+    expect(stableStringify({ a: 1, b: undefined })).toBe(stableStringify({ a: 1 }));
+  });
+
+  it("classifyChange retorna null para condition idêntica com chaves reordenadas", () => {
+    const oldF = [baseField({ name: "q1", options: ["A"], condition: condB })];
+    const newF = [baseField({ name: "q1", options: ["A"], condition: condA })];
+    expect(classifyChange(oldF, newF)).toBeNull();
+    expect(diffFields(oldF, newF)).toHaveLength(0);
+  });
+
+  it("classifyChange segue minor para mudança real de condition", () => {
+    const oldF = [baseField({ name: "q1", options: ["A"], condition: condA })];
+    const newF = [
+      baseField({
+        name: "q1",
+        options: ["A"],
+        condition: { field: "q0", equals: "Não" },
+      }),
+    ];
+    expect(classifyChange(oldF, newF)).toBe("minor");
+    const entries = diffFields(oldF, newF);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].change_summary).toContain("condição");
+  });
+
+  it("fieldDiffIsStructural ignora reordenação de chaves em condition", () => {
+    expect(fieldDiffIsStructural({ condition: condA }, { condition: condB })).toBe(
+      false,
+    );
   });
 });
 

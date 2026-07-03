@@ -4,7 +4,7 @@
  *
  * Lê um arquivo JSON com a lista estruturada de decisões (produzido pelo Claude
  * a partir do .md anotado pelo usuário) e aplica:
- *   1. Mudanças no schema Pydantic (replicando primitivas de saveSchemaFromGUI):
+ *   1. Mudanças no schema Pydantic (mesmas primitivas de saveSchemaFromGUI):
  *      - update projects.{pydantic_code, pydantic_hash, pydantic_fields, schema_version_*}
  *      - insert schema_change_log entries
  *      (sem invalidar responses: is_latest não é flipado na troca de schema —
@@ -15,20 +15,17 @@
  *   cd frontend
  *   npx tsx scripts/comentarios-relatorio/apply-decisions.ts <decisions.json> [--dry-run] [--yes]
  *
- * Formato esperado do JSON: ver references/decisions-format.md
+ * Sem --yes, TUDO roda como preview (schema incluído) — nenhum write acontece.
+ * --dry-run é o alias explícito do mesmo comportamento.
  *
- * Observação: `generatePydanticCode` é importado diretamente de
- * `src/lib/schema-utils` (pure, client-safe) para manter paridade com a UI
- * e evitar drift. A lógica de classificação de versão e persistência duplica
- * `saveSchemaFromGUI` de `src/actions/schema.ts` porque server actions não
- * são chamáveis fora do Next runtime.
+ * Formato esperado do JSON: ver references/decisions-format.md (neste diretório).
  *
- * Fixes aplicados pós-commit 7247704 (PR #62 → revertido em #64):
- *   - classifyChange/snapshotOf/per-field diff agora consideram `condition`
- *     (introduzido em #58); sem isso, mudanças só em condição viravam no-op.
- *   - UPDATEs com service role key em reviews/schema_suggestions/verdict_acknowledgments
- *     agora restringem por project_id (defesa contra cross-project drift).
- *   A solução estrutural — extrair as primitivas para schema-utils.ts — é a issue #63.
+ * As primitivas de versionamento/auditoria (classifyChange, bumpVersion,
+ * diffFields, computeFieldHash) e generatePydanticCode são importadas de
+ * `src/lib/schema-utils` (puras, client-safe — extração da issue #63), as
+ * mesmas usadas por saveSchemaFromGUI. Só a persistência (UPDATE/INSERT)
+ * replica `src/actions/schema.ts`, porque server actions não são chamáveis
+ * fora do Next runtime.
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -36,44 +33,15 @@ import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { generatePydanticCode } from "../../src/lib/schema-utils";
-import type { FieldCondition, PydanticField as LibPydanticField } from "../../src/lib/types";
-
-// ----------------------- Env loading -----------------------
-
-function loadEnv() {
-  const cwd = process.cwd();
-  // Honra SUPABASE_ENV_PATH explícito; caso contrário usa os caminhos
-  // canônicos relativos ao cwd (raiz do repo ou frontend/). Nunca subir a
-  // árvore de diretórios (../.env.local) — ver CLAUDE.md.
-  const candidates = [
-    process.env.SUPABASE_ENV_PATH,
-    resolve(cwd, ".env.local"),
-    resolve(cwd, "frontend/.env.local"),
-  ].filter((p): p is string => Boolean(p));
-  for (const path of candidates) {
-    try {
-      const content = readFileSync(path, "utf-8");
-      for (const line of content.split("\n")) {
-        const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-        if (!m) continue;
-        const key = m[1];
-        if (process.env[key]) continue;
-        let val = m[2].trim();
-        if (
-          (val.startsWith('"') && val.endsWith('"')) ||
-          (val.startsWith("'") && val.endsWith("'"))
-        ) {
-          val = val.slice(1, -1);
-        }
-        process.env[key] = val;
-      }
-      return;
-    } catch {
-      /* try next */
-    }
-  }
-}
+import {
+  bumpVersion,
+  classifyChange,
+  computeFieldHash,
+  diffFields,
+  generatePydanticCode,
+} from "../../src/lib/schema-utils";
+import type { PydanticField } from "../../src/lib/types";
+import { loadEnv } from "./load-env";
 
 loadEnv();
 
@@ -89,9 +57,33 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 // ----------------------- Tipos -----------------------
 
-type PydanticField = LibPydanticField;
+// Formato do JSON de entrada. O Claude gera esse arquivo parseando o .md
+// anotado. Documentação completa: references/decisions-format.md
+type Resolution =
+  | { source: "anotacao"; rawId: string }
+  | { source: "review"; rawId: string }
+  | { source: "nota"; rawId: string; note?: string } // rawId = response_id
+  | {
+      source: "dificuldade";
+      rawId: string; // response_id
+      documentId: string;
+      note?: string;
+    }
+  | {
+      source: "duvida";
+      reviewId: string;
+      respondentId: string;
+    }
+  | {
+      source: "sugestao";
+      rawId: string; // suggestion_id
+      action: "approved" | "rejected";
+      rejectionReason?: string;
+    }
+  // Pedidos de exclusão de documento NÃO são resolvíveis por aqui: a aprovação
+  // exige excludeDocuments (soft delete + auditoria) — fluxo da plataforma.
+  | { source: "exclusao"; rawId: string };
 
-// Formato do JSON de entrada. O Claude gera esse arquivo parseando o .md anotado.
 interface DecisionsFile {
   projectId: string;
   // ID do usuário a registrar como changed_by / resolved_by.
@@ -100,165 +92,15 @@ interface DecisionsFile {
   // Nova lista completa de fields a persistir (já com add/remove/edit aplicados).
   newFields: PydanticField[];
   // Lista de comentários a resolver.
-  resolutions: Array<
-    | { source: "anotacao"; rawId: string }
-    | { source: "review"; rawId: string }
-    | { source: "nota"; rawId: string; note?: string } // rawId = response_id
-    | {
-        source: "dificuldade";
-        rawId: string; // response_id
-        documentId: string;
-        note?: string;
-      }
-    | {
-        source: "duvida";
-        reviewId: string;
-        respondentId: string;
-      }
-    | {
-        source: "sugestao";
-        rawId: string; // suggestion_id
-        action: "approved" | "rejected";
-        rejectionReason?: string;
-      }
-  >;
+  resolutions: Resolution[];
   // Opcional: nota resumo a registrar num project_comment "meta" após aplicação.
   summaryNote?: string;
 }
 
-// ----------------------- Funções puras -----------------------
-// `generatePydanticCode` vem de `src/lib/schema-utils` (mesma função usada pela UI).
-// Apenas utilitários específicos do script ficam aqui.
-
-function pythonListRepr(arr: string[]): string {
-  return "[" + arr.map((s) => `'${s}'`).join(", ") + "]";
-}
-
-// Stringify com chaves ordenadas: o jsonb do Postgres normaliza a ordem das
-// chaves (por tamanho, depois bytewise), então `condition`/`subfields` lidos
-// do banco nunca batem com o objeto autorado no JSON de decisões se a
-// comparação for JSON.stringify cru — todo run viraria um falso "minor"
-// com before == after no change log (visto na troca 1.1.0 do Judiciário).
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return "[" + value.map(stableStringify).join(",") + "]";
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return "{" + entries.map(([k, v]) => JSON.stringify(k) + ":" + stableStringify(v)).join(",") + "}";
-  }
-  return JSON.stringify(value);
-}
-
-function computeFieldHash(
-  name: string,
-  type: string,
-  options: string[] | null,
-  description: string,
-): string {
-  const optionsPart = options ? pythonListRepr([...options].sort()) : "";
-  const content = `${name}|${type}|${optionsPart}|${description}`;
-  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 12);
-}
-
-type ChangeType = "major" | "minor" | "patch";
-
-function classifyChange(
-  oldFields: PydanticField[],
-  newFields: PydanticField[],
-): ChangeType | null {
-  const oldNames = new Set(oldFields.map((f) => f.name));
-  const newNames = new Set(newFields.map((f) => f.name));
-
-  const addedOrRemoved =
-    newFields.some((f) => !oldNames.has(f.name)) ||
-    oldFields.some((f) => !newNames.has(f.name));
-
-  if (addedOrRemoved) return "minor";
-
-  let hasStructural = false;
-  let hasTextual = false;
-  const oldMap = new Map(oldFields.map((f) => [f.name, f]));
-
-  for (const n of newFields) {
-    const o = oldMap.get(n.name);
-    if (!o) continue;
-
-    if (o.type !== n.type) hasStructural = true;
-    if ((o.target ?? "all") !== (n.target ?? "all")) hasStructural = true;
-    if ((o.required ?? true) !== (n.required ?? true)) hasStructural = true;
-    if ((o.subfield_rule ?? null) !== (n.subfield_rule ?? null)) hasStructural = true;
-    if ((o.allow_other ?? false) !== (n.allow_other ?? false)) hasStructural = true;
-    if (stableStringify(o.subfields ?? null) !== stableStringify(n.subfields ?? null)) {
-      hasStructural = true;
-    }
-    if (stableStringify(o.condition ?? null) !== stableStringify(n.condition ?? null)) {
-      hasStructural = true;
-    }
-
-    const optsOld = o.options ?? [];
-    const optsNew = n.options ?? [];
-    const setOld = new Set(optsOld);
-    const setNew = new Set(optsNew);
-    const sameSet =
-      setOld.size === setNew.size && [...setOld].every((x) => setNew.has(x));
-    if (!sameSet) {
-      hasStructural = true;
-    } else if (optsOld.length !== optsNew.length) {
-      hasStructural = true;
-    } else {
-      for (let i = 0; i < optsOld.length; i++) {
-        if (optsOld[i] !== optsNew[i]) {
-          hasTextual = true;
-          break;
-        }
-      }
-    }
-
-    if (o.description !== n.description) hasTextual = true;
-    if ((o.help_text || "") !== (n.help_text || "")) hasTextual = true;
-  }
-
-  if (!hasStructural && !hasTextual) {
-    for (let i = 0; i < newFields.length; i++) {
-      if (newFields[i].name !== oldFields[i]?.name) {
-        hasTextual = true;
-        break;
-      }
-    }
-  }
-
-  if (hasStructural) return "minor";
-  if (hasTextual) return "patch";
-  return null;
-}
-
-function bumpVersion(
-  current: { major: number; minor: number; patch: number },
-  type: ChangeType,
-): { major: number; minor: number; patch: number } {
-  if (type === "major") return { major: current.major + 1, minor: 0, patch: 0 };
-  if (type === "minor")
-    return { major: current.major, minor: current.minor + 1, patch: 0 };
-  return { major: current.major, minor: current.minor, patch: current.patch + 1 };
-}
-
-function snapshotOf(field: PydanticField): Record<string, unknown> {
-  return {
-    name: field.name,
-    type: field.type,
-    description: field.description,
-    help_text: field.help_text ?? null,
-    options: field.options ?? null,
-    target: field.target ?? null,
-    required: field.required ?? null,
-    subfields: field.subfields ?? null,
-    subfield_rule: field.subfield_rule ?? null,
-    allow_other: field.allow_other ?? null,
-    condition: field.condition ?? null,
-  };
+interface ResolutionResult {
+  success: boolean;
+  error?: string;
+  detail?: string;
 }
 
 // ----------------------- Schema apply -----------------------
@@ -268,20 +110,30 @@ async function applySchemaChanges(
   projectId: string,
   newFields: PydanticField[],
   changedBy: string,
-  dryRun: boolean,
+  write: boolean,
 ) {
   const { data: project, error: projErr } = await supabase
     .from("projects")
     .select(
-      "pydantic_fields, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch",
+      "pydantic_fields, pydantic_code, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch",
     )
     .eq("id", projectId)
     .single();
   if (projErr) throw new Error(`projects select: ${projErr.message}`);
 
   const oldFields = (project?.pydantic_fields as PydanticField[]) ?? [];
-  const oldMap = new Map(oldFields.map((f) => [f.name, f]));
-  const newMap = new Map(newFields.map((f) => [f.name, f]));
+
+  // Guarda anti-wipe — espelha saveSchemaFromGUI (src/actions/schema.ts):
+  // nunca gravar 0 campos por cima de um schema existente. Um decisions.json
+  // malformado (newFields vazio/parcial) apagaria o schema inteiro com a
+  // service role key.
+  const hasExistingSchema = oldFields.length > 0 || !!project?.pydantic_code;
+  if (newFields.length === 0 && hasExistingSchema) {
+    throw new Error(
+      "guarda anti-wipe: newFields está vazio mas o projeto já tem schema. " +
+        "Se a intenção é remover todos os campos, faça pela UI.",
+    );
+  }
 
   const current = {
     major: project?.schema_version_major ?? 0,
@@ -291,105 +143,7 @@ async function applySchemaChanges(
 
   const changeType = classifyChange(oldFields, newFields);
   const bumped = changeType ? bumpVersion(current, changeType) : current;
-
-  // Audit entries
-  const logEntries: Array<{
-    field_name: string;
-    change_summary: string;
-    before_value: Record<string, unknown>;
-    after_value: Record<string, unknown>;
-  }> = [];
-
-  for (const f of newFields) {
-    if (oldMap.has(f.name)) continue;
-    logEntries.push({
-      field_name: f.name,
-      change_summary: "campo adicionado",
-      before_value: {},
-      after_value: snapshotOf(f),
-    });
-  }
-  for (const o of oldFields) {
-    if (newMap.has(o.name)) continue;
-    logEntries.push({
-      field_name: o.name,
-      change_summary: "campo removido",
-      before_value: snapshotOf(o),
-      after_value: {},
-    });
-  }
-  for (const f of newFields) {
-    const old = oldMap.get(f.name);
-    if (!old) continue;
-    const diffs: string[] = [];
-    const before: Record<string, unknown> = {};
-    const after: Record<string, unknown> = {};
-
-    if (old.description !== f.description) {
-      diffs.push("descrição");
-      before.description = old.description;
-      after.description = f.description;
-    }
-    if ((old.help_text || "") !== (f.help_text || "")) {
-      diffs.push("instruções");
-      before.help_text = old.help_text || null;
-      after.help_text = f.help_text || null;
-    }
-    const oldOpts = JSON.stringify(old.options ?? null);
-    const newOpts = JSON.stringify(f.options ?? null);
-    if (oldOpts !== newOpts) {
-      diffs.push(f.type === "text" ? "respostas padronizadas" : "opções");
-      before.options = old.options;
-      after.options = f.options;
-    }
-    if (old.type !== f.type) {
-      diffs.push("tipo");
-      before.type = old.type;
-      after.type = f.type;
-    }
-    if ((old.target ?? "all") !== (f.target ?? "all")) {
-      diffs.push("alvo");
-      before.target = old.target ?? null;
-      after.target = f.target ?? null;
-    }
-    if ((old.required ?? true) !== (f.required ?? true)) {
-      diffs.push("obrigatório");
-      before.required = old.required ?? null;
-      after.required = f.required ?? null;
-    }
-    if ((old.subfield_rule ?? null) !== (f.subfield_rule ?? null)) {
-      diffs.push("regra de subcampos");
-      before.subfield_rule = old.subfield_rule ?? null;
-      after.subfield_rule = f.subfield_rule ?? null;
-    }
-    if ((old.allow_other ?? false) !== (f.allow_other ?? false)) {
-      diffs.push("permite outro");
-      before.allow_other = old.allow_other ?? false;
-      after.allow_other = f.allow_other ?? false;
-    }
-    const oldSubs = stableStringify(old.subfields ?? null);
-    const newSubs = stableStringify(f.subfields ?? null);
-    if (oldSubs !== newSubs) {
-      diffs.push("subcampos");
-      before.subfields = old.subfields ?? null;
-      after.subfields = f.subfields ?? null;
-    }
-    const oldCond = stableStringify(old.condition ?? null);
-    const newCond = stableStringify(f.condition ?? null);
-    if (oldCond !== newCond) {
-      diffs.push("condição");
-      before.condition = old.condition ?? null;
-      after.condition = f.condition ?? null;
-    }
-    if (diffs.length > 0) {
-      logEntries.push({
-        field_name: f.name,
-        change_summary: diffs.join(", "),
-        before_value: before,
-        after_value: after,
-      });
-    }
-  }
+  const logEntries = diffFields(oldFields, newFields);
 
   const code = generatePydanticCode(newFields);
   const hash = crypto.createHash("sha256").update(code).digest("hex").slice(0, 16);
@@ -408,12 +162,12 @@ async function applySchemaChanges(
     pydanticCodePreview: code.split("\n").slice(0, 10).join("\n") + "\n...",
   };
 
-  if (dryRun) {
-    return { dryRun: true, summary };
+  if (!write) {
+    return { preview: true, summary };
   }
 
   if (!changeType && logEntries.length === 0) {
-    return { dryRun: false, summary, applied: false, reason: "sem mudanças" };
+    return { preview: false, summary, applied: false, reason: "sem mudanças" };
   }
 
   // Update projects
@@ -456,111 +210,306 @@ async function applySchemaChanges(
     if (logErr) throw new Error(`schema_change_log insert: ${logErr.message}`);
   }
 
-  return { dryRun: false, summary, applied: true };
+  return { preview: false, summary, applied: true };
 }
 
 // ----------------------- Comment resolution -----------------------
 
-async function resolveComment(
+// Valida em lote a que projeto pertencem as responses (nota/dificuldade) e os
+// reviews (duvida) referenciados: note_resolutions/difficulty_resolutions não
+// têm constraint amarrando o project_id da linha ao da response, e
+// verdict_acknowledgments só tem review_id — sem o guard, um rawId de outro
+// projeto viraria linha órfã "resolvida" com sucesso aparente.
+async function buildOwnershipMaps(supabase: SupabaseClient, resolutions: Resolution[]) {
+  const responseIds = [
+    ...new Set(
+      resolutions
+        .filter((r) => r.source === "nota" || r.source === "dificuldade")
+        .map((r) => (r as { rawId: string }).rawId),
+    ),
+  ];
+  const reviewIds = [
+    ...new Set(
+      resolutions
+        .filter((r) => r.source === "duvida")
+        .map((r) => (r as { reviewId: string }).reviewId),
+    ),
+  ];
+
+  const [responsesRes, reviewsRes] = await Promise.all([
+    responseIds.length > 0
+      ? supabase.from("responses").select("id, project_id").in("id", responseIds)
+      : Promise.resolve({ data: [], error: null }),
+    reviewIds.length > 0
+      ? supabase.from("reviews").select("id, project_id").in("id", reviewIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (responsesRes.error) {
+    throw new Error(`responses select (guard): ${responsesRes.error.message}`);
+  }
+  if (reviewsRes.error) {
+    throw new Error(`reviews select (guard): ${reviewsRes.error.message}`);
+  }
+
+  return {
+    responseProject: new Map(
+      (responsesRes.data ?? []).map((r) => [r.id as string, r.project_id as string]),
+    ),
+    reviewProject: new Map(
+      (reviewsRes.data ?? []).map((r) => [r.id as string, r.project_id as string]),
+    ),
+  };
+}
+
+// UPDATE em lote restrito ao projeto; devolve, por id pedido, sucesso ou
+// "not found" (id inexistente ou de outro projeto).
+async function batchResolveUpdate(
+  supabase: SupabaseClient,
+  table: string,
+  projectId: string,
+  ids: string[],
+  payload: Record<string, unknown>,
+): Promise<Map<string, ResolutionResult>> {
+  const results = new Map<string, ResolutionResult>();
+  if (ids.length === 0) return results;
+  const { data, error } = await supabase
+    .from(table)
+    .update(payload)
+    .in("id", ids)
+    .eq("project_id", projectId)
+    .select("id");
+  if (error) {
+    for (const id of ids) results.set(id, { success: false, error: error.message });
+    return results;
+  }
+  const updated = new Set((data ?? []).map((d) => d.id as string));
+  for (const id of ids) {
+    results.set(
+      id,
+      updated.has(id) ? { success: true } : { success: false, error: "not found" },
+    );
+  }
+  return results;
+}
+
+async function resolveComments(
   supabase: SupabaseClient,
   projectId: string,
   changedBy: string,
-  r: DecisionsFile["resolutions"][number],
-  dryRun: boolean,
-): Promise<{ success: boolean; error?: string; detail?: string }> {
-  if (dryRun) {
-    return { success: true, detail: `DRY RUN: would resolve ${r.source} ${JSON.stringify(r)}` };
+  resolutions: Resolution[],
+  write: boolean,
+): Promise<Array<{ item: Resolution; result: ResolutionResult }>> {
+  if (!write) {
+    return resolutions.map((r) => ({
+      item: r,
+      result: {
+        success: true,
+        detail: `PREVIEW: would resolve ${r.source} ${JSON.stringify(r)}`,
+      },
+    }));
   }
+
   const nowIso = new Date().toISOString();
-  try {
-    if (r.source === "anotacao") {
-      const { data, error } = await supabase
-        .from("project_comments")
-        .update({ resolved_at: nowIso, resolved_by: changedBy })
-        .eq("id", r.rawId)
-        .eq("project_id", projectId)
-        .select("id");
-      if (error) return { success: false, error: error.message };
-      if (!data || data.length === 0) return { success: false, error: "not found" };
-      return { success: true };
+  const { responseProject, reviewProject } = await buildOwnershipMaps(
+    supabase,
+    resolutions,
+  );
+  const resolvedPayload = { resolved_at: nowIso, resolved_by: changedBy };
+  const resultFor = new Map<Resolution, ResolutionResult>();
+
+  const guardResponse = (rawId: string): ResolutionResult | null => {
+    const owner = responseProject.get(rawId);
+    if (!owner) return { success: false, error: "response não encontrada" };
+    if (owner !== projectId) {
+      return { success: false, error: "response pertence a outro projeto" };
     }
-    if (r.source === "review") {
-      const { data, error } = await supabase
-        .from("reviews")
-        .update({ resolved_at: nowIso, resolved_by: changedBy })
-        .eq("id", r.rawId)
-        .eq("project_id", projectId)
-        .select("id");
-      if (error) return { success: false, error: error.message };
-      if (!data || data.length === 0) return { success: false, error: "not found" };
-      return { success: true };
+    return null;
+  };
+
+  // --- nota / dificuldade: guard + INSERT em lote (upsert ignora par já resolvido) ---
+  const notas = resolutions.filter((r) => r.source === "nota") as Array<
+    Extract<Resolution, { source: "nota" }>
+  >;
+  const dificuldades = resolutions.filter((r) => r.source === "dificuldade") as Array<
+    Extract<Resolution, { source: "dificuldade" }>
+  >;
+
+  const notaRows: Record<string, unknown>[] = [];
+  for (const r of notas) {
+    const guardErr = guardResponse(r.rawId);
+    if (guardErr) {
+      resultFor.set(r, guardErr);
+      continue;
     }
-    if (r.source === "nota") {
-      const { error } = await supabase.from("note_resolutions").insert({
-        project_id: projectId,
-        response_id: r.rawId,
-        resolved_by: changedBy,
-        note: r.note || null,
-      });
-      if (error) return { success: false, error: error.message };
-      return { success: true };
+    resultFor.set(r, { success: true });
+    notaRows.push({
+      project_id: projectId,
+      response_id: r.rawId,
+      resolved_by: changedBy,
+      note: r.note || null,
+    });
+  }
+  const difRows: Record<string, unknown>[] = [];
+  for (const r of dificuldades) {
+    const guardErr = guardResponse(r.rawId);
+    if (guardErr) {
+      resultFor.set(r, guardErr);
+      continue;
     }
-    if (r.source === "dificuldade") {
-      const { error } = await supabase.from("difficulty_resolutions").insert({
-        project_id: projectId,
-        response_id: r.rawId,
-        document_id: r.documentId,
-        resolved_by: changedBy,
-        note: r.note || null,
-      });
-      if (error) return { success: false, error: error.message };
-      return { success: true };
+    resultFor.set(r, { success: true });
+    difRows.push({
+      project_id: projectId,
+      response_id: r.rawId,
+      document_id: r.documentId,
+      resolved_by: changedBy,
+      note: r.note || null,
+    });
+  }
+
+  // --- sugestao: approved em lote; rejected agrupado por motivo ---
+  const sugestoes = resolutions.filter((r) => r.source === "sugestao") as Array<
+    Extract<Resolution, { source: "sugestao" }>
+  >;
+  const approvedIds = sugestoes
+    .filter((s) => s.action === "approved")
+    .map((s) => s.rawId);
+  const rejectedByReason = new Map<string | null, string[]>();
+  for (const s of sugestoes.filter((s) => s.action === "rejected")) {
+    const key = s.rejectionReason ?? null;
+    rejectedByReason.set(key, [...(rejectedByReason.get(key) ?? []), s.rawId]);
+  }
+
+  const anotacaoIds = resolutions
+    .filter((r) => r.source === "anotacao")
+    .map((r) => (r as { rawId: string }).rawId);
+  const reviewIds = resolutions
+    .filter((r) => r.source === "review")
+    .map((r) => (r as { rawId: string }).rawId);
+
+  const [anotacaoResults, reviewResults, approvedResults, notaInsert, difInsert, ...rejectedMaps] =
+    await Promise.all([
+      batchResolveUpdate(
+        supabase,
+        "project_comments",
+        projectId,
+        anotacaoIds,
+        resolvedPayload,
+      ),
+      batchResolveUpdate(supabase, "reviews", projectId, reviewIds, resolvedPayload),
+      batchResolveUpdate(supabase, "schema_suggestions", projectId, approvedIds, {
+        status: "approved",
+        ...resolvedPayload,
+      }),
+      notaRows.length > 0
+        ? supabase
+            .from("note_resolutions")
+            .upsert(notaRows, {
+              onConflict: "project_id,response_id",
+              ignoreDuplicates: true,
+            })
+        : Promise.resolve({ error: null }),
+      difRows.length > 0
+        ? supabase
+            .from("difficulty_resolutions")
+            .upsert(difRows, {
+              onConflict: "project_id,response_id",
+              ignoreDuplicates: true,
+            })
+        : Promise.resolve({ error: null }),
+      ...[...rejectedByReason.entries()].map(([reason, ids]) =>
+        batchResolveUpdate(supabase, "schema_suggestions", projectId, ids, {
+          status: "rejected",
+          ...resolvedPayload,
+          ...(reason ? { rejection_reason: reason } : {}),
+        }),
+      ),
+    ]);
+
+  const rejectedResults = new Map<string, ResolutionResult>();
+  for (const m of rejectedMaps as Map<string, ResolutionResult>[]) {
+    for (const [k, v] of m) rejectedResults.set(k, v);
+  }
+  if ((notaInsert as { error: { message: string } | null }).error) {
+    const msg = (notaInsert as { error: { message: string } }).error.message;
+    for (const r of notas) {
+      if (resultFor.get(r)?.success) resultFor.set(r, { success: false, error: msg });
     }
-    if (r.source === "duvida") {
-      // Cross-project guard: confirma que o review pertence a este projeto
-      // antes de tocar a verdict_acknowledgments (tabela só tem review_id, não project_id).
-      const { data: rev, error: revErr } = await supabase
-        .from("reviews")
-        .select("project_id")
-        .eq("id", r.reviewId)
-        .single();
-      if (revErr) return { success: false, error: revErr.message };
-      if (rev?.project_id !== projectId) {
-        return { success: false, error: "review pertence a outro projeto" };
+  }
+  if ((difInsert as { error: { message: string } | null }).error) {
+    const msg = (difInsert as { error: { message: string } }).error.message;
+    for (const r of dificuldades) {
+      if (resultFor.get(r)?.success) resultFor.set(r, { success: false, error: msg });
+    }
+  }
+
+  // --- duvida: guard batched acima; UPDATE por par (review_id, respondent_id) ---
+  const duvidas = resolutions.filter((r) => r.source === "duvida") as Array<
+    Extract<Resolution, { source: "duvida" }>
+  >;
+  await Promise.all(
+    duvidas.map(async (r) => {
+      const owner = reviewProject.get(r.reviewId);
+      if (!owner) {
+        resultFor.set(r, { success: false, error: "review não encontrado" });
+        return;
+      }
+      if (owner !== projectId) {
+        resultFor.set(r, { success: false, error: "review pertence a outro projeto" });
+        return;
       }
       const { data, error } = await supabase
         .from("verdict_acknowledgments")
-        .update({ resolved_at: nowIso, resolved_by: changedBy })
+        .update(resolvedPayload)
         .eq("review_id", r.reviewId)
         .eq("respondent_id", r.respondentId)
         .select("review_id");
-      if (error) return { success: false, error: error.message };
-      if (!data || data.length === 0) return { success: false, error: "not found" };
-      return { success: true };
+      if (error) {
+        resultFor.set(r, { success: false, error: error.message });
+      } else if (!data || data.length === 0) {
+        resultFor.set(r, { success: false, error: "not found" });
+      } else {
+        resultFor.set(r, { success: true });
+      }
+    }),
+  );
+
+  // --- montar resultados na ordem original ---
+  return resolutions.map((r) => {
+    if (r.source === "anotacao") {
+      return {
+        item: r,
+        result: anotacaoResults.get(r.rawId) ?? { success: false, error: "not found" },
+      };
+    }
+    if (r.source === "review") {
+      return {
+        item: r,
+        result: reviewResults.get(r.rawId) ?? { success: false, error: "not found" },
+      };
     }
     if (r.source === "sugestao") {
-      const payload: Record<string, unknown> = {
-        status: r.action,
-        resolved_by: changedBy,
-        resolved_at: nowIso,
+      const m = r.action === "approved" ? approvedResults : rejectedResults;
+      return {
+        item: r,
+        result: m.get(r.rawId) ?? { success: false, error: "not found" },
       };
-      if (r.action === "rejected" && r.rejectionReason) {
-        payload.rejection_reason = r.rejectionReason;
-      }
-      const { data, error } = await supabase
-        .from("schema_suggestions")
-        .update(payload)
-        .eq("id", r.rawId)
-        .eq("project_id", projectId)
-        .select("id");
-      if (error) return { success: false, error: error.message };
-      if (!data || data.length === 0) return { success: false, error: "not found" };
-      return { success: true };
     }
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) };
-  }
-  return { success: false, error: "unknown source" };
+    if (r.source === "exclusao") {
+      return {
+        item: r,
+        result: {
+          success: false,
+          error:
+            "pedido de exclusão de documento: resolver pela plataforma " +
+            "(aprovação exige excludeDocuments — soft delete + auditoria)",
+        },
+      };
+    }
+    return {
+      item: r,
+      result: resultFor.get(r) ?? { success: false, error: "unknown source" },
+    };
+  });
 }
 
 // ----------------------- Main -----------------------
@@ -606,12 +555,17 @@ async function main() {
     changedBy = proj?.created_by as string;
   }
   if (!changedBy) {
-    console.error("Não foi possível resolver changedBy. Forneça decisions.changedBy.");
+    console.error(
+      "Não foi possível resolver changedBy. Forneça decisions.changedBy.",
+    );
     process.exit(1);
   }
 
+  // Sem --yes, nada é gravado: schema E resoluções rodam como preview.
+  const write = args.yes && !args.dryRun;
+
   console.log(
-    `Projeto: ${decisions.projectId}\nchangedBy: ${changedBy}\nNovos fields: ${decisions.newFields.length}\nResoluções: ${decisions.resolutions.length}\ndry-run: ${args.dryRun}\n`,
+    `Projeto: ${decisions.projectId}\nchangedBy: ${changedBy}\nNovos fields: ${decisions.newFields.length}\nResoluções: ${decisions.resolutions.length}\nmodo: ${write ? "APLICAR" : "preview (use --yes para gravar)"}\n`,
   );
 
   // Step 1: schema
@@ -620,36 +574,24 @@ async function main() {
     decisions.projectId,
     decisions.newFields,
     changedBy,
-    args.dryRun,
+    write,
   );
   console.log("---- SCHEMA ----");
   console.log(JSON.stringify(schemaResult, null, 2));
 
-  // Step 2: confirmação antes de resolver comentários (se não dry-run e não --yes)
-  if (!args.dryRun && !args.yes) {
-    console.log(
-      "\n[info] Para prosseguir com a resolução dos comentários, rode novamente com --yes.",
-    );
-    return;
-  }
-
-  // Step 3: resolutions
+  // Step 2: resolutions
   console.log("\n---- RESOLUÇÕES ----");
-  const results: Array<{ item: unknown; result: unknown }> = [];
-  for (const r of decisions.resolutions) {
-    const res = await resolveComment(
-      supabase,
-      decisions.projectId,
-      changedBy,
-      r,
-      args.dryRun,
-    );
-    results.push({ item: r, result: res });
-  }
+  const results = await resolveComments(
+    supabase,
+    decisions.projectId,
+    changedBy,
+    decisions.resolutions,
+    write,
+  );
   console.log(JSON.stringify(results, null, 2));
 
-  // Step 4: summaryNote (opcional)
-  if (decisions.summaryNote && !args.dryRun) {
+  // Step 3: summaryNote (opcional)
+  if (decisions.summaryNote && write) {
     const { error } = await supabase.from("project_comments").insert({
       project_id: decisions.projectId,
       author_id: changedBy,
