@@ -5,6 +5,7 @@ import type {
   SchemaChangeType,
   SubfieldDef,
 } from "./types";
+import { TYPE_LABELS } from "./field-labels";
 
 export type FieldChangeKind = "added" | "removed" | "renamed" | "modified";
 
@@ -291,13 +292,6 @@ export function formatTarget(t: unknown): string {
   if (typeof t !== "string") return "—";
   return TARGET_LABELS[t] ?? t;
 }
-
-const TYPE_LABELS: Record<string, string> = {
-  single: "Escolha única",
-  multi: "Múltipla escolha",
-  text: "Texto",
-  date: "Data",
-};
 
 export function formatType(t: unknown): string {
   if (typeof t !== "string") return "—";

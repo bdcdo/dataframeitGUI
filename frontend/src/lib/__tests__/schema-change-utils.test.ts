@@ -310,7 +310,7 @@ describe("formatVersion / formatTarget / formatType / propertyLabel", () => {
   it("formatType cobre labels conhecidos", () => {
     expect(formatType("single")).toBe("Escolha única");
     expect(formatType("multi")).toBe("Múltipla escolha");
-    expect(formatType("text")).toBe("Texto");
+    expect(formatType("text")).toBe("Texto livre");
     expect(formatType("date")).toBe("Data");
   });
 
