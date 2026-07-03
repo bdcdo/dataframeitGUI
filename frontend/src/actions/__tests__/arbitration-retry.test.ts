@@ -309,3 +309,23 @@ describe("retryPendingArbitrations — batch de responses agrupado por doc", () 
     expect(arbitrators).toEqual(["userB", "userC"]);
   });
 });
+
+// regenerateAutoReviewBacklog não tinha nenhum teste antes do #385 — passou a
+// reusar o mesmo requireCoordinator de retryPendingArbitrations (mesmo
+// arquivo), então o gap real a fechar é o guard.
+async function loadRegenerate() {
+  return (await import("@/actions/field-reviews")).regenerateAutoReviewBacklog;
+}
+
+describe("regenerateAutoReviewBacklog — guard", () => {
+  it("não-coordenador → erro, sem efeito colateral", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const regenerate = await loadRegenerate();
+
+    const r = await regenerate("p1");
+
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("coordenadores");
+    expect(writeCalls).toHaveLength(0);
+  });
+});

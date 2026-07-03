@@ -1,19 +1,39 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, type AuthUser } from "@/lib/auth";
+import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
+
+// As 10 funções resolve/reopen abaixo (5 pares, sobre 5 tabelas) compartilhavam
+// o mesmo esqueleto: auth → supabase → mutação específica → revalidatePath só
+// no sucesso → catch genérico. withResolutionAction absorve esse esqueleto sem
+// tocar a query em si — cada callback monta seu próprio `.from(tabela)...`
+// com tipagem completa do client Supabase, sem genéricos por string de tabela.
+async function withResolutionAction(
+  projectId: string,
+  action: (
+    user: AuthUser,
+    supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  ) => Promise<{ success: boolean; error?: string }>,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getAuthUser();
+    if (!user) return { success: false, error: "Não autenticado" };
+    const supabase = await createSupabaseServer();
+    const result = await action(user, supabase);
+    if (result.success) revalidatePath(`/projects/${projectId}/reviews`);
+    return result;
+  } catch (e) {
+    return { success: false, error: errorMessage(e) || "Erro desconhecido" };
+  }
+}
 
 export async function resolveReviewComment(
   reviewId: string,
   projectId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (user, supabase) => {
     const { data, error } = await supabase
       .from("reviews")
       .update({
@@ -26,24 +46,15 @@ export async function resolveReviewComment(
     if (error) return { success: false, error: error.message };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para resolver este comentário" };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function reopenReviewComment(
   reviewId: string,
   projectId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (_user, supabase) => {
     const { data, error } = await supabase
       .from("reviews")
       .update({
@@ -56,12 +67,8 @@ export async function reopenReviewComment(
     if (error) return { success: false, error: error.message };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para reabrir este comentário" };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function resolveNote(
@@ -69,12 +76,7 @@ export async function resolveNote(
   responseId: string,
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (user, supabase) => {
     const { error } = await supabase.from("note_resolutions").insert({
       project_id: projectId,
       response_id: responseId,
@@ -83,24 +85,15 @@ export async function resolveNote(
     });
 
     if (error) return { success: false, error: error.message };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function reopenNote(
   projectId: string,
   responseId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (_user, supabase) => {
     const { data, error } = await supabase
       .from("note_resolutions")
       .delete()
@@ -111,12 +104,8 @@ export async function reopenNote(
     if (error) return { success: false, error: error.message };
     if (!data || data.length === 0)
       return { success: false, error: "Nada reaberto: sem permissão ou anotação já reaberta" };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function resolveDuvida(
@@ -124,12 +113,7 @@ export async function resolveDuvida(
   reviewId: string,
   respondentId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (user, supabase) => {
     const { data, error } = await supabase
       .from("verdict_acknowledgments")
       .update({
@@ -143,12 +127,8 @@ export async function resolveDuvida(
     if (error) return { success: false, error: error.message };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para resolver esta dúvida" };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function reopenDuvida(
@@ -156,12 +136,7 @@ export async function reopenDuvida(
   reviewId: string,
   respondentId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (_user, supabase) => {
     const { data, error } = await supabase
       .from("verdict_acknowledgments")
       .update({
@@ -175,12 +150,8 @@ export async function reopenDuvida(
     if (error) return { success: false, error: error.message };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para reabrir esta dúvida" };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function resolveDifficulty(
@@ -189,12 +160,7 @@ export async function resolveDifficulty(
   documentId: string,
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (user, supabase) => {
     const { error } = await supabase.from("difficulty_resolutions").insert({
       project_id: projectId,
       response_id: responseId,
@@ -204,24 +170,15 @@ export async function resolveDifficulty(
     });
 
     if (error) return { success: false, error: error.message };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function reopenDifficulty(
   projectId: string,
   responseId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (_user, supabase) => {
     const { data, error } = await supabase
       .from("difficulty_resolutions")
       .delete()
@@ -232,12 +189,8 @@ export async function reopenDifficulty(
     if (error) return { success: false, error: error.message };
     if (!data || data.length === 0)
       return { success: false, error: "Nada reaberto: sem permissão ou dificuldade já reaberta" };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export interface GabaritoRespondentAnswer {
@@ -282,7 +235,7 @@ export async function fetchGabaritoForComment(
 
     return { answers: result };
   } catch (e) {
-    return { answers: [], error: e instanceof Error ? e.message : "Erro desconhecido" };
+    return { answers: [], error: errorMessage(e) || "Erro desconhecido" };
   }
 }
 
@@ -292,12 +245,7 @@ export async function resolveError(
   fieldName: string,
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (user, supabase) => {
     const { error } = await supabase.from("error_resolutions").insert({
       project_id: projectId,
       document_id: documentId,
@@ -307,12 +255,8 @@ export async function resolveError(
     });
 
     if (error) return { success: false, error: error.message };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }
 
 export async function reopenError(
@@ -320,12 +264,7 @@ export async function reopenError(
   documentId: string,
   fieldName: string,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    const supabase = await createSupabaseServer();
-
+  return withResolutionAction(projectId, async (_user, supabase) => {
     const { data, error } = await supabase
       .from("error_resolutions")
       .delete()
@@ -337,10 +276,6 @@ export async function reopenError(
     if (error) return { success: false, error: error.message };
     if (!data || data.length === 0)
       return { success: false, error: "Nada reaberto: sem permissão ou erro já reaberto" };
-
-    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
-  }
+  });
 }

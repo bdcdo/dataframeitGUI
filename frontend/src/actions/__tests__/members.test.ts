@@ -62,6 +62,7 @@ vi.mock("next/cache", () => ({
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
   isProjectCoordinator: async () => true,
+  requireCoordinator: async () => ({ ok: true, user: { id: "userCoord" } }),
 }));
 vi.mock("@/lib/clerk-sync", () => ({
   syncClerkUserToSupabase: async () => "userX",

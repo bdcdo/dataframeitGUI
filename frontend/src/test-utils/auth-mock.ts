@@ -25,5 +25,11 @@ export function authModuleMock(isCoord: () => Promise<boolean>, userId = "userCo
   return {
     getAuthUser: async () => ({ id: userId }),
     isProjectCoordinator: () => isCoord(),
+    // Espelha requireCoordinator real (lib/auth.ts): getAuthUser nesta
+    // factory nunca retorna null, então só o gate de coordenador varia.
+    requireCoordinator: async (_projectId: string, deniedMessage: string) => {
+      if (!(await isCoord())) return { ok: false, error: deniedMessage };
+      return { ok: true, user: { id: userId } };
+    },
   };
 }
