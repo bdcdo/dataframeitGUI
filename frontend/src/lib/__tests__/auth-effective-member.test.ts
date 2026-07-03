@@ -64,6 +64,10 @@ async function loadGetEffective() {
   return (await import("@/lib/auth")).getEffectiveMemberId;
 }
 
+async function loadResolveEffective() {
+  return (await import("@/lib/auth")).resolveEffectiveUserId;
+}
+
 describe("getEffectiveMemberId", () => {
   it("com alias no projeto → retorna o member_user_id canônico", async () => {
     aliasByProject = { pA: { member_user_id: "canonico1" } };
@@ -81,5 +85,35 @@ describe("getEffectiveMemberId", () => {
     aliasByProject = { pC: { member_user_id: "canonico1" }, pD: null };
     const getEffectiveMemberId = await loadGetEffective();
     await expect(getEffectiveMemberId("pD")).resolves.toBe("acc1");
+  });
+});
+
+// resolveEffectiveUserId: fonte única da precedência entre impersonação
+// master (?viewAsUser=) e conta-alias, compartilhada por Codificar,
+// Comparação e Arbitragem. Sem ela, Comparação/Arbitragem filtravam a fila
+// pessoal pelo id do master logado e mostravam fila vazia na impersonação.
+describe("resolveEffectiveUserId", () => {
+  it("master + viewAsUser → impersona (precedência sobre alias)", async () => {
+    aliasByProject = { pE: { member_user_id: "canonico1" } };
+    const resolveEffectiveUserId = await loadResolveEffective();
+    await expect(
+      resolveEffectiveUserId("pE", { id: "acc1", isMaster: true }, "membro9"),
+    ).resolves.toEqual({ effectiveUserId: "membro9", isImpersonating: true });
+  });
+
+  it("não-master ignora viewAsUser e resolve alias", async () => {
+    aliasByProject = { pF: { member_user_id: "canonico1" } };
+    const resolveEffectiveUserId = await loadResolveEffective();
+    await expect(
+      resolveEffectiveUserId("pF", { id: "acc1", isMaster: false }, "membro9"),
+    ).resolves.toEqual({ effectiveUserId: "canonico1", isImpersonating: false });
+  });
+
+  it("master sem viewAsUser cai na resolução de alias/si próprio", async () => {
+    aliasByProject = { pG: null };
+    const resolveEffectiveUserId = await loadResolveEffective();
+    await expect(
+      resolveEffectiveUserId("pG", { id: "acc1", isMaster: true }, undefined),
+    ).resolves.toEqual({ effectiveUserId: "acc1", isImpersonating: false });
   });
 });

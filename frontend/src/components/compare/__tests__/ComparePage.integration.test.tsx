@@ -116,6 +116,7 @@ const props = {
   isCoordinator: false,
   showingAllQueue: false,
   hasAssignedDocs: false,
+  isImpersonating: false,
 };
 
 const renderReal = () =>

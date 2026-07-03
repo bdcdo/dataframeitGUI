@@ -218,6 +218,7 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
     isCoordinator: false,
     showingAllQueue: false,
     hasAssignedDocs: false,
+    isImpersonating: false,
   };
 }
 
@@ -567,6 +568,42 @@ describe("ComparePage — toggle de fila (só coordenador)", () => {
     expect(
       screen.queryByText(/Você não tem documentos atribuídos/),
     ).toBeNull();
+  });
+
+  it("impersonando sem documentos atribuídos: copy em 3ª pessoa (fila é do membro)", () => {
+    render(
+      <ComparePage
+        {...emptyProps({
+          isCoordinator: true,
+          showingAllQueue: false,
+          hasAssignedDocs: false,
+          isImpersonating: true,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/Este membro não tem documentos atribuídos.*aba "Todos"/),
+    ).not.toBeNull();
+    expect(
+      screen.queryByText(/Você não tem documentos atribuídos/),
+    ).toBeNull();
+  });
+
+  it("impersonando com atribuídos filtrados por cobertura: copy em 3ª pessoa", () => {
+    render(
+      <ComparePage
+        {...emptyProps({
+          isCoordinator: true,
+          showingAllQueue: false,
+          hasAssignedDocs: true,
+          isImpersonating: true,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/atribuídos a este membro não atendem aos filtros atuais/),
+    ).not.toBeNull();
+    expect(screen.queryByText(/Seus documentos atribuídos/)).toBeNull();
   });
 
   it("na aba 'Todos', a mensagem genérica não menciona assignment", () => {

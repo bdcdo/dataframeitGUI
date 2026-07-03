@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
   getAuthUser,
-  getEffectiveMemberId,
   isProjectCoordinator,
+  resolveEffectiveUserId,
 } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
@@ -43,10 +43,13 @@ export default async function CodePage({
 
   // Impersonação master (viewAsUser) tem precedência; sem ela, contas
   // vinculadas trabalham como o membro canônico do projeto (spec 002).
-  const isImpersonating = !!(user.isMaster && sp.viewAsUser);
-  const effectiveUserId = isImpersonating
-    ? sp.viewAsUser!
-    : await getEffectiveMemberId(id);
+  // resolveEffectiveUserId é a fonte única dessa precedência, compartilhada
+  // com Comparação e Arbitragem.
+  const { effectiveUserId, isImpersonating } = await resolveEffectiveUserId(
+    id,
+    user,
+    sp.viewAsUser,
+  );
   const roundParam = sp.round ?? CURRENT_FILTER_VALUE;
 
   const supabase = await createSupabaseServer();

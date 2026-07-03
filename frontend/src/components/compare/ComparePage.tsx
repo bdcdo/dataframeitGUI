@@ -64,6 +64,11 @@ interface ComparePageProps {
   // pra diferenciar a mensagem de estado vazio: "sem nada atribuído" (trocar
   // de aba resolve) vs. "atribuído mas filtrado" (trocar de aba não resolve).
   hasAssignedDocs: boolean;
+  // Master visualizando como outro membro (?viewAsUser=): a fila exibida é a
+  // do membro impersonado, então a copy do estado vazio muda pra 3ª pessoa —
+  // o "você não tem documentos atribuídos" desta tela já foi lido como sendo
+  // sobre o membro quando era sobre o master.
+  isImpersonating: boolean;
 }
 
 export function ComparePage({
@@ -89,6 +94,7 @@ export function ComparePage({
   isCoordinator,
   showingAllQueue,
   hasAssignedDocs,
+  isImpersonating,
 }: ComparePageProps) {
   // Ordem estável de montagem: o re-sort por pendências do servidor (a cada
   // veredito) não remexe a fila nem a sidebar — só mudança de composição
@@ -262,12 +268,21 @@ export function ComparePage({
     // — trocar de aba não muda nada, o filtro de cobertura é ortogonal ao
     // de assignment. `hasAssignedDocs` (calculado em page.tsx a partir do
     // mesmo Set que já filtra a fila) diferencia os dois casos.
+    // Na impersonação a fila exibida é a do membro, então o sujeito da copy
+    // muda pra 3ª pessoa — "você" aqui já foi lido como sendo sobre o membro
+    // quando descrevia a fila (vazia) do próprio master.
+    const filteredOutMessage = isImpersonating
+      ? "Os documentos atribuídos a este membro não atendem aos filtros atuais (respostas mínimas, versão, etc.). Ajuste os filtros ou use a aba \"Todos\" para ver a fila completa."
+      : "Seus documentos atribuídos não atendem aos filtros atuais (respostas mínimas, versão, etc.). Ajuste os filtros ou use a aba \"Todos\" para ver a fila completa.";
+    const nothingAssignedMessage = isImpersonating
+      ? 'Este membro não tem documentos atribuídos para comparação. Use a aba "Todos" acima para ver a fila completa do projeto.'
+      : 'Você não tem documentos atribuídos para comparação. Use a aba "Todos" acima para ver a fila completa do projeto.';
     const emptyMessage =
       documents.length === 0
         ? isCoordinator && !showingAllQueue
           ? hasAssignedDocs
-            ? "Seus documentos atribuídos não atendem aos filtros atuais (respostas mínimas, versão, etc.). Ajuste os filtros ou use a aba \"Todos\" para ver a fila completa."
-            : 'Você não tem documentos atribuídos para comparação. Use a aba "Todos" acima para ver a fila completa do projeto.'
+            ? filteredOutMessage
+            : nothingAssignedMessage
           : "Nenhum documento na fila com os filtros atuais."
         : "Nenhuma divergência neste documento.";
 
