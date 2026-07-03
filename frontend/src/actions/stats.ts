@@ -241,6 +241,8 @@ export async function reopenDifficulty(
 }
 
 export interface GabaritoRespondentAnswer {
+  /** id da resposta — key estável de render (nomes de respondente colidem). */
+  id: string;
   respondentName: string;
   respondentType: "humano" | "llm";
   answer: unknown;
@@ -271,6 +273,7 @@ export async function fetchGabaritoForComment(
     if (!responses) return { answers: [] };
 
     const result: GabaritoRespondentAnswer[] = responses.map((r) => ({
+      id: r.id,
       respondentName: r.respondent_name || "Anônimo",
       respondentType: r.respondent_type as "humano" | "llm",
       answer: (r.answers as Record<string, unknown>)?.[fieldName] ?? null,

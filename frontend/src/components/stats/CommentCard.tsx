@@ -1,105 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  CheckCircle2,
-  RotateCcw,
-  ChevronDown,
-  Pencil,
-  Loader2,
-  Check,
-} from "lucide-react";
+import { CheckCircle2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  fetchGabaritoForComment,
-  type GabaritoRespondentAnswer,
-} from "@/actions/stats";
-import { resolveSchemaSuggestion } from "@/actions/suggestions";
-import {
-  approveExclusionRequest,
-  rejectExclusionRequest,
-} from "@/actions/project-comments";
 import { SuggestionDiff } from "./SuggestionDiff";
-import { Textarea } from "@/components/ui/textarea";
-import { toast } from "sonner";
+import { CommentCardHeader } from "./CommentCardHeader";
+import { GabaritoSection } from "./GabaritoSection";
+import { SuggestionActions } from "./SuggestionActions";
+import { ExclusionActions } from "./ExclusionActions";
+import type { ReviewComment } from "./comment-card-utils";
 
-const TYPE_LABELS: Record<string, string> = {
-  single: "Escolha única",
-  multi: "Múltipla escolha",
-  text: "Texto livre",
-  date: "Data",
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  single: "bg-blue-500/10 text-blue-700",
-  multi: "bg-purple-500/10 text-purple-700",
-  text: "bg-green-500/10 text-green-700",
-  date: "bg-amber-500/10 text-amber-700",
-};
-
-export interface ResponseSnapshotEntry {
-  id: string;
-  respondent_name: string;
-  respondent_type: "humano" | "llm";
-  answer: unknown;
-  justification?: string;
-}
-
-export interface ReviewComment {
-  id: string;
-  documentId: string;
-  documentTitle: string;
-  fieldName: string;
-  fieldDescription: string;
-  fieldHelpText?: string;
-  fieldOptions?: string[] | null;
-  fieldType?: "single" | "multi" | "text" | "date";
-  verdict: string;
-  comment: string;
-  reviewerName: string;
-  resolvedAt: string | null;
-  createdAt: string;
-  chosenResponseId: string | null;
-  source:
-    | "review"
-    | "nota"
-    | "sugestao"
-    | "dificuldade"
-    | "anotacao"
-    | "duvida"
-    | "exclusao";
-  responseSnapshot: ResponseSnapshotEntry[] | null;
-  suggestionId?: string;
-  suggestionStatus?: "pending" | "approved" | "rejected";
-  suggestionChanges?: {
-    description?: string;
-    help_text?: string | null;
-    options?: string[] | null;
-  };
-  fieldSnapshot?: {
-    description: string;
-    help_text: string | null;
-    options: string[] | null;
-  };
-  difficultyResponseId?: string;
-  difficultyDocumentId?: string;
-  duvidaReviewId?: string;
-  duvidaRespondentId?: string;
-  /** Para exclusao_request — id do project_comment, status e document_id alvo. */
-  exclusionCommentId?: string;
-  exclusionDocumentId?: string;
-  exclusionStatus?: "pending" | "approved" | "rejected";
-  exclusionRejectedReason?: string | null;
-}
+// Tipos vivem em comment-card-utils.ts (evita ciclo pai↔filho com os
+// componentes extraídos); re-export mantém os consumidores externos intactos.
+export type { ReviewComment, ResponseSnapshotEntry } from "./comment-card-utils";
 
 interface CommentCardProps {
   comment: ReviewComment;
@@ -113,49 +27,6 @@ interface CommentCardProps {
   onOpenDocument?: (documentId: string) => void;
 }
 
-function formatVerdictLabel(verdict: string): string {
-  if (verdict === "nota") return "Nota do pesquisador";
-  if (verdict === "anotacao") return "Anotação";
-  if (verdict === "dificuldade") return "Dificuldade do LLM";
-  if (verdict === "sugestao") return "Sugestão";
-  if (verdict === "exclusao") return "Sugestão de exclusão";
-  if (verdict === "duvida") return "Dúvida do gabarito";
-  if (verdict === "ambiguo") return "Ambíguo";
-  if (verdict === "pular") return "Pular";
-  if (verdict.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(verdict) as Record<string, boolean>;
-      const selected = Object.entries(parsed)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      return selected.length > 0 ? selected.join(", ") : "(nenhuma)";
-    } catch {
-      /* fallback */
-    }
-  }
-  return verdict;
-}
-
-function verdictVariant(
-  verdict: string,
-): "default" | "secondary" | "destructive" | "outline" {
-  if (verdict === "nota") return "secondary";
-  if (verdict === "anotacao") return "secondary";
-  if (verdict === "dificuldade") return "secondary";
-  if (verdict === "sugestao") return "outline";
-  if (verdict === "exclusao") return "destructive";
-  if (verdict === "duvida") return "secondary";
-  if (verdict === "ambiguo") return "secondary";
-  if (verdict === "pular") return "outline";
-  return "default";
-}
-
-function formatAnswer(answer: unknown): string {
-  if (answer === null || answer === undefined) return "(sem resposta)";
-  if (Array.isArray(answer)) return answer.join(", ");
-  return String(answer);
-}
-
 export function CommentCard({
   comment,
   projectId,
@@ -167,126 +38,18 @@ export function CommentCard({
   onSuggestField,
   onOpenDocument,
 }: CommentCardProps) {
-  const { refresh } = useRouter();
   const isResolved = !!comment.resolvedAt;
-  const [suggestionPending, startSuggestionAction] = useTransition();
-  const [gabaritoOpen, setGabaritoOpen] = useState(false);
-  const [gabaritoData, setGabaritoData] = useState<
-    GabaritoRespondentAnswer[] | null
-  >(null);
-  const [loadingGabarito, startLoadGabarito] = useTransition();
-
-  // If snapshot exists, convert to gabarito format immediately
-  const snapshotAsGabarito: GabaritoRespondentAnswer[] | null =
-    comment.responseSnapshot
-      ? comment.responseSnapshot.map((r) => ({
-          respondentName: r.respondent_name,
-          respondentType: r.respondent_type,
-          answer: r.answer,
-          isChosen: r.id === comment.chosenResponseId,
-        }))
-      : null;
-
-  const handleGabaritoToggle = (open: boolean) => {
-    setGabaritoOpen(open);
-    // Only fetch if no snapshot and no cached data
-    if (open && !gabaritoData && !snapshotAsGabarito) {
-      startLoadGabarito(async () => {
-        const result = await fetchGabaritoForComment(
-          projectId,
-          comment.documentId,
-          comment.fieldName,
-          comment.chosenResponseId,
-        );
-        setGabaritoData(result.answers);
-      });
-    }
-  };
-
-  const gabaritoEntries = snapshotAsGabarito ?? gabaritoData;
 
   return (
     <Card className={cn(isResolved && "opacity-60")}>
       <CardContent className="space-y-2 pt-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            {onOpenDocument && comment.documentId ? (
-              <button
-                type="button"
-                onClick={() => onOpenDocument(comment.documentId)}
-                className="text-sm font-medium hover:underline text-left"
-              >
-                {comment.documentTitle}
-              </button>
-            ) : (
-              <span className="text-sm font-medium">{comment.documentTitle || comment.fieldName}</span>
-            )}
-            <div className="flex items-center gap-1.5">
-              <code className="text-xs font-mono text-muted-foreground/70">
-                {comment.fieldName}
-              </code>
-              {isCoordinator && onEditField && comment.source !== "nota" && comment.source !== "exclusao" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="size-5 p-0"
-                  onClick={onEditField}
-                  title="Editar campo"
-                >
-                  <Pencil className="size-3" />
-                </Button>
-              )}
-              {!isCoordinator && onSuggestField && comment.source !== "nota" && comment.source !== "exclusao" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="size-5 p-0"
-                  onClick={onSuggestField}
-                  title="Sugerir alteração"
-                >
-                  <Pencil className="size-3 text-amber-500" />
-                </Button>
-              )}
-            </div>
-            {comment.fieldDescription &&
-              comment.fieldDescription !== comment.fieldName && (
-                <p className="text-xs text-muted-foreground">
-                  {comment.fieldDescription}
-                </p>
-              )}
-          </div>
-          <Badge
-            variant={verdictVariant(comment.verdict)}
-            className="shrink-0"
-          >
-            {formatVerdictLabel(comment.verdict)}
-          </Badge>
-        </div>
-
-        {/* Metadados do campo (contexto para avaliacao do schema) */}
-        {(comment.fieldType || comment.fieldHelpText || (comment.fieldOptions && comment.fieldOptions.length > 0)) && (
-          <div className="space-y-1 rounded-md bg-muted/30 px-3 py-2">
-            {comment.fieldType && (
-              <Badge className={cn("text-[10px] px-1 py-0", TYPE_COLORS[comment.fieldType])}>
-                {TYPE_LABELS[comment.fieldType]}
-              </Badge>
-            )}
-            {comment.fieldHelpText && (
-              <p className="text-xs italic text-muted-foreground">
-                {comment.fieldHelpText}
-              </p>
-            )}
-            {comment.fieldOptions && comment.fieldOptions.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {comment.fieldOptions.map((opt) => (
-                  <Badge key={opt} variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
-                    {opt}
-                  </Badge>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <CommentCardHeader
+          comment={comment}
+          isCoordinator={isCoordinator}
+          onEditField={onEditField}
+          onSuggestField={onSuggestField}
+          onOpenDocument={onOpenDocument}
+        />
 
         <blockquote className="border-l-2 pl-3 text-sm text-foreground">
           {comment.comment}
@@ -301,47 +64,15 @@ export function CommentCard({
             />
           )}
 
-        {/* Suggestion actions (coordinator: review/reject)
-            "Revisar" abre EditFieldDialog pré-preenchido (via onResolve);
-            salvar lá aprova com os valores finais editados. */}
         {comment.source === "sugestao" && comment.suggestionId && (
-          <div className="flex items-center gap-2">
-            {comment.suggestionStatus === "pending" && isCoordinator && (
-              <>
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="h-6 text-xs"
-                  disabled={suggestionPending || isPending}
-                  onClick={onResolve}
-                  title="Abre editor para revisar antes de aprovar"
-                >
-                  Revisar
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-xs"
-                  disabled={suggestionPending}
-                  onClick={() => {
-                    startSuggestionAction(async () => {
-                      const result = await resolveSchemaSuggestion(comment.suggestionId!, projectId, "rejected");
-                      if (result.error) toast.error(result.error);
-                      else { toast.success("Sugestão rejeitada"); refresh(); }
-                    });
-                  }}
-                >
-                  Rejeitar
-                </Button>
-              </>
-            )}
-            {comment.suggestionStatus === "approved" && (
-              <Badge className="text-xs bg-green-500/10 text-green-700">Aprovada</Badge>
-            )}
-            {comment.suggestionStatus === "rejected" && (
-              <Badge className="text-xs bg-red-500/10 text-red-700">Rejeitada</Badge>
-            )}
-          </div>
+          <SuggestionActions
+            suggestionId={comment.suggestionId}
+            suggestionStatus={comment.suggestionStatus}
+            projectId={projectId}
+            isPending={isPending}
+            isCoordinator={isCoordinator}
+            onResolve={onResolve}
+          />
         )}
 
         {/* Acoes de sugestao de exclusao */}
@@ -356,78 +87,12 @@ export function CommentCard({
         )}
 
         {/* Gabarito expansível (só para reviews, não para notas) */}
-        {comment.source !== "nota" && comment.source !== "dificuldade" && comment.source !== "anotacao" && comment.source !== "exclusao" && <Collapsible open={gabaritoOpen} onOpenChange={handleGabaritoToggle}>
-          <CollapsibleTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-            >
-              Ver gabarito
-              {loadingGabarito ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <ChevronDown
-                  className={cn(
-                    "size-3 transition-transform",
-                    gabaritoOpen && "rotate-180",
-                  )}
-                />
-              )}
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-1 space-y-1.5 rounded-md bg-muted/50 p-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium">Gabarito:</span>
-                <Badge
-                  variant={verdictVariant(comment.verdict)}
-                  className="text-xs"
-                >
-                  {formatVerdictLabel(comment.verdict)}
-                </Badge>
-              </div>
-              {gabaritoEntries && gabaritoEntries.length > 0 ? (
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Respostas dos respondentes:
-                  </span>
-                  {gabaritoEntries.map((a) => (
-                    <div
-                      key={a.respondentName}
-                      className={cn(
-                        "flex items-start gap-2 rounded px-2 py-1 text-xs",
-                        a.isChosen && "bg-brand/5",
-                      )}
-                    >
-                      {a.isChosen && (
-                        <Check className="mt-0.5 size-3 shrink-0 text-brand" />
-                      )}
-                      <div className="min-w-0">
-                        <span className="font-medium">
-                          {a.respondentName}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className="ml-1.5 text-[10px] px-1 py-0"
-                        >
-                          {a.respondentType === "humano" ? "Humano" : "LLM"}
-                        </Badge>
-                        <span className="ml-2 text-muted-foreground">
-                          {formatAnswer(a.answer)}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : gabaritoEntries && gabaritoEntries.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Nenhuma resposta encontrada.
-                </p>
-              ) : null}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>}
+        {comment.source !== "nota" &&
+          comment.source !== "dificuldade" &&
+          comment.source !== "anotacao" &&
+          comment.source !== "exclusao" && (
+            <GabaritoSection comment={comment} projectId={projectId} />
+          )}
 
         <div className="flex items-center justify-between">
           <p className="text-xs text-muted-foreground" suppressHydrationWarning>
@@ -468,144 +133,5 @@ export function CommentCard({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function ExclusionActions({
-  commentId,
-  projectId,
-  status,
-  rejectedReason,
-  isCoordinator,
-}: {
-  commentId: string;
-  projectId: string;
-  status: "pending" | "approved" | "rejected";
-  rejectedReason?: string | null;
-  isCoordinator: boolean;
-}) {
-  const { refresh } = useRouter();
-  const [isPending, startAction] = useTransition();
-  const [showRejectInput, setShowRejectInput] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
-  const rejectTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    if (showRejectInput) {
-      rejectTextareaRef.current?.focus();
-    }
-  }, [showRejectInput]);
-
-  if (status === "approved") {
-    return (
-      <Badge className="text-xs bg-red-500/10 text-red-700 w-fit">
-        Documento excluído
-      </Badge>
-    );
-  }
-  if (status === "rejected") {
-    return (
-      <div className="flex flex-col gap-1">
-        <Badge className="text-xs bg-muted text-muted-foreground w-fit">
-          Sugestão rejeitada
-        </Badge>
-        {rejectedReason && (
-          <p className="text-xs text-muted-foreground italic">
-            Motivo: {rejectedReason}
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  if (!isCoordinator) {
-    return (
-      <Badge className="text-xs bg-amber-500/10 text-amber-700 w-fit">
-        Aguardando coordenador
-      </Badge>
-    );
-  }
-
-  if (showRejectInput) {
-    return (
-      <div className="flex flex-col gap-2">
-        <Textarea
-          ref={rejectTextareaRef}
-          className="text-xs"
-          placeholder="Motivo da rejeição"
-          value={rejectReason}
-          onChange={(e) => setRejectReason(e.target.value)}
-          rows={2}
-        />
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6 text-xs"
-            disabled={isPending}
-            onClick={() => {
-              setShowRejectInput(false);
-              setRejectReason("");
-            }}
-          >
-            Cancelar
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            className="h-6 text-xs"
-            disabled={isPending || !rejectReason.trim()}
-            onClick={() => {
-              startAction(async () => {
-                const result = await rejectExclusionRequest(
-                  commentId,
-                  projectId,
-                  rejectReason,
-                );
-                if (result.error) toast.error(result.error);
-                else {
-                  toast.success("Sugestão rejeitada");
-                  refresh();
-                }
-              });
-            }}
-          >
-            Confirmar rejeição
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <Button
-        variant="destructive"
-        size="sm"
-        className="h-6 text-xs"
-        disabled={isPending}
-        onClick={() => {
-          startAction(async () => {
-            const result = await approveExclusionRequest(commentId, projectId);
-            if (result.error) toast.error(result.error);
-            else {
-              toast.success("Documento excluído");
-              refresh();
-            }
-          });
-        }}
-      >
-        Aprovar e excluir
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-6 text-xs"
-        disabled={isPending}
-        onClick={() => setShowRejectInput(true)}
-      >
-        Rejeitar
-      </Button>
-    </div>
   );
 }

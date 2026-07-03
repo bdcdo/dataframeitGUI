@@ -179,26 +179,32 @@ export function useLotteryRun({
     setPreviewing(true);
     try {
       const result = await previewLottery(buildParams(false));
-      setPreviewState({ key: configKey, preview: result });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao calcular a prévia");
+      if (result.error) {
+        toast.error(result.error);
+      } else if (result.preview) {
+        setPreviewState({ key: configKey, preview: result.preview });
+      }
+    } finally {
+      setPreviewing(false);
     }
-    setPreviewing(false);
   };
 
   const handleRandomize = async () => {
     setLoading(true);
     try {
       const result = await smartRandomize(buildParams(true));
-      toast.success(
-        `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
-      );
-      setPreviewState(null);
-      onLotteryDone();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao sortear");
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success(
+          `${result.count} novas atribuições criadas! (${result.preserved} preservadas)`
+        );
+        setPreviewState(null);
+        onLotteryDone();
+      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const docsConsidered =

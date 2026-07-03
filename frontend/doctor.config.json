@@ -50,8 +50,7 @@
       {
         "files": [
           "src/components/auto-review/AutoReviewFieldPanel.tsx",
-          "src/components/compare/ComparisonPanel.tsx",
-          "src/components/stats/CommentCard.tsx"
+          "src/components/compare/ComparisonPanel.tsx"
         ],
         "rules": [
           "react-doctor/no-event-handler"
@@ -85,6 +84,15 @@
         ],
         "rules": [
           "react-doctor/no-array-index-as-key"
+        ]
+      },
+      {
+        "files": [
+          "src/app/**/analyze/compare/page.tsx",
+          "src/app/**/reviews/comments/page.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-giant-component"
         ]
       }
     ]

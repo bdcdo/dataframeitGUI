@@ -58,7 +58,11 @@ export function RunLlmButton({
         if (cancelledRef.current) return;
         try {
           // Token fresco a cada poll: o do template expira em ~60s e o
-          // polling pode durar minutos.
+          // polling pode durar minutos. O await roda antes do guard de
+          // cancelamento de propósito (mesma razão da supressão no fetchFastAPI
+          // abaixo): o token precisa estar fresco quando a request de status
+          // parte, e mover o await para baixo do guard atrasaria a renovação.
+          // react-doctor-disable-next-line react-doctor/async-defer-await
           const token = await requireSupabaseToken(getToken);
           // O guard de cancelamento abaixo roda DEPOIS do await de propósito: o
           // usuário pode cancelar enquanto a request de status está em voo, então

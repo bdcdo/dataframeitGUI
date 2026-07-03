@@ -69,7 +69,7 @@ function setup() {
 }
 
 beforeEach(() => {
-  mockPreview.mockResolvedValue(previewResult);
+  mockPreview.mockResolvedValue({ preview: previewResult });
   mockRandomize.mockResolvedValue({ count: 2, preserved: 0 });
 });
 

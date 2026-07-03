@@ -196,6 +196,7 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
     projectPydanticHash: null,
     respondentNames: ["Ana", "Bia"],
     defaultMinHumans: 2,
+    defaultVersion: "latest_major",
     coverageByDoc: { d1: coverage("d1"), d2: coverage("d2") },
     commentCountsByKey: {},
     suggestionCountsByField: {},

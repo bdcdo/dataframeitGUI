@@ -13,7 +13,7 @@ A regra de ouro é que tudo roda sozinho, via git hook ou automação de servido
 | Quem dispara | Quando | Ferramentas | Grandfathering |
 |---|---|---|---|
 | `pre-commit` | todo commit (leve, file-scoped) | gitleaks · ruff (lint+format) · react-doctor | só o arquivo/linha tocado é checado |
-| `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · lint:types · fallow audit · semgrep | new-only / file-scoped (ver cada um) |
+| `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · lint:types · fallow audit · semgrep · backend-pytest | new-only / file-scoped (ver cada um); pytest roda a suíte inteira |
 | GitHub (servidor) | automático | Dependabot | n/a — abre PRs de vuln sozinho |
 | on-demand | ao investigar performance | React Scan | n/a — ferramenta de diagnóstico, não gate |
 
@@ -44,6 +44,10 @@ O projeto não tinha sequer um script `tsc --noEmit`. O `npm run typecheck` pree
 `ruff` (dependency-group dev em `backend/pyproject.toml`), via o hook oficial `astral-sh/ruff-pre-commit` v0.15.19. Cobre o backend Python, que não tinha nenhum gate. Resolve o eixo de complexidade que a #260 levantou (a pergunta original era sobre o `lizard`): no frontend a complexidade já está coberta por react-doctor + fallow, então a lacuna real era o Python, e o `ruff` entrega `C901` (mccabe) junto com lint (E/F/I/B) e format num binário só — mais que o `lizard`, que só mede CCN.
 
 Config em `backend/pyproject.toml`: `select = ["E", "F", "I", "B", "C901"]`, `ignore = ["E501"]` (comprimento de linha fica a cargo do `ruff format`), `max-complexity = 10`. Os hooks rodam file-scoped (só os `.py` alterados), com `--fix` no lint, então o débito legado fica grandfathered por arquivo-tocado. As três funções legadas acima do limite de complexidade — `evaluate_condition` (13), `compile_pydantic` (20) e `run_llm` (35) — são grandfathered explicitamente via `per-file-ignores`, porque refatorá-las está fora do escopo de um PR de tooling; novas funções complexas nos demais arquivos continuam disparando `C901`. Baseline restante: 8 achados auto-fixáveis (7 imports desordenados, 1 import morto) e 16 de 22 arquivos que o `ruff format` reformataria ao serem tocados.
+
+### backend-pytest — a suíte do backend como gate
+
+Enquanto o `ruff` cobre o eixo estático do Python, ele não roda os testes — a suíte de auth que o #195 adicionou (`backend/tests/`) não gateava nada, então uma regressão que enfraquecesse o gate JWT ou quebrasse as fronteiras 401/403/404/503 mergearia com o gate verde e o deploy do Fly shipparia direto para produção (issue #337). O hook local `backend-pytest` fecha essa lacuna: roda `uv run pytest -q` (working-dir `backend/`) no estágio de pre-push sempre que o push toca `backend/**/*.py`. Diferente dos hooks file-scoped, roda a suíte inteira — testes não têm noção de "linha grandfathered". Diferente do semgrep (fail-open em erro de infra), é **fail-closed**: se o `uv` não estiver no PATH o push é barrado com mensagem, porque é um gate de verdade, não um sinal informativo. `[tool.uv] package = false` no `backend/pyproject.toml` faz o `uv run` não tentar empacotar o app (que é um FastAPI flat, não uma lib instalável), evitando a regressão histórica de build. Coerente com a decisão de manter o gate pré-merge nos hooks locais e não em GitHub Actions (sem branch protection no free tier, um job de Actions não bloqueia merge).
 
 ### React Scan — o runtime
 

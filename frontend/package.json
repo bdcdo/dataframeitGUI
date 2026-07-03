@@ -48,7 +48,14 @@
     "tailwind-merge": "^3.6.0"
   },
   "overrides": {
-    "react-is": "$react"
+    "react-is": "$react",
+    "postcss": "^8.5.16",
+    "monaco-editor": {
+      "dompurify": "^3.4.11"
+    },
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   },
   "devDependencies": {
     "@clerk/testing": "^2.1.6",

@@ -17,7 +17,20 @@ export function useLotteryStats(projectId: string, open: boolean) {
     let cancelled = false;
     getLotteryDocStats(projectId)
       .then((s) => {
-        if (!cancelled) setStatsState({ data: s, error: false });
+        if (cancelled) return;
+        if (s.error || !s.docs) {
+          setStatsState((prev) => ({ ...prev, error: true }));
+        } else {
+          setStatsState({
+            data: {
+              docs: s.docs,
+              batches: s.batches ?? [],
+              minResponsesForComparison: s.minResponsesForComparison ?? 2,
+              automationMode: s.automationMode ?? null,
+            },
+            error: false,
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setStatsState((prev) => ({ ...prev, error: true }));
