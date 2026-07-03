@@ -180,20 +180,24 @@ describe("buildCodingAssignedByDoc / buildCompareAssignmentStatusByDoc", () => {
   });
 });
 
+// Fixtures do único doc "doc1" usado pela maioria dos casos abaixo — reduz a
+// repetição do par (responsesByDoc, docsMetaMap) presente em quase todo teste.
+function doc1Responses(...responses: CompareResponse[]): Map<string, CompareResponse[]> {
+  return new Map([["doc1", responses]]);
+}
+
+function doc1Meta(): Map<string, { id: string; title: string | null; external_id: string | null }> {
+  return new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
+}
+
 describe("qualifyDocumentsForCompare", () => {
   it("doc com 2 respostas divergentes e cobertura suficiente entra na fila", () => {
-    const responsesByDoc = new Map([
-      [
-        "doc1",
-        [
-          response({ id: "r1", respondent_id: "u1", answers: { a: "alpha" } }),
-          response({ id: "r2", respondent_id: "u2", respondent_name: "Bia", answers: { a: "beta" } }),
-        ],
-      ],
-    ]);
-    const docsMetaMap = new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", respondent_id: "u1", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u2", respondent_name: "Bia", answers: { a: "beta" } }),
+    );
 
-    const result = qualifyDocumentsForCompare(responsesByDoc, docsMetaMap, baseCtx());
+    const result = qualifyDocumentsForCompare(responsesByDoc, doc1Meta(), baseCtx());
 
     expect(result.qualifiedDocIds).toEqual(["doc1"]);
     expect(result.divergentFields.doc1).toEqual(["a"]);
@@ -206,51 +210,39 @@ describe("qualifyDocumentsForCompare", () => {
   });
 
   it("doc sem meta (docsMetaMap) é descartado mesmo com respostas", () => {
-    const responsesByDoc = new Map([
-      ["doc1", [response({ id: "r1" }), response({ id: "r2", respondent_id: "u2" })]],
-    ]);
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1" }),
+      response({ id: "r2", respondent_id: "u2" }),
+    );
     const result = qualifyDocumentsForCompare(responsesByDoc, new Map(), baseCtx());
     expect(result.qualifiedDocIds).toEqual([]);
   });
 
   it("doc fora de compareAssignedDocIds é invisível para o não-coordenador", () => {
-    const responsesByDoc = new Map([
-      [
-        "doc1",
-        [
-          response({ id: "r1", answers: { a: "alpha" } }),
-          response({ id: "r2", respondent_id: "u2", answers: { a: "beta" } }),
-        ],
-      ],
-    ]);
-    const docsMetaMap = new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u2", answers: { a: "beta" } }),
+    );
     const result = qualifyDocumentsForCompare(
       responsesByDoc,
-      docsMetaMap,
+      doc1Meta(),
       baseCtx({ compareAssignedDocIds: new Set(["doc2"]) }),
     );
     expect(result.qualifiedDocIds).toEqual([]);
   });
 
   it("abaixo do piso minHumans, o doc é descartado", () => {
-    const responsesByDoc = new Map([["doc1", [response({ id: "r1" })]]]);
-    const docsMetaMap = new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
-    const result = qualifyDocumentsForCompare(responsesByDoc, docsMetaMap, baseCtx());
+    const responsesByDoc = doc1Responses(response({ id: "r1" }));
+    const result = qualifyDocumentsForCompare(responsesByDoc, doc1Meta(), baseCtx());
     expect(result.qualifiedDocIds).toEqual([]);
   });
 
   it("sem divergência entre as respostas, o doc é descartado (mesma resposta)", () => {
-    const responsesByDoc = new Map([
-      [
-        "doc1",
-        [
-          response({ id: "r1", answers: { a: "alpha" } }),
-          response({ id: "r2", respondent_id: "u2", answers: { a: "alpha" } }),
-        ],
-      ],
-    ]);
-    const docsMetaMap = new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
-    const result = qualifyDocumentsForCompare(responsesByDoc, docsMetaMap, baseCtx());
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u2", answers: { a: "alpha" } }),
+    );
+    const result = qualifyDocumentsForCompare(responsesByDoc, doc1Meta(), baseCtx());
     expect(result.qualifiedDocIds).toEqual([]);
   });
 
@@ -258,21 +250,21 @@ describe("qualifyDocumentsForCompare", () => {
     // Só 1 humano respondeu de 2 atribuídos (50% < minAssignedPct padrão), mas
     // como minHumans < 2 o gate de % atribuídos não se aplica (regra espelhada
     // do page.tsx original, ligada ao modo compare_llm).
-    const responsesByDoc = new Map([
-      [
-        "doc1",
-        [
-          response({ id: "r1", respondent_id: "u1", answers: { a: "alpha" } }),
-          response({ id: "r2", respondent_type: "llm", respondent_name: "LLM", respondent_id: null, answers: { a: "beta" } }),
-        ],
-      ],
-    ]);
-    const docsMetaMap = new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", respondent_id: "u1", answers: { a: "alpha" } }),
+      response({
+        id: "r2",
+        respondent_type: "llm",
+        respondent_name: "LLM",
+        respondent_id: null,
+        answers: { a: "beta" },
+      }),
+    );
     const codingAssignedByDoc = new Map([["doc1", new Set(["u1", "u2"])]]);
 
     const result = qualifyDocumentsForCompare(
       responsesByDoc,
-      docsMetaMap,
+      doc1Meta(),
       baseCtx({
         filters: { ...BASE_FILTERS, minHumans: 1, minTotal: 2 },
         codingAssignedByDoc,
@@ -282,24 +274,18 @@ describe("qualifyDocumentsForCompare", () => {
   });
 
   it("filtro since descarta respostas anteriores à data", () => {
-    const responsesByDoc = new Map([
-      [
-        "doc1",
-        [
-          response({ id: "r1", answers: { a: "alpha" }, created_at: "2026-01-01T00:00:00.000Z" }),
-          response({
-            id: "r2",
-            respondent_id: "u2",
-            answers: { a: "beta" },
-            created_at: "2026-06-01T00:00:00.000Z",
-          }),
-        ],
-      ],
-    ]);
-    const docsMetaMap = new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", answers: { a: "alpha" }, created_at: "2026-01-01T00:00:00.000Z" }),
+      response({
+        id: "r2",
+        respondent_id: "u2",
+        answers: { a: "beta" },
+        created_at: "2026-06-01T00:00:00.000Z",
+      }),
+    );
     const result = qualifyDocumentsForCompare(
       responsesByDoc,
-      docsMetaMap,
+      doc1Meta(),
       baseCtx({ sinceMs: new Date("2026-03-01T00:00:00.000Z").getTime() }),
     );
     // só a resposta de junho sobrevive ao filtro — cai abaixo de minTotal=2
@@ -307,19 +293,13 @@ describe("qualifyDocumentsForCompare", () => {
   });
 
   it("filtro respondent restringe a um único respondente nomeado", () => {
-    const responsesByDoc = new Map([
-      [
-        "doc1",
-        [
-          response({ id: "r1", respondent_name: "Ana", answers: { a: "alpha" } }),
-          response({ id: "r2", respondent_id: "u2", respondent_name: "Bia", answers: { a: "beta" } }),
-        ],
-      ],
-    ]);
-    const docsMetaMap = new Map([["doc1", { id: "doc1", title: "T1", external_id: null }]]);
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", respondent_name: "Ana", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u2", respondent_name: "Bia", answers: { a: "beta" } }),
+    );
     const result = qualifyDocumentsForCompare(
       responsesByDoc,
-      docsMetaMap,
+      doc1Meta(),
       baseCtx({ filters: { ...BASE_FILTERS, respondent: "Ana" } }),
     );
     // só Ana qualifica — cai abaixo de minTotal=2

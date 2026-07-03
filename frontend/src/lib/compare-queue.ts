@@ -72,7 +72,11 @@ export interface EquivalenceRow {
 // Row solta o suficiente para aceitar o resultado do select do Supabase (que
 // também traz o join `documents`, cujo tipo inferido não bate 1:1 com
 // Omit<CompareDoc, "text">) sem replicar seu tipo inferido — mesma pragmática
-// de `as unknown as CompareResponse` que o page.tsx já usava.
+// de `as unknown as CompareResponse` que o page.tsx já usava. Sem index
+// signature de propósito: bastam os campos abaixo (structural typing ignora
+// os demais campos da row real/de teste), e um index signature exigiria o
+// mesmo em qualquer valor passado (inclusive em fixtures de teste tipadas
+// como CompareResponse).
 interface RawResponseRow {
   document_id: string;
   respondent_name: string | null;
@@ -80,7 +84,6 @@ interface RawResponseRow {
   schema_version_minor: number | null;
   schema_version_patch: number | null;
   documents?: unknown;
-  [key: string]: unknown;
 }
 
 export interface VersionLogRow {
