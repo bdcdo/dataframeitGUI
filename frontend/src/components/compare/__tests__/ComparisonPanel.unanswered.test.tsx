@@ -22,7 +22,7 @@ const FIELD: PydanticField = {
 
 type Resp = Parameters<typeof ComparisonPanel>[0]["responses"][number];
 
-function renderPanel(responses: Resp[]) {
+function renderPanel(responses: Resp[], fieldHelpText?: string) {
   render(
     <ComparisonPanel
       projectId="p1"
@@ -30,6 +30,7 @@ function renderPanel(responses: Resp[]) {
       documentTitle="Nota técnica 1"
       fieldName="data_parecer"
       fieldDescription="Data do parecer"
+      fieldHelpText={fieldHelpText}
       fieldType="date"
       fieldOptions={null}
       fields={[FIELD]}
@@ -121,5 +122,23 @@ describe("ComparisonPanel — não preencheu este campo (issue #247, ponto 3)", 
       resp({ id: "ana", respondent_name: "Ana", answer: "2021-05-11" }),
     ]);
     expect(screen.queryByText(/não preencheu este campo/i)).toBeNull();
+  });
+});
+
+describe("ComparisonPanel — help_text no header (#373)", () => {
+  const RESPONSES = [
+    resp({ id: "llm", respondent_type: "llm", respondent_name: "Robô", answer: "2021-05-10" }),
+  ];
+
+  it("mostra o help_text do campo quando presente", () => {
+    renderPanel(RESPONSES, "Considere apenas a data de assinatura.");
+    expect(
+      screen.getByText("Considere apenas a data de assinatura."),
+    ).toBeTruthy();
+  });
+
+  it("não renderiza bloco de help_text quando ausente", () => {
+    renderPanel(RESPONSES);
+    expect(screen.queryByText(/Considere apenas/)).toBeNull();
   });
 });

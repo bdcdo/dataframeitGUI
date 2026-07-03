@@ -9,11 +9,13 @@ import { Keyboard, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatAnswerDisplay } from "@/lib/format-answer";
 import { verdictRequiresJustification } from "@/lib/auto-review-decided";
+import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { SelfVerdict } from "@/lib/types";
 
 export interface AutoReviewField {
   fieldName: string;
   fieldDescription: string | null;
+  fieldHelpText: string | null;
   humanAnswer: unknown;
   llmAnswer: unknown;
   llmJustification: string | null;
@@ -178,11 +180,12 @@ export function AutoReviewFieldPanel({
           incomplete={incomplete}
           onNavigate={onFieldNavigate}
         />
-        <div className="mt-1.5 flex items-center gap-2">
-          <p className="min-w-0 truncate text-sm font-medium">
-            <span className="text-muted-foreground">
-              Campo {fieldIndex + 1}/{totalFields}:
-            </span>{" "}
+        <div className="mt-1.5 flex items-start gap-2">
+          <FieldHeaderLabel
+            prefix={`Campo ${fieldIndex + 1}/${totalFields}:`}
+            helpText={field.fieldHelpText}
+            helpTextClassName="max-h-24 overflow-y-auto pr-1"
+          >
             <span className="font-mono text-xs">{field.fieldName}</span>
             {field.fieldDescription ? (
               <span className="text-muted-foreground">
@@ -190,7 +193,7 @@ export function AutoReviewFieldPanel({
                 {field.fieldDescription}
               </span>
             ) : null}
-          </p>
+          </FieldHeaderLabel>
         </div>
       </div>
 

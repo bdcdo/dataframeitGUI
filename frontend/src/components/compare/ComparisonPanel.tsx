@@ -13,6 +13,7 @@ import { cn, normalizeForComparison } from "@/lib/utils";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
 import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
+import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
 import type { PydanticField } from "@/lib/types";
 
@@ -205,19 +206,13 @@ export function ComparisonPanel({
           onNavigate={onFieldNavigate}
         />
         <div className="mt-1.5 flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">
-              <span className="text-muted-foreground">
-                Campo {fieldIndex + 1}/{totalFields}:
-              </span>{" "}
-              {fieldDescription || fieldName}
-            </p>
-            {fieldHelpText && (
-              <p className="mt-1 text-xs text-muted-foreground whitespace-pre-line">
-                {fieldHelpText}
-              </p>
-            )}
-          </div>
+          <FieldHeaderLabel
+            prefix={`Campo ${fieldIndex + 1}/${totalFields}:`}
+            helpText={fieldHelpText}
+            helpTextClassName="max-h-24 overflow-y-auto pr-1"
+          >
+            {fieldDescription || fieldName}
+          </FieldHeaderLabel>
           <div className="flex shrink-0 items-center gap-1">
             {feedbackBadge > 0 && (
               <Badge
