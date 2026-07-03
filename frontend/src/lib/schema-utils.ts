@@ -845,3 +845,37 @@ export function diffFields(
 
   return logEntries;
 }
+
+export interface SchemaPersistencePlan {
+  changeType: ChangeType | null;
+  bumped: { major: number; minor: number; patch: number };
+  logEntries: SchemaLogEntry[];
+  code: string;
+  hash: string;
+  fieldsWithHash: PydanticField[];
+}
+
+// Calcula tudo que uma troca de schema precisa persistir — classificação,
+// versão, log de auditoria, código Pydantic e hash — sem escrever nada.
+// Extraído para eliminar a duplicação entre `saveSchemaFromGUI`
+// (src/actions/schema.ts, autenticado via Clerk/RLS) e o script
+// `apply-decisions.ts` (fora do runtime Next, service-role key): os dois
+// clientes Supabase e as regras de revalidação de cache continuam
+// específicos de cada chamador, mas o que calcular é a mesma coisa e não
+// deve ser reimplementado em paralelo (risco de drift — ver #63/PR #352).
+export function planSchemaPersistence(
+  oldFields: PydanticField[],
+  newFields: PydanticField[],
+  current: { major: number; minor: number; patch: number },
+): SchemaPersistencePlan {
+  const changeType = classifyChange(oldFields, newFields);
+  const bumped = changeType ? bumpVersion(current, changeType) : current;
+  const logEntries = diffFields(oldFields, newFields);
+  const code = generatePydanticCode(newFields);
+  const hash = sha256Hex(code).slice(0, 16);
+  const fieldsWithHash = newFields.map((f) => ({
+    ...f,
+    hash: computeFieldHash(f.name, f.type, f.options, f.description),
+  }));
+  return { changeType, bumped, logEntries, code, hash, fieldsWithHash };
+}

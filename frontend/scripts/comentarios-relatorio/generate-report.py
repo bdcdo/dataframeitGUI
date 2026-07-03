@@ -17,6 +17,11 @@ consome esse mesmo formato (via JSON intermediário produzido pelo Claude).
 Agrupamento (clusters por campo):
 1. Cada `review` vira um cluster — arrasta junto todas as `duvida` com
    `extra.reviewId` igual ao `rawId` do review + `anotacao` do mesmo documento.
+   Quando há mais de um review em aberto no mesmo documento+campo (dois
+   revisores), uma anotação do documento é "possuída" (resolvida) só pelo
+   primeiro cluster, mas ainda aparece como contexto (sem bloco de decisão
+   próprio) nos demais clusters do mesmo documento — ver
+   `render_annotation_context_bullets`.
 2. `duvida` órfãs (sem review correspondente no aberto) → cluster por reviewId.
 3. `anotacao` restantes → cluster por documentId dentro do campo.
 4. `sugestao` → um cluster por sugestão.
@@ -141,6 +146,15 @@ def build_clusters(field_comments: list[dict]) -> list[dict]:
     suggestions = [c for c in field_comments if c["source"] == "sugestao"]
 
     # 1. Cluster por review
+    #
+    # Uma anotação no mesmo documento pode ser contexto relevante para MAIS de
+    # um review em aberto (dois revisores no mesmo documento+campo). Ela só é
+    # "possuída" (resolvida) por um único bloco — o primeiro review processado
+    # — mas os demais reviews do mesmo documento ainda precisam VER o
+    # conteúdo, senão o segundo revisor perde contexto ao decidir. Por isso
+    # `annotations` (possuídas, entram no `<!-- ids: ... -->` do bloco) fica
+    # separado de `context_annotations` (só exibidas, já resolvidas em outro
+    # bloco).
     for r in reviews:
         if r["id"] in consumed:
             continue
@@ -149,15 +163,17 @@ def build_clusters(field_comments: list[dict]) -> list[dict]:
             if d["id"] not in consumed
             and d.get("extra", {}).get("reviewId") == r["rawId"]
         ]
-        cluster_annots = [
-            a for a in annotations
-            if a["id"] not in consumed and a.get("documentId") == r.get("documentId")
+        doc_annots = [
+            a for a in annotations if a.get("documentId") == r.get("documentId")
         ]
+        cluster_annots = [a for a in doc_annots if a["id"] not in consumed]
+        context_annots = [a for a in doc_annots if a["id"] in consumed]
         clusters.append({
             "type": "review",
             "anchor": r,
             "doubts": cluster_doubts,
             "annotations": cluster_annots,
+            "context_annotations": context_annots,
         })
         consumed.update([
             r["id"],
@@ -173,14 +189,17 @@ def build_clusters(field_comments: list[dict]) -> list[dict]:
         rid = d.get("extra", {}).get("reviewId") or d["rawId"]
         by_review.setdefault(rid, []).append(d)
     for rid, group in by_review.items():
-        cluster_annots = [
+        doc_annots = [
             a for a in annotations
-            if a["id"] not in consumed and a.get("documentId") == group[0].get("documentId")
+            if a.get("documentId") == group[0].get("documentId")
         ]
+        cluster_annots = [a for a in doc_annots if a["id"] not in consumed]
+        context_annots = [a for a in doc_annots if a["id"] in consumed]
         clusters.append({
             "type": "duvidas-orphans",
             "doubts": group,
             "annotations": cluster_annots,
+            "context_annotations": context_annots,
             "reviewId": rid,
         })
         consumed.update([
@@ -206,10 +225,33 @@ def build_clusters(field_comments: list[dict]) -> list[dict]:
     return clusters
 
 
+def render_annotation_context_bullets(context_annots: list[dict]) -> list[str]:
+    """Anotações do mesmo documento já vinculadas (resolvidas) a outro bloco —
+    mostradas aqui só como contexto, sem entrar no `ids` deste bloco."""
+    if not context_annots:
+        return []
+    plural = len(context_annots) > 1
+    vinculada = "vinculadas" if plural else "vinculada"
+    mostrada = "mostradas" if plural else "mostrada"
+    lines: list[str] = []
+    lines.append(
+        f"{count_in_words(len(context_annots), 'anotação', 'anotações', fem=True)} "
+        f"no mesmo documento já {vinculada} a outro bloco ({mostrada} aqui como contexto):"
+    )
+    lines.append("")
+    for a in context_annots:
+        nm = pretty_author(a.get("author"))
+        txt = a["text"].strip().replace("\n", " ")
+        lines.append(f"- **{nm}** — {txt}")
+    lines.append("")
+    return lines
+
+
 def render_review_cluster(cl: dict) -> list[str]:
     r = cl["anchor"]
     doubts = cl["doubts"]
     annots = cl["annotations"]
+    context_annots = cl.get("context_annotations", [])
     doc = r.get("documentTitle") or "(documento)"
     date = r["createdAt"][:10]
     verdict = format_verdict((r.get("extra") or {}).get("verdict"))
@@ -259,6 +301,8 @@ def render_review_cluster(cl: dict) -> list[str]:
             body.append(f"- **{nm}** — {txt}")
         body.append("")
 
+    body.extend(render_annotation_context_bullets(context_annots))
+
     ids = [r["id"], *(d["id"] for d in doubts), *(a["id"] for a in annots)]
     return render_decision_block(heading, body, ids)
 
@@ -266,6 +310,7 @@ def render_review_cluster(cl: dict) -> list[str]:
 def render_doubts_orphan_cluster(cl: dict) -> list[str]:
     doubts = cl["doubts"]
     annots = cl.get("annotations", [])
+    context_annots = cl.get("context_annotations", [])
     doc = doubts[0].get("documentTitle") or "(documento)"
     verdict = format_verdict((doubts[0].get("extra") or {}).get("verdict"))
 
@@ -293,6 +338,8 @@ def render_doubts_orphan_cluster(cl: dict) -> list[str]:
             txt = a["text"].strip().replace("\n", " ")
             body.append(f"- **{nm}** — {txt}")
         body.append("")
+
+    body.extend(render_annotation_context_bullets(context_annots))
 
     ids = [*(d["id"] for d in doubts), *(a["id"] for a in annots)]
     return render_decision_block(heading, body, ids)

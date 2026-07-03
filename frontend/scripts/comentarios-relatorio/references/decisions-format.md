@@ -39,8 +39,12 @@ Atenção ao caso `duvida`: o `rawId` do fetch é composto (`"reviewId|responden
 
 Pedidos de exclusão de documento (source `exclusao` no fetch) **não são resolvíveis por aqui**: a aprovação exige `excludeDocuments` (soft delete + auditoria), fluxo da plataforma. Se aparecerem em `resolutions`, o script devolve erro por item sem tocar o banco.
 
-Todas as resoluções são validadas contra o `projectId` (ids de outro projeto retornam erro por item), e `nota`/`dificuldade` são idempotentes — pares já resolvidos são ignorados via `UNIQUE(project_id, response_id)`.
+Todas as resoluções são validadas contra o `projectId` (ids de outro projeto retornam erro por item), e `nota`/`dificuldade` são idempotentes — pares já resolvidos são ignorados via `UNIQUE(project_id, response_id)`. **Importante**: idempotente aqui significa que o par existente **não é alterado** — se um `nota`/`dificuldade` já resolvido reaparecer em `decisions.json` com um `note` diferente do que já está gravado, essa nota nova é descartada silenciosamente (o upsert ignora o conflito) e o item volta com `result.detail` indicando "já resolvido anteriormente — nota não foi alterada" em vez de sugerir que a nota nova foi persistida.
 
 ## Semântica de `--dry-run` / `--yes`
 
 Sem `--yes`, **nada é gravado**: schema e resoluções rodam como preview (o output mostra o que seria feito). `--dry-run` é o alias explícito do mesmo comportamento. Só `--yes` (sem `--dry-run`) executa os writes — schema, resoluções e `summaryNote`.
+
+## Cache da GUI após uma mudança de schema
+
+Este script roda fora do runtime Next (processo `tsx` standalone) e por isso não pode chamar `revalidatePath`/`revalidateTag` como `saveSchemaFromGUI` faz. Depois de um `--yes` que aplica mudança de schema, a GUI pode continuar mostrando o schema/versão anteriores por até ~60s (TTL do cache de `project-{id}-progress`) até o cache expirar naturalmente ou outra mutação pela própria GUI revalidar as mesmas rotas/tag. Se precisar ver o resultado imediatamente numa página específica, recarregue com Ctrl+Shift+R.

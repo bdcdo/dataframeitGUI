@@ -20,26 +20,22 @@
  *
  * Formato esperado do JSON: ver references/decisions-format.md (neste diretório).
  *
- * As primitivas de versionamento/auditoria (classifyChange, bumpVersion,
- * diffFields, computeFieldHash) e generatePydanticCode são importadas de
- * `src/lib/schema-utils` (puras, client-safe — extração da issue #63), as
- * mesmas usadas por saveSchemaFromGUI. Só a persistência (UPDATE/INSERT)
- * replica `src/actions/schema.ts`, porque server actions não são chamáveis
- * fora do Next runtime.
+ * O cálculo (classificação, versão, log de auditoria, código Pydantic e
+ * hash) usa `planSchemaPersistence` de `src/lib/schema-utils` (pura,
+ * client-safe — extração da issue #63/PR #352), a mesma função usada por
+ * saveSchemaFromGUI. A escrita em si usa `updateOrThrow` de
+ * `src/lib/supabase/rls-guard` (mesma guarda contra "histórico fantasma" —
+ * #178 — que saveSchema usa) porque é código puro sem `"use server"`, então
+ * é chamável fora do Next runtime; só a revalidação de cache
+ * (`revalidatePath`/`revalidateTag`) fica de fora, por depender do runtime.
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import {
-  bumpVersion,
-  classifyChange,
-  computeFieldHash,
-  diffFields,
-  generatePydanticCode,
-} from "../../src/lib/schema-utils";
+import { planSchemaPersistence } from "../../src/lib/schema-utils";
+import { updateOrThrow } from "../../src/lib/supabase/rls-guard";
 import type { PydanticField } from "../../src/lib/types";
 import { loadEnv } from "./load-env";
 
@@ -141,16 +137,8 @@ async function applySchemaChanges(
     patch: project?.schema_version_patch ?? 0,
   };
 
-  const changeType = classifyChange(oldFields, newFields);
-  const bumped = changeType ? bumpVersion(current, changeType) : current;
-  const logEntries = diffFields(oldFields, newFields);
-
-  const code = generatePydanticCode(newFields);
-  const hash = crypto.createHash("sha256").update(code).digest("hex").slice(0, 16);
-  const fieldsWithHash = newFields.map((f) => ({
-    ...f,
-    hash: computeFieldHash(f.name, f.type, f.options, f.description),
-  }));
+  const { changeType, bumped, logEntries, code, hash, fieldsWithHash } =
+    planSchemaPersistence(oldFields, newFields, current);
 
   const summary = {
     changeType,
@@ -181,11 +169,15 @@ async function applySchemaChanges(
     updatePayload.schema_version_minor = bumped.minor;
     updatePayload.schema_version_patch = bumped.patch;
   }
-  const { error: updErr } = await supabase
-    .from("projects")
-    .update(updatePayload)
-    .eq("id", projectId);
-  if (updErr) throw new Error(`projects update: ${updErr.message}`);
+  // updateOrThrow (não .update().eq()) checa linhas afetadas: um projectId
+  // inexistente/desatualizado faria o UPDATE "suceder" com 0 linhas
+  // (comportamento normal do PostgREST) e o INSERT em schema_change_log
+  // abaixo gravaria histórico de uma mudança nunca persistida — o mesmo bug
+  // de "histórico fantasma" que updateOrThrow já existe para prevenir em
+  // saveSchema (issue #178).
+  await updateOrThrow(supabase, "projects", updatePayload, { id: projectId }, {
+    message: `Nenhuma linha atualizada em projects para id=${projectId} (registro inexistente): abortando antes de gravar schema_change_log.`,
+  });
 
   // Sem invalidação de responses na troca de schema: is_latest significa
   // "última resposta ativa por respondente", não "compatível com o schema
@@ -366,6 +358,43 @@ async function resolveComments(
     });
   }
 
+  // Checagem prévia de quais pares (project_id, response_id) já existem em
+  // note_resolutions/difficulty_resolutions: o upsert abaixo usa
+  // ignoreDuplicates (idempotente — pares já resolvidos ficam como estão,
+  // ver references/decisions-format.md), então sem esta checagem o relato
+  // final diria "success" mesmo quando uma nota nova em decisions.json foi
+  // silenciosamente descartada por já existir a linha.
+  const [existingNotaRes, existingDifRes] = await Promise.all([
+    notaRows.length > 0
+      ? supabase
+          .from("note_resolutions")
+          .select("response_id")
+          .eq("project_id", projectId)
+          .in("response_id", notaRows.map((r) => r.response_id as string))
+      : Promise.resolve({ data: [], error: null }),
+    difRows.length > 0
+      ? supabase
+          .from("difficulty_resolutions")
+          .select("response_id")
+          .eq("project_id", projectId)
+          .in("response_id", difRows.map((r) => r.response_id as string))
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (existingNotaRes.error) {
+    throw new Error(`note_resolutions select (guard): ${existingNotaRes.error.message}`);
+  }
+  if (existingDifRes.error) {
+    throw new Error(
+      `difficulty_resolutions select (guard): ${existingDifRes.error.message}`,
+    );
+  }
+  const existingNotaIds = new Set(
+    (existingNotaRes.data ?? []).map((d) => d.response_id as string),
+  );
+  const existingDifIds = new Set(
+    (existingDifRes.data ?? []).map((d) => d.response_id as string),
+  );
+
   // --- sugestao: approved em lote; rejected agrupado por motivo ---
   const sugestoes = resolutions.filter((r) => r.source === "sugestao") as Array<
     Extract<Resolution, { source: "sugestao" }>
@@ -434,44 +463,89 @@ async function resolveComments(
     for (const r of notas) {
       if (resultFor.get(r)?.success) resultFor.set(r, { success: false, error: msg });
     }
+  } else {
+    // upsert com ignoreDuplicates é idempotente: um par já resolvido não é
+    // sobrescrito. Sinalizar isso explicitamente em vez de "success" cego,
+    // para não sugerir que uma nota nova em decisions.json foi persistida.
+    for (const r of notas) {
+      if (resultFor.get(r)?.success && existingNotaIds.has(r.rawId)) {
+        resultFor.set(r, {
+          success: true,
+          detail:
+            "já resolvido anteriormente — nota não foi alterada (upsert idempotente ignora conflitos)",
+        });
+      }
+    }
   }
   if ((difInsert as { error: { message: string } | null }).error) {
     const msg = (difInsert as { error: { message: string } }).error.message;
     for (const r of dificuldades) {
       if (resultFor.get(r)?.success) resultFor.set(r, { success: false, error: msg });
     }
+  } else {
+    for (const r of dificuldades) {
+      if (resultFor.get(r)?.success && existingDifIds.has(r.rawId)) {
+        resultFor.set(r, {
+          success: true,
+          detail:
+            "já resolvido anteriormente — nota não foi alterada (upsert idempotente ignora conflitos)",
+        });
+      }
+    }
   }
 
-  // --- duvida: guard batched acima; UPDATE por par (review_id, respondent_id) ---
+  // --- duvida: guard batched acima; 1 único UPDATE em lote via .or(), não
+  // 1 UPDATE por par. verdict_acknowledgments tem chave composta
+  // (review_id, respondent_id) sem coluna `id` única, então batchResolveUpdate
+  // (.in("id", ids)) não se aplica direto — mas o filtro .or() do PostgREST
+  // combina os pares já validados pelo guard numa única query. review_id/
+  // respondent_id são UUIDs (sem vírgula/parênteses), então não precisam de
+  // escaping na string do filtro.
   const duvidas = resolutions.filter((r) => r.source === "duvida") as Array<
     Extract<Resolution, { source: "duvida" }>
   >;
-  await Promise.all(
-    duvidas.map(async (r) => {
-      const owner = reviewProject.get(r.reviewId);
-      if (!owner) {
-        resultFor.set(r, { success: false, error: "review não encontrado" });
-        return;
-      }
-      if (owner !== projectId) {
-        resultFor.set(r, { success: false, error: "review pertence a outro projeto" });
-        return;
-      }
-      const { data, error } = await supabase
-        .from("verdict_acknowledgments")
-        .update(resolvedPayload)
-        .eq("review_id", r.reviewId)
-        .eq("respondent_id", r.respondentId)
-        .select("review_id");
-      if (error) {
+  const eligibleDuvidas: Array<Extract<Resolution, { source: "duvida" }>> = [];
+  for (const r of duvidas) {
+    const owner = reviewProject.get(r.reviewId);
+    if (!owner) {
+      resultFor.set(r, { success: false, error: "review não encontrado" });
+      continue;
+    }
+    if (owner !== projectId) {
+      resultFor.set(r, { success: false, error: "review pertence a outro projeto" });
+      continue;
+    }
+    eligibleDuvidas.push(r);
+  }
+  if (eligibleDuvidas.length > 0) {
+    const orFilter = eligibleDuvidas
+      .map((r) => `and(review_id.eq.${r.reviewId},respondent_id.eq.${r.respondentId})`)
+      .join(",");
+    const { data, error } = await supabase
+      .from("verdict_acknowledgments")
+      .update(resolvedPayload)
+      .or(orFilter)
+      .select("review_id, respondent_id");
+    if (error) {
+      for (const r of eligibleDuvidas) {
         resultFor.set(r, { success: false, error: error.message });
-      } else if (!data || data.length === 0) {
-        resultFor.set(r, { success: false, error: "not found" });
-      } else {
-        resultFor.set(r, { success: true });
       }
-    }),
-  );
+    } else {
+      const matched = new Set(
+        (data ?? []).map(
+          (d) => `${d.review_id as string}|${d.respondent_id as string}`,
+        ),
+      );
+      for (const r of eligibleDuvidas) {
+        resultFor.set(
+          r,
+          matched.has(`${r.reviewId}|${r.respondentId}`)
+            ? { success: true }
+            : { success: false, error: "not found" },
+        );
+      }
+    }
+  }
 
   // --- montar resultados na ordem original ---
   return resolutions.map((r) => {
@@ -604,6 +678,18 @@ async function main() {
     } else {
       console.log("\n[info] summaryNote registrada em project_comments.");
     }
+  }
+
+  // Este script roda fora do runtime Next, então não pode chamar
+  // revalidatePath/revalidateTag como saveSchemaFromGUI faz — o cache da GUI
+  // (revalidateTag com expire:60) pode continuar servindo o schema/versão
+  // antigos por até ~60s após um --yes que aplicou mudança de schema.
+  if (write && (schemaResult as { applied?: boolean }).applied) {
+    console.log(
+      "\n[aviso] Schema atualizado no banco. A GUI pode levar até ~60s para " +
+        "refletir a mudança (cache do Next) — se precisar ver o resultado " +
+        "imediatamente, recarregue a página específica com Ctrl+Shift+R.",
+    );
   }
 }
 
