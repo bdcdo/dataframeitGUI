@@ -20,13 +20,22 @@ let rpcCalls: RpcCall[];
 let serverTableResults: TableResults | undefined;
 let serverRpcResults: Record<string, TableResult> | undefined;
 
+// vi.fn() (não arrow fixa) para permitir override por teste nos guards de
+// exclude/restore/hardDelete — mesmo padrão de comparisons-retry.test.ts.
+const hoisted = vi.hoisted(() => ({
+  getUser: vi.fn<() => Promise<{ id: string } | null>>(async () => ({
+    id: "userCoord",
+  })),
+  isCoord: vi.fn<() => Promise<boolean>>(async () => true),
+}));
+
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
   revalidateTag: () => {},
 }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "userCoord" }),
-  isProjectCoordinator: async () => true,
+  getAuthUser: () => hoisted.getUser(),
+  isProjectCoordinator: () => hoisted.isCoord(),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
@@ -43,6 +52,8 @@ beforeEach(() => {
   rpcCalls = [];
   serverTableResults = undefined;
   serverRpcResults = undefined;
+  hoisted.getUser.mockResolvedValue({ id: "userCoord" });
+  hoisted.isCoord.mockResolvedValue(true);
 });
 
 async function loadUpload() {
@@ -55,6 +66,18 @@ async function loadGetDocumentText() {
 
 async function loadCheck() {
   return (await import("@/actions/documents")).checkDuplicates;
+}
+
+async function loadExclude() {
+  return (await import("@/actions/documents")).excludeDocuments;
+}
+
+async function loadRestore() {
+  return (await import("@/actions/documents")).restoreDocuments;
+}
+
+async function loadHardDelete() {
+  return (await import("@/actions/documents")).hardDeleteDocuments;
 }
 
 function insertedExternalIds(): (string | null)[] {
@@ -367,5 +390,116 @@ describe("getDocumentText", () => {
     expect(errorSpy).toHaveBeenCalled();
 
     errorSpy.mockRestore();
+  });
+});
+
+// Caracterização de excludeDocuments/restoreDocuments/hardDeleteDocuments —
+// não tinham nenhum teste antes do #385. Cobrem o guard (auth+coordenador) e o
+// caminho feliz que passou a compartilhar finishDocumentsMutation.
+describe("excludeDocuments", () => {
+  it("não-autenticado → error, sem UPDATE", async () => {
+    hoisted.getUser.mockResolvedValueOnce(null);
+    const excludeDocuments = await loadExclude();
+
+    const r = await excludeDocuments("proj-1", ["doc1"], "motivo");
+
+    expect(r).toEqual({ error: "Não autenticado" });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("motivo vazio → error, sem checar coordenador nem UPDATE", async () => {
+    const excludeDocuments = await loadExclude();
+
+    const r = await excludeDocuments("proj-1", ["doc1"], "   ");
+
+    expect(r).toEqual({ error: "Motivo da exclusão é obrigatório" });
+    expect(hoisted.isCoord).not.toHaveBeenCalled();
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("não-coordenador → error, sem UPDATE", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const excludeDocuments = await loadExclude();
+
+    const r = await excludeDocuments("proj-1", ["doc1"], "motivo");
+
+    expect(r).toEqual({ error: "Apenas coordenador pode excluir documentos" });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("caminho feliz: marca excluded_at/reason/by e retorna count", async () => {
+    const excludeDocuments = await loadExclude();
+
+    const r = await excludeDocuments("proj-1", ["doc1", "doc2"], "  motivo  ");
+
+    expect(r).toEqual({ count: 2 });
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0]).toMatchObject({
+      table: "documents",
+      op: "update",
+      payload: {
+        excluded_reason: "motivo",
+        excluded_by: "userCoord",
+      },
+    });
+  });
+
+  it("erro do Supabase → error, sem revalidar", async () => {
+    serverTableResults = {
+      documents: [{ error: { message: "db down" } }],
+    };
+    const excludeDocuments = await loadExclude();
+
+    const r = await excludeDocuments("proj-1", ["doc1"], "motivo");
+
+    expect(r).toEqual({ error: "db down" });
+  });
+});
+
+describe("restoreDocuments", () => {
+  it("não-coordenador → error, sem UPDATE", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const restoreDocuments = await loadRestore();
+
+    const r = await restoreDocuments("proj-1", ["doc1"]);
+
+    expect(r).toEqual({ error: "Apenas coordenador pode restaurar documentos" });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("caminho feliz: limpa excluded_at/reason/by e retorna count", async () => {
+    const restoreDocuments = await loadRestore();
+
+    const r = await restoreDocuments("proj-1", ["doc1", "doc2", "doc3"]);
+
+    expect(r).toEqual({ count: 3 });
+    expect(writeCalls[0]).toMatchObject({
+      table: "documents",
+      op: "update",
+      payload: { excluded_at: null, excluded_reason: null, excluded_by: null },
+    });
+  });
+});
+
+describe("hardDeleteDocuments", () => {
+  it("não-coordenador → error, sem DELETE", async () => {
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    const hardDeleteDocuments = await loadHardDelete();
+
+    const r = await hardDeleteDocuments("proj-1", ["doc1"]);
+
+    expect(r).toEqual({
+      error: "Apenas coordenador pode apagar documentos permanentemente",
+    });
+    expect(writeCalls).toHaveLength(0);
+  });
+
+  it("caminho feliz: DELETE e retorna count", async () => {
+    const hardDeleteDocuments = await loadHardDelete();
+
+    const r = await hardDeleteDocuments("proj-1", ["doc1"]);
+
+    expect(r).toEqual({ count: 1 });
+    expect(writeCalls[0]).toMatchObject({ table: "documents", op: "delete" });
   });
 });

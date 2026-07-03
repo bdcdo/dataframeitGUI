@@ -585,6 +585,23 @@ export async function getDocumentText(
   return { text: data.text, title: data.title || documentId };
 }
 
+// Rodapé comum às mutações de exclusão/restauração de documents: as 3 funções
+// abaixo só divergem na query em si (update com payloads opostos vs delete),
+// não no que fazem depois dela.
+// Sem anotação de retorno explícita (de propósito): os 3 callers dependem da
+// inferência "solta" que o TS produz a partir de returns de object literal
+// (equivalente a {error?, count?}), não de uma união discriminada estrita —
+// os call sites em useDocumentActions.ts fazem `result?.error` sem narrowing.
+async function finishDocumentsMutation(
+  projectId: string,
+  error: { message: string } | null,
+  count: number,
+) {
+  if (error) return { error: error.message };
+  await revalidateProjectDocumentsCache(projectId);
+  return { count };
+}
+
 // Soft delete: marca documents.excluded_at. Reads default filtram excluidos.
 // Coordenador pode visualizar/restaurar via toggle "Mostrar excluidos".
 export async function excludeDocuments(
@@ -612,9 +629,7 @@ export async function excludeDocuments(
     .eq("project_id", projectId)
     .in("id", documentIds);
 
-  if (error) return { error: error.message };
-  await revalidateProjectDocumentsCache(projectId);
-  return { count: documentIds.length };
+  return finishDocumentsMutation(projectId, error, documentIds.length);
 }
 
 export async function restoreDocuments(
@@ -640,9 +655,7 @@ export async function restoreDocuments(
     .eq("project_id", projectId)
     .in("id", documentIds);
 
-  if (error) return { error: error.message };
-  await revalidateProjectDocumentsCache(projectId);
-  return { count: documentIds.length };
+  return finishDocumentsMutation(projectId, error, documentIds.length);
 }
 
 // Hard delete: remove DB permanente (CASCADE em responses/reviews/assignments).
@@ -667,7 +680,5 @@ export async function hardDeleteDocuments(
     .eq("project_id", projectId)
     .in("id", documentIds);
 
-  if (error) return { error: error.message };
-  await revalidateProjectDocumentsCache(projectId);
-  return { count: documentIds.length };
+  return finishDocumentsMutation(projectId, error, documentIds.length);
 }
