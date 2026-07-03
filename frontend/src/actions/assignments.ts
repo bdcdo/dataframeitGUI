@@ -215,7 +215,7 @@ async function fetchLotteryDocStats(projectId: string): Promise<LotteryDocStatsR
       label: b.label,
       createdAt: b.created_at,
     })),
-    minResponsesForComparison: project?.min_responses_for_comparison || 2,
+    minResponsesForComparison: project?.min_responses_for_comparison ?? 2,
     automationMode: project?.automation_mode ?? null,
   };
 }
@@ -253,13 +253,9 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
  * Stats leves por documento, carregadas uma vez na abertura do dialog.
  * O client reaplica filterEligibleDocs sobre elas para contagem ao vivo.
  */
-export async function getLotteryDocStats(projectId: string): Promise<{
-  docs?: LotteryDocStats[];
-  batches?: { id: string; label: string | null; createdAt: string }[];
-  minResponsesForComparison?: number;
-  automationMode?: string | null;
-  error?: string;
-}> {
+export async function getLotteryDocStats(
+  projectId: string,
+): Promise<Partial<LotteryDocStatsResult> & { error?: string }> {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
