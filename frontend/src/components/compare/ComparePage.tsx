@@ -303,7 +303,7 @@ export function ComparePage({
             : { complete: false },
           onFieldNavigate: setFieldIndex,
           onVerdict: (verdict, chosenResponseId) =>
-      void handleVerdict(verdict, chosenResponseId),
+            void handleVerdict(verdict, chosenResponseId),
           onMarkReviewed: () => void handleMarkReviewed(),
           comment,
           onCommentChange: setComment,
