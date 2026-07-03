@@ -2,10 +2,8 @@ import "server-only";
 
 import type { createSupabaseServer } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import {
-  computeDivergentFieldNames,
-  resolveCompareStatus,
-} from "@/lib/compare-divergence";
+import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { resolveCompareStatus } from "@/lib/compare-assignment-status";
 import {
   responseQualifiesForVersion,
   versionGate,
