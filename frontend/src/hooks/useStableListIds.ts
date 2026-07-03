@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useResetOnKeyChange } from "./useResetOnKeyChange";
 
 // crypto.randomUUID is only exposed in secure contexts (HTTPS/localhost); fall
 // back so a dev server reached over a plain-http LAN IP doesn't crash editing.
@@ -25,29 +26,24 @@ export interface StableListIds {
  *
  * Mutations go through the caller's own handlers: call `removeIdAt`/`appendId`
  * together with the value mutation + `onChange`, so ids and values stay aligned
- * before the next render. The render-time reconcile below only kicks in for
- * *external* length changes (field switch, toggling subfields, schema reset),
- * preserving the ids of positions that remain.
- *
- * State (not refs) holds the ids, mirroring `length` in `prevLength` per
- * React's "adjusting state when a prop changes" pattern. A ref-mutation
- * reconcile would misfire here: `removeIdAt`/`appendId` call `setIds`, which
- * (unlike a ref write) triggers its own re-render — for one render, `ids`
+ * before the next render. The `useResetOnKeyChange` reconcile below only kicks
+ * in for *external* length changes (field switch, toggling subfields, schema
+ * reset), preserving the ids of positions that remain — it can't run on every
+ * mutation, because `removeIdAt`/`appendId` themselves call `setIds`, which
+ * (unlike a ref write) triggers its own re-render: for one render, `ids`
  * already reflects the mutation while the caller's `length` prop hasn't
- * caught up yet. Comparing directly against `length` in that window would
- * fabricate a spurious id; the `prevLength` mirror only advances on a real
- * external length change.
+ * caught up yet. Comparing `ids.length` directly against `length` in that
+ * window would fabricate/drop an id; keying the reconcile on `length` itself
+ * only re-fires on a real external length change.
  */
 export function useStableListIds(length: number): StableListIds {
   const [ids, setIds] = useState<string[]>(() =>
     Array.from({ length }, () => makeId())
   );
-  const [prevLength, setPrevLength] = useState(length);
 
-  if (length !== prevLength) {
-    setPrevLength(length);
+  useResetOnKeyChange(length, () => {
     setIds((cur) => Array.from({ length }, (_, i) => cur[i] ?? makeId()));
-  }
+  });
 
   return {
     ids,
