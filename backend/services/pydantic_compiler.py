@@ -38,101 +38,10 @@ def compile_pydantic(code: str) -> dict:
             "errors": ["Nenhuma classe BaseModel encontrada"],
         }
 
-    fields = []
-    for field_name, field_info in model_class.model_fields.items():
-        annotation = field_info.annotation
-        field_type, options = _parse_annotation(annotation)
-
-        extra = field_info.json_schema_extra or {}
-        if callable(extra):
-            extra = {}
-        is_dict_extra = isinstance(extra, dict)
-        target = extra.get("target", "all") if is_dict_extra else "all"
-        # Allow json_schema_extra to override the inferred field type (e.g. date)
-        explicit_type = extra.get("field_type") if is_dict_extra else None
-        if explicit_type:
-            field_type = explicit_type
-        # Date fields carry options as sentinels in json_schema_extra because
-        # the annotation itself is `str`, not Literal.
-        if field_type == "date" and is_dict_extra:
-            raw_opts = extra.get("options")
-            if isinstance(raw_opts, (list, tuple)) and raw_opts:
-                options = [str(o) for o in raw_opts]
-        description = field_info.description or field_name
-        allow_other = bool(extra.get("allowOther", False)) if is_dict_extra else False
-        help_text_raw = extra.get("help_text") if is_dict_extra else None
-        help_text = help_text_raw.strip() if isinstance(help_text_raw, str) else None
-        if not help_text:
-            help_text = None
-        subfield_rule_raw = extra.get("subfield_rule") if is_dict_extra else None
-        subfield_rule = (
-            subfield_rule_raw.strip() if isinstance(subfield_rule_raw, str) else None
-        ) or None
-        condition = _sanitize_condition(
-            extra.get("condition") if is_dict_extra else None
-        )
-        justification_prompt_raw = (
-            extra.get("justification_prompt") if is_dict_extra else None
-        )
-        justification_prompt = (
-            justification_prompt_raw.strip()
-            if isinstance(justification_prompt_raw, str)
-            else None
-        ) or None
-
-        # If help_text was carried structurally, strip the ". Instrucoes: ..."
-        # suffix from description so the returned description is the pure form.
-        if help_text:
-            suffix = f". Instrucoes: {help_text}"
-            if description.endswith(suffix):
-                description = description[: -len(suffix)]
-
-        # Date fields: strip suffixes added by generatePydanticCode so the
-        # description round-trips cleanly (otherwise each UI -> compile -> UI
-        # cycle accumulates the suffix).
-        if field_type == "date":
-            if options:
-                sentinel_list = ", ".join(f'"{o}"' for o in options)
-                sentinel_suffix = (
-                    f". Caso não seja possível informar a data, "
-                    f"usar um dos seguintes valores: {sentinel_list}"
-                )
-                if description.endswith(sentinel_suffix):
-                    description = description[: -len(sentinel_suffix)]
-            date_format_suffix = (
-                ". Formato: DD/MM/AAAA (use XX para partes desconhecidas)"
-            )
-            if description.endswith(date_format_suffix):
-                description = description[: -len(date_format_suffix)]
-
-        field_dict: dict = {
-            "name": field_name,
-            "type": field_type,
-            "options": options,
-            "description": description,
-            "target": target,
-            "hash": _field_hash(field_name, field_type, options, description),
-        }
-
-        if help_text:
-            field_dict["help_text"] = help_text
-
-        if allow_other and field_type in ("single", "multi"):
-            field_dict["allow_other"] = True
-
-        # Extract subfields from nested BaseModel
-        subfields = _extract_subfields(annotation)
-        if subfields:
-            field_dict["subfields"] = subfields
-            field_dict["subfield_rule"] = subfield_rule or "all"
-
-        if condition is not None:
-            field_dict["condition"] = condition
-
-        if justification_prompt:
-            field_dict["justification_prompt"] = justification_prompt
-
-        fields.append(field_dict)
+    fields = [
+        _build_field_dict(field_name, field_info)
+        for field_name, field_info in model_class.model_fields.items()
+    ]
 
     return {
         "valid": True,
@@ -140,6 +49,133 @@ def compile_pydantic(code: str) -> dict:
         "model_name": model_class.__name__,
         "errors": errors,
     }
+
+
+def _extract_extra(field_info) -> dict:
+    """Normaliza `json_schema_extra` para sempre ser um dict (nunca callable)."""
+    extra = field_info.json_schema_extra or {}
+    if callable(extra) or not isinstance(extra, dict):
+        return {}
+    return extra
+
+
+def _normalize_optional_str(raw) -> str | None:
+    """Trim de sentinela de string; retorna None se vazio/ausente."""
+    return (raw.strip() if isinstance(raw, str) else None) or None
+
+
+def _resolve_field_type_and_options(
+    field_type: str, options: list[str] | None, extra: dict
+) -> tuple[str, list[str] | None]:
+    """Aplica override explícito de tipo e sentinelas de opções de campo date."""
+    # Allow json_schema_extra to override the inferred field type (e.g. date)
+    explicit_type = extra.get("field_type")
+    if explicit_type:
+        field_type = explicit_type
+    # Date fields carry options as sentinels in json_schema_extra because the
+    # annotation itself is `str`, not Literal.
+    if field_type == "date":
+        raw_opts = extra.get("options")
+        if isinstance(raw_opts, (list, tuple)) and raw_opts:
+            options = [str(o) for o in raw_opts]
+    return field_type, options
+
+
+def _strip_description_suffixes(
+    description: str, field_type: str, options: list[str] | None, help_text: str | None
+) -> str:
+    """Remove sufixos que `generatePydanticCode` acrescenta à description.
+
+    Evita que o round-trip UI -> compile -> UI acumule o sufixo a cada ciclo.
+    """
+    if help_text:
+        suffix = f". Instrucoes: {help_text}"
+        if description.endswith(suffix):
+            description = description[: -len(suffix)]
+
+    if field_type == "date":
+        if options:
+            sentinel_list = ", ".join(f'"{o}"' for o in options)
+            sentinel_suffix = (
+                f". Caso não seja possível informar a data, "
+                f"usar um dos seguintes valores: {sentinel_list}"
+            )
+            if description.endswith(sentinel_suffix):
+                description = description[: -len(sentinel_suffix)]
+        date_format_suffix = ". Formato: DD/MM/AAAA (use XX para partes desconhecidas)"
+        if description.endswith(date_format_suffix):
+            description = description[: -len(date_format_suffix)]
+
+    return description
+
+
+def _assemble_field_dict(
+    field_name: str,
+    field_type: str,
+    options: list[str] | None,
+    description: str,
+    target: str,
+    help_text: str | None,
+    allow_other: bool,
+    subfields: list[dict] | None,
+    subfield_rule: str | None,
+    condition: dict | None,
+    justification_prompt: str | None,
+) -> dict:
+    field_dict: dict = {
+        "name": field_name,
+        "type": field_type,
+        "options": options,
+        "description": description,
+        "target": target,
+        "hash": _field_hash(field_name, field_type, options, description),
+    }
+
+    if help_text:
+        field_dict["help_text"] = help_text
+
+    if allow_other and field_type in ("single", "multi"):
+        field_dict["allow_other"] = True
+
+    if subfields:
+        field_dict["subfields"] = subfields
+        field_dict["subfield_rule"] = subfield_rule or "all"
+
+    if condition is not None:
+        field_dict["condition"] = condition
+
+    if justification_prompt:
+        field_dict["justification_prompt"] = justification_prompt
+
+    return field_dict
+
+
+def _build_field_dict(field_name: str, field_info) -> dict:
+    """Reconstitui o dict de metadata de `PydanticField` para um campo compilado."""
+    annotation = field_info.annotation
+    field_type, options = _parse_annotation(annotation)
+    extra = _extract_extra(field_info)
+
+    field_type, options = _resolve_field_type_and_options(field_type, options, extra)
+    description = field_info.description or field_name
+    help_text = _normalize_optional_str(extra.get("help_text"))
+    description = _strip_description_suffixes(
+        description, field_type, options, help_text
+    )
+
+    return _assemble_field_dict(
+        field_name=field_name,
+        field_type=field_type,
+        options=options,
+        description=description,
+        target=extra.get("target", "all"),
+        help_text=help_text,
+        allow_other=bool(extra.get("allowOther", False)),
+        subfields=_extract_subfields(annotation),
+        subfield_rule=_normalize_optional_str(extra.get("subfield_rule")),
+        condition=_sanitize_condition(extra.get("condition")),
+        justification_prompt=_normalize_optional_str(extra.get("justification_prompt")),
+    )
 
 
 def find_root_model(namespace: dict):
@@ -363,8 +399,15 @@ def _is_strict_dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
 
-def _reject_dangerous(tree: ast.AST) -> None:
-    """Varre a árvore inteira e rejeita qualquer construção fora da allowlist."""
+def _reject_dangerous(tree: ast.AST) -> None:  # noqa: C901
+    """Varre a árvore inteira e rejeita qualquer construção fora da allowlist.
+
+    Isenta de C901 (14 > 10) de propósito: é o vetor de segurança contra
+    execução arbitrária no schema editável pelo usuário — cada `if` é uma
+    checagem de allowlist independente e extrair sub-funções fragmentaria a
+    varredura de um único `ast.walk`, sem reduzir o risco real. Refactor
+    dedicado (não de tooling) exigiria revisão de segurança à parte. Ver #376.
+    """
     for node in ast.walk(tree):
         if isinstance(node, _FORBIDDEN_NODES):
             raise SchemaError(
@@ -487,7 +530,7 @@ def _slice_elements(sl: ast.AST) -> list[ast.AST]:
     return list(sl.elts) if isinstance(sl, ast.Tuple) else [sl]
 
 
-def _resolve_type(node: ast.AST, built: dict, depth: int = 0):
+def _resolve_type(node: ast.AST, built: dict, depth: int = 0):  # noqa: C901
     """Converte um nó de anotação de tipo num objeto de tipo real (sem eval).
 
     Suporta apenas a grammar do gerador: escalares (``_SCALAR_TYPES``), classes
@@ -495,6 +538,10 @@ def _resolve_type(node: ast.AST, built: dict, depth: int = 0):
     como ``Annotated``/``dict``/``tuple``/``Union`` (e união ``X | None``, já
     barrada em ``_reject_dangerous``) não são emitidos pelo gerador e viram
     ``SchemaError`` limpo.
+
+    Isenta de C901 (12 > 10) de propósito, mesmo motivo de `_reject_dangerous`:
+    é dispatch por tipo de nó AST na allowlist do schema, não lógica de
+    negócio acidental. Ver #376.
     """
     if depth > _MAX_TYPE_DEPTH:
         raise SchemaError("Anotação de tipo aninhada demais")

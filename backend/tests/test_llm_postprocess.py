@@ -113,6 +113,46 @@ def test_not_equals_with_present_trigger_normal_semantics():
     assert _postprocess({"trigger": "sim", "follow": "x"}, conds) == {"trigger": "sim"}
 
 
+def test_not_in_with_present_trigger_matching_hides():
+    conds = {"follow": {"field": "trigger", "not_in": ["a", "b"]}}
+    assert _postprocess({"trigger": "a", "follow": "x"}, conds) == {"trigger": "a"}
+
+
+def test_not_in_with_present_trigger_not_matching_keeps():
+    conds = {"follow": {"field": "trigger", "not_in": ["a", "b"]}}
+    assert _postprocess({"trigger": "c", "follow": "x"}, conds) == {
+        "trigger": "c",
+        "follow": "x",
+    }
+
+
+def test_not_in_with_invalid_targets_hides():
+    """`not_in` que nao e lista e tratado como condicao nao satisfeita."""
+    conds = {"follow": {"field": "trigger", "not_in": "not-a-list"}}
+    assert _postprocess({"trigger": "a", "follow": "x"}, conds) == {"trigger": "a"}
+
+
+# --- Guards de entrada invalida ---
+
+
+def test_condition_not_a_dict_is_treated_as_unsatisfied():
+    assert evaluate_condition("bogus", {"trigger": "sim"}) is False
+
+
+def test_condition_missing_field_key_is_treated_as_unsatisfied():
+    assert evaluate_condition({"equals": "sim"}, {"trigger": "sim"}) is False
+
+
+def test_condition_with_empty_field_is_treated_as_unsatisfied():
+    assert (
+        evaluate_condition({"field": "", "equals": "sim"}, {"trigger": "sim"}) is False
+    )
+
+
+def test_condition_none_is_always_visible():
+    assert evaluate_condition(None, {}) is True
+
+
 def test_extract_field_conditions_from_compiled_model():
     """extract_field_conditions deve ler de json_schema_extra, nao do JSON."""
     from typing import Literal, Optional
