@@ -5,7 +5,7 @@
 #
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, lint:types, fallow, semgrep
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, lint:types, fallow, semgrep, mypy
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
@@ -138,5 +138,25 @@ repos:
         language: system
         files: ^backend/.*\.py$
         pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # mypy: type-check do backend, escopado aos .py alterados (mesmo padrao
+      # do lint-types no frontend) — assim como o lint-types file-scoped
+      # grandfathers seus ~59 achados legados, este grandfathers o baseline
+      # inicial (10 erros em 4 arquivos: auth.py, pydantic_routes.py,
+      # pydantic_compiler.py, main.py). services/llm_runner.py e isento via
+      # [[tool.mypy.overrides]] em backend/pyproject.toml — concentrava 103
+      # dos 113 erros do primeiro scan (explosao do alias JSON recursivo) e
+      # ja e o mesmo arquivo isento de C901 no ruff (run_llm, CCN 35); tipar
+      # direito exige o mesmo refactor maior, fora do escopo deste PR. Ver
+      # docs/CODE_QUALITY_TOOLING.md.
+      - id: mypy
+        name: mypy (changed files, pre-push)
+        entry: bash -c 'cd backend && files=$(printf "%s\n" "$@" | sed "s|^backend/||"); [ -z "$files" ] && exit 0; command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para rodar o mypy" >&2; exit 1; }; exec uv run mypy $files' --
+        language: system
+        files: ^backend/.*\.py$
+        exclude: ^backend/tests/.*\.py$
+        pass_filenames: true
         require_serial: true
         stages: [pre-push]

@@ -13,7 +13,7 @@ A regra de ouro é que tudo roda sozinho, via git hook ou automação de servido
 | Quem dispara | Quando | Ferramentas | Grandfathering |
 |---|---|---|---|
 | `pre-commit` | todo commit (leve, file-scoped) | gitleaks · ruff (lint+format) · react-doctor | só o arquivo/linha tocado é checado |
-| `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · lint:types · fallow audit · semgrep · backend-pytest | new-only / file-scoped (ver cada um); pytest roda a suíte inteira |
+| `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · lint:types · fallow audit · semgrep · backend-pytest · mypy | new-only / file-scoped (ver cada um); pytest roda a suíte inteira |
 | GitHub (servidor) | automático | Dependabot | n/a — abre PRs de vuln sozinho |
 | on-demand | ao investigar performance | React Scan | n/a — ferramenta de diagnóstico, não gate |
 
@@ -49,6 +49,14 @@ Config em `backend/pyproject.toml`: `select = ["E", "F", "I", "B", "C901"]`, `ig
 
 Enquanto o `ruff` cobre o eixo estático do Python, ele não roda os testes — a suíte de auth que o #195 adicionou (`backend/tests/`) não gateava nada, então uma regressão que enfraquecesse o gate JWT ou quebrasse as fronteiras 401/403/404/503 mergearia com o gate verde e o deploy do Fly shipparia direto para produção (issue #337). O hook local `backend-pytest` fecha essa lacuna: roda `uv run pytest -q` (working-dir `backend/`) no estágio de pre-push sempre que o push toca `backend/**/*.py`. Diferente dos hooks file-scoped, roda a suíte inteira — testes não têm noção de "linha grandfathered". Diferente do semgrep (fail-open em erro de infra), é **fail-closed**: se o `uv` não estiver no PATH o push é barrado com mensagem, porque é um gate de verdade, não um sinal informativo. `[tool.uv] package = false` no `backend/pyproject.toml` faz o `uv run` não tentar empacotar o app (que é um FastAPI flat, não uma lib instalável), evitando a regressão histórica de build. Coerente com a decisão de manter o gate pré-merge nos hooks locais e não em GitHub Actions (sem branch protection no free tier, um job de Actions não bloqueia merge).
 
+### mypy — o eixo de tipos do backend
+
+`mypy` (dependency-group dev em `backend/pyproject.toml`, `>=1.15`), via hook local de pre-push, escopado aos `.py` alterados (mesmo padrão do `lint-types` do frontend). Fecha a lacuna que o `ruff` deixa: `ruff` cobre lint/format/complexidade, mas não checa tipos — o backend é o boundary de segurança internet-facing (pós-#195/#337) e um `Any` vazando de um `dict` cru do LLM até um argumento tipado é exatamente o footgun que motivou o `no-floating-promises` no frontend, só que do lado dos tipos.
+
+Config em `backend/pyproject.toml`: `ignore_missing_imports = true` (as libs de LLM — `langchain-*`, `dataframeit` — não publicam stubs; sem isso todo `import-untyped` mascararia os erros reais) e sem `strict` de cara, mesmo raciocínio do subset curado do `lint:types` no frontend.
+
+O primeiro scan completo encontrou **113 erros em 5 arquivos**, com **103 (91%) concentrados em `services/llm_runner.py`** — quase todos `union-attr`/`arg-type` da explosão do alias `JSON` recursivo (`int | float | Sequence[JSON] | Mapping[str, JSON] | None`) toda vez que um `dict` cru vindo do LLM é acessado. É o mesmo arquivo já isento de `C901` no `ruff` (`run_llm`, CCN 35) — tipar direito exige o mesmo refactor maior, fora do escopo de um PR de tooling. Por isso `services/llm_runner.py` é isento por inteiro via `[[tool.mypy.overrides]]` (`ignore_errors = true`), do mesmo jeito que o `per-file-ignores` do `ruff` isenta sua complexidade — sem isso, qualquer push que tocasse o arquivo bloquearia nos 103 erros pré-existentes, já que o hook é file-scoped (não line-scoped). Baseline restante, grandfathered pelo escopo file-a-file do hook: **10 erros em 4 arquivos** (`services/auth.py`: 4, `routes/pydantic_routes.py`: 4, `services/pydantic_compiler.py`: 1, `main.py`: 1).
+
 ### React Scan — o runtime
 
 `react-scan` 0.5.7 (devDependency pinada), via `npm run scan` contra a aplicação em dev. É o eixo que o react-doctor estático não alcança: detecta re-renders desnecessários ao vivo. Casa com a dívida de performance registrada na constituição ("diagnosticar e corrigir a lentidão atual da plataforma"). É ferramenta de diagnóstico pontual, não gate — roda quando se investiga performance, não em CI.
@@ -78,6 +86,7 @@ npm run scan             # React Scan (precisa de `npm run dev` rodando)
 cd backend
 uv run ruff check .      # lint (ruff do dev-group via uv.lock; o hook pina v0.15.19)
 uv run ruff format .     # format
+uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy acima)
 ```
 
 ## Monitorar
@@ -87,7 +96,6 @@ uv run ruff format .     # format
 ## Avaliadas e diferidas
 
 - **lizard** (complexidade ciclomática portável) — redundante no frontend (react-doctor + fallow já cobrem) e mais raso que o `ruff` no backend (só mede CCN, não faz lint). Coberto pelo `ruff`.
-- **mypy** (type-check Python) — não pedido nesta rodada; complementaria o `ruff` no backend.
 - **Biome** (lint+format all-in-one) — sobreporia o investimento já feito em ESLint + react-doctor.
 - **type-coverage** — o projeto já é `strict`; ganho marginal fora de migração/caça a `any`.
 - **Analisadores de bundle** (vite-bundle-visualizer, source-map-explorer) — só se performance de bundle pesar; a dívida de performance atual não é de bundle.
