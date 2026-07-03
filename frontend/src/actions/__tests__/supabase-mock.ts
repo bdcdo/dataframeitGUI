@@ -11,7 +11,7 @@
 
 export type WriteCall = {
   table: string;
-  op: "update" | "insert" | "delete";
+  op: "update" | "insert" | "delete" | "upsert";
   payload: unknown;
 };
 
@@ -65,6 +65,10 @@ export function makeSupabaseMock(opts?: {
       };
       builder.insert = (payload: unknown) => {
         writeCalls?.push({ table, op: "insert", payload });
+        return builder;
+      };
+      builder.upsert = (payload: unknown) => {
+        writeCalls?.push({ table, op: "upsert", payload });
         return builder;
       };
       builder.delete = () => {
