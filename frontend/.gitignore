@@ -49,3 +49,8 @@ next-env.d.ts
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# scripts de migracao pontual (one-off, ja executados) - nunca versionar.
+# nao afeta scripts/comentarios-relatorio/**, que e reutilizado pela skill (#352)
+/scripts/*.mjs
+/scripts/*.ts

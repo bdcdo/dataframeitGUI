@@ -4,7 +4,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
  * template não existe na instância do Clerk). Distinto de um 401 do backend:
  * aqui o request nem chega a sair, então o caller mostra uma causa acionável em
  * vez de um "API error: 401" genérico. */
-export class MissingAuthTokenError extends Error {
+class MissingAuthTokenError extends Error {
   constructor() {
     super(
       "Sessão indisponível ou template 'supabase' não configurado no Clerk.",

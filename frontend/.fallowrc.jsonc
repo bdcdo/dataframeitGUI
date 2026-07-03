@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  // scripts/comentarios-relatorio/* rodam manualmente via `tsx` (skill local,
+  // ver #352), nunca sao importados por um entry point do Next -
+  // falso-positivo de unused-files.
+  "ignorePatterns": ["scripts/comentarios-relatorio/**"],
+  "ignoreExports": [
+    // Primitivas shadcn/Radix exportam a API completa do primitive kit por
+    // convencao do gerador shadcn; a maior parte nao tem consumidor hoje sem
+    // ser dead code de verdade (mesmo raciocinio do #230 no react-doctor,
+    // ver docs/LINT_CONFIG.md).
+    { "file": "src/components/ui/**", "exports": ["*"] }
+  ]
+}

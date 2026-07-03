@@ -43,7 +43,7 @@ interface StatusResponse {
   processed_empty: number;
 }
 
-export interface LlmRunProgressState {
+interface LlmRunProgressState {
   activeJobId: string | null;
   progress: number;
   total: number;

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isAnswerCorrect } from "@/lib/reviews/queries";
-import { formatAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
+import { formatVerdictAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import type { VerdictItem } from "@/app/(app)/projects/[id]/reviews/my-verdicts/page";
 import type { PydanticField } from "@/lib/types";
@@ -197,7 +197,7 @@ function VerdictCard({
             "text-sm font-medium mt-0.5",
             !item.isCorrect && !isSpecialVerdict && "text-red-600 dark:text-red-400",
           )}>
-            {formatAnswer(item.myAnswer)}
+            {formatVerdictAnswer(item.myAnswer)}
           </p>
         </div>
         <div
@@ -362,7 +362,7 @@ function RespondentRow({
             !isSpecialVerdict && !correct && "text-red-600 dark:text-red-400",
           )}
         >
-          {formatAnswer(respondent.answer) || (
+          {formatVerdictAnswer(respondent.answer) || (
             <span className="italic text-muted-foreground">sem resposta</span>
           )}
         </span>

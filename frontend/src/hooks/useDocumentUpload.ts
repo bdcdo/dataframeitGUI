@@ -27,7 +27,7 @@ export interface ColumnMapping {
   external_id: string;
 }
 
-export interface AnalysisResult {
+interface AnalysisResult {
   docs: UploadDoc[];
   duplicates: DuplicateMatch[];
   duplicatesWithResponses: number;
@@ -42,7 +42,7 @@ interface Csv {
 // The upload flow is one discriminated `phase`: each variant carries exactly the
 // data that state needs (analysis carries its result; uploading carries progress),
 // so a state like "analysis without a result" is unrepresentable.
-export type UploadPhase =
+type UploadPhase =
   | { kind: "idle" }
   | { kind: "mapping" }
   | { kind: "checking" }

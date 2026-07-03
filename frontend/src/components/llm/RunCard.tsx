@@ -17,7 +17,7 @@ import { LlmErrorCard } from "./LlmErrorCard";
 import { RunProgress } from "./RunProgress";
 import type { LlmConfig } from "@/lib/types";
 
-export type FilterMode =
+type FilterMode =
   | "all"
   | "pending"
   | "max_responses"
