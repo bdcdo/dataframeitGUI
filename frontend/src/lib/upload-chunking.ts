@@ -1,6 +1,26 @@
 // Pure chunking/sizing helpers for the CSV upload flow, extracted from
 // useDocumentUpload so they can be unit-tested without the client hook's
 // dependency graph (sonner, Server Actions, md5). No React/client imports here.
+//
+// checkDuplicatesInChunks (que chama a Server Action checkDuplicates) fica de
+// propósito FORA deste módulo — mora em hooks/document-upload-helpers.ts — para
+// preservar essa ausência de dependência de Server Actions/React aqui.
+
+import type { UploadDoc, UploadOptions } from "@/actions/documents";
+
+export interface ColumnMapping {
+  text: string;
+  title: string;
+  external_id: string;
+}
+
+export interface Csv {
+  rows: Record<string, string>[];
+  columns: string[];
+}
+
+export const PAYLOAD_TOO_LARGE_MESSAGE =
+  "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores.";
 
 // Vercel Server Actions reject payloads above ~4.5 MB (FUNCTION_PAYLOAD_TOO_LARGE).
 // Pack docs by aggregate UTF-8 byte size to stay safely under that, with a count cap to avoid latency spikes.
@@ -80,4 +100,79 @@ export async function mapWithConcurrency<T, R>(
   const workers = Math.min(Math.max(1, limit), items.length);
   await Promise.all(Array.from({ length: workers }, worker));
   return results;
+}
+
+export function buildDocs(csv: Csv | null, mapping: ColumnMapping): UploadDoc[] {
+  if (!csv || !mapping.text) return [];
+  return csv.rows
+    .filter((row) => row[mapping.text]?.trim())
+    .map((row) => ({
+      text: row[mapping.text],
+      title: mapping.title ? row[mapping.title] : undefined,
+      external_id: mapping.external_id ? row[mapping.external_id] : undefined,
+    }));
+}
+
+// Localiza os indices de duplicateMap ao chunk, para que uploadDocuments
+// indexe direto em `items` (csvIndex precisa ser relativo ao array enviado).
+export function remapDuplicateMapToChunk(
+  options: UploadOptions | undefined,
+  startIndex: number,
+  endIndex: number
+): UploadOptions | undefined {
+  if (!options) return undefined;
+  return {
+    mode: options.mode,
+    deleteResponses: options.deleteResponses,
+    duplicateMap: options.duplicateMap
+      ?.filter((d) => d.csvIndex >= startIndex && d.csvIndex < endIndex)
+      .map((d) => ({ ...d, csvIndex: d.csvIndex - startIndex })),
+  };
+}
+
+export function buildUploadSuccessMessage(
+  totalInserted: number,
+  totalDocs: number,
+  mode: UploadOptions["mode"] | undefined
+): string {
+  const skipped = totalDocs - totalInserted;
+  // Verbo ciente do modo: em replace_and_add, `count` conta duplicatas
+  // ATUALIZADAS (não inseridas), então "importados" sozinho superconta.
+  const savedVerb =
+    mode === "replace_and_add" ? "importado(s)/atualizado(s)" : "importado(s)";
+  const allVerb = mode === "replace_and_add" ? "importados/atualizados" : "importados";
+  return skipped > 0
+    ? `${totalInserted} documento(s) ${savedVerb}; ${skipped} ignorado(s) (já existiam no projeto ou repetidos no arquivo).`
+    : `${totalDocs} documentos ${allVerb}!`;
+}
+
+export function buildUploadErrorMessage(params: {
+  totalInserted: number;
+  totalDocs: number;
+  mode: UploadOptions["mode"] | undefined;
+  deleteResponses: boolean | undefined;
+  msg: string;
+}): string {
+  const { totalInserted, totalDocs, mode, deleteResponses, msg } = params;
+  const destructiveReplace = mode === "replace_and_add" && !!deleteResponses;
+
+  if (totalInserted > 0) {
+    // Chunks 0..N-1 já foram commitados; só o último chunk revalidaria.
+    const importedVerb = mode === "replace_and_add" ? "importados/atualizados" : "importados";
+    // Num replace destrutivo multi-chunk, este ramo (totalInserted > 0) e o
+    // ramo `else if (destructiveReplace)` não são exclusivos: um chunk
+    // anterior pode ter inserido enquanto o que falhou já apagou
+    // responses/reviews. O aviso de remoção precisa ser anexado aqui também,
+    // senão ficaria inalcançável justamente no cenário com perda de dados.
+    const destructiveWarn = destructiveReplace
+      ? " Respostas/revisões de documentos duplicados podem já ter sido removidas — confira a lista."
+      : "";
+    return isPayloadTooLarge(msg)
+      ? `${totalInserted}/${totalDocs} ${importedVerb}. ${PAYLOAD_TOO_LARGE_MESSAGE}${destructiveWarn}`
+      : `${totalInserted} de ${totalDocs} documentos ${importedVerb} antes de uma falha${msg ? `: ${msg}` : ""}${destructiveWarn}`;
+  }
+  if (destructiveReplace) {
+    return `A importação falhou, mas respostas/revisões dos documentos duplicados podem já ter sido removidas. Confira a lista.${msg ? ` (${msg})` : ""}`;
+  }
+  return isPayloadTooLarge(msg) ? PAYLOAD_TOO_LARGE_MESSAGE : msg || "Erro ao importar documentos";
 }
