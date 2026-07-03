@@ -1,9 +1,11 @@
+import { stableStringify } from "./schema-utils";
 import type {
   FieldCondition,
   SchemaChangeEntry,
   SchemaChangeType,
   SubfieldDef,
 } from "./types";
+import { TYPE_LABELS } from "./field-labels";
 
 export type FieldChangeKind = "added" | "removed" | "renamed" | "modified";
 
@@ -64,13 +66,19 @@ function arraysEqual<T>(a: T[] | null | undefined, b: T[] | null | undefined): b
   return true;
 }
 
+// stableStringify (não JSON.stringify) — o jsonb do Postgres normaliza a
+// ordem das chaves, então before/after vindos do banco podem ter subfields/
+// condition com chaves reordenadas em relação ao que foi autorado no
+// cliente. Mesma correção de schema-utils.ts (classifyChange/diffFields),
+// aplicada aqui para o diff de histórico ficar em sincronia — ver CLAUDE.md
+// regra (d) e PR #352.
 function subfieldsEqual(
   a: SubfieldDef[] | null | undefined,
   b: SubfieldDef[] | null | undefined,
 ): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
+  return stableStringify(a) === stableStringify(b);
 }
 
 function conditionEqual(
@@ -79,7 +87,7 @@ function conditionEqual(
 ): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
+  return stableStringify(a) === stableStringify(b);
 }
 
 export function diffPydanticField(
@@ -284,13 +292,6 @@ export function formatTarget(t: unknown): string {
   if (typeof t !== "string") return "—";
   return TARGET_LABELS[t] ?? t;
 }
-
-const TYPE_LABELS: Record<string, string> = {
-  single: "Escolha única",
-  multi: "Múltipla escolha",
-  text: "Texto",
-  date: "Data",
-};
 
 export function formatType(t: unknown): string {
   if (typeof t !== "string") return "—";

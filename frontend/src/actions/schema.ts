@@ -6,12 +6,10 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { fetchFastAPIServer } from "@/lib/api-server";
 import type { PydanticField } from "@/lib/types";
 import {
-  generatePydanticCode,
   computeFieldHash,
-  classifyChange,
   bumpVersion,
-  diffFields,
   fieldDiffIsStructural,
+  planSchemaPersistence,
   type ChangeType,
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
@@ -127,10 +125,10 @@ export async function savePrompt(
 
 // ---------- Save from GUI ----------
 //
-// Orquestrador fino: lê o estado antigo, delega a classificação/diff às
-// primitivas puras de lib/schema-utils.ts e faz os writes. As primitivas
-// (classifyChange, bumpVersion, diffFields, computeFieldHash) são compartilhadas
-// com scripts fora do Next runtime para eliminar drift — ver #63.
+// Orquestrador fino: lê o estado antigo, delega o cálculo a
+// planSchemaPersistence (lib/schema-utils.ts, pura) e faz os writes. A mesma
+// função é usada por apply-decisions.ts (fora do Next runtime) para eliminar
+// drift — ver #63/PR #352.
 
 export async function saveSchemaFromGUI(
   projectId: string,
@@ -179,18 +177,15 @@ export async function saveSchemaFromGUI(
     patch: project?.schema_version_patch ?? 0,
   };
 
-  const changeType = classifyChange(oldFields, fields);
-  const bumped = changeType ? bumpVersion(current, changeType) : current;
+  // Classificação, versão, log de auditoria, código Pydantic e hash: cálculo
+  // puro compartilhado com apply-decisions.ts via planSchemaPersistence
+  // (schema-utils.ts) — ver #63/PR #352 (evita drift entre os dois callers).
+  const { changeType, bumped, logEntries, code, fieldsWithHash } = planSchemaPersistence(
+    oldFields,
+    fields,
+    current,
+  );
 
-  // Detect per-field changes and build log entries
-  const logEntries = diffFields(oldFields, fields);
-
-  // Save schema com versão bumpada (ou mantida se não houve mudança)
-  const code = generatePydanticCode(fields);
-  const fieldsWithHash = fields.map((f) => ({
-    ...f,
-    hash: computeFieldHash(f.name, f.type, f.options, f.description),
-  }));
   const saved = await saveSchema(projectId, code, fieldsWithHash, changeType ? bumped : undefined);
   if (saved.error) return saved;
 

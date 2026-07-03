@@ -4,17 +4,6 @@ import { useMemo, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import {
   saveSchemaFromGUI,
   publishMajorVersion,
@@ -23,10 +12,13 @@ import {
 } from "@/actions/schema";
 import { validateGUIFields, generatePydanticCode } from "@/lib/schema-utils";
 import { toast } from "sonner";
-import { LayoutGrid, Code, Rocket, Info, X, History } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Info } from "lucide-react";
 import { SchemaBuilderGUI } from "./SchemaBuilderGUI";
 import { ValidationErrorPanel } from "./ValidationErrorPanel";
+import { SchemaEditorHeader } from "./SchemaEditorHeader";
+import { SchemaEditorBanners } from "./SchemaEditorBanners";
+import { SchemaEditorDialogs } from "./SchemaEditorDialogs";
+import { useSchemaEditorDialogs } from "./useSchemaEditorDialogs";
 import type { PydanticField } from "@/lib/types";
 
 const MonacoEditor = dynamic(
@@ -34,43 +26,11 @@ const MonacoEditor = dynamic(
   { ssr: false }
 );
 
-const VERSIONING_HELP_KEY = "schema-versioning-help-dismissed";
-
 interface SchemaEditorProps {
   projectId: string;
   initialCode: string | null;
   initialFields: PydanticField[] | null;
   currentVersion: string;
-}
-
-// Agrupa as flags de UI (dialogs de MAJOR/backfill e o banner de ajuda de
-// versionamento) num hook co-localizado. Pura relocação de estado para manter
-// o componente abaixo do limiar de useState do react-doctor — sem mudança de
-// comportamento. O lazy initializer de `helpDismissed` lê o localStorage uma
-// única vez na montagem e é preservado exatamente.
-function useSchemaEditorDialogs() {
-  const [majorDialogOpen, setMajorDialogOpen] = useState(false);
-  const [backfillDialogOpen, setBackfillDialogOpen] = useState(false);
-  const [helpDismissed, setHelpDismissed] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return window.localStorage.getItem(VERSIONING_HELP_KEY) === "1";
-  });
-
-  const dismissHelp = () => {
-    setHelpDismissed(true);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(VERSIONING_HELP_KEY, "1");
-    }
-  };
-
-  return {
-    majorDialogOpen,
-    setMajorDialogOpen,
-    backfillDialogOpen,
-    setBackfillDialogOpen,
-    helpDismissed,
-    dismissHelp,
-  };
 }
 
 export function SchemaEditor({
@@ -210,132 +170,27 @@ export function SchemaEditor({
     });
   };
 
-  // --- Info para badges ---
-  const fieldCount = fields.length;
-  const llmOnlyCount = fields.filter((f) => f.target === "llm_only").length;
-
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
-      {/* Header: toggle de modo */}
-      <div className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "h-7 text-xs gap-1.5",
-                mode === "gui" && "bg-background shadow-sm"
-              )}
-              onClick={() => (mode === "code" ? switchToGUI() : undefined)}
-            >
-              <LayoutGrid className="size-3.5" />
-              Visual
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "h-7 text-xs gap-1.5",
-                mode === "code" && "bg-background shadow-sm"
-              )}
-              onClick={() => (mode === "gui" ? switchToCode() : undefined)}
-            >
-              <Code className="size-3.5" />
-              Código
-            </Button>
-          </div>
-          <Badge
-            variant="outline"
-            className="h-6 px-2 font-mono text-xs"
-            title="Versão atual do schema"
-          >
-            v{currentVersion}
-          </Badge>
-        </div>
+      <SchemaEditorHeader
+        mode={mode}
+        onSwitchToGUI={switchToGUI}
+        onSwitchToCode={switchToCode}
+        currentVersion={currentVersion}
+        fieldCount={fields.length}
+        llmOnlyCount={fields.filter((f) => f.target === "llm_only").length}
+        isPending={isPending}
+        onOpenBackfill={() => setBackfillDialogOpen(true)}
+        onOpenMajor={() => setMajorDialogOpen(true)}
+      />
 
-        <div className="flex items-center gap-2">
-          {fieldCount > 0 && (
-            <Badge className="bg-green-500/10 text-green-700 text-xs">
-              {fieldCount} {fieldCount === 1 ? "campo" : "campos"}
-            </Badge>
-          )}
-          {llmOnlyCount > 0 && (
-            <Badge className="bg-blue-500/10 text-blue-700 text-xs">
-              {llmOnlyCount} LLM-only
-            </Badge>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1.5 text-xs text-muted-foreground"
-            onClick={() => setBackfillDialogOpen(true)}
-            disabled={isPending}
-            title="Reconstruir versão a partir do histórico de mudanças"
-          >
-            <History className="size-3.5" />
-            Reconstruir histórico
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            onClick={() => setMajorDialogOpen(true)}
-            disabled={isPending}
-            title="Consolidar baseline e bumpar MAJOR"
-          >
-            <Rocket className="size-3.5" />
-            Publicar MAJOR
-          </Button>
-        </div>
-      </div>
-
-      {!helpDismissed && (
-        <div className="flex items-start gap-2 border-b bg-blue-500/5 px-4 py-2 text-xs text-muted-foreground">
-          <Info className="mt-0.5 size-3.5 shrink-0 text-blue-600" />
-          <div className="flex-1">
-            <strong className="text-foreground">Sobre versões do schema.</strong>{" "}
-            Toda edição bumpa a versão automaticamente (MINOR para mudanças
-            estruturais como adicionar/remover campo ou opção, PATCH para texto).
-            Nenhuma edição apaga respostas: elas ficam rotuladas com a versão em
-            que foram dadas. Quando você quiser consolidar o codebook como{" "}
-            <strong className="text-foreground">baseline oficial</strong>, clique em{" "}
-            <strong className="text-foreground">Publicar MAJOR</strong>. A partir daí,
-            o filtro padrão da aba Comparar passa a ignorar respostas de versões
-            anteriores.
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-5 shrink-0"
-            onClick={dismissHelp}
-            title="Dispensar"
-          >
-            <X className="size-3" />
-          </Button>
-        </div>
-      )}
-
-      {canRecover && (
-        <div className="flex items-start gap-2 border-b bg-amber-500/10 px-4 py-2 text-xs">
-          <Info className="mt-0.5 size-3.5 shrink-0 text-amber-600" />
-          <div className="flex-1 text-muted-foreground">
-            <strong className="text-foreground">Editor visual vazio.</strong>{" "}
-            Este projeto tem código Pydantic armazenado, mas nenhum campo
-            carregado no editor. Salvar agora apagaria o schema — recupere os
-            campos a partir do código.
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 shrink-0 text-xs"
-            onClick={handleRecover}
-            disabled={isPending}
-          >
-            Recuperar do código
-          </Button>
-        </div>
-      )}
+      <SchemaEditorBanners
+        helpDismissed={helpDismissed}
+        onDismissHelp={dismissHelp}
+        canRecover={canRecover}
+        onRecover={handleRecover}
+        isPending={isPending}
+      />
 
       {/* Conteúdo */}
       <div className="flex-1 overflow-hidden">
@@ -394,48 +249,16 @@ export function SchemaEditor({
         )}
       </div>
 
-      <AlertDialog open={backfillDialogOpen} onOpenChange={setBackfillDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reconstruir versão pelo histórico?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Percorre o histórico de mudanças em ordem cronológica, classifica cada
-              entrada (MINOR em mudanças estruturais; PATCH em texto; MAJOR preservado)
-              e reconstrói o schema em cada versão. Para atribuir versão a cada resposta,
-              tenta match por <strong>answer_field_hashes</strong> (hashes gravados a cada
-              save); se não bater, cai em <strong>created_at</strong>. Respostas salvas
-              diretamente na plataforma (live_save) preservam a versão original.
-              Idempotente: pode rodar de novo sem problemas.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleBackfill} disabled={isPending}>
-              Reconstruir
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={majorDialogOpen} onOpenChange={setMajorDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Publicar nova versão MAJOR?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Isso bumpa a versão do projeto de <strong>{currentVersion}</strong> para uma nova MAJOR
-              (próximo inteiro). Use quando o codebook estiver estável e você quiser declarar uma
-              baseline oficial. A partir daí, o filtro padrão da aba Comparar ignorará respostas
-              de versões anteriores. Respostas antigas continuam salvas.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handlePublishMajor} disabled={isPending}>
-              Publicar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <SchemaEditorDialogs
+        backfillOpen={backfillDialogOpen}
+        onBackfillOpenChange={setBackfillDialogOpen}
+        onConfirmBackfill={handleBackfill}
+        majorOpen={majorDialogOpen}
+        onMajorOpenChange={setMajorDialogOpen}
+        onConfirmPublishMajor={handlePublishMajor}
+        isPending={isPending}
+        currentVersion={currentVersion}
+      />
     </div>
   );
 }

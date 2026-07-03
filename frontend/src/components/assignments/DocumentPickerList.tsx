@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import type { LotteryDocStats } from "@/lib/lottery-utils";
+import { toggleInSet } from "@/lib/utils";
 
 interface DocumentPickerListProps {
   docs: LotteryDocStats[];
@@ -35,10 +36,7 @@ export function DocumentPickerList({
   }, [docs, query]);
 
   const toggle = (docId: string, checked: boolean) => {
-    const next = new Set(selected);
-    if (checked) next.add(docId);
-    else next.delete(docId);
-    onChange(next);
+    onChange(toggleInSet(selected, docId, checked));
   };
 
   return (

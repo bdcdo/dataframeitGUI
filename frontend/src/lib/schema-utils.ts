@@ -536,6 +536,28 @@ function pythonListRepr(arr: string[]): string {
   return "[" + arr.map((s) => `'${s}'`).join(", ") + "]";
 }
 
+// Stringify canônico (chaves ordenadas, `undefined` omitido) para comparar
+// valores que fazem round-trip pelo jsonb do Postgres, que normaliza a ordem
+// das chaves — `JSON.stringify` cru sobre `condition`/`subfields` lidos do
+// banco vs. autorados no cliente gera falso diff (bump minor com
+// before == after no schema_change_log).
+export function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return (
+      "{" +
+      entries.map(([k, v]) => JSON.stringify(k) + ":" + stableStringify(v)).join(",") +
+      "}"
+    );
+  }
+  return JSON.stringify(value);
+}
+
 // Hash estável por campo — espelha _field_hash do backend. Exclui `target`,
 // `condition`, `help_text` (carregados estruturalmente) de propósito: mudá-los
 // não invalida respostas já coletadas.
@@ -584,10 +606,10 @@ export function classifyChange(
     if ((o.required ?? true) !== (n.required ?? true)) hasStructural = true;
     if ((o.subfield_rule ?? null) !== (n.subfield_rule ?? null)) hasStructural = true;
     if ((o.allow_other ?? false) !== (n.allow_other ?? false)) hasStructural = true;
-    if (JSON.stringify(o.subfields ?? null) !== JSON.stringify(n.subfields ?? null)) {
+    if (stableStringify(o.subfields ?? null) !== stableStringify(n.subfields ?? null)) {
       hasStructural = true;
     }
-    if (JSON.stringify(o.condition ?? null) !== JSON.stringify(n.condition ?? null)) {
+    if (stableStringify(o.condition ?? null) !== stableStringify(n.condition ?? null)) {
       hasStructural = true;
     }
 
@@ -678,13 +700,13 @@ export function fieldDiffIsStructural(
   }
 
   if (before.subfields !== undefined || after.subfields !== undefined) {
-    if (JSON.stringify(before.subfields ?? null) !== JSON.stringify(after.subfields ?? null)) {
+    if (stableStringify(before.subfields ?? null) !== stableStringify(after.subfields ?? null)) {
       return true;
     }
   }
 
   if (before.condition !== undefined || after.condition !== undefined) {
-    if (JSON.stringify(before.condition ?? null) !== JSON.stringify(after.condition ?? null)) {
+    if (stableStringify(before.condition ?? null) !== stableStringify(after.condition ?? null)) {
       return true;
     }
   }
@@ -791,15 +813,15 @@ export function diffFields(
       before.allow_other = old.allow_other ?? false;
       after.allow_other = f.allow_other ?? false;
     }
-    const oldSubs = JSON.stringify(old.subfields ?? null);
-    const newSubs = JSON.stringify(f.subfields ?? null);
+    const oldSubs = stableStringify(old.subfields ?? null);
+    const newSubs = stableStringify(f.subfields ?? null);
     if (oldSubs !== newSubs) {
       diffs.push("subcampos");
       before.subfields = old.subfields ?? null;
       after.subfields = f.subfields ?? null;
     }
-    const oldCond = JSON.stringify(old.condition ?? null);
-    const newCond = JSON.stringify(f.condition ?? null);
+    const oldCond = stableStringify(old.condition ?? null);
+    const newCond = stableStringify(f.condition ?? null);
     if (oldCond !== newCond) {
       diffs.push("condição");
       before.condition = old.condition ?? null;
@@ -822,4 +844,38 @@ export function diffFields(
   }
 
   return logEntries;
+}
+
+export interface SchemaPersistencePlan {
+  changeType: ChangeType | null;
+  bumped: { major: number; minor: number; patch: number };
+  logEntries: SchemaLogEntry[];
+  code: string;
+  hash: string;
+  fieldsWithHash: PydanticField[];
+}
+
+// Calcula tudo que uma troca de schema precisa persistir — classificação,
+// versão, log de auditoria, código Pydantic e hash — sem escrever nada.
+// Extraído para eliminar a duplicação entre `saveSchemaFromGUI`
+// (src/actions/schema.ts, autenticado via Clerk/RLS) e o script
+// `apply-decisions.ts` (fora do runtime Next, service-role key): os dois
+// clientes Supabase e as regras de revalidação de cache continuam
+// específicos de cada chamador, mas o que calcular é a mesma coisa e não
+// deve ser reimplementado em paralelo (risco de drift — ver #63/PR #352).
+export function planSchemaPersistence(
+  oldFields: PydanticField[],
+  newFields: PydanticField[],
+  current: { major: number; minor: number; patch: number },
+): SchemaPersistencePlan {
+  const changeType = classifyChange(oldFields, newFields);
+  const bumped = changeType ? bumpVersion(current, changeType) : current;
+  const logEntries = diffFields(oldFields, newFields);
+  const code = generatePydanticCode(newFields);
+  const hash = sha256Hex(code).slice(0, 16);
+  const fieldsWithHash = newFields.map((f) => ({
+    ...f,
+    hash: computeFieldHash(f.name, f.type, f.options, f.description),
+  }));
+  return { changeType, bumped, logEntries, code, hash, fieldsWithHash };
 }

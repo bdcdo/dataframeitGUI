@@ -107,13 +107,34 @@ describe("diffPydanticField", () => {
     expect(diffs).toEqual([]);
   });
 
-  it("captura mudança de subfields via JSON.stringify", () => {
+  it("captura mudança de subfields", () => {
     const diffs = diffPydanticField(
       { subfields: [{ key: "a", label: "A", required: true }] },
       { subfields: [{ key: "a", label: "A", required: false }] },
     );
     expect(diffs).toHaveLength(1);
     expect(diffs[0].property).toBe("subfields");
+  });
+
+  // O jsonb do Postgres normaliza a ordem das chaves; before/after lidos do
+  // banco podem vir com subfields/condition reordenados em relação ao que
+  // foi autorado no cliente. subfieldsEqual/conditionEqual usam
+  // stableStringify (não JSON.stringify) por isso — mesma correção de
+  // schema-utils.ts (classifyChange/diffFields), ver PR #352.
+  it("não reporta mudança de subfields quando só a ordem das chaves difere (round-trip jsonb)", () => {
+    const diffs = diffPydanticField(
+      { subfields: [JSON.parse('{"required":true,"key":"a","label":"A"}')] },
+      { subfields: [{ key: "a", label: "A", required: true }] },
+    );
+    expect(diffs).toHaveLength(0);
+  });
+
+  it("não reporta mudança de condition quando só a ordem das chaves difere (round-trip jsonb)", () => {
+    const diffs = diffPydanticField(
+      { condition: JSON.parse('{"equals":"a","field":"x"}') },
+      { condition: { field: "x", equals: "a" } },
+    );
+    expect(diffs).toHaveLength(0);
   });
 
   it("captura propriedades novas no SubfieldDef futuro (futureproof)", () => {
@@ -289,7 +310,7 @@ describe("formatVersion / formatTarget / formatType / propertyLabel", () => {
   it("formatType cobre labels conhecidos", () => {
     expect(formatType("single")).toBe("Escolha única");
     expect(formatType("multi")).toBe("Múltipla escolha");
-    expect(formatType("text")).toBe("Texto");
+    expect(formatType("text")).toBe("Texto livre");
     expect(formatType("date")).toBe("Data");
   });
 
