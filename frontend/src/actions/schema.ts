@@ -223,7 +223,7 @@ export async function saveSchemaFromGUI(
 // - Rastreia o método em responses.version_inferred_from.
 // Idempotente.
 
-type FieldSnapshot = Partial<PydanticField> & { name: string };
+export type FieldSnapshot = Partial<PydanticField> & { name: string };
 
 function cloneFieldSnapshot(f: FieldSnapshot): FieldSnapshot {
   return {
@@ -281,67 +281,79 @@ export async function backfillSchemaVersionHistory(
   }
 }
 
-async function runBackfill(projectId: string): Promise<BackfillStats> {
-  const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
 
-  const supabase = await createSupabaseServer();
+export type Version = { major: number; minor: number; patch: number };
 
-  const [{ data: project }, { data: log, error: logErr }] = await Promise.all([
-    supabase
-      .from("projects")
-      .select(
-        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
-      )
-      .eq("id", projectId)
-      .single(),
-    supabase
-      .from("schema_change_log")
-      .select("id, field_name, before_value, after_value, created_at, change_type")
-      .eq("project_id", projectId)
-      .order("created_at", { ascending: true }),
-  ]);
+export type EnrichedEntry = {
+  id: string;
+  field_name: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  createdAt: number;
+  changeType: ChangeType;
+  version: Version;
+};
 
-  if (logErr) throw new Error(logErr.message);
-  if (!project) throw new Error("Projeto não encontrado ou sem permissão");
+export type LogEntryRow = {
+  id: string;
+  field_name: string;
+  before_value: Record<string, unknown> | null;
+  after_value: Record<string, unknown> | null;
+  created_at: string;
+  change_type: string | null;
+};
 
-  // 1) Classify entries and compute cumulative version per entry
-  let current = { major: 0, minor: 1, patch: 0 };
-  type EnrichedEntry = {
-    id: string;
-    field_name: string;
-    before: Record<string, unknown>;
-    after: Record<string, unknown>;
-    createdAt: number;
-    changeType: ChangeType;
-    version: { major: number; minor: number; patch: number };
-  };
+export type ResponseRow = {
+  id: string;
+  created_at: string;
+  answer_field_hashes: Record<string, string> | null;
+  version_inferred_from: string | null;
+};
+
+export type UpdateBucket = { version: Version; method: string; ids: string[] };
+
+// Puro, sem I/O — exportada para teste unitário direto (schema.test.ts).
+// Classifica cada entry (major/minor/patch) e acumula a versão corrente:
+// `current` acumula sequencialmente porque a versão de uma entry depende de
+// todas as anteriores (semver é cumulativo).
+export function classifyLogEntries(log: LogEntryRow[]): {
+  enriched: EnrichedEntry[];
+  finalVersion: Version;
+} {
+  let current: Version = { major: 0, minor: 1, patch: 0 };
   const enriched: EnrichedEntry[] = [];
 
-  for (const entry of log ?? []) {
-    const before = (entry.before_value ?? {}) as Record<string, unknown>;
-    const after = (entry.after_value ?? {}) as Record<string, unknown>;
+  for (const entry of log) {
+    const before = entry.before_value ?? {};
+    const after = entry.after_value ?? {};
 
-    let type: ChangeType;
-    if (entry.change_type === "major") {
-      type = "major";
-    } else {
-      type = fieldDiffIsStructural(before, after) ? "minor" : "patch";
-    }
+    const type: ChangeType =
+      entry.change_type === "major"
+        ? "major"
+        : fieldDiffIsStructural(before, after)
+          ? "minor"
+          : "patch";
 
     current = bumpVersion(current, type);
     enriched.push({
-      id: entry.id as string,
-      field_name: entry.field_name as string,
+      id: entry.id,
+      field_name: entry.field_name,
       before,
       after,
-      createdAt: new Date(entry.created_at as string).getTime(),
+      createdAt: new Date(entry.created_at).getTime(),
       changeType: type,
       version: { ...current },
     });
   }
 
-  // 2) Update each log entry with classification + version
+  return { enriched, finalVersion: current };
+}
+
+async function persistLogClassification(
+  supabase: SupabaseServerClient,
+  enriched: EnrichedEntry[],
+): Promise<void> {
   const logUpdateResults = await Promise.all(
     enriched.map((e) =>
       supabase
@@ -366,33 +378,27 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
         (firstErr ? ` (${firstErr.message})` : " (sem permissão de UPDATE em schema_change_log)"),
     );
   }
+}
 
-  // 3) Set project current version
-  await updateOrThrow(
-    supabase,
-    "projects",
-    {
-      schema_version_major: current.major,
-      schema_version_minor: current.minor,
-      schema_version_patch: current.patch,
-    },
-    { id: projectId },
-    { message: "Backfill: sem permissão para atualizar a versão do projeto." },
-  );
-
-  // 4) Reconstruct snapshots at each version, walking log in reverse.
-  // Current project fields = snapshot of the "current" version after all entries applied.
+// Puro, sem I/O — exportada para teste unitário direto (schema.test.ts).
+// Reconstrói o snapshot de campos em cada versão, andando o log de trás para
+// frente (revertendo diffs a partir do estado atual).
+export function reconstructSnapshotsByVersion(
+  pydanticFields: PydanticField[],
+  enriched: EnrichedEntry[],
+  finalVersion: Version,
+): Map<string, Map<string, FieldSnapshot>> {
   const currentSnap = new Map<string, FieldSnapshot>();
-  for (const f of (project?.pydantic_fields as PydanticField[]) ?? []) {
+  for (const f of pydanticFields) {
     currentSnap.set(f.name, cloneFieldSnapshot({ ...f }));
   }
 
   // Map: versionKey -> snapshot map (fieldName -> snapshot)
   const snapByVersion = new Map<string, Map<string, FieldSnapshot>>();
-  snapByVersion.set(versionKey(current), cloneSnapshotMap(currentSnap));
+  snapByVersion.set(versionKey(finalVersion), cloneSnapshotMap(currentSnap));
 
   // Group entries by version so we revert all at once per version-change
-  const versionsDesc: Array<{ key: string; version: typeof current }> = [];
+  const versionsDesc: Array<{ key: string; version: Version }> = [];
   const entriesByVersion = new Map<string, EnrichedEntry[]>();
   for (const e of enriched) {
     const k = versionKey(e.version);
@@ -411,7 +417,7 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
 
   const workingSnap = cloneSnapshotMap(currentSnap);
   for (let idx = 0; idx < versionsDesc.length; idx++) {
-    const { key, version } = versionsDesc[idx];
+    const { key } = versionsDesc[idx];
     // Snapshot at version `version` (before reverting) — if not already stored
     if (!snapByVersion.has(key)) {
       snapByVersion.set(key, cloneSnapshotMap(workingSnap));
@@ -448,20 +454,14 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
     }
   }
 
-  // Compute hashes per version
-  const hashesByVersion = new Map<string, Record<string, string>>();
-  for (const [k, snap] of snapByVersion) {
-    hashesByVersion.set(k, computeHashesFromSnapshot(snap));
-  }
+  return snapByVersion;
+}
 
-  // 5) Assign versions to responses (paginate to avoid implicit 1000-row cap)
+async function fetchAllResponses(
+  supabase: SupabaseServerClient,
+  projectId: string,
+): Promise<ResponseRow[]> {
   const RESPONSES_PAGE = 500;
-  type ResponseRow = {
-    id: string;
-    created_at: string;
-    answer_field_hashes: Record<string, string> | null;
-    version_inferred_from: string | null;
-  };
   const responses: ResponseRow[] = [];
   for (let from = 0; ; from += RESPONSES_PAGE) {
     // Paginação sequencial: a próxima página depende de a anterior ter retornado
@@ -477,10 +477,19 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
     responses.push(...(page as unknown as ResponseRow[]));
     if (page.length < RESPONSES_PAGE) break;
   }
+  return responses;
+}
 
-  const allVersionKeys = [...hashesByVersion.keys()];
-  const versionByKey = new Map<string, { major: number; minor: number; patch: number }>();
-  for (const k of allVersionKeys) {
+// Puro, sem I/O — exportada para teste unitário direto (schema.test.ts).
+// Escolhe a versão de cada response (por hash de campos, com fallback em
+// created_at) e agrupa em buckets por (versão, método).
+export function matchResponsesToVersions(
+  responses: ResponseRow[],
+  hashesByVersion: Map<string, Record<string, string>>,
+  enriched: EnrichedEntry[],
+): { updates: Map<string, UpdateBucket>; byMethod: BackfillStats["byMethod"] } {
+  const versionByKey = new Map<string, Version>();
+  for (const k of hashesByVersion.keys()) {
     const [mj, mn, pt] = k.split(".").map((n) => Number.parseInt(n, 10));
     versionByKey.set(k, { major: mj, minor: mn, patch: pt });
   }
@@ -493,11 +502,7 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
   versionTs.set(versionKey({ major: 0, minor: 1, patch: 0 }), 0);
 
   // Bucket updates by (version, method)
-  const updates = new Map<
-    string, // versionKey + "|" + method
-    { version: { major: number; minor: number; patch: number }; method: string; ids: string[] }
-  >();
-
+  const updates = new Map<string, UpdateBucket>();
   let countLiveSave = 0;
 
   for (const r of responses) {
@@ -507,8 +512,8 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
       continue;
     }
 
-    const rHashes = (r.answer_field_hashes as Record<string, string> | null) ?? null;
-    const ts = new Date(r.created_at as string).getTime();
+    const rHashes = r.answer_field_hashes ?? null;
+    const ts = new Date(r.created_at).getTime();
 
     let chosenKey: string | null = null;
     let chosenMethod: "hashes" | "created_at" | "fallback_created_at" = "created_at";
@@ -526,10 +531,7 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
         if (score === 0) continue;
         const kTs = versionTs.get(k) ?? 0;
         const tieMetric = Math.abs(kTs - ts);
-        if (
-          score > bestScore ||
-          (score === bestScore && tieMetric < bestTieTs)
-        ) {
+        if (score > bestScore || (score === bestScore && tieMetric < bestTieTs)) {
           bestScore = score;
           bestKey = k;
           bestTieTs = tieMetric;
@@ -546,12 +548,10 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
       const candidates = [...versionTs.entries()]
         .filter(([, t]) => t <= ts)
         .sort((a, b) => b[1] - a[1]);
-      chosenKey = candidates.length > 0
-        ? candidates[0][0]
-        : versionKey({ major: 0, minor: 1, patch: 0 });
-      chosenMethod = rHashes && Object.keys(rHashes).length > 0
-        ? "fallback_created_at"
-        : "created_at";
+      chosenKey =
+        candidates.length > 0 ? candidates[0][0] : versionKey({ major: 0, minor: 1, patch: 0 });
+      chosenMethod =
+        rHashes && Object.keys(rHashes).length > 0 ? "fallback_created_at" : "created_at";
     }
 
     const v = versionByKey.get(chosenKey) ?? { major: 0, minor: 1, patch: 0 };
@@ -559,31 +559,46 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
     if (!updates.has(bucketKey)) {
       updates.set(bucketKey, { version: v, method: chosenMethod, ids: [] });
     }
-    updates.get(bucketKey)!.ids.push(r.id as string);
+    updates.get(bucketKey)!.ids.push(r.id);
   }
 
   let countHashes = 0;
   let countCreatedAt = 0;
   let countFallback = 0;
+  for (const bucket of updates.values()) {
+    if (bucket.method === "hashes") countHashes += bucket.ids.length;
+    else if (bucket.method === "created_at") countCreatedAt += bucket.ids.length;
+    else if (bucket.method === "fallback_created_at") countFallback += bucket.ids.length;
+  }
 
+  return {
+    updates,
+    byMethod: {
+      hashes: countHashes,
+      created_at: countCreatedAt,
+      fallback_created_at: countFallback,
+      live_save: countLiveSave,
+    },
+  };
+}
+
+async function persistResponseVersionUpdates(
+  supabase: SupabaseServerClient,
+  updates: Map<string, UpdateBucket>,
+): Promise<void> {
   const updatePromises = [];
   for (const bucket of updates.values()) {
-    const { ids, method } = bucket;
-    const idsLength = ids.length;
-    if (method === "hashes") countHashes += idsLength;
-    else if (method === "created_at") countCreatedAt += idsLength;
-    else if (method === "fallback_created_at") countFallback += idsLength;
-
-    for (let i = 0; i < idsLength; i += 100) {
+    const { ids, method, version } = bucket;
+    for (let i = 0; i < ids.length; i += 100) {
       const chunk = ids.slice(i, i + 100);
       updatePromises.push(
         supabase
           .from("responses")
           .update({
-            schema_version_major: bucket.version.major,
-            schema_version_minor: bucket.version.minor,
-            schema_version_patch: bucket.version.patch,
-            version_inferred_from: bucket.method,
+            schema_version_major: version.major,
+            schema_version_minor: version.minor,
+            schema_version_patch: version.patch,
+            version_inferred_from: method,
           })
           .in("id", chunk)
           .select("id")
@@ -603,21 +618,74 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
       );
     }
   }
+}
+
+async function runBackfill(projectId: string): Promise<BackfillStats> {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
+  const supabase = await createSupabaseServer();
+
+  const [{ data: project }, { data: log, error: logErr }] = await Promise.all([
+    supabase
+      .from("projects")
+      .select(
+        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      )
+      .eq("id", projectId)
+      .single(),
+    supabase
+      .from("schema_change_log")
+      .select("id, field_name, before_value, after_value, created_at, change_type")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: true }),
+  ]);
+
+  if (logErr) throw new Error(logErr.message);
+  if (!project) throw new Error("Projeto não encontrado ou sem permissão");
+
+  const { enriched, finalVersion } = classifyLogEntries((log ?? []) as LogEntryRow[]);
+
+  await persistLogClassification(supabase, enriched);
+
+  await updateOrThrow(
+    supabase,
+    "projects",
+    {
+      schema_version_major: finalVersion.major,
+      schema_version_minor: finalVersion.minor,
+      schema_version_patch: finalVersion.patch,
+    },
+    { id: projectId },
+    { message: "Backfill: sem permissão para atualizar a versão do projeto." },
+  );
+
+  const snapByVersion = reconstructSnapshotsByVersion(
+    ((project?.pydantic_fields as PydanticField[]) ?? []),
+    enriched,
+    finalVersion,
+  );
+
+  const hashesByVersion = new Map<string, Record<string, string>>();
+  for (const [k, snap] of snapByVersion) {
+    hashesByVersion.set(k, computeHashesFromSnapshot(snap));
+  }
+
+  const responses = await fetchAllResponses(supabase, projectId);
+
+  const { updates, byMethod } = matchResponsesToVersions(responses, hashesByVersion, enriched);
+
+  await persistResponseVersionUpdates(supabase, updates);
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/config/schema`);
   revalidatePath(`/projects/${projectId}/reviews`);
 
   return {
-    finalVersion: current,
+    finalVersion,
     logEntriesUpdated: enriched.length,
     responsesProcessed: responses.length,
-    byMethod: {
-      hashes: countHashes,
-      created_at: countCreatedAt,
-      fallback_created_at: countFallback,
-      live_save: countLiveSave,
-    },
+    byMethod,
   };
 }
 
