@@ -4,13 +4,7 @@ import { renderHook, cleanup } from "@testing-library/react";
 
 import { useStableDocOrder } from "@/components/compare/useStableDocOrder";
 import type { CompareDocument } from "@/components/compare/compare-types";
-
-const doc = (id: string, title?: string): CompareDocument => ({
-  id,
-  title: title ?? `Doc ${id}`,
-  external_id: null,
-  text: "",
-});
+import { doc } from "./compare-test-helpers";
 
 const ids = (docs: CompareDocument[]) => docs.map((d) => d.id);
 

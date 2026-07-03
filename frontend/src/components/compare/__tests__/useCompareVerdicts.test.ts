@@ -15,7 +15,9 @@ import {
   unmarkEquivalencePair,
 } from "@/actions/equivalences";
 import { useCompareVerdicts } from "../useCompareVerdicts";
-import type { CompareDocument, FieldResponse } from "../compare-types";
+import type { FieldResponse } from "../compare-types";
+import type { VerdictInfo } from "@/lib/compare-reviews";
+import { doc } from "./compare-test-helpers";
 
 const { toastError, toastSuccess } = vi.hoisted(() => ({
   toastError: vi.fn(),
@@ -39,17 +41,35 @@ const mockMarkReviewed = vi.mocked(markCompareDocReviewed);
 const mockConfirmEquivalent = vi.mocked(confirmEquivalentVerdict);
 const mockUnmarkPair = vi.mocked(unmarkEquivalencePair);
 
-const DOC: CompareDocument = {
-  id: "doc1",
-  title: "Doc 1",
-  external_id: null,
-  text: "texto",
-};
+const DOC = doc("doc1", "Doc 1", "texto");
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 afterEach(cleanup);
+
+/** Nenhuma escrita otimista: a Server Action retornou `{ error }`. */
+function expectNoOptimisticWrite(
+  recordReview: ReturnType<typeof vi.fn>,
+  goNextField: ReturnType<typeof vi.fn>,
+  message: string,
+) {
+  expect(recordReview).not.toHaveBeenCalled();
+  expect(goNextField).not.toHaveBeenCalled();
+  expect(toastError).toHaveBeenCalledWith(message);
+}
+
+/** Escrita otimista após sucesso da Server Action + avanço de campo. */
+function expectOptimisticWrite(
+  recordReview: ReturnType<typeof vi.fn>,
+  goNextField: ReturnType<typeof vi.fn>,
+  docId: string,
+  fieldName: string,
+  info: VerdictInfo,
+) {
+  expect(recordReview).toHaveBeenCalledWith(docId, fieldName, info);
+  expect(goNextField).toHaveBeenCalledTimes(1);
+}
 
 function setup() {
   const recordReview = vi.fn();
@@ -80,9 +100,7 @@ describe("handleVerdict", () => {
       await result.current.handleVerdict("concordo", "r1");
     });
 
-    expect(recordReview).not.toHaveBeenCalled();
-    expect(goNextField).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith("falhou");
+    expectNoOptimisticWrite(recordReview, goNextField, "falhou");
   });
 
   it("sucesso → grava o veredito otimista e avança de campo", async () => {
@@ -93,12 +111,11 @@ describe("handleVerdict", () => {
       await result.current.handleVerdict("concordo", "r1");
     });
 
-    expect(recordReview).toHaveBeenCalledWith("doc1", "q1", {
+    expectOptimisticWrite(recordReview, goNextField, "doc1", "q1", {
       verdict: "concordo",
       chosenResponseId: "r1",
       comment: null,
     });
-    expect(goNextField).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -111,9 +128,7 @@ describe("handleConfirmEquivalent — o caminho da issue #366", () => {
       await result.current.handleConfirmEquivalent(["r1", "r2"], "r1", "fundida");
     });
 
-    expect(recordReview).not.toHaveBeenCalled();
-    expect(goNextField).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith("não foi");
+    expectNoOptimisticWrite(recordReview, goNextField, "não foi");
   });
 
   it("sucesso → grava o gabarito como veredito otimista e avança de campo", async () => {
@@ -124,12 +139,11 @@ describe("handleConfirmEquivalent — o caminho da issue #366", () => {
       await result.current.handleConfirmEquivalent(["r1", "r2"], "r1", "fundida");
     });
 
-    expect(recordReview).toHaveBeenCalledWith("doc1", "q1", {
+    expectOptimisticWrite(recordReview, goNextField, "doc1", "q1", {
       verdict: "fundida",
       chosenResponseId: "r1",
       comment: null,
     });
-    expect(goNextField).toHaveBeenCalledTimes(1);
   });
 });
 

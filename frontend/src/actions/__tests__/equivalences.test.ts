@@ -41,27 +41,67 @@ function upsertsOn(table: string) {
   return writeCalls.filter((c) => c.op === "upsert" && c.table === table);
 }
 
-describe("confirmEquivalentVerdict", () => {
-  it("upsert em response_equivalences falha → retorna { error }, não lança, e não tenta gravar reviews", async () => {
-    serverTableResults = {
+type Actions = Awaited<ReturnType<typeof loadActions>>;
+
+// As 3 actions de equivalences.ts falham do mesmo jeito (upsert/delete
+// retorna erro → `{ error }`, nunca lança); um caso por action evita repetir
+// o esqueleto "seta serverTableResults, chama a action, confere o retorno".
+describe.each([
+  {
+    action: "confirmEquivalentVerdict",
+    tableResults: {
       response_equivalences: { error: { message: "pair upsert boom" } },
-    };
-    const { confirmEquivalentVerdict } = await loadActions();
+    },
+    call: (fns: Actions) =>
+      fns.confirmEquivalentVerdict(
+        "p1",
+        "doc1",
+        "q1",
+        ["r1", "r2"],
+        "r1",
+        "resposta fundida",
+      ),
+    expectedError: "pair upsert boom",
+    extraChecks: () => {
+      expect(upsertsOn("response_equivalences")).toHaveLength(1);
+      expect(upsertsOn("reviews")).toHaveLength(0);
+    },
+  },
+  {
+    action: "markLlmEquivalent",
+    tableResults: {
+      response_equivalences: { error: { message: "llm pair boom" } },
+    },
+    call: (fns: Actions) =>
+      fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1"),
+    expectedError: "llm pair boom",
+    extraChecks: undefined,
+  },
+  {
+    action: "unmarkEquivalencePair",
+    tableResults: {
+      response_equivalences: [
+        { data: { document_id: "doc1", field_name: "q1" } },
+        { error: { message: "delete pair boom" } },
+      ],
+    },
+    call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
+    expectedError: "delete pair boom",
+    extraChecks: undefined,
+  },
+])("$action — falha no upsert/delete", ({ tableResults, call, expectedError, extraChecks }) => {
+  it("retorna { error }, não lança", async () => {
+    serverTableResults = tableResults;
+    const fns = await loadActions();
 
-    const result = await confirmEquivalentVerdict(
-      "p1",
-      "doc1",
-      "q1",
-      ["r1", "r2"],
-      "r1",
-      "resposta fundida",
-    );
+    const result = await call(fns);
 
-    expect(result).toEqual({ error: "pair upsert boom" });
-    expect(upsertsOn("response_equivalences")).toHaveLength(1);
-    expect(upsertsOn("reviews")).toHaveLength(0);
+    expect(result).toEqual({ error: expectedError });
+    extraChecks?.();
   });
+});
 
+describe("confirmEquivalentVerdict", () => {
   it("upsert em reviews falha após response_equivalences já gravado → retorna { error }, não lança", async () => {
     serverTableResults = {
       response_equivalences: { error: null },
@@ -125,17 +165,6 @@ describe("confirmEquivalentVerdict", () => {
 });
 
 describe("markLlmEquivalent", () => {
-  it("upsert falha → retorna { error }, não lança", async () => {
-    serverTableResults = {
-      response_equivalences: { error: { message: "llm pair boom" } },
-    };
-    const { markLlmEquivalent } = await loadActions();
-
-    const result = await markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1");
-
-    expect(result).toEqual({ error: "llm pair boom" });
-  });
-
   it("caminho feliz → retorna {}", async () => {
     serverTableResults = { response_equivalences: { error: null } };
     const { markLlmEquivalent } = await loadActions();
@@ -148,20 +177,6 @@ describe("markLlmEquivalent", () => {
 });
 
 describe("unmarkEquivalencePair", () => {
-  it("delete falha → retorna { error }, não lança", async () => {
-    serverTableResults = {
-      response_equivalences: [
-        { data: { document_id: "doc1", field_name: "q1" } },
-        { error: { message: "delete pair boom" } },
-      ],
-    };
-    const { unmarkEquivalencePair } = await loadActions();
-
-    const result = await unmarkEquivalencePair("p1", "eq1");
-
-    expect(result).toEqual({ error: "delete pair boom" });
-  });
-
   it("caminho feliz → retorna {} e limpa o review do revisor atual para o par", async () => {
     serverTableResults = {
       response_equivalences: [
