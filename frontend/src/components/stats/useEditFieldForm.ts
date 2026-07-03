@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useResetOnKeyChange } from "@/hooks/useResetOnKeyChange";
 import type { FieldCondition, PydanticField, SubfieldDef } from "@/lib/types";
 
 export interface PendingSuggestion {
@@ -54,13 +55,7 @@ export function useEditFieldForm(
 
   // Reset state when dialog opens with a different field or suggestion
   const resetKey = `${fieldName}::${pendingSuggestion?.id ?? ""}`;
-  // `prevKey` É lido no render (comparação `resetKey !== prevKey` abaixo) — é o
-  // padrão oficial React de "adjusting state on a prop change", não state
-  // só-de-handler. A regra classifica errado; useRef quebraria o padrão.
-  // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers
-  const [prevKey, setPrevKey] = useState(resetKey);
-  if (resetKey !== prevKey) {
-    setPrevKey(resetKey);
+  useResetOnKeyChange(resetKey, () => {
     const f = allFields.find((ff) => ff.name === fieldName);
     const init = initialFromField(f, pendingSuggestion);
     setDescription(init.description);
@@ -71,7 +66,7 @@ export function useEditFieldForm(
     setSubfieldRule(f?.subfield_rule ?? "all");
     setCondition(f?.condition);
     setJustificationPrompt(f?.justification_prompt ?? "");
-  }
+  });
 
   return {
     description,

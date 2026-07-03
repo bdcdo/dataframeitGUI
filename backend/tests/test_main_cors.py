@@ -1,4 +1,5 @@
 """Tests for CORS handling in 500 and HTTPException responses."""
+
 from __future__ import annotations
 
 import re
@@ -16,7 +17,9 @@ def _boom() -> None:
 
 
 def _http_500() -> None:
-    raise HTTPException(status_code=500, detail="internal message that should be hidden")
+    raise HTTPException(
+        status_code=500, detail="internal message that should be hidden"
+    )
 
 
 def _http_404() -> None:

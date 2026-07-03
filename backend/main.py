@@ -136,7 +136,11 @@ def create_app(*, enable_docs: bool = settings.enable_docs) -> FastAPI:
     )
 
     app.add_exception_handler(Exception, unhandled_exception_handler)
-    app.add_exception_handler(HTTPException, http_exception_handler)
+    # Starlette tipa ExceptionHandler como Callable[[Request, Exception], ...]
+    # (types.py), sem generico sobre a subclasse; o dispatch real do Starlette
+    # so chama http_exception_handler para HTTPException, entao a assinatura
+    # mais estreita e segura em runtime, so incompativel para o mypy.
+    app.add_exception_handler(HTTPException, http_exception_handler)  # type: ignore[arg-type]
 
     # Autenticação estrutural: toda rota dos dois routers exige um JWT válido por
     # dependency de router, não só pela chamada manual no corpo do handler. Assim,

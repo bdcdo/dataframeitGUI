@@ -1,7 +1,9 @@
 "use server";
 
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { requireCoordinator } from "@/lib/auth";
+import { buildLoadMap } from "@/lib/load-balancing";
+import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import {
   scanComparisonBacklog,
@@ -12,7 +14,7 @@ import {
 // Re-sorteia revisores para todo documento divergente sem comparação ativa
 // (o "backlog" sem revisor). Disparada por setCanCompare ao habilitar/desabilitar
 // um membro, para drenar o backlog acumulado enquanto não havia ninguém elegível.
-// Espelha retryPendingArbitrations (actions/field-reviews.ts:1118).
+// Espelha retryPendingArbitrations (actions/field-reviews.ts:1119).
 //
 // Diferença estrutural: a comparação não materializa divergência (não há stub
 // como field_reviews), então o backlog é recomputado por varredura — ver
@@ -24,17 +26,12 @@ export async function retryPendingComparisons(projectId: string): Promise<{
   stillNoPool: number;
 }> {
   try {
-    const user = await getAuthUser();
-    if (!user)
-      return { success: false, error: "Não autenticado", assigned: 0, stillNoPool: 0 };
-    const isCoord = await isProjectCoordinator(projectId, user);
-    if (!isCoord)
-      return {
-        success: false,
-        error: "Apenas coordenadores podem reprocessar comparações.",
-        assigned: 0,
-        stillNoPool: 0,
-      };
+    const gate = await requireCoordinator(
+      projectId,
+      "Apenas coordenadores podem reprocessar comparações.",
+    );
+    if (!gate.ok)
+      return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
     const admin = createSupabaseAdmin();
 
@@ -61,10 +58,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       .eq("project_id", projectId)
       .eq("type", "comparacao")
       .neq("status", "concluido");
-    const loadByUser = new Map<string, number>();
-    for (const r of openCounts ?? []) {
-      loadByUser.set(r.user_id, (loadByUser.get(r.user_id) ?? 0) + 1);
-    }
+    const loadByUser = buildLoadMap(openCounts ?? []);
 
     let assigned = 0;
     let stillNoPool = 0;
@@ -89,7 +83,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
   } catch (e) {
     return {
       success: false,
-      error: e instanceof Error ? e.message : "Erro",
+      error: errorMessage(e) || "Erro",
       assigned: 0,
       stillNoPool: 0,
     };

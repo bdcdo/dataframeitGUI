@@ -48,7 +48,7 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
   - (a) `generatePydanticCode()` em `frontend/src/lib/schema-utils.ts` para emitir a propriedade;
   - (b) `compile_pydantic()` em `backend/services/pydantic_compiler.py` para le-la de volta;
   - (c) as primitivas de versionamento/auditoria em `frontend/src/lib/schema-utils.ts` — `snapshotOf`, `classifyChange`, `diffFields`, `fieldDiffIsStructural` — para que a mudanca da propriedade seja classificada (minor/patch) e registrada em `schema_change_log`. Essas primitivas sao puras e compartilhadas entre `saveSchemaFromGUI` e scripts fora do Next runtime, justamente para evitar drift (ver #63);
-  - (d) o diff de historico em `frontend/src/lib/schema-change-utils.ts` (`FieldPropertyDiff`, `diffPydanticField`, `PROPERTY_LABELS`) e o renderizador `FieldChangeDiff.tsx`.
+  - (d) o diff de historico em `frontend/src/lib/schema-change-diff.ts` (`FieldPropertyDiff`, `diffPydanticField`) e `frontend/src/lib/schema-change-format.ts` (`PROPERTY_LABELS`), consumidos pelo renderizador `FieldChangeDiff.tsx`.
 
   **Direcao registrada (constituicao, Principios III e VII)**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(d) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
 - Testes: **Vitest** (frontend), **pytest** (backend)

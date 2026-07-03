@@ -120,7 +120,7 @@ export const getEffectiveMemberId = cache(
   },
 );
 
-export interface ProjectAccessContext {
+interface ProjectAccessContext {
   project: { id: string; name: string; created_by: string } | null;
   membershipRole: string | null;
   isCoordinator: boolean;
@@ -204,4 +204,20 @@ export async function isProjectCoordinator(
     user.isMaster,
   );
   return isCoordinator;
+}
+
+// Gate combinado (auth + coordenador) para Server Actions coordinator-only.
+// União discriminada em vez de lançar: cada caller adapta {ok:false,error} pro
+// próprio shape de retorno (heterogêneo entre callers — ver comparisons.ts,
+// field-reviews.ts, documents.ts), então fixar um shape único aqui forçaria
+// os callers a normalizar depois.
+export async function requireCoordinator(
+  projectId: string,
+  deniedMessage: string,
+): Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }> {
+  const user = await getAuthUser();
+  if (!user) return { ok: false, error: "Não autenticado" };
+  const isCoord = await isProjectCoordinator(projectId, user);
+  if (!isCoord) return { ok: false, error: deniedMessage };
+  return { ok: true, user };
 }

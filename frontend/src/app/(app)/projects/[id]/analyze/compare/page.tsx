@@ -3,8 +3,6 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { ComparePage } from "@/components/compare/ComparePage";
-import { computeDivergentFieldNames } from "@/lib/compare-divergence";
-import type { EquivalencePair } from "@/lib/equivalence";
 import { coordinatorGate } from "@/lib/project-access";
 import {
   readCompareFilters,
@@ -14,48 +12,26 @@ import {
 import {
   deriveProjectVersionContext,
   resolveMinVersion,
-  responseQualifiesForVersion,
   latestMajorAnchor,
   formatVersion,
-  parseVersionStr,
 } from "@/lib/compare-version";
-import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { respondentKey } from "@/components/compare/compare-types";
+import {
+  buildEquivalenceMap,
+  indexResponsesByDoc,
+  extractRespondentNames,
+  buildAvailableVersions,
+  buildCodingAssignedByDoc,
+  buildCompareAssignmentStatusByDoc,
+  qualifyDocumentsForCompare,
+  buildDocumentsForCompare,
+  buildReviewsAndReviewedCounts,
+  buildCountsByKey,
+  sortDocumentsByPendingDivergence,
+  serializeEquivalencesForClient,
+} from "@/lib/compare-queue";
+import type { PydanticField } from "@/lib/types";
 
-interface CompareDoc {
-  id: string;
-  title: string | null;
-  external_id: string | null;
-  text: string;
-}
-
-interface CompareResponse {
-  id: string;
-  document_id: string;
-  respondent_type: "humano" | "llm";
-  respondent_name: string;
-  respondent_id: string | null;
-  answers: Record<string, unknown>;
-  justifications: Record<string, string> | null;
-  is_latest: boolean;
-  pydantic_hash: string | null;
-  answer_field_hashes: AnswerFieldHashes;
-  schema_version_major: number | null;
-  schema_version_minor: number | null;
-  schema_version_patch: number | null;
-  created_at: string;
-}
-
-export interface DocCoverage {
-  docId: string;
-  humanCount: number; // responderam com versão ok
-  totalCount: number;
-  assignedCodingCount: number; // pesquisadores atribuídos em codificação
-  humansFromAssigned: number; // dos atribuídos, quantos responderam
-  divergentCount: number;
-  reviewedCount: number;
-  assignmentStatus: "pendente" | "em_andamento" | "concluido" | null;
-}
+export type { DocCoverage } from "@/lib/compare-queue";
 
 export default async function ComparePageRoute({
   params,
@@ -121,23 +97,7 @@ export default async function ComparePageRoute({
 
   // Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
   // detection on the server and for fusing answer cards on the client.
-  const equivByDocField = new Map<
-    string,
-    Map<string, Array<EquivalencePair & { id: string; reviewer_id: string | null }>>
-  >();
-  for (const eq of allEquivalences ?? []) {
-    if (!equivByDocField.has(eq.document_id)) {
-      equivByDocField.set(eq.document_id, new Map());
-    }
-    const fieldMap = equivByDocField.get(eq.document_id)!;
-    if (!fieldMap.has(eq.field_name)) fieldMap.set(eq.field_name, []);
-    fieldMap.get(eq.field_name)!.push({
-      id: eq.id,
-      response_a_id: eq.response_a_id,
-      response_b_id: eq.response_b_id,
-      reviewer_id: eq.reviewer_id ?? null,
-    });
-  }
+  const equivByDocField = buildEquivalenceMap(allEquivalences);
 
   // Fail-CLOSED (ao contrario de comments/llm-insights): isCoordinator decide
   // quais documentos aparecem na fila — um nao-coordenador ve so os atribuidos a
@@ -179,182 +139,39 @@ export default async function ComparePageRoute({
   // Build distinct ordered version list desc — une versões do schema_change_log
   // com as efetivamente gravadas em responses (cobre respostas cuja versão
   // veio do backfill por hashes/created_at e não tem entry classificada no log).
-  const versionSet = new Set<string>();
-  for (const v of versionLog ?? []) {
-    if (v.version_major !== null && v.version_minor !== null && v.version_patch !== null) {
-      versionSet.add(`${v.version_major}.${v.version_minor}.${v.version_patch}`);
-    }
-  }
-  for (const r of allResponses ?? []) {
-    if (
-      r.schema_version_major !== null &&
-      r.schema_version_minor !== null &&
-      r.schema_version_patch !== null
-    ) {
-      versionSet.add(
-        `${r.schema_version_major}.${r.schema_version_minor}.${r.schema_version_patch}`,
-      );
-    }
-  }
-  const availableVersions = Array.from(versionSet).toSorted((a, b) => {
-    const pa = parseVersionStr(a)!;
-    const pb = parseVersionStr(b)!;
-    if (pa.major !== pb.major) return pb.major - pa.major;
-    if (pa.minor !== pb.minor) return pb.minor - pa.minor;
-    return pb.patch - pa.patch;
-  });
+  const availableVersions = buildAvailableVersions(versionLog, allResponses);
   const latestMajorLabel = formatVersion(latestMajorAnchor(projectVersion));
 
   // Compare-type assignments filter for researchers (ver assignedCompareDocIds).
-  const compareAssignedDocIds = assignedCompareDocIds(
-    isCoordinator,
+  const compareAssignedDocIds = assignedCompareDocIds(isCoordinator, allAssignments, user.id);
+
+  // Coding-type assignments map per doc (denominator for % atribuídos)
+  const codingAssignedByDoc = buildCodingAssignedByDoc(allAssignments);
+
+  // Status per user-doc for compare assignment (used in list and panel)
+  const compareAssignmentStatusByDoc = buildCompareAssignmentStatusByDoc(
     allAssignments,
+    isCoordinator,
     user.id,
   );
 
-  // Coding-type assignments map per doc (denominator for % atribuídos)
-  const codingAssignedByDoc = new Map<string, Set<string>>();
-  for (const a of allAssignments ?? []) {
-    if (a.type !== "codificacao") continue;
-    if (!codingAssignedByDoc.has(a.document_id)) {
-      codingAssignedByDoc.set(a.document_id, new Set());
-    }
-    codingAssignedByDoc.get(a.document_id)!.add(a.user_id);
-  }
-
-  // Status per user-doc for compare assignment (used in list and panel)
-  const compareAssignmentStatusByDoc = new Map<
-    string,
-    "pendente" | "em_andamento" | "concluido"
-  >();
-  if (!isCoordinator) {
-    for (const a of allAssignments ?? []) {
-      if (a.type !== "comparacao" || a.user_id !== user.id) continue;
-      compareAssignmentStatusByDoc.set(
-        a.document_id,
-        a.status as "pendente" | "em_andamento" | "concluido",
-      );
-    }
-  }
-
-  const responsesByDoc = new Map<string, CompareResponse[]>();
-  const docsMetaMap = new Map<string, Omit<CompareDoc, "text">>();
-
-  allResponses?.forEach((r) => {
-    const docId = r.document_id;
-    if (!responsesByDoc.has(docId)) responsesByDoc.set(docId, []);
-    responsesByDoc.get(docId)!.push(r as unknown as CompareResponse);
-    if (r.documents) docsMetaMap.set(docId, r.documents as unknown as Omit<CompareDoc, "text">);
-  });
+  const { responsesByDoc, docsMetaMap } = indexResponsesByDoc(allResponses);
 
   // Respondent names list (do conjunto todo, antes de filtrar)
-  const respondentNames = [
-    ...new Set(
-      allResponses?.flatMap((r) =>
-        r.respondent_name ? [r.respondent_name] : [],
-      ) ?? [],
-    ),
-  ];
+  const respondentNames = extractRespondentNames(allResponses);
 
-  const qualifiedDocIds: string[] = [];
-  const divergentFields: Record<string, string[]> = {};
-  const responsesMap: Record<string, CompareResponse[]> = {};
-  const coverageByDoc: Record<string, DocCoverage> = {};
-
-  for (const [docId, docResponses] of responsesByDoc) {
-    if (compareAssignedDocIds && !compareAssignedDocIds.has(docId)) continue;
-    if (!docsMetaMap.has(docId)) continue;
-
-    // Apply version + since + respondent filters per response. A regra de
-    // versão (is_latest/humano, pré-versionamento, piso) é compartilhada com
-    // compare-sync.ts via responseQualifiesForVersion; aqui adicionamos só os
-    // filtros efêmeros de UI (since/respondent).
-    const qualifiedResponses = docResponses.filter((r) => {
-      // Qualificação por versão (is_latest, pré-versionamento, piso)
-      // centralizada em responseQualifiesForVersion. Após o merge do PR #213,
-      // essa regra descarta TODA resposta superseded (is_latest=false), humana
-      // ou LLM — não só a LLM. A contagem abaixo ainda agrega por respondente
-      // distinto como defesa adicional.
-      if (!responseQualifiesForVersion(r, minVersion, projectVersionCtx))
-        return false;
-      if (sinceMs !== null) {
-        if (new Date(r.created_at).getTime() < sinceMs) return false;
-      }
-      if (filters.respondent !== "all" && r.respondent_name !== filters.respondent) {
-        return false;
-      }
-      return true;
-    });
-
-    // Conta respondentes humanos DISTINTOS (não linhas) — `respondentKey`
-    // compartilha a regra de dedup com o aviso "não preencheu" do painel.
-    const humanCount = new Set(
-      qualifiedResponses
-        .filter((r) => r.respondent_type === "humano")
-        .map(respondentKey),
-    ).size;
-    const totalCount = qualifiedResponses.length;
-
-    const assignedUsers = codingAssignedByDoc.get(docId) ?? new Set<string>();
-    const assignedCodingCount = assignedUsers.size;
-
-    const humansFromAssigned = new Set(
-      qualifiedResponses
-        .filter(
-          (r) =>
-            r.respondent_type === "humano" &&
-            r.respondent_id &&
-            assignedUsers.has(r.respondent_id),
-        )
-        .map((r) => r.respondent_id),
-    ).size;
-
-    const pct = assignedCodingCount === 0 ? 100 : Math.round((humansFromAssigned / assignedCodingCount) * 100);
-
-    // Apply coverage filters
-    if (humanCount < filters.minHumans) continue;
-    if (totalCount < filters.minTotal) continue;
-    // O gate de "% atribuídos que responderam" só faz sentido quando se espera
-    // ≥ 2 humanos. Em compare_llm (piso de 1 humano + LLM) ele esconderia docs
-    // de 1 codificador onde há mais de um atribuído — fora do que o gatilho de
-    // comparação exige. Aplica-se só quando o piso de humanos é ≥ 2.
-    if (
-      filters.minHumans >= 2 &&
-      assignedCodingCount > 0 &&
-      pct < filters.minAssignedPct
-    )
-      continue;
-
-    // Equivalence-aware divergence detection (free-text fields can have
-    // responses fused via the reviewer's "marcar como equivalentes" action).
-    // `answerFieldHashes` torna a comparação consciente de staleness: campos
-    // adicionados ao schema depois de uma codificação não geram falso "(vazio)".
-    const divergent = computeDivergentFieldNames(
+  const { qualifiedDocIds, divergentFields, responsesMap, coverageByDoc } =
+    qualifyDocumentsForCompare(responsesByDoc, docsMetaMap, {
+      compareAssignedDocIds,
+      codingAssignedByDoc,
+      compareAssignmentStatusByDoc,
+      filters,
+      minVersion,
+      projectVersionCtx,
+      sinceMs,
       fields,
-      qualifiedResponses.map((r) => ({
-        id: r.id,
-        answers: r.answers,
-        answerFieldHashes: r.answer_field_hashes,
-      })),
-      equivByDocField.get(docId),
-    );
-
-    if (divergent.length === 0) continue;
-
-    qualifiedDocIds.push(docId);
-    divergentFields[docId] = divergent;
-    responsesMap[docId] = qualifiedResponses;
-    coverageByDoc[docId] = {
-      docId,
-      humanCount,
-      totalCount,
-      assignedCodingCount,
-      humansFromAssigned,
-      divergentCount: divergent.length,
-      reviewedCount: 0, // preenchido abaixo
-      assignmentStatus: compareAssignmentStatusByDoc.get(docId) ?? null,
-    };
-  }
+      equivByDocField,
+    });
 
   // Fetch text + reviews + comment counts
   const [{ data: docTexts }, { data: reviews }, { data: commentCounts }, { data: suggestionCounts }] =
@@ -388,82 +205,34 @@ export default async function ComparePageRoute({
   // textMap so contem docs com excluded_at IS NULL (filtro acima). Usar como
   // gate final garante que docs soft-deletados saiam da comparacao por
   // completo, nao apenas com texto vazio.
-  const documentsForCompare: CompareDoc[] = qualifiedDocIds
-    .filter((docId) => textMap.has(docId))
-    .map((docId) => {
-      const meta = docsMetaMap.get(docId)!;
-      return { ...meta, text: textMap.get(docId) || "" };
-    });
-
-  const existingReviews: Record<
-    string,
-    Record<string, { verdict: string; chosenResponseId: string | null; comment: string | null }>
-  > = {};
+  const documentsForCompareUnsorted = buildDocumentsForCompare(qualifiedDocIds, textMap, docsMetaMap);
 
   // Track reviews do user atual para preencher reviewedCount
-  const myReviewsByDoc = new Map<string, Set<string>>();
-  reviews?.forEach((r) => {
-    if (!existingReviews[r.document_id]) existingReviews[r.document_id] = {};
-    // Sempre captura o veredito mais recente (se múltiplos reviewers, o da página é do user logado)
-    existingReviews[r.document_id][r.field_name] = {
-      verdict: r.verdict,
-      chosenResponseId: r.chosen_response_id ?? null,
-      comment: r.comment ?? null,
-    };
-    if (r.reviewer_id === user.id) {
-      if (!myReviewsByDoc.has(r.document_id)) myReviewsByDoc.set(r.document_id, new Set());
-      myReviewsByDoc.get(r.document_id)!.add(r.field_name);
-    }
-  });
-
+  const { existingReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
+    reviews,
+    user.id,
+    qualifiedDocIds,
+    divergentFields,
+  );
   for (const docId of qualifiedDocIds) {
-    const reviewed = myReviewsByDoc.get(docId) ?? new Set<string>();
-    const divergent = divergentFields[docId] ?? [];
-    coverageByDoc[docId].reviewedCount = divergent.filter((fn) => reviewed.has(fn)).length;
+    coverageByDoc[docId].reviewedCount = reviewedCountByDoc[docId] ?? 0;
   }
 
   // Build comment+suggestion counts by (doc, field)
-  const commentCountsByKey: Record<string, number> = {};
-  for (const c of commentCounts ?? []) {
-    const key = `${c.document_id ?? ""}|${c.field_name ?? ""}`;
-    commentCountsByKey[key] = (commentCountsByKey[key] ?? 0) + 1;
-  }
-  const suggestionCountsByField: Record<string, number> = {};
-  for (const s of suggestionCounts ?? []) {
-    suggestionCountsByField[s.field_name] = (suggestionCountsByField[s.field_name] ?? 0) + 1;
-  }
+  const { commentCountsByKey, suggestionCountsByField } = buildCountsByKey(
+    commentCounts,
+    suggestionCounts,
+  );
 
   // Sort docs: most unreviewed divergences first
-  documentsForCompare.sort((a, b) => {
-    const ca = coverageByDoc[a.id];
-    const cb = coverageByDoc[b.id];
-    const pendA = ca.divergentCount - ca.reviewedCount;
-    const pendB = cb.divergentCount - cb.reviewedCount;
-    return pendB - pendA;
-  });
+  const documentsForCompare = sortDocumentsByPendingDivergence(
+    documentsForCompareUnsorted,
+    coverageByDoc,
+  );
 
   // Serialize equivalences for the client component (Maps don't cross the
   // RSC boundary). Only ship pairs for documents in the qualified list.
-  const equivalencesByDocField: Record<
-    string,
-    Record<
-      string,
-      Array<{
-        id: string;
-        response_a_id: string;
-        response_b_id: string;
-        reviewer_id: string | null;
-      }>
-    >
-  > = {};
-  for (const docId of qualifiedDocIds) {
-    const fieldMap = equivByDocField.get(docId);
-    if (!fieldMap) continue;
-    equivalencesByDocField[docId] = {};
-    for (const [fieldName, pairs] of fieldMap) {
-      equivalencesByDocField[docId][fieldName] = pairs;
-    }
-  }
+  const equivalencesByDocField = serializeEquivalencesForClient(equivByDocField, qualifiedDocIds);
 
   return (
     <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>

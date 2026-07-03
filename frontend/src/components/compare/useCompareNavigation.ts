@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { isDocComplete, findNextPendingDocIndex } from "@/lib/compare-divergence";
+import { isDocComplete } from "@/lib/compare-assignment-status";
+import { findNextPendingDocIndex } from "@/lib/compare-queue-navigation";
 import { pinnedDocIndex } from "@/hooks/usePinnedDoc";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";

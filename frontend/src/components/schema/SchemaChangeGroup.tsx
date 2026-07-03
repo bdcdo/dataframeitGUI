@@ -3,11 +3,8 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { FieldChangeDiff } from "./FieldChangeDiff";
-import {
-  formatRelativeDate,
-  formatVersion,
-  type ChangeGroup,
-} from "@/lib/schema-change-utils";
+import { formatRelativeDate, formatVersion } from "@/lib/schema-change-format";
+import type { ChangeGroup } from "@/lib/schema-change-grouping";
 import type { SchemaChangeType } from "@/lib/types";
 
 interface SchemaChangeGroupProps {

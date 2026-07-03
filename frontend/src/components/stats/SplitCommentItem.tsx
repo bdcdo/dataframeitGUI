@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, RotateCcw, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatAnswer } from "@/lib/reviews/verdict-format";
+import { formatVerdictAnswer } from "@/lib/reviews/verdict-format";
 import {
   type ReviewComment,
   type ResponseSnapshotEntry,
@@ -107,7 +107,7 @@ export function SplitCommentItem({
                   {r.respondent_type === "humano" ? "Humano" : "LLM"}
                 </Badge>
                 <span className="ml-2 text-muted-foreground">
-                  {formatAnswer(r.answer)}
+                  {formatVerdictAnswer(r.answer)}
                 </span>
               </div>
             </div>

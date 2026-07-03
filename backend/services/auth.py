@@ -16,6 +16,7 @@ request é rejeitada. Nunca passa.
 
 import logging
 from dataclasses import dataclass
+from typing import Any, cast
 
 import jwt
 from fastapi import Header, HTTPException
@@ -272,7 +273,8 @@ def require_job_access(job_id: str, user: AuthUser) -> None:
         )
         if not run.data:
             raise HTTPException(status_code=404, detail="Job não encontrado")
-        project_id = run.data[0]["project_id"]
+        row = cast(dict[str, Any], run.data[0])
+        project_id = row["project_id"]
         is_member = _is_project_member(sb, project_id, user.id)
     except HTTPException:
         raise

@@ -7,13 +7,15 @@ import { cn } from "@/lib/utils";
 import {
   detectFieldChangeKind,
   diffPydanticField,
+  type FieldChangeKind,
+  type FieldPropertyDiff,
+} from "@/lib/schema-change-diff";
+import {
   formatCondition,
   formatTarget,
   formatType,
   propertyLabel,
-  type FieldChangeKind,
-  type FieldPropertyDiff,
-} from "@/lib/schema-change-utils";
+} from "@/lib/schema-change-format";
 import type { SchemaChangeEntry, FieldCondition, SubfieldDef } from "@/lib/types";
 
 interface FieldChangeDiffProps {
