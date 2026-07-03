@@ -67,6 +67,13 @@ export function AssignedCodingView({
   hasAssignments,
   roundFilter,
 }: AssignedCodingViewProps) {
+  // Diferente do container anterior (#389), este componente agora fica montado
+  // o tempo todo em mode==="assigned" — a cascata abaixo decide o retorno via
+  // early-return, em vez de o pai desmontar/remontar `AssignedCodingView` entre
+  // os estados. Hoje isso não tem efeito porque o componente não guarda estado
+  // próprio (sem useState/useRef/useEffect aqui). Se algum for adicionado
+  // diretamente neste componente, ele sobreviverá indevidamente entre as
+  // transições allDone -> no-doc -> doc normal — revisar este ponto nesse caso.
   if (allDone) {
     return (
       <CodingEmptyStates
