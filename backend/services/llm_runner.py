@@ -12,6 +12,7 @@ import re
 import time
 import traceback
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -391,22 +392,35 @@ def _build_llm_error_message(
     return None
 
 
+@dataclass(frozen=True)
+class _RunMetadata:
+    """Metadados invariantes por run, compartilhados entre todas as rows.
+
+    Agrupa os campos que antes eram passados soltos como kwargs duplicados
+    em `_process_and_save_rows` e `_build_llm_response_row` — um campo novo
+    de metadado passa a ser adicionado em 1 lugar (a dataclass) em vez de 2
+    assinaturas + 2 call sites.
+    """
+
+    project_id: str
+    llm_provider: str
+    llm_model: str
+    pydantic_hash: str
+    answer_field_hashes: dict
+    schema_version_major: int
+    schema_version_minor: int
+    schema_version_patch: int
+
+
 def _build_llm_response_row(
     *,
-    project_id: str,
+    run: _RunMetadata,
     doc_id: str,
-    llm_provider: str,
-    llm_model: str,
     answers: dict,
     justifications: dict | None,
     is_partial: bool,
-    pydantic_hash: str,
-    answer_field_hashes: dict,
     job_id: str,
     llm_error_msg: str | None,
-    schema_version_major: int,
-    schema_version_minor: int,
-    schema_version_patch: int,
 ) -> dict:
     """Monta o dict de insert em `responses` para uma resposta LLM.
 
@@ -417,10 +431,10 @@ def _build_llm_response_row(
     versões).
     """
     return {
-        "project_id": project_id,
+        "project_id": run.project_id,
         "document_id": doc_id,
         "respondent_type": "llm",
-        "respondent_name": f"{llm_provider}/{llm_model}",
+        "respondent_name": f"{run.llm_provider}/{run.llm_model}",
         "answers": answers,
         "justifications": justifications if justifications else None,
         # is_latest: respostas parciais já nascem como False para não
@@ -431,8 +445,8 @@ def _build_llm_response_row(
         # "cobertura baixa" mesmo depois que uma run posterior supersede esta
         # resposta (ver migration 20260425000000).
         "is_partial": is_partial,
-        "pydantic_hash": pydantic_hash,
-        "answer_field_hashes": answer_field_hashes,
+        "pydantic_hash": run.pydantic_hash,
+        "answer_field_hashes": run.answer_field_hashes,
         # Correlaciona a resposta com a execução que a produziu para a aba
         # LLM > Respostas (ver migration 20260424000000).
         "llm_job_id": job_id,
@@ -444,9 +458,9 @@ def _build_llm_response_row(
         # projeto, igual ao caminho humano (frontend/src/actions/responses.ts);
         # isso faz o backfill (actions/schema.ts) PULAR estas linhas em vez de
         # re-inferir por hash/timestamp e sobrescrever a versão correta.
-        "schema_version_major": schema_version_major,
-        "schema_version_minor": schema_version_minor,
-        "schema_version_patch": schema_version_patch,
+        "schema_version_major": run.schema_version_major,
+        "schema_version_minor": run.schema_version_minor,
+        "schema_version_patch": run.schema_version_patch,
         "version_inferred_from": "live_save",
     }
 
@@ -718,15 +732,7 @@ def _process_and_save_rows(
     field_conditions: dict,
     expected_llm_fields: set[str],
     partial_coverage_threshold: float,
-    *,
-    project_id: str,
-    llm_provider: str,
-    llm_model: str,
-    pydantic_hash: str,
-    answer_field_hashes: dict,
-    schema_version_major: int,
-    schema_version_minor: int,
-    schema_version_patch: int,
+    run: _RunMetadata,
 ) -> tuple[list[str], dict[str, str]]:
     """Processa cada row de result_df e persiste a resposta em `responses`.
 
@@ -875,20 +881,13 @@ def _process_and_save_rows(
 
         sb.table("responses").insert(
             _build_llm_response_row(
-                project_id=project_id,
+                run=run,
                 doc_id=doc_id,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
                 answers=answers,
                 justifications=justifications,
                 is_partial=is_partial,
-                pydantic_hash=pydantic_hash,
-                answer_field_hashes=answer_field_hashes,
                 job_id=job_id,
                 llm_error_msg=llm_error_msg,
-                schema_version_major=schema_version_major,
-                schema_version_minor=schema_version_minor,
-                schema_version_patch=schema_version_patch,
             )
         ).execute()
 
@@ -1140,6 +1139,16 @@ async def run_llm(
             else:
                 expected_llm_fields.add(name)
 
+        run_metadata = _RunMetadata(
+            project_id=project_id,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            pydantic_hash=pydantic_hash,
+            answer_field_hashes=answer_field_hashes,
+            schema_version_major=schema_version_major,
+            schema_version_minor=schema_version_minor,
+            schema_version_patch=schema_version_patch,
+        )
         partial_warnings, dfi_error_samples = _process_and_save_rows(
             sb,
             job_id,
@@ -1150,14 +1159,7 @@ async def run_llm(
             field_conditions,
             expected_llm_fields,
             partial_coverage_threshold,
-            project_id=project_id,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-            pydantic_hash=pydantic_hash,
-            answer_field_hashes=answer_field_hashes,
-            schema_version_major=schema_version_major,
-            schema_version_minor=schema_version_minor,
-            schema_version_patch=schema_version_patch,
+            run_metadata,
         )
 
         # Update project hash

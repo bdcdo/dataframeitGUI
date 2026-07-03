@@ -30,25 +30,63 @@ class Analysis(BaseModel):
 
 
 class _FakeQuery:
+    """Fake do query builder do Supabase.
+
+    Aplica os filtros .eq()/.in_()/.is_() de verdade em execute() quando
+    `data` é uma lista de rows (ex.: "documents"); um "select_data" em
+    formato de dict único (ex.: "projects", uma única row já resolvida)
+    passa direto, já que os testes atuais nunca variam entre múltiplos
+    projetos. Sem filtro real, uma regressão no `.is_("excluded_at",
+    "null")` de run_llm (bug histórico documentado em llm_runner.py —
+    docs arquivados voltando a receber resposta LLM) passaria batida por
+    este "teste de integração".
+    """
+
     def __init__(self, data):
         self._data = data
+        self._filters: list[tuple[str, str, object]] = []
+        self._single = False
 
-    def eq(self, *a, **k):
+    def eq(self, column, value):
+        self._filters.append(("eq", column, value))
         return self
 
-    def in_(self, *a, **k):
+    def in_(self, column, values):
+        self._filters.append(("in", column, values))
         return self
 
-    def is_(self, *a, **k):
+    def is_(self, column, value):
+        self._filters.append(("is", column, value))
         return self
 
     def single(self, *a, **k):
+        self._single = True
         return self
 
     def maybe_single(self, *a, **k):
+        self._single = True
         return self
 
+    def _matches(self, row: dict) -> bool:
+        for op, column, value in self._filters:
+            if op == "eq" and row.get(column) != value:
+                return False
+            if op == "in" and row.get(column) not in value:
+                return False
+            if op == "is":
+                if value == "null":
+                    if row.get(column) is not None:
+                        return False
+                elif row.get(column) != value:
+                    return False
+        return True
+
     def execute(self):
+        if isinstance(self._data, list):
+            rows = [r for r in self._data if self._matches(r)]
+            if self._single:
+                return SimpleNamespace(data=rows[0] if rows else None)
+            return SimpleNamespace(data=rows)
         return SimpleNamespace(data=self._data)
 
 
@@ -104,9 +142,13 @@ def _project_row(**overrides) -> dict:
 
 
 def _docs(n: int) -> list[dict]:
+    # project_id precisa estar presente para o fake filtrar de verdade em
+    # .eq("project_id", ...) — a query real roda sobre a tabela inteira,
+    # não só as colunas do .select().
     return [
         {
             "id": f"doc-{i}",
+            "project_id": PROJECT_ID,
             "text": f"texto {i}",
             "title": f"Doc {i}",
             "external_id": None,
@@ -194,6 +236,36 @@ def test_run_llm_happy_path(monkeypatch):
 
     project_updates = sb.table("projects").update_calls
     assert any("pydantic_hash" in payload for payload in project_updates)
+
+
+def test_run_llm_skips_excluded_documents(monkeypatch):
+    """Guarda o filtro `.is_("excluded_at", "null")` em run_llm — bug
+    histórico documentado em llm_runner.py: o backend não filtrava docs
+    arquivados, recriando respostas LLM neles. O fake precisa aplicar esse
+    filtro de verdade (ver _FakeQuery._matches); senão este teste passaria
+    mesmo com o filtro quebrado.
+    """
+    docs = _docs(2)
+    docs.append(
+        {
+            "id": "doc-archived",
+            "project_id": PROJECT_ID,
+            "text": "texto arquivado",
+            "title": "Doc arquivado",
+            "external_id": None,
+            "excluded_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    row_specs = {
+        d["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for d in docs
+    }
+    sb = _build_supabase(_project_row(), docs)
+
+    _run_llm_sync(monkeypatch, sb, row_specs)
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    inserts = sb.table("responses").insert_calls
+    assert {row["document_id"] for row in inserts} == {"doc-0", "doc-1"}
 
 
 def test_run_llm_partial_run_does_not_fail(monkeypatch):
