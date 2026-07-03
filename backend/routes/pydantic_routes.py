@@ -14,6 +14,8 @@ restringe ao coordenador do projeto, fechando a exposição anônima do boundary
 rede.
 """
 
+from typing import Any, cast
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -60,9 +62,10 @@ async def recover_fields(
     )
     if not result or not result.data:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
-    code = result.data.get("pydantic_code")
+    row = cast(dict[str, Any], result.data)
+    code = row.get("pydantic_code")
     if not code:
         raise HTTPException(
             status_code=404, detail="Projeto não possui código Pydantic armazenado"
         )
-    return compile_pydantic(code)
+    return compile_pydantic(cast(str, code))

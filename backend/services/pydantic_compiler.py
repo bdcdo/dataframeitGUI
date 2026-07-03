@@ -589,7 +589,12 @@ def _resolve_type(node: ast.AST, built: dict, depth: int = 0):  # noqa: C901
             values = tuple(_literal_value(e) for e in _slice_elements(sl))
             return Literal[values]
         if ctor in ("list", "List"):
-            return list[_resolve_type(_single_arg(sl), built, depth + 1)]
+            # list[T] com T resolvido em runtime: diferente de Optional[...]
+            # (SpecialForm mais permissivo), o mypy exige que o parametro do
+            # generico builtin list[...] seja reconhecivel estaticamente como
+            # type[...]; nao ha como expressar isso sem reescrever o compilador
+            # para eval (o que _resolve_type existe justamente para evitar).
+            return list[_resolve_type(_single_arg(sl), built, depth + 1)]  # type: ignore[misc]
         if ctor == "Optional":
             return Optional[_resolve_type(_single_arg(sl), built, depth + 1)]
         raise SchemaError(f"Construtor de tipo não suportado: {ctor}")

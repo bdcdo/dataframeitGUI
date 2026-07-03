@@ -57,13 +57,12 @@ testpaths = ["tests"]
 #
 # follow_imports = "silent": sem isso, checar um unico arquivo (como o hook de
 # pre-push faz, file-scoped) tambem reporta os erros de qualquer modulo que
-# esse arquivo importe — inclusive os 10 erros grandfathered em auth.py/
-# pydantic_routes.py/pydantic_compiler.py/main.py (ver baixo). Como
-# services/auth.py e importado por praticamente toda rota, isso bloquearia
-# pushes que nao tocam nenhum dos 4 arquivos do baseline. "silent" mantem o
-# modulo importado sendo checado (a inferencia de tipo continua correta) mas
-# suprime os diagnosticos dele quando ele nao foi passado explicitamente na
-# linha de comando.
+# esse arquivo importe. Como services/auth.py e importado por praticamente
+# toda rota, sem "silent" um push que so tocasse routes/llm_routes.py (por
+# exemplo) ficaria acoplado aos erros de tipo de auth.py mesmo sem editá-lo.
+# "silent" mantem o modulo importado sendo checado (a inferencia de tipo
+# continua correta) mas suprime os diagnosticos dele quando ele nao foi
+# passado explicitamente na linha de comando.
 #
 # exclude = ["tests/"]: so tem efeito quando o mypy descobre arquivos sozinho
 # (`uv run mypy .`); e ignorado quando arquivos sao passados explicitamente,
