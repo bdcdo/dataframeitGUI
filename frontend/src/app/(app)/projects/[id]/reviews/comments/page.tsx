@@ -175,12 +175,17 @@ export default async function CommentsPage({
   const typedProjectComments = (projectComments ||
     []) as unknown as ProjectCommentRow[];
 
+  const exclusionRows = typedProjectComments.filter(
+    (c) => c.kind === "exclusion_request",
+  );
+  const noteRows = typedProjectComments.filter(
+    (c) => c.kind !== "exclusion_request",
+  );
+
   // Buscar titulos de docs excluidos referenciados por exclusion_requests resolvidas
-  const excludedDocIds = typedProjectComments
-    .filter((c) => c.kind === "exclusion_request")
-    .flatMap((c) =>
-      c.document_id && !docMap.has(c.document_id) ? [c.document_id] : [],
-    );
+  const excludedDocIds = exclusionRows.flatMap((c) =>
+    c.document_id && !docMap.has(c.document_id) ? [c.document_id] : [],
+  );
   const excludedDocTitles = new Map<string, string>();
   if (excludedDocIds.length > 0) {
     const { data: excludedDocs } = await supabase
@@ -193,7 +198,7 @@ export default async function CommentsPage({
   }
 
   const { annotationComments, exclusionComments } = mapProjectComments(
-    typedProjectComments,
+    { exclusionRows, noteRows },
     docMap,
     excludedDocTitles,
     fieldMap,

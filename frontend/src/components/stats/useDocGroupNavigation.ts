@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { pinnedDocIndex } from "@/hooks/usePinnedDoc";
 import type { ReviewComment } from "./comment-card-utils";
 
 interface DocGroup {
@@ -26,14 +27,26 @@ export function useDocGroupNavigation(
     }));
   }, [comments]);
 
-  const initialIdx = Math.max(
-    docGroups.findIndex((g) => g.docId === initialDocId),
-    0,
-  );
-  const [docIndex, setDocIndex] = useState(initialIdx);
-
+  // Fixa o documento atual por id (não por índice): `comments` é reordenado
+  // pelo servidor a cada resolve/reopen (buildOrderedComments), o que pode
+  // mudar qual doc ocupa a posição N — pinnedDocIndex recalcula o índice a
+  // cada render em vez de confiar num índice preso desde o mount.
+  const [currentDocId, setCurrentDocId] = useState(initialDocId);
+  const docIds = useMemo(() => docGroups.map((g) => g.docId), [docGroups]);
+  const docIndex = pinnedDocIndex(docIds, currentDocId);
   const currentGroup = docGroups[docIndex];
-  const currentDocId = currentGroup?.docId;
 
-  return { docGroups, docIndex, setDocIndex, currentGroup, currentDocId };
+  const setDocIndex = (updater: number | ((prev: number) => number)) => {
+    const nextIndex = typeof updater === "function" ? updater(docIndex) : updater;
+    const target = docGroups[nextIndex];
+    if (target) setCurrentDocId(target.docId);
+  };
+
+  return {
+    docGroups,
+    docIndex,
+    setDocIndex,
+    currentGroup,
+    currentDocId: currentGroup?.docId,
+  };
 }

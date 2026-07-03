@@ -7,7 +7,7 @@ import {
   mapDuvidaComments,
   mapProjectComments,
   buildOrderedComments,
-  type ReviewRow,
+  type ReviewCommentRow,
   type NoteResponseRow,
   type SuggestionRow,
   type LlmResponseRow,
@@ -29,7 +29,7 @@ const docMap = new Map([["doc1", "Documento 1"]]);
 
 describe("mapReviewComments", () => {
   it("mapeia review para ReviewComment preservando reviewer e snapshot", () => {
-    const review: ReviewRow = {
+    const review: ReviewCommentRow = {
       id: "r1",
       document_id: "doc1",
       field_name: "campo1",
@@ -53,7 +53,7 @@ describe("mapReviewComments", () => {
   });
 
   it("usa 'Anônimo' quando reviewer_id não está no mapa", () => {
-    const review: ReviewRow = {
+    const review: ReviewCommentRow = {
       id: "r2",
       document_id: "doc-desconhecido",
       field_name: "campo-desconhecido",
@@ -198,6 +198,23 @@ describe("mapDifficultyComments", () => {
     expect(result[0].fieldName).toBe("llm_ambiguidades");
     expect(result[0].reviewerName).toBe("LLM");
   });
+
+  it("usa o fallback 'Dificuldade do LLM' quando llm_ambiguidades nao esta no schema", () => {
+    const rows: LlmResponseRow[] = [
+      {
+        id: "llm1",
+        document_id: "doc1",
+        answers: { llm_ambiguidades: "confuso" },
+        respondent_name: "LLM",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ];
+
+    const result = mapDifficultyComments(rows, docMap, fieldMap, new Map());
+
+    expect(result[0].fieldName).toBe("(geral)");
+    expect(result[0].fieldDescription).toBe("Dificuldade do LLM");
+  });
 });
 
 describe("mapDuvidaComments", () => {
@@ -248,7 +265,7 @@ describe("mapProjectComments", () => {
     };
 
     const { annotationComments, exclusionComments } = mapProjectComments(
-      [baseRow, exclusionRow],
+      { exclusionRows: [exclusionRow], noteRows: [baseRow] },
       docMap,
       new Map(),
       fieldMap,
@@ -271,7 +288,7 @@ describe("mapProjectComments", () => {
     };
 
     const { exclusionComments } = mapProjectComments(
-      [exclusionRow],
+      { exclusionRows: [exclusionRow], noteRows: [] },
       docMap,
       new Map([["doc-excluido", "Título do doc excluído"]]),
       fieldMap,
@@ -291,7 +308,7 @@ describe("mapProjectComments", () => {
     };
 
     const { exclusionComments } = mapProjectComments(
-      [exclusionRow],
+      { exclusionRows: [exclusionRow], noteRows: [] },
       docMap,
       new Map(),
       fieldMap,

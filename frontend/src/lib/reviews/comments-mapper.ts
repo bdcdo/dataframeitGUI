@@ -3,7 +3,7 @@ import type { ReviewComment } from "@/components/stats/comment-card-utils";
 
 /* ── Raw row shapes (subset de colunas realmente usadas por cada mapper) ── */
 
-export interface ReviewRow {
+export interface ReviewCommentRow {
   id: string;
   document_id: string;
   field_name: string;
@@ -82,8 +82,12 @@ function resolveFieldMeta(fieldMap: Map<string, PydanticField>, fieldName: strin
   };
 }
 
+function nameFromEmail(email: string | null | undefined): string {
+  return email?.split("@")[0] || "Anônimo";
+}
+
 export function mapReviewComments(
-  reviews: ReviewRow[],
+  reviews: ReviewCommentRow[],
   docMap: Map<string, string>,
   fieldMap: Map<string, PydanticField>,
   reviewerMap: Map<string, string>,
@@ -147,13 +151,10 @@ export function mapSuggestionComments(
       documentId: "",
       documentTitle: "",
       fieldName: s.field_name,
-      fieldDescription: currentField?.description || s.field_name,
-      fieldHelpText: currentField?.help_text,
-      fieldOptions: currentField?.options,
-      fieldType: currentField?.type,
+      ...resolveFieldMeta(fieldMap, s.field_name),
       verdict: "sugestao",
       comment: s.reason || "Sem motivo",
-      reviewerName: s.profiles?.email?.split("@")[0] || "Anônimo",
+      reviewerName: nameFromEmail(s.profiles?.email),
       resolvedAt: s.resolved_at,
       createdAt: s.created_at,
       chosenResponseId: null,
@@ -209,10 +210,8 @@ export function mapDifficultyComments(
       documentId: r.document_id,
       documentTitle: docMap.get(r.document_id) || r.document_id,
       fieldName: difficultyFieldName,
+      ...resolveFieldMeta(fieldMap, "llm_ambiguidades"),
       fieldDescription: ambiguitiesField?.description || "Dificuldade do LLM",
-      fieldHelpText: ambiguitiesField?.help_text,
-      fieldOptions: ambiguitiesField?.options,
-      fieldType: ambiguitiesField?.type,
       verdict: "dificuldade",
       comment: String(ambiguidades),
       reviewerName: r.respondent_name || "LLM",
@@ -261,20 +260,17 @@ export function mapDuvidaComments(
 // excludedDocTitles (buscado a parte pelo caller, ja que documents exclui
 // registros com excluded_at != null do docMap principal).
 export function mapProjectComments(
-  projectComments: ProjectCommentRow[],
+  rows: { exclusionRows: ProjectCommentRow[]; noteRows: ProjectCommentRow[] },
   docMap: Map<string, string>,
   excludedDocTitles: Map<string, string>,
   fieldMap: Map<string, PydanticField>,
 ): { annotationComments: ReviewComment[]; exclusionComments: ReviewComment[] } {
+  const { exclusionRows, noteRows } = rows;
+
   function titleForDocId(docId: string | null): string {
     if (!docId) return "";
     return docMap.get(docId) || excludedDocTitles.get(docId) || docId;
   }
-
-  const exclusionRows = projectComments.filter(
-    (c) => c.kind === "exclusion_request",
-  );
-  const noteRows = projectComments.filter((c) => c.kind !== "exclusion_request");
 
   const annotationComments: ReviewComment[] = noteRows.map((c) => ({
     id: `anotacao-${c.id}`,
@@ -286,7 +282,7 @@ export function mapProjectComments(
       : "Anotação livre",
     verdict: "anotacao",
     comment: c.body,
-    reviewerName: c.profiles?.email?.split("@")[0] || "Anônimo",
+    reviewerName: nameFromEmail(c.profiles?.email),
     resolvedAt: c.resolved_at,
     createdAt: c.created_at,
     chosenResponseId: null,
@@ -308,7 +304,7 @@ export function mapProjectComments(
       fieldDescription: "Sugestão de exclusão",
       verdict: "exclusao",
       comment: c.body,
-      reviewerName: c.profiles?.email?.split("@")[0] || "Anônimo",
+      reviewerName: nameFromEmail(c.profiles?.email),
       resolvedAt: c.resolved_at,
       createdAt: c.created_at,
       chosenResponseId: null,
