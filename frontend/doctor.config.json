@@ -3,26 +3,34 @@
   "ignore": {
     "overrides": [
       {
-        "files": ["src/actions/**"],
+        "files": [
+          "src/actions/**"
+        ],
         "rules": [
           "react-doctor/server-auth-actions"
         ]
       },
       {
-        "files": ["src/components/ui/**"],
+        "files": [
+          "src/components/ui/**"
+        ],
         "rules": [
           "react-doctor/only-export-components",
           "react-doctor/no-multi-comp"
         ]
       },
       {
-        "files": ["src/components/coding/QuestionsPanel.tsx"],
+        "files": [
+          "src/components/coding/QuestionsPanel.tsx"
+        ],
         "rules": [
           "react-doctor/exhaustive-deps"
         ]
       },
       {
-        "files": ["src/lib/date-parts.ts"],
+        "files": [
+          "src/lib/date-parts.ts"
+        ],
         "rules": [
           "react-doctor/js-length-check-first"
         ]
@@ -49,7 +57,7 @@
       },
       {
         "files": [
-          "src/components/auto-review/AutoReviewFieldPanel.tsx",
+          "src/components/auto-review/AutoReviewJustificationInput.tsx",
           "src/components/compare/ComparisonPanel.tsx"
         ],
         "rules": [
@@ -57,19 +65,25 @@
         ]
       },
       {
-        "files": ["src/hooks/usePinnedDoc.ts"],
+        "files": [
+          "src/hooks/usePinnedDoc.ts"
+        ],
         "rules": [
           "react-doctor/no-event-handler"
         ]
       },
       {
-        "files": ["src/hooks/useAutosaveOnExit.ts"],
+        "files": [
+          "src/hooks/useAutosaveOnExit.ts"
+        ],
         "rules": [
           "react-doctor/no-fetch-in-effect"
         ]
       },
       {
-        "files": ["src/hooks/useDocumentText.ts"],
+        "files": [
+          "src/hooks/useDocumentText.ts"
+        ],
         "rules": [
           "react-doctor/no-chain-state-updates",
           "react-doctor/no-derived-state"

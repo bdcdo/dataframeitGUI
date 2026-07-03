@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { getDocumentsForSelection, type DocSelectionItem } from "@/actions/llm";
 import { FileText, User, Bot } from "lucide-react";
+import { toggleInSet } from "@/lib/utils";
 
 interface DocumentSelectorProps {
   projectId: string;
@@ -60,12 +61,7 @@ export function DocumentSelector({
   }, [resource.items, search]);
 
   const toggle = (id: string) => {
-    setLocalSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setLocalSelected((prev) => toggleInSet(prev, id));
   };
 
   const selectAll = () => setLocalSelected(new Set(filtered.map((d) => d.id)));
