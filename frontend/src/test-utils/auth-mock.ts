@@ -12,6 +12,15 @@
 // para `authModuleMock`, chamado de dentro do callback de `vi.mock`, que
 // SÓ roda quando o módulo mockado é de fato importado (bem depois de todo o
 // topo do arquivo, imports inclusive, já ter executado).
+//
+// Um mock GLOBAL via `vitest.config.ts` (setupFiles) foi cogitado e
+// descartado: `src/lib/__tests__/auth-effective-member.test.ts` testa a
+// implementação REAL de `getEffectiveMemberId`/`getAuthUser` (só mocka as
+// dependências transitivas — Clerk, supabase/admin — não `@/lib/auth` em
+// si); um `vi.mock("@/lib/auth", ...)` em setupFiles substituiria esse
+// módulo incondicionalmente para TODOS os arquivos, quebrando esse teste.
+// A duplicação do par vi.hoisted/vi.mock nos poucos arquivos que precisam de
+// override por teste é o preço de não ter um mock global de auth no repo.
 export function authModuleMock(isCoord: () => Promise<boolean>, userId = "userCoord") {
   return {
     getAuthUser: async () => ({ id: userId }),

@@ -16,6 +16,40 @@ export function callsOf(
   return writeCalls.filter((c) => c.op === op && (!table || c.table === table));
 }
 
+// Rastreia a última operação de escrita (update/upsert/insert/delete) por
+// referência mutável, para que os dois mocks abaixo possam expor o `op`
+// corrente ao restante do builder (chave de erro, fallback de leitura) sem
+// duplicar os quatro métodos de escrita entre si.
+type OpRef = { current: string };
+
+function attachWriteOps(
+  builder: Record<string, unknown>,
+  table: string,
+  writeCalls: WriteCall[],
+  opRef: OpRef,
+) {
+  builder.update = (payload: unknown) => {
+    writeCalls.push({ table, op: "update", payload });
+    opRef.current = "update";
+    return builder;
+  };
+  builder.upsert = (payload: unknown) => {
+    writeCalls.push({ table, op: "upsert", payload });
+    opRef.current = "upsert";
+    return builder;
+  };
+  builder.insert = (payload: unknown) => {
+    writeCalls.push({ table, op: "insert", payload });
+    opRef.current = "insert";
+    return builder;
+  };
+  builder.delete = () => {
+    writeCalls.push({ table, op: "delete", payload: null });
+    opRef.current = "delete";
+    return builder;
+  };
+}
+
 // Mock filter-aware: aplica eq/neq/is/in/limit às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Usado por comparisons-retry.test.ts,
 // auto-comparison.test.ts e compare-sync.test.ts. `state` deve ser passado como
@@ -31,7 +65,7 @@ export function makeFilterAwareSupabaseMock(state: {
       const eqs: Array<[string, unknown]> = [];
       const neqs: Array<[string, unknown]> = [];
       const ins: Array<[string, unknown[]]> = [];
-      let op = "select";
+      const opRef: OpRef = { current: "select" };
       let limitN: number | null = null;
       const builder: Record<string, unknown> = {};
       builder.select = () => builder;
@@ -55,26 +89,7 @@ export function makeFilterAwareSupabaseMock(state: {
         limitN = n;
         return builder;
       };
-      builder.update = (payload: unknown) => {
-        state.writeCalls.push({ table, op: "update", payload });
-        op = "update";
-        return builder;
-      };
-      builder.upsert = (payload: unknown) => {
-        state.writeCalls.push({ table, op: "upsert", payload });
-        op = "upsert";
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        state.writeCalls.push({ table, op: "insert", payload });
-        op = "insert";
-        return builder;
-      };
-      builder.delete = () => {
-        state.writeCalls.push({ table, op: "delete", payload: null });
-        op = "delete";
-        return builder;
-      };
+      attachWriteOps(builder, table, state.writeCalls, opRef);
       const rows = () => {
         const data = (state.tableData[table] ?? []) as Array<
           Record<string, unknown>
@@ -87,7 +102,7 @@ export function makeFilterAwareSupabaseMock(state: {
         });
         return limitN != null ? filtered.slice(0, limitN) : filtered;
       };
-      const err = () => state.tableData[`__error:${table}:${op}`] ?? null;
+      const err = () => state.tableData[`__error:${table}:${opRef.current}`] ?? null;
       builder.single = () =>
         Promise.resolve({ data: rows()[0] ?? null, error: err() });
       builder.maybeSingle = () =>
@@ -109,34 +124,18 @@ export function makeSimpleSupabaseMock(state: {
   return {
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      let op = "select";
+      const opRef: OpRef = { current: "select" };
       for (const m of ["select", "eq", "is", "in", "neq", "limit"]) {
         builder[m] = () => builder;
       }
-      builder.update = (payload: unknown) => {
-        state.writeCalls.push({ table, op: "update", payload });
-        op = "update";
-        return builder;
-      };
-      builder.upsert = (payload: unknown) => {
-        state.writeCalls.push({ table, op: "upsert", payload });
-        op = "upsert";
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        state.writeCalls.push({ table, op: "insert", payload });
-        op = "insert";
-        return builder;
-      };
-      builder.delete = () => {
-        state.writeCalls.push({ table, op: "delete", payload: null });
-        op = "delete";
-        return builder;
-      };
+      attachWriteOps(builder, table, state.writeCalls, opRef);
       builder.then = (resolve: (v: unknown) => unknown) =>
         resolve({
-          data: state.tableData[`${table}:${op}`] ?? state.tableData[table] ?? null,
-          error: state.tableData[`__error:${table}:${op}`] ?? null,
+          data:
+            state.tableData[`${table}:${opRef.current}`] ??
+            state.tableData[table] ??
+            null,
+          error: state.tableData[`__error:${table}:${opRef.current}`] ?? null,
         });
       return builder;
     },
