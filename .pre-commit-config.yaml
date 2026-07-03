@@ -105,9 +105,14 @@ repos:
       # mecanismo ja usado pelos outros hooks pesados).
       #
       # PLAYWRIGHT_PRE_PUSH=1 forca o playwright.config.ts a nunca reaproveitar
-      # um dev server ja rodando (evita validar a worktree/branch errada, ja
-      # que e comum ter varias worktrees com `npm run dev` ativo em paralelo)
-      # e a rodar os specs em serie (evita reintroduzir o burst de
+      # um dev server ja rodando e a subir numa porta dedicada (3100, nao a
+      # 3000 padrao) — reuseExistingServer:false sozinho abortaria com erro
+      # sempre que QUALQUER coisa ja estivesse escutando na porta, inclusive
+      # o `npm run dev` legitimo do proprio desenvolvedor na mesma branch, ja
+      # que o Playwright nao distingue "worktree errada" de "servidor certo".
+      # A porta dedicada evita esse falso-positivo comum; so fica o risco
+      # residual (raro) de duas worktrees empurrando ao mesmo tempo. Tambem
+      # forca os specs a rodar em serie (evita reintroduzir o burst de
       # clerk.signIn() entre arquivos de spec que a #198/PR #294 corrigiu
       # dentro de um arquivo so).
       - id: e2e-smoke
