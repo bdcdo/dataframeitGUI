@@ -1,8 +1,12 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { resolveDocTitle } from "@/lib/utils";
 import { DocListPanel } from "@/components/shared/DocListPanel";
-import { DocListItem, DocListDoneIcon } from "@/components/shared/DocListItem";
+import {
+  DocListItem,
+  DocListDoneIcon,
+  DocListBadge,
+} from "@/components/shared/DocListItem";
 
 export interface ArbitrationDocListEntry {
   id: string;
@@ -33,43 +37,38 @@ export function ArbitrationDocList({
       collapsed={collapsed}
       onToggle={onToggle}
       headerLabel="Fila de arbitragem"
-      isEmpty={docs.length === 0}
     >
-      {docs.map((d, idx) => {
-        const isDone = d.finalDecided === d.totalFields;
-        const phase: "blind" | "reveal" =
-          d.blindDecided === d.totalFields ? "reveal" : "blind";
-        const title = d.title || d.externalId || d.id.slice(0, 8);
-        const isCurrent = idx === currentIndex;
-        return (
-          <DocListItem
-            key={d.id}
-            icon={<DocListDoneIcon isDone={isDone} />}
-            title={title}
-            isCurrent={isCurrent}
-            onClick={() => onSelect(idx)}
-          >
-            <Badge
-              variant={phase === "reveal" ? "secondary" : "outline"}
-              className="h-4 px-1 text-[10px] font-normal"
-              title={
-                phase === "reveal"
-                  ? "fase cega concluída — aguarda decisão final"
-                  : "ainda na fase cega"
-              }
+      {!collapsed &&
+        docs.map((d, idx) => {
+          const isDone = d.finalDecided === d.totalFields;
+          const phase: "blind" | "reveal" =
+            d.blindDecided === d.totalFields ? "reveal" : "blind";
+          const title = resolveDocTitle(d.title, d.externalId, d.id);
+          const isCurrent = idx === currentIndex;
+          return (
+            <DocListItem
+              key={d.id}
+              icon={<DocListDoneIcon isDone={isDone} />}
+              title={title}
+              isCurrent={isCurrent}
+              onClick={() => onSelect(idx)}
             >
-              {phase === "reveal" ? "Revelação" : "Cega"}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="h-4 px-1 text-[10px] font-normal"
-              title="campos finalizados / total"
-            >
-              {d.finalDecided}/{d.totalFields} ✓
-            </Badge>
-          </DocListItem>
-        );
-      })}
+              <DocListBadge
+                variant={phase === "reveal" ? "secondary" : "outline"}
+                title={
+                  phase === "reveal"
+                    ? "fase cega concluída — aguarda decisão final"
+                    : "ainda na fase cega"
+                }
+              >
+                {phase === "reveal" ? "Revelação" : "Cega"}
+              </DocListBadge>
+              <DocListBadge variant="outline" title="campos finalizados / total">
+                {d.finalDecided}/{d.totalFields} ✓
+              </DocListBadge>
+            </DocListItem>
+          );
+        })}
     </DocListPanel>
   );
 }

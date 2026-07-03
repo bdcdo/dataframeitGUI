@@ -1,10 +1,9 @@
 "use client";
 
-import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
+import { cn, resolveDocTitle } from "@/lib/utils";
 import { CheckCircle2, Circle } from "lucide-react";
 import { DocListPanel } from "@/components/shared/DocListPanel";
-import { DocListItem } from "@/components/shared/DocListItem";
+import { DocListItem, DocListBadge } from "@/components/shared/DocListItem";
 
 export interface DocListEntry {
   id: string;
@@ -49,48 +48,41 @@ export function CompareDocList({
       collapsed={collapsed}
       onToggle={onToggle}
       headerLabel="Fila de revisão"
-      isEmpty={docs.length === 0}
     >
-      {docs.map((d, idx) => {
-        const pending = d.divergentCount - d.reviewedCount;
-        const title = d.title || d.external_id || d.id.slice(0, 8);
-        const isCurrent = idx === currentIndex;
-        return (
-          <DocListItem
-            key={d.id}
-            icon={<StatusDot status={d.assignmentStatus} />}
-            title={title}
-            isCurrent={isCurrent}
-            onClick={() => onSelect(idx)}
-          >
-            <Badge
-              variant="outline"
-              className="h-4 gap-0.5 px-1 text-[10px] font-normal"
-              title="humanos atualizados / atribuídos"
+      {!collapsed &&
+        docs.map((d, idx) => {
+          const pending = d.divergentCount - d.reviewedCount;
+          const title = resolveDocTitle(d.title, d.external_id, d.id);
+          const isCurrent = idx === currentIndex;
+          return (
+            <DocListItem
+              key={d.id}
+              icon={<StatusDot status={d.assignmentStatus} />}
+              title={title}
+              isCurrent={isCurrent}
+              onClick={() => onSelect(idx)}
             >
-              👤 {d.humansFromAssigned}
-              {d.assignedCodingCount > 0 && `/${d.assignedCodingCount}`}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="h-4 px-1 text-[10px] font-normal"
-              title="respostas totais"
-            >
-              {d.totalCount} resp.
-            </Badge>
-            <Badge
-              variant={pending > 0 ? "secondary" : "outline"}
-              className={cn(
-                "h-4 px-1 text-[10px] font-normal",
-                pending === 0 && "text-muted-foreground",
-              )}
-              title="revisados / divergentes"
-            >
-              {d.reviewedCount}/{d.divergentCount} ✓
-            </Badge>
-          </DocListItem>
-        );
-      })}
+              <DocListBadge
+                variant="outline"
+                className="gap-0.5"
+                title="humanos atualizados / atribuídos"
+              >
+                👤 {d.humansFromAssigned}
+                {d.assignedCodingCount > 0 && `/${d.assignedCodingCount}`}
+              </DocListBadge>
+              <DocListBadge variant="outline" title="respostas totais">
+                {d.totalCount} resp.
+              </DocListBadge>
+              <DocListBadge
+                variant={pending > 0 ? "secondary" : "outline"}
+                className={cn(pending === 0 && "text-muted-foreground")}
+                title="revisados / divergentes"
+              >
+                {d.reviewedCount}/{d.divergentCount} ✓
+              </DocListBadge>
+            </DocListItem>
+          );
+        })}
     </DocListPanel>
   );
 }

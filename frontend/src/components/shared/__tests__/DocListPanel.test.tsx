@@ -9,12 +9,7 @@ describe("DocListPanel — colapsado", () => {
   it("mostra só o botão de expandir, acessível por title e aria-label, e dispara onToggle", () => {
     const onToggle = vi.fn();
     render(
-      <DocListPanel
-        collapsed
-        onToggle={onToggle}
-        headerLabel="Fila de teste"
-        isEmpty={false}
-      >
+      <DocListPanel collapsed onToggle={onToggle} headerLabel="Fila de teste">
         <li>item</li>
       </DocListPanel>,
     );
@@ -35,7 +30,6 @@ describe("DocListPanel — expandido", () => {
         collapsed={false}
         onToggle={onToggle}
         headerLabel="Fila de teste"
-        isEmpty={false}
       >
         <li>item</li>
       </DocListPanel>,
@@ -46,28 +40,32 @@ describe("DocListPanel — expandido", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("isEmpty=true mostra a mensagem dedicada e não renderiza children", () => {
+  it("sem children mostra a mensagem de vazio default e não renderiza a lista", () => {
     render(
-      <DocListPanel
-        collapsed={false}
-        onToggle={vi.fn()}
-        headerLabel="Fila de teste"
-        isEmpty
-      >
-        <li>não deveria aparecer</li>
-      </DocListPanel>,
+      <DocListPanel collapsed={false} onToggle={vi.fn()} headerLabel="Fila de teste" />,
     );
     expect(screen.getByText("Nenhum documento na fila.")).toBeTruthy();
-    expect(screen.queryByText("não deveria aparecer")).toBeNull();
   });
 
-  it("isEmpty=false renderiza children dentro da lista", () => {
+  it("emptyMessage customizado substitui o default quando não há children", () => {
     render(
       <DocListPanel
         collapsed={false}
         onToggle={vi.fn()}
         headerLabel="Fila de teste"
-        isEmpty={false}
+        emptyMessage="Nenhum item atribuído a você."
+      />,
+    );
+    expect(screen.getByText("Nenhum item atribuído a você.")).toBeTruthy();
+    expect(screen.queryByText("Nenhum documento na fila.")).toBeNull();
+  });
+
+  it("com children renderiza a lista e não a mensagem de vazio", () => {
+    render(
+      <DocListPanel
+        collapsed={false}
+        onToggle={vi.fn()}
+        headerLabel="Fila de teste"
       >
         <li>item visível</li>
       </DocListPanel>,

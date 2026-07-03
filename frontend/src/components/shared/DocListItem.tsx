@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Circle } from "lucide-react";
 
 interface DocListItemProps {
@@ -50,5 +51,17 @@ export function DocListDoneIcon({ isDone }: { isDone: boolean }) {
     <CheckCircle2 className="size-3 text-green-600" />
   ) : (
     <Circle className="size-3 text-muted-foreground/50" />
+  );
+}
+
+export function DocListBadge({
+  className,
+  ...props
+}: React.ComponentProps<typeof Badge>) {
+  return (
+    <Badge
+      className={cn("h-4 px-1 text-[10px] font-normal", className)}
+      {...props}
+    />
   );
 }

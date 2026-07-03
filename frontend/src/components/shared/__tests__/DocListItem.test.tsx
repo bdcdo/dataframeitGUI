@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { DocListItem, DocListDoneIcon } from "../DocListItem";
+import { DocListItem, DocListDoneIcon, DocListBadge } from "../DocListItem";
 
 afterEach(cleanup);
 
@@ -103,5 +103,33 @@ describe("DocListDoneIcon", () => {
     const { container } = render(<DocListDoneIcon isDone={false} />);
     const icon = container.querySelector("svg");
     expect(icon?.getAttribute("class")).toContain("text-muted-foreground/50");
+  });
+});
+
+describe("DocListBadge", () => {
+  it("aplica o className default h-4/px-1/text-[10px]/font-normal", () => {
+    render(<DocListBadge>conteúdo</DocListBadge>);
+    const badge = screen.getByText("conteúdo");
+    expect(badge.className).toContain("h-4");
+    expect(badge.className).toContain("text-[10px]");
+    expect(badge.className).toContain("font-normal");
+  });
+
+  it("mescla className extra sem perder o default", () => {
+    render(<DocListBadge className="gap-0.5">conteúdo</DocListBadge>);
+    const badge = screen.getByText("conteúdo");
+    expect(badge.className).toContain("gap-0.5");
+    expect(badge.className).toContain("h-4");
+  });
+
+  it("repassa variant e title para o Badge subjacente", () => {
+    render(
+      <DocListBadge variant="secondary" title="dica">
+        conteúdo
+      </DocListBadge>,
+    );
+    const badge = screen.getByText("conteúdo");
+    expect(badge.getAttribute("title")).toBe("dica");
+    expect(badge.getAttribute("data-variant")).toBe("secondary");
   });
 });

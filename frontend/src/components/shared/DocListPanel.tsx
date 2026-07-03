@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
@@ -7,15 +8,15 @@ interface DocListPanelProps {
   collapsed: boolean;
   onToggle: () => void;
   headerLabel: string;
-  isEmpty: boolean;
-  children: React.ReactNode;
+  emptyMessage?: string;
+  children?: React.ReactNode;
 }
 
 export function DocListPanel({
   collapsed,
   onToggle,
   headerLabel,
-  isEmpty,
+  emptyMessage = "Nenhum documento na fila.",
   children,
 }: DocListPanelProps) {
   if (collapsed) {
@@ -53,10 +54,8 @@ export function DocListPanel({
         </Button>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {isEmpty ? (
-          <p className="p-3 text-xs text-muted-foreground">
-            Nenhum documento na fila.
-          </p>
+        {React.Children.count(children) === 0 ? (
+          <p className="p-3 text-xs text-muted-foreground">{emptyMessage}</p>
         ) : (
           <ul className="divide-y">{children}</ul>
         )}

@@ -21,12 +21,15 @@ function entry(
   };
 }
 
-describe("AutoReviewDocList — colapsada", () => {
-  it("mostra só o botão de expandir e dispara onToggle", () => {
+describe("AutoReviewDocList — integração com DocListPanel", () => {
+  // Comportamento genérico de colapsar/expandir/estado-vazio/onToggle já é
+  // coberto em DocListPanel.test.tsx; aqui só confirmamos que este
+  // consumidor wireia collapsed/onToggle/docs corretamente.
+  it("colapsada mostra só o botão de expandir; expandida e vazia mostra mensagem; recolher dispara onToggle", () => {
     const onToggle = vi.fn();
-    render(
+    const { rerender } = render(
       <AutoReviewDocList
-        docs={[entry()]}
+        docs={[]}
         currentIndex={0}
         onSelect={vi.fn()}
         collapsed
@@ -34,41 +37,25 @@ describe("AutoReviewDocList — colapsada", () => {
       />,
     );
     expect(screen.queryByText("Fila de auto-revisão")).toBeNull();
-    const btn = screen.getByTitle("Mostrar lista de documentos");
-    fireEvent.click(btn);
+    fireEvent.click(screen.getByTitle("Mostrar lista de documentos"));
     expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-});
 
-describe("AutoReviewDocList — expandida", () => {
-  it("lista vazia exibe mensagem dedicada", () => {
-    render(
+    rerender(
       <AutoReviewDocList
         docs={[]}
-        currentIndex={0}
-        onSelect={vi.fn()}
-        collapsed={false}
-        onToggle={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Nenhum documento na fila.")).toBeTruthy();
-  });
-
-  it("recolher dispara onToggle", () => {
-    const onToggle = vi.fn();
-    render(
-      <AutoReviewDocList
-        docs={[entry()]}
         currentIndex={0}
         onSelect={vi.fn()}
         collapsed={false}
         onToggle={onToggle}
       />,
     );
+    expect(screen.getByText("Nenhum documento na fila.")).toBeTruthy();
     fireEvent.click(screen.getByTitle("Recolher lista"));
-    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onToggle).toHaveBeenCalledTimes(2);
   });
+});
 
+describe("AutoReviewDocList — expandida", () => {
   it("título cai para externalId e depois para os 8 primeiros chars do id", () => {
     render(
       <AutoReviewDocList
