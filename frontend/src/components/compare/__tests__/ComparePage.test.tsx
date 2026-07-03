@@ -22,6 +22,11 @@ vi.mock("@/actions/equivalences", () => ({
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/projects/p1/analyze/compare",
+}));
 
 // Mock das views: expõem só os controles necessários para dirigir a lógica do
 // container. NÃO testam o render dos filhos reais (CompareNav/ComparisonPanel/
@@ -210,6 +215,9 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
     equivalencesByDocField: {},
     currentUserId: "u1",
     canManageAnyPair: false,
+    isCoordinator: false,
+    showingAllQueue: false,
+    hasAssignedDocs: false,
   };
 }
 
@@ -499,5 +507,76 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
     await user.click(screen.getByTestId("mark-reviewed"));
 
     expect(markCompareDocReviewed).toHaveBeenCalledWith("p1", "d1");
+  });
+});
+
+// Antes deste PR, nenhum teste deste arquivo exercitava isCoordinator: true —
+// a bar do toggle e a diferenciação da mensagem de estado vazio ficavam sem
+// cobertura direta.
+describe("ComparePage — toggle de fila (só coordenador)", () => {
+  function emptyProps(overrides: Partial<ReturnType<typeof makeProps>> = {}) {
+    return {
+      ...makeProps(),
+      documents: [],
+      divergentFields: {},
+      responses: {},
+      coverageByDoc: {},
+      ...overrides,
+    };
+  }
+
+  it("não-coordenador nunca vê o toggle de fila", () => {
+    render(<ComparePage {...emptyProps({ isCoordinator: false })} />);
+    expect(screen.queryByRole("tab", { name: "Meus atribuídos" })).toBeNull();
+  });
+
+  it("coordenador vê o toggle de fila", () => {
+    render(<ComparePage {...emptyProps({ isCoordinator: true })} />);
+    expect(screen.getByRole("tab", { name: "Meus atribuídos" })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: "Todos" })).not.toBeNull();
+  });
+
+  it("sem nenhum documento atribuído: mensagem sugere a aba 'Todos'", () => {
+    render(
+      <ComparePage
+        {...emptyProps({
+          isCoordinator: true,
+          showingAllQueue: false,
+          hasAssignedDocs: false,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/Você não tem documentos atribuídos.*aba "Todos"/),
+    ).not.toBeNull();
+  });
+
+  it("com documentos atribuídos filtrados por cobertura: mensagem não sugere trocar de aba", () => {
+    render(
+      <ComparePage
+        {...emptyProps({
+          isCoordinator: true,
+          showingAllQueue: false,
+          hasAssignedDocs: true,
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/não atendem aos filtros atuais/),
+    ).not.toBeNull();
+    expect(
+      screen.queryByText(/Você não tem documentos atribuídos/),
+    ).toBeNull();
+  });
+
+  it("na aba 'Todos', a mensagem genérica não menciona assignment", () => {
+    render(
+      <ComparePage
+        {...emptyProps({ isCoordinator: true, showingAllQueue: true })}
+      />,
+    );
+    expect(
+      screen.getByText("Nenhum documento na fila com os filtros atuais."),
+    ).not.toBeNull();
   });
 });

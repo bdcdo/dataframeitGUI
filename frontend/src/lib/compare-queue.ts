@@ -218,17 +218,19 @@ export function buildCodingAssignedByDoc(
 }
 
 // Status per user-doc for compare assignment (used in list and panel).
-// Coordenador não tem assignment individual de comparação — mapa vazio.
+// showAll (coordenador na aba "Todos") não tem um único assignment individual
+// de referência — mapa vazio. Na aba "Meus" (showAll=false), vale tanto para
+// coordenador quanto para não-coordenador: mesmo filtro por user_id.
 export function buildCompareAssignmentStatusByDoc(
   allAssignments: readonly AssignmentRow[] | null,
-  isCoordinator: boolean,
+  showAll: boolean,
   userId: string,
 ): Map<string, "pendente" | "em_andamento" | "concluido"> {
   const compareAssignmentStatusByDoc = new Map<
     string,
     "pendente" | "em_andamento" | "concluido"
   >();
-  if (isCoordinator) return compareAssignmentStatusByDoc;
+  if (showAll) return compareAssignmentStatusByDoc;
   for (const a of allAssignments ?? []) {
     if (a.type !== "comparacao" || a.user_id !== userId) continue;
     compareAssignmentStatusByDoc.set(

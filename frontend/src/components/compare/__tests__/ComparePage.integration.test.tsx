@@ -113,6 +113,9 @@ const props = {
   equivalencesByDocField: {},
   currentUserId: "u1",
   canManageAnyPair: false,
+  isCoordinator: false,
+  showingAllQueue: false,
+  hasAssignedDocs: false,
 };
 
 const renderReal = () =>
@@ -160,5 +163,15 @@ describe("ComparePage — árvore real (smoke)", () => {
       undefined,
       expect.any(Array),
     );
+  });
+
+  it("coordenador vê o toggle de fila real (CompareQueueTabs) montado", () => {
+    render(
+      <TooltipProvider>
+        <ComparePage {...props} isCoordinator canManageAnyPair />
+      </TooltipProvider>,
+    );
+    expect(screen.getByRole("tab", { name: "Meus atribuídos" })).not.toBeNull();
+    expect(screen.getByRole("tab", { name: "Todos" })).not.toBeNull();
   });
 });

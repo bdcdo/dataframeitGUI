@@ -169,11 +169,11 @@ describe("buildCodingAssignedByDoc / buildCompareAssignmentStatusByDoc", () => {
     expect(map.has("d2")).toBe(false);
   });
 
-  it("buildCompareAssignmentStatusByDoc: coordenador não tem assignment individual", () => {
+  it("buildCompareAssignmentStatusByDoc: showAll=true não tem assignment individual de referência", () => {
     expect(buildCompareAssignmentStatusByDoc(assignments, true, "u3").size).toBe(0);
   });
 
-  it("buildCompareAssignmentStatusByDoc: filtra por type=comparacao e pelo usuário", () => {
+  it("buildCompareAssignmentStatusByDoc: showAll=false filtra por type=comparacao e pelo usuário", () => {
     const map = buildCompareAssignmentStatusByDoc(assignments, false, "u3");
     expect(map.get("d1")).toBe("em_andamento");
     expect(map.get("d2")).toBe("concluido");

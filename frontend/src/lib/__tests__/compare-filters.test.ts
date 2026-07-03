@@ -5,6 +5,7 @@ import {
   readCompareFilters,
   compareDefaultsForMode,
   assignedCompareDocIds,
+  resolveShowAllQueue,
 } from "@/lib/compare-filters";
 
 // Estes testes cobrem a peça que liga a Comparação de "1 humano + 1 LLM": o
@@ -102,11 +103,13 @@ describe("readCompareFilters com defaults por modo", () => {
   });
 });
 
-// Invariante de segurança: na fila de Comparação, um não-coordenador só pode
-// ver os documentos atribuídos a ele. A policy RLS "Members view responses" não
-// restringe por linha, então este recorte é a única barreira — por isso o
-// `isCoordinator` que o alimenta é fail-closed.
-describe("assignedCompareDocIds — não-coordenador vê só os docs atribuídos", () => {
+// Invariante de segurança: na fila de Comparação, quem não pediu "todos" só
+// pode ver os documentos atribuídos a ele (vale tanto para coordenador na aba
+// "Meus atribuídos" quanto para não-coordenador, que nunca alcança showAll).
+// A policy RLS "Members view responses" não restringe por linha, então este
+// recorte é a única barreira — por isso `showAll` é resolvido fail-closed no
+// servidor (showAllQueue = isCoordinator && queueParam === "all").
+describe("assignedCompareDocIds — showAll decide, não o papel sozinho", () => {
   const userId = "user-self";
   const assignments = [
     { document_id: "doc-meu", user_id: userId, type: "comparacao" },
@@ -114,11 +117,11 @@ describe("assignedCompareDocIds — não-coordenador vê só os docs atribuídos
     { document_id: "doc-codificacao", user_id: userId, type: "codificacao" },
   ];
 
-  it("coordenador → null (sem restrição: vê todos os documentos)", () => {
+  it("showAll=true → null (sem restrição: vê todos os documentos)", () => {
     expect(assignedCompareDocIds(true, assignments, userId)).toBeNull();
   });
 
-  it("não-coordenador → só os docs de comparação atribuídos a ele", () => {
+  it("showAll=false → só os docs de comparação atribuídos ao usuário (coordenador ou não)", () => {
     const visible = assignedCompareDocIds(false, assignments, userId);
     expect(visible).toEqual(new Set(["doc-meu"]));
     // não vaza o doc de comparação atribuído a outro respondente...
@@ -127,8 +130,36 @@ describe("assignedCompareDocIds — não-coordenador vê só os docs atribuídos
     expect(visible!.has("doc-codificacao")).toBe(false);
   });
 
-  it("não-coordenador sem assignments → conjunto vazio (não vê nada)", () => {
+  it("showAll=false sem assignments → conjunto vazio (não vê nada)", () => {
     expect(assignedCompareDocIds(false, [], userId)).toEqual(new Set());
     expect(assignedCompareDocIds(false, null, userId)).toEqual(new Set());
+  });
+});
+
+// Regressão: showAllQueue nasceu inline em page.tsx (isCoordinator &&
+// queueParam === "all") — a mesma classe de expressão que já causou o bug
+// original desta página (tratar "é coordenador" como "vê tudo"). Extraída
+// aqui como função pura testada para que uma reescrita futura (ex.: trocar
+// `&&` por `||`, esquecer o `isCoordinator &&`) quebre o CI em vez de só
+// aparecer em produção.
+describe("resolveShowAllQueue — gate fail-closed do toggle de fila", () => {
+  it("coordenador + queue=all → true", () => {
+    expect(resolveShowAllQueue(true, "all")).toBe(true);
+  });
+
+  it("coordenador + param ausente → false (padrão é a fila pessoal)", () => {
+    expect(resolveShowAllQueue(true, undefined)).toBe(false);
+  });
+
+  it("coordenador + queue=mine → false", () => {
+    expect(resolveShowAllQueue(true, "mine")).toBe(false);
+  });
+
+  it("não-coordenador + queue=all → false (fail-closed, param sozinho não basta)", () => {
+    expect(resolveShowAllQueue(false, "all")).toBe(false);
+  });
+
+  it("não-coordenador + param ausente → false", () => {
+    expect(resolveShowAllQueue(false, undefined)).toBe(false);
   });
 });
