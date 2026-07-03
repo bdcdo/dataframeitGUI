@@ -5,31 +5,29 @@ import { useResetOnKeyChange } from "../useResetOnKeyChange";
 
 afterEach(cleanup);
 
+function setup(initialKey: string) {
+  const onKeyChange = vi.fn();
+  const { rerender } = renderHook(
+    ({ key }) => useResetOnKeyChange(key, onKeyChange),
+    { initialProps: { key: initialKey } }
+  );
+  return { onKeyChange, rerender };
+}
+
 describe("useResetOnKeyChange", () => {
   it("não chama onKeyChange no primeiro render", () => {
-    const onKeyChange = vi.fn();
-    renderHook(({ key }) => useResetOnKeyChange(key, onKeyChange), {
-      initialProps: { key: "a" },
-    });
+    const { onKeyChange } = setup("a");
     expect(onKeyChange).not.toHaveBeenCalled();
   });
 
   it("não chama onKeyChange ao re-renderizar com a mesma key", () => {
-    const onKeyChange = vi.fn();
-    const { rerender } = renderHook(
-      ({ key }) => useResetOnKeyChange(key, onKeyChange),
-      { initialProps: { key: "a" } }
-    );
+    const { onKeyChange, rerender } = setup("a");
     rerender({ key: "a" });
     expect(onKeyChange).not.toHaveBeenCalled();
   });
 
   it("chama onKeyChange exatamente uma vez quando a key muda", () => {
-    const onKeyChange = vi.fn();
-    const { rerender } = renderHook(
-      ({ key }) => useResetOnKeyChange(key, onKeyChange),
-      { initialProps: { key: "a" } }
-    );
+    const { onKeyChange, rerender } = setup("a");
     rerender({ key: "b" });
     expect(onKeyChange).toHaveBeenCalledTimes(1);
     rerender({ key: "b" });
