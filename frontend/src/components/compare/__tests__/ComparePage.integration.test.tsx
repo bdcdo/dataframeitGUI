@@ -92,6 +92,7 @@ const props = {
   projectPydanticHash: null,
   respondentNames: ["Ana", "GPT"],
   defaultMinHumans: 2,
+  defaultVersion: "latest_major",
   coverageByDoc: {
     d1: {
       docId: "d1",
