@@ -19,7 +19,7 @@ export default async function ConfigDocumentsPage({
   let query = supabase
     .from("documents")
     .select(
-      "id, external_id, title, created_at, excluded_at, excluded_reason, excluded_by, responses(count)",
+      "id, external_id, title, created_at, excluded_at, excluded_reason, excluded_by, exclusion_pending_at, responses(count)",
     )
     .eq("project_id", id);
 
@@ -62,6 +62,7 @@ export default async function ConfigDocumentsPage({
     excluded_reason: d.excluded_reason,
     excluded_by: d.excluded_by,
     excluded_by_name: d.excluded_by ? profileById.get(d.excluded_by) || null : null,
+    exclusion_pending_at: d.exclusion_pending_at,
     responseCount:
       (d.responses as unknown as { count: number }[])?.[0]?.count || 0,
   }));

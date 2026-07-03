@@ -122,3 +122,60 @@ WHERE d.id = p.document_id
 --    continuam valendo (docs escondidos) até decisão do coordenador.
 ALTER TABLE projects
   ADD COLUMN IF NOT EXISTS out_of_scope_enabled BOOLEAN NOT NULL DEFAULT true;
+
+-- 7. Invariante: excluded_at NOT NULL implica exclusion_pending_at NULL.
+--    approveExclusionRequest já resolve o project_comments antes do soft
+--    delete, mas excludeDocuments (botão "Excluir" manual de Config →
+--    Documentos) e qualquer caminho futuro de escrita direta em
+--    documents.excluded_at não passam por esse cascade. Sem a trigger, um
+--    doc com pedido pendente excluído por essa via manual fica com o
+--    comentário de exclusion_request órfão (nunca resolvido) e, se depois
+--    restaurado, com excluded_at NULL e exclusion_pending_at ainda
+--    NOT NULL — estado que nenhum dos filtros
+--    `.is('exclusion_pending_at', null)` (~14 call sites) reverte, tornando
+--    o documento invisível para sempre sem caminho de UI para corrigir.
+--    SECURITY DEFINER pelo mesmo motivo do item 3: quem faz UPDATE em
+--    documents.excluded_at é sempre coordenador (RLS já garante), mas o
+--    resolved_at em project_comments deve valer mesmo que o autor original
+--    do pedido seja outro pesquisador — a trigger grava um valor derivado,
+--    não dependente de permissão de terceiro.
+CREATE OR REPLACE FUNCTION public.resolve_exclusion_requests_on_exclude()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  IF NEW.excluded_at IS NOT NULL AND OLD.excluded_at IS NULL THEN
+    UPDATE public.project_comments
+    SET resolved_at = NEW.excluded_at,
+        resolved_by = NEW.excluded_by
+    WHERE document_id = NEW.id
+      AND kind = 'exclusion_request'
+      AND resolved_at IS NULL
+      AND rejected_at IS NULL;
+  END IF;
+
+  RETURN NULL;  -- trigger AFTER: valor de retorno é ignorado
+END;
+$$;
+
+DROP TRIGGER IF EXISTS resolve_exclusion_requests_on_exclude_trigger ON documents;
+CREATE TRIGGER resolve_exclusion_requests_on_exclude_trigger
+  AFTER UPDATE OF excluded_at ON documents
+  FOR EACH ROW
+  EXECUTE FUNCTION public.resolve_exclusion_requests_on_exclude();
+
+-- 8. Backfill defensivo: cobre reaplicação da migration e o caso raro de um
+--    doc já excluído (por caminho manual, antes desta trigger existir) com
+--    pedido de exclusão ainda pendente. Dispara o recompute (trigger do
+--    item 3) e resolve o invariante do item 7 para dados existentes.
+UPDATE project_comments pc
+SET resolved_at = d.excluded_at,
+    resolved_by = d.excluded_by
+FROM documents d
+WHERE pc.document_id = d.id
+  AND d.excluded_at IS NOT NULL
+  AND pc.kind = 'exclusion_request'
+  AND pc.resolved_at IS NULL
+  AND pc.rejected_at IS NULL;

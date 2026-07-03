@@ -218,10 +218,13 @@ async function filterActiveExternalIdConflicts<
 // catch do hook ficaria preso). Um cache stale é recuperável; um upload "perdido"
 // não.
 //
-// Privada (não-exportada): os chamadores internos deste módulo já passaram pelo
-// RLS de escrita, então não pagam o custo do gate de autorização. O ponto de
-// entrada client é o wrapper `revalidateProjectDocuments` abaixo.
-async function revalidateProjectDocumentsCache(projectId: string) {
+// Exportada (não client-callable — é uma "use server" function, mas seu uso
+// pretendido é só server-to-server) para outras actions deste app que já
+// fizeram o próprio gate de autorização (ex: project-comments.ts) reusarem a
+// mesma invalidação em vez de duplicar revalidatePath/revalidateTag. Chamadas
+// client-side desautenticadas ainda passam pelo wrapper `revalidateProjectDocuments`
+// abaixo, que faz o gate de acesso antes de delegar aqui.
+export async function revalidateProjectDocumentsCache(projectId: string) {
   try {
     revalidatePath(`/projects/${projectId}/config/documents`);
     revalidateTag(`project-${projectId}-documents`, TAG_PROFILE);

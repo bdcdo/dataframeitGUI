@@ -2,7 +2,10 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
-import { excludeDocuments } from "@/actions/documents";
+import {
+  excludeDocuments,
+  revalidateProjectDocumentsCache,
+} from "@/actions/documents";
 import { revalidatePath } from "next/cache";
 
 export async function createProjectComment(
@@ -49,27 +52,41 @@ export async function requestDocumentExclusion(
 
   const supabase = await createSupabaseServer();
 
-  // Guardas em paralelo: doc já excluído/em revisão e pedido duplicado do
-  // mesmo autor.
-  const [{ data: doc }, { data: existing }] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("excluded_at, exclusion_pending_at")
-      .eq("id", documentId)
-      .eq("project_id", projectId)
-      .maybeSingle(),
-    supabase
-      .from("project_comments")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("author_id", user.id)
-      .eq("kind", "exclusion_request")
-      .is("resolved_at", null)
-      .is("rejected_at", null)
-      .maybeSingle(),
-  ]);
+  // Guardas em paralelo: doc já excluído/em revisão, pedido duplicado do
+  // mesmo autor e recurso desligado pelo coordenador. O toggle
+  // (projects.out_of_scope_enabled) só esconde a pergunta no client — sem
+  // este check, a action segue aceitando pedidos por chamada direta mesmo
+  // com o recurso desligado no projeto.
+  const [{ data: doc }, { data: existing }, { data: project }] =
+    await Promise.all([
+      supabase
+        .from("documents")
+        .select("excluded_at, exclusion_pending_at")
+        .eq("id", documentId)
+        .eq("project_id", projectId)
+        .maybeSingle(),
+      supabase
+        .from("project_comments")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("author_id", user.id)
+        .eq("kind", "exclusion_request")
+        .is("resolved_at", null)
+        .is("rejected_at", null)
+        .maybeSingle(),
+      supabase
+        .from("projects")
+        .select("out_of_scope_enabled")
+        .eq("id", projectId)
+        .maybeSingle(),
+    ]);
 
+  if (!project?.out_of_scope_enabled) {
+    return {
+      error: "Sinalização de documentos fora do escopo está desligada neste projeto",
+    };
+  }
   if (!doc) return { error: "Documento não encontrado" };
   if (doc.excluded_at)
     return { error: "Documento já foi removido do escopo do projeto" };
@@ -101,6 +118,9 @@ export async function requestDocumentExclusion(
   // O doc some imediatamente das filas de codificação e da Comparação.
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
+  // Fila de Assignments é lida via unstable_cache tagged (5min TTL) — sem
+  // isto o coordenador vê o doc como atribuível por até 5min após o pedido.
+  await revalidateProjectDocumentsCache(projectId);
   return { success: true };
 }
 
@@ -136,6 +156,7 @@ export async function cancelExclusionRequest(
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
+  await revalidateProjectDocumentsCache(projectId);
   return { success: true };
 }
 
@@ -260,6 +281,7 @@ export async function rejectExclusionRequest(
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
+  await revalidateProjectDocumentsCache(projectId);
   return { success: true };
 }
 

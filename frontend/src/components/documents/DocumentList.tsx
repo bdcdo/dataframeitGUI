@@ -14,6 +14,9 @@ export type DocumentSummary = Pick<Document, "id" | "external_id" | "title"> & {
   excluded_at?: string | null;
   excluded_reason?: string | null;
   excluded_by_name?: string | null;
+  /** Pedido de exclusão pendente (revisão de escopo) — doc ainda ativo mas
+   *  já escondido das filas de codificação/Comparação/LLM para todos. */
+  exclusion_pending_at?: string | null;
 };
 
 interface DocumentListProps {
@@ -171,7 +174,18 @@ export function DocumentList({
                   </>
                 ) : (
                   <td className="px-4 py-2">
-                    <Badge variant="secondary">{doc.responseCount || 0}</Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">{doc.responseCount || 0}</Badge>
+                      {doc.exclusion_pending_at && (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-500/40 text-amber-600 dark:text-amber-400"
+                          title="Sinalizado como fora do escopo — aguardando decisão do coordenador em Comentários"
+                        >
+                          Revisão de escopo pendente
+                        </Badge>
+                      )}
+                    </div>
                   </td>
                 )}
                 {projectId && !showExcluded && (

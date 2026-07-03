@@ -15,6 +15,7 @@ const hoisted = vi.hoisted(() => ({
   user: { id: "user-1", email: "u@test.com" } as { id: string } | null,
   isCoord: vi.fn(async () => true),
   excludeDocuments: vi.fn(async () => ({ count: 1 })),
+  revalidateProjectDocumentsCache: vi.fn(async () => {}),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -25,6 +26,8 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/actions/documents", () => ({
   excludeDocuments: (...args: unknown[]) =>
     hoisted.excludeDocuments(...(args as [])),
+  revalidateProjectDocumentsCache: (...args: unknown[]) =>
+    hoisted.revalidateProjectDocumentsCache(...(args as [])),
 }));
 
 let tableResults: TableResults;
@@ -38,6 +41,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 const activeDoc = { excluded_at: null, exclusion_pending_at: null };
+const enabledProject = { data: { out_of_scope_enabled: true } };
 
 beforeEach(() => {
   tableResults = {};
@@ -46,6 +50,7 @@ beforeEach(() => {
   hoisted.isCoord.mockResolvedValue(true);
   hoisted.excludeDocuments.mockClear();
   hoisted.excludeDocuments.mockResolvedValue({ count: 1 });
+  hoisted.revalidateProjectDocumentsCache.mockClear();
 });
 
 async function loadActions() {
@@ -64,6 +69,7 @@ describe("requestDocumentExclusion — guardas", () => {
     tableResults = {
       documents: { data: null },
       project_comments: { data: null },
+      projects: enabledProject,
     };
     const { requestDocumentExclusion } = await loadActions();
     const r = await requestDocumentExclusion("p1", "d1", "fora do tema");
@@ -75,6 +81,7 @@ describe("requestDocumentExclusion — guardas", () => {
     tableResults = {
       documents: { data: { ...activeDoc, excluded_at: "2026-01-01" } },
       project_comments: { data: null },
+      projects: enabledProject,
     };
     const { requestDocumentExclusion } = await loadActions();
     const r = await requestDocumentExclusion("p1", "d1", "fora do tema");
@@ -88,6 +95,7 @@ describe("requestDocumentExclusion — guardas", () => {
         data: { ...activeDoc, exclusion_pending_at: "2026-01-01" },
       },
       project_comments: { data: { id: "c1" } },
+      projects: enabledProject,
     };
     const { requestDocumentExclusion } = await loadActions();
     const r = await requestDocumentExclusion("p1", "d1", "fora do tema");
@@ -101,6 +109,7 @@ describe("requestDocumentExclusion — guardas", () => {
         data: { ...activeDoc, exclusion_pending_at: "2026-01-01" },
       },
       project_comments: { data: null },
+      projects: enabledProject,
     };
     const { requestDocumentExclusion } = await loadActions();
     const r = await requestDocumentExclusion("p1", "d1", "fora do tema");
@@ -108,10 +117,23 @@ describe("requestDocumentExclusion — guardas", () => {
     expect(writeCalls).toHaveLength(0);
   });
 
+  it("recurso desligado pelo coordenador (out_of_scope_enabled=false) → erro, sem escrita", async () => {
+    tableResults = {
+      documents: { data: activeDoc },
+      project_comments: { data: null },
+      projects: { data: { out_of_scope_enabled: false } },
+    };
+    const { requestDocumentExclusion } = await loadActions();
+    const r = await requestDocumentExclusion("p1", "d1", "fora do tema");
+    expect(r.error).toContain("desligada");
+    expect(writeCalls).toHaveLength(0);
+  });
+
   it("sucesso → insert de exclusion_request com a justificativa", async () => {
     tableResults = {
       documents: { data: activeDoc },
       project_comments: [{ data: null }, { data: null, error: null }],
+      projects: enabledProject,
     };
     const { requestDocumentExclusion } = await loadActions();
     const r = await requestDocumentExclusion("p1", "d1", "  fora do tema  ");
@@ -125,6 +147,7 @@ describe("requestDocumentExclusion — guardas", () => {
       kind: "exclusion_request",
       body: "fora do tema",
     });
+    expect(hoisted.revalidateProjectDocumentsCache).toHaveBeenCalledWith("p1");
   });
 });
 
@@ -135,6 +158,7 @@ describe("cancelExclusionRequest", () => {
     const r = await cancelExclusionRequest("p1", "d1");
     expect(r).toEqual({ success: true });
     expect(writeCalls.filter((c) => c.op === "delete")).toHaveLength(1);
+    expect(hoisted.revalidateProjectDocumentsCache).toHaveBeenCalledWith("p1");
   });
 
   it("sem pedido pendente do autor (RLS/no-op) → erro", async () => {
@@ -232,5 +256,6 @@ describe("rejectExclusionRequest", () => {
       rejected_reason: "está no escopo",
       resolved_by: "user-1",
     });
+    expect(hoisted.revalidateProjectDocumentsCache).toHaveBeenCalledWith("p1");
   });
 });
