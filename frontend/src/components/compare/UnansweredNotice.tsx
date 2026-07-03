@@ -1,15 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { respondentKey, type FieldResponse } from "./compare-types";
 
-interface UnansweredResponse {
-  id: string;
-  respondent_type: "humano" | "llm";
-  respondent_name: string;
-  respondent_id: string | null;
-  answer: unknown;
-  isFieldStale: boolean;
-}
+// Subconjunto de `FieldResponse` que o aviso consome — derivado do tipo
+// canônico para que mudanças de semântica lá virem erro de tipo aqui.
+type UnansweredResponse = Pick<
+  FieldResponse,
+  "id" | "respondent_type" | "respondent_name" | "respondent_id" | "answer" | "isFieldStale"
+>;
 
 // "Não preencheu este campo" (issue #247, ponto 3): respostas sem valor para
 // o campo atual ficam fora dos cards (que só mostram quem respondeu), o que
@@ -23,10 +21,10 @@ interface UnansweredResponse {
 //  - `respondent_type === "humano"`: a issue é sobre humanos sumindo da tela; um
 //    LLM pode omitir um campo legitimamente (ex.: condicional não satisfeita),
 //    então "Robô não preencheu" seria ruído.
-// Deduplicamos por `respondent_id ?? id` — mesma chave que a contagem da página
-// (page.tsx) — para que um respondente com duas respostas qualificadas em branco
-// (dados legados / re-codificação) conte e apareça uma vez só, sem fundir
-// anônimos distintos (respondent_id null cai no id, que é único por linha).
+// Deduplicamos por `respondentKey` — a mesma chave da contagem de humanos da
+// página (gate `minHumans`) — para que um respondente com duas respostas
+// qualificadas em branco (dados legados / re-codificação) conte e apareça uma
+// vez só, sem fundir anônimos distintos.
 function listUnansweredHumans(
   responses: UnansweredResponse[],
 ): { name: string }[] {
@@ -39,7 +37,7 @@ function listUnansweredHumans(
       r.respondent_type !== "humano"
     )
       continue;
-    const key = r.respondent_id ?? r.id;
+    const key = respondentKey(r);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({ name: r.respondent_name });
@@ -52,7 +50,7 @@ export function UnansweredNotice({
 }: {
   responses: UnansweredResponse[];
 }) {
-  const unanswered = useMemo(() => listUnansweredHumans(responses), [responses]);
+  const unanswered = listUnansweredHumans(responses);
 
   if (unanswered.length === 0) return null;
 

@@ -12,6 +12,7 @@ import {
   Equal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatVerdictDisplay } from "@/lib/verdict-display";
 import type { LlmError } from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
 
 interface LlmErrorCardProps {
@@ -23,21 +24,6 @@ interface LlmErrorCardProps {
   onReopen: () => void;
   onEditField?: () => void;
   onMarkEquivalent?: () => void;
-}
-
-function formatVerdictDisplay(verdict: string): string {
-  if (verdict.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(verdict) as Record<string, boolean>;
-      const selected = Object.entries(parsed)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      return selected.length > 0 ? selected.join(", ") : "(nenhuma)";
-    } catch {
-      /* fallback */
-    }
-  }
-  return verdict;
 }
 
 function formatReviewedAt(iso: string): string {

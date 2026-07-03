@@ -1,32 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { CustomAnswerInput } from "./CustomAnswerInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
-
-function formatVerdictDisplay(verdict: string): string {
-  if (verdict.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(verdict) as Record<string, boolean>;
-      const selected = Object.entries(parsed)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      return selected.length > 0 ? selected.join(", ") : "(nenhuma)";
-    } catch {
-      // fallback
-    }
-  }
-  return verdict;
-}
-
-interface ExistingVerdict {
-  verdict: string;
-  chosenResponseId: string | null;
-  comment: string | null;
-}
+import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
+import { formatVerdictDisplay } from "@/lib/verdict-display";
+import type { VerdictInfo } from "@/lib/compare-reviews";
+import type { PydanticField } from "@/lib/types";
 
 interface DivergenceActionsPanelProps {
   projectId: string;
@@ -34,29 +18,34 @@ interface DivergenceActionsPanelProps {
   documentTitle: string;
   fieldName: string;
   fieldDescription: string;
+  fields: PydanticField[];
   isMulti: boolean;
-  existingVerdict: ExistingVerdict | null;
-  onVerdict: (verdict: string, chosenResponseId?: string) => void;
+  existingVerdict: VerdictInfo | null;
+  // Só o veredito: voto com chosenResponseId é papel do AgreementGroup, não
+  // deste painel — o pai passa seu handler mais largo por contravariância.
+  onVerdict: (verdict: string) => void;
   comment: string;
   onCommentChange: (value: string) => void;
-  onSuggest: () => void;
 }
 
 // Ações do campo divergente: marcadores Ambíguo/Pular + resposta nova, veredito
-// anterior e a linha de feedback (comentário, nota, sugestão de schema).
+// anterior e a linha de feedback (comentário, nota, sugestão de schema). O
+// dialog de sugestão mora aqui junto do seu único gatilho (o botão Sugerir).
 export function DivergenceActionsPanel({
   projectId,
   documentId,
   documentTitle,
   fieldName,
   fieldDescription,
+  fields,
   isMulti,
   existingVerdict,
   onVerdict,
   comment,
   onCommentChange,
-  onSuggest,
 }: DivergenceActionsPanelProps) {
+  const [suggestOpen, setSuggestOpen] = useState(false);
+
   return (
     <>
       {!isMulti && (
@@ -146,13 +135,24 @@ export function DivergenceActionsPanel({
           variant="outline"
           size="sm"
           className="gap-1"
-          onClick={onSuggest}
+          onClick={() => setSuggestOpen(true)}
           title="Sugerir alteração ao codebook neste campo"
         >
           <Lightbulb className="size-3.5" />
           Sugerir
         </Button>
       </div>
+
+      <SuggestFieldDialog
+        // Remonta ao trocar de campo: o form do dialog renasce semeado pelos
+        // valores do novo campo, dispensando o reset-em-render por prop.
+        key={fieldName}
+        projectId={projectId}
+        fieldName={fieldName}
+        allFields={fields}
+        open={suggestOpen}
+        onOpenChange={setSuggestOpen}
+      />
     </>
   );
 }

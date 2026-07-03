@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
 import { AgreementGroup, type FieldEquivalencePair } from "./AgreementGroup";
 import { MultiOptionReview } from "./MultiOptionReview";
@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { normalizeForComparison } from "@/lib/utils";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
 import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
-import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
+import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 
 interface ComparisonResponse {
@@ -25,12 +25,6 @@ interface ComparisonResponse {
   is_latest: boolean;
   isFieldStale: boolean;
   schemaVersion?: string | null;
-}
-
-interface ExistingVerdict {
-  verdict: string;
-  chosenResponseId: string | null;
-  comment: string | null;
 }
 
 // Conclusão do documento + navegação da fila. Discriminated union: `hasNextDoc`
@@ -63,7 +57,7 @@ interface ComparisonPanelProps {
   fieldIndex: number;
   totalFields: number;
   responses: ComparisonResponse[];
-  existingVerdict: ExistingVerdict | null;
+  existingVerdict: VerdictInfo | null;
   reviewed: boolean[];
   isDivergent: boolean;
   docStatus: DocStatus;
@@ -114,8 +108,6 @@ export function ComparisonPanel({
   onUnmarkEquivalencePair,
   currentUserId,
 }: ComparisonPanelProps) {
-  const [suggestOpen, setSuggestOpen] = useState(false);
-
   // Primitivos derivados da union para deps estáveis do effect (o objeto
   // `docStatus` é recriado a cada render).
   const docComplete = docStatus.complete;
@@ -130,7 +122,7 @@ export function ComparisonPanel({
     }
   }, [docComplete, docHasNext, documentId]);
 
-  const isMulti = fieldType === "multi" && fieldOptions && fieldOptions.length > 0;
+  const isMulti = fieldType === "multi" && !!fieldOptions?.length;
   const groupCount = useMemo(() => {
     const present = responses.filter((r) => r.answer !== undefined);
     const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
@@ -224,12 +216,12 @@ export function ComparisonPanel({
             documentTitle={documentTitle}
             fieldName={fieldName}
             fieldDescription={fieldDescription}
-            isMulti={!!isMulti}
+            fields={fields}
+            isMulti={isMulti}
             existingVerdict={existingVerdict}
             onVerdict={onVerdict}
             comment={comment}
             onCommentChange={onCommentChange}
-            onSuggest={() => setSuggestOpen(true)}
           />
         ) : (
           <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
@@ -271,21 +263,10 @@ export function ComparisonPanel({
       {isDivergent && (
         <KeyboardHints
           groupCount={groupCount}
-          isMulti={!!isMulti}
+          isMulti={isMulti}
           optionCount={isMulti ? fieldOptions.length : undefined}
         />
       )}
-
-      <SuggestFieldDialog
-        // Remonta ao trocar de campo: o form do dialog renasce semeado pelos
-        // valores do novo campo, dispensando o reset-em-render por prop.
-        key={fieldName}
-        projectId={projectId}
-        fieldName={fieldName}
-        allFields={fields}
-        open={suggestOpen}
-        onOpenChange={setSuggestOpen}
-      />
     </div>
   );
 }
