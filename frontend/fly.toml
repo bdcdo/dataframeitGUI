@@ -7,6 +7,10 @@
 app = "gui-analise-sistematica-frontend"
 primary_region = "gru"
 
+# Swap como amortecedor de picos de memoria: o next-server chegava a ~152 MB
+# de RSS sob trafego real e era OOM-killed nas VMs de 256 MB (2026-07-02).
+swap_size_mb = 512
+
 [build]
   dockerfile = "Dockerfile"
 
@@ -39,3 +43,11 @@ primary_region = "gru"
     method = "GET"
     timeout = "5s"
     path = "/api/health"
+
+[[vm]]
+  # 512 MB persiste o `fly scale memory 512` de 2026-07-02: sem esta secao,
+  # um `fly deploy` futuro recriaria as maquinas com o default de 256 MB e
+  # o OOM-kill do next-server voltaria.
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

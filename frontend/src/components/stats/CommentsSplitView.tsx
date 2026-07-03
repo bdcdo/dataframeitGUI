@@ -29,37 +29,15 @@ import {
 } from "@/actions/stats";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
-import type { ReviewComment, ResponseSnapshotEntry } from "./CommentCard";
-import { TYPE_LABELS, TYPE_COLORS } from "@/lib/field-labels";
-
-function formatAnswer(answer: unknown): string {
-  if (answer === null || answer === undefined) return "(sem resposta)";
-  if (Array.isArray(answer)) return answer.join(", ");
-  return String(answer);
-}
-
-function verdictVariant(verdict: string): "default" | "secondary" | "outline" {
-  if (verdict === "ambiguo") return "secondary";
-  if (verdict === "pular") return "outline";
-  return "default";
-}
-
-function formatVerdictLabel(verdict: string): string {
-  if (verdict === "ambiguo") return "Ambíguo";
-  if (verdict === "pular") return "Pular";
-  if (verdict.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(verdict) as Record<string, boolean>;
-      const selected = Object.entries(parsed)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      return selected.length > 0 ? selected.join(", ") : "(nenhuma)";
-    } catch {
-      // fallback
-    }
-  }
-  return verdict;
-}
+import { formatAnswer } from "@/lib/reviews/verdict-format";
+import {
+  type ReviewComment,
+  type ResponseSnapshotEntry,
+  TYPE_LABELS,
+  TYPE_COLORS,
+  formatVerdictLabel,
+  verdictVariant,
+} from "./comment-card-utils";
 
 interface CommentsSplitViewProps {
   projectId: string;

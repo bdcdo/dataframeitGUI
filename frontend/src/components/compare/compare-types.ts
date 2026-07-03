@@ -44,3 +44,18 @@ export interface FieldResponse {
   isFieldStale: boolean;
   schemaVersion: string | null;
 }
+
+/**
+ * Identidade de respondente para dedup/contagem: `respondent_id` quando
+ * existe, senão o id da própria resposta — fallback para dados legados que
+ * não funde respostas anônimas distintas (o id é único por linha). É a MESMA
+ * chave nos dois lados que precisam concordar: a contagem de humanos da fila
+ * (gate `minHumans` em analyze/compare/page.tsx) e o aviso "não preencheu"
+ * (UnansweredNotice).
+ */
+export function respondentKey(r: {
+  id: string;
+  respondent_id: string | null;
+}): string {
+  return r.respondent_id ?? r.id;
+}
