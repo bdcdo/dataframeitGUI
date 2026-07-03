@@ -68,8 +68,14 @@ test("dialog de sorteio abre com filtros, modos e prévia funcionais", async ({
     // Seção Prazo não existe mais (US6 — guarda de regressão)
     await expect(dialog.getByText("Prazo", { exact: true })).toHaveCount(0);
 
-    // Stats carregam e a contagem de elegíveis aparece
-    await expect(dialog.getByText(/\d+ documentos elegíveis/)).toBeVisible({
+    // Stats carregam e a contagem de elegíveis aparece — requer pesquisador
+    // atribuído ao projeto (ver comentário acima); a mensagem custom evita um
+    // "locator not found" genérico quando a causa real é drift no fixture.
+    await expect(
+      dialog.getByText(/\d+ documentos elegíveis/),
+      "contagem de elegíveis não apareceu — confira que o projeto de " +
+        "E2E_LOTTERY_PROJECT_ID tem ao menos um pesquisador atribuído",
+    ).toBeVisible({
       timeout: 15_000,
     });
 

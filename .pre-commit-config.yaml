@@ -96,14 +96,23 @@ repos:
       # Os specs (frontend/e2e/*.smoke.spec.ts) fazem test.skip() quando as
       # env vars de .env.e2e (E2E_COORDINATOR_EMAIL etc.) nao estao definidas
       # — entao checkouts/worktrees sem credenciais de teste (inclusive as
-      # worktrees efemeras que agentes criam) so pulam o hook, sem falhar. O
-      # custo real (subir o dev server via webServer do playwright.config.ts +
-      # autenticar 3 papeis no Clerk dev) so e pago onde .env.e2e existe. Para
-      # pular pontualmente mesmo com .env.e2e presente: `SKIP=e2e-smoke git
-      # push` (mesmo mecanismo ja usado pelos outros hooks pesados).
+      # worktrees efemeras que agentes criam) so pulam esses specs, sem
+      # falhar. Mas o boot do dev server (webServer do playwright.config.ts) e
+      # a troca de Testing Token do Clerk (global.setup.ts) sao incondicionais
+      # — gated por .env.local (que todo checkout ja tem), nao por .env.e2e —
+      # entao esse custo e pago sempre que o hook dispara, com ou sem
+      # .env.e2e. Para pular pontualmente: `SKIP=e2e-smoke git push` (mesmo
+      # mecanismo ja usado pelos outros hooks pesados).
+      #
+      # PLAYWRIGHT_PRE_PUSH=1 forca o playwright.config.ts a nunca reaproveitar
+      # um dev server ja rodando (evita validar a worktree/branch errada, ja
+      # que e comum ter varias worktrees com `npm run dev` ativo em paralelo)
+      # e a rodar os specs em serie (evita reintroduzir o burst de
+      # clerk.signIn() entre arquivos de spec que a #198/PR #294 corrigiu
+      # dentro de um arquivo so).
       - id: e2e-smoke
         name: playwright e2e smoke (pre-push)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && PLAYWRIGHT_PRE_PUSH=1 exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(ts|tsx)$
         pass_filenames: false
