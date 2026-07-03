@@ -287,7 +287,7 @@ function CodingPageInner({
                   variant: "browse",
                   title: browseTitle,
                   responseCount: browse.browseDocInfo?.responseCount ?? 0,
-                  onBack: browse.handleBrowseBack,
+                  onBack: () => void browse.handleBrowseBack(),
                   onRandom: browse.handleBrowseRandom,
                   submitting,
                   parecerUrl: browseParecerUrl,
@@ -326,7 +326,7 @@ function CodingPageInner({
             fields={orderedFields}
             answers={assigned.docAnswers}
             onAnswer={assigned.handleAnswer}
-            onSubmit={assigned.handleSubmit}
+            onSubmit={() => void assigned.handleSubmit()}
             submitting={submitting}
             notes={assigned.docNotes}
             onNotesChange={assigned.handleNotesChange}
@@ -355,7 +355,7 @@ function CodingPageInner({
           responseCount={browse.browseDocInfo?.responseCount ?? 0}
           onToggleFullscreen={toggleFullscreen}
           onReorder={handleReorder}
-          onSubmit={browse.handleBrowseSubmit}
+          onSubmit={(draft) => void browse.handleBrowseSubmit(draft)}
           onDraftChange={browse.handleDraftChange}
           outOfScope={browseOutOfScope}
         />

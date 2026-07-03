@@ -45,7 +45,7 @@ export function ValidationErrorPanel({
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5"
-            onClick={handleCopy}
+            onClick={() => void handleCopy()}
           >
             {copied ? (
               <>

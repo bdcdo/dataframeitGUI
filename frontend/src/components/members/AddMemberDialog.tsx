@@ -53,7 +53,7 @@ export function AddMemberDialog({ projectId }: AddMemberDialogProps) {
             <option value="pesquisador">Pesquisador</option>
             <option value="coordenador">Coordenador</option>
           </select>
-          <Button onClick={handleAdd} disabled={loading || !email} className="w-full bg-brand hover:bg-brand/90 text-brand-foreground">
+          <Button onClick={() => void handleAdd()} disabled={loading || !email} className="w-full bg-brand hover:bg-brand/90 text-brand-foreground">
             {loading ? "Adicionando..." : "Adicionar"}
           </Button>
         </div>

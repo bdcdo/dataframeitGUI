@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { useClerk } from "@clerk/nextjs";
+import { toast } from "sonner";
 
 interface UserMenuProps {
   email: string;
@@ -19,7 +20,9 @@ export function UserMenu({ email, firstName }: UserMenuProps) {
   const { signOut } = useClerk();
 
   const handleLogout = () => {
-    signOut({ redirectUrl: "/auth/login" });
+    signOut({ redirectUrl: "/auth/login" }).catch(() => {
+      toast.error("Não foi possível sair. Tente novamente.");
+    });
   };
 
   const initials = firstName

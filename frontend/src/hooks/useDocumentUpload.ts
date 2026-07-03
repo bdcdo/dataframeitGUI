@@ -316,7 +316,7 @@ export function useDocumentUpload(projectId: string) {
   const handleImportNewOnly = () => {
     if (phase.kind !== "analysis") return;
     const { analysis } = phase;
-    doUpload(analysis.docs, phase, {
+    void doUpload(analysis.docs, phase, {
       mode: "add_new_only",
       duplicateMap: analysis.duplicates,
     });
@@ -325,7 +325,7 @@ export function useDocumentUpload(projectId: string) {
   const handleReplaceAndImport = (deleteResponses: boolean) => {
     if (phase.kind !== "analysis") return;
     const { analysis } = phase;
-    doUpload(analysis.docs, phase, {
+    void doUpload(analysis.docs, phase, {
       mode: "replace_and_add",
       duplicateMap: analysis.duplicates,
       deleteResponses,
@@ -335,7 +335,7 @@ export function useDocumentUpload(projectId: string) {
   const handleImportAll = () => {
     if (phase.kind !== "analysis") return;
     const { analysis } = phase;
-    doUpload(analysis.docs, phase, { mode: "add_all" });
+    void doUpload(analysis.docs, phase, { mode: "add_all" });
   };
 
   const cancelAnalysis = () => setPhase({ kind: "mapping" });

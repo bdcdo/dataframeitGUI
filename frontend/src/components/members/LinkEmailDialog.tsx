@@ -79,7 +79,7 @@ export function LinkEmailDialog({
             placeholder="email-adicional@exemplo.com"
           />
           <Button
-            onClick={handleLink}
+            onClick={() => void handleLink()}
             disabled={loading || !email}
             className="w-full bg-brand hover:bg-brand/90 text-brand-foreground"
           >

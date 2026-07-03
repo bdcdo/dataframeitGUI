@@ -32,7 +32,7 @@ export function usePromptPreview(
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    const timer = setTimeout(async () => {
+    const run = async () => {
       if (cancelled) return;
       setPreviewError(null);
       setPreviewLoading(true);
@@ -58,7 +58,8 @@ export function usePromptPreview(
       } finally {
         if (!cancelled) setPreviewLoading(false);
       }
-    }, 300);
+    };
+    const timer = setTimeout(() => void run(), 300);
     return () => {
       cancelled = true;
       clearTimeout(timer);

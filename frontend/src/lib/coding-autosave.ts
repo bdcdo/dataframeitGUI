@@ -28,14 +28,16 @@ export function autosaveDirtyDoc({
   markClean,
   onSuccess,
 }: AutosaveDirtyDocParams): void {
-  saveResponse(projectId, docId, answers, { notes, isAutoSave: true }).then(
-    (result) => {
+  saveResponse(projectId, docId, answers, { notes, isAutoSave: true })
+    .then((result) => {
       if (result.success) {
         markClean(docId);
         onSuccess?.();
       } else {
         toast.error(result.error || "Erro ao salvar respostas");
       }
-    },
-  );
+    })
+    .catch(() => {
+      toast.error("Erro ao salvar respostas");
+    });
 }

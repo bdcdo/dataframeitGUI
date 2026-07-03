@@ -127,7 +127,9 @@ export function VerdictsList({
           questionComment={questionComment}
           onSetCommentingReviewId={setCommentingReviewId}
           onSetQuestionComment={setQuestionComment}
-          onAcknowledge={handleAck}
+          onAcknowledge={(reviewId, status, comment) =>
+            void handleAck(reviewId, status, comment)
+          }
         />
       ))}
     </div>

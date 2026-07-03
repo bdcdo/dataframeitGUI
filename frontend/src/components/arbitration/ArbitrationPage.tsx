@@ -117,8 +117,8 @@ export function ArbitrationPage({
         allFinalChosen={arb.allFinalChosen}
         onNavigate={handleDocNavigate}
         onBackToBlind={arb.onBackToBlind}
-        onBlindSubmit={arb.handleBlindSubmit}
-        onFinalSubmit={arb.handleFinalSubmit}
+        onBlindSubmit={() => void arb.handleBlindSubmit()}
+        onFinalSubmit={() => void arb.handleFinalSubmit()}
       />
       <ArbitrationPageContent
         doc={doc}

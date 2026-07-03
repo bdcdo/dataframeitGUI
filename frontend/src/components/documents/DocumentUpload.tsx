@@ -26,7 +26,9 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
 
   return (
     <div className="space-y-4">
-      {phase.kind !== "analysis" && <CsvDropzone onFile={handleFile} />}
+      {phase.kind !== "analysis" && (
+        <CsvDropzone onFile={(file) => void handleFile(file)} />
+      )}
 
       {phase.kind === "mapping" && csv && csv.columns.length > 0 && (
         <MappingStep
@@ -35,7 +37,7 @@ export function DocumentUpload({ projectId }: DocumentUploadProps) {
           mapping={mapping}
           onMappingChange={setMapping}
           disabled={!mapping.text}
-          onSubmit={handleCheckAndUpload}
+          onSubmit={() => void handleCheckAndUpload()}
         />
       )}
 
