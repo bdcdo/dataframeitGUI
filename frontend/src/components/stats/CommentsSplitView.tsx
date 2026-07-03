@@ -29,7 +29,7 @@ import {
 } from "@/actions/stats";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
-import { formatAnswer } from "@/lib/reviews/verdict-format";
+import { formatVerdictAnswer } from "@/lib/reviews/verdict-format";
 import {
   type ReviewComment,
   type ResponseSnapshotEntry,
@@ -285,7 +285,7 @@ export function CommentsSplitView({
                               {r.respondent_type === "humano" ? "Humano" : "LLM"}
                             </Badge>
                             <span className="ml-2 text-muted-foreground">
-                              {formatAnswer(r.answer)}
+                              {formatVerdictAnswer(r.answer)}
                             </span>
                           </div>
                         </div>

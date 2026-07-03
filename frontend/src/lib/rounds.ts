@@ -91,15 +91,6 @@ export function classifyDocStatus(
   return { kind: "previous", label: versionLabel(v) };
 }
 
-/**
- * Identificadores possiveis para o filtro de rodada na URL (`?round=`).
- *  - "current": padrao, mostra docs pendentes da rodada atual
- *  - "all": mostra tudo (comportamento legacy)
- *  - rodada manual: id (UUID)
- *  - rodada schema_version: label "X.Y.Z"
- */
-export type RoundFilterValue = "current" | "all" | string;
-
 /** Valor do `?round=` que representa "rodada atual" — equivalente a omitir o param. */
 export const CURRENT_FILTER_VALUE = "current";
 

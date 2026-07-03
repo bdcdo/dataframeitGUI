@@ -1,24 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { formatAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
+import { formatVerdictAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
 
-describe("formatAnswer", () => {
+describe("formatVerdictAnswer", () => {
   it("trata null/undefined como '(sem resposta)'", () => {
-    expect(formatAnswer(null)).toBe("(sem resposta)");
-    expect(formatAnswer(undefined)).toBe("(sem resposta)");
+    expect(formatVerdictAnswer(null)).toBe("(sem resposta)");
+    expect(formatVerdictAnswer(undefined)).toBe("(sem resposta)");
   });
 
   it("retorna strings cruas e converte primitivos", () => {
-    expect(formatAnswer("sim")).toBe("sim");
-    expect(formatAnswer(42)).toBe("42");
-    expect(formatAnswer(true)).toBe("true");
+    expect(formatVerdictAnswer("sim")).toBe("sim");
+    expect(formatVerdictAnswer(42)).toBe("42");
+    expect(formatVerdictAnswer(true)).toBe("true");
   });
 
   it("junta arrays com ', '", () => {
-    expect(formatAnswer(["a", "b", "c"])).toBe("a, b, c");
+    expect(formatVerdictAnswer(["a", "b", "c"])).toBe("a, b, c");
   });
 
   it("serializa objeto como 'k: v' separado por ', ', omitindo vazios", () => {
-    expect(formatAnswer({ a: "1", b: "", c: "3" })).toBe("a: 1, c: 3");
+    expect(formatVerdictAnswer({ a: "1", b: "", c: "3" })).toBe("a: 1, c: 3");
   });
 });
 

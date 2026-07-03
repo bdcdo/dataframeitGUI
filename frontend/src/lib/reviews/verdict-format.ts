@@ -8,7 +8,7 @@
 //     objeto via JSON.stringify.
 // Aqui: null → "(sem resposta)", objeto "k: v" separado por ", ".
 
-export function formatAnswer(answer: unknown): string {
+export function formatVerdictAnswer(answer: unknown): string {
   if (answer == null) return "(sem resposta)";
   if (typeof answer === "string") return answer;
   if (Array.isArray(answer)) return answer.join(", ");
