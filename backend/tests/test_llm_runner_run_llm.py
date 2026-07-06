@@ -28,6 +28,15 @@ class Analysis(BaseModel):
     campo_c: str = Field(description="Campo C")
 """
 
+NESTED_PYDANTIC_CODE = """from pydantic import BaseModel, Field
+
+class Doenca(BaseModel):
+    doenca: str = Field(description="Doença")
+
+class Analysis(BaseModel):
+    q5: Doenca = Field(description="Q5")
+"""
+
 
 class _FakeQuery:
     """Fake do query builder do Supabase.
@@ -101,6 +110,8 @@ class _FakeTable:
         self.select_error = select_error
         self.insert_calls: list[dict] = []
         self.update_calls: list[dict] = []
+        self.name = ""
+        self.operation_log: list[tuple[str, str, dict]] = []
 
     def select(self, *a, **k):
         if self.select_error is not None:
@@ -109,16 +120,22 @@ class _FakeTable:
 
     def insert(self, payload):
         self.insert_calls.append(payload)
+        self.operation_log.append((self.name, "insert", payload))
         return _FakeQuery(payload)
 
     def update(self, payload):
         self.update_calls.append(payload)
+        self.operation_log.append((self.name, "update", payload))
         return _FakeQuery(payload)
 
 
 class _FakeSupabase:
     def __init__(self, tables: dict[str, _FakeTable]):
         self._tables = tables
+        self.operation_log: list[tuple[str, str, dict]] = []
+        for name, table in tables.items():
+            table.name = name
+            table.operation_log = self.operation_log
 
     def table(self, name):
         return self._tables[name]
@@ -157,7 +174,7 @@ def _docs(n: int) -> list[dict]:
     ]
 
 
-def _make_fake_dataframeit(row_specs: dict[str, dict]):
+def _make_fake_dataframeit(row_specs: dict[str, dict], calls: list[dict] | None = None):
     """row_specs: {doc_id: {field: value}}.
 
     Campos ausentes do spec de um doc simulam resposta incompleta do
@@ -165,6 +182,14 @@ def _make_fake_dataframeit(row_specs: dict[str, dict]):
     """
 
     def _fake(batch_df, model_class, prompt_template, **kwargs):
+        if calls is not None:
+            calls.append(
+                {
+                    "model_fields": set(model_class.model_fields),
+                    "prompt_template": prompt_template,
+                    "kwargs": kwargs,
+                }
+            )
         out = batch_df.copy()
         field_names = [
             f for f in model_class.model_fields if not f.endswith("_justification")
@@ -191,12 +216,20 @@ def _build_supabase(project_row, docs, *, documents_error=None) -> _FakeSupabase
     )
 
 
-def _run_llm_sync(monkeypatch, sb: _FakeSupabase, row_specs: dict[str, dict]) -> None:
+def _run_llm_sync(
+    monkeypatch,
+    sb: _FakeSupabase,
+    row_specs: dict[str, dict],
+    *,
+    dataframeit_calls: list[dict] | None = None,
+) -> None:
     monkeypatch.setattr("services.llm_runner.get_supabase", lambda: sb)
     monkeypatch.setitem(
         sys.modules,
         "dataframeit",
-        SimpleNamespace(dataframeit=_make_fake_dataframeit(row_specs)),
+        SimpleNamespace(
+            dataframeit=_make_fake_dataframeit(row_specs, dataframeit_calls)
+        ),
     )
     init_job(JOB_ID, PROJECT_ID, "all")
     asyncio.run(run_llm(JOB_ID, PROJECT_ID))
@@ -236,6 +269,103 @@ def test_run_llm_happy_path(monkeypatch):
 
     project_updates = sb.table("projects").update_calls
     assert any("pydantic_hash" in payload for payload in project_updates)
+
+
+def test_run_llm_routes_kwargs_without_leaking_internal_options(monkeypatch):
+    docs = _docs(1)
+    row_specs = {"doc-0": {"campo_a": "a", "campo_b": "b", "campo_c": "c"}}
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(
+            llm_kwargs={
+                "include_justifications": True,
+                "parallel_requests": 2,
+                "rate_limit_delay": 0.25,
+                "partial_coverage_threshold": 0.4,
+                "run_failure_threshold": 0.9,
+                "resume": True,
+                "track_tokens": True,
+                "temperature": 0.2,
+            }
+        ),
+        docs,
+    )
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
+
+    assert len(dataframeit_calls) == 1
+    kwargs = dataframeit_calls[0]["kwargs"]
+    assert kwargs["parallel_requests"] == 2
+    assert kwargs["rate_limit_delay"] == 0.25
+    assert kwargs["resume"] is False
+    assert kwargs["track_tokens"] is True
+    assert kwargs["model_kwargs"] == {"temperature": 0.2}
+    for internal_key in [
+        "include_justifications",
+        "partial_coverage_threshold",
+        "run_failure_threshold",
+    ]:
+        assert internal_key not in kwargs
+        assert internal_key not in kwargs["model_kwargs"]
+
+
+def test_run_llm_flattens_nested_model_before_adding_justifications(monkeypatch):
+    docs = _docs(1)
+    row_specs = {"doc-0": {"q5__doenca": "AME"}}
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(
+            pydantic_code=NESTED_PYDANTIC_CODE,
+            llm_kwargs={"include_justifications": True},
+        ),
+        docs,
+    )
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
+
+    model_fields = dataframeit_calls[0]["model_fields"]
+    assert "q5__doenca" in model_fields
+    assert "q5__doenca_justification" in model_fields
+    assert "q5_justification" not in model_fields
+
+
+def test_run_llm_marks_previous_llm_responses_before_inserting_new_ones(monkeypatch):
+    docs = _docs(1)
+    row_specs = {"doc-0": {"campo_a": "a", "campo_b": "b", "campo_c": "c"}}
+    sb = _build_supabase(_project_row(), docs)
+
+    _run_llm_sync(monkeypatch, sb, row_specs)
+
+    operations = [
+        (table, operation, payload)
+        for table, operation, payload in sb.operation_log
+        if table == "responses"
+    ]
+    update_index = next(
+        i
+        for i, (_, operation, payload) in enumerate(operations)
+        if operation == "update" and payload == {"is_latest": False}
+    )
+    first_insert_index = next(
+        i for i, (_, operation, _) in enumerate(operations) if operation == "insert"
+    )
+    assert update_index < first_insert_index
+
+
+def test_run_llm_completes_empty_run_without_calling_dataframeit(monkeypatch):
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(_project_row(), [])
+
+    _run_llm_sync(monkeypatch, sb, row_specs={}, dataframeit_calls=dataframeit_calls)
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert _jobs[JOB_ID]["total"] == 0
+    assert dataframeit_calls == []
+    assert sb.table("responses").insert_calls == []
+    completion = _last_update_where(sb.table("llm_runs"), status="completed")
+    assert completion is not None
+    assert completion["progress"] == 0
+    assert completion["total"] == 0
 
 
 def test_run_llm_skips_excluded_documents(monkeypatch):

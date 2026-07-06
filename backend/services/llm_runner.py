@@ -412,6 +412,48 @@ class _RunMetadata:
     schema_version_patch: int
 
 
+@dataclass(frozen=True)
+class _PreparedLlmModel:
+    model_class: object
+    nested_field_map: dict
+
+
+@dataclass(frozen=True)
+class _DataframeitRunConfig:
+    parallel_requests: int
+    rate_limit_delay: float
+    partial_coverage_threshold: float
+    run_failure_threshold: float
+    model_kwargs: dict
+    dfi_kwargs: dict
+
+
+@dataclass(frozen=True)
+class _SaveContext:
+    field_conditions: dict
+    expected_llm_fields: set[str]
+    run_metadata: _RunMetadata
+
+
+DATAFRAMEIT_PARAMS = {
+    "api_key",
+    "max_retries",
+    "base_delay",
+    "max_delay",
+    "track_tokens",
+    "use_search",
+    "search_provider",
+    "search_per_field",
+    "max_results",
+    "search_depth",
+    "search_groups",
+    "save_trace",
+    "resume",
+    "reprocess_columns",
+    "status_column",
+}
+
+
 def _build_llm_response_row(
     *,
     run: _RunMetadata,
@@ -676,6 +718,205 @@ def _filter_docs(
     return docs
 
 
+def _pop_threshold(llm_kwargs: dict, key: str, default: float) -> float:
+    raw = llm_kwargs.pop(key, None)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "llm_kwargs['%s']=%r não é número, usando default %s",
+            key,
+            raw,
+            default,
+        )
+        return default
+    if not 0 <= value <= 1:
+        logger.warning(
+            "llm_kwargs['%s']=%s fora de [0,1], usando default %s",
+            key,
+            value,
+            default,
+        )
+        return default
+    return value
+
+
+def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
+    parallel_requests = llm_kwargs.pop("parallel_requests", 5)
+    rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
+    partial_coverage_threshold = _pop_threshold(
+        llm_kwargs, "partial_coverage_threshold", 0.5
+    )
+    run_failure_threshold = _pop_threshold(llm_kwargs, "run_failure_threshold", 0.3)
+    model_kwargs = {k: v for k, v in llm_kwargs.items() if k not in DATAFRAMEIT_PARAMS}
+    dfi_kwargs = {k: v for k, v in llm_kwargs.items() if k in DATAFRAMEIT_PARAMS}
+    dfi_kwargs.pop("resume", None)
+    return _DataframeitRunConfig(
+        parallel_requests=parallel_requests,
+        rate_limit_delay=rate_limit_delay,
+        partial_coverage_threshold=partial_coverage_threshold,
+        run_failure_threshold=run_failure_threshold,
+        model_kwargs=model_kwargs,
+        dfi_kwargs=dfi_kwargs,
+    )
+
+
+def _prepare_llm_model(
+    pydantic_code: str,
+    pydantic_fields: list[dict],
+    include_justifications: bool,
+) -> _PreparedLlmModel:
+    model_class = _compile_model(pydantic_code)
+    if not model_class:
+        raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
+    model_class = _filter_model_for_llm(model_class, pydantic_fields)
+    model_class, nested_field_map = _flatten_nested_basemodels(model_class)
+    if include_justifications:
+        model_class = _extend_model_with_justifications(model_class)
+    return _PreparedLlmModel(
+        model_class=model_class,
+        nested_field_map=nested_field_map,
+    )
+
+
+def _load_documents_for_run(
+    sb,
+    project_id: str,
+    document_ids: list[str] | None,
+    filter_mode: str,
+    max_response_count: int | None,
+    sample_size: int | None,
+) -> list[dict]:
+    query = (
+        sb.table("documents")
+        .select("id, text, title, external_id")
+        .eq("project_id", project_id)
+        .is_("excluded_at", "null")
+    )
+    if document_ids:
+        query = query.in_("id", document_ids)
+    docs = query.execute().data
+    return _filter_docs(
+        sb, docs, project_id, filter_mode, max_response_count, sample_size
+    )
+
+
+def _expected_llm_fields(model_class) -> set[str]:
+    expected_llm_fields = set()
+    for name in model_class.model_fields:
+        if name.endswith("_justification"):
+            continue
+        if _NESTED_FLATTEN_SEP in name:
+            expected_llm_fields.add(name.split(_NESTED_FLATTEN_SEP, 1)[0])
+        else:
+            expected_llm_fields.add(name)
+    return expected_llm_fields
+
+
+def _prepare_save_context(
+    *,
+    project_id: str,
+    model_class,
+    llm_provider: str,
+    llm_model: str,
+    pydantic_hash: str,
+    answer_field_hashes: dict,
+    schema_version_major: int,
+    schema_version_minor: int,
+    schema_version_patch: int,
+) -> _SaveContext:
+    return _SaveContext(
+        field_conditions=extract_field_conditions(model_class),
+        expected_llm_fields=_expected_llm_fields(model_class),
+        run_metadata=_RunMetadata(
+            project_id=project_id,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            pydantic_hash=pydantic_hash,
+            answer_field_hashes=answer_field_hashes,
+            schema_version_major=schema_version_major,
+            schema_version_minor=schema_version_minor,
+            schema_version_patch=schema_version_patch,
+        ),
+    )
+
+
+def _run_dataframeit_batches(
+    *,
+    sb,
+    job_id: str,
+    jobs_state: dict,
+    docs: list[dict],
+    model_class,
+    prompt_template: str,
+    llm_provider: str,
+    llm_model: str,
+    config: _DataframeitRunConfig,
+) -> pd.DataFrame:
+    df = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
+    from dataframeit import dataframeit
+
+    batch_size = max(1, config.parallel_requests)
+    batches = [df.iloc[i : i + batch_size] for i in range(0, len(df), batch_size)]
+    jobs_state.update(phase="processing", total_batches=len(batches))
+
+    result_frames = []
+    proc_start = time.time()
+    last_proc_heartbeat = 0.0
+    for idx, batch_df in enumerate(batches):
+        jobs_state["current_batch"] = idx + 1
+        batch_result = dataframeit(
+            batch_df,
+            model_class,
+            prompt_template,
+            text_column="texto",
+            provider=llm_provider,
+            model=llm_model,
+            parallel_requests=config.parallel_requests,
+            rate_limit_delay=config.rate_limit_delay,
+            model_kwargs=config.model_kwargs if config.model_kwargs else None,
+            resume=False,
+            **config.dfi_kwargs,
+        )
+        result_frames.append(batch_result)
+        processed = sum(len(f) for f in result_frames)
+        jobs_state["progress"] = processed
+        elapsed = time.time() - proc_start
+        if processed > 0:
+            jobs_state["eta_seconds"] = round(
+                (elapsed / processed) * (len(df) - processed), 1
+            )
+        now_ts = time.time()
+        if now_ts - last_proc_heartbeat >= 2.0:
+            _persist_run_progress(sb, job_id, jobs_state)
+            last_proc_heartbeat = now_ts
+
+    return pd.concat(result_frames, ignore_index=True)
+
+
+def _raise_if_run_compromised(
+    partial_warnings: list[str],
+    dfi_error_samples: dict[str, str],
+    total_processed: int,
+    run_failure_threshold: float,
+) -> None:
+    partial_ratio = len(partial_warnings) / total_processed if total_processed else 0.0
+    if partial_ratio < run_failure_threshold:
+        return
+    error_examples = list(dfi_error_samples.values())[:3]
+    sections = [
+        f"Run comprometida: {len(partial_warnings)}/{total_processed} "
+        f"docs ({int(partial_ratio * 100)}%) com resposta parcial. "
+        f"Respostas gravadas com is_latest=false."
+    ]
+    if error_examples:
+        sections.append("Erros do provider: " + " || ".join(error_examples))
+    sections.append("Exemplos de cobertura baixa: " + " || ".join(partial_warnings[:3]))
+    raise RuntimeError(" ".join(sections))
+
+
 def init_job(job_id: str, project_id: str, filter_mode: str) -> None:
     """Inicializar estado do job + INSERT em llm_runs.
 
@@ -720,6 +961,184 @@ def init_job(job_id: str, project_id: str, filter_mode: str) -> None:
         raise
 
 
+@dataclass(frozen=True)
+class _ProcessedLlmRow:
+    doc_id: str
+    answers: dict
+    justifications: dict
+    dfi_status: object
+    dfi_error: str | None
+    answers_pre_prune_keys: list[str]
+    active_expected: set[str]
+    answered: set[str]
+    is_empty: bool
+    is_partial: bool
+    llm_error_msg: str | None
+
+
+def _extract_dataframeit_error(row) -> tuple[object, str | None]:
+    dfi_status = row.get("_dataframeit_status")
+    dfi_error_raw = row.get("_error_details")
+    dfi_error = (
+        str(dfi_error_raw)
+        if dfi_error_raw is not None and pd.notna(dfi_error_raw)
+        else None
+    )
+    return dfi_status, dfi_error
+
+
+def _reconstruct_nested_answers(
+    answers: dict,
+    justifications: dict,
+    nested_field_map: dict,
+) -> None:
+    for original_name, subs in nested_field_map.items():
+        sub_dict: dict = {}
+        sub_justs: dict = {}
+        for flat_name, sub_name in subs:
+            if flat_name in answers:
+                sub_dict[sub_name] = answers.pop(flat_name)
+            if flat_name in justifications:
+                sub_justs[sub_name] = justifications.pop(flat_name)
+        if sub_dict:
+            answers[original_name] = sub_dict
+        if sub_justs:
+            justifications[original_name] = "\n".join(
+                f"{key}: {value}" for key, value in sub_justs.items()
+            )
+
+
+def _prune_inactive_conditionals(
+    answers: dict,
+    justifications: dict,
+    field_conditions: dict,
+) -> None:
+    for field_name, condition in field_conditions.items():
+        if not evaluate_condition(condition, answers, field_name):
+            answers.pop(field_name, None)
+            justifications.pop(field_name, None)
+
+
+def _active_expected_fields(
+    expected_llm_fields: set[str],
+    field_conditions: dict,
+    answers: dict,
+) -> set[str]:
+    return {
+        name
+        for name in expected_llm_fields
+        if name not in field_conditions
+        or evaluate_condition(field_conditions[name], answers, name)
+    }
+
+
+def _build_processed_llm_row(
+    row,
+    model_class,
+    nested_field_map: dict,
+    field_conditions: dict,
+    expected_llm_fields: set[str],
+    partial_coverage_threshold: float,
+) -> _ProcessedLlmRow:
+    doc_id = row["id"]
+    dfi_status, dfi_error = _extract_dataframeit_error(row)
+    answers, justifications = _extract_answers_from_row(row, model_class)
+    _reconstruct_nested_answers(answers, justifications, nested_field_map)
+    answers_pre_prune_keys = sorted(answers.keys())
+    if field_conditions:
+        _prune_inactive_conditionals(answers, justifications, field_conditions)
+    active_expected = _active_expected_fields(
+        expected_llm_fields,
+        field_conditions,
+        answers,
+    )
+    answered = set(answers.keys()) & active_expected
+    coverage = len(answered) / len(active_expected) if active_expected else 1.0
+    is_partial = coverage < partial_coverage_threshold
+    is_empty = not _answers_have_content(answers)
+    llm_error_msg = _build_llm_error_message(
+        dfi_error=dfi_error,
+        is_empty=is_empty,
+        is_partial=is_partial,
+        dfi_status=dfi_status,
+        pre_prune_keys=answers_pre_prune_keys,
+        post_prune_keys=sorted(answers.keys()),
+        answered_count=len(answered),
+        active_expected_count=len(active_expected),
+    )
+    return _ProcessedLlmRow(
+        doc_id=doc_id,
+        answers=answers,
+        justifications=justifications,
+        dfi_status=dfi_status,
+        dfi_error=dfi_error,
+        answers_pre_prune_keys=answers_pre_prune_keys,
+        active_expected=active_expected,
+        answered=answered,
+        is_empty=is_empty,
+        is_partial=is_partial,
+        llm_error_msg=llm_error_msg,
+    )
+
+
+def _update_processed_counters(
+    jobs_state: dict, processed_row: _ProcessedLlmRow
+) -> None:
+    if processed_row.is_empty:
+        jobs_state["processed_empty"] += 1
+    elif processed_row.is_partial:
+        jobs_state["processed_partial"] += 1
+    else:
+        jobs_state["processed_complete"] += 1
+
+
+def _log_processed_row_if_needed(processed_row: _ProcessedLlmRow) -> None:
+    if not (
+        processed_row.is_partial or processed_row.is_empty or processed_row.dfi_error
+    ):
+        return
+    logger.warning(
+        "LLM row diag doc=%s status=%s error=%s pre_prune=%s post_prune=%s",
+        processed_row.doc_id,
+        processed_row.dfi_status,
+        processed_row.dfi_error,
+        processed_row.answers_pre_prune_keys,
+        sorted(processed_row.answers.keys()),
+    )
+
+
+def _record_dataframeit_error_sample(
+    dfi_error_samples: dict[str, str],
+    processed_row: _ProcessedLlmRow,
+) -> None:
+    if not processed_row.dfi_error:
+        return
+    key = hashlib.md5(
+        processed_row.dfi_error.encode("utf-8", errors="replace"),
+        usedforsecurity=False,
+    ).hexdigest()[:16]
+    if key not in dfi_error_samples:
+        dfi_error_samples[key] = (
+            f"doc={processed_row.doc_id}: {processed_row.dfi_error}"
+        )
+
+
+def _build_partial_warning(processed_row: _ProcessedLlmRow) -> str:
+    missing = sorted(processed_row.active_expected - processed_row.answered)
+    return (
+        f"doc={processed_row.doc_id}: cobertura baixa "
+        f"({len(processed_row.answered)}/{len(processed_row.active_expected)}); "
+        f"faltaram: {missing[:8]}{'...' if len(missing) > 8 else ''}"
+    )
+
+
+def _persist_progress_if_due(sb, job_id: str, jobs_state: dict) -> None:
+    now_ts = time.time()
+    if now_ts - jobs_state["last_progress_persist"] >= 2.0:
+        _persist_run_progress(sb, job_id, jobs_state)
+        jobs_state["last_progress_persist"] = now_ts
+
+
 def _process_and_save_rows(
     sb,
     job_id: str,
@@ -732,160 +1151,37 @@ def _process_and_save_rows(
     partial_coverage_threshold: float,
     run: _RunMetadata,
 ) -> tuple[list[str], dict[str, str]]:
-    """Processa cada row de result_df e persiste a resposta em `responses`.
-
-    Extraído de run_llm (issue #377, passo 2/4 do refactor de complexidade)
-    como a fase de menor risco: já se apoia inteiramente em helpers testados
-    (_extract_answers_from_row, _build_llm_error_message,
-    _build_llm_response_row) e não muda de comportamento — pura extração.
-
-    Retorna (partial_warnings, dfi_error_samples), usados por run_llm depois
-    do loop para decidir se a run deve ser marcada como "comprometida".
-    """
     partial_warnings: list[str] = []
     dfi_error_samples: dict[str, str] = {}
-    progress_persist_interval_s = 2.0
 
-    # Save responses — use row["id"] (not index correlation) for safety
     for _, row in result_df.iterrows():
-        doc_id = row["id"]
-
-        # Diagnóstico cru do dataframeit (ver dataframeit/core.py:451-452):
-        # _dataframeit_status é 'processed' ou 'error'; _error_details traz
-        # a mensagem da exceção quando a row falhou. Sem ler isso, qualquer
-        # falha de provider/parse/timeout vira "resposta vazia" sem motivo.
-        dfi_status = row.get("_dataframeit_status")
-        dfi_error_raw = row.get("_error_details")
-        dfi_error: str | None = (
-            str(dfi_error_raw)
-            if dfi_error_raw is not None and pd.notna(dfi_error_raw)
-            else None
+        processed_row = _build_processed_llm_row(
+            row,
+            model_class,
+            nested_field_map,
+            field_conditions,
+            expected_llm_fields,
+            partial_coverage_threshold,
         )
+        _update_processed_counters(jobs_state, processed_row)
+        _log_processed_row_if_needed(processed_row)
+        _record_dataframeit_error_sample(dfi_error_samples, processed_row)
 
-        answers, justifications = _extract_answers_from_row(row, model_class)
-
-        # Reconstruir dicts aninhados a partir dos subfields flat (ver
-        # _flatten_nested_basemodels). Deve rodar ANTES do prune de
-        # condicionais para que condições que referenciam o field pai
-        # (ex.: q21 em q24a) continuem sendo avaliadas sobre o shape
-        # original que a UI / humanas usam. Justifications de subfields
-        # são concatenadas em string para manter Record<string,string>
-        # esperado pelo frontend.
-        for original_name, subs in nested_field_map.items():
-            sub_dict: dict = {}
-            sub_justs: dict = {}
-            for flat_name, sub_name in subs:
-                if flat_name in answers:
-                    sub_dict[sub_name] = answers.pop(flat_name)
-                if flat_name in justifications:
-                    sub_justs[sub_name] = justifications.pop(flat_name)
-            if sub_dict:
-                answers[original_name] = sub_dict
-            if sub_justs:
-                justifications[original_name] = "\n".join(
-                    f"{k}: {v}" for k, v in sub_justs.items()
-                )
-
-        # Snapshot pré-prune para diagnosticar quando o evaluate_condition
-        # zera campos. Se uma resposta sai com 1 campo só mas pre_prune
-        # tinha muitos, o problema está nas conditions — não no LLM.
-        answers_pre_prune_keys = sorted(answers.keys())
-
-        # Post-process conditional fields: remove values for fields whose
-        # visibility condition is not satisfied by the sibling answers.
-        # dataframeit core mode doesn't evaluate conditions itself, so the
-        # LLM may have filled them even though Optional; we prune here to
-        # keep the stored answers consistent with the researcher UX.
-        if field_conditions:
-            for field_name, condition in field_conditions.items():
-                if not evaluate_condition(condition, answers, field_name):
-                    answers.pop(field_name, None)
-                    justifications.pop(field_name, None)
-
-        # Detectar respostas parciais: campos esperados cuja condition
-        # está satisfeita mas que não vieram do LLM. Excluímos condicionais
-        # não-satisfeitas porque ausência delas é legítima.
-        active_expected = {
-            name
-            for name in expected_llm_fields
-            if name not in field_conditions
-            or evaluate_condition(field_conditions[name], answers, name)
-        }
-        answered = set(answers.keys()) & active_expected
-        coverage = len(answered) / len(active_expected) if active_expected else 1.0
-        is_partial = coverage < partial_coverage_threshold
-
-        # Classificação para counters ao vivo. Espelha
-        # LlmResponseRow.classifyResponse no frontend: vazia se nenhum
-        # field tem conteúdo significativo; senão complete ou partial.
-        is_empty = not _answers_have_content(answers)
-        if is_empty:
-            jobs_state["processed_empty"] += 1
-        elif is_partial:
-            jobs_state["processed_partial"] += 1
-        else:
-            jobs_state["processed_complete"] += 1
-
-        llm_error_msg = _build_llm_error_message(
-            dfi_error=dfi_error,
-            is_empty=is_empty,
-            is_partial=is_partial,
-            dfi_status=dfi_status,
-            pre_prune_keys=answers_pre_prune_keys,
-            post_prune_keys=sorted(answers.keys()),
-            answered_count=len(answered),
-            active_expected_count=len(active_expected),
-        )
-
-        if is_partial or is_empty or dfi_error:
-            logger.warning(
-                "LLM row diag doc=%s status=%s error=%s pre_prune=%s post_prune=%s",
-                doc_id,
-                dfi_status,
-                dfi_error,
-                answers_pre_prune_keys,
-                sorted(answers.keys()),
-            )
-
-        if dfi_error:
-            # Agrupa por hash da mensagem (não prefixo) para o RuntimeError
-            # final. Truncar 120 chars agrupava erros distintos com prefixo
-            # igual.
-            # usedforsecurity=False: chave de cache/dedup, nao uso cripto.
-            key = hashlib.md5(
-                dfi_error.encode("utf-8", errors="replace"),
-                usedforsecurity=False,
-            ).hexdigest()[:16]
-            if key not in dfi_error_samples:
-                dfi_error_samples[key] = f"doc={doc_id}: {dfi_error}"
-
-        if is_partial:
-            missing = sorted(active_expected - answered)
-            warning_msg = (
-                f"doc={doc_id}: cobertura baixa "
-                f"({len(answered)}/{len(active_expected)}); "
-                f"faltaram: {missing[:8]}{'...' if len(missing) > 8 else ''}"
-            )
+        if processed_row.is_partial:
+            warning_msg = _build_partial_warning(processed_row)
             partial_warnings.append(warning_msg)
             jobs_state.setdefault("warnings", []).append(warning_msg)
 
-        # Throttle: persiste counters + heartbeat a cada 2s. Garante que
-        # mesmo após scale-to-zero o llm_runs reflete o trabalho feito,
-        # e que a UI consegue distinguir run viva de zumbi.
-        now_ts = time.time()
-        if now_ts - jobs_state["last_progress_persist"] >= progress_persist_interval_s:
-            _persist_run_progress(sb, job_id, jobs_state)
-            jobs_state["last_progress_persist"] = now_ts
-
+        _persist_progress_if_due(sb, job_id, jobs_state)
         sb.table("responses").insert(
             _build_llm_response_row(
                 run=run,
-                doc_id=doc_id,
-                answers=answers,
-                justifications=justifications,
-                is_partial=is_partial,
+                doc_id=processed_row.doc_id,
+                answers=processed_row.answers,
+                justifications=processed_row.justifications,
+                is_partial=processed_row.is_partial,
                 job_id=job_id,
-                llm_error_msg=llm_error_msg,
+                llm_error_msg=processed_row.llm_error_msg,
             )
         ).execute()
 
@@ -950,24 +1246,13 @@ async def run_llm(
             if f.get("hash")
         }
 
-        # Load documents
-        # Ignora documentos arquivados (excluded_at != null): não devem receber
-        # resposta LLM. O frontend já os exclui das contagens (B4); o backend
-        # não filtrava, recriando respostas em docs arquivados e inflando
-        # docsWithLlm acima de totalDocs (contador negativo de pendentes).
-        query = (
-            sb.table("documents")
-            .select("id, text, title, external_id")
-            .eq("project_id", project_id)
-            .is_("excluded_at", "null")
-        )
-        if document_ids:
-            query = query.in_("id", document_ids)
-        docs = query.execute().data
-
-        # Apply filtering
-        docs = _filter_docs(
-            sb, docs, project_id, filter_mode, max_response_count, sample_size
+        docs = _load_documents_for_run(
+            sb,
+            project_id,
+            document_ids,
+            filter_mode,
+            max_response_count,
+            sample_size,
         )
 
         _jobs[job_id]["total"] = len(docs)
@@ -979,166 +1264,35 @@ async def run_llm(
             _persist_run_completion(sb, job_id, 0, 0)
             return
 
-        # Compile Pydantic model
-        model_class = _compile_model(pydantic_code)
-        if not model_class:
-            raise RuntimeError(
-                "Nenhuma classe BaseModel encontrada no código Pydantic."
-            )
-
-        # Filter out fields that should not be sent to the LLM
-        # (target="none" hides from everyone; target="human_only" hides from LLM)
-        model_class = _filter_model_for_llm(
-            model_class, project.get("pydantic_fields") or []
+        include_justifications = llm_kwargs.pop("include_justifications", False)
+        prepared_model = _prepare_llm_model(
+            pydantic_code,
+            project.get("pydantic_fields") or [],
+            include_justifications,
+        )
+        run_config = _normalize_llm_kwargs(llm_kwargs)
+        result_df = _run_dataframeit_batches(
+            sb=sb,
+            job_id=job_id,
+            jobs_state=_jobs[job_id],
+            docs=docs,
+            model_class=prepared_model.model_class,
+            prompt_template=prompt_template,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            config=run_config,
         )
 
-        # Achatar nested BaseModels em top-level ANTES do extend. Evita o
-        # padrão em que o provider (Gemini) retorna os subfields flat e o
-        # Pydantic aceita o dict vazio para o BaseModel pai, produzindo
-        # resposta quase sem dados. field_map é usado no save loop para
-        # reconstruir o formato aninhado ao persistir em responses.answers.
-        model_class, nested_field_map = _flatten_nested_basemodels(model_class)
-
-        # Optionally extend model with justification fields
-        include_justifications = llm_kwargs.pop("include_justifications", False)
-        if include_justifications:
-            model_class = _extend_model_with_justifications(model_class)
-
-        # Separate dataframeit params from model-specific params (temperature, thinking_level, etc.)
-        parallel_requests = llm_kwargs.pop("parallel_requests", 5)
-        rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
-
-        # Thresholds configuráveis por projeto para detecção de respostas
-        # parciais. Valores fora de [0, 1] caem para o default. São popados
-        # de llm_kwargs para não vazarem para o LLM / dataframeit.
-        def _threshold(key: str, default: float) -> float:
-            raw = llm_kwargs.pop(key, None)
-            if raw is None:
-                return default
-            try:
-                v = float(raw)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "llm_kwargs['%s']=%r não é número, usando default %s",
-                    key,
-                    raw,
-                    default,
-                )
-                return default
-            if not 0 <= v <= 1:
-                logger.warning(
-                    "llm_kwargs['%s']=%s fora de [0,1], usando default %s",
-                    key,
-                    v,
-                    default,
-                )
-                return default
-            return v
-
-        partial_coverage_threshold = _threshold("partial_coverage_threshold", 0.5)
-        run_failure_threshold = _threshold("run_failure_threshold", 0.3)
-
-        DATAFRAMEIT_PARAMS = {
-            "api_key",
-            "max_retries",
-            "base_delay",
-            "max_delay",
-            "track_tokens",
-            "use_search",
-            "search_provider",
-            "search_per_field",
-            "max_results",
-            "search_depth",
-            "search_groups",
-            "save_trace",
-            "resume",
-            "reprocess_columns",
-            "status_column",
-        }
-        model_kwargs = {
-            k: v for k, v in llm_kwargs.items() if k not in DATAFRAMEIT_PARAMS
-        }
-        dfi_kwargs = {k: v for k, v in llm_kwargs.items() if k in DATAFRAMEIT_PARAMS}
-
-        # Build DataFrame
-        df = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
-
-        # Run dataframeit in batches for granular progress
-        from dataframeit import dataframeit
-
-        dfi_kwargs.pop("resume", None)
-
-        batch_size = max(1, parallel_requests)
-        batches = [df.iloc[i : i + batch_size] for i in range(0, len(df), batch_size)]
-        _jobs[job_id].update(phase="processing", total_batches=len(batches))
-
-        result_frames = []
-        proc_start = time.time()
-        # Throttle de heartbeat na fase de processing. Importante porque
-        # processar pode levar minutos antes do save loop começar; sem
-        # heartbeat aqui, mark_stale_runs_as_error marcaria a run como morta
-        # mesmo estando viva.
-        last_proc_heartbeat = 0.0
-        for idx, batch_df in enumerate(batches):
-            _jobs[job_id]["current_batch"] = idx + 1
-            batch_result = dataframeit(
-                batch_df,
-                model_class,
-                prompt_template,
-                text_column="texto",
-                provider=llm_provider,
-                model=llm_model,
-                parallel_requests=parallel_requests,
-                rate_limit_delay=rate_limit_delay,
-                model_kwargs=model_kwargs if model_kwargs else None,
-                resume=False,
-                **dfi_kwargs,
-            )
-            result_frames.append(batch_result)
-            processed = sum(len(f) for f in result_frames)
-            _jobs[job_id]["progress"] = processed
-            elapsed = time.time() - proc_start
-            if processed > 0:
-                _jobs[job_id]["eta_seconds"] = round(
-                    (elapsed / processed) * (len(df) - processed), 1
-                )
-            now_ts = time.time()
-            if now_ts - last_proc_heartbeat >= 2.0:
-                _persist_run_progress(sb, job_id, _jobs[job_id])
-                last_proc_heartbeat = now_ts
-
-        result_df = pd.concat(result_frames, ignore_index=True)
-
-        # --- Saving phase ---
         _jobs[job_id].update(phase="saving", eta_seconds=None)
 
-        # Mark all old LLM responses as not current in one batch
         doc_ids = [d["id"] for d in docs]
         sb.table("responses").update({"is_latest": False}).eq(
             "project_id", project_id
         ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
 
-        # Build per-field condition map once (same across all rows).
-        # Fonte: pydantic_code compilado (regra CLAUDE.md "Pydantic = fonte
-        # de verdade"). Nunca ler de projects.pydantic_fields aqui — a coluna
-        # pode ficar defasada se o coordenador editar o código direto.
-        field_conditions = extract_field_conditions(model_class)
-
-        # Set dos campos top-level que esperamos ver preenchidos em
-        # responses.answers após reconstrução. Subfields flat (foo__bar)
-        # contam pelo seu parent (foo), pois o que importa para detecção de
-        # parcial é se o conceito de alto nível ficou representado.
-        expected_llm_fields = set()
-        for name in model_class.model_fields:
-            if name.endswith("_justification"):
-                continue
-            if _NESTED_FLATTEN_SEP in name:
-                expected_llm_fields.add(name.split(_NESTED_FLATTEN_SEP, 1)[0])
-            else:
-                expected_llm_fields.add(name)
-
-        run_metadata = _RunMetadata(
+        save_context = _prepare_save_context(
             project_id=project_id,
+            model_class=prepared_model.model_class,
             llm_provider=llm_provider,
             llm_model=llm_model,
             pydantic_hash=pydantic_hash,
@@ -1152,42 +1306,24 @@ async def run_llm(
             job_id,
             _jobs[job_id],
             result_df,
-            model_class,
-            nested_field_map,
-            field_conditions,
-            expected_llm_fields,
-            partial_coverage_threshold,
-            run_metadata,
+            prepared_model.model_class,
+            prepared_model.nested_field_map,
+            save_context.field_conditions,
+            save_context.expected_llm_fields,
+            run_config.partial_coverage_threshold,
+            save_context.run_metadata,
         )
 
-        # Update project hash
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq(
             "id", project_id
         ).execute()
 
-        # Check de run comprometida: se uma fração grande dos docs produziu
-        # resposta parcial, a run é marcada como erro para ficar visível na UI
-        # em vez de passar como "completed" com warnings enterrados.
-        total_processed = len(result_df)
-        partial_ratio = (
-            len(partial_warnings) / total_processed if total_processed else 0.0
+        _raise_if_run_compromised(
+            partial_warnings,
+            dfi_error_samples,
+            len(result_df),
+            run_config.run_failure_threshold,
         )
-        if partial_ratio >= run_failure_threshold:
-            # Inclui exemplos de _error_details reais (quando dataframeit
-            # falhou) além dos warnings de cobertura. Mais útil que só
-            # "cobertura baixa" porque diz a causa primária.
-            error_examples = list(dfi_error_samples.values())[:3]
-            sections = [
-                f"Run comprometida: {len(partial_warnings)}/{total_processed} "
-                f"docs ({int(partial_ratio * 100)}%) com resposta parcial. "
-                f"Respostas gravadas com is_latest=false."
-            ]
-            if error_examples:
-                sections.append("Erros do provider: " + " || ".join(error_examples))
-            sections.append(
-                "Exemplos de cobertura baixa: " + " || ".join(partial_warnings[:3])
-            )
-            raise RuntimeError(" ".join(sections))
 
         _jobs[job_id].update(status="completed", phase="completed", eta_seconds=0)
         _persist_run_completion(
