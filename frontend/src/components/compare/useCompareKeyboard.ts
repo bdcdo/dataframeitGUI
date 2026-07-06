@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import type { PydanticField } from "@/lib/types";
-import type { FieldResponse } from "./compare-types";
+import type { FieldResponse, PendingVerdict } from "./compare-types";
 
 interface UseCompareKeyboardParams {
   isFullscreen: boolean;
@@ -14,9 +14,11 @@ interface UseCompareKeyboardParams {
   onExitFullscreen: () => void;
   onNextField: () => void;
   onPrevField: () => void;
-  onPrepareVerdict: (verdict: string, chosenResponseId?: string) => void;
+  onPrepareVerdict: (pending: PendingVerdict) => void;
+  onSubmitSpecialVerdict: (verdict: "ambiguo" | "pular") => void;
   onConfirmPendingVerdict: () => void;
   hasPendingVerdict: boolean;
+  isConfirmingVerdict: boolean;
 }
 
 /**
@@ -38,8 +40,10 @@ export function useCompareKeyboard({
   onNextField,
   onPrevField,
   onPrepareVerdict,
+  onSubmitSpecialVerdict,
   onConfirmPendingVerdict,
   hasPendingVerdict,
+  isConfirmingVerdict,
 }: UseCompareKeyboardParams): void {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -60,24 +64,23 @@ export function useCompareKeyboard({
       }
 
       if (e.key === "n") {
-        onNextField();
+        if (!isConfirmingVerdict) onNextField();
         return;
       }
       if (e.key === "p") {
-        onPrevField();
+        if (!isConfirmingVerdict) onPrevField();
         return;
       }
 
-      // Doc concluído: o avanço é por ação explícita (botão "Próximo parecer"
-      // recebe foco; Enter nele é nativo). Não deixar 1-9/a/s re-disparar
-      // veredito sobre um documento já fechado.
-      if (isCurrentDocComplete) return;
-
-      if (!isCurrentFieldDivergent) return;
+      if (!isCurrentFieldDivergent || isConfirmingVerdict) return;
 
       const isMultiField =
         currentField?.type === "multi" && currentField.options?.length;
-      if (isMultiField) return;
+      if (isMultiField) {
+        if (e.key === "a") onSubmitSpecialVerdict("ambiguo");
+        if (e.key === "s") onSubmitSpecialVerdict("pular");
+        return;
+      }
 
       if (e.key === "Enter" && hasPendingVerdict) {
         e.preventDefault();
@@ -95,12 +98,16 @@ export function useCompareKeyboard({
             : Array.isArray(answer)
               ? answer.join(", ")
               : String(answer);
-        onPrepareVerdict(displayAnswer, group[0].id);
+        onPrepareVerdict({
+          kind: "response",
+          verdict: displayAnswer,
+          chosenResponseId: group[0].id,
+        });
         return;
       }
 
-      if (e.key === "a") onPrepareVerdict("ambiguo");
-      if (e.key === "s") onPrepareVerdict("pular");
+      if (e.key === "a") onPrepareVerdict({ kind: "ambiguous", verdict: "ambiguo" });
+      if (e.key === "s") onPrepareVerdict({ kind: "skip", verdict: "pular" });
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -111,11 +118,13 @@ export function useCompareKeyboard({
     isCurrentFieldDivergent,
     isFullscreen,
     hasPendingVerdict,
+    isConfirmingVerdict,
     onConfirmPendingVerdict,
     onExitFullscreen,
     onNextField,
     onPrepareVerdict,
     onPrevField,
+    onSubmitSpecialVerdict,
     onToggleFullscreen,
   ]);
 }

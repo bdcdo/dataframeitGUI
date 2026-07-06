@@ -66,7 +66,14 @@ function renderPanel(
         pendingVerdict={pendingVerdict}
         onPrepareVerdict={setPendingVerdict}
         onConfirmPendingVerdict={() => {
-          if (pendingVerdict) onVerdict(pendingVerdict.verdict, pendingVerdict.chosenResponseId);
+          if (pendingVerdict) {
+            onVerdict(
+              pendingVerdict.verdict,
+              pendingVerdict.kind === "response"
+                ? pendingVerdict.chosenResponseId
+                : undefined,
+            );
+          }
         }}
         isConfirmingVerdict={false}
         onMarkReviewed={vi.fn()}
@@ -87,6 +94,27 @@ function renderPanel(
   render(<Harness />);
   return { onVerdict };
 }
+
+describe("ComparisonPanel — confirmação pendente", () => {
+  it("mantém caminho de confirmação ao revisitar documento concluído", async () => {
+    const user = userEvent.setup();
+    const onConfirmPendingVerdict = vi.fn();
+
+    renderPanel({
+      docStatus: { complete: true, hasNextDoc: false, onNextDoc: vi.fn() },
+      pendingVerdict: {
+        kind: "response",
+        verdict: "2021-05-10",
+        chosenResponseId: "r-llm",
+      },
+      onConfirmPendingVerdict,
+    });
+
+    await user.click(screen.getByRole("button", { name: /^confirmar$/i }));
+
+    expect(onConfirmPendingVerdict).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("ComparisonPanel — resposta nova (issue #247, ponto 4)", () => {
   it("o input de resposta nova fica oculto até clicar em 'Nenhuma correta'", () => {

@@ -256,9 +256,9 @@ export function AgreementGroup({
           const isChosen = group.responses.some(
             (r) => r.id === existingVerdict?.chosenResponseId,
           );
-          const isPending = group.responses.some(
-            (r) => r.id === pendingVerdict?.chosenResponseId,
-          );
+          const isPending =
+            pendingVerdict?.kind === "response" &&
+            group.responses.some((r) => r.id === pendingVerdict.chosenResponseId);
           const versions = Array.from(
             new Set(
               group.responses

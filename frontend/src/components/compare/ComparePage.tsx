@@ -222,13 +222,22 @@ export function ComparePage({
     setPendingVerdict(next);
   }, []);
 
+  const submitSpecialVerdict = useCallback(
+    (verdict: "ambiguo" | "pular") => {
+      void handleVerdict(verdict);
+    },
+    [handleVerdict],
+  );
+
   const confirmPendingVerdict = useCallback(async () => {
     if (!pendingVerdict || isConfirmingVerdict) return;
     setIsConfirmingVerdict(true);
     try {
       const saved = await handleVerdict(
         pendingVerdict.verdict,
-        pendingVerdict.chosenResponseId,
+        pendingVerdict.kind === "response"
+          ? pendingVerdict.chosenResponseId
+          : undefined,
       );
       if (saved) setPendingVerdict(null);
     } finally {
@@ -244,6 +253,21 @@ export function ComparePage({
   const exitFullscreen = useCallback(() => setIsFullscreen(false), []);
   const [listCollapsed, setListCollapsed] = useState(false);
   const toggleList = useCallback(() => setListCollapsed((v) => !v), []);
+  const navigateDoc = useCallback(
+    (index: number) => {
+      if (!isConfirmingVerdict) handleDocNavigate(index);
+    },
+    [handleDocNavigate, isConfirmingVerdict],
+  );
+  const navigateField = useCallback(
+    (index: number) => {
+      if (!isConfirmingVerdict) setFieldIndex(index);
+    },
+    [isConfirmingVerdict, setFieldIndex],
+  );
+  const nextDoc = useCallback(() => {
+    if (!isConfirmingVerdict) handleNextDoc();
+  }, [handleNextDoc, isConfirmingVerdict]);
 
   useCompareKeyboard({
     isFullscreen,
@@ -255,23 +279,11 @@ export function ComparePage({
     onExitFullscreen: exitFullscreen,
     onNextField: goNextField,
     onPrevField: goPrevField,
-    onPrepareVerdict: (verdict, chosenResponseId) => {
-      const kind =
-        verdict === "ambiguo" ? "ambiguous" : verdict === "pular" ? "skip" : "response";
-      preparePendingVerdict({
-        kind,
-        verdict,
-        chosenResponseId,
-        label:
-          kind === "ambiguous"
-            ? "Ambíguo"
-            : kind === "skip"
-              ? "Pular"
-              : verdict || "(vazia)",
-      });
-    },
+    onPrepareVerdict: preparePendingVerdict,
+    onSubmitSpecialVerdict: submitSpecialVerdict,
     onConfirmPendingVerdict: () => void confirmPendingVerdict(),
     hasPendingVerdict: !!pendingVerdict,
+    isConfirmingVerdict,
   });
 
   const reviewed = docFields.map(
@@ -339,7 +351,7 @@ export function ComparePage({
           <CompareDocList
             docs={docListEntries}
             currentIndex={docIndex}
-            onSelect={handleDocNavigate}
+            onSelect={navigateDoc}
             collapsed={listCollapsed}
             onToggle={toggleList}
           />
@@ -375,7 +387,7 @@ export function ComparePage({
           title={docTitle}
           currentIndex={docIndex}
           total={documents.length}
-          onNavigate={handleDocNavigate}
+          onNavigate={navigateDoc}
           onExit={toggleFullscreen}
         />
       ) : (
@@ -383,7 +395,7 @@ export function ComparePage({
           title={docTitle}
           docIndex={docIndex}
           totalDocs={documents.length}
-          onDocNavigate={handleDocNavigate}
+          onDocNavigate={navigateDoc}
           filter={filter}
           onFilterChange={changeFilter}
           fields={fields}
@@ -405,7 +417,7 @@ export function ComparePage({
       <CompareWorkspace
         docs={docListEntries}
         docIndex={docIndex}
-        onDocNavigate={handleDocNavigate}
+        onDocNavigate={navigateDoc}
         listCollapsed={listCollapsed}
         onToggleList={toggleList}
         documentText={currentDoc.text}
@@ -426,9 +438,9 @@ export function ComparePage({
           reviewed,
           isDivergent: isCurrentFieldDivergent,
           docStatus: isCurrentDocComplete
-            ? { complete: true, hasNextDoc, onNextDoc: handleNextDoc }
+            ? { complete: true, hasNextDoc, onNextDoc: nextDoc }
             : { complete: false },
-          onFieldNavigate: setFieldIndex,
+          onFieldNavigate: navigateField,
           onVerdict: (verdict, chosenResponseId) =>
             void handleVerdict(verdict, chosenResponseId),
           pendingVerdict,

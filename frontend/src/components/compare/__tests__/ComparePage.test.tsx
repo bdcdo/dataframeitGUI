@@ -6,7 +6,9 @@ import userEvent from "@testing-library/user-event";
 // Mocks dos Server Actions e do toast (efeitos colaterais fora do escopo do
 // teste de lógica do container).
 const { submitVerdict, markCompareDocReviewed } = vi.hoisted(() => ({
-  submitVerdict: vi.fn(async () => {}),
+  submitVerdict: vi.fn<
+    (...args: unknown[]) => Promise<{ error?: string } | void>
+  >(async () => {}),
   markCompareDocReviewed: vi.fn(async () => {}),
 }));
 const { confirmEquivalentVerdict, unmarkEquivalencePair } = vi.hoisted(() => ({
@@ -38,17 +40,8 @@ interface MockComparisonPanel {
   onCommentChange: (v: string) => void;
   onFieldNavigate: (i: number) => void;
   onVerdict: (verdict: string, chosenResponseId?: string) => void;
-  pendingVerdict: {
-    verdict: string;
-    chosenResponseId?: string;
-    label: string;
-  } | null;
-  onPrepareVerdict: (pending: {
-    kind: "response" | "ambiguous" | "skip" | "custom";
-    verdict: string;
-    chosenResponseId?: string;
-    label: string;
-  }) => void;
+  pendingVerdict: PendingVerdict | null;
+  onPrepareVerdict: (pending: PendingVerdict) => void;
   onConfirmPendingVerdict: () => void;
   isConfirmingVerdict: boolean;
   onConfirmEquivalent: (
@@ -71,7 +64,9 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
       <span data-testid="doc-text">{documentText}</span>
       <span data-testid="field-name">{comparisonPanel.fieldName}</span>
       <span data-testid="pending-verdict">
-        {comparisonPanel.pendingVerdict?.label ?? ""}
+        {comparisonPanel.pendingVerdict
+          ? pendingVerdictLabel(comparisonPanel.pendingVerdict)
+          : ""}
       </span>
       <input
         data-testid="comment"
@@ -93,7 +88,6 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
             kind: "response",
             verdict: "Deferido",
             chosenResponseId: "r1",
-            label: "Deferido",
           })
         }
       >
@@ -101,9 +95,10 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
       </button>
       <button
         data-testid="confirm-verdict"
+        disabled={comparisonPanel.isConfirmingVerdict}
         onClick={() => comparisonPanel.onConfirmPendingVerdict()}
       >
-        confirm verdict
+        {comparisonPanel.isConfirmingVerdict ? "saving verdict" : "confirm verdict"}
       </button>
       <button
         data-testid="confirm-equiv"
@@ -164,7 +159,7 @@ vi.mock("@/components/coding/FullscreenNav", () => ({
 import { ComparePage } from "@/components/compare/ComparePage";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
-import type { CompareResponse } from "@/components/compare/compare-types";
+import { pendingVerdictLabel, type CompareResponse, type PendingVerdict } from "@/components/compare/compare-types";
 
 const fields: PydanticField[] = [
   { name: "campoA", type: "text", options: null, description: "Campo A", hash: "hA" },
@@ -253,6 +248,13 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
 
 const text = (id: string) => screen.getByTestId(id).textContent;
 const commentInput = () => screen.getByTestId("comment") as HTMLInputElement;
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 const verdict = (verdictName: string, comment: string | null = null) => ({
   verdict: verdictName,
   chosenResponseId: null,
@@ -450,6 +452,50 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     );
   });
 
+  it("teclas 'a' e 's' em campo multi salvam marcadores especiais diretamente", async () => {
+    const user = userEvent.setup();
+    render(
+      <ComparePage
+        {...makeProps()}
+        fields={[
+          {
+            name: "campoA",
+            type: "multi",
+            options: ["Sim", "Não"],
+            description: "Campo A",
+            hash: "hA",
+          } as PydanticField,
+          fields[1],
+        ]}
+        divergentFields={{ d1: ["campoA"], d2: ["campoA"] }}
+      />,
+    );
+
+    await user.keyboard("a");
+    await user.keyboard("s");
+
+    expect(submitVerdict).toHaveBeenNthCalledWith(
+      1,
+      "p1",
+      "d1",
+      "campoA",
+      "ambiguo",
+      undefined,
+      undefined,
+      expect.any(Array),
+    );
+    expect(submitVerdict).toHaveBeenNthCalledWith(
+      2,
+      "p1",
+      "d1",
+      "campoA",
+      "pular",
+      undefined,
+      undefined,
+      expect.any(Array),
+    );
+  });
+
   it("o comentário digitado segue junto no veredito por teclado", async () => {
     const user = userEvent.setup();
     render(<ComparePage {...makeProps()} />);
@@ -474,7 +520,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     );
   });
 
-  it("não dispara veredito por teclado quando o documento já está concluído", async () => {
+  it("documento concluído permite preparar correção por teclado e só salva no Enter", async () => {
     const user = userEvent.setup();
     render(
       <ComparePage
@@ -484,9 +530,22 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       />,
     );
 
-    await user.keyboard("1");
-    await user.keyboard("a");
+    await user.keyboard("2");
+
     expect(submitVerdict).not.toHaveBeenCalled();
+    expect(text("pending-verdict")).toBe("Indeferido");
+
+    await user.keyboard("{Enter}");
+
+    expect(submitVerdict).toHaveBeenCalledWith(
+      "p1",
+      "d1",
+      "campoA",
+      "Indeferido",
+      "r2",
+      undefined,
+      expect.any(Array),
+    );
   });
 
   it("Ctrl+Shift+F entra em tela cheia e Esc sai", async () => {
@@ -530,6 +589,61 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
       undefined,
       expect.any(Array),
     );
+    await waitFor(() => expect(text("field-name")).toBe("campoB"));
+  });
+
+  it("falha de salvamento mantém o pendente e não avança o campo", async () => {
+    submitVerdict.mockResolvedValueOnce({ error: "falha ao salvar" });
+    const user = userEvent.setup();
+    render(<ComparePage {...makeProps()} />);
+
+    await user.click(screen.getByTestId("prepare-verdict"));
+    expect(text("pending-verdict")).toBe("Deferido");
+
+    await user.click(screen.getByTestId("confirm-verdict"));
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    expect(text("field-name")).toBe("campoA");
+    expect(text("pending-verdict")).toBe("Deferido");
+  });
+
+  it("trocar de campo limpa o pendente e não salva o veredito antigo no novo contexto", async () => {
+    const user = userEvent.setup();
+    render(<ComparePage {...makeProps()} />);
+
+    await user.click(screen.getByTestId("prepare-verdict"));
+    expect(text("pending-verdict")).toBe("Deferido");
+
+    await user.click(screen.getByTestId("next-field"));
+    expect(text("field-name")).toBe("campoB");
+    expect(text("pending-verdict")).toBe("");
+
+    await user.click(screen.getByTestId("confirm-verdict"));
+    expect(submitVerdict).not.toHaveBeenCalled();
+  });
+
+  it("bloqueia confirmação dupla e navegação enquanto o salvamento está em andamento", async () => {
+    const save = deferred<void>();
+    submitVerdict.mockReturnValueOnce(save.promise);
+    const user = userEvent.setup();
+    render(<ComparePage {...makeProps()} />);
+
+    await user.click(screen.getByTestId("prepare-verdict"));
+    await user.click(screen.getByTestId("confirm-verdict"));
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("confirm-verdict")).toHaveProperty("disabled", true);
+
+    await user.click(screen.getByTestId("confirm-verdict"));
+    await user.click(screen.getByTestId("next-field"));
+    await user.click(screen.getByTestId("nav-next-doc"));
+    await user.keyboard("n");
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    expect(text("field-name")).toBe("campoA");
+    expect(text("doc-text")).toBe("Texto do documento 1");
+
+    save.resolve(undefined);
     await waitFor(() => expect(text("field-name")).toBe("campoB"));
   });
 

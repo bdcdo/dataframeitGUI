@@ -95,9 +95,20 @@ export function useCompareVerdicts({
         chosenResponseId,
         verdictComment,
         buildSnapshot(fieldResponses),
-      );
+      ).catch((error: unknown) => {
+        console.error("Failed to submit compare verdict", {
+          error,
+          projectId,
+          documentId: currentDoc.id,
+          fieldName: currentFieldName,
+          verdict,
+          chosenResponseId,
+        });
+        toast.error("Não foi possível salvar o veredito. Tente novamente antes de avançar.");
+        return { error: "unexpected" };
+      });
       if (result?.error) {
-        toast.error(result.error);
+        if (result.error !== "unexpected") toast.error(result.error);
         return false;
       }
 

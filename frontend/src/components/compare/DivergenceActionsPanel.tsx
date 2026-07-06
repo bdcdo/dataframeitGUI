@@ -64,7 +64,6 @@ export function DivergenceActionsPanel({
               onPrepareVerdict({
                 kind: "ambiguous",
                 verdict: "ambiguo",
-                label: "Ambíguo",
               })
             }
           >
@@ -83,7 +82,6 @@ export function DivergenceActionsPanel({
               onPrepareVerdict({
                 kind: "skip",
                 verdict: "pular",
-                label: "Pular",
               })
             }
           >
@@ -118,7 +116,6 @@ export function DivergenceActionsPanel({
               onPrepareVerdict({
                 kind: "custom",
                 verdict: value,
-                label: value,
               })
             }
           />
