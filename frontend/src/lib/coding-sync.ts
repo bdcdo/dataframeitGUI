@@ -10,6 +10,9 @@ async function runCodingAutomation(
   mode: string | null | undefined,
   projectId: string,
   documentId: string,
+  // Falso positivo: `userId` só restringe SELECT/UPDATE pelas policies RLS;
+  // a automação chamada abaixo já audita as escritas via admin client.
+  // react-doctor-disable-next-line react-doctor/supabase-client-owned-authz-field
   userId: string,
 ): Promise<void> {
   // Dispara a automacao do projeto ao submeter, conforme automation_mode.

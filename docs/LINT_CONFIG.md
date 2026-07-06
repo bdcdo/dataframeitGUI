@@ -65,7 +65,7 @@ Se o react-doctor passar a aceitar custom auth helpers (ou se o projeto adotar `
 
 Os componentes shadcn/ui (`ui/button`, `ui/badge`, `ui/tabs`) exportam, além do componente, suas variantes CVA (`buttonVariants`, `badgeVariants` etc.) — convenção intencional do shadcn. A regra `react-doctor/only-export-components` (orientada a Fast Refresh) acusa isso como error. O override silencia a regra **apenas em `src/components/ui/**`** (onde o padrão é da própria biblioteca), mantendo-a ativa no resto do app. Na 0.2.x estes eram os únicos errors do codebase, junto com `server-auth-actions`; com os overrides, a baseline daquela versão era 0 errors. Na 0.5.6 o ruleset expandido introduziu novos errors (ver baseline abaixo), mas estes dois overrides continuam necessários e ativos.
 
-## Por que `supabase-client-owned-authz-field` está silenciada nos 4 arquivos auditados
+## Por que `supabase-client-owned-authz-field` está silenciada nos arquivos auditados
 
 A regra `react-doctor/supabase-client-owned-authz-field` acusa código client Supabase que escreve campos de `user`/`tenant`/`owner`/`role` que deveriam ser enforçados pela RLS. Os 4 disparos da baseline foram auditados em #203 e confirmados como FP heurístico — silenciados **por arquivo** (não pela regra inteira, nem por `src/actions/**`), para que a regra continue pegando actions novas:
 
@@ -74,7 +74,9 @@ A regra `react-doctor/supabase-client-owned-authz-field` acusa código client Su
 - `src/actions/members.ts` — escreve `role`/`can_resolve`/`can_arbitrate`/`can_compare` via client autenticado, mas a policy `Coordinators manage members` (`USING project_id IN auth_user_coordinator_or_creator_project_ids() OR is_master()`) barra qualquer não-coordenador: o UPDATE afeta 0 linhas e o código retorna "Sem permissão". Não há auto-escalação explorável. A ausência de um *column-level guard* em `project_members` (defesa em profundidade, presente em `projects`/`project_comments`/`schema_change_log`) é a única lacuna real, rastreada em issue-filha de #203 — não é vulnerabilidade, e fechá-la embute decisão de produto (se um coordenador pode alternar as próprias flags).
 - `src/actions/projects.ts` — `role: "coordenador"` inserido no bootstrap criador→coordenador, gated pela policy `Creator inserts members` (só permite inserir em projeto cujo `created_by = clerk_uid()`). Intencional; ninguém entra em projeto alheio.
 
-Se algum desses fluxos migrar para depender de coluna client-fornecida sem RLS, **remover o override do arquivo afetado** e corrigir.
+Casos posteriores seguem a mesma política: suprimir no menor escopo possível, com justificativa explícita. Em `src/lib/arbitragem-sync.ts`, a regra aponta o parâmetro `userId`, mas ele é usado só como filtro em `.eq("arbitrator_id", userId)` e `.eq("user_id", userId)` para restringir SELECT/UPDATE às linhas permitidas pelas policies RLS já citadas no arquivo. O payload do UPDATE escreve apenas `status` e `completed_at`; não há escrita client-fornecida de `user_id`, `arbitrator_id`, `role` ou outro campo de autorização. Em `src/lib/coding-sync.ts`, o parâmetro `userId` segue o mesmo padrão nos updates de `assignments` e também é repassado ao gatilho de auto-revisão, cuja escrita via admin client já está auditada em `src/lib/auto-review.ts`. As supressões ficam inline para manter a regra ativa no restante dos arquivos.
+
+Se algum desses fluxos migrar para depender de coluna client-fornecida sem RLS, **remover o override ou a supressão inline do trecho afetado** e corrigir.
 
 ## Por que `supabase-table-missing-rls` está silenciada nas 2 migrations auditadas
 
