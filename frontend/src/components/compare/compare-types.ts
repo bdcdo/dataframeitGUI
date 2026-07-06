@@ -32,6 +32,13 @@ export interface CompareDocument {
   text: string;
 }
 
+export interface PendingVerdict {
+  kind: "response" | "ambiguous" | "skip" | "custom";
+  verdict: string;
+  chosenResponseId?: string;
+  label: string;
+}
+
 /** Forma de cada item em `fieldResponses` (derivado por `useCompareFieldData`). */
 export interface FieldResponse {
   id: string;

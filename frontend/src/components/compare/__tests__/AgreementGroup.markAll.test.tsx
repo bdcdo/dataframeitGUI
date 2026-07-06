@@ -44,6 +44,7 @@ function renderGroup(
         }),
       ]}
       existingVerdict={null}
+      pendingVerdict={null}
       onVote={onVote}
       allowEquivalence={true}
       equivalences={[]}
@@ -58,13 +59,20 @@ function renderGroup(
 }
 
 describe("AgreementGroup — 'Todas são similares' (issue #247, ponto 5)", () => {
-  it("funde todos os grupos num clique; o maior grupo (NI) vira gabarito", async () => {
+  it("pré-seleciona todos os grupos e só confirma equivalência no botão explícito", async () => {
     const user = userEvent.setup();
     const { onConfirmEquivalent } = renderGroup();
 
     await user.click(
       screen.getByRole("button", { name: /todas são similares/i }),
     );
+
+    expect(onConfirmEquivalent).not.toHaveBeenCalled();
+    const confirmBtn = await screen.findByRole("button", {
+      name: /confirmar .*equivalentes/i,
+    });
+
+    await user.click(confirmBtn);
 
     await waitFor(() => expect(onConfirmEquivalent).toHaveBeenCalledTimes(1));
     const [responseIds, gabaritoId, verdictDisplay] =

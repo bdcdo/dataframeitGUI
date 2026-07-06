@@ -20,6 +20,7 @@ import type {
   CompareDocument,
   CompareResponse,
   EquivalencePairWire,
+  PendingVerdict,
 } from "./compare-types";
 
 interface ComparePageProps {
@@ -174,10 +175,11 @@ export function ComparePage({
   // preserva o comentário recém-digitado/salvo — por isso `useCompareVerdicts`
   // não limpa a caixa no sucesso.
   const [comment, setComment] = useState("");
-  const commentCtxKey =
+  const verdictCtxKey =
     currentDoc && currentFieldName
       ? `${currentDoc.id}|${currentFieldName}`
       : null;
+  const commentCtxKey = verdictCtxKey;
   // Sentinela `undefined` (≠ qualquer chave e ≠ null) força o guard a disparar
   // no PRIMEIRO render, semeando o comentário do veredito existente já na
   // montagem — o effect original fazia isso (depois do paint); aqui é antes.
@@ -185,6 +187,17 @@ export function ComparePage({
   if (commentCtxKey !== commentCtxRef.current) {
     commentCtxRef.current = commentCtxKey;
     setComment(currentVerdict?.comment ?? "");
+  }
+
+  const [pendingVerdict, setPendingVerdict] = useState<PendingVerdict | null>(
+    null,
+  );
+  const [isConfirmingVerdict, setIsConfirmingVerdict] = useState(false);
+  const pendingVerdictCtxRef = useRef<string | null | undefined>(undefined);
+  if (verdictCtxKey !== pendingVerdictCtxRef.current) {
+    pendingVerdictCtxRef.current = verdictCtxKey;
+    setPendingVerdict(null);
+    setIsConfirmingVerdict(false);
   }
 
   const {
@@ -205,6 +218,24 @@ export function ComparePage({
     goNextField,
   });
 
+  const preparePendingVerdict = useCallback((next: PendingVerdict) => {
+    setPendingVerdict(next);
+  }, []);
+
+  const confirmPendingVerdict = useCallback(async () => {
+    if (!pendingVerdict || isConfirmingVerdict) return;
+    setIsConfirmingVerdict(true);
+    try {
+      const saved = await handleVerdict(
+        pendingVerdict.verdict,
+        pendingVerdict.chosenResponseId,
+      );
+      if (saved) setPendingVerdict(null);
+    } finally {
+      setIsConfirmingVerdict(false);
+    }
+  }, [handleVerdict, isConfirmingVerdict, pendingVerdict]);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(
     () => setIsFullscreen((prev) => !prev),
@@ -224,8 +255,23 @@ export function ComparePage({
     onExitFullscreen: exitFullscreen,
     onNextField: goNextField,
     onPrevField: goPrevField,
-    onVerdict: (verdict, chosenResponseId) =>
-      void handleVerdict(verdict, chosenResponseId),
+    onPrepareVerdict: (verdict, chosenResponseId) => {
+      const kind =
+        verdict === "ambiguo" ? "ambiguous" : verdict === "pular" ? "skip" : "response";
+      preparePendingVerdict({
+        kind,
+        verdict,
+        chosenResponseId,
+        label:
+          kind === "ambiguous"
+            ? "Ambíguo"
+            : kind === "skip"
+              ? "Pular"
+              : verdict || "(vazia)",
+      });
+    },
+    onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+    hasPendingVerdict: !!pendingVerdict,
   });
 
   const reviewed = docFields.map(
@@ -385,6 +431,10 @@ export function ComparePage({
           onFieldNavigate: setFieldIndex,
           onVerdict: (verdict, chosenResponseId) =>
             void handleVerdict(verdict, chosenResponseId),
+          pendingVerdict,
+          onPrepareVerdict: preparePendingVerdict,
+          onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+          isConfirmingVerdict,
           onMarkReviewed: () => void handleMarkReviewed(),
           comment,
           onCommentChange: setComment,

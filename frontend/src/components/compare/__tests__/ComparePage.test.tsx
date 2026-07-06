@@ -38,6 +38,19 @@ interface MockComparisonPanel {
   onCommentChange: (v: string) => void;
   onFieldNavigate: (i: number) => void;
   onVerdict: (verdict: string, chosenResponseId?: string) => void;
+  pendingVerdict: {
+    verdict: string;
+    chosenResponseId?: string;
+    label: string;
+  } | null;
+  onPrepareVerdict: (pending: {
+    kind: "response" | "ambiguous" | "skip" | "custom";
+    verdict: string;
+    chosenResponseId?: string;
+    label: string;
+  }) => void;
+  onConfirmPendingVerdict: () => void;
+  isConfirmingVerdict: boolean;
   onConfirmEquivalent: (
     responseIds: string[],
     gabaritoId: string,
@@ -57,6 +70,9 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
     <div>
       <span data-testid="doc-text">{documentText}</span>
       <span data-testid="field-name">{comparisonPanel.fieldName}</span>
+      <span data-testid="pending-verdict">
+        {comparisonPanel.pendingVerdict?.label ?? ""}
+      </span>
       <input
         data-testid="comment"
         value={comparisonPanel.comment}
@@ -71,10 +87,23 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
         next field
       </button>
       <button
-        data-testid="emit-verdict"
-        onClick={() => comparisonPanel.onVerdict("Deferido", "r1")}
+        data-testid="prepare-verdict"
+        onClick={() =>
+          comparisonPanel.onPrepareVerdict({
+            kind: "response",
+            verdict: "Deferido",
+            chosenResponseId: "r1",
+            label: "Deferido",
+          })
+        }
       >
-        verdict
+        prepare verdict
+      </button>
+      <button
+        data-testid="confirm-verdict"
+        onClick={() => comparisonPanel.onConfirmPendingVerdict()}
+      >
+        confirm verdict
       </button>
       <button
         data-testid="confirm-equiv"
@@ -282,7 +311,10 @@ describe("ComparePage — comentário (fix no-derived-state)", () => {
     await user.type(commentInput(), "minha nota");
     expect(commentInput().value).toBe("minha nota");
 
-    await user.click(screen.getByTestId("emit-verdict"));
+    await user.click(screen.getByTestId("prepare-verdict"));
+    expect(submitVerdict).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("confirm-verdict"));
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
     expect(text("field-name")).toBe("campoB");
@@ -370,12 +402,17 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     expect(text("field-name")).toBe("campoA");
   });
 
-  it("número emite veredito do grupo de resposta correspondente", async () => {
+  it("número prepara veredito do grupo correspondente; Enter confirma", async () => {
     const user = userEvent.setup();
     render(<ComparePage {...makeProps()} />);
 
     // campoA: grupos [Deferido(r1), Indeferido(r2)] → '2' escolhe Indeferido.
     await user.keyboard("2");
+
+    expect(submitVerdict).not.toHaveBeenCalled();
+    expect(text("pending-verdict")).toBe("Indeferido");
+
+    await user.keyboard("{Enter}");
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
     expect(submitVerdict).toHaveBeenCalledWith(
@@ -389,16 +426,24 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     );
   });
 
-  it("tecla 'a' emite veredito 'ambiguo' e 's' emite 'pular'", async () => {
+  it("teclas 'a' e 's' preparam marcadores especiais; Enter confirma", async () => {
     const user = userEvent.setup();
     render(<ComparePage {...makeProps()} />);
 
     await user.keyboard("a");
+    expect(submitVerdict).not.toHaveBeenCalled();
+    expect(text("pending-verdict")).toBe("Ambíguo");
+
+    await user.keyboard("s");
+    expect(submitVerdict).not.toHaveBeenCalled();
+    expect(text("pending-verdict")).toBe("Pular");
+
+    await user.keyboard("{Enter}");
     expect(submitVerdict).toHaveBeenCalledWith(
       "p1",
       "d1",
       "campoA",
-      "ambiguo",
+      "pular",
       undefined,
       undefined,
       expect.any(Array),
@@ -414,6 +459,9 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     commentInput().blur();
 
     await user.keyboard("1");
+    expect(submitVerdict).not.toHaveBeenCalled();
+
+    await user.keyboard("{Enter}");
 
     expect(submitVerdict).toHaveBeenCalledWith(
       "p1",
@@ -466,7 +514,11 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
 
     expect(text("field-name")).toBe("campoA");
 
-    await user.click(screen.getByTestId("emit-verdict"));
+    await user.click(screen.getByTestId("prepare-verdict"));
+    expect(submitVerdict).not.toHaveBeenCalled();
+    expect(text("pending-verdict")).toBe("Deferido");
+
+    await user.click(screen.getByTestId("confirm-verdict"));
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
     expect(submitVerdict).toHaveBeenCalledWith(

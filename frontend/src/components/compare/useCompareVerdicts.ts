@@ -28,7 +28,7 @@ interface UseCompareVerdictsParams {
 }
 
 export interface CompareVerdicts {
-  handleVerdict: (verdict: string, chosenResponseId?: string) => Promise<void>;
+  handleVerdict: (verdict: string, chosenResponseId?: string) => Promise<boolean>;
   handleConfirmEquivalent: (
     responseIds: string[],
     gabaritoId: string,
@@ -77,7 +77,9 @@ export function useCompareVerdicts({
 }: UseCompareVerdictsParams): CompareVerdicts {
   const handleVerdict = useCallback(
     async (verdict: string, chosenResponseId?: string) => {
-      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) return;
+      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) {
+        return false;
+      }
 
       const verdictComment = comment || undefined;
       const info: VerdictInfo = {
@@ -96,7 +98,7 @@ export function useCompareVerdicts({
       );
       if (result?.error) {
         toast.error(result.error);
-        return;
+        return false;
       }
 
       // Escrita otimista só após o sucesso: `recordReview` grava em `overrides`
@@ -120,6 +122,7 @@ export function useCompareVerdicts({
       } else {
         goNextField();
       }
+      return true;
     },
     [
       projectId,

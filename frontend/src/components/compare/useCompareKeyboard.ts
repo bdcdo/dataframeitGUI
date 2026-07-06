@@ -14,13 +14,15 @@ interface UseCompareKeyboardParams {
   onExitFullscreen: () => void;
   onNextField: () => void;
   onPrevField: () => void;
-  onVerdict: (verdict: string, chosenResponseId?: string) => void;
+  onPrepareVerdict: (verdict: string, chosenResponseId?: string) => void;
+  onConfirmPendingVerdict: () => void;
+  hasPendingVerdict: boolean;
 }
 
 /**
  * Atalhos de teclado da Comparação. Extraído de `ComparePage`: o corpo do
  * effect só chama callbacks recebidos por prop (`onToggleFullscreen`,
- * `onNextField`, `onVerdict`, …) — nenhum `setState` léxico —, o que zera o
+ * `onNextField`, `onPrepareVerdict`, …) — nenhum `setState` léxico —, o que zera o
  * `no-cascading-set-state` que o effect inline disparava sem precisar de
  * `useReducer`. `onNextField`/`onPrevField` já fazem o clamp de limite
  * internamente, então as teclas `n`/`p` chamam incondicionalmente.
@@ -35,7 +37,9 @@ export function useCompareKeyboard({
   onExitFullscreen,
   onNextField,
   onPrevField,
-  onVerdict,
+  onPrepareVerdict,
+  onConfirmPendingVerdict,
+  hasPendingVerdict,
 }: UseCompareKeyboardParams): void {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -73,9 +77,11 @@ export function useCompareKeyboard({
 
       const isMultiField =
         currentField?.type === "multi" && currentField.options?.length;
-      if (isMultiField) {
-        if (e.key === "a") onVerdict("ambiguo");
-        if (e.key === "s") onVerdict("pular");
+      if (isMultiField) return;
+
+      if (e.key === "Enter" && hasPendingVerdict) {
+        e.preventDefault();
+        onConfirmPendingVerdict();
         return;
       }
 
@@ -89,12 +95,12 @@ export function useCompareKeyboard({
             : Array.isArray(answer)
               ? answer.join(", ")
               : String(answer);
-        onVerdict(displayAnswer, group[0].id);
+        onPrepareVerdict(displayAnswer, group[0].id);
         return;
       }
 
-      if (e.key === "a") onVerdict("ambiguo");
-      if (e.key === "s") onVerdict("pular");
+      if (e.key === "a") onPrepareVerdict("ambiguo");
+      if (e.key === "s") onPrepareVerdict("pular");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -104,10 +110,12 @@ export function useCompareKeyboard({
     isCurrentDocComplete,
     isCurrentFieldDivergent,
     isFullscreen,
+    hasPendingVerdict,
+    onConfirmPendingVerdict,
     onExitFullscreen,
     onNextField,
+    onPrepareVerdict,
     onPrevField,
     onToggleFullscreen,
-    onVerdict,
   ]);
 }

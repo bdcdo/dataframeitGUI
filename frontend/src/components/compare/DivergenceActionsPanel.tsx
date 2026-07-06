@@ -11,6 +11,7 @@ import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
+import type { PendingVerdict } from "./compare-types";
 
 interface DivergenceActionsPanelProps {
   projectId: string;
@@ -21,9 +22,8 @@ interface DivergenceActionsPanelProps {
   fields: PydanticField[];
   isMulti: boolean;
   existingVerdict: VerdictInfo | null;
-  // Só o veredito: voto com chosenResponseId é papel do AgreementGroup, não
-  // deste painel — o pai passa seu handler mais largo por contravariância.
-  onVerdict: (verdict: string) => void;
+  pendingVerdict: PendingVerdict | null;
+  onPrepareVerdict: (pending: PendingVerdict) => void;
   comment: string;
   onCommentChange: (value: string) => void;
 }
@@ -40,7 +40,8 @@ export function DivergenceActionsPanel({
   fields,
   isMulti,
   existingVerdict,
-  onVerdict,
+  pendingVerdict,
+  onPrepareVerdict,
   comment,
   onCommentChange,
 }: DivergenceActionsPanelProps) {
@@ -54,21 +55,37 @@ export function DivergenceActionsPanel({
             variant="outline"
             size="sm"
             className={cn(
-              existingVerdict?.verdict === "ambiguo" &&
+              (pendingVerdict
+                ? pendingVerdict.kind === "ambiguous"
+                : existingVerdict?.verdict === "ambiguo") &&
                 "border-brand bg-brand/10 text-brand",
             )}
-            onClick={() => onVerdict("ambiguo")}
+            onClick={() =>
+              onPrepareVerdict({
+                kind: "ambiguous",
+                verdict: "ambiguo",
+                label: "Ambíguo",
+              })
+            }
           >
-            [A] Ambiguo
+            [A] Ambíguo
           </Button>
           <Button
             variant="outline"
             size="sm"
             className={cn(
-              existingVerdict?.verdict === "pular" &&
+              (pendingVerdict
+                ? pendingVerdict.kind === "skip"
+                : existingVerdict?.verdict === "pular") &&
                 "border-brand bg-brand/10 text-brand",
             )}
-            onClick={() => onVerdict("pular")}
+            onClick={() =>
+              onPrepareVerdict({
+                kind: "skip",
+                verdict: "pular",
+                label: "Pular",
+              })
+            }
           >
             [S] Pular
           </Button>
@@ -94,7 +111,16 @@ export function DivergenceActionsPanel({
                 ? existingVerdict.verdict
                 : null
             }
-            onSubmit={(value) => onVerdict(value)}
+            pendingValue={
+              pendingVerdict?.kind === "custom" ? pendingVerdict.verdict : null
+            }
+            onSubmit={(value) =>
+              onPrepareVerdict({
+                kind: "custom",
+                verdict: value,
+                label: value,
+              })
+            }
           />
         </div>
       )}
