@@ -9,6 +9,9 @@ export async function syncArbitragemAssignmentStatus(
   supabase: SupabaseServerClient,
   projectId: string,
   documentId: string,
+  // Falso positivo: `userId` só restringe SELECT/UPDATE pelas policies RLS;
+  // o payload do UPDATE não escreve campo de autorização.
+  // react-doctor-disable-next-line react-doctor/supabase-client-owned-authz-field
   userId: string,
   now: string,
 ): Promise<void> {
