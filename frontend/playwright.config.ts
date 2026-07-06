@@ -13,21 +13,41 @@ loadEnv({ path: ".env.e2e", override: true });
 // otimizado para iteracao local, nao para um gate deterministico que roda a
 // cada `git push` em worktrees paralelas.
 const isPrePush = !!process.env.PLAYWRIGHT_PRE_PUSH;
+
+const requiredPrePushEnv = [
+  "CLERK_SECRET_KEY",
+  "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  "E2E_COORDINATOR_EMAIL",
+  "E2E_MEMBER_EMAIL",
+  "E2E_MASTER_EMAIL",
+  "E2E_PROJECT_ID",
+  "E2E_LOTTERY_PROJECT_ID",
+] as const;
+
+const missingPrePushEnv = isPrePush
+  ? requiredPrePushEnv.filter((name) => !process.env[name])
+  : [];
+
+if (missingPrePushEnv.length > 0) {
+  throw new Error(
+    [
+      "e2e-smoke pre-push sem variáveis obrigatórias.",
+      `Faltando: ${missingPrePushEnv.join(", ")}`,
+      "Configure frontend/.env.local com as chaves Clerk e copie frontend/.env.e2e.example para frontend/.env.e2e preenchendo os usuários/projetos de teste.",
+      "Bypass intencional neste push: SKIP=e2e-smoke git push",
+    ].join("\n"),
+  );
+}
+
 // CI e pre-push sao os dois contextos "gated" (execucao deterministica, sem
 // paralelismo nem reaproveitamento de servidor) — usar um unico booleano nos
 // dois lugares abaixo evita que `workers` e `reuseExistingServer` divirjam
 // se um dos dois for atualizado sem o outro no futuro.
 const isGatedRun = !!process.env.CI || isPrePush;
 
-// Porta dedicada (3100) no pre-push, distinta da porta padrao (3000) do
-// `npm run dev` interativo: com reuseExistingServer:false, o Playwright nao
-// distingue "servidor da worktree errada" de "servidor legitimo do proprio
-// dev" — qualquer coisa ja escutando na porta faz o webServer abortar com
-// erro em vez de isolar a run. Isolar por porta evita colidir com o
-// `npm run dev` que o proprio desenvolvedor pode ja ter aberto na mesma
-// branch que esta sendo empurrada (fluxo comum, ex.: `npm run scan` tambem
-// assume um dev server já rodando). `E2E_BASE_URL` explicito continua
-// tendo prioridade sobre esse default.
+// Porta dedicada (3100) é o default do pre-push quando E2E_BASE_URL não foi
+// definido. E2E_BASE_URL explícito continua tendo prioridade e a porta
+// repassada ao `next dev` acompanha a URL escolhida.
 const baseURL =
   process.env.E2E_BASE_URL ??
   (isPrePush ? "http://localhost:3100" : "http://localhost:3000");
@@ -57,14 +77,12 @@ export default defineConfig({
   webServer: {
     command: "npm run dev",
     url: baseURL,
-    // Repassa a porta dedicada acima para o `next dev` via PORT — sem isso
-    // o servidor subiria sempre em 3000 e a porta dedicada em baseURL não
-    // corresponderia a nada.
+    // Repassa ao `next dev` a porta escolhida em baseURL; no pre-push, o
+    // default é 3100, mas E2E_BASE_URL explícito pode escolher outra porta.
     env: isPrePush ? { PORT: new URL(baseURL).port } : undefined,
-    // No pre-push, nunca reaproveitar: a porta dedicada acima ja evita
-    // colidir com o dev server do proprio desenvolvedor; resta so o risco
-    // residual (raro) de duas worktrees-irmas empurrando ao mesmo tempo e
-    // disputando essa mesma porta dedicada.
+    // No pre-push, nunca reaproveitar: o default 3100 evita colidir com o dev
+    // server interativo em 3000; com E2E_BASE_URL explícito, o caller assume a
+    // porta escolhida para este gate.
     reuseExistingServer: !isGatedRun,
     timeout: 120_000,
   },

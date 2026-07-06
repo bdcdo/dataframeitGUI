@@ -12,9 +12,12 @@ test("pesquisador é redirecionado de config/* para analyze/code", async ({
 }) => {
   const identifier = process.env.E2E_MEMBER_EMAIL;
   const projectId = process.env.E2E_PROJECT_ID;
+  const hasClerkTestingEnv =
+    !!process.env.CLERK_SECRET_KEY &&
+    !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   test.skip(
-    !identifier || !projectId,
-    "defina E2E_MEMBER_EMAIL e E2E_PROJECT_ID em .env.e2e",
+    !hasClerkTestingEnv || !identifier || !projectId,
+    "defina CLERK_SECRET_KEY, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, E2E_MEMBER_EMAIL e E2E_PROJECT_ID",
   );
 
   await setupClerkTestingToken({ page });

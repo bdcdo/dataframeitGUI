@@ -5,7 +5,7 @@
 #
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, mypy
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
@@ -93,33 +93,22 @@ repos:
       # docs/CODE_QUALITY_TOOLING.md), entao pre-push e o unico lugar onde
       # "testar antes do PR" pode ser automatico de verdade.
       #
-      # Os specs (frontend/e2e/*.smoke.spec.ts) fazem test.skip() quando as
-      # env vars de .env.e2e (E2E_COORDINATOR_EMAIL etc.) nao estao definidas
-      # — entao checkouts/worktrees sem credenciais de teste (inclusive as
-      # worktrees efemeras que agentes criam) so pulam esses specs, sem
-      # falhar. Mas o boot do dev server (webServer do playwright.config.ts) e
-      # a troca de Testing Token do Clerk (global.setup.ts) sao incondicionais
-      # — gated por .env.local (que todo checkout ja tem), nao por .env.e2e —
-      # entao esse custo e pago sempre que o hook dispara, com ou sem
-      # .env.e2e. Para pular pontualmente: `SKIP=e2e-smoke git push` (mesmo
-      # mecanismo ja usado pelos outros hooks pesados).
+      # No modo manual (`npm run test:e2e`), os specs ainda fazem test.skip()
+      # quando faltam variáveis E2E/Clerk, para permitir investigação parcial em
+      # checkouts sem tenant de teste. No pre-push, porém, PLAYWRIGHT_PRE_PUSH=1
+      # faz playwright.config.ts falhar fechado se qualquer env obrigatória
+      # faltar: um gate não pode passar verde sem executar os fluxos autenticados.
+      # Para pular pontualmente de forma explícita: `SKIP=e2e-smoke git push`.
       #
-      # PLAYWRIGHT_PRE_PUSH=1 forca o playwright.config.ts a nunca reaproveitar
-      # um dev server ja rodando e a subir numa porta dedicada (3100, nao a
-      # 3000 padrao) — reuseExistingServer:false sozinho abortaria com erro
-      # sempre que QUALQUER coisa ja estivesse escutando na porta, inclusive
-      # o `npm run dev` legitimo do proprio desenvolvedor na mesma branch, ja
-      # que o Playwright nao distingue "worktree errada" de "servidor certo".
-      # A porta dedicada evita esse falso-positivo comum; so fica o risco
-      # residual (raro) de duas worktrees empurrando ao mesmo tempo. Tambem
-      # forca os specs a rodar em serie (evita reintroduzir o burst de
-      # clerk.signIn() entre arquivos de spec que a #198/PR #294 corrigiu
-      # dentro de um arquivo so).
+      # Por default, PLAYWRIGHT_PRE_PUSH=1 também usa uma porta dedicada (3100,
+      # não a 3000 padrão) e nunca reaproveita um dev server já rodando. Um
+      # E2E_BASE_URL explícito sobrescreve esse default e o PORT repassado ao
+      # `next dev` acompanha a porta dessa URL.
       - id: e2e-smoke
         name: playwright e2e smoke (pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && PLAYWRIGHT_PRE_PUSH=1 exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/.*\.(ts|tsx)$
+        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(ts|tsx)|package(-lock)?\.json|\.env\.e2e\.example))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
