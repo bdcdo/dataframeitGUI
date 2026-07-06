@@ -8,6 +8,13 @@
 
 **Input**: User description: "Melhorar a autenticação após a issue #187: reduzir a latência de páginas autenticadas causada por verificações remotas durante a renderização, manter o caminho oficial Clerk/Supabase como padrão, incluir cache por request na mesma spec, preservar RLS e evitar que pesquisadores fiquem bloqueados quando o vínculo de conta ainda não estiver pronto."
 
+## Clarifications
+
+### Session 2026-07-06
+
+- Q: Quando uma página protegida encontra sessão válida, mas vínculo interno ausente ou divergente, ela deve tentar reparo silencioso no render ou encaminhar o usuário para conclusão de acesso? → A: Redirecionar para conclusão de acesso/reparo; páginas protegidas não fazem reparo silencioso.
+- Q: `viewAs`/impersonação deve afetar também escritas ou apenas leitura, navegação e escopo visual? → A: `viewAs`/impersonação só afeta leitura, navegação e escopo visual; escritas continuam proibidas ou feitas como ator real quando já permitido.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Acessar projeto sem espera perceptível de autenticação (Priority: P1)
@@ -37,8 +44,9 @@ O usuário que acabou de entrar, ou cuja conta ainda não foi vinculada ao perfi
 **Acceptance Scenarios**:
 
 1. **Given** uma sessão autenticada sem vínculo interno confirmado, **When** o usuário conclui o login, **Then** a plataforma mostra um estado de conclusão de acesso com explicação clara e ação de nova tentativa.
-2. **Given** uma falha temporária ao preparar o vínculo de acesso, **When** o usuário tenta novamente após a recuperação, **Then** ele é redirecionado para o dashboard sem precisar sair da conta manualmente.
-3. **Given** uma conta autenticada que não tem acesso a nenhum projeto, **When** o usuário chega ao dashboard, **Then** a plataforma distingue ausência de projetos de falha técnica de autenticação.
+2. **Given** uma página protegida encontra sessão válida, mas vínculo interno ausente ou divergente, **When** a página verifica o acesso, **Then** o usuário é redirecionado para conclusão de acesso/reparo sem reparo silencioso dentro da renderização protegida.
+3. **Given** uma falha temporária ao preparar o vínculo de acesso, **When** o usuário tenta novamente após a recuperação, **Then** ele é redirecionado para o dashboard sem precisar sair da conta manualmente.
+4. **Given** uma conta autenticada que não tem acesso a nenhum projeto, **When** o usuário chega ao dashboard, **Then** a plataforma distingue ausência de projetos de falha técnica de autenticação.
 
 ---
 
@@ -55,7 +63,8 @@ O coordenador, pesquisador, pesquisador vinculado por e-mail alternativo ou usu�
 1. **Given** um pesquisador atribuído diretamente a um projeto, **When** ele acessa filas e formulários protegidos, **Then** ele vê somente os documentos e ações permitidos para sua identidade efetiva.
 2. **Given** um pesquisador que acessa o projeto por vínculo de e-mail alternativo, **When** ele codifica ou revisa documentos, **Then** a plataforma preserva a identidade efetiva do membro canônico sem perder o ator autenticado real.
 3. **Given** um usuário master ou coordenador usando visualização como outro usuário, **When** ele navega por páginas protegidas, **Then** a plataforma mantém a distinção entre quem está autenticado e qual identidade está sendo visualizada ou usada para escopo de trabalho.
-4. **Given** um usuário autenticado sem permissão para um projeto, **When** ele tenta acessar a URL desse projeto, **Then** o acesso é negado sem revelar dados do projeto.
+4. **Given** um usuário master ou coordenador usando visualização como outro usuário, **When** uma ação de escrita é apresentada ou executada, **Then** a visualização como outro usuário não concede permissão de escrita em nome da identidade visualizada; a ação permanece proibida ou atribuída ao ator real quando ele já tiver permissão própria.
+5. **Given** um usuário autenticado sem permissão para um projeto, **When** ele tenta acessar a URL desse projeto, **Then** o acesso é negado sem revelar dados do projeto.
 
 ---
 
@@ -78,16 +87,17 @@ O coordenador, pesquisador, pesquisador vinculado por e-mail alternativo ou usu�
 - **FR-003**: The system MUST use the official supported integration path between the identity provider and the data authorization layer as the default approach for authenticated data access.
 - **FR-004**: The system MUST NOT replace per-user authorization controls with a general privileged data-access path for ordinary authenticated pages.
 - **FR-005**: The system MUST preserve project-level authorization for coordinators, direct researchers, linked-email researchers, master users, and users without project access.
-- **FR-006**: The system MUST preserve the distinction between the authenticated actor, the effective project member identity, and any visualized or impersonated user context.
+- **FR-006**: The system MUST preserve the distinction between the authenticated actor, the effective project member identity, and any visualized or impersonated user context; visualized or impersonated context MUST NOT grant write permission as the viewed identity.
 - **FR-007**: The system MUST provide a user-facing access-completion state when an authenticated account has not yet been linked to an internal profile.
-- **FR-008**: The access-completion state MUST explain the situation in non-technical language and offer a recovery action that can be retried safely.
-- **FR-009**: The system MUST avoid exposing diagnostic-only links or token-debugging instructions in ordinary user-facing authentication failure states.
-- **FR-010**: The system MUST distinguish at least these outcomes: signed out, signed in but link pending, signed in without project access, and signed in with a technical synchronization failure.
-- **FR-011**: The system MUST keep account-link preparation idempotent so retrying access completion does not create duplicate user records or duplicate project memberships.
-- **FR-012**: The system MUST define a measured contingency process for any non-default token path: it can only be considered after the official supported path fails the performance target in measurement, and it must require explicit security review before implementation.
-- **FR-013**: The system MUST provide a regression check that flags reintroduction of the legacy custom-token path or full remote user lookup in protected rendering flows.
-- **FR-014**: The system MUST provide observability or test evidence sufficient to show whether authentication work is still contributing materially to protected-page latency.
-- **FR-015**: The system MUST keep existing login and sign-out behavior recognizable to current users, except for clearer completion and error states after login.
+- **FR-008**: Protected pages MUST fail closed and redirect to access completion or repair when the internal account link is absent or divergent; they MUST NOT silently repair the link inside the protected rendering flow.
+- **FR-009**: The access-completion state MUST explain the situation in non-technical language and offer a recovery action that can be retried safely.
+- **FR-010**: The system MUST avoid exposing diagnostic-only links or token-debugging instructions in ordinary user-facing authentication failure states.
+- **FR-011**: The system MUST distinguish at least these outcomes: signed out, signed in but link pending, signed in without project access, and signed in with a technical synchronization failure.
+- **FR-012**: The system MUST keep account-link preparation idempotent so retrying access completion does not create duplicate user records or duplicate project memberships.
+- **FR-013**: The system MUST define a measured contingency process for any non-default token path: it can only be considered after the official supported path fails the performance target in measurement, and it must require explicit security review before implementation.
+- **FR-014**: The system MUST provide a regression check that flags reintroduction of the legacy custom-token path or full remote user lookup in protected rendering flows.
+- **FR-015**: The system MUST provide observability or test evidence sufficient to show whether authentication work is still contributing materially to protected-page latency.
+- **FR-016**: The system MUST keep existing login and sign-out behavior recognizable to current users, except for clearer completion and error states after login.
 
 ### Key Entities *(include if feature involves data)*
 
