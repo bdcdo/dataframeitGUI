@@ -32,14 +32,16 @@ Coordenadores passam a poder (1) adicionar e-mails sem conta a um projeto — o 
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-`.specify/memory/constitution.md` é o template não ratificado — sem gates formais. Gates de fato adotados (CLAUDE.md do projeto):
+`.specify/memory/constitution.md` está ratificada na versão 1.0.1 e prevalece sobre práticas ad hoc. Gates aplicáveis:
 
-- ✅ Server Actions para mutations, RSC para reads — todas as operações novas são actions em `actions/members.ts`.
-- ✅ Queries com colunas explícitas, sem `select("*")`; agregações via `count`/join; `Promise.all` para independentes.
-- ✅ Tabela nova em RLS com index nas colunas usadas pelas funções de auth (`linked_user_id`, `project_id`).
-- ✅ UI com shadcn/ui, pt-BR nos labels, código em inglês.
-- ✅ Migrations manuais (memória do projeto): `db push` nunca roda sozinho no merge.
-- ✅ Pydantic/schema não é tocado — regras de round-trip não se aplicam.
+- ✅ I. Usabilidade primeiro — a feature vive na tela de membros, usa labels/toasts em pt-BR, status visível de pendente e confirmação explícita para unificação.
+- ✅ II. Velocidade — resolução de identidade efetiva e lista de membros devem evitar N+1; queries novas usam colunas explícitas, índices e `Promise.all` quando independentes.
+- ✅ III. Segurança da informação — aliases por projeto preservam isolamento cross-project; service key fica restrita a Server Actions/webhook.
+- ✅ IV. RLS-por-padrão — `member_email_links` nasce com RLS, policies por projeto/papel e índices em `project_id`/`linked_user_id`.
+- ✅ V. Robustez via testes — mudanças em `frontend/src/lib` e `frontend/src/actions` exigem Vitest; fluxos Clerk/signup ficam no quickstart manual.
+- ✅ VI. Acessibilidade WCAG 2.1 AA — dialogs e ações novas devem manter shadcn/ui, labels associados, foco visível e contraste AA.
+- ✅ VII. Fonte única de verdade do schema — Pydantic/schema não é tocado; regras de round-trip não se aplicam.
+- ✅ VIII. Simplicidade de stack — tudo permanece em Next.js Server Actions/RSC + Supabase; FastAPI não participa de CRUD.
 
 **Pós-Phase 1**: sem violações; nenhuma entrada em Complexity Tracking.
 
