@@ -28,11 +28,14 @@ function renderPanel(
   props: Partial<Parameters<typeof ComparisonPanel>[0]> = {},
 ) {
   const onVerdict = vi.fn();
+  // `pendingVerdict` do chamador é só o estado INICIAL: o spread não pode
+  // sobrescrever o valor stateful, senão preparar/descartar não re-renderiza.
+  const { pendingVerdict: initialPendingVerdict, ...staticProps } = props;
 
   function Harness() {
     const [pendingVerdict, setPendingVerdict] =
       useState<Parameters<typeof ComparisonPanel>[0]["pendingVerdict"]>(
-        props.pendingVerdict ?? null,
+        initialPendingVerdict ?? null,
       );
     return (
       <ComparisonPanel
@@ -75,6 +78,7 @@ function renderPanel(
             );
           }
         }}
+        onDiscardPendingVerdict={() => setPendingVerdict(null)}
         isConfirmingVerdict={false}
         onMarkReviewed={vi.fn()}
         comment=""
@@ -86,7 +90,7 @@ function renderPanel(
         onConfirmEquivalent={vi.fn(async () => {})}
         onUnmarkEquivalencePair={vi.fn(async () => {})}
         currentUserId="u1"
-        {...props}
+        {...staticProps}
       />
     );
   }
@@ -113,6 +117,43 @@ describe("ComparisonPanel — confirmação pendente", () => {
     await user.click(screen.getByRole("button", { name: /^confirmar$/i }));
 
     expect(onConfirmPendingVerdict).toHaveBeenCalledTimes(1);
+  });
+
+  it("'Descartar' aparece só com rascunho e fica desabilitado durante o salvamento", async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      pendingVerdict: {
+        kind: "response",
+        verdict: "2021-05-10",
+        chosenResponseId: "r-llm",
+      },
+    });
+
+    // Com rascunho e sem save em voo: Descartar limpa a seleção (o Harness
+    // espelha o container: onDiscardPendingVerdict → setPendingVerdict(null)).
+    const discard = screen.getByRole("button", { name: /^descartar$/i });
+    expect((discard as HTMLButtonElement).disabled).toBe(false);
+    await user.click(discard);
+    expect(screen.queryByRole("button", { name: /^descartar$/i })).toBeNull();
+    expect(screen.queryByText("Selecionado:")).toBeNull();
+
+    cleanup();
+
+    // Durante o in-flight, descartar deixaria a UI sem referente do save em
+    // andamento — o botão desabilita junto com o Confirmar.
+    renderPanel({
+      pendingVerdict: {
+        kind: "response",
+        verdict: "2021-05-10",
+        chosenResponseId: "r-llm",
+      },
+      isConfirmingVerdict: true,
+    });
+    expect(
+      (screen.getByRole("button", { name: /^descartar$/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 });
 

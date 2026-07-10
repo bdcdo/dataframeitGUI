@@ -43,6 +43,13 @@ interface CompareFiltersProps {
   defaultVersion: string;
   availableVersions: string[]; // ["X.Y.Z", ...] ordered desc
   latestMajorLabel: string | null; // "1.0.0" ou null
+  // Gate de navegação do container (issue #430): trocar filtro recompõe a
+  // fila no servidor e pode mudar o doc/campo atual — com rascunho de
+  // veredito pendente, isso descartaria a seleção em silêncio via guard de
+  // contexto. Este componente faz o próprio `router.push`, então recebe o
+  // guard por prop em vez de ter o handler embrulhado no container (como os
+  // demais vetores de navegação da Comparação). `false` = navegação vetada.
+  guardNavigation?: () => boolean;
 }
 
 export function CompareFilters(props: CompareFiltersProps) {
@@ -61,6 +68,7 @@ function CompareFiltersInner({
   defaultVersion,
   availableVersions,
   latestMajorLabel,
+  guardNavigation,
 }: CompareFiltersProps) {
   const { push } = useRouter();
   const searchParams = useSearchParams();
@@ -85,6 +93,7 @@ function CompareFiltersInner({
 
   const update = useCallback(
     (patch: Partial<CompareFiltersValue>) => {
+      if (guardNavigation && !guardNavigation()) return;
       const sp = new URLSearchParams(searchParams.toString());
       const apply = { ...readCompareFilters(searchParams, effectiveDefaults), ...patch };
       const map: Record<keyof CompareFiltersValue, string> = {
@@ -109,14 +118,15 @@ function CompareFiltersInner({
         push(`${pathname}?${sp.toString()}`);
       });
     },
-    [pathname, push, searchParams, effectiveDefaults],
+    [guardNavigation, pathname, push, searchParams, effectiveDefaults],
   );
 
   const reset = useCallback(() => {
+    if (guardNavigation && !guardNavigation()) return;
     startTransition(() => {
       push(pathname);
     });
-  }, [pathname, push]);
+  }, [guardNavigation, pathname, push]);
 
   const activeCount = [
     current.version !== effectiveDefaults.version,

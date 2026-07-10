@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  waitFor,
+  act,
+  fireEvent,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // Mocks dos Server Actions e do toast (efeitos colaterais fora do escopo do
@@ -22,7 +29,7 @@ vi.mock("@/actions/equivalences", () => ({
   unmarkEquivalencePair,
 }));
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
@@ -43,6 +50,7 @@ interface MockComparisonPanel {
   pendingVerdict: PendingVerdict | null;
   onPrepareVerdict: (pending: PendingVerdict) => void;
   onConfirmPendingVerdict: () => void;
+  onDiscardPendingVerdict: () => void;
   isConfirmingVerdict: boolean;
   onConfirmEquivalent: (
     responseIds: string[],
@@ -113,6 +121,12 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
         {comparisonPanel.isConfirmingVerdict ? "saving verdict" : "confirm verdict"}
       </button>
       <button
+        data-testid="discard-verdict"
+        onClick={() => comparisonPanel.onDiscardPendingVerdict()}
+      >
+        discard verdict
+      </button>
+      <button
         data-testid="confirm-equiv"
         onClick={() =>
           void comparisonPanel.onConfirmEquivalent(
@@ -168,7 +182,9 @@ vi.mock("@/components/coding/FullscreenNav", () => ({
   ),
 }));
 
+import { toast } from "sonner";
 import { ComparePage } from "@/components/compare/ComparePage";
+import { SAVE_TIMEOUT_MS } from "@/components/compare/useCompareVerdicts";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import { pendingVerdictLabel, type CompareResponse, type PendingVerdict } from "@/components/compare/compare-types";
@@ -278,6 +294,8 @@ beforeEach(() => {
   markCompareDocReviewed.mockClear();
   confirmEquivalentVerdict.mockClear();
   unmarkEquivalencePair.mockClear();
+  vi.mocked(toast.warning).mockClear();
+  vi.mocked(toast.error).mockClear();
 });
 
 afterEach(cleanup);
@@ -643,7 +661,10 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
       undefined,
       expect.any(Array),
     );
+    // O avanço automático pós-confirmação usa goNextField cru (não passa pelo
+    // gate de navegação do #430) — avança sem disparar o aviso de bloqueio.
     await waitFor(() => expect(text("field-name")).toBe("campoB"));
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 
   it("falha de salvamento mantém o pendente e não avança o campo", async () => {
@@ -661,7 +682,10 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
     expect(text("pending-verdict")).toBe("Deferido");
   });
 
-  it("trocar de campo limpa o pendente e não salva o veredito antigo no novo contexto", async () => {
+  // Antes do #430, trocar de campo descartava o rascunho EM SILÊNCIO (guard de
+  // contexto) — foi a perda de sessão do incidente de 10/07. Agora a navegação
+  // manual com rascunho pendente é bloqueada com aviso.
+  it("com rascunho pendente, navegação manual (campo, doc, teclado) é bloqueada com aviso", async () => {
     const user = userEvent.setup();
     render(<ComparePage {...makeProps()} />);
 
@@ -669,11 +693,104 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
     expect(text("pending-verdict")).toBe("Deferido");
 
     await user.click(screen.getByTestId("next-field"));
-    expect(text("field-name")).toBe("campoB");
+    await user.click(screen.getByTestId("nav-next-doc"));
+    await user.keyboard("n");
+    await user.keyboard("p");
+
+    // Nada navegou; o rascunho sobreviveu; cada tentativa avisou.
+    expect(text("field-name")).toBe("campoA");
+    expect(text("doc-text")).toBe("Texto do documento 1");
+    expect(text("pending-verdict")).toBe("Deferido");
+    expect(toast.warning).toHaveBeenCalledTimes(4);
+    expect(submitVerdict).not.toHaveBeenCalled();
+  });
+
+  // Vetores achados na revisão adversarial: filtro de campo e aba de fila
+  // também mudam o contexto e cairiam no guard de render que descarta o
+  // rascunho — precisam do mesmo bloqueio dos wrappers de navegação.
+  it("com rascunho pendente, trocar o filtro de campo é bloqueado com aviso", async () => {
+    const user = userEvent.setup();
+    render(<ComparePage {...makeProps()} />);
+
+    await user.click(screen.getByTestId("prepare-verdict"));
+    await user.click(screen.getByTestId("set-filter-b"));
+
+    expect(text("field-name")).toBe("campoA");
+    expect(text("pending-verdict")).toBe("Deferido");
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+  });
+
+  it("com rascunho pendente, trocar a aba de fila é bloqueado com aviso", async () => {
+    const user = userEvent.setup();
+    render(<ComparePage {...makeProps()} isCoordinator />);
+
+    await user.click(screen.getByTestId("prepare-verdict"));
+    await user.click(screen.getByRole("tab", { name: "Todos" }));
+
+    expect(text("pending-verdict")).toBe("Deferido");
+    // Radix Tabs pode disparar onValueChange mais de uma vez (ativação por
+    // foco + clique) quando o valor não muda — o que importa é o aviso.
+    expect(toast.warning).toHaveBeenCalledWith(
+      "Seleção não confirmada — confirme ou descarte antes de avançar.",
+      { id: "compare-nav-guard" },
+    );
+  });
+
+  it("'Descartar' limpa o rascunho sem salvar e libera a navegação", async () => {
+    const user = userEvent.setup();
+    render(<ComparePage {...makeProps()} />);
+
+    await user.click(screen.getByTestId("prepare-verdict"));
+    expect(text("pending-verdict")).toBe("Deferido");
+
+    await user.click(screen.getByTestId("discard-verdict"));
     expect(text("pending-verdict")).toBe("");
 
+    await user.click(screen.getByTestId("next-field"));
+    expect(text("field-name")).toBe("campoB");
+    expect(toast.warning).not.toHaveBeenCalled();
+
+    // Sem rascunho, confirmar é no-op: o veredito descartado não vaza para o
+    // novo contexto.
     await user.click(screen.getByTestId("confirm-verdict"));
     expect(submitVerdict).not.toHaveBeenCalled();
+  });
+
+  // fireEvent (não userEvent) porque os delays internos do userEvent penduram
+  // sob vi.useFakeTimers mesmo com a opção advanceTimers.
+  it("salvamento pendurado: a trava se auto-liberta no timeout com erro visível e o rascunho é mantido", async () => {
+    vi.useFakeTimers();
+    try {
+      // Promise que NUNCA resolve (fetch dropado num redeploy): sem o timeout,
+      // o finally nunca rodaria e todo clique seguinte seria ignorado.
+      submitVerdict.mockReturnValueOnce(new Promise(() => {}));
+      render(<ComparePage {...makeProps()} />);
+
+      fireEvent.click(screen.getByTestId("prepare-verdict"));
+      fireEvent.click(screen.getByTestId("confirm-verdict"));
+      expect(screen.getByTestId("confirm-verdict")).toHaveProperty(
+        "disabled",
+        true,
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SAVE_TIMEOUT_MS);
+      });
+
+      expect(toast.error).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("confirm-verdict")).toHaveProperty(
+        "disabled",
+        false,
+      );
+      // Rascunho mantido: a usuária reconfirma sem re-selecionar.
+      expect(text("pending-verdict")).toBe("Deferido");
+
+      // A trava solta volta a aceitar interação (re-preparar funciona).
+      fireEvent.click(screen.getByTestId("prepare-verdict-2"));
+      expect(text("pending-verdict")).toBe("Indeferido");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("bloqueia confirmação dupla e navegação enquanto o salvamento está em andamento", async () => {
