@@ -25,6 +25,14 @@ export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();
   }
+
+  // Expõe o pathname atual aos Server Components (layouts) via header de
+  // requisição, para a conclusão de acesso preservar o deep-link em `?next` e
+  // devolver o usuário ao destino pretendido após reparar o vínculo. Aditivo:
+  // não altera o redirect do cutover nem o auth.protect() acima.
+  const headers = new Headers(request.headers);
+  headers.set("x-pathname", request.nextUrl.pathname + request.nextUrl.search);
+  return NextResponse.next({ request: { headers } });
 });
 
 export const config = {

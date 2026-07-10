@@ -20,6 +20,7 @@ import type {
   CompareDocument,
   CompareResponse,
   EquivalencePairWire,
+  PendingVerdict,
 } from "./compare-types";
 
 interface ComparePageProps {
@@ -174,10 +175,11 @@ export function ComparePage({
   // preserva o comentário recém-digitado/salvo — por isso `useCompareVerdicts`
   // não limpa a caixa no sucesso.
   const [comment, setComment] = useState("");
-  const commentCtxKey =
+  const verdictCtxKey =
     currentDoc && currentFieldName
       ? `${currentDoc.id}|${currentFieldName}`
       : null;
+  const commentCtxKey = verdictCtxKey;
   // Sentinela `undefined` (≠ qualquer chave e ≠ null) força o guard a disparar
   // no PRIMEIRO render, semeando o comentário do veredito existente já na
   // montagem — o effect original fazia isso (depois do paint); aqui é antes.
@@ -185,6 +187,17 @@ export function ComparePage({
   if (commentCtxKey !== commentCtxRef.current) {
     commentCtxRef.current = commentCtxKey;
     setComment(currentVerdict?.comment ?? "");
+  }
+
+  const [pendingVerdict, setPendingVerdict] = useState<PendingVerdict | null>(
+    null,
+  );
+  const [isConfirmingVerdict, setIsConfirmingVerdict] = useState(false);
+  const pendingVerdictCtxRef = useRef<string | null | undefined>(undefined);
+  if (verdictCtxKey !== pendingVerdictCtxRef.current) {
+    pendingVerdictCtxRef.current = verdictCtxKey;
+    setPendingVerdict(null);
+    setIsConfirmingVerdict(false);
   }
 
   const {
@@ -205,6 +218,51 @@ export function ComparePage({
     goNextField,
   });
 
+  const preparePendingVerdict = useCallback(
+    (next: PendingVerdict) => {
+      // Trava de in-flight: aceitar um rascunho novo (mouse ou teclado) durante
+      // um salvamento em andamento seria descartado silenciosamente pelo
+      // `setPendingVerdict(null)` que confirmPendingVerdict roda ao concluir.
+      // Ignorar aqui — ponto único — mantém o rascunho que está sendo salvo.
+      if (isConfirmingVerdict) return;
+      setPendingVerdict(next);
+    },
+    [isConfirmingVerdict],
+  );
+
+  const submitSpecialVerdict = useCallback(
+    async (verdict: "ambiguo" | "pular") => {
+      // Campos multi salvam direto (sem rascunho). Reusa `isConfirmingVerdict`
+      // como trava de in-flight para o teclado não disparar dois submitVerdict
+      // concorrentes quando 'a'/'s' são pressionados em sucessão rápida — o
+      // guard do useCompareKeyboard já bloqueia a segunda tecla enquanto true.
+      if (isConfirmingVerdict) return;
+      setIsConfirmingVerdict(true);
+      try {
+        await handleVerdict(verdict);
+      } finally {
+        setIsConfirmingVerdict(false);
+      }
+    },
+    [handleVerdict, isConfirmingVerdict],
+  );
+
+  const confirmPendingVerdict = useCallback(async () => {
+    if (!pendingVerdict || isConfirmingVerdict) return;
+    setIsConfirmingVerdict(true);
+    try {
+      const saved = await handleVerdict(
+        pendingVerdict.verdict,
+        pendingVerdict.kind === "response"
+          ? pendingVerdict.chosenResponseId
+          : undefined,
+      );
+      if (saved) setPendingVerdict(null);
+    } finally {
+      setIsConfirmingVerdict(false);
+    }
+  }, [handleVerdict, isConfirmingVerdict, pendingVerdict]);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(
     () => setIsFullscreen((prev) => !prev),
@@ -213,6 +271,21 @@ export function ComparePage({
   const exitFullscreen = useCallback(() => setIsFullscreen(false), []);
   const [listCollapsed, setListCollapsed] = useState(false);
   const toggleList = useCallback(() => setListCollapsed((v) => !v), []);
+  const navigateDoc = useCallback(
+    (index: number) => {
+      if (!isConfirmingVerdict) handleDocNavigate(index);
+    },
+    [handleDocNavigate, isConfirmingVerdict],
+  );
+  const navigateField = useCallback(
+    (index: number) => {
+      if (!isConfirmingVerdict) setFieldIndex(index);
+    },
+    [isConfirmingVerdict, setFieldIndex],
+  );
+  const nextDoc = useCallback(() => {
+    if (!isConfirmingVerdict) handleNextDoc();
+  }, [handleNextDoc, isConfirmingVerdict]);
 
   useCompareKeyboard({
     isFullscreen,
@@ -224,8 +297,11 @@ export function ComparePage({
     onExitFullscreen: exitFullscreen,
     onNextField: goNextField,
     onPrevField: goPrevField,
-    onVerdict: (verdict, chosenResponseId) =>
-      void handleVerdict(verdict, chosenResponseId),
+    onPrepareVerdict: preparePendingVerdict,
+    onSubmitSpecialVerdict: (verdict) => void submitSpecialVerdict(verdict),
+    onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+    hasPendingVerdict: !!pendingVerdict,
+    isConfirmingVerdict,
   });
 
   const reviewed = docFields.map(
@@ -293,7 +369,7 @@ export function ComparePage({
           <CompareDocList
             docs={docListEntries}
             currentIndex={docIndex}
-            onSelect={handleDocNavigate}
+            onSelect={navigateDoc}
             collapsed={listCollapsed}
             onToggle={toggleList}
           />
@@ -329,7 +405,7 @@ export function ComparePage({
           title={docTitle}
           currentIndex={docIndex}
           total={documents.length}
-          onNavigate={handleDocNavigate}
+          onNavigate={navigateDoc}
           onExit={toggleFullscreen}
         />
       ) : (
@@ -337,7 +413,7 @@ export function ComparePage({
           title={docTitle}
           docIndex={docIndex}
           totalDocs={documents.length}
-          onDocNavigate={handleDocNavigate}
+          onDocNavigate={navigateDoc}
           filter={filter}
           onFilterChange={changeFilter}
           fields={fields}
@@ -359,7 +435,7 @@ export function ComparePage({
       <CompareWorkspace
         docs={docListEntries}
         docIndex={docIndex}
-        onDocNavigate={handleDocNavigate}
+        onDocNavigate={navigateDoc}
         listCollapsed={listCollapsed}
         onToggleList={toggleList}
         documentText={currentDoc.text}
@@ -380,11 +456,15 @@ export function ComparePage({
           reviewed,
           isDivergent: isCurrentFieldDivergent,
           docStatus: isCurrentDocComplete
-            ? { complete: true, hasNextDoc, onNextDoc: handleNextDoc }
+            ? { complete: true, hasNextDoc, onNextDoc: nextDoc }
             : { complete: false },
-          onFieldNavigate: setFieldIndex,
+          onFieldNavigate: navigateField,
           onVerdict: (verdict, chosenResponseId) =>
             void handleVerdict(verdict, chosenResponseId),
+          pendingVerdict,
+          onPrepareVerdict: preparePendingVerdict,
+          onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+          isConfirmingVerdict,
           onMarkReviewed: () => void handleMarkReviewed(),
           comment,
           onCommentChange: setComment,

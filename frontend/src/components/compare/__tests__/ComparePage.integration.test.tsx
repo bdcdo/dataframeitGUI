@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 // Smoke de ÁRVORE REAL: renderiza os filhos reais (CompareNav, ComparisonPanel,
 // CompareWorkspace) para garantir que o container os monta com props válidas e
-// que um veredito clicado no painel real chega ao Server Action. Só o
+// que um veredito confirmado no painel real chega ao Server Action. Só o
 // DocumentReader é mockado (usa react-markdown via next/dynamic, ruidoso em
 // jsdom e irrelevante para esta verificação).
 const { submitVerdict, markCompareDocReviewed } = vi.hoisted(() => ({
@@ -148,11 +148,16 @@ describe("ComparePage — árvore real (smoke)", () => {
     expect(screen.getByText("Indeferido")).not.toBeNull();
   });
 
-  it("clicar 'Ambiguo' no painel real dispara submitVerdict", async () => {
+  it("clicar 'Ambíguo' no painel real só dispara submitVerdict ao confirmar", async () => {
     const user = userEvent.setup();
     renderReal();
 
-    await user.click(screen.getByRole("button", { name: /Ambiguo/i }));
+    await user.click(screen.getByRole("button", { name: /Ambíguo/i }));
+
+    expect(submitVerdict).not.toHaveBeenCalled();
+    expect(screen.getByText("Selecionado:")).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Confirmar" }));
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
     expect(submitVerdict).toHaveBeenCalledWith(

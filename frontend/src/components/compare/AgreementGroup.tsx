@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { AnswerCard, type EquivalentVariant } from "./AnswerCard";
+import type { PendingVerdict } from "./compare-types";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { normalizeForComparison } from "@/lib/utils";
@@ -44,6 +45,7 @@ interface ExistingVerdict {
 interface AgreementGroupProps {
   responses: AgreementResponse[];
   existingVerdict: ExistingVerdict | null;
+  pendingVerdict: PendingVerdict | null;
   onVote: (displayAnswer: string, chosenResponseId: string) => void;
   allowEquivalence: boolean;
   equivalences: FieldEquivalencePair[];
@@ -82,6 +84,7 @@ interface RenderedGroup {
 export function AgreementGroup({
   responses,
   existingVerdict,
+  pendingVerdict,
   onVote,
   allowEquivalence,
   equivalences,
@@ -186,37 +189,15 @@ export function AgreementGroup({
     });
   }
 
-  // "Todas são similares" (issue #247, ponto 5): funde TODOS os grupos de uma
-  // vez, em vez de o revisor marcar par a par. `groups` já vem ordenado desc
-  // por nº de respostas, então `groups[0]` é a resposta mais comum.
-  //
-  // Só funde em 1 clique quando há maioria CLARA — `groups[0]` tem
-  // estritamente mais respostas que o segundo grupo, logo o gabarito é
-  // inequívoco. Quando há empate no topo (ex.: divergências 1×1 como
-  // "8 meses" vs "0 ano e 08 meses"), não existe "resposta mais comum": eleger
-  // `groups[0]` seria escolher o gabarito pela ordem do array, sem o revisor
-  // ver nem poder corrigir. Nesse caso pré-selecionamos todos os grupos e
-  // caímos no fluxo de confirmação manual abaixo, onde o gabarito fica visível
-  // e pode ser sobrescrito antes de aplicar.
+  // "Todas são similares" (issue #247, ponto 5): pré-seleciona TODOS os grupos
+  // de uma vez, em vez de o revisor marcar par a par. A persistência continua no
+  // botão explícito de confirmação de equivalência abaixo, inclusive quando há
+  // maioria clara.
   function handleConfirmAll() {
     if (!onConfirmEquivalent) return;
     if (groups.length < 2) return;
-    const hasClearMajority =
-      groups[0].responses.length > groups[1].responses.length;
-    if (!hasClearMajority) {
-      setSelectionOrder(groups.map((g) => g.groupKey));
-      setGabaritoOverride(null);
-      return;
-    }
-    const gabaritoGroup = groups[0];
-    const gabaritoResponseId = gabaritoGroup.responses[0].id;
-    const responseIds = groups.map((g) => g.responses[0].id);
-    const verdictDisplay = gabaritoGroup.displayAnswer;
-    startTransition(async () => {
-      await onConfirmEquivalent(responseIds, gabaritoResponseId, verdictDisplay);
-      setSelectionOrder([]);
-      setGabaritoOverride(null);
-    });
+    setSelectionOrder(groups.map((g) => g.groupKey));
+    setGabaritoOverride(null);
   }
 
   function handleUnmark(pairId: string) {
@@ -254,7 +235,7 @@ export function AgreementGroup({
               className="h-7 shrink-0 gap-1"
               disabled={isSubmitting}
               onClick={handleConfirmAll}
-              title="Funde todas as respostas como equivalentes; a mais comum vira o gabarito. Em caso de empate, você confirma o gabarito antes de aplicar."
+              title="Pré-seleciona todas as respostas como equivalentes; a mais comum fica como gabarito sugerido. Revise o gabarito e aplique no botão de confirmação abaixo."
             >
               <Link2 className="size-3.5" />
               Todas são similares
@@ -275,6 +256,9 @@ export function AgreementGroup({
           const isChosen = group.responses.some(
             (r) => r.id === existingVerdict?.chosenResponseId,
           );
+          const isPending =
+            pendingVerdict?.kind === "response" &&
+            group.responses.some((r) => r.id === pendingVerdict.chosenResponseId);
           const versions = Array.from(
             new Set(
               group.responses
@@ -296,6 +280,7 @@ export function AgreementGroup({
               llmJustification={llmResponse?.justification}
               staleCount={staleCount}
               isChosen={isChosen}
+              isPending={isPending}
               versions={versions}
               onVote={() => onVote(group.displayAnswer, group.responses[0].id)}
               equivalenceMode={

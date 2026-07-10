@@ -214,10 +214,15 @@ export default async function ComparePageRoute({
             .is("excluded_at", null)
             .is("exclusion_pending_at", null)
         : Promise.resolve({ data: [] as { id: string; text: string }[] }),
+      // Só os reviews da identidade efetiva: a revisão é por revisor e este
+      // fetch alimenta exclusivamente existingReviews/reviewedCount (ver
+      // buildReviewsAndReviewedCounts). Vereditos de terceiros contaminavam o
+      // estado "já revisado" da tela e travavam o fecho do parecer.
       supabase
         .from("reviews")
         .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id")
-        .eq("project_id", id),
+        .eq("project_id", id)
+        .eq("reviewer_id", effectiveUserId),
       supabase
         .from("project_comments")
         .select("document_id, field_name")

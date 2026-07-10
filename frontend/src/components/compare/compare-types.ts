@@ -32,6 +32,25 @@ export interface CompareDocument {
   text: string;
 }
 
+export type PendingVerdict =
+  | { kind: "response"; verdict: string; chosenResponseId: string }
+  | { kind: "ambiguous"; verdict: "ambiguo" }
+  | { kind: "skip"; verdict: "pular" }
+  | { kind: "custom"; verdict: string };
+
+export function pendingVerdictLabel(pending: PendingVerdict): string {
+  switch (pending.kind) {
+    case "ambiguous":
+      return "Ambíguo";
+    case "skip":
+      return "Pular";
+    case "custom":
+      return pending.verdict;
+    case "response":
+      return pending.verdict || "(vazia)";
+  }
+}
+
 /** Forma de cada item em `fieldResponses` (derivado por `useCompareFieldData`). */
 export interface FieldResponse {
   id: string;
