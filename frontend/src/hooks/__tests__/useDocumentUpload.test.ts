@@ -133,11 +133,16 @@ describe("useDocumentUpload — propaga a linha original (metadata) ao upload", 
 
     expect(uploadDocuments).toHaveBeenCalled();
     const docs = uploadDocuments.mock.calls[0][1] as {
-      metadata?: { original_row: Record<string, string>; original_columns: string[] };
+      metadata?: {
+        original_row: Record<string, string>;
+        original_columns: string[];
+        text_column?: string;
+      };
     }[];
     expect(docs[0].metadata).toEqual({
       original_row: { text_col: "conteúdo", tribunal: "TJSP", classe: "" },
       original_columns: ["text_col", "tribunal", "classe"],
+      text_column: "text_col",
     });
   });
 });

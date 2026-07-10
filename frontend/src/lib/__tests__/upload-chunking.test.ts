@@ -186,6 +186,7 @@ describe("buildDocs", () => {
         metadata: {
           original_row: { texto: "conteúdo 1", titulo: "Doc 1", ext: "e1" },
           original_columns: ["texto", "titulo", "ext"],
+          text_column: "texto",
         },
       },
       {
@@ -195,6 +196,7 @@ describe("buildDocs", () => {
         metadata: {
           original_row: { texto: "conteúdo 3", titulo: "", ext: "" },
           original_columns: ["texto", "titulo", "ext"],
+          text_column: "texto",
         },
       },
     ]);
@@ -211,6 +213,7 @@ describe("buildDocs", () => {
         metadata: {
           original_row: { texto: "conteúdo" },
           original_columns: ["texto"],
+          text_column: "texto",
         },
       },
     ]);
@@ -247,6 +250,7 @@ describe("buildDocs", () => {
         classe: "",
       },
       original_columns: ["id_original", "titulo", "texto", "tribunal", "classe"],
+      text_column: "texto",
     });
   });
 

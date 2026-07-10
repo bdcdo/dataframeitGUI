@@ -102,7 +102,9 @@ interface VerdictEntry {
 }
 
 // Identidade e título de cada documento derivam da base (document_id =
-// external_id || id), consistentes em todas as visões.
+// external_id || id), consistentes em todas as visões. O título é `title || ""`
+// SEM fallback para external_id de propósito: o document_id já carrega o
+// external_id, então o fallback só duplicaria o id numa segunda coluna.
 function buildIdentity(baseDocs: ExportDocument[]): Map<string, DocIdentity> {
   return new Map(
     baseDocs.map((d) => [
@@ -255,15 +257,40 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const identity = buildIdentity(baseDocs);
 
   const unionRaw = unionOriginalColumns(baseDocs);
+
+  // O inteiro teor sai APENAS na aba Documentos (coluna dedicada `document_text`,
+  // uma linha por doc); as colunas auxiliares (tribunal, classe...) são leves e
+  // seguem repetidas por linha no CSV. `textColumns` reúne os nomes marcados como
+  // texto (metadata.text_column) — o cenário dominante é um único mapeamento por
+  // projeto (size === 1). Suposição: uma coluna cujo nome coincide com a coluna
+  // de texto de algum upload é tratada como texto globalmente.
+  const textColumns = new Set<string>();
+  for (const d of baseDocs) {
+    const tc = d.metadata?.text_column;
+    if (tc) textColumns.add(tc);
+  }
+  const hasText = textColumns.size > 0;
+  const auxRaw = unionRaw.filter((col) => !textColumns.has(col));
+
   const reserved = new Set<string>([
     ...CONTROL_COLUMNS,
     REVIEWER_COMMENTS,
     ...fieldNames,
   ]);
-  const originalHeaders = resolveOriginalHeaders(unionRaw, reserved);
-  const originalCells = (docId: string): string[] => {
+  // Reserva `document_text` só quando há coluna de texto: assim uma coluna
+  // auxiliar homônima vira `original_document_text` e o header dedicado do texto
+  // fica garantidamente único. Sem texto, nenhuma coluna dedicada é criada e uma
+  // auxiliar chamada `document_text` mantém seu nome.
+  const auxReserved = hasText ? new Set([...reserved, "document_text"]) : reserved;
+  const auxHeaders = resolveOriginalHeaders(auxRaw, auxReserved);
+  const auxCells = (docId: string): string[] => {
     const row = docById.get(docId)?.metadata?.original_row ?? {};
-    return unionRaw.map((col) => row[col] ?? "");
+    return auxRaw.map((col) => row[col] ?? "");
+  };
+  // Texto do documento (uma vez por doc, só na aba Documentos).
+  const documentText = (docId: string): string => {
+    const meta = docById.get(docId)?.metadata;
+    return meta?.text_column ? (meta.original_row?.[meta.text_column] ?? "") : "";
   };
 
   // Filtragem à base (achado C1): descarta respostas/reviews de docs fora dela.
@@ -300,12 +327,22 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const verdictFieldCells = (docId: string): string[] =>
     fieldNames.map((name) => verdictFieldValue(docId, name));
 
-  // --- Visão Documentos ---
+  // --- Visão Documentos --- (única visão com o inteiro teor: coluna document_text)
   const documentsSheet: ExportSheet = {
-    headers: ["document_id", "document_title", ...originalHeaders],
+    headers: [
+      "document_id",
+      "document_title",
+      ...auxHeaders,
+      ...(hasText ? ["document_text"] : []),
+    ],
     rows: baseDocs.map((d) => {
       const info = identity.get(d.id)!;
-      return [info.displayId, info.title, ...originalCells(d.id)];
+      return [
+        info.displayId,
+        info.title,
+        ...auxCells(d.id),
+        ...(hasText ? [documentText(d.id)] : []),
+      ];
     }),
   };
 
@@ -363,7 +400,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       r.respondent_name || "",
       r.respondent_type,
       sourceOf(r.respondent_type),
-      ...originalCells(r.document_id),
+      ...auxCells(r.document_id),
       ...responseFieldCells(r),
       "",
     ];
@@ -376,7 +413,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       "",
       "",
       "comparacao",
-      ...originalCells(docId),
+      ...auxCells(docId),
       ...verdictFieldCells(docId),
       (verdictsByDoc.get(docId)?.comments ?? []).join(" | "),
     ];
@@ -392,7 +429,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
         "",
         "",
         "documento",
-        ...originalCells(d.id),
+        ...auxCells(d.id),
         ...fieldNames.map(() => ""),
         "",
       ];
@@ -401,7 +438,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const csvSheet: ExportSheet = {
     headers: [
       ...CONTROL_COLUMNS,
-      ...originalHeaders,
+      ...auxHeaders,
       ...fieldNames,
       REVIEWER_COMMENTS,
     ],

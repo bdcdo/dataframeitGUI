@@ -128,6 +128,9 @@ export function buildDocs(csv: Csv | null, mapping: ColumnMapping): UploadDoc[] 
           csv.columns.map((col) => [col, row[col] ?? ""])
         ),
         original_columns: csv.columns,
+        // Marca a coluna de texto para o export separá-la das auxiliares (ver
+        // DocumentMetadata.text_column). `mapping.text` é sempre não-vazio aqui.
+        text_column: mapping.text,
       },
     }));
 }

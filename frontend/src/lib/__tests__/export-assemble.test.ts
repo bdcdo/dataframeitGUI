@@ -22,6 +22,7 @@ function doc(
     created_at?: string;
     columns?: string[];
     row?: Record<string, string>;
+    textColumn?: string;
   } = {}
 ): ExportDocument {
   const {
@@ -30,6 +31,7 @@ function doc(
     created_at = "2024-01-01T00:00:00Z",
     columns,
     row,
+    textColumn,
   } = opts;
   const metadata =
     columns === undefined
@@ -37,6 +39,7 @@ function doc(
       : {
           original_columns: columns,
           original_row: row ?? Object.fromEntries(columns.map((c) => [c, ""])),
+          ...(textColumn ? { text_column: textColumn } : {}),
         };
   return { id, external_id, title, created_at, metadata };
 }
@@ -348,5 +351,90 @@ describe("assembleExport — filtra à base exportada (achado C1)", () => {
     ]);
     expect(allIds.has("ghost")).toBe(false);
     expect(allIds.has("EXT-A")).toBe(true);
+  });
+});
+
+// --- Texto só na aba Documentos (correção pós-revisão do PR #432) ---
+
+describe("assembleExport — inteiro teor só na aba Documentos", () => {
+  it("coluna de texto vira document_text na aba Documentos e some do CSV", () => {
+    const d = run({
+      fields: [field("campo")],
+      documents: [
+        doc("A", {
+          external_id: "EXT-A",
+          columns: ["texto", "tribunal"],
+          row: { texto: "Inteiro teor longo", tribunal: "TJSP" },
+          textColumn: "texto",
+        }),
+      ],
+      responses: [
+        { document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "a" } },
+        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "b" } },
+      ],
+    });
+
+    // Aba Documentos: 'texto' NÃO aparece como coluna original; há document_text.
+    expect(d.documents.headers).not.toContain("texto");
+    expect(d.documents.headers).toContain("document_text");
+    expect(d.documents.headers).toContain("tribunal");
+    const docRow = d.documents.rows.find((r) => r[0] === "EXT-A")!;
+    expect(docRow[idx(d.documents, "document_text")]).toBe("Inteiro teor longo");
+    expect(docRow[idx(d.documents, "tribunal")]).toBe("TJSP");
+
+    // CSV unificado: sem coluna de texto nem document_text; a auxiliar 'tribunal'
+    // segue repetida por linha (2 linhas do doc A).
+    expect(d.csv.headers).not.toContain("texto");
+    expect(d.csv.headers).not.toContain("document_text");
+    expect(d.csv.headers).toContain("tribunal");
+    const csvRows = d.csv.rows.filter((r) => r[idx(d.csv, "document_id")] === "EXT-A");
+    expect(csvRows).toHaveLength(2);
+    expect(csvRows.every((r) => r[idx(d.csv, "tribunal")] === "TJSP")).toBe(true);
+    // O inteiro teor não aparece em nenhuma célula do CSV.
+    expect(
+      d.csv.rows.some((r) => r.some((cell) => cell === "Inteiro teor longo"))
+    ).toBe(false);
+  });
+
+  it("document_text colide com coluna auxiliar homônima → original_document_text", () => {
+    const d = run({
+      documents: [
+        doc("A", {
+          external_id: "EXT-A",
+          columns: ["conteudo", "document_text"],
+          row: { conteudo: "TEOR", document_text: "auxiliar" },
+          textColumn: "conteudo",
+        }),
+      ],
+    });
+    // A coluna de texto ('conteudo') vira a coluna dedicada document_text; a
+    // coluna auxiliar literal 'document_text' é renomeada para não colidir.
+    expect(d.documents.headers).toContain("document_text");
+    expect(d.documents.headers).toContain("original_document_text");
+    const docRow = d.documents.rows[0];
+    expect(docRow[idx(d.documents, "document_text")]).toBe("TEOR");
+    expect(docRow[idx(d.documents, "original_document_text")]).toBe("auxiliar");
+  });
+
+  it("doc sem text_column mantém comportamento antigo (toda coluna é auxiliar)", () => {
+    // Guarda de retrocompatibilidade: metadata sem text_column (legado/NULL) não
+    // cria document_text e não omite nenhuma coluna.
+    const d = run({
+      documents: [
+        doc("A", {
+          external_id: "EXT-A",
+          columns: ["texto", "tribunal"],
+          row: { texto: "conteúdo", tribunal: "TJSP" },
+        }),
+      ],
+    });
+    expect(d.documents.headers).toEqual([
+      "document_id",
+      "document_title",
+      "texto",
+      "tribunal",
+    ]);
+    expect(d.documents.headers).not.toContain("document_text");
+    expect(d.csv.headers).toContain("texto");
   });
 });

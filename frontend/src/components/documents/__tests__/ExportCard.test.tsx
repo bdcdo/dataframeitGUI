@@ -4,6 +4,7 @@ import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ExportCard } from "@/components/documents/ExportCard";
 import type { ExportDataset } from "@/lib/export/assemble";
+import { toast } from "sonner";
 
 const hoisted = vi.hoisted(() => ({
   getExportDataset: vi.fn(),
@@ -12,7 +13,9 @@ const hoisted = vi.hoisted(() => ({
 vi.mock("@/actions/export", () => ({
   getExportDataset: (...a: unknown[]) => hoisted.getExportDataset(...(a as [])),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
 
 function makeDataset(overrides: Partial<ExportDataset> = {}): ExportDataset {
   const empty = { headers: [], rows: [] };
@@ -32,6 +35,7 @@ function makeDataset(overrides: Partial<ExportDataset> = {}): ExportDataset {
 afterEach(cleanup);
 beforeEach(() => {
   hoisted.getExportDataset.mockReset();
+  vi.mocked(toast.info).mockClear();
 });
 
 describe("ExportCard", () => {
@@ -84,5 +88,22 @@ describe("ExportCard", () => {
     expect(
       screen.getByRole("button", { name: /Baixar CSV/ }).hasAttribute("disabled"),
     ).toBe(true);
+  });
+
+  it("baixar sem prévia em base vazia avisa e não gera arquivo", async () => {
+    hoisted.getExportDataset.mockResolvedValue(
+      makeDataset({ csv: { headers: ["document_id"], rows: [] } }),
+    );
+    render(<ExportCard projectId="p1" />);
+
+    // Sem clicar em "Gerar prévia" antes: o primeiro clique carrega o dataset
+    // (vazio) e deve curto-circuitar com um toast informativo, sem download.
+    await userEvent.click(screen.getByRole("button", { name: /Baixar CSV/ }));
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
+        "Nenhum documento para exportar.",
+      ),
+    );
   });
 });

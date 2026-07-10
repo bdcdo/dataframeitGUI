@@ -158,6 +158,11 @@ export interface MemberEmailLink {
 export interface DocumentMetadata {
   original_row: Record<string, string>;
   original_columns: string[];
+  // Nome da coluna do CSV mapeada como texto do documento. Usado APENAS pelo
+  // export para separar o inteiro teor (coluna dedicada `document_text`, uma
+  // linha por doc) das colunas auxiliares (repetidas por linha no CSV). Opcional
+  // para leitura fail-soft de docs sem o campo (metadata NULL ou legado).
+  text_column?: string;
 }
 
 export interface Document {

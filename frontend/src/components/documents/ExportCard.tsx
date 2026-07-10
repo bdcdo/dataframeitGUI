@@ -228,6 +228,12 @@ export function ExportCard({ projectId }: { projectId: string }) {
   const handleDownload = async () => {
     const data = dataset ?? (await loadDataset());
     if (!data) return;
+    // Guarda o clique em base vazia (baixar sem prévia num projeto sem
+    // documentos): evita gerar um arquivo só com cabeçalhos.
+    if (data.csv.rows.length === 0) {
+      toast.info("Nenhum documento para exportar.");
+      return;
+    }
     try {
       await doDownload(data);
     } catch {
