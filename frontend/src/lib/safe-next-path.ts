@@ -22,3 +22,16 @@ export function safeNextPath(
     return fallback;
   }
 }
+
+// Monta o destino de conclusão de acesso preservando o deep-link pretendido em
+// `?next` (lido do header `x-pathname` injetado pelo middleware). Sanitiza o
+// pathname antes de embutir; sem um destino interno válido, vai à tela sem
+// `?next` (post-login cai no fallback /dashboard).
+export function completionRedirectPath(
+  pathname: string | null | undefined,
+): string {
+  const next = pathname ? safeNextPath(pathname, "") : "";
+  return next
+    ? `/auth/post-login?next=${encodeURIComponent(next)}`
+    : "/auth/post-login";
+}

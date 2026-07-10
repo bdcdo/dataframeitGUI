@@ -1,5 +1,7 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { resolveAuth } from "@/lib/auth";
+import { completionRedirectPath } from "@/lib/safe-next-path";
 
 export default async function AppLayout({
   children,
@@ -18,7 +20,9 @@ export default async function AppLayout({
     redirect("/auth/login");
   }
   if (resolution.status !== "authenticated") {
-    redirect("/auth/post-login");
+    // Preserva o deep-link pretendido para voltar a ele após concluir o acesso.
+    const pathname = (await headers()).get("x-pathname");
+    redirect(completionRedirectPath(pathname));
   }
 
   return <>{children}</>;

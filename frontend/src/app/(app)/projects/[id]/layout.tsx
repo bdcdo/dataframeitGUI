@@ -1,6 +1,8 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getProjectAccessContext, resolveAuth } from "@/lib/auth";
+import { completionRedirectPath } from "@/lib/safe-next-path";
 import { getRunningLlmCount } from "@/actions/llm";
 import { Header } from "@/components/shell/Header";
 import { ProjectTabs } from "@/components/shell/ProjectTabs";
@@ -23,7 +25,10 @@ export default async function ProjectLayout({
   // último não pode virar login nem, mais abaixo, `notFound()` de projeto
   // (contracts/access-completion "Rejected behavior").
   if (resolution.status === "signed-out") redirect("/auth/login");
-  if (resolution.status !== "authenticated") redirect("/auth/post-login");
+  if (resolution.status !== "authenticated") {
+    const pathname = (await headers()).get("x-pathname");
+    redirect(completionRedirectPath(pathname));
+  }
   const user = resolution.user;
 
   // project + membership vem de getProjectAccessContext (request-scoped via
