@@ -69,6 +69,7 @@ interface ComparisonPanelProps {
   pendingVerdict: PendingVerdict | null;
   onPrepareVerdict: (pending: PendingVerdict) => void;
   onConfirmPendingVerdict: () => void;
+  onDiscardPendingVerdict: () => void;
   isConfirmingVerdict: boolean;
   onMarkReviewed: () => void;
   comment: string;
@@ -108,6 +109,7 @@ export function ComparisonPanel({
   pendingVerdict,
   onPrepareVerdict,
   onConfirmPendingVerdict,
+  onDiscardPendingVerdict,
   isConfirmingVerdict,
   onMarkReviewed,
   comment,
@@ -269,13 +271,25 @@ export function ComparisonPanel({
               "Escolha uma resposta para confirmar."
             )}
           </span>
-          <Button
-            size="sm"
-            disabled={!pendingVerdict || isConfirmingVerdict}
-            onClick={onConfirmPendingVerdict}
-          >
-            {isConfirmingVerdict ? "Salvando..." : "Confirmar"}
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            {pendingVerdict && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isConfirmingVerdict}
+                onClick={onDiscardPendingVerdict}
+              >
+                Descartar
+              </Button>
+            )}
+            <Button
+              size="sm"
+              disabled={!pendingVerdict || isConfirmingVerdict}
+              onClick={onConfirmPendingVerdict}
+            >
+              {isConfirmingVerdict ? "Salvando..." : "Confirmar"}
+            </Button>
+          </div>
         </div>
       )}
 

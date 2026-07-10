@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { toast } from "sonner";
 import { FullscreenNav } from "../coding/FullscreenNav";
 import { CompareNav } from "./CompareNav";
 import { CompareQueueTabs, type CompareQueueScope } from "./CompareQueueTabs";
@@ -247,6 +248,10 @@ export function ComparePage({
     [handleVerdict, isConfirmingVerdict],
   );
 
+  // `handleVerdict` sempre settla (o timeout de `actionSucceeded` em
+  // useCompareVerdicts resolve como erro a promise pendurada — issue #430),
+  // então o `finally` é garantido e a trava nunca fica presa. No timeout o
+  // rascunho é MANTIDO: a usuária reconfirma sem re-selecionar.
   const confirmPendingVerdict = useCallback(async () => {
     if (!pendingVerdict || isConfirmingVerdict) return;
     setIsConfirmingVerdict(true);
@@ -263,6 +268,12 @@ export function ComparePage({
     }
   }, [handleVerdict, isConfirmingVerdict, pendingVerdict]);
 
+  const discardPendingVerdict = useCallback(() => {
+    // Durante o in-flight o rascunho é o que está sendo salvo — descartá-lo
+    // deixaria a UI sem referente do save em andamento.
+    if (!isConfirmingVerdict) setPendingVerdict(null);
+  }, [isConfirmingVerdict]);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(
     () => setIsFullscreen((prev) => !prev),
@@ -271,21 +282,59 @@ export function ComparePage({
   const exitFullscreen = useCallback(() => setIsFullscreen(false), []);
   const [listCollapsed, setListCollapsed] = useState(false);
   const toggleList = useCallback(() => setListCollapsed((v) => !v), []);
+  // Ponto único de gate da navegação MANUAL (sidebar, nav de doc, nav de
+  // campo, teclado). Com rascunho não confirmado, navegar descartaria a
+  // seleção em silêncio via guard de contexto — a perda de sessão da issue
+  // #430. O avanço automático pós-confirmação usa `goNextField` cru dentro de
+  // `handleVerdict` e não passa por aqui.
+  const guardNavigation = useCallback(() => {
+    // In-flight: bloqueio silencioso (o botão já exibe "Salvando...").
+    if (isConfirmingVerdict) return false;
+    if (pendingVerdict) {
+      toast.warning(
+        "Seleção não confirmada — confirme ou descarte antes de avançar.",
+      );
+      return false;
+    }
+    return true;
+  }, [isConfirmingVerdict, pendingVerdict]);
+
   const navigateDoc = useCallback(
     (index: number) => {
-      if (!isConfirmingVerdict) handleDocNavigate(index);
+      if (guardNavigation()) handleDocNavigate(index);
     },
-    [handleDocNavigate, isConfirmingVerdict],
+    [guardNavigation, handleDocNavigate],
   );
   const navigateField = useCallback(
     (index: number) => {
-      if (!isConfirmingVerdict) setFieldIndex(index);
+      if (guardNavigation()) setFieldIndex(index);
     },
-    [isConfirmingVerdict, setFieldIndex],
+    [guardNavigation, setFieldIndex],
   );
   const nextDoc = useCallback(() => {
-    if (!isConfirmingVerdict) handleNextDoc();
-  }, [handleNextDoc, isConfirmingVerdict]);
+    if (guardNavigation()) handleNextDoc();
+  }, [guardNavigation, handleNextDoc]);
+  const nextField = useCallback(() => {
+    if (guardNavigation()) goNextField();
+  }, [goNextField, guardNavigation]);
+  const prevField = useCallback(() => {
+    if (guardNavigation()) goPrevField();
+  }, [goPrevField, guardNavigation]);
+  // Trocar o filtro de campo ou a aba de fila também muda o contexto
+  // (doc/campo atual) e cairia no guard de render que descarta o rascunho —
+  // os dois vetores que a primeira versão do #430 deixou de fora.
+  const changeFieldFilter = useCallback(
+    (value: string) => {
+      if (guardNavigation()) changeFilter(value);
+    },
+    [changeFilter, guardNavigation],
+  );
+  const changeQueue = useCallback(
+    (value: CompareQueueScope) => {
+      if (guardNavigation()) handleQueueChange(value);
+    },
+    [guardNavigation, handleQueueChange],
+  );
 
   useCompareKeyboard({
     isFullscreen,
@@ -295,8 +344,8 @@ export function ComparePage({
     answerGroups,
     onToggleFullscreen: toggleFullscreen,
     onExitFullscreen: exitFullscreen,
-    onNextField: goNextField,
-    onPrevField: goPrevField,
+    onNextField: nextField,
+    onPrevField: prevField,
     onPrepareVerdict: preparePendingVerdict,
     onSubmitSpecialVerdict: (verdict) => void submitSpecialVerdict(verdict),
     onConfirmPendingVerdict: () => void confirmPendingVerdict(),
@@ -332,7 +381,7 @@ export function ComparePage({
   // abaixo (estado vazio e visão completa) — só coordenador vê.
   const queueTabsBar = isCoordinator ? (
     <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3">
-      <CompareQueueTabs value={queueValue} onValueChange={handleQueueChange} />
+      <CompareQueueTabs value={queueValue} onValueChange={changeQueue} />
     </div>
   ) : null;
 
@@ -415,7 +464,7 @@ export function ComparePage({
           totalDocs={documents.length}
           onDocNavigate={navigateDoc}
           filter={filter}
-          onFilterChange={changeFilter}
+          onFilterChange={changeFieldFilter}
           fields={fields}
           reviewedDocsCount={reviewedDocsCount}
           onToggleFullscreen={toggleFullscreen}
@@ -464,6 +513,7 @@ export function ComparePage({
           pendingVerdict,
           onPrepareVerdict: preparePendingVerdict,
           onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+          onDiscardPendingVerdict: discardPendingVerdict,
           isConfirmingVerdict,
           onMarkReviewed: () => void handleMarkReviewed(),
           comment,

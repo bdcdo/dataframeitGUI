@@ -24,7 +24,7 @@ vi.mock("@/actions/equivalences", () => ({
   unmarkEquivalencePair,
 }));
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 vi.mock("@/components/coding/DocumentReader", () => ({
   DocumentReader: ({ text }: { text: string }) => (
@@ -169,6 +169,20 @@ describe("ComparePage — árvore real (smoke)", () => {
       undefined,
       expect.any(Array),
     );
+  });
+
+  it("'Descartar' no painel real limpa a seleção sem salvar", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.click(screen.getByRole("button", { name: /Ambíguo/i }));
+    expect(screen.getByText("Selecionado:")).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Descartar" }));
+
+    expect(screen.queryByText("Selecionado:")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Descartar" })).toBeNull();
+    expect(submitVerdict).not.toHaveBeenCalled();
   });
 
   it("coordenador vê o toggle de fila real (CompareQueueTabs) montado", () => {
