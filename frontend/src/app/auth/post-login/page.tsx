@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { resolveAuth } from "@/lib/auth";
+import { safeNextPath } from "@/lib/safe-next-path";
 import { AccessCompletionCard } from "@/components/auth/AccessCompletionCard";
 
 export const metadata: Metadata = {
@@ -20,9 +21,10 @@ export default async function PostLoginPage({
 }) {
   const [resolution, params] = await Promise.all([resolveAuth(), searchParams]);
 
-  // Só aceita destino interno (começa com "/") — impede open-redirect via ?next.
-  const nextUrl =
-    params.next && params.next.startsWith("/") ? params.next : "/dashboard";
+  // Sanitiza o destino contra open-redirect (inclui protocol-relative
+  // "//evil.com"); só um caminho interno passa. O card recebe o valor já
+  // saneado, então o router.replace do cliente herda a sanitização.
+  const nextUrl = safeNextPath(params.next);
 
   if (resolution.status === "signed-out") {
     redirect("/auth/login");
