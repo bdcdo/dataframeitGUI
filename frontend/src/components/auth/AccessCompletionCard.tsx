@@ -1,10 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { completeAccess } from "@/actions/complete-access";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 // Cópia por motivo (contracts/access-completion "User-visible states"), em
 // pt-BR e sem termo técnico, token, claim ou nome de tabela (FR-010). O motivo
@@ -62,6 +62,16 @@ export function AccessCompletionCard({
   const [isPending, startTransition] = useTransition();
   const copy = REASON_COPY[currentReason];
 
+  // Move o foco para o título ao montar e sempre que o motivo muda (ex.: após um
+  // retry que não resolveu). Um `<h1>` com `tabIndex={-1}` recebe foco
+  // programático sem entrar na ordem de tabulação; o ref + effect é mais
+  // confiável que `autoFocus` em elemento não-form entre SSR e hidratação, e
+  // garante que leitores de tela anunciem o novo estado (WCAG 2.1 AA).
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, [currentReason]);
+
   function handleRetry() {
     startTransition(async () => {
       const result = await completeAccess();
@@ -85,14 +95,29 @@ export function AccessCompletionCard({
     <div className="flex min-h-screen items-center justify-center p-6">
       <Card className="w-full max-w-lg">
         <CardHeader>
-          {/* foco inicial no título para leitores de tela e navegação por
-              teclado (WCAG 2.1 AA / contracts/access-completion) */}
-          <CardTitle tabIndex={-1} autoFocus>
+          {/* Heading real (`<h1>`) para ser anunciado como cabeçalho por AT, com
+              foco inicial gerenciado por ref (ver useEffect acima) — WCAG 2.1 AA
+              / contracts/access-completion. `outline-none` evita anel de foco
+              visível num alvo que a pessoa não navegou por Tab. */}
+          <h1
+            ref={titleRef}
+            tabIndex={-1}
+            className="leading-none font-semibold outline-none"
+          >
             {copy.title}
-          </CardTitle>
+          </h1>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">{copy.description}</p>
+          {/* Região viva: quando o motivo muda após um retry (ex.: link-pending
+              → unknown-recoverable), a descrição é reanunciada por AT sem depender
+              do foco — complementa o re-foco no título. */}
+          <p
+            className="text-sm text-muted-foreground"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {copy.description}
+          </p>
           <p className="text-sm text-muted-foreground">
             Conta conectada: <span className="font-medium">{actorEmail}</span>
           </p>

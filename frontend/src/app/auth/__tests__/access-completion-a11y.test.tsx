@@ -33,13 +33,15 @@ describe("AccessCompletionCard — acessibilidade e ausência de detalhe técnic
     // Botão com nome acessível (acionável por teclado — button nativo).
     const button = screen.getByRole("button", { name: /tentar novamente/i });
     expect(button).toBeTruthy();
-    // Título visível para reconhecimento do estado.
-    expect(screen.getByText(/preparando seu acesso/i)).toBeTruthy();
+    // Título como heading real (anunciado como cabeçalho por AT).
+    expect(
+      screen.getByRole("heading", { name: /preparando seu acesso/i }),
+    ).toBeTruthy();
     // Conta reconhecível (não é dado técnico).
     expect(screen.getByText("ana@exemplo.com")).toBeTruthy();
   });
 
-  it("define foco inicial no título (tabIndex -1 + autoFocus)", () => {
+  it("título é heading focável e recebe o foco inicial (tabIndex -1 + ref)", () => {
     render(
       <AccessCompletionCard
         reason="link-pending"
@@ -47,8 +49,13 @@ describe("AccessCompletionCard — acessibilidade e ausência de detalhe técnic
         nextUrl="/dashboard"
       />,
     );
-    const title = screen.getByText(/preparando seu acesso/i);
+    const title = screen.getByRole("heading", {
+      name: /preparando seu acesso/i,
+    });
+    // Focável fora da ordem de Tab e foco movido para ele ao montar, para que
+    // leitores de tela anunciem o estado de conclusão de acesso.
     expect(title.getAttribute("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(title);
   });
 
   it("não renderiza token, claim, debug nem nome de tabela (FR-010)", () => {

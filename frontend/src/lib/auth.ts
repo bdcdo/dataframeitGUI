@@ -40,11 +40,22 @@ async function readSupabaseUid(
   metadataUid: string | undefined,
 ): Promise<{ uid: string | null; mappingUid: string | null }> {
   const admin = createSupabaseAdmin();
-  const { data: mapping } = await admin
+  const { data: mapping, error: mappingError } = await admin
     .from("clerk_user_mapping")
     .select("supabase_user_id")
     .eq("clerk_user_id", clerkUserId)
     .maybeSingle();
+  // Não engolir a falha em silêncio: numa leitura errada, `mapping` fica nulo e
+  // a resolução segue pela metadata (autoritativa) ou cai em `link-pending`. Não
+  // convertemos o erro em falha técnica de propósito — a metadata do Clerk basta
+  // para autenticar e um blip transitório aqui não deve barrar quem já tem uid —,
+  // mas ele precisa ficar rastreável para suporte em vez de desaparecer.
+  if (mappingError) {
+    console.error("[auth] leitura de clerk_user_mapping falhou", {
+      clerkUserId,
+      error: mappingError,
+    });
+  }
   const mappingUid = mapping?.supabase_user_id ?? null;
   return { uid: metadataUid ?? mappingUid, mappingUid };
 }
@@ -93,12 +104,27 @@ export const resolveAuth = cache(async (): Promise<AuthResolution> => {
   }
 
   const admin = createSupabaseAdmin();
-  const { data: masterRow } = await admin
+  const { data: masterRow, error: masterError } = await admin
     .from("master_users")
     .select("user_id")
     .eq("user_id", uid)
     .maybeSingle();
+  // `isMaster` degrada com segurança para false quando a leitura falha (menos
+  // privilégio), mas não em silêncio: sem log, um master rebaixado por um timeout
+  // transitório seria indistinguível de um não-master legítimo.
+  if (masterError) {
+    console.error("[auth] leitura de master_users falhou", {
+      supabaseUid: uid,
+      error: masterError,
+    });
+  }
 
+  // Nota (decisão D3): a ativação de perfil (`activated_at`) NÃO acontece aqui.
+  // Este caminho é read-only por design — a ativação é reparo de vínculo e vive
+  // fora do render: no webhook `user.created` (com retry do Svix) e na ação
+  // `completeAccess` da tela de conclusão. Não recolocar a escrita neste ponto:
+  // além de reintroduzir mutação no caminho crítico, ela quebraria os testes de
+  // contagem de lookups (auth-request-dedup / auth-no-remote-lookup).
   return {
     status: "authenticated",
     user: {

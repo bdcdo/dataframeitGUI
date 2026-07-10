@@ -80,17 +80,17 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 ### Tests for User Story 2 ⚠️ (write first, ensure they FAIL before implementation)
 
 - [X] T012 [P] [US2] Regression RC-005 (fail-closed on missing/divergent link): assert a valid Clerk session with absent/divergent link redirects protected renders to access completion and shows no project data, in `frontend/src/lib/__tests__/auth-fail-closed.test.ts`
-- [X] T013 [P] [US2] Reason-classification tests covering `link-pending`, `link-divergent`, `sync-temporary-failure`, `no-project-access`, `unknown-recoverable` per `contracts/access-completion.md` and `data-model.md`, in `frontend/src/app/auth/__tests__/access-completion-reason.test.ts`
+- [X] T013 [P] [US2] Reason-classification tests covering `link-pending`, `link-divergent`, `sync-temporary-failure`, `no-project-access`, `unknown-recoverable` per `contracts/access-completion.md` and `data-model.md`, in `frontend/src/app/auth/__tests__/access-completion-reason.test.tsx`
 - [X] T014 [P] [US2] Idempotent-retry test (SC-007): repeating access completion for the same account produces at most one profile link and no duplicate `profiles` / `clerk_user_mapping` / memberships, in `frontend/src/actions/__tests__/complete-access.test.ts`
-- [X] T015 [P] [US2] Accessibility test (C3, Constitution §VI / FR-009 / contracts/access-completion.md): assert the access-completion screen is keyboard-navigable, sets initial focus, exposes associated labels and an accessible retry button, and renders no token/claims/debug text, in `frontend/src/app/auth/__tests__/access-completion-a11y.test.ts`
+- [X] T015 [P] [US2] Accessibility test (C3, Constitution §VI / FR-009 / contracts/access-completion.md): assert the access-completion screen is keyboard-navigable, sets initial focus, exposes associated labels and an accessible retry button, and renders no token/claims/debug text, in `frontend/src/app/auth/__tests__/access-completion-a11y.test.tsx`
 
 ### Implementation for User Story 2
 
-- [X] T016 [US2] Add the access-completion route/page under `frontend/src/app/auth/access-completion/page.tsx` (pt-BR, shadcn/ui, keyboard-navigable, visible focus, WCAG 2.1 AA, no token/claims/debug/table-name exposure), rendering the five `reason` states from `contracts/access-completion.md`
+- [X] T016 [US2] Add the access-completion route/page under `frontend/src/app/auth/post-login/page.tsx` (pt-BR, shadcn/ui, keyboard-navigable, visible focus, WCAG 2.1 AA, no token/claims/debug/table-name exposure), rendering the five `reason` states from `contracts/access-completion.md`
 - [X] T017 [US2] Implement the idempotent access-completion Server Action (retry of link preparation/repair) in `frontend/src/actions/complete-access.ts`, reusing the relocated idempotent routine (T005) and `frontend/src/lib/clerk-sync.ts`
 - [X] T018 [US2] Wire fail-closed redirects in `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx`: `access-completion-required`/`technical-sync-failure` → access-completion route; do NOT convert an identity-sync failure into project `notFound()` and do NOT send a link-pending user back to login as if signed out. (I1: depends on T009 — same files)
 - [X] T019 [US2] Distinguish `no-project-access` (active account, no memberships) from `technical-sync-failure` on the dashboard, per `data-model.md` Project Access Context rules, in `frontend/src/app/(app)/**` dashboard entry
-- [X] T020 [US2] Success transitions: on confirmed active link, redirect to safe `nextUrl` or dashboard; on persistent failure, show a short non-technical support hint, in `frontend/src/app/auth/access-completion/page.tsx` + `frontend/src/actions/complete-access.ts`
+- [X] T020 [US2] Success transitions: on confirmed active link, redirect to safe `nextUrl` or dashboard; on persistent failure, show a short non-technical support hint, in `frontend/src/app/auth/post-login/page.tsx` + `frontend/src/actions/complete-access.ts`
 
 **Checkpoint**: US1 and US2 both work independently.
 
