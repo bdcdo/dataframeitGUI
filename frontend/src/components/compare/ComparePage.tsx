@@ -218,15 +218,33 @@ export function ComparePage({
     goNextField,
   });
 
-  const preparePendingVerdict = useCallback((next: PendingVerdict) => {
-    setPendingVerdict(next);
-  }, []);
+  const preparePendingVerdict = useCallback(
+    (next: PendingVerdict) => {
+      // Trava de in-flight: aceitar um rascunho novo (mouse ou teclado) durante
+      // um salvamento em andamento seria descartado silenciosamente pelo
+      // `setPendingVerdict(null)` que confirmPendingVerdict roda ao concluir.
+      // Ignorar aqui — ponto único — mantém o rascunho que está sendo salvo.
+      if (isConfirmingVerdict) return;
+      setPendingVerdict(next);
+    },
+    [isConfirmingVerdict],
+  );
 
   const submitSpecialVerdict = useCallback(
-    (verdict: "ambiguo" | "pular") => {
-      void handleVerdict(verdict);
+    async (verdict: "ambiguo" | "pular") => {
+      // Campos multi salvam direto (sem rascunho). Reusa `isConfirmingVerdict`
+      // como trava de in-flight para o teclado não disparar dois submitVerdict
+      // concorrentes quando 'a'/'s' são pressionados em sucessão rápida — o
+      // guard do useCompareKeyboard já bloqueia a segunda tecla enquanto true.
+      if (isConfirmingVerdict) return;
+      setIsConfirmingVerdict(true);
+      try {
+        await handleVerdict(verdict);
+      } finally {
+        setIsConfirmingVerdict(false);
+      }
     },
-    [handleVerdict],
+    [handleVerdict, isConfirmingVerdict],
   );
 
   const confirmPendingVerdict = useCallback(async () => {
@@ -280,7 +298,7 @@ export function ComparePage({
     onNextField: goNextField,
     onPrevField: goPrevField,
     onPrepareVerdict: preparePendingVerdict,
-    onSubmitSpecialVerdict: submitSpecialVerdict,
+    onSubmitSpecialVerdict: (verdict) => void submitSpecialVerdict(verdict),
     onConfirmPendingVerdict: () => void confirmPendingVerdict(),
     hasPendingVerdict: !!pendingVerdict,
     isConfirmingVerdict,

@@ -235,7 +235,7 @@ export function AgreementGroup({
               className="h-7 shrink-0 gap-1"
               disabled={isSubmitting}
               onClick={handleConfirmAll}
-              title="Funde todas as respostas como equivalentes; a mais comum vira o gabarito. Em caso de empate, você confirma o gabarito antes de aplicar."
+              title="Pré-seleciona todas as respostas como equivalentes; a mais comum fica como gabarito sugerido. Revise o gabarito e aplique no botão de confirmação abaixo."
             >
               <Link2 className="size-3.5" />
               Todas são similares

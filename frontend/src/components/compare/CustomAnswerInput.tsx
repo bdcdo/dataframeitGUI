@@ -32,7 +32,13 @@ export function CustomAnswerInput({
   pendingValue = null,
 }: CustomAnswerInputProps) {
   const [open, setOpen] = useState(false);
-  const [value, setValue] = useState(pendingValue ?? currentValue ?? "");
+  // O seed usa só `currentValue`: na montagem `pendingValue` é sempre null,
+  // porque o pai reseta o rascunho no mesmo doc|campo que remonta este
+  // componente (key). Após um "Usar resposta nova", `submit` sincroniza `value`
+  // com o texto confirmado, então o rascunho pendente já reaparece sem o seed.
+  const [value, setValue] = useState(currentValue ?? "");
+  // `pendingValue` ainda destaca o botão enquanto há um rascunho custom não
+  // salvo — paridade visual com Ambíguo/Pular.
   const isActive = currentValue != null || pendingValue != null;
 
   const submit = () => {

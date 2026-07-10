@@ -94,6 +94,18 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
         prepare verdict
       </button>
       <button
+        data-testid="prepare-verdict-2"
+        onClick={() =>
+          comparisonPanel.onPrepareVerdict({
+            kind: "response",
+            verdict: "Indeferido",
+            chosenResponseId: "r2",
+          })
+        }
+      >
+        prepare verdict 2
+      </button>
+      <button
         data-testid="confirm-verdict"
         disabled={comparisonPanel.isConfirmingVerdict}
         onClick={() => comparisonPanel.onConfirmPendingVerdict()}
@@ -496,6 +508,48 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     );
   });
 
+  it("campo multi trava a segunda tecla especial enquanto o salvamento está em andamento", async () => {
+    const save = deferred<void>();
+    submitVerdict.mockReturnValueOnce(save.promise);
+    const user = userEvent.setup();
+    render(
+      <ComparePage
+        {...makeProps()}
+        fields={[
+          {
+            name: "campoA",
+            type: "multi",
+            options: ["Sim", "Não"],
+            description: "Campo A",
+            hash: "hA",
+          } as PydanticField,
+          fields[1],
+        ]}
+        divergentFields={{ d1: ["campoA"], d2: ["campoA"] }}
+      />,
+    );
+
+    // 'a' inicia um save em voo; 's' logo em seguida é ignorado — sem disparar
+    // um segundo submitVerdict concorrente para o mesmo campo.
+    await user.keyboard("a");
+    await user.keyboard("s");
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    expect(submitVerdict).toHaveBeenNthCalledWith(
+      1,
+      "p1",
+      "d1",
+      "campoA",
+      "ambiguo",
+      undefined,
+      undefined,
+      expect.any(Array),
+    );
+
+    save.resolve(undefined);
+    await waitFor(() => expect(submitVerdict).toHaveBeenCalledTimes(1));
+  });
+
   it("o comentário digitado segue junto no veredito por teclado", async () => {
     const user = userEvent.setup();
     render(<ComparePage {...makeProps()} />);
@@ -638,6 +692,11 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
     await user.click(screen.getByTestId("next-field"));
     await user.click(screen.getByTestId("nav-next-doc"));
     await user.keyboard("n");
+
+    // Re-preparar durante o save é ignorado: o rascunho em voo (Deferido)
+    // continua, sem ser trocado por Indeferido e depois descartado em silêncio.
+    await user.click(screen.getByTestId("prepare-verdict-2"));
+    expect(text("pending-verdict")).toBe("Deferido");
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
     expect(text("field-name")).toBe("campoA");
