@@ -184,3 +184,68 @@ describe("handleMarkReviewed", () => {
     expect(toastError).toHaveBeenCalledWith("não marcou");
   });
 });
+
+describe("rejeição da Server Action (fora do try dela) → toast.error, sem escrita otimista", () => {
+  // Regressão do padrão do PR #417 estendido aos quatro handlers: uma
+  // rejeição (vs. retorno { error }) era descartada pelo `void` do call site
+  // — silêncio total. Cada handler precisa capturar e avisar.
+  let consoleError: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
+  it("handleVerdict", async () => {
+    mockSubmitVerdict.mockRejectedValue(new Error("rede caiu"));
+    const { result, recordReview, goNextField } = setup();
+
+    await act(async () => {
+      await result.current.handleVerdict("concordo", "r1");
+    });
+
+    expect(recordReview).not.toHaveBeenCalled();
+    expect(goNextField).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleConfirmEquivalent", async () => {
+    mockConfirmEquivalent.mockRejectedValue(new Error("rede caiu"));
+    const { result, recordReview, goNextField } = setup();
+
+    await act(async () => {
+      await result.current.handleConfirmEquivalent(["r1", "r2"], "r1", "fundida");
+    });
+
+    expect(recordReview).not.toHaveBeenCalled();
+    expect(goNextField).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleMarkReviewed", async () => {
+    mockMarkReviewed.mockRejectedValue(new Error("rede caiu"));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.handleMarkReviewed();
+    });
+
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("handleUnmarkPair", async () => {
+    mockUnmarkPair.mockRejectedValue(new Error("rede caiu"));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.handleUnmarkPair("pair1");
+    });
+
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+});

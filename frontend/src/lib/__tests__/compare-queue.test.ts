@@ -338,7 +338,7 @@ describe("buildDocumentsForCompare", () => {
 });
 
 describe("buildReviewsAndReviewedCounts", () => {
-  it("monta existingReviews por doc/campo e conta só os vereditos do usuário atual", () => {
+  it("monta existingReviews e reviewedCount só com os vereditos do usuário atual", () => {
     const { existingReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
       [
         {
@@ -363,9 +363,41 @@ describe("buildReviewsAndReviewedCounts", () => {
       { doc1: ["a", "b"] },
     );
     expect(existingReviews.doc1.a.verdict).toBe("resposta_a");
-    expect(existingReviews.doc1.b.verdict).toBe("resposta_b");
-    // só o campo "a" foi revisado pelo usuário logado ("me")
+    // veredito de outro revisor NÃO semeia a tela do usuário atual — a
+    // revisão da Comparação é por revisor (mesmo critério do reviewedCount)
+    expect(existingReviews.doc1.b).toBeUndefined();
     expect(reviewedCountByDoc.doc1).toBe(1);
+  });
+
+  it("doc coberto só por vereditos de terceiros continua inteiramente pendente para o usuário", () => {
+    // Regressão do bug de 2026-07-10: docs 100% revisados por OUTRO revisor
+    // apareciam como "Revisão concluída" para quem nunca os revisou — o
+    // teclado de voto era bloqueado e o assignment nunca fechava.
+    const { existingReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
+      [
+        {
+          document_id: "doc1",
+          field_name: "a",
+          verdict: "x",
+          chosen_response_id: null,
+          comment: null,
+          reviewer_id: "coordenador",
+        },
+        {
+          document_id: "doc1",
+          field_name: "b",
+          verdict: "y",
+          chosen_response_id: null,
+          comment: null,
+          reviewer_id: "coordenador",
+        },
+      ],
+      "me",
+      ["doc1"],
+      { doc1: ["a", "b"] },
+    );
+    expect(existingReviews.doc1).toBeUndefined();
+    expect(reviewedCountByDoc.doc1).toBe(0);
   });
 
   it("doc sem nenhum review do usuário atual conta 0", () => {

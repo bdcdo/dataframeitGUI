@@ -38,6 +38,31 @@ export interface CompareVerdicts {
   handleUnmarkPair: (pairId: string) => Promise<void>;
 }
 
+/**
+ * Resolve a promise de uma server action em "salvou?", exibindo o toast
+ * adequado no caminho de erro. Ponto único para os dois modos de falha:
+ * rejeição da action (fora do try dela, que o `void` do call site
+ * descartaria em silêncio) vira log + mensagem genérica; `{ error }`
+ * retornado vira toast com a mensagem da própria action.
+ */
+async function actionSucceeded(
+  promise: Promise<{ error?: string }>,
+  logLabel: string,
+  logContext: Record<string, unknown>,
+  rejectionMessage: string,
+): Promise<boolean> {
+  const result = await promise.catch((error: unknown) => {
+    console.error(logLabel, { error, ...logContext });
+    toast.error(rejectionMessage);
+    return { error: "unexpected" as const };
+  });
+  if (result?.error) {
+    if (result.error !== "unexpected") toast.error(result.error);
+    return false;
+  }
+  return true;
+}
+
 /** Snapshot das respostas presentes no momento do veredito (auditoria). */
 function buildSnapshot(fieldResponses: FieldResponse[]): ResponseSnapshotEntry[] {
   return fieldResponses
@@ -87,30 +112,27 @@ export function useCompareVerdicts({
         chosenResponseId: chosenResponseId ?? null,
         comment: verdictComment ?? null,
       };
-      const result = await submitVerdict(
-        projectId,
-        currentDoc.id,
-        currentFieldName,
-        verdict,
-        chosenResponseId,
-        verdictComment,
-        buildSnapshot(fieldResponses),
-      ).catch((error: unknown) => {
-        console.error("Failed to submit compare verdict", {
-          error,
+      const saved = await actionSucceeded(
+        submitVerdict(
+          projectId,
+          currentDoc.id,
+          currentFieldName,
+          verdict,
+          chosenResponseId,
+          verdictComment,
+          buildSnapshot(fieldResponses),
+        ),
+        "Failed to submit compare verdict",
+        {
           projectId,
           documentId: currentDoc.id,
           fieldName: currentFieldName,
           verdict,
           chosenResponseId,
-        });
-        toast.error("Não foi possível salvar o veredito. Tente novamente antes de avançar.");
-        return { error: "unexpected" };
-      });
-      if (result?.error) {
-        if (result.error !== "unexpected") toast.error(result.error);
-        return false;
-      }
+        },
+        "Não foi possível salvar o veredito. Tente novamente antes de avançar.",
+      );
+      if (!saved) return false;
 
       // Escrita otimista só após o sucesso: `recordReview` grava em `overrides`
       // (estado da sessão, não auto-revertido). Gravar antes deixaria o campo
@@ -165,20 +187,22 @@ export function useCompareVerdicts({
         chosenResponseId: gabaritoId,
         comment: verdictComment ?? null,
       };
-      const result = await confirmEquivalentVerdict(
-        projectId,
-        docId,
-        fieldName,
-        responseIds,
-        gabaritoId,
-        verdictDisplay,
-        verdictComment,
-        buildSnapshot(fieldResponses),
+      const saved = await actionSucceeded(
+        confirmEquivalentVerdict(
+          projectId,
+          docId,
+          fieldName,
+          responseIds,
+          gabaritoId,
+          verdictDisplay,
+          verdictComment,
+          buildSnapshot(fieldResponses),
+        ),
+        "Failed to confirm equivalent verdict",
+        { projectId, documentId: docId, fieldName },
+        "Não foi possível salvar a equivalência. Tente novamente antes de avançar.",
       );
-      if (result?.error) {
-        toast.error(result.error);
-        return;
-      }
+      if (!saved) return;
 
       // Escrita otimista só após o sucesso (ver handleVerdict): não deixar o
       // campo/doc exibido como revisado quando a marcação de equivalência falha.
@@ -214,21 +238,25 @@ export function useCompareVerdicts({
 
   const handleMarkReviewed = useCallback(async () => {
     if (!currentDoc) return;
-    const result = await markCompareDocReviewed(projectId, currentDoc.id);
-    if (result?.error) {
-      toast.error(result.error);
-      return;
-    }
+    const saved = await actionSucceeded(
+      markCompareDocReviewed(projectId, currentDoc.id),
+      "Failed to mark compare doc reviewed",
+      { projectId, documentId: currentDoc.id },
+      "Não foi possível marcar o documento como revisado. Tente novamente.",
+    );
+    if (!saved) return;
     toast.success("Documento marcado como revisado.");
   }, [projectId, currentDoc]);
 
   const handleUnmarkPair = useCallback(
     async (pairId: string) => {
-      const result = await unmarkEquivalencePair(projectId, pairId);
-      if (result?.error) {
-        toast.error(result.error);
-        return;
-      }
+      const saved = await actionSucceeded(
+        unmarkEquivalencePair(projectId, pairId),
+        "Failed to unmark equivalence pair",
+        { projectId, pairId },
+        "Não foi possível remover a equivalência. Tente novamente.",
+      );
+      if (!saved) return;
       toast.success("Equivalência removida.");
     },
     [projectId],
