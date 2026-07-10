@@ -37,5 +37,17 @@
     { "file": "src/components/ui/tabs.tsx", "exports": ["*"] },
     { "file": "src/components/ui/textarea.tsx", "exports": ["*"] },
     { "file": "src/components/ui/tooltip.tsx", "exports": ["*"] }
-  ]
+  ],
+  // O `fallow audit --gate new-only` (hook de pre-push) cria um worktree de
+  // cache do commit-base em /tmp (fallow-audit-base-cache-<hash>-<base>) para
+  // atribuir achados novos vs. herdados sem tocar no working tree. O GC mede a
+  // idade desde a CRIACAO do cache (um cache-hit nao atualiza o .last-used) e o
+  // default eh 30 dias, o que faz uma entrada por commit-base se acumular em
+  // /tmp entre pushes (ver o pile de detached worktrees em `git worktree list`).
+  // 1 dia preserva o reuso do checkout dentro do mesmo dia contra a mesma base;
+  // o miss e barato (o node_modules do cache e symlink para o vivo, sem
+  // reinstalacao — so um `git worktree add` de ~8,5 MB). 0 desligaria o sweep.
+  "audit": {
+    "cacheMaxAgeDays": 1
+  }
 }
