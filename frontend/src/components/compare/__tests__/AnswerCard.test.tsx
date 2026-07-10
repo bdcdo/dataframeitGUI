@@ -20,6 +20,7 @@ function renderCard(props: Partial<Parameters<typeof AnswerCard>[0]> = {}) {
         hasLlm={false}
         staleCount={0}
         isChosen={false}
+        isPending={false}
         versions={["1.0.0"]}
         onVote={onVote}
         {...props}
@@ -35,7 +36,7 @@ describe("AnswerCard — overlay de voto", () => {
     const { onVote } = renderCard();
 
     const voteButton = screen.getByRole("button", {
-      name: /escolher esta resposta/i,
+      name: /selecionar esta resposta para confirmar/i,
     });
     await user.click(voteButton);
     expect(onVote).toHaveBeenCalledTimes(1);
@@ -44,6 +45,16 @@ describe("AnswerCard — overlay de voto", () => {
     await user.keyboard("{Enter}");
     await user.keyboard(" ");
     expect(onVote).toHaveBeenCalledTimes(3);
+  });
+
+  it("destaca visualmente a resposta preparada para confirmação", () => {
+    renderCard({ isPending: true });
+
+    expect(
+      screen.getByRole("button", {
+        name: /selecionar esta resposta para confirmar/i,
+      }).parentElement?.className,
+    ).toContain("border-brand");
   });
 
   it("seleciona o gabarito sem disparar o voto (não há mais aninhamento)", async () => {

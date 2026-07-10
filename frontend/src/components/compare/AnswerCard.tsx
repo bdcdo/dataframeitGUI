@@ -57,6 +57,7 @@ interface AnswerCardProps {
   llmJustification?: string;
   staleCount: number;
   isChosen: boolean;
+  isPending: boolean;
   versions: string[];
   onVote: () => void;
 
@@ -79,6 +80,7 @@ export function AnswerCard({
   llmJustification,
   staleCount,
   isChosen,
+  isPending,
   versions,
   onVote,
   equivalenceMode,
@@ -100,9 +102,11 @@ export function AnswerCard({
         "has-[[data-vote-target]:focus-visible]:outline-none has-[[data-vote-target]:focus-visible]:ring-2 has-[[data-vote-target]:focus-visible]:ring-ring has-[[data-vote-target]:focus-visible]:ring-offset-2",
         isChosen
           ? "border-green-500/50 bg-green-500/5"
-          : selected
-            ? "border-brand/60 bg-brand/5"
-            : "border-muted",
+          : isPending
+            ? "border-brand bg-brand/10"
+            : selected
+              ? "border-brand/60 bg-brand/5"
+              : "border-muted",
       )}
     >
       {/*
@@ -119,7 +123,7 @@ export function AnswerCard({
         type="button"
         data-vote-target
         onClick={onVote}
-        aria-label={`Escolher esta resposta: ${displayAnswer || "(vazia)"}`}
+        aria-label={`Selecionar esta resposta para confirmar: ${displayAnswer || "(vazia)"}`}
         className="absolute inset-0 z-[1] cursor-pointer rounded-lg focus:outline-none"
       />
       <div className="flex items-start gap-2">

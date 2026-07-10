@@ -43,6 +43,10 @@ function renderPanel(responses: Resp[], fieldHelpText?: string) {
       docStatus={{ complete: false }}
       onFieldNavigate={vi.fn()}
       onVerdict={vi.fn()}
+      pendingVerdict={null}
+      onPrepareVerdict={vi.fn()}
+      onConfirmPendingVerdict={vi.fn()}
+      isConfirmingVerdict={false}
       onMarkReviewed={vi.fn()}
       comment=""
       onCommentChange={vi.fn()}

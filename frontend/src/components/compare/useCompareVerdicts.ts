@@ -28,7 +28,7 @@ interface UseCompareVerdictsParams {
 }
 
 export interface CompareVerdicts {
-  handleVerdict: (verdict: string, chosenResponseId?: string) => Promise<void>;
+  handleVerdict: (verdict: string, chosenResponseId?: string) => Promise<boolean>;
   handleConfirmEquivalent: (
     responseIds: string[],
     gabaritoId: string,
@@ -77,7 +77,9 @@ export function useCompareVerdicts({
 }: UseCompareVerdictsParams): CompareVerdicts {
   const handleVerdict = useCallback(
     async (verdict: string, chosenResponseId?: string) => {
-      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) return;
+      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) {
+        return false;
+      }
 
       const verdictComment = comment || undefined;
       const info: VerdictInfo = {
@@ -93,10 +95,21 @@ export function useCompareVerdicts({
         chosenResponseId,
         verdictComment,
         buildSnapshot(fieldResponses),
-      );
+      ).catch((error: unknown) => {
+        console.error("Failed to submit compare verdict", {
+          error,
+          projectId,
+          documentId: currentDoc.id,
+          fieldName: currentFieldName,
+          verdict,
+          chosenResponseId,
+        });
+        toast.error("Não foi possível salvar o veredito. Tente novamente antes de avançar.");
+        return { error: "unexpected" };
+      });
       if (result?.error) {
-        toast.error(result.error);
-        return;
+        if (result.error !== "unexpected") toast.error(result.error);
+        return false;
       }
 
       // Escrita otimista só após o sucesso: `recordReview` grava em `overrides`
@@ -120,6 +133,7 @@ export function useCompareVerdicts({
       } else {
         goNextField();
       }
+      return true;
     },
     [
       projectId,

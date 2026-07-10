@@ -6,14 +6,15 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 interface CustomAnswerInputProps {
-  // Chamado com o valor digitado quando o revisor confirma a resposta nova.
-  // O pai grava como verdict SEM chosenResponseId — nenhuma resposta existente
-  // é o gabarito.
+  // Chamado com o valor digitado quando o revisor escolhe usar uma resposta
+  // nova. O pai apenas prepara o rascunho; a gravação ocorre no botão global
+  // Confirmar.
   onSubmit: (value: string) => void;
   // Veredito de "resposta nova" já salvo para este doc|campo (ou null). Quando
   // presente, o botão fica destacado e o input reabre pré-preenchido — paridade
   // com Ambíguo/Pular, que refletem o veredito atual ao revisitar o campo.
   currentValue?: string | null;
+  pendingValue?: string | null;
 }
 
 // "Nenhuma correta" (issue #247, ponto 4): quando todas as respostas dos
@@ -28,10 +29,17 @@ interface CustomAnswerInputProps {
 export function CustomAnswerInput({
   onSubmit,
   currentValue = null,
+  pendingValue = null,
 }: CustomAnswerInputProps) {
   const [open, setOpen] = useState(false);
+  // O seed usa só `currentValue`: na montagem `pendingValue` é sempre null,
+  // porque o pai reseta o rascunho no mesmo doc|campo que remonta este
+  // componente (key). Após um "Usar resposta nova", `submit` sincroniza `value`
+  // com o texto confirmado, então o rascunho pendente já reaparece sem o seed.
   const [value, setValue] = useState(currentValue ?? "");
-  const isActive = currentValue != null;
+  // `pendingValue` ainda destaca o botão enquanto há um rascunho custom não
+  // salvo — paridade visual com Ambíguo/Pular.
+  const isActive = currentValue != null || pendingValue != null;
 
   const submit = () => {
     const trimmed = value.trim();
@@ -70,7 +78,7 @@ export function CustomAnswerInput({
             className="min-w-[180px] flex-1 text-sm"
           />
           <Button size="sm" disabled={!value.trim()} onClick={submit}>
-            Confirmar resposta nova
+            Usar resposta nova
           </Button>
         </div>
       )}

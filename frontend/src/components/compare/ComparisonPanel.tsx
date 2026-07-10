@@ -15,6 +15,7 @@ import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react
 import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
+import { pendingVerdictLabel, type PendingVerdict } from "./compare-types";
 
 interface ComparisonResponse {
   id: string;
@@ -65,6 +66,10 @@ interface ComparisonPanelProps {
   docStatus: DocStatus;
   onFieldNavigate: (index: number) => void;
   onVerdict: (verdict: string, chosenResponseId?: string) => void;
+  pendingVerdict: PendingVerdict | null;
+  onPrepareVerdict: (pending: PendingVerdict) => void;
+  onConfirmPendingVerdict: () => void;
+  isConfirmingVerdict: boolean;
   onMarkReviewed: () => void;
   comment: string;
   onCommentChange: (value: string) => void;
@@ -100,6 +105,10 @@ export function ComparisonPanel({
   docStatus,
   onFieldNavigate,
   onVerdict,
+  pendingVerdict,
+  onPrepareVerdict,
+  onConfirmPendingVerdict,
+  isConfirmingVerdict,
   onMarkReviewed,
   comment,
   onCommentChange,
@@ -199,8 +208,13 @@ export function ComparisonPanel({
               schemaVersion: r.schemaVersion,
             }))}
             existingVerdict={existingVerdict}
+            pendingVerdict={pendingVerdict}
             onVote={(displayAnswer, chosenResponseId) =>
-              onVerdict(displayAnswer, chosenResponseId)
+              onPrepareVerdict({
+                kind: "response",
+                verdict: displayAnswer,
+                chosenResponseId,
+              })
             }
             allowEquivalence={equivalence.allow}
             equivalences={equivalences}
@@ -223,7 +237,8 @@ export function ComparisonPanel({
             fields={fields}
             isMulti={isMulti}
             existingVerdict={existingVerdict}
-            onVerdict={onVerdict}
+            pendingVerdict={pendingVerdict}
+            onPrepareVerdict={onPrepareVerdict}
             comment={comment}
             onCommentChange={onCommentChange}
           />
@@ -240,6 +255,30 @@ export function ComparisonPanel({
         )}
       </div>
 
+      {isDivergent && !isMulti && (!docStatus.complete || pendingVerdict) && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t bg-muted/20 px-4 py-2">
+          <span className="min-w-0 truncate text-xs text-muted-foreground">
+            {pendingVerdict ? (
+              <>
+                Selecionado:{" "}
+                <span className="font-medium text-foreground">
+                  {pendingVerdictLabel(pendingVerdict)}
+                </span>
+              </>
+            ) : (
+              "Escolha uma resposta para confirmar."
+            )}
+          </span>
+          <Button
+            size="sm"
+            disabled={!pendingVerdict || isConfirmingVerdict}
+            onClick={onConfirmPendingVerdict}
+          >
+            {isConfirmingVerdict ? "Salvando..." : "Confirmar"}
+          </Button>
+        </div>
+      )}
+
       {docStatus.complete && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-green-500/20 bg-green-500/5 px-4 py-2">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -251,6 +290,7 @@ export function ComparisonPanel({
               ref={nextDocButtonRef}
               size="sm"
               className="gap-1"
+              disabled={isConfirmingVerdict}
               onClick={docStatus.onNextDoc}
             >
               Próximo parecer
