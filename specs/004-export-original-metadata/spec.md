@@ -8,6 +8,14 @@
 
 **Input**: User description: "Melhorar a experiência de Documentos e Exportar no dataframeitGUI. A plataforma deve preservar a linha original inteira do CSV importado junto a cada documento, inclusive colunas que também são mapeadas para texto, título e ID externo. A área de Documentos deve reunir lista, preview e exportação de forma mais intuitiva: a exportação fica no topo de Documentos em um card simples, usando o preview existente como base quando aplicável. Todos os membros do projeto devem poder acessar Documentos em modo leitura e baixar exportações; ações de gestão, como importar, excluir, restaurar ou apagar documentos, continuam restritas a coordenadores. A exportação deve priorizar simplicidade técnica: exportar sempre o conjunto completo equivalente ao modo atual “Ambos”, removendo a escolha de dataset e mantendo apenas a escolha de formato CSV/XLSX. Para CSV, manter um arquivo unificado com colunas combinadas; para XLSX, reaproveitar múltiplas abas. Não criar ZIP de CSVs, geração server-side nem jobs assíncronos nesta primeira versão. Documentos antigos sem linha original preservada continuam exportáveis, com colunas originais vazias. Não há requisito de migration nesta fase, salvo descoberta técnica posterior. O objetivo é facilitar análises posteriores preservando todos os campos da base original fornecida e tornando a exportação mais fácil de encontrar."
 
+## Clarifications
+
+### Session 2026-07-10
+
+- Q: Documentos sem nenhuma resposta individual e sem gabarito devem aparecer no export? → A: Sim — o export cobre toda a base: cada documento aparece ao menos uma vez, como linha de origem "documento" com colunas originais preenchidas e campos de resposta vazios.
+- Q: O que fazer com a sub-aba "Exportar" atual dentro de Revisões? → A: Remover a aba e a rota antiga; a exportação passa a existir apenas no topo de Documentos.
+- Q: No XLSX, como entram as colunas originais e os documentos sem resposta? → A: Nova aba "Documentos" com uma linha por documento e todas as colunas originais; as abas Respostas e Gabarito seguem enxutas, com identificadores do documento para cruzamento.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Preservar a base original importada (Priority: P1)
@@ -36,7 +44,7 @@ Como membro do projeto que quer analisar os dados fora da plataforma, quero aces
 **Acceptance Scenarios**:
 
 1. **Given** um projeto com documentos importados, **When** o usuário abre Documentos, **Then** a primeira seção de conteúdo apresenta um card simples de exportação com escolha entre CSV e XLSX.
-2. **Given** que o usuário baixa a exportação, **When** o arquivo é aberto, **Then** ele contém o conjunto completo equivalente ao modo “Ambos”, com identificação suficiente para distinguir a origem de cada linha.
+2. **Given** que o usuário baixa a exportação, **When** o arquivo é aberto, **Then** ele contém o conjunto completo — todos os documentos da base, respostas individuais e gabarito — com identificação suficiente para distinguir a origem de cada linha.
 3. **Given** que o usuário visualiza o preview no card de exportação, **When** existem documentos e respostas suficientes para prévia, **Then** o preview mostra uma amostra coerente do arquivo que será baixado, reaproveitando o padrão de preview já usado em Documentos quando fizer sentido.
 
 ---
@@ -76,7 +84,7 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 
 - CSVs com colunas vazias devem preservar a existência da coluna no conjunto exportado, mesmo quando uma linha específica não tem valor.
 - CSVs com nomes de colunas repetidos ou incompatíveis com a exportação devem gerar nomes de coluna estáveis e distinguíveis no arquivo baixado.
-- Projetos sem respostas individuais ou sem gabarito devem continuar baixando a exportação completa com os dados disponíveis e sem erro.
+- Projetos sem respostas individuais ou sem gabarito devem continuar baixando a exportação completa sem erro: todos os documentos aparecem como linhas de origem “documento”, com colunas originais preenchidas e campos de resposta/gabarito vazios.
 - Campos da base original com o mesmo nome de campos de controle da exportação devem ser diferenciados para evitar ambiguidade no arquivo final.
 - Valores complexos de respostas ou gabarito devem continuar sendo representados de forma legível na exportação, como ocorre hoje.
 - Usuários sem acesso ao projeto não devem conseguir visualizar Documentos nem baixar exportações.
@@ -92,14 +100,15 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 - **FR-003**: A importação por CSV deve continuar permitindo que o coordenador escolha quais colunas alimentam texto, título e ID externo do documento.
 - **FR-004**: A área Documentos deve reunir lista, preview e exportação na mesma experiência de navegação.
 - **FR-005**: A área Documentos deve exibir um card simples de exportação no topo da página, antes da lista de documentos.
+- **FR-005a**: A exportação em Documentos substitui a sub-aba “Exportar” de Revisões: a aba e sua rota devem ser removidas, deixando Documentos como único ponto de exportação.
 - **FR-006**: O card de exportação deve permitir escolher apenas o formato do arquivo, entre CSV e XLSX.
 - **FR-007**: A exportação deve incluir as colunas preservadas da base original nos arquivos baixados.
-- **FR-008**: A exportação deve exportar sempre o conjunto completo equivalente ao modo atual “Ambos”, sem exigir escolha entre respostas individuais, gabarito ou ambos.
+- **FR-008**: A exportação deve exportar sempre o conjunto completo: respostas individuais e gabarito (equivalente ao modo atual “Ambos”) mais todos os documentos da base — documentos sem resposta e sem gabarito aparecem ao menos uma vez, como linha de origem “documento” com campos de resposta vazios — sem exigir escolha de dataset.
 - **FR-009**: O CSV deve ser gerado como arquivo único com colunas combinadas e identificação da origem de cada linha.
-- **FR-010**: O XLSX deve separar respostas individuais e gabarito em abas distintas quando ambos existirem.
+- **FR-010**: O XLSX deve conter uma aba “Documentos” com uma linha por documento da base (incluindo as colunas originais preservadas) e separar respostas individuais e gabarito em abas distintas quando existirem, cada uma com identificadores do documento para cruzamento.
 - **FR-011**: Documentos sem linha original preservada devem continuar exportáveis, com células vazias nas colunas da base original que não existirem para esses documentos.
 - **FR-012**: A exportação deve diferenciar colunas da base original quando seus nomes colidirem com colunas de controle, respostas ou gabarito.
-- **FR-013**: A exportação deve manter informações suficientes para o usuário distinguir respostas individuais, registros de gabarito e a origem de cada linha no arquivo final.
+- **FR-013**: A exportação deve manter informações suficientes para o usuário distinguir a origem de cada linha no arquivo final: resposta individual, registro de gabarito ou documento sem resposta.
 - **FR-014**: Todos os membros do projeto devem poder acessar Documentos em modo leitura, visualizar preview de documentos e baixar exportações.
 - **FR-015**: Ações de importação, exclusão, restauração e apagamento de documentos devem continuar restritas a coordenadores.
 - **FR-016**: A experiência de Documentos deve deixar claro para membros não coordenadores quais ações são apenas de coordenação, preferindo ocultar ações indisponíveis a exibir controles inertes.
@@ -114,7 +123,7 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 - Colunas originais devem aparecer na exportação em ordem estável e previsível.
 - Quando uma coluna original tiver o mesmo nome de uma coluna de controle, resposta ou gabarito, o arquivo exportado deve diferenciar os nomes de modo consistente.
 - O CSV unificado deve repetir os dados originais do documento nas linhas associadas a esse documento, inclusive nas linhas de resposta individual e gabarito quando aplicável.
-- O XLSX deve incluir as colunas originais nas abas em que elas ajudam a relacionar resposta/gabarito ao documento correspondente.
+- No XLSX, as colunas originais vivem na aba “Documentos” (uma linha por documento); as abas de respostas e gabarito carregam identificadores do documento para cruzamento, sem repetir as colunas originais.
 
 ### Key Entities
 
