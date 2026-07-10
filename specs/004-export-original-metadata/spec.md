@@ -16,6 +16,7 @@
 - Q: O que fazer com a sub-aba "Exportar" atual dentro de Revisões? → A: Remover a aba e a rota antiga; a exportação passa a existir apenas no topo de Documentos.
 - Q: No XLSX, como entram as colunas originais e os documentos sem resposta? → A: Nova aba "Documentos" com uma linha por documento e todas as colunas originais; as abas Respostas e Gabarito seguem enxutas, com identificadores do documento para cruzamento.
 - Q: Membros não coordenadores devem ter acesso a Documentos em modo leitura e à exportação? → A: Não — priorizando simplicidade, Documentos e exportação ficam restritos a coordenadores. A remoção da aba Exportar de Revisões retira dos pesquisadores um acesso que existe hoje; regressão aceita explicitamente. A antiga User Story 3 (leitura para membros) foi removida da spec.
+- Q: Documentos excluídos entram na exportação? → A: Não — a exportação cobre apenas documentos não excluídos, e respostas/gabarito de documentos excluídos ficam fora do arquivo (senão o arquivo conteria linhas de documentos ausentes da própria base exportada). Exclusões apenas pendentes ainda contam como parte da base até serem confirmadas. (Achado C1 do /speckit-analyze, aprovado em 2026-07-10.)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -46,7 +47,7 @@ Como coordenador que quer analisar os dados fora da plataforma, quero acessar Do
 
 1. **Given** um projeto com documentos importados, **When** o usuário abre Documentos, **Then** a primeira seção de conteúdo apresenta um card simples de exportação com escolha entre CSV e XLSX.
 2. **Given** que o usuário baixa a exportação, **When** o arquivo é aberto, **Then** ele contém o conjunto completo — todos os documentos da base, respostas individuais e gabarito — com identificação suficiente para distinguir a origem de cada linha.
-3. **Given** que o usuário visualiza o preview no card de exportação, **When** existem documentos e respostas suficientes para prévia, **Then** o preview mostra uma amostra coerente do arquivo que será baixado, reaproveitando o padrão de preview já usado em Documentos quando fizer sentido.
+3. **Given** que o usuário visualiza o preview no card de exportação, **When** existem documentos e respostas suficientes para prévia, **Then** o preview mostra uma amostra tabular do arquivo que será baixado (até 10 linhas), com os mesmos cabeçalhos do arquivo final.
 
 ---
 
@@ -106,6 +107,7 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 - Colunas originais devem aparecer na exportação em ordem estável e previsível.
 - Quando uma coluna original tiver o mesmo nome de uma coluna de controle, resposta ou gabarito, o arquivo exportado deve diferenciar os nomes de modo consistente.
 - O CSV unificado deve repetir os dados originais do documento nas linhas associadas a esse documento, inclusive nas linhas de resposta individual e gabarito quando aplicável.
+- A base exportada compreende apenas documentos não excluídos; respostas e gabarito de documentos excluídos não entram no arquivo. Documentos com exclusão apenas pendente permanecem na base exportada.
 - No XLSX, as colunas originais vivem na aba “Documentos” (uma linha por documento); as abas de respostas e gabarito carregam identificadores do documento para cruzamento, sem repetir as colunas originais.
 
 ### Key Entities

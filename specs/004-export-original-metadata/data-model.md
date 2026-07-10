@@ -21,6 +21,7 @@ Regras e invariantes:
 
 - `original_row` contém **todas** as colunas da linha, inclusive as mapeadas para `text`/`title`/`external_id` (FR-002). Valores são os textuais do parse (`Record<string, string>`); células ausentes em linhas curtas normalizam para `""`.
 - `original_columns` existe porque jsonb não preserva ordem de chaves; é a fonte da ordenação no export. Invariante: `original_columns` ⊇ chaves de `original_row` na prática (ambos vêm de `results.meta.fields` e da própria linha); o export usa `original_columns` como ordem e `original_row` como valores.
+- **Cabeçalhos duplicados no CSV** (achado C2 do /speckit-analyze): verificado contra o pacote instalado (papaparse 5.5.4) em 2026-07-10 — o próprio parse com `header: true` renomeia duplicatas (`nome`, `nome_1`, …) preservando os valores de todas as colunas homônimas ("Duplicate headers found and renamed."). `buildDocs` confia nessa garantia e não normaliza de novo; um teste de regressão protege a dependência desse comportamento. Invariante resultante: `original_columns` não contém duplicatas.
 - `metadata IS NULL` ⇒ documento importado antes da feature (ou criado por caminho sem CSV). O export trata como "colunas originais vazias" (FR-011); nenhum backfill (FR-018).
 - Reimportação `replace_and_add` sobrescreve `metadata` (linha nova prevalece); `add_new_only` não toca documentos existentes.
 
@@ -42,6 +43,8 @@ export type UploadDoc = Pick<DocumentRow, "text" | "title" | "external_id" | "me
 ## 3. Dataset de export (retorno de `getExportDataset` — ver contracts/)
 
 Três visões montadas server-side por funções puras de `lib/export/`:
+
+**Escopo da base exportada**: apenas documentos não excluídos (`excluded_at IS NULL`); documentos com exclusão apenas pendente (`exclusion_pending_at`) permanecem na base. Respostas e gabarito são filtrados ao conjunto de documentos exportados — nenhuma linha do arquivo referencia documento ausente da visão Documentos.
 
 ### 3.1 Visão Documentos (base da aba XLSX "Documentos" e das linhas `source=documento` do CSV)
 

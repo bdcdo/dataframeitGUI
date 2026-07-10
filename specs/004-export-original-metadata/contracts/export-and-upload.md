@@ -23,6 +23,7 @@ type GetExportDatasetResult =
 Garantias:
 
 - `csv.rows` contém: todas as respostas `is_latest`, todos os gabaritos, e uma linha `source="documento"` por documento sem resposta e sem gabarito — todo documento da base aparece ao menos uma vez em `documents.rows` e, se órfão, também em `csv.rows`.
+- A base é composta apenas por documentos não excluídos (`excluded_at IS NULL`; exclusão pendente ainda conta como ativo); respostas e gabarito de documentos fora da base são descartados na montagem — nenhuma linha do arquivo referencia documento ausente de `documents.rows`.
 - Cabeçalhos determinísticos: mesma base + mesmo schema ⇒ mesmos headers na mesma ordem (regras de colisão/ordenação em data-model.md §3.5).
 - Valores já formatados como string (`formatExportValue`); o client só serializa (CSV manual com BOM / exceljs), sem lógica de domínio.
 - Queries internas com colunas explícitas; `documents.metadata` é lido **apenas** aqui, nunca na listagem da página.
@@ -47,7 +48,7 @@ Compatibilidade: `metadata` opcional — chamadas antigas (ou docs sem CSV) segu
 Função pura client-side. Passa a retornar `UploadDoc[]` com `metadata` preenchido a partir da linha completa do papaparse:
 
 - `original_row` = a linha inteira (`Record<string, string>`), células ausentes normalizadas para `""`;
-- `original_columns` = `csv.columns` (ordem de `results.meta.fields`);
+- `original_columns` = `csv.columns` (ordem de `results.meta.fields`); cabeçalhos duplicados já chegam renomeados pelo papaparse 5.5.4 (`nome`, `nome_1`, … — comportamento verificado em 2026-07-10), então `original_columns` não contém duplicatas; um teste de regressão no fluxo de parse protege essa garantia;
 - filtro existente mantido: linhas sem `row[mapping.text]?.trim()` continuam descartadas.
 
 `chunkByBytes`/medição de bytes: passa a medir o documento serializado completo (incluindo metadata), mantendo `MAX_CHUNK_BYTES`/`MAX_DOCS_PER_CHUNK`. Fail-early de doc único acima do limite continua, sobre o tamanho real.
