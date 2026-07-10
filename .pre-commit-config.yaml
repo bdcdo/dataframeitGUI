@@ -5,7 +5,7 @@
 #
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, lint:types, fallow, semgrep, mypy
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
@@ -82,6 +82,33 @@ repos:
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # Playwright e2e smoke: fecha o loop aberto pela #107 (agent/CI travava
+      # no login do Clerk sem Testing Tokens) fazendo esses specs rodarem sem
+      # depender de alguem lembrar de digitar `npm run test:e2e` (issue #306).
+      # Nao ha CI bloqueante (sem branch protection no free tier — ver
+      # docs/CODE_QUALITY_TOOLING.md), entao pre-push e o unico lugar onde
+      # "testar antes do PR" pode ser automatico de verdade.
+      #
+      # No modo manual (`npm run test:e2e`), os specs ainda fazem test.skip()
+      # quando faltam variáveis E2E/Clerk, para permitir investigação parcial em
+      # checkouts sem tenant de teste. No pre-push, porém, PLAYWRIGHT_PRE_PUSH=1
+      # faz playwright.config.ts falhar fechado se qualquer env obrigatória
+      # faltar: um gate não pode passar verde sem executar os fluxos autenticados.
+      # Para pular pontualmente de forma explícita: `SKIP=e2e-smoke git push`.
+      #
+      # Por default, PLAYWRIGHT_PRE_PUSH=1 também usa uma porta dedicada (3100,
+      # não a 3000 padrão) e nunca reaproveita um dev server já rodando. Um
+      # E2E_BASE_URL explícito sobrescreve esse default e o PORT repassado ao
+      # `next dev` acompanha a porta dessa URL.
+      - id: e2e-smoke
+        name: playwright e2e smoke (pre-push)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && PLAYWRIGHT_PRE_PUSH=1 exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        language: system
+        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(ts|tsx)|package(-lock)?\.json|\.env\.e2e\.example))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

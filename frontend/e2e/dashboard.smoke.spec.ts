@@ -32,10 +32,17 @@ const roles = [
   { role: "master", emailEnv: "E2E_MASTER_EMAIL" },
 ] as const;
 
+const hasClerkTestingEnv =
+  !!process.env.CLERK_SECRET_KEY &&
+  !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 for (const { role, emailEnv } of roles) {
   test(`dashboard carrega autenticado como ${role}`, async ({ page }) => {
     const identifier = process.env[emailEnv];
-    test.skip(!identifier, `defina ${emailEnv} em .env.e2e`);
+    test.skip(
+      !hasClerkTestingEnv || !identifier,
+      `defina CLERK_SECRET_KEY, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY e ${emailEnv}`,
+    );
 
     // Injeta o Testing Token nas requisições da página, dispensando o
     // challenge anti-bot do Clerk.
@@ -56,21 +63,37 @@ for (const { role, emailEnv } of roles) {
       { timeout: 15_000 },
     );
 
+    let testBodyError: unknown;
+
     try {
       await page.goto("/dashboard");
       await expect(
         page.getByRole("heading", { name: "Meus Projetos" }),
       ).toBeVisible();
+    } catch (error) {
+      testBodyError = error;
+      throw error;
     } finally {
-      // Encerra a sessão mesmo se a asserção falhar. clerk.signOut faz
-      // page.evaluate sobre window.Clerk e pode pendurar se a página não
-      // estiver no estado esperado (ver nota em lottery.smoke.spec.ts); limita
-      // a 5s para não estourar o timeout do teste e mascarar a causa real — o
-      // contexto isolado do Playwright já descarta os cookies entre testes.
-      await Promise.race([
-        clerk.signOut({ page }).catch(() => {}),
-        page.waitForTimeout(5_000),
+      const signOutError = await Promise.race([
+        clerk.signOut({ page }).then(() => null).catch((error: unknown) => error),
+        page.waitForTimeout(5_000).then(
+          () =>
+            new Error(
+              `clerk.signOut não concluiu em 5s durante cleanup do smoke de dashboard (${role})`,
+            ),
+        ),
       ]);
+
+      if (signOutError) {
+        if (testBodyError) {
+          console.warn(
+            `clerk.signOut falhou durante cleanup após falha anterior do smoke de dashboard (${role}):`,
+            signOutError,
+          );
+        } else {
+          throw signOutError;
+        }
+      }
     }
   });
 }
