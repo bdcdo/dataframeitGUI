@@ -60,6 +60,14 @@ async function readSupabaseUid(
  * redirecione à conclusão de acesso (FR-008), em vez de reparar no render.
  */
 export const resolveAuth = cache(async (): Promise<AuthResolution> => {
+  // Observabilidade de SC-002 (T010): como o corpo do `cache()` roda uma vez por
+  // request, cada execução aqui é uma resolução real. Com o flag ligado, o log
+  // por request confirma que a identidade é resolvida uma vez, não por leitura.
+  // Server-only e opt-in — nunca vaza para o cliente nem polui logs por padrão.
+  if (process.env.AUTH_RESOLVE_DEBUG === "1") {
+    console.info("[auth] resolveAuth: nova resolução de identidade na request");
+  }
+
   const user = await currentUser();
   if (!user) return { status: "signed-out" };
 
