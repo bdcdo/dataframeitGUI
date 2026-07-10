@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import Papa from "papaparse";
 import {
   MAX_CHUNK_BYTES,
   MAX_DOCS_PER_CHUNK,
@@ -7,6 +8,7 @@ import {
   buildUploadErrorMessage,
   buildUploadSuccessMessage,
   chunkByBytes,
+  docBytes,
   isPayloadTooLarge,
   mapWithConcurrency,
   remapDuplicateMapToChunk,
@@ -84,6 +86,38 @@ describe("chunkByBytes", () => {
     expect(chunks[1].items).toHaveLength(1);
     expect(chunks[1].startIndex).toBe(1);
   });
+
+  it("mede o doc serializado completo: metadata empurra para além do orçamento", () => {
+    // Cada doc: ~1 MB de texto + a MESMA ~1 MB repetida em metadata.original_row
+    // (a coluna de texto também é preservada — FR-002). Só pelo `text`, os dois
+    // caberiam num chunk (2 MB < 3,5 MB); medindo o doc serializado, cada um pesa
+    // ~2 MB e os dois estouram o orçamento → 2 chunks. Guarda contra medir só o texto.
+    const oneMb = "a".repeat(1_000_000);
+    const docs = buildDocs(
+      { rows: [{ texto: oneMb }, { texto: oneMb }], columns: ["texto"] },
+      { text: "texto", title: "", external_id: "" }
+    );
+    // Sanidade: só pelo texto, os dois caberiam num único chunk.
+    expect(utf8Bytes(docs[0].text) + utf8Bytes(docs[1].text)).toBeLessThan(
+      MAX_CHUNK_BYTES
+    );
+
+    const chunks = chunkByBytes(docs);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].items).toHaveLength(1);
+    expect(chunks[1].items).toHaveLength(1);
+  });
+});
+
+describe("docBytes", () => {
+  it("mede o doc serializado completo, não apenas o texto", () => {
+    const [built] = buildDocs(
+      { rows: [{ texto: "abc", extra: "xyz" }], columns: ["texto", "extra"] },
+      { text: "texto", title: "", external_id: "" }
+    );
+    // metadata carrega 'texto' e 'extra' de novo → serializado > só o texto.
+    expect(docBytes(built)).toBeGreaterThan(utf8Bytes(built.text));
+  });
 });
 
 describe("mapWithConcurrency", () => {
@@ -145,15 +179,113 @@ describe("buildDocs", () => {
     const docs = buildDocs(csv, mapping);
 
     expect(docs).toEqual([
-      { text: "conteúdo 1", title: "Doc 1", external_id: "e1" },
-      { text: "conteúdo 3", title: "", external_id: "" },
+      {
+        text: "conteúdo 1",
+        title: "Doc 1",
+        external_id: "e1",
+        metadata: {
+          original_row: { texto: "conteúdo 1", titulo: "Doc 1", ext: "e1" },
+          original_columns: ["texto", "titulo", "ext"],
+        },
+      },
+      {
+        text: "conteúdo 3",
+        title: "",
+        external_id: "",
+        metadata: {
+          original_row: { texto: "conteúdo 3", titulo: "", ext: "" },
+          original_columns: ["texto", "titulo", "ext"],
+        },
+      },
     ]);
   });
 
   it("não mapeia title/external_id quando a coluna não foi selecionada", () => {
     const csv = { rows: [{ texto: "conteúdo" }], columns: ["texto"] };
     const docs = buildDocs(csv, { text: "texto", title: "", external_id: "" });
-    expect(docs).toEqual([{ text: "conteúdo", title: undefined, external_id: undefined }]);
+    expect(docs).toEqual([
+      {
+        text: "conteúdo",
+        title: undefined,
+        external_id: undefined,
+        metadata: {
+          original_row: { texto: "conteúdo" },
+          original_columns: ["texto"],
+        },
+      },
+    ]);
+  });
+
+  it("preserva colunas não mapeadas na linha original (inclusive as mapeadas)", () => {
+    const csv = {
+      rows: [
+        {
+          id_original: "0001",
+          titulo: "Apelação",
+          texto: "Inteiro teor",
+          tribunal: "TJSP",
+          classe: "",
+        },
+      ],
+      columns: ["id_original", "titulo", "texto", "tribunal", "classe"],
+    };
+
+    const [d] = buildDocs(csv, {
+      text: "texto",
+      title: "titulo",
+      external_id: "id_original",
+    });
+
+    // original_row inclui as colunas mapeadas (texto/titulo/id_original) E as
+    // não mapeadas (tribunal/classe); célula vazia preservada como "".
+    expect(d.metadata).toEqual({
+      original_row: {
+        id_original: "0001",
+        titulo: "Apelação",
+        texto: "Inteiro teor",
+        tribunal: "TJSP",
+        classe: "",
+      },
+      original_columns: ["id_original", "titulo", "texto", "tribunal", "classe"],
+    });
+  });
+
+  it("normaliza célula ausente (linha curta) para '' mantendo a coluna", () => {
+    // A linha não tem a chave 'classe'; original_row ainda registra classe: "".
+    const csv = {
+      rows: [{ texto: "conteúdo", tribunal: "TJRS" }],
+      columns: ["texto", "tribunal", "classe"],
+    };
+    const [d] = buildDocs(csv, { text: "texto", title: "", external_id: "" });
+    expect(d.metadata?.original_row).toEqual({
+      texto: "conteúdo",
+      tribunal: "TJRS",
+      classe: "",
+    });
+    expect(d.metadata?.original_columns).toEqual(["texto", "tribunal", "classe"]);
+  });
+
+  // Regressão da garantia de cabeçalhos únicos (achado C2): buildDocs confia que
+  // o papaparse (header: true) renomeia colunas homônimas preservando os valores,
+  // e NÃO re-normaliza. Este teste protege essa dependência contra bumps do pacote.
+  it("papaparse renomeia colunas homônimas e buildDocs preserva todos os valores", () => {
+    const csvText = "nome,texto,nome\nAna,conteúdo,Silva";
+    const parsed = Papa.parse<Record<string, string>>(csvText, { header: true });
+    const columns = parsed.meta.fields ?? [];
+
+    // papaparse 5.5.4: a duplicata 'nome' vira 'nome_1' ("Duplicate headers ... renamed").
+    expect(columns).toEqual(["nome", "texto", "nome_1"]);
+
+    const [d] = buildDocs(
+      { rows: parsed.data, columns },
+      { text: "texto", title: "", external_id: "" }
+    );
+    expect(d.metadata?.original_columns).toEqual(["nome", "texto", "nome_1"]);
+    expect(d.metadata?.original_row).toEqual({
+      nome: "Ana",
+      texto: "conteúdo",
+      nome_1: "Silva",
+    });
   });
 });
 

@@ -30,6 +30,14 @@ export const MAX_DOCS_PER_CHUNK = 500;
 const textEncoder = new TextEncoder();
 export const utf8Bytes = (s: string) => textEncoder.encode(s).length;
 
+// Bytes UTF-8 do documento serializado completo (text + title + external_id +
+// metadata), não apenas do texto. A linha original preservada em metadata pode
+// quase dobrar o payload por doc (o texto aparece em `text` e de novo em
+// original_row[colunaDeTexto]); medir só o texto subestimaria o payload e um
+// chunk "dentro do limite" estouraria o cap ~4,5 MB de Server Actions da Vercel.
+// Fonte única da medição — usada tanto no chunking quanto no fail-early do hook.
+export const docBytes = (doc: UploadDoc) => utf8Bytes(JSON.stringify(doc));
+
 export function isPayloadTooLarge(msg: string): boolean {
   return (
     msg.includes("Body exceeded") ||
@@ -53,7 +61,7 @@ export function chunkByBytes<T extends { text: string }>(
   let currentBytes = 0;
   let startIndex = 0;
   for (let i = 0; i < docs.length; i++) {
-    const itemBytes = sizes ? sizes[i] : utf8Bytes(docs[i].text);
+    const itemBytes = sizes ? sizes[i] : docBytes(docs[i] as UploadDoc);
     if (
       current.length > 0 &&
       (currentBytes + itemBytes > MAX_CHUNK_BYTES ||
@@ -110,6 +118,17 @@ export function buildDocs(csv: Csv | null, mapping: ColumnMapping): UploadDoc[] 
       text: row[mapping.text],
       title: mapping.title ? row[mapping.title] : undefined,
       external_id: mapping.external_id ? row[mapping.external_id] : undefined,
+      // Linha original completa preservada (feature 004): TODA coluna do CSV,
+      // inclusive as mapeadas para text/title/external_id (FR-002). Célula
+      // ausente numa linha curta normaliza para "" — a coluna existe sem valor.
+      // original_columns preserva a ordem do CSV (jsonb não preserva ordem de
+      // chaves); os cabeçalhos já chegam únicos do papaparse (ver data-model §1).
+      metadata: {
+        original_row: Object.fromEntries(
+          csv.columns.map((col) => [col, row[col] ?? ""])
+        ),
+        original_columns: csv.columns,
+      },
     }));
 }
 

@@ -152,13 +152,21 @@ export interface MemberEmailLink {
   created_at: string;
 }
 
+// Linha original completa do CSV preservada em documents.metadata (feature 004).
+// original_columns existe porque jsonb não preserva a ordem das chaves — é a
+// fonte da ordenação das colunas originais no export (ver data-model.md §1).
+export interface DocumentMetadata {
+  original_row: Record<string, string>;
+  original_columns: string[];
+}
+
 export interface Document {
   id: string;
   project_id: string;
   external_id: string | null;
   title: string | null;
   text: string;
-  metadata: Record<string, unknown> | null;
+  metadata: DocumentMetadata | null;
   created_at: string;
   excluded_at: string | null;
   excluded_reason: string | null;

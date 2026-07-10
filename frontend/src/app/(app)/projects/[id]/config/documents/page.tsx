@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { DocumentUpload } from "@/components/documents/DocumentUpload";
 import { DocumentsPageClient } from "@/components/documents/DocumentsPageClient";
+import { ExportCard } from "@/components/documents/ExportCard";
 
 export default async function ConfigDocumentsPage({
   params,
@@ -70,6 +71,7 @@ export default async function ConfigDocumentsPage({
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <DocumentUpload projectId={id} />
+      <ExportCard projectId={id} />
       <DocumentsPageClient
         documents={docsWithCounts}
         projectId={id}
