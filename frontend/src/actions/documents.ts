@@ -7,18 +7,22 @@ import { revalidatePath, revalidateTag } from "next/cache";
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
 import { dropHiddenConditionals } from "@/lib/conditional";
-import type { PydanticField } from "@/lib/types";
+import type { DocumentMetadata, PydanticField } from "@/lib/types";
 
 export interface DocumentRow {
   external_id?: string;
   title?: string;
   text: string;
-  metadata?: Record<string, unknown>;
+  metadata?: DocumentMetadata | null;
 }
 
-// Single source of truth for the CSV-upload row shape (subset of DocumentRow,
-// without the server-added `metadata`). The client hook imports this type.
-export type UploadDoc = Pick<DocumentRow, "text" | "title" | "external_id">;
+// Single source of truth for the CSV-upload row shape (subset of DocumentRow).
+// Inclui `metadata` (linha original do CSV) desde a feature 004 — o client
+// monta a partir do buildDocs e flui até o INSERT/RPC sem transformação.
+export type UploadDoc = Pick<
+  DocumentRow,
+  "text" | "title" | "external_id" | "metadata"
+>;
 
 function md5(text: string): string {
   return createHash("md5").update(text).digest("hex");

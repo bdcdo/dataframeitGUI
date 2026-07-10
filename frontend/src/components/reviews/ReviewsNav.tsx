@@ -12,7 +12,6 @@ const reviewsTabs: Array<{
   { label: "Meu Gabarito", href: "my-verdicts" },
   { label: "Erros LLM", href: "llm-insights" },
   { label: "Comentários", href: "comments" },
-  { label: "Exportar", href: "export" },
 ];
 
 interface ReviewsNavProps {

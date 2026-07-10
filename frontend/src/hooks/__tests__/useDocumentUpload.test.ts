@@ -107,6 +107,46 @@ describe("useDocumentUpload — recuperação de falha (returnTo)", () => {
   });
 });
 
+describe("useDocumentUpload — propaga a linha original (metadata) ao upload", () => {
+  it("colunas extras não mapeadas chegam a uploadDocuments em metadata", async () => {
+    checkDuplicates.mockResolvedValue({ duplicates: [], duplicatesWithResponses: 0 });
+    uploadDocuments.mockResolvedValue({ count: 1 });
+
+    const { result } = renderHook(() => useDocumentUpload("p1"));
+    // CSV com coluna 'tribunal' não mapeada + 'classe' vazia.
+    feedCsv(
+      [{ text_col: "conteúdo", tribunal: "TJSP", classe: "" }],
+      ["text_col", "tribunal", "classe"]
+    );
+    await act(async () => {
+      await result.current.handleFile(
+        new File(["x"], "t.csv", { type: "text/csv" })
+      );
+    });
+    act(() =>
+      result.current.setMapping({ text: "text_col", title: "", external_id: "" })
+    );
+
+    await act(async () => {
+      await result.current.handleCheckAndUpload();
+    });
+
+    expect(uploadDocuments).toHaveBeenCalled();
+    const docs = uploadDocuments.mock.calls[0][1] as {
+      metadata?: {
+        original_row: Record<string, string>;
+        original_columns: string[];
+        text_column?: string;
+      };
+    }[];
+    expect(docs[0].metadata).toEqual({
+      original_row: { text_col: "conteúdo", tribunal: "TJSP", classe: "" },
+      original_columns: ["text_col", "tribunal", "classe"],
+      text_column: "text_col",
+    });
+  });
+});
+
 describe("useDocumentUpload — contagem do toast de sucesso", () => {
   it("importação completa anuncia o total, sem menção a ignorados", async () => {
     checkDuplicates.mockResolvedValue({ duplicates: [], duplicatesWithResponses: 0 });

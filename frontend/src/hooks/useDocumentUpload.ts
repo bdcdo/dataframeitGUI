@@ -17,9 +17,9 @@ import {
   buildUploadErrorMessage,
   buildUploadSuccessMessage,
   chunkByBytes,
+  docBytes,
   isPayloadTooLarge,
   remapDuplicateMapToChunk,
-  utf8Bytes,
   type ColumnMapping,
   type Csv,
 } from "@/lib/upload-chunking";
@@ -170,9 +170,11 @@ export function useDocumentUpload(projectId: string) {
       return;
     }
 
-    // Mede os bytes UTF-8 uma única vez: reusado no check de oversize e repassado
-    // a chunkByBytes (via doUpload) para não re-encodar todo o array.
-    const sizes = docs.map((d) => utf8Bytes(d.text));
+    // Mede os bytes UTF-8 do doc serializado completo (inclui metadata) uma única
+    // vez: reusado no check de oversize e repassado a chunkByBytes (via doUpload)
+    // para não re-encodar. Medir só o texto subestimaria o payload real (a linha
+    // original preservada quase dobra o tamanho por doc — ver docBytes).
+    const sizes = docs.map(docBytes);
 
     // Fail early if a single doc exceeds the per-chunk byte budget — chunking can't rescue it.
     const oversizeIdx = sizes.findIndex((b) => b > MAX_CHUNK_BYTES);
