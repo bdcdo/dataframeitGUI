@@ -211,6 +211,19 @@ async function loadRelease() {
 }
 
 describe("releaseArbitrationsFromUser", () => {
+  it("não-coordenador → erro, nenhum efeito colateral (guard IDOR #166)", async () => {
+    // Sem o gate, qualquer autenticado libera a arbitragem alheia via
+    // Next-Action + createSupabaseAdmin (bypassa RLS). O guard precisa barrar
+    // ANTES de qualquer leitura/escrita no admin client.
+    hoisted.isCoord.mockResolvedValueOnce(false);
+    tableData.field_reviews = [{ id: "fr1", document_id: "doc1" }];
+    const release = await loadRelease();
+    const r = await release("p1", "userX");
+    expect(r.released).toBe(0);
+    expect(r.error).toContain("coordenadores");
+    expect(writeCalls).toHaveLength(0);
+  });
+
   it("sem field_reviews afetados → released 0, nenhum write", async () => {
     tableData.field_reviews = [];
     const release = await loadRelease();

@@ -1154,6 +1154,19 @@ export async function releaseArbitrationsFromUser(
   projectId: string,
   userId: string,
 ): Promise<{ released: number; error?: string }> {
+  // Autorização no entrypoint: este é um Server Action exportado num arquivo
+  // "use server", logo invocável direto via header Next-Action — não basta o
+  // único caller legítimo (removeMember) já ser coordinator-gated. Como o corpo
+  // usa createSupabaseAdmin() (bypassa RLS), sem este gate qualquer autenticado
+  // liberaria a arbitragem em andamento de um `userId` arbitrário em qualquer
+  // `projectId` (CWE-862; mesma classe residual da IDOR #166 / #45). Espelha o
+  // guard das actions-irmãs regenerateAutoReviewBacklog/retryPendingArbitrations.
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem liberar arbitragens de um membro.",
+  );
+  if (!gate.ok) return { released: 0, error: gate.error };
+
   const admin = createSupabaseAdmin();
 
   // Filtro `self_verdict='contesta_llm'`: só esses field_reviews chegam a
