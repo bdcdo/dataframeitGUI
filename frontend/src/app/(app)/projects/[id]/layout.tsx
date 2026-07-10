@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { getProjectAccessContext, resolveAuth } from "@/lib/auth";
 import { getRunningLlmCount } from "@/actions/llm";
 import { Header } from "@/components/shell/Header";
 import { ProjectTabs } from "@/components/shell/ProjectTabs";
@@ -13,13 +13,18 @@ export default async function ProjectLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user, supabase] = await Promise.all([
+  const [{ id }, resolution, supabase] = await Promise.all([
     params,
-    getAuthUser(),
+    resolveAuth(),
     createSupabaseServer(),
   ]);
 
-  if (!user) redirect("/auth/login");
+  // Fail-closed (FR-008): distinguir "sem sessão" de "vínculo pendente" — este
+  // último não pode virar login nem, mais abaixo, `notFound()` de projeto
+  // (contracts/access-completion "Rejected behavior").
+  if (resolution.status === "signed-out") redirect("/auth/login");
+  if (resolution.status !== "authenticated") redirect("/auth/post-login");
+  const user = resolution.user;
 
   // project + membership vem de getProjectAccessContext (request-scoped via
   // cache()) — mesma leitura reaproveitada pelos layouts filhos config/llm.

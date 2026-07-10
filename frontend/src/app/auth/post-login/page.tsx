@@ -1,49 +1,49 @@
 import type { Metadata } from "next";
-import { getAuthUser } from "@/lib/auth";
-import { auth } from "@clerk/nextjs/server";
-import Link from "next/link";
+import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { resolveAuth } from "@/lib/auth";
+import { AccessCompletionCard } from "@/components/auth/AccessCompletionCard";
 
 export const metadata: Metadata = {
   title: "Concluindo acesso · GUI Análise Sistemática",
-  description: "Conferindo vínculo entre Clerk e Supabase após login",
+  description: "Conferindo o vínculo da sua conta após o login",
 };
 
-export default async function PostLoginPage() {
-  const { userId } = await auth();
-  if (!userId) {
+// Rota canônica de conclusão/reparo de acesso (afterSignInUrl do Clerk e destino
+// do fail-closed dos layouts protegidos). Read-only: apenas resolve o estado e
+// delega o reparo idempotente ao botão de retry — nenhuma mutação de vínculo
+// acontece aqui no render (decisão D3).
+export default async function PostLoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const [resolution, params] = await Promise.all([resolveAuth(), searchParams]);
+
+  // Só aceita destino interno (começa com "/") — impede open-redirect via ?next.
+  const nextUrl =
+    params.next && params.next.startsWith("/") ? params.next : "/dashboard";
+
+  if (resolution.status === "signed-out") {
     redirect("/auth/login");
   }
 
-  const user = await getAuthUser();
-
-  if (user) {
-    redirect("/dashboard");
+  if (resolution.status === "authenticated") {
+    // Vínculo já ativo: nada a concluir, segue para o destino pretendido.
+    redirect(nextUrl);
   }
 
+  // access-completion-required | technical-sync-failure: mostra o estado
+  // recuperável. O e-mail do ator é lido só para reconhecimento da conta
+  // (currentUser é memoizado por request pelo Clerk).
+  const user = await currentUser();
+  const actorEmail = user?.emailAddresses[0]?.emailAddress ?? "";
+
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
-      <Card className="w-full max-w-lg">
-        <CardHeader>
-          <CardTitle>Nao foi possivel concluir seu acesso</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Sua sessao no Clerk existe, mas o vinculo com o Supabase ainda nao
-            foi confirmado. Isso evita o loop entre login e dashboard.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Link href="/auth/login">
-              <Button>Tentar login novamente</Button>
-            </Link>
-            <Link href="/api/debug-token" target="_blank">
-              <Button variant="outline">Abrir debug do token</Button>
-            </Link>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+    <AccessCompletionCard
+      reason={resolution.reason}
+      actorEmail={actorEmail}
+      nextUrl={nextUrl}
+    />
   );
 }

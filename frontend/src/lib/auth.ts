@@ -1,6 +1,5 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { cache } from "react";
-import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSupabaseServer } from "@/lib/supabase/server";
 
@@ -13,87 +12,107 @@ export interface AuthUser {
   isMaster: boolean;
 }
 
-async function resolveSupabaseUidFromClerk(): Promise<{
-  user: Awaited<ReturnType<typeof currentUser>>;
-  supabaseUid: string | null;
-}> {
-  const user = await currentUser();
-  if (!user) {
-    return { user: null, supabaseUid: null };
-  }
+// Motivo de conclusão de acesso (data-model: Access Completion State). O caminho
+// crítico só produz os quatro primeiros; `no-project-access` é decidido depois,
+// no dashboard, e `unknown-recoverable` é o fallback da própria tela.
+export type AccessCompletionReason =
+  | "link-pending"
+  | "link-divergent"
+  | "sync-temporary-failure";
 
-  const metadataUid = user.publicMetadata.supabase_uid as string | undefined;
-  if (metadataUid) {
-    return { user, supabaseUid: metadataUid };
-  }
+// Resultado observável da resolução de identidade (contracts/auth-resolution).
+// É a fonte única que distingue os estados que a feature precisa separar —
+// substitui o antigo `AuthUser | null`, que colapsava "sem sessão", "vínculo
+// pendente" e "falha técnica" num único `null` e escondia a diferença dos
+// layouts protegidos.
+export type AuthResolution =
+  | { status: "signed-out" }
+  | { status: "authenticated"; user: AuthUser }
+  | { status: "access-completion-required"; reason: AccessCompletionReason }
+  | { status: "technical-sync-failure"; reason: AccessCompletionReason };
 
-  const email = user.emailAddresses[0]?.emailAddress;
-  if (!email) {
-    return { user, supabaseUid: null };
-  }
-
-  try {
-    const syncedUid = await syncClerkUserToSupabase(
-      user.id,
-      email,
-      user.firstName,
-      user.lastName
-    );
-    return { user, supabaseUid: syncedUid };
-  } catch (error) {
-    console.error("Failed to sync Clerk user to Supabase", {
-      clerkUserId: user.id,
-      error,
-    });
-    return { user, supabaseUid: null };
-  }
+// Resolve o UUID Supabase da sessão SEM escrever nada (decisão D3): metadata do
+// Clerk primeiro; senão, leitura read-only de `clerk_user_mapping`. Nunca chama
+// `syncClerkUserToSupabase` — a criação/reparo do vínculo é responsabilidade
+// explícita da ação de conclusão de acesso, fora do render protegido.
+async function readSupabaseUid(
+  clerkUserId: string,
+  metadataUid: string | undefined,
+): Promise<{ uid: string | null; mappingUid: string | null }> {
+  const admin = createSupabaseAdmin();
+  const { data: mapping } = await admin
+    .from("clerk_user_mapping")
+    .select("supabase_user_id")
+    .eq("clerk_user_id", clerkUserId)
+    .maybeSingle();
+  const mappingUid = mapping?.supabase_user_id ?? null;
+  return { uid: metadataUid ?? mappingUid, mappingUid };
 }
 
 /**
- * Returns the authenticated user with their Supabase UUID as `id`.
- * Drop-in replacement for the old `supabase.auth.getUser()` pattern.
+ * Resolução de identidade autenticada, request-scoped e read-only.
  *
- * `cache()` deduplica a resolucao Clerk + lookup em `master_users` quando
- * varios layouts/pages da mesma request chamam `getAuthUser()`.
+ * `cache()` deduplica a resolução Clerk + lookups em `clerk_user_mapping` /
+ * `master_users` / `profiles` quando vários layouts, pages e helpers da mesma
+ * request pedem a identidade (RC-001 / SC-002). Não faz nenhuma escrita: quando
+ * o vínculo interno está ausente, pendente ou divergente, retorna
+ * `access-completion-required` para que a página protegida falhe fechada e
+ * redirecione à conclusão de acesso (FR-008), em vez de reparar no render.
  */
-export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
-  const { user, supabaseUid } = await resolveSupabaseUidFromClerk();
-  if (!user) return null;
-  if (!supabaseUid) return null;
+export const resolveAuth = cache(async (): Promise<AuthResolution> => {
+  const user = await currentUser();
+  if (!user) return { status: "signed-out" };
 
-  const admin = createSupabaseAdmin();
-  const [{ data: masterRow }, { data: profileRow }] = await Promise.all([
-    admin
-      .from("master_users")
-      .select("user_id")
-      .eq("user_id", supabaseUid)
-      .maybeSingle(),
-    admin
-      .from("profiles")
-      .select("activated_at")
-      .eq("id", supabaseUid)
-      .maybeSingle(),
-  ]);
+  const metadataUid = user.publicMetadata.supabase_uid as string | undefined;
+  const email = user.emailAddresses[0]?.emailAddress;
 
-  // Fallback de ativação (research D2): sessão autenticada com profile ainda
-  // pendente cobre webhook perdido e contas antigas — o caminho normal é o
-  // webhook user.created.
-  if (profileRow && profileRow.activated_at === null) {
-    await admin
-      .from("profiles")
-      .update({ activated_at: new Date().toISOString() })
-      .eq("id", supabaseUid)
-      .is("activated_at", null);
+  const { uid, mappingUid } = await readSupabaseUid(user.id, metadataUid);
+
+  // Vínculo ainda não existe. Com e-mail utilizável, é pendente e recuperável
+  // por retry; sem e-mail, não há como concluir o vínculo automaticamente —
+  // falha técnica recuperável (data-model: validação de Authenticated Actor).
+  if (!uid) {
+    if (!email) {
+      return { status: "technical-sync-failure", reason: "sync-temporary-failure" };
+    }
+    return { status: "access-completion-required", reason: "link-pending" };
   }
 
+  // Metadata e mapping apontam para identidades incompatíveis: não adivinhar
+  // qual vale — encaminhar para reparo (data-model: active → divergent).
+  if (metadataUid && mappingUid && metadataUid !== mappingUid) {
+    return { status: "access-completion-required", reason: "link-divergent" };
+  }
+
+  const admin = createSupabaseAdmin();
+  const { data: masterRow } = await admin
+    .from("master_users")
+    .select("user_id")
+    .eq("user_id", uid)
+    .maybeSingle();
+
   return {
-    id: supabaseUid,
-    email: user.emailAddresses[0]?.emailAddress ?? "",
-    firstName: user.firstName,
-    lastName: user.lastName,
-    clerkId: user.id,
-    isMaster: !!masterRow,
+    status: "authenticated",
+    user: {
+      id: uid,
+      email: email ?? "",
+      firstName: user.firstName,
+      lastName: user.lastName,
+      clerkId: user.id,
+      isMaster: !!masterRow,
+    },
   };
+});
+
+/**
+ * Retorna o usuário autenticado ou `null`. Fina camada sobre `resolveAuth` para
+ * os muitos callers (actions, pages) que só precisam do par autenticado/não —
+ * eles já tratam `null` como fail-closed. Layouts que precisam distinguir
+ * "vínculo pendente" de "sem sessão" devem usar `resolveAuth` diretamente.
+ */
+export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
+  const resolution = await resolveAuth();
+  return resolution.status === "authenticated" ? resolution.user : null;
 });
 
 // Identidade efetiva do usuário num projeto (spec 002): se a conta atual está

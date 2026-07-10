@@ -28,8 +28,8 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 **Purpose**: Prepare test surface. Project, stack and dependencies already exist — no scaffolding or new libraries.
 
-- [ ] T001 Inventory existing auth/authorization test coverage and confirm Vitest picks up new specs, listing current tests that touch `frontend/src/lib/auth.ts` and `frontend/src/lib/clerk-sync.ts` in `frontend/src/lib/__tests__/`
-- [ ] T002 [P] Add a shared test helper for building a fake Clerk session + Supabase link state (prepared / pending / divergent / no-email) in `frontend/src/lib/__tests__/auth-test-helpers.ts`, reused across US1–US3 regressions
+- [X] T001 Inventory existing auth/authorization test coverage and confirm Vitest picks up new specs, listing current tests that touch `frontend/src/lib/auth.ts` and `frontend/src/lib/clerk-sync.ts` in `frontend/src/lib/__tests__/`
+- [X] T002 [P] Add a shared test helper for building a fake Clerk session + Supabase link state (prepared / pending / divergent / no-email) in `frontend/src/lib/__tests__/auth-test-helpers.ts`, reused across US1–US3 regressions
 
 **Checkpoint**: Test harness ready — foundational refactor can begin.
 
@@ -41,10 +41,10 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 Define the auth-resolution outcome type — `signed-out` | `authenticated` | `access-completion-required` | `technical-sync-failure` — per `specs/003-auth-render-path/contracts/auth-resolution.md`, exported from `frontend/src/lib/auth.ts` (or a new `frontend/src/lib/auth-resolution.ts` re-exported by `auth.ts`)
-- [ ] T004 Split "resolve session / prepared link" from "complete / repair link": remove the `syncClerkUserToSupabase(...)` call from the `getAuthUser` render path (`frontend/src/lib/auth.ts:36`) so a protected render never silently repairs the link (decision D3), while keeping `getAuthUser` wrapped in `cache()`
-- [ ] T005 Preserve first-login behavior by relocating the link preparation/repair logic (formerly inline in `getAuthUser`) into an idempotent, explicitly-invoked routine reused by the access-completion action, keeping the idempotence guarantees of `frontend/src/lib/clerk-sync.ts` (`syncClerkUserToSupabase`, `preregisterSupabaseUser`)
-- [ ] T006 Make `getAuthUser` return/signal `access-completion-required` (vs `technical-sync-failure` when no usable email) instead of attempting repair, so protected pages can fail closed, in `frontend/src/lib/auth.ts`
+- [X] T003 Define the auth-resolution outcome type — `signed-out` | `authenticated` | `access-completion-required` | `technical-sync-failure` — per `specs/003-auth-render-path/contracts/auth-resolution.md`, exported from `frontend/src/lib/auth.ts` (or a new `frontend/src/lib/auth-resolution.ts` re-exported by `auth.ts`)
+- [X] T004 Split "resolve session / prepared link" from "complete / repair link": remove the `syncClerkUserToSupabase(...)` call from the `getAuthUser` render path (`frontend/src/lib/auth.ts:36`) so a protected render never silently repairs the link (decision D3), while keeping `getAuthUser` wrapped in `cache()`
+- [X] T005 Preserve first-login behavior by relocating the link preparation/repair logic (formerly inline in `getAuthUser`) into an idempotent, explicitly-invoked routine reused by the access-completion action, keeping the idempotence guarantees of `frontend/src/lib/clerk-sync.ts` (`syncClerkUserToSupabase`, `preregisterSupabaseUser`)
+- [X] T006 Make `getAuthUser` return/signal `access-completion-required` (vs `technical-sync-failure` when no usable email) instead of attempting repair, so protected pages can fail closed, in `frontend/src/lib/auth.ts`
 
 **Checkpoint**: Identity resolution is render-safe and repair is out of the critical path. User stories can now proceed.
 
@@ -58,12 +58,12 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 ### Tests for User Story 1 ⚠️ (write first, ensure they FAIL before implementation)
 
-- [ ] T007 [P] [US1] Regression RC-001 (identity resolved once per request): assert `getAuthUser` de-duplicates across a parent layout + project layout + multiple reads in the same request, in `frontend/src/lib/__tests__/auth-request-dedup.test.ts`
-- [ ] T008 [P] [US1] Regression RC-002 (no full remote lookup on prepared path): **first fix M1 — define the measured target explicitly**: "full remote identity-provider lookup" = the count of Clerk `currentUser()`/`auth()` remote round-trips plus any Supabase `profiles`/`clerk_user_mapping` lookups per protected request. The test asserts that, for a prepared-link user, this count is exactly one per request (from the single cached `getAuthUser`), not once per protected read, in `frontend/src/lib/__tests__/auth-no-remote-lookup.test.ts`
+- [X] T007 [P] [US1] Regression RC-001 (identity resolved once per request): assert `getAuthUser` de-duplicates across a parent layout + project layout + multiple reads in the same request, in `frontend/src/lib/__tests__/auth-request-dedup.test.ts`
+- [X] T008 [P] [US1] Regression RC-002 (no full remote lookup on prepared path): **first fix M1 — define the measured target explicitly**: "full remote identity-provider lookup" = the count of Clerk `currentUser()`/`auth()` remote round-trips plus any Supabase `profiles`/`clerk_user_mapping` lookups per protected request. The test asserts that, for a prepared-link user, this count is exactly one per request (from the single cached `getAuthUser`), not once per protected read, in `frontend/src/lib/__tests__/auth-no-remote-lookup.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Confirm/ensure `cache()` de-duplication is honored end-to-end between `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx` (no direct `currentUser()`/`auth()` calls bypassing `getAuthUser`). NOTE (I1): these two layout files are also edited by T018 [US2] — do T009 before T018 to avoid a same-file conflict; they are not parallel
+- [X] T009 [US1] Confirm/ensure `cache()` de-duplication is honored end-to-end between `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx` (no direct `currentUser()`/`auth()` calls bypassing `getAuthUser`). NOTE (I1): these two layout files are also edited by T018 [US2] — do T009 before T018 to avoid a same-file conflict; they are not parallel
 - [ ] T010 [US1] Add observability/counter evidence for SC-002 (number of identity resolutions per representative request) via a request-scoped debug counter or test instrumentation in `frontend/src/lib/auth.ts`, without leaking to the client
 - [ ] T011 [US1] Sweep protected pages/actions that read project data for repeated identity resolution and route them through `getAuthUser`/`getProjectAccessContext` (`frontend/src/app/(app)/**`, `frontend/src/actions/**`)
 
@@ -79,18 +79,18 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 ### Tests for User Story 2 ⚠️ (write first, ensure they FAIL before implementation)
 
-- [ ] T012 [P] [US2] Regression RC-005 (fail-closed on missing/divergent link): assert a valid Clerk session with absent/divergent link redirects protected renders to access completion and shows no project data, in `frontend/src/lib/__tests__/auth-fail-closed.test.ts`
+- [X] T012 [P] [US2] Regression RC-005 (fail-closed on missing/divergent link): assert a valid Clerk session with absent/divergent link redirects protected renders to access completion and shows no project data, in `frontend/src/lib/__tests__/auth-fail-closed.test.ts`
 - [ ] T013 [P] [US2] Reason-classification tests covering `link-pending`, `link-divergent`, `sync-temporary-failure`, `no-project-access`, `unknown-recoverable` per `contracts/access-completion.md` and `data-model.md`, in `frontend/src/app/auth/__tests__/access-completion-reason.test.ts`
 - [ ] T014 [P] [US2] Idempotent-retry test (SC-007): repeating access completion for the same account produces at most one profile link and no duplicate `profiles` / `clerk_user_mapping` / memberships, in `frontend/src/actions/__tests__/complete-access.test.ts`
 - [ ] T015 [P] [US2] Accessibility test (C3, Constitution §VI / FR-009 / contracts/access-completion.md): assert the access-completion screen is keyboard-navigable, sets initial focus, exposes associated labels and an accessible retry button, and renders no token/claims/debug text, in `frontend/src/app/auth/__tests__/access-completion-a11y.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] Add the access-completion route/page under `frontend/src/app/auth/access-completion/page.tsx` (pt-BR, shadcn/ui, keyboard-navigable, visible focus, WCAG 2.1 AA, no token/claims/debug/table-name exposure), rendering the five `reason` states from `contracts/access-completion.md`
-- [ ] T017 [US2] Implement the idempotent access-completion Server Action (retry of link preparation/repair) in `frontend/src/actions/complete-access.ts`, reusing the relocated idempotent routine (T005) and `frontend/src/lib/clerk-sync.ts`
-- [ ] T018 [US2] Wire fail-closed redirects in `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx`: `access-completion-required`/`technical-sync-failure` → access-completion route; do NOT convert an identity-sync failure into project `notFound()` and do NOT send a link-pending user back to login as if signed out. (I1: depends on T009 — same files)
-- [ ] T019 [US2] Distinguish `no-project-access` (active account, no memberships) from `technical-sync-failure` on the dashboard, per `data-model.md` Project Access Context rules, in `frontend/src/app/(app)/**` dashboard entry
-- [ ] T020 [US2] Success transitions: on confirmed active link, redirect to safe `nextUrl` or dashboard; on persistent failure, show a short non-technical support hint, in `frontend/src/app/auth/access-completion/page.tsx` + `frontend/src/actions/complete-access.ts`
+- [X] T016 [US2] Add the access-completion route/page under `frontend/src/app/auth/access-completion/page.tsx` (pt-BR, shadcn/ui, keyboard-navigable, visible focus, WCAG 2.1 AA, no token/claims/debug/table-name exposure), rendering the five `reason` states from `contracts/access-completion.md`
+- [X] T017 [US2] Implement the idempotent access-completion Server Action (retry of link preparation/repair) in `frontend/src/actions/complete-access.ts`, reusing the relocated idempotent routine (T005) and `frontend/src/lib/clerk-sync.ts`
+- [X] T018 [US2] Wire fail-closed redirects in `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx`: `access-completion-required`/`technical-sync-failure` → access-completion route; do NOT convert an identity-sync failure into project `notFound()` and do NOT send a link-pending user back to login as if signed out. (I1: depends on T009 — same files)
+- [X] T019 [US2] Distinguish `no-project-access` (active account, no memberships) from `technical-sync-failure` on the dashboard, per `data-model.md` Project Access Context rules, in `frontend/src/app/(app)/**` dashboard entry
+- [X] T020 [US2] Success transitions: on confirmed active link, redirect to safe `nextUrl` or dashboard; on persistent failure, show a short non-technical support hint, in `frontend/src/app/auth/access-completion/page.tsx` + `frontend/src/actions/complete-access.ts`
 
 **Checkpoint**: US1 and US2 both work independently.
 

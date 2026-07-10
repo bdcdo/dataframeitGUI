@@ -85,11 +85,11 @@ export default async function DashboardPage() {
         {membershipsError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
             <p className="font-medium text-destructive">
-              Erro ao carregar seus projetos.
+              Não foi possível carregar seus projetos agora.
             </p>
             <p className="mt-1 text-muted-foreground">
-              Abra <code>/api/debug-token</code> e compartilhe o retorno para
-              diagnosticar permissões no Supabase.
+              Isso costuma ser temporário. Recarregue a página em instantes; se
+              persistir, procure o coordenador do seu projeto.
             </p>
           </div>
         ) : projects.length === 0 ? (

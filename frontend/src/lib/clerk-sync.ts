@@ -50,6 +50,25 @@ export async function preregisterSupabaseUser(email: string): Promise<string> {
   return data.user.id;
 }
 
+/**
+ * Marca um profile pré-registrado como ativado no primeiro login real
+ * (activated_at). Idempotente por design: o filtro `.is("activated_at", null)`
+ * só grava quando ainda está pendente, então repetir a conclusão de acesso não
+ * "reativa" nem sobrescreve o instante original. Relocada para fora de
+ * `getAuthUser` (decisão D3): a ativação é reparo de vínculo e não deve rodar no
+ * render path protegido — só na conclusão de acesso explícita.
+ */
+export async function activateProfileIfPending(
+  supabaseUserId: string
+): Promise<void> {
+  const admin = createSupabaseAdmin();
+  await admin
+    .from("profiles")
+    .update({ activated_at: new Date().toISOString() })
+    .eq("id", supabaseUserId)
+    .is("activated_at", null);
+}
+
 export async function syncClerkUserToSupabase(
   clerkUserId: string,
   email: string,
