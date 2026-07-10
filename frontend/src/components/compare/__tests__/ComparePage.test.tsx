@@ -732,6 +732,7 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
     // foco + clique) quando o valor não muda — o que importa é o aviso.
     expect(toast.warning).toHaveBeenCalledWith(
       "Seleção não confirmada — confirme ou descarte antes de avançar.",
+      { id: "compare-nav-guard" },
     );
   });
 

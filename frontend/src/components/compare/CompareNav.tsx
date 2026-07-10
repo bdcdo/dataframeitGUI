@@ -30,6 +30,9 @@ interface CompareNavProps {
   documentId?: string;
   /** Coordenador do projeto? Gate do botão "Rodar LLM" (#195). */
   canRunLlm?: boolean;
+  /** Gate de navegação com rascunho pendente (#430) — repassado ao
+   * CompareFilters, que faz o próprio push de URL. */
+  guardNavigation?: () => boolean;
 }
 
 export function CompareNav({
@@ -52,6 +55,7 @@ export function CompareNav({
   projectId,
   documentId,
   canRunLlm = false,
+  guardNavigation,
 }: CompareNavProps) {
   return (
     <div className="flex h-10 items-center justify-between border-b px-4 text-sm shrink-0">
@@ -76,6 +80,7 @@ export function CompareNav({
           defaultVersion={defaultVersion}
           availableVersions={availableVersions}
           latestMajorLabel={latestMajorLabel}
+          guardNavigation={guardNavigation}
         />
         <CompareFieldFilter value={filter} onChange={onFilterChange} fields={fields} />
         <div className="flex items-center gap-0.5">

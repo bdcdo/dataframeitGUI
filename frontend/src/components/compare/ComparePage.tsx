@@ -291,8 +291,11 @@ export function ComparePage({
     // In-flight: bloqueio silencioso (o botão já exibe "Salvando...").
     if (isConfirmingVerdict) return false;
     if (pendingVerdict) {
+      // `id` fixo: tentativas repetidas (tecla `n` segurada, onValueChange
+      // duplo do Radix Tabs) atualizam o mesmo toast em vez de empilhar.
       toast.warning(
         "Seleção não confirmada — confirme ou descarte antes de avançar.",
+        { id: "compare-nav-guard" },
       );
       return false;
     }
@@ -322,7 +325,9 @@ export function ComparePage({
   }, [goPrevField, guardNavigation]);
   // Trocar o filtro de campo ou a aba de fila também muda o contexto
   // (doc/campo atual) e cairia no guard de render que descarta o rascunho —
-  // os dois vetores que a primeira versão do #430 deixou de fora.
+  // os dois vetores que a primeira versão do #430 deixou de fora. Os filtros
+  // de fila (CompareFilters) são o mesmo caso, mas fazem o próprio push de
+  // URL, então recebem `guardNavigation` por prop via CompareNav.
   const changeFieldFilter = useCallback(
     (value: string) => {
       if (guardNavigation()) changeFilter(value);
@@ -478,6 +483,7 @@ export function ComparePage({
           projectId={projectId}
           documentId={currentDoc.id}
           canRunLlm={canManageAnyPair}
+          guardNavigation={guardNavigation}
         />
       )}
 
