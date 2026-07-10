@@ -15,6 +15,7 @@
 - Q: Documentos sem nenhuma resposta individual e sem gabarito devem aparecer no export? → A: Sim — o export cobre toda a base: cada documento aparece ao menos uma vez, como linha de origem "documento" com colunas originais preenchidas e campos de resposta vazios.
 - Q: O que fazer com a sub-aba "Exportar" atual dentro de Revisões? → A: Remover a aba e a rota antiga; a exportação passa a existir apenas no topo de Documentos.
 - Q: No XLSX, como entram as colunas originais e os documentos sem resposta? → A: Nova aba "Documentos" com uma linha por documento e todas as colunas originais; as abas Respostas e Gabarito seguem enxutas, com identificadores do documento para cruzamento.
+- Q: Membros não coordenadores devem ter acesso a Documentos em modo leitura e à exportação? → A: Não — priorizando simplicidade, Documentos e exportação ficam restritos a coordenadores. A remoção da aba Exportar de Revisões retira dos pesquisadores um acesso que existe hoje; regressão aceita explicitamente. A antiga User Story 3 (leitura para membros) foi removida da spec.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -29,13 +30,13 @@ Como coordenador que importa documentos por CSV, quero que todas as colunas da p
 **Acceptance Scenarios**:
 
 1. **Given** um CSV com colunas `id_original`, `titulo`, `texto`, `tribunal` e `classe`, **When** o coordenador importa os documentos mapeando `texto` como conteúdo, `titulo` como título e `id_original` como ID externo, **Then** cada documento preserva também `tribunal`, `classe` e todas as demais colunas da linha original para exportação futura.
-2. **Given** uma coluna do CSV que foi usada como título, texto ou ID externo, **When** qualquer membro autorizado exporta a base, **Then** essa coluna ainda aparece como parte da linha original preservada, sem depender apenas do campo normalizado da plataforma.
+2. **Given** uma coluna do CSV que foi usada como título, texto ou ID externo, **When** o coordenador exporta a base, **Then** essa coluna ainda aparece como parte da linha original preservada, sem depender apenas do campo normalizado da plataforma.
 
 ---
 
 ### User Story 2 - Encontrar exportação no topo de Documentos (Priority: P2)
 
-Como membro do projeto que quer analisar os dados fora da plataforma, quero acessar Documentos e encontrar a exportação logo no topo da tela para não precisar saber que ela ficava escondida em outra área.
+Como coordenador que quer analisar os dados fora da plataforma, quero acessar Documentos e encontrar a exportação logo no topo da tela para não precisar saber que ela ficava escondida em outra área.
 
 **Why this priority**: Exportar é uma ação natural do fluxo de Documentos: o usuário primeiro entende quais documentos compõem a base e depois baixa o conjunto completo para análise. Colocar a exportação no topo reduz descoberta por tentativa e erro.
 
@@ -49,23 +50,7 @@ Como membro do projeto que quer analisar os dados fora da plataforma, quero aces
 
 ---
 
-### User Story 3 - Consultar Documentos como membro do projeto (Priority: P3)
-
-Como pesquisador ou outro membro do projeto, quero acessar Documentos em modo leitura para conferir a base que estou codificando ou revisando, sem receber permissões de coordenação.
-
-**Why this priority**: A leitura dos documentos é parte do trabalho de todos os membros, enquanto importação e ações destrutivas continuam sendo responsabilidade de coordenação. Separar leitura de gestão simplifica permissões sem abrir configurações sensíveis.
-
-**Independent Test**: Entrar como membro não coordenador de um projeto; acessar Documentos; confirmar que lista, preview e exportação estão disponíveis, enquanto importação, exclusão, restauração e apagamento não aparecem ou não são acionáveis.
-
-**Acceptance Scenarios**:
-
-1. **Given** um membro não coordenador com acesso ao projeto, **When** ele abre Documentos, **Then** ele vê a lista de documentos, consegue abrir preview e consegue baixar exportações.
-2. **Given** esse mesmo membro não coordenador, **When** ele visualiza Documentos, **Then** ações de importação, exclusão, restauração e apagamento não ficam disponíveis.
-3. **Given** um coordenador do projeto, **When** ele abre Documentos, **Then** ele continua podendo importar, excluir, restaurar e apagar documentos conforme as regras já existentes.
-
----
-
-### User Story 4 - Exportar documentos antigos sem quebrar o fluxo (Priority: P4)
+### User Story 3 - Exportar documentos antigos sem quebrar o fluxo (Priority: P3)
 
 Como usuário de um projeto já existente, quero que documentos importados antes dessa melhoria continuem exportáveis para que a nova experiência de Documentos não bloqueie análises de bases antigas.
 
@@ -87,8 +72,7 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 - Projetos sem respostas individuais ou sem gabarito devem continuar baixando a exportação completa sem erro: todos os documentos aparecem como linhas de origem “documento”, com colunas originais preenchidas e campos de resposta/gabarito vazios.
 - Campos da base original com o mesmo nome de campos de controle da exportação devem ser diferenciados para evitar ambiguidade no arquivo final.
 - Valores complexos de respostas ou gabarito devem continuar sendo representados de forma legível na exportação, como ocorre hoje.
-- Usuários sem acesso ao projeto não devem conseguir visualizar Documentos nem baixar exportações.
-- Um membro não coordenador não deve conseguir acionar ações de gestão de documentos por navegação direta, atalho ou estado residual da interface.
+- Usuários que não sejam coordenadores do projeto não devem conseguir visualizar Documentos nem baixar exportações, inclusive por navegação direta à rota.
 - Em reimportações que substituem documentos existentes, a linha original preservada deve refletir a nova linha importada; em duplicatas ignoradas, os dados preservados anteriormente devem permanecer inalterados.
 
 ## Requirements *(mandatory)*
@@ -109,9 +93,8 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 - **FR-011**: Documentos sem linha original preservada devem continuar exportáveis, com células vazias nas colunas da base original que não existirem para esses documentos.
 - **FR-012**: A exportação deve diferenciar colunas da base original quando seus nomes colidirem com colunas de controle, respostas ou gabarito.
 - **FR-013**: A exportação deve manter informações suficientes para o usuário distinguir a origem de cada linha no arquivo final: resposta individual, registro de gabarito ou documento sem resposta.
-- **FR-014**: Todos os membros do projeto devem poder acessar Documentos em modo leitura, visualizar preview de documentos e baixar exportações.
+- **FR-014**: A área Documentos — lista, preview e exportação — permanece restrita a coordenadores do projeto, mantendo o controle de acesso já existente.
 - **FR-015**: Ações de importação, exclusão, restauração e apagamento de documentos devem continuar restritas a coordenadores.
-- **FR-016**: A experiência de Documentos deve deixar claro para membros não coordenadores quais ações são apenas de coordenação, preferindo ocultar ações indisponíveis a exibir controles inertes.
 - **FR-017**: A melhoria não deve introduzir nesta versão exportação em ZIP, geração assíncrona, jobs de exportação ou novo fluxo de seleção de recortes.
 - **FR-018**: A melhoria não deve exigir reconstrução retroativa da linha original para documentos já importados antes da preservação.
 
@@ -129,12 +112,11 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 
 - **Documento importado**: Unidade de análise criada a partir de uma linha do CSV, com conteúdo textual, título opcional, ID externo opcional e a linha original preservada.
 - **Linha original do CSV**: Conjunto completo de pares coluna-valor fornecido pelo usuário na importação, preservado para auditoria e exportação posterior.
-- **Área Documentos**: Experiência unificada para consultar documentos, visualizar preview, importar documentos quando o usuário for coordenador e baixar exportações.
+- **Área Documentos**: Experiência unificada, exclusiva de coordenadores, para consultar documentos, visualizar preview, importar documentos e baixar exportações.
 - **Resposta individual**: Codificação humana ou gerada por LLM associada a um documento e a um conjunto de campos do schema do projeto.
 - **Gabarito do revisor**: Resultado consolidado da revisão/comparação para um documento, exportado junto com as respostas individuais quando disponível.
 - **Arquivo exportado**: Saída baixada pelo usuário em CSV ou XLSX contendo dados da base original preservada, respostas e gabarito disponível.
-- **Membro do projeto**: Usuário com acesso ao projeto, autorizado a consultar documentos e exportações.
-- **Coordenador do projeto**: Usuário com permissões de gestão sobre documentos, incluindo importação e ações destrutivas.
+- **Coordenador do projeto**: Usuário com permissões de gestão sobre documentos — importação, ações destrutivas, consulta e exportação.
 
 ## Success Criteria *(mandatory)*
 
@@ -142,7 +124,7 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 
 - **SC-001**: Em um CSV de teste com pelo menos 5 colunas originais, incluindo 2 colunas não mapeadas para campos operacionais, 100% das colunas aparecem na exportação após o upload.
 - **SC-002**: Usuários conseguem baixar a exportação completa a partir do topo de Documentos escolhendo apenas o formato do arquivo.
-- **SC-003**: Um membro não coordenador consegue acessar Documentos, visualizar preview e baixar exportação sem ver ações de importação, exclusão, restauração ou apagamento.
+- **SC-003**: Um membro não coordenador não acessa Documentos nem exportação — a navegação não oferece o caminho e o acesso direto à rota é redirecionado, como já ocorre com as demais áreas de coordenação.
 - **SC-004**: Um coordenador mantém acesso às ações de gestão de documentos já existentes após a reorganização da experiência.
 - **SC-005**: Projetos com documentos antigos sem linha original preservada geram CSV e XLSX sem erro e mantêm visíveis os dados disponíveis da plataforma.
 - **SC-006**: Em um projeto com respostas individuais e gabarito, o arquivo exportado permite distinguir a origem de 100% das linhas.
@@ -154,7 +136,7 @@ Como usuário de um projeto já existente, quero que documentos importados antes
 - A exportação completa é preferível a filtros na plataforma; o usuário fará recortes posteriores em ferramenta externa de análise.
 - Colunas da base original são tratadas como dados do usuário e devem aparecer no export exatamente para fins de análise e auditoria, salvo ajustes necessários de nome para evitar colisão de cabeçalhos.
 - A melhoria vale para novas importações por CSV; documentos antigos sem linha original preservada não serão retroativamente enriquecidos.
-- Todos os membros do projeto podem consultar documentos, mas apenas coordenadores podem alterar a composição da base de documentos.
-- A experiência unificada permanece em Configurações > Documentos nesta versão, mas deixa de tratar a leitura de Documentos como uma área exclusiva de coordenadores.
+- Documentos e exportação são tarefa de coordenação: pesquisadores analisam a partir de arquivos repassados pela coordenação. A remoção da aba Exportar de Revisões retira dos pesquisadores um acesso que existe hoje — regressão aceita em favor da simplicidade.
+- A experiência unificada permanece em Configurações > Documentos, mantendo o gate de coordenador já existente, sem mudança de rota ou permissão.
 - Não há requisito de migration nesta especificação. A fase de planejamento técnico deve apenas verificar se a persistência e as permissões existentes já suportam o comportamento descrito; se descobrir lacuna real, a migration passa a ser consequência técnica, não premissa da feature.
 - O alvo principal continua sendo uso em desktop, com foco em clareza e densidade de informação para análise.
