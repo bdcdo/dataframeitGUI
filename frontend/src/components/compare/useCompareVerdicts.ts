@@ -174,9 +174,20 @@ export function useCompareVerdicts({
         verdictDisplay,
         verdictComment,
         buildSnapshot(fieldResponses),
-      );
+      ).catch((error: unknown) => {
+        // Mesmo padrão do handleVerdict: rejeição da server action (fora do
+        // try dela) seria descartada pelo `void` do call site — sem toast.
+        console.error("Failed to confirm equivalent verdict", {
+          error,
+          projectId,
+          documentId: docId,
+          fieldName,
+        });
+        toast.error("Não foi possível salvar a equivalência. Tente novamente antes de avançar.");
+        return { error: "unexpected" };
+      });
       if (result?.error) {
-        toast.error(result.error);
+        if (result.error !== "unexpected") toast.error(result.error);
         return;
       }
 
@@ -214,9 +225,19 @@ export function useCompareVerdicts({
 
   const handleMarkReviewed = useCallback(async () => {
     if (!currentDoc) return;
-    const result = await markCompareDocReviewed(projectId, currentDoc.id);
+    const result = await markCompareDocReviewed(projectId, currentDoc.id).catch(
+      (error: unknown) => {
+        console.error("Failed to mark compare doc reviewed", {
+          error,
+          projectId,
+          documentId: currentDoc.id,
+        });
+        toast.error("Não foi possível marcar o documento como revisado. Tente novamente.");
+        return { error: "unexpected" };
+      },
+    );
     if (result?.error) {
-      toast.error(result.error);
+      if (result.error !== "unexpected") toast.error(result.error);
       return;
     }
     toast.success("Documento marcado como revisado.");
@@ -224,9 +245,19 @@ export function useCompareVerdicts({
 
   const handleUnmarkPair = useCallback(
     async (pairId: string) => {
-      const result = await unmarkEquivalencePair(projectId, pairId);
+      const result = await unmarkEquivalencePair(projectId, pairId).catch(
+        (error: unknown) => {
+          console.error("Failed to unmark equivalence pair", {
+            error,
+            projectId,
+            pairId,
+          });
+          toast.error("Não foi possível remover a equivalência. Tente novamente.");
+          return { error: "unexpected" };
+        },
+      );
       if (result?.error) {
-        toast.error(result.error);
+        if (result.error !== "unexpected") toast.error(result.error);
         return;
       }
       toast.success("Equivalência removida.");

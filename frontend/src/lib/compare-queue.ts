@@ -437,20 +437,25 @@ export function buildReviewsAndReviewedCounts(
 ): { existingReviews: ReviewsByDoc; reviewedCountByDoc: Record<string, number> } {
   const existingReviews: ReviewsByDoc = {};
 
-  // Track reviews do user atual para preencher reviewedCount
+  // A revisão da Comparação é POR REVISOR (UNIQUE inclui reviewer_id, e
+  // syncCompareAssignment fecha o assignment contando só os reviews do
+  // usuário). Por isso `existingReviews` — que semeia `localReviews` e decide
+  // "campo/doc já revisado" na UI — considera SÓ a identidade efetiva, igual
+  // ao reviewedCount. Semear com vereditos de terceiros (comportamento antigo)
+  // marcava docs revisados por outro revisor como "Revisão concluída" na tela
+  // de quem nunca os revisou: o teclado de voto era bloqueado e o assignment
+  // nunca fechava — o parecer travava na fila (bug relatado em 2026-07-10).
   const myReviewsByDoc = new Map<string, Set<string>>();
   reviews?.forEach((r) => {
+    if (r.reviewer_id !== userId) return;
     if (!existingReviews[r.document_id]) existingReviews[r.document_id] = {};
-    // Sempre captura o veredito mais recente (se múltiplos reviewers, o da página é do user logado)
     existingReviews[r.document_id][r.field_name] = {
       verdict: r.verdict,
       chosenResponseId: r.chosen_response_id ?? null,
       comment: r.comment ?? null,
     };
-    if (r.reviewer_id === userId) {
-      if (!myReviewsByDoc.has(r.document_id)) myReviewsByDoc.set(r.document_id, new Set());
-      myReviewsByDoc.get(r.document_id)!.add(r.field_name);
-    }
+    if (!myReviewsByDoc.has(r.document_id)) myReviewsByDoc.set(r.document_id, new Set());
+    myReviewsByDoc.get(r.document_id)!.add(r.field_name);
   });
 
   const reviewedCountByDoc: Record<string, number> = {};
