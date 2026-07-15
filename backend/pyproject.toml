@@ -19,8 +19,8 @@ dependencies = [
 
 # Este projeto é um app FastAPI executado via `uvicorn main:app`, não uma lib
 # instalável — não há diretório de pacote para empacotar. Sem isto, `uv sync` /
-# `uv run` falham tentando buildar um wheel. O deploy (Dockerfile) instala as
-# dependências direto via `uv pip install --system`, sem empacotar o app.
+# `uv run` falham tentando buildar um wheel. O deploy também usa `uv sync`
+# sobre este projeto e o `uv.lock`, sem empacotar o app.
 [tool.uv]
 package = false
 # Cooldown de dependencias: aguarda 7 dias antes de resolver versoes recem
