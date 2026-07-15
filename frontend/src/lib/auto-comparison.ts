@@ -532,24 +532,3 @@ export async function scanComparisonBacklog(
 
   return result;
 }
-
-// Solta as comparações PENDENTES atribuídas a `userId` (em_andamento/concluido
-// ficam intactas). Disparada por setCanCompare ao desmarcar can_compare, antes
-// do retry re-sortear. Espelha releaseArbitrationsFromUser, porém mais simples
-// (não há field_reviews para limpar — a comparação é só o assignment).
-export async function releaseComparisonsFromUser(
-  admin: Admin,
-  projectId: string,
-  userId: string,
-): Promise<{ released: number; error?: string }> {
-  const { data: deleted, error } = await admin
-    .from("assignments")
-    .delete()
-    .eq("project_id", projectId)
-    .eq("user_id", userId)
-    .eq("type", "comparacao")
-    .eq("status", "pendente")
-    .select("id");
-  if (error) return { released: 0, error: error.message };
-  return { released: deleted?.length ?? 0 };
-}

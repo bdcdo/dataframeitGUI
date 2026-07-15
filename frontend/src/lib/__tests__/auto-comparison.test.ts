@@ -19,7 +19,6 @@ let writeCalls: WriteCall[];
 let tableData: Record<string, unknown[]>;
 
 const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
-const deleteCallsOf = (table?: string) => callsOf(writeCalls, "delete", table);
 
 function makeClient() {
   return makeFilterAwareSupabaseMock({ tableData, writeCalls });
@@ -367,26 +366,5 @@ describe("scanComparisonBacklog — piso de versão latest_major (#247)", () => 
     );
     expect(backlog).toHaveLength(1);
     expect(backlog[0].documentId).toBe("doc1");
-  });
-});
-
-describe("releaseComparisonsFromUser", () => {
-  it("deleta comparacao pendente do usuário", async () => {
-    const { releaseComparisonsFromUser } = await loadLib();
-    tableData.assignments = [
-      { id: "a1", project_id: "p1", user_id: "userX", type: "comparacao", status: "pendente" },
-      { id: "a2", project_id: "p1", user_id: "userX", type: "comparacao", status: "em_andamento" },
-    ];
-    const r = await releaseComparisonsFromUser(makeClient() as never, "p1", "userX");
-    // só a pendente é contada (o filtro status=pendente exclui em_andamento)
-    expect(r.released).toBe(1);
-    expect(deleteCallsOf("assignments")).toHaveLength(1);
-  });
-
-  it("nada pendente → released 0", async () => {
-    const { releaseComparisonsFromUser } = await loadLib();
-    tableData.assignments = [];
-    const r = await releaseComparisonsFromUser(makeClient() as never, "p1", "userX");
-    expect(r.released).toBe(0);
   });
 });

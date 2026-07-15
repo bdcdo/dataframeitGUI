@@ -29,6 +29,27 @@ interface MemberListProps {
   currentUserId: string;
 }
 
+async function removeMemberWithToast(memberId: string) {
+  const result = await removeMember(memberId);
+  if (result?.error) {
+    toast.error(result.error);
+  } else {
+    toast.success("Membro removido");
+  }
+}
+
+async function changeRoleWithToast(
+  memberId: string,
+  newRole: "coordenador" | "pesquisador",
+) {
+  const result = await changeRole(memberId, newRole);
+  if (result?.error) {
+    toast.error(result.error);
+  } else {
+    toast.success("Papel atualizado");
+  }
+}
+
 export function MemberList({
   projectId,
   members,
@@ -68,26 +89,7 @@ export function MemberList({
     ),
   );
 
-  const handleRemove = async (memberId: string) => {
-    const result = await removeMember(projectId, memberId);
-    if (result?.error) {
-      toast.error(result.error);
-    } else {
-      toast.success("Membro removido");
-    }
-  };
-
-  const handleChangeRole = async (memberId: string, newRole: "coordenador" | "pesquisador") => {
-    const result = await changeRole(memberId, newRole, projectId);
-    if (result?.error) {
-      toast.error(result.error);
-    } else {
-      toast.success("Papel atualizado");
-    }
-  };
-
   const arbitrate = useTogglePermission(
-    projectId,
     setCanArbitrate,
     (value) => ({ can_arbitrate: value }),
     (value, retried) =>
@@ -100,7 +102,6 @@ export function MemberList({
     startTransition,
   );
   const resolve = useTogglePermission(
-    projectId,
     setCanResolve,
     (value) => ({ can_resolve: value }),
     (value) =>
@@ -109,7 +110,6 @@ export function MemberList({
     startTransition,
   );
   const compare = useTogglePermission(
-    projectId,
     setCanCompare,
     (value) => ({ can_compare: value }),
     (value, retried) =>
@@ -141,8 +141,10 @@ export function MemberList({
           onToggleArbitrate={arbitrate.toggle}
           onToggleResolve={resolve.toggle}
           onToggleCompare={compare.toggle}
-          onChangeRole={(memberId, newRole) => void handleChangeRole(memberId, newRole)}
-          onRemove={(memberId) => void handleRemove(memberId)}
+          onChangeRole={(memberId, newRole) =>
+            void changeRoleWithToast(memberId, newRole)
+          }
+          onRemove={(memberId) => void removeMemberWithToast(memberId)}
         />
       ))}
       {linkingMember && (

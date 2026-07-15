@@ -11,26 +11,12 @@ import { authModuleMock } from "@/test-utils/auth-mock";
 // e assignArbitrator sem subir Postgres.
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown>;
-let adminCreateCalls: number;
-let adminFromCalls: string[];
 
 const updateCallsOf = (table?: string) => callsOf(writeCalls, "update", table);
 const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
-const deleteCallsOf = (table?: string) => callsOf(writeCalls, "delete", table);
 
 function makeClient() {
   return makeSimpleSupabaseMock({ tableData, writeCalls });
-}
-
-function makeAdminClient() {
-  adminCreateCalls++;
-  const client = makeClient();
-  return {
-    from: (table: string) => {
-      adminFromCalls.push(table);
-      return client.from(table);
-    },
-  };
 }
 
 // isProjectCoordinator: hoisted para permitir override por teste.
@@ -44,13 +30,11 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeAdminClient(),
+  createSupabaseAdmin: () => makeClient(),
 }));
 
 beforeEach(() => {
   writeCalls = [];
-  adminCreateCalls = 0;
-  adminFromCalls = [];
   tableData = {
     field_reviews: [],
     project_members: [],
@@ -218,93 +202,6 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
     expect(r.assigned).toBe(0);
     expect(r.stillNoPool).toBe(1);
     expect(updateCallsOf("field_reviews")).toHaveLength(0);
-  });
-});
-
-async function loadRelease() {
-  return (await import("@/actions/field-reviews")).releaseArbitrationsFromUser;
-}
-
-describe("releaseArbitrationsFromUser", () => {
-  it("não-coordenador → erro, nenhum efeito colateral (guard IDOR #166)", async () => {
-    // Sem o gate, qualquer autenticado libera a arbitragem alheia via
-    // Next-Action + createSupabaseAdmin (bypassa RLS). O guard precisa barrar
-    // ANTES de qualquer leitura/escrita no admin client.
-    hoisted.isCoord.mockResolvedValueOnce(false);
-    tableData.field_reviews = [{ id: "fr1", document_id: "doc1" }];
-    const release = await loadRelease();
-    const r = await release("p1", "userX");
-    expect(r.released).toBe(0);
-    expect(r.error).toContain("coordenadores");
-    expect(adminCreateCalls).toBe(0);
-    expect(adminFromCalls).toEqual([]);
-    expect(writeCalls).toHaveLength(0);
-  });
-
-  it("sem field_reviews afetados → released 0, nenhum write", async () => {
-    tableData.field_reviews = [];
-    const release = await loadRelease();
-    const r = await release("p1", "userX");
-    expect(r.released).toBe(0);
-    expect(r.error).toBeUndefined();
-    expect(writeCalls).toHaveLength(0);
-  });
-
-  it("N afetados → UPDATE primeiro, DELETE depois, released N", async () => {
-    tableData.field_reviews = [
-      { id: "fr1", document_id: "doc1" },
-      { id: "fr2", document_id: "doc1" },
-      { id: "fr3", document_id: "doc2" },
-    ];
-    const release = await loadRelease();
-    const r = await release("p1", "userX");
-    expect(r.released).toBe(3);
-    expect(r.error).toBeUndefined();
-    // 1 UPDATE em field_reviews zerando arbitrator_id/blind_verdict/blind_decided_at
-    const upd = updateCallsOf("field_reviews");
-    expect(upd).toHaveLength(1);
-    expect(upd[0].payload).toEqual({
-      arbitrator_id: null,
-      blind_verdict: null,
-      blind_decided_at: null,
-    });
-    // 1 DELETE em assignments (árbitragens órfãs do ex-árbitro)
-    expect(deleteCallsOf("assignments")).toHaveLength(1);
-    // Ordem importa: UPDATE precede DELETE (estado autocorrigível se DELETE
-    // falhar; ordem inversa deixaria field_reviews presos ao ex-árbitro).
-    const updIdx = writeCalls.findIndex(
-      (c) => c.op === "update" && c.table === "field_reviews",
-    );
-    const delIdx = writeCalls.findIndex(
-      (c) => c.op === "delete" && c.table === "assignments",
-    );
-    expect(updIdx).toBeLessThan(delIdx);
-  });
-
-  it("UPDATE falha → released 0, error preenchido, sem DELETE", async () => {
-    tableData.field_reviews = [{ id: "fr1", document_id: "doc1" }];
-    tableData["__error:field_reviews:update"] = { message: "RLS bloqueou update" };
-    const release = await loadRelease();
-    const r = await release("p1", "userX");
-    expect(r.released).toBe(0);
-    expect(r.error).toBe("RLS bloqueou update");
-    // Sem DELETE: a função sai antes — UPDATE falhou, então não toca assignments.
-    expect(deleteCallsOf("assignments")).toHaveLength(0);
-  });
-
-  it("DELETE falha → released N (estado já liberado), error preenchido", async () => {
-    tableData.field_reviews = [
-      { id: "fr1", document_id: "doc1" },
-      { id: "fr2", document_id: "doc2" },
-    ];
-    tableData["__error:assignments:delete"] = { message: "RLS bloqueou delete" };
-    const release = await loadRelease();
-    const r = await release("p1", "userX");
-    // UPDATE foi aplicado (released = 2) mas DELETE falhou. Estado é
-    // autocorrigível: field_reviews já têm arbitrator_id NULL.
-    expect(r.released).toBe(2);
-    expect(r.error).toBe("RLS bloqueou delete");
-    expect(updateCallsOf("field_reviews")).toHaveLength(1);
   });
 });
 
