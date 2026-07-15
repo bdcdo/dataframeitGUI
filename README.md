@@ -21,11 +21,21 @@ Plataforma web para análise de conteúdo com IA, baseada na lib dataframeit.
 ### Frontend
 
 ```bash
-cd frontend
-pnpm install
-cp .env.example .env.local  # configurar SUPABASE_URL e SUPABASE_ANON_KEY
-pnpm dev
+npm --prefix frontend install
+cp frontend/.env.local.example frontend/.env.local
+# Preencha frontend/.env.local sem versionar credenciais.
+npm --prefix frontend run dev
 ```
+
+### Provisionamento de worktrees
+
+Depois de criar uma worktree, execute na raiz dela um único comando e informe explicitamente um checkout cujo diretório `frontend/` já contenha `.env.local` e `.env.e2e` válidos:
+
+```bash
+./frontend/scripts/worktree-env/bootstrap.sh --source /caminho/do/checkout-fonte/frontend
+```
+
+O bootstrap valida as atribuições não comentadas de `.env.local.example` e `.env.e2e.example`, cria symlinks para os dois arquivos da fonte e falha antes de alterar a worktree se a fonte estiver incompleta ou se algum destino já existir. Ele não copia credenciais, não sobrescreve arquivos e não tenta descobrir outro checkout pelo layout dos diretórios.
 
 ### Backend
 
