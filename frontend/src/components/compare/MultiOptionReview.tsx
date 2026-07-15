@@ -31,6 +31,7 @@ interface MultiOptionReviewProps {
   options: string[];
   responses: MultiOptionResponse[];
   existingVerdict: ExistingVerdict | null;
+  isSubmitting: boolean;
   onSubmit: (verdictJson: string) => void;
 }
 
@@ -38,6 +39,7 @@ export function MultiOptionReview({
   options,
   responses,
   existingVerdict,
+  isSubmitting,
   onSubmit,
 }: MultiOptionReviewProps) {
   // Count how many respondents selected each option
@@ -78,10 +80,12 @@ export function MultiOptionReview({
   );
 
   const toggleOption = (opt: string) => {
+    if (isSubmitting) return;
     setChoices((prev) => ({ ...prev, [opt]: !prev[opt] }));
   };
 
   const handleSubmit = () => {
+    if (isSubmitting) return;
     onSubmit(JSON.stringify(choices));
   };
 
@@ -121,7 +125,10 @@ export function MultiOptionReview({
           <label
             key={stat.option}
             className={cn(
-              "flex cursor-pointer items-center gap-2.5 rounded-lg border p-2.5 transition-colors hover:bg-accent/50",
+              "flex items-center gap-2.5 rounded-lg border p-2.5 transition-colors",
+              isSubmitting
+                ? "cursor-not-allowed opacity-60"
+                : "cursor-pointer hover:bg-accent/50",
               stat.isDivergent
                 ? "border-amber-500/30 bg-amber-500/5"
                 : "border-muted",
@@ -129,6 +136,7 @@ export function MultiOptionReview({
           >
             <Checkbox
               checked={choices[stat.option] ?? false}
+              disabled={isSubmitting}
               onCheckedChange={() => toggleOption(stat.option)}
             />
             <div className="min-w-0 flex-1">
@@ -173,9 +181,10 @@ export function MultiOptionReview({
         <Button
           size="sm"
           className="mt-2 w-full"
+          disabled={isSubmitting}
           onClick={handleSubmit}
         >
-          [Enter] Confirmar
+          {isSubmitting ? "Salvando..." : "[Enter] Confirmar"}
         </Button>
       </div>
     </TooltipProvider>

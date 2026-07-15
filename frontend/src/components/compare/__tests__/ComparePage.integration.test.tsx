@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -182,6 +182,63 @@ describe("ComparePage — árvore real (smoke)", () => {
       undefined,
       expect.any(Array),
     );
+  });
+
+  it("campo multi mantém click/Enter em single-flight e exibe o save em andamento", async () => {
+    let finishSave!: () => void;
+    const save = new Promise<void>((resolve) => {
+      finishSave = resolve;
+    });
+    submitVerdict.mockReturnValueOnce(save);
+
+    render(
+      <TooltipProvider>
+        <ComparePage
+          {...props}
+          fields={[
+            {
+              name: "campoA",
+              type: "multi",
+              options: ["Sim", "Não"],
+              description: "Pergunta A",
+              hash: "hA",
+            },
+          ]}
+          responses={{
+            d1: [
+              resp("r1", "humano", "Ana", { campoA: ["Sim"] }),
+              resp("r2", "llm", "GPT", { campoA: ["Não"] }),
+            ],
+          }}
+          divergentFields={{ d1: ["campoA"] }}
+        />
+      </TooltipProvider>,
+    );
+
+    const confirmButton = screen.getByRole("button", {
+      name: "[Enter] Confirmar",
+    });
+
+    // Dispatch direto no mesmo act mantém os três eventos antes do rerender.
+    // O state visual ainda está stale; só a trava síncrona pode rejeitar o
+    // segundo click e o Enter sem disparar outra Server Action.
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    });
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    const savingButton = screen.getByRole("button", { name: "Salvando..." });
+    expect(savingButton).toHaveProperty("disabled", true);
+    for (const checkbox of screen.getAllByRole("checkbox")) {
+      expect(checkbox).toHaveProperty("disabled", true);
+    }
+
+    await act(async () => {
+      finishSave();
+      await save;
+    });
   });
 
   it("'Descartar' no painel real limpa a seleção sem salvar", async () => {

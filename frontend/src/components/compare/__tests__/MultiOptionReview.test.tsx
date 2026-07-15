@@ -16,6 +16,7 @@ describe("MultiOptionReview — atalhos de teclado", () => {
         options={["A", "B", "C"]}
         responses={[]}
         existingVerdict={null}
+        isSubmitting={false}
         onSubmit={onSubmit}
       />,
     );
@@ -43,6 +44,7 @@ describe("MultiOptionReview — atalhos de teclado", () => {
         options={["A", "B"]}
         responses={[]}
         existingVerdict={null}
+        isSubmitting={false}
         onSubmit={onSubmit}
       />,
     );
@@ -67,6 +69,7 @@ describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", ()
         options={["A", "B"]}
         responses={[]}
         existingVerdict={null}
+        isSubmitting={false}
         onSubmit={vi.fn()}
       />,
     );
@@ -92,6 +95,7 @@ describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", ()
           chosenResponseId: null,
           comment: null,
         }}
+        isSubmitting={false}
         onSubmit={vi.fn()}
       />,
     );

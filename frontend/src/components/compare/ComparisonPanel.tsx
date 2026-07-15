@@ -194,6 +194,7 @@ export function ComparisonPanel({
             options={fieldOptions}
             responses={responses}
             existingVerdict={existingVerdict}
+            isSubmitting={isConfirmingVerdict}
             onSubmit={(verdictJson) => onVerdict(verdictJson)}
           />
         ) : (
