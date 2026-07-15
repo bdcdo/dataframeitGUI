@@ -2,7 +2,12 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, getEffectiveMemberId, requireCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getEffectiveMemberId,
+  getProjectAccessContext,
+  requireCoordinator,
+} from "@/lib/auth";
 import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
 import { canonicalPair } from "@/lib/equivalence";
@@ -11,9 +16,7 @@ import {
   computeBacklogRows,
   compositeKeySet,
   diffReviewsToRemove,
-  type AssignmentRow,
   type ExistingFieldReviewRow,
-  type FieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
 } from "@/lib/auto-review-backlog";
@@ -64,10 +67,6 @@ export async function submitAutoReview(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
-    // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
-    // como o membro canônico.
-    const effectiveId = await getEffectiveMemberId(projectId);
-
     // contesta_llm e ambiguo exigem justificativa — o arbitro precisa do
     // contraponto humano na revelacao; ambiguo leva o porque para a discussao.
     for (const v of verdicts) {
@@ -80,6 +79,18 @@ export async function submitAutoReview(
               : `Campo "${v.fieldName}": justificativa obrigatória quando você contesta o LLM.`,
         };
       }
+    }
+
+    // Esta action usa service role para materializar efeitos que um pesquisador
+    // não pode escrever diretamente (equivalência, comentário e arbitragem).
+    // Revalidar o acesso no entrypoint impede que uma linha histórica seja usada
+    // para acionar o bypass depois da remoção do projeto.
+    const [{ project, queryFailed }, effectiveId] = await Promise.all([
+      getProjectAccessContext(projectId, user.id, user.isMaster),
+      getEffectiveMemberId(projectId),
+    ]);
+    if (queryFailed || !project) {
+      return { success: false, error: "Projeto não encontrado ou inacessível." };
     }
 
     const admin = createSupabaseAdmin();
@@ -284,6 +295,7 @@ export async function submitAutoReview(
     let warning: string | undefined;
     if (contested.length > 0) {
       const result = await assignArbitrator(
+        admin,
         projectId,
         documentId,
         effectiveId,
@@ -334,14 +346,13 @@ export async function submitAutoReview(
 //    usa para alertar o pesquisador; sem esse sinal, o submit completa
 //    silenciosamente e os campos ficam presos sem árbitro)
 async function assignArbitrator(
+  admin: SupabaseDataClient,
   projectId: string,
   documentId: string,
   excludeUserId: string,
   fieldNames: string[],
   precomputedCoderIds?: Set<string>,
 ): Promise<{ count: number; noPool: boolean }> {
-  const admin = createSupabaseAdmin();
-
   // Codificadores humanos deste documento — quem já tem resposta registrada
   // para o doc (recurso de comparação N+). Quando o caller pré-buscou em
   // batch (retryPendingArbitrations), reusa o set para evitar N queries.
@@ -576,7 +587,6 @@ export async function submitFinalVerdicts(
     }
 
     const supabase = await createSupabaseServer();
-    const admin = createSupabaseAdmin();
     const now = new Date().toISOString();
 
     // Estrategia de clientes:
@@ -643,12 +653,18 @@ export async function submitFinalVerdicts(
       choicesToUpdate.push(c);
     }
 
+    // A service role só é necessária para decisões pelo LLM (leitura das duas
+    // responses + comentário canônico). Instanciar depois de validar todas as
+    // linhas garante que documento/campo/arbitrator/RLS falhem antes de a chave
+    // administrativa sequer ser lida; decisões humanas não criam admin client.
+    const llmChoices = choices.filter((c) => c.verdict === "llm");
+    const admin = llmChoices.length > 0 ? createSupabaseAdmin() : null;
+
     // 2) Respostas: admin porque a RLS de responses restringe leitura cross-user
     // (arbitro nao precisa ser membro do mesmo "scope" da resposta humana).
     // So precisa carregar respostas se ha algum verdict='llm' (para o comment).
-    const needsResponseData = choices.some((c) => c.verdict === "llm");
     const responseById = new Map<string, { id: string; answers: unknown }>();
-    if (needsResponseData) {
+    if (admin) {
       const responseIds = new Set<string>();
       for (const r of frRows ?? []) {
         responseIds.add(r.human_response_id);
@@ -708,8 +724,7 @@ export async function submitFinalVerdicts(
     // em retry (sem precisar de UNIQUE constraint que limitaria o uso geral
     // de comments). Race window minuscula entre SELECT e INSERT — aceitavel
     // dado o custo de evitar.
-    const llmChoices = choices.filter((c) => c.verdict === "llm");
-    if (llmChoices.length > 0) {
+    if (admin) {
       const { data: existingComments } = await admin
         .from("project_comments")
         .select("field_name")
@@ -803,7 +818,11 @@ export async function submitFinalVerdicts(
 //
 // Bulk-otimizado: queries em batch + upserts/deletes em batch, independente do
 // numero de respostas.
-type SupabaseAdminClient = ReturnType<typeof createSupabaseAdmin>;
+// Os dois factories retornam o mesmo cliente Supabase; o papel efetivo vem da
+// chave/token usado na criação. Helpers coordinator-only recebem o cliente
+// autenticado para preservar RLS, enquanto fluxos disparados por pesquisador
+// podem passar o admin client explicitamente.
+type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 
 interface BacklogInputs {
   fields: PydanticField[];
@@ -817,7 +836,7 @@ interface BacklogInputs {
 // convertido em { success: false, error } pelo try/catch de
 // regenerateAutoReviewBacklog.
 async function fetchBacklogInputs(
-  admin: SupabaseAdminClient,
+  admin: SupabaseDataClient,
   projectId: string,
 ): Promise<BacklogInputs> {
   const [
@@ -880,7 +899,7 @@ async function fetchBacklogInputs(
 // concluidos sao preservados. As duas leituras refletem o estado pos-
 // delete/upsert e sao independentes entre si — buscadas em paralelo.
 async function removeOrphanAssignments(
-  admin: SupabaseAdminClient,
+  admin: SupabaseDataClient,
   projectId: string,
 ): Promise<void> {
   const [
@@ -934,9 +953,9 @@ export async function regenerateAutoReviewBacklog(
     );
     if (!gate.ok) return { success: false, error: gate.error };
 
-    const admin = createSupabaseAdmin();
+    const supabase = await createSupabaseServer();
     const { fields, humanResponses, llmResponses, equivalences, existingReviews } =
-      await fetchBacklogInputs(admin, projectId);
+      await fetchBacklogInputs(supabase, projectId);
 
     if (fields.length === 0) {
       return { success: true, scanned: 0, regenerated: 0 };
@@ -959,6 +978,14 @@ export async function regenerateAutoReviewBacklog(
       fieldReviewRows,
     );
 
+    // A migration de hardening da #134 remove todo INSERT autenticado em
+    // field_reviews: a fila só pode ser materializada por um serviço após um
+    // gate explícito. Validar a configuração do factory antes de qualquer
+    // mutation evita apagar/upsertar metade do backlog quando o secret estiver
+    // ausente; sem linhas novas, nenhuma service role é criada.
+    const admin =
+      fieldReviewRows.length > 0 ? createSupabaseAdmin() : null;
+
     // Defesa em profundidade: `.is("self_verdict", null)` fecha a janela TOCTOU
     // entre a leitura de `existingReviews` (fetchBacklogInputs) e este DELETE.
     // Se um pesquisador resolver um campo nesse intervalo, o DB recusa a linha
@@ -966,7 +993,7 @@ export async function regenerateAutoReviewBacklog(
     // efetivamente apagadas, fonte da contagem `removed` retornada.
     let actuallyRemoved = 0;
     if (idsToDelete.length > 0) {
-      const { data: deleted, error } = await admin
+      const { data: deleted, error } = await supabase
         .from("field_reviews")
         .delete()
         .in("id", idsToDelete)
@@ -977,13 +1004,13 @@ export async function regenerateAutoReviewBacklog(
     }
 
     if (assignmentRows.length > 0) {
-      const { error } = await admin.from("assignments").upsert(assignmentRows, {
+      const { error } = await supabase.from("assignments").upsert(assignmentRows, {
         onConflict: "document_id,user_id,type",
         ignoreDuplicates: true,
       });
       if (error) return { success: false, error: error.message };
     }
-    if (fieldReviewRows.length > 0) {
+    if (admin) {
       // NB: ignoreDuplicates reconcilia o *conjunto* de field_reviews
       // (doc+field), nao os ponteiros. Uma linha ja existente mantem seus
       // human_response_id/llm_response_id antigos mesmo que o LLM tenha
@@ -997,7 +1024,7 @@ export async function regenerateAutoReviewBacklog(
       if (error) return { success: false, error: error.message };
     }
 
-    await removeOrphanAssignments(admin, projectId);
+    await removeOrphanAssignments(supabase, projectId);
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -1037,8 +1064,8 @@ export async function retryPendingArbitrations(
     if (!gate.ok)
       return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
-    const admin = createSupabaseAdmin();
-    const { data: pending, error } = await admin
+    const supabase = await createSupabaseServer();
+    const { data: pending, error } = await supabase
       .from("field_reviews")
       .select("document_id, field_name, self_reviewer_id")
       .eq("project_id", projectId)
@@ -1076,7 +1103,7 @@ export async function retryPendingArbitrations(
     ];
     const codersByDoc = new Map<string, Set<string>>();
     if (allDocIds.length > 0) {
-      const { data: allCoders } = await admin
+      const { data: allCoders } = await supabase
         .from("responses")
         .select("document_id, respondent_id")
         .eq("project_id", projectId)
@@ -1108,6 +1135,7 @@ export async function retryPendingArbitrations(
       // openCounts recalculado; paralelizar degradaria a distribuição.
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const result = await assignArbitrator(
+        supabase,
         projectId,
         g.documentId,
         g.selfReviewerId,
@@ -1197,4 +1225,3 @@ export async function releaseArbitrationsFromUser(
 
   return { released: ids.length };
 }
-

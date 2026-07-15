@@ -1,5 +1,4 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 import { scanComparisonBacklog } from "@/lib/auto-comparison";
 import { MemberList } from "@/components/members/MemberList";
@@ -50,8 +49,7 @@ export default async function MembersPage({
   const mode = project?.automation_mode;
   let orphanedComparisons = 0;
   if (mode === "compare_humans" || mode === "compare_llm") {
-    const admin = createSupabaseAdmin();
-    orphanedComparisons = (await scanComparisonBacklog(admin, id, mode)).length;
+    orphanedComparisons = (await scanComparisonBacklog(supabase, id, mode)).length;
   }
 
   const typedMembers = (members || []) as unknown as (ProjectMember & { profiles: Profile })[];

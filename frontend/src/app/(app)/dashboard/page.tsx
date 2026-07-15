@@ -1,5 +1,4 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { Header } from "@/components/shell/Header";
@@ -22,7 +21,7 @@ export default async function DashboardPage() {
     .single();
 
   const projectsPromise = user.isMaster
-    ? createSupabaseAdmin()
+    ? supabase
         .from("projects")
         .select("id, name, description")
         .order("created_at", { ascending: false })

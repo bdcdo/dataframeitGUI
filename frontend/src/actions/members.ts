@@ -382,9 +382,8 @@ export async function setCanCompare(
   if (error) return { error: error.message };
 
   if (!canCompare) {
-    const admin = createSupabaseAdmin();
     const releaseResult = await releaseComparisonsFromUser(
-      admin,
+      supabase,
       projectId,
       member.user_id,
     );
@@ -612,8 +611,8 @@ export async function unlinkMemberEmail(
   );
   if (!gate.ok) return { error: gate.error };
 
-  const admin = createSupabaseAdmin();
-  const { error } = await admin
+  const supabase = await createSupabaseServer();
+  const { error } = await supabase
     .from("member_email_links")
     .delete()
     .eq("id", linkId)

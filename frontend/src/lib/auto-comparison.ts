@@ -10,7 +10,10 @@ import {
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
-type Admin = ReturnType<typeof createSupabaseAdmin>;
+// O factory admin e o factory autenticado têm o mesmo shape. Callers
+// coordinator-only passam o cliente autenticado para preservar RLS; o fluxo
+// automático disparado por pesquisador passa o admin client.
+type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 
 // Modos de automação que materializam uma comparação (assignment type=comparacao)
 // para um revisor terceiro. auto_review_llm e none não passam por aqui.
@@ -108,7 +111,7 @@ function buildEquivByField(
 //   - precomputedOpenLoad: quando passado (batch do retry), evita N queries de
 //     carga e é incrementado a cada atribuição para balancear entre docs.
 export async function assignComparisonReviewer(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   documentId: string,
   coderIds: Set<string>,
@@ -358,7 +361,7 @@ export async function createAutoComparisonIfDiverges(
 // puxar `answers` de todo doc: fase 1 acha candidatos por metadado leve, fase 2
 // busca answers so deles e recomputa divergencia.
 export async function scanComparisonBacklog(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   mode: ComparisonMode,
 ): Promise<Array<{ documentId: string; coderIds: Set<string> }>> {
@@ -538,7 +541,7 @@ export async function scanComparisonBacklog(
 // do retry re-sortear. Espelha releaseArbitrationsFromUser, porém mais simples
 // (não há field_reviews para limpar — a comparação é só o assignment).
 export async function releaseComparisonsFromUser(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   userId: string,
 ): Promise<{ released: number; error?: string }> {

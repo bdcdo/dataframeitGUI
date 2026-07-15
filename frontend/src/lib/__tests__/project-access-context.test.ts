@@ -56,6 +56,10 @@ async function loadCtx() {
   return (await import("@/lib/auth")).getProjectAccessContext;
 }
 
+async function loadIsCoordinator() {
+  return (await import("@/lib/auth")).isProjectCoordinator;
+}
+
 const projA = { id: "p1", name: "Projeto A", created_by: "owner_1" };
 
 beforeEach(() => {
@@ -104,5 +108,25 @@ describe("getProjectAccessContext — autorização preservada", () => {
     };
     const ctx = await (await loadCtx())("p1", "coord", false);
     expect(ctx.queryFailed).toBe(true);
+  });
+
+  it("gate de mutation falha fechado quando a leitura de acesso é parcial", async () => {
+    scenario = {
+      project: projA,
+      membershipRole: null,
+      membershipError: "timeout",
+    };
+    const isProjectCoordinator = await loadIsCoordinator();
+
+    await expect(
+      isProjectCoordinator("p1", {
+        id: "owner_1",
+        email: "owner@example.com",
+        firstName: "Owner",
+        lastName: null,
+        clerkId: "clerk_owner_1",
+        isMaster: false,
+      }),
+    ).resolves.toBe(false);
   });
 });
