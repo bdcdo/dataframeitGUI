@@ -11,14 +11,26 @@
 -- blocos roda como owner (o objeto é a transação); o bloco "RLS" abaixo troca
 -- para o role `authenticated` com um JWT forjado para provar que, sob SECURITY
 -- INVOKER, a RLS continua filtrando dentro da função (um não-coordenador não
--- apaga dados via a RPC). Sem dependência de profiles/auth.users: os FKs
--- created_by / respondent_id / reviewer_id / user_id são todos nuláveis.
+-- apaga dados via a RPC). A response e o review usam uma identidade real e os
+-- metadados canônicos mínimos exigidos pelo schema; FKs não nuláveis não são
+-- contornadas por fixtures artificiais.
 
 BEGIN;
 
 -- ----- Fixtures -----
+INSERT INTO auth.users (id, email) VALUES
+  ('77777777-7777-7777-7777-777777777777', 'atomic-reviewer@example.test'),
+  ('88888888-8888-8888-8888-888888888888', 'atomic-outsider@example.test');
+
 INSERT INTO public.projects (id, name) VALUES
   ('11111111-1111-1111-1111-111111111111', 'proj atomic test');
+
+INSERT INTO public.project_members (id, project_id, user_id, role) VALUES (
+  '99999999-9999-9999-9999-999999999991',
+  '11111111-1111-1111-1111-111111111111',
+  '77777777-7777-7777-7777-777777777777',
+  'pesquisador'
+);
 
 -- D1 = doc alvo do "replace"; D2 = doc ativo cujo external_id 'EXISTING' será
 -- colidido pelo INSERT do caminho de falha.
@@ -26,14 +38,31 @@ INSERT INTO public.documents (id, project_id, external_id, title, text, text_has
   ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', NULL,       'D1 alvo',  'texto d1', 'h-d1'),
   ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'EXISTING', 'D2 ativo', 'texto d2', 'h-d2');
 
-INSERT INTO public.responses (id, project_id, document_id, respondent_type, answers) VALUES
-  ('44444444-4444-4444-4444-444444444444', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', 'humano', '{"campo":"x"}');
+INSERT INTO public.responses (
+  id, project_id, document_id, respondent_id, respondent_type, answers,
+  is_latest, pydantic_hash, schema_version_major, schema_version_minor,
+  schema_version_patch, version_inferred_from
+) VALUES (
+  '44444444-4444-4444-4444-444444444444',
+  '11111111-1111-1111-1111-111111111111',
+  '22222222-2222-2222-2222-222222222222',
+  '77777777-7777-7777-7777-777777777777',
+  'humano', '{"campo":"x"}', true, NULL, 0, 1, 0, 'live_save'
+);
 
-INSERT INTO public.reviews (id, project_id, document_id, field_name, verdict) VALUES
-  ('55555555-5555-5555-5555-555555555555', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', 'campo', 'concordo');
+INSERT INTO public.reviews (
+  id, project_id, document_id, field_name, reviewer_id, verdict
+) VALUES (
+  '55555555-5555-5555-5555-555555555555',
+  '11111111-1111-1111-1111-111111111111',
+  '22222222-2222-2222-2222-222222222222',
+  'campo', '77777777-7777-7777-7777-777777777777', 'concordo'
+);
 
-INSERT INTO public.assignments (id, project_id, document_id, status, type) VALUES
-  ('66666666-6666-6666-6666-666666666666', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', 'concluido', 'codificacao');
+INSERT INTO public.assignments (id, project_id, document_id, user_id, status, type) VALUES
+  ('66666666-6666-6666-6666-666666666666', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '77777777-7777-7777-7777-777777777777', 'concluido', 'codificacao'),
+  -- Histórico do mesmo documento para profile que já não é membro.
+  ('66666666-6666-6666-6666-666666666667', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '88888888-8888-8888-8888-888888888888', 'concluido', 'codificacao');
 
 -- ----- RLS: authenticated não-coordenador não apaga dados via a RPC -----
 -- A decisão central do PR é SECURITY INVOKER justamente para manter a RLS valendo
@@ -50,6 +79,7 @@ INSERT INTO public.assignments (id, project_id, document_id, status, type) VALUE
 GRANT SELECT, INSERT, UPDATE, DELETE
   ON public.responses, public.reviews, public.assignments, public.documents
   TO authenticated;
+GRANT SELECT ON public.project_members TO authenticated;
 SELECT set_config('request.jwt.claims',
   '{"supabase_uid":"99999999-9999-9999-9999-999999999999"}', true);
 SET LOCAL ROLE authenticated;
@@ -61,15 +91,18 @@ SELECT public.replace_and_add_documents(
   '[]'::jsonb
 );
 RESET ROLE;
+SELECT set_config('request.jwt.claims', '{}', true);
 
 DO $$
-DECLARE n_resp int; n_rev int; a_status text;
+DECLARE n_resp int; n_rev int; n_inactive int; a_status text;
 BEGIN
   SELECT count(*) INTO n_resp   FROM public.responses   WHERE id = '44444444-4444-4444-4444-444444444444';
   SELECT count(*) INTO n_rev    FROM public.reviews     WHERE id = '55555555-5555-5555-5555-555555555555';
+  SELECT count(*) INTO n_inactive FROM public.assignments WHERE id = '66666666-6666-6666-6666-666666666667';
   SELECT status   INTO a_status FROM public.assignments WHERE id = '66666666-6666-6666-6666-666666666666';
   IF n_resp <> 1 THEN RAISE EXCEPTION 'FALHOU RLS: response apagada por nao-coordenador via RPC (n=%)', n_resp; END IF;
   IF n_rev  <> 1 THEN RAISE EXCEPTION 'FALHOU RLS: review apagada por nao-coordenador via RPC (n=%)', n_rev; END IF;
+  IF n_inactive <> 1 THEN RAISE EXCEPTION 'FALHOU RLS: histórico inativo apagado por nao-coordenador via RPC'; END IF;
   IF a_status <> 'concluido' THEN RAISE EXCEPTION 'FALHOU RLS: assignment resetado por nao-coordenador via RPC (status=%)', a_status; END IF;
   RAISE NOTICE 'OK RLS: authenticated nao-coordenador nao apagou responses/reviews/assignments via a RPC';
 END $$;
@@ -92,13 +125,15 @@ EXCEPTION
 END $$;
 
 DO $$
-DECLARE n_resp int; n_rev int; a_status text;
+DECLARE n_resp int; n_rev int; n_inactive int; a_status text;
 BEGIN
   SELECT count(*) INTO n_resp   FROM public.responses   WHERE id = '44444444-4444-4444-4444-444444444444';
   SELECT count(*) INTO n_rev    FROM public.reviews     WHERE id = '55555555-5555-5555-5555-555555555555';
+  SELECT count(*) INTO n_inactive FROM public.assignments WHERE id = '66666666-6666-6666-6666-666666666667';
   SELECT status   INTO a_status FROM public.assignments WHERE id = '66666666-6666-6666-6666-666666666666';
   IF n_resp <> 1   THEN RAISE EXCEPTION 'FALHOU #284: response apagada sem rollback (n=%)', n_resp; END IF;
   IF n_rev  <> 1   THEN RAISE EXCEPTION 'FALHOU #284: review apagada sem rollback (n=%)', n_rev; END IF;
+  IF n_inactive <> 1 THEN RAISE EXCEPTION 'FALHOU #284: histórico inativo apagado sem rollback'; END IF;
   IF a_status <> 'concluido' THEN RAISE EXCEPTION 'FALHOU #284: assignment resetado sem rollback (status=%)', a_status; END IF;
   RAISE NOTICE 'OK #284: responses/reviews/assignments preservados apos falha (rollback atomico)';
 END $$;
@@ -128,7 +163,7 @@ END $$;
 -- parcial DENTRO do passo UPDATE. Como há delete_responses=true, o DELETE roda
 -- antes; a exceção deve reverter inclusive esse DELETE (atomicidade no UPDATE).
 DO $$
-DECLARE n_resp int;
+DECLARE n_resp int; n_inactive int;
 BEGIN
   PERFORM public.replace_and_add_documents(
     '11111111-1111-1111-1111-111111111111'::uuid,
@@ -141,13 +176,15 @@ BEGIN
 EXCEPTION
   WHEN unique_violation THEN
     SELECT count(*) INTO n_resp FROM public.responses WHERE id = '44444444-4444-4444-4444-444444444444';
+    SELECT count(*) INTO n_inactive FROM public.assignments WHERE id = '66666666-6666-6666-6666-666666666667';
     IF n_resp <> 1 THEN RAISE EXCEPTION 'FALHOU #284: response apagada sem rollback na falha do UPDATE (n=%)', n_resp; END IF;
+    IF n_inactive <> 1 THEN RAISE EXCEPTION 'FALHOU #284: histórico inativo apagado sem rollback na falha do UPDATE'; END IF;
     RAISE NOTICE 'OK #284: falha no UPDATE reverteu o DELETE anterior (rollback atomico)';
 END $$;
 
 -- ----- #284: caminho feliz aplica deletes + insere o novo doc -----
 DO $$
-DECLARE n_new int; n_resp int;
+DECLARE n_new int; n_resp int; n_inactive int; active_status text;
 BEGIN
   PERFORM public.replace_and_add_documents(
     '11111111-1111-1111-1111-111111111111'::uuid,
@@ -157,9 +194,13 @@ BEGIN
   );
   SELECT count(*) INTO n_new  FROM public.documents WHERE project_id = '11111111-1111-1111-1111-111111111111' AND external_id = 'NEW-OK';
   SELECT count(*) INTO n_resp FROM public.responses WHERE id = '44444444-4444-4444-4444-444444444444';
+  SELECT count(*) INTO n_inactive FROM public.assignments WHERE id = '66666666-6666-6666-6666-666666666667';
+  SELECT status INTO active_status FROM public.assignments WHERE id = '66666666-6666-6666-6666-666666666666';
   IF n_new  <> 1 THEN RAISE EXCEPTION 'FALHOU: novo doc nao inserido no caminho feliz (n=%)', n_new; END IF;
   IF n_resp <> 0 THEN RAISE EXCEPTION 'FALHOU: deleteResponses nao apagou a response no caminho feliz (n=%)', n_resp; END IF;
-  RAISE NOTICE 'OK #284: caminho feliz inseriu o novo doc e aplicou os deletes';
+  IF n_inactive <> 0 THEN RAISE EXCEPTION 'FALHOU: histórico de ex-membro virou pendência'; END IF;
+  IF active_status <> 'pendente' THEN RAISE EXCEPTION 'FALHOU: assignment de membro ativo não foi reaberto'; END IF;
+  RAISE NOTICE 'OK #284: ex-membro removido e assignment do membro ativo reaberto';
 END $$;
 
 -- ----- #181: apply_lottery_assignments(replace) descarta pendentes do tipo + insere -----
@@ -167,17 +208,50 @@ DO $$
 DECLARE n_pend int;
 BEGIN
   -- Pendente antiga (em D2) que deve ser descartada pelo modo replace.
-  INSERT INTO public.assignments (project_id, document_id, status, type)
-    VALUES ('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333', 'pendente', 'codificacao');
+  INSERT INTO public.assignments (project_id, document_id, user_id, status, type)
+    VALUES ('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333', '77777777-7777-7777-7777-777777777777', 'pendente', 'codificacao');
   PERFORM public.apply_lottery_assignments(
     '11111111-1111-1111-1111-111111111111'::uuid, 'codificacao', NULL,
-    '[{"document_id":"22222222-2222-2222-2222-222222222222","user_id":null}]'::jsonb,
+    '[{"document_id":"22222222-2222-2222-2222-222222222222","user_id":"77777777-7777-7777-7777-777777777777"}]'::jsonb,
     true
   );
   SELECT count(*) INTO n_pend FROM public.assignments
     WHERE project_id = '11111111-1111-1111-1111-111111111111' AND type = 'codificacao' AND status = 'pendente';
   IF n_pend <> 1 THEN RAISE EXCEPTION 'FALHOU #181: esperava 1 pendente (a nova), achei %', n_pend; END IF;
   RAISE NOTICE 'OK #181: replace descartou a pendente antiga e inseriu a nova atomicamente';
+END $$;
+
+-- O trigger também cobre o writer em lote. A função primeiro apaga a
+-- pendente válida do modo replace, mas o INSERT para um profile sem membership
+-- falha; como tudo é um statement, a pendência anterior volta no rollback.
+DO $$
+DECLARE n_original int;
+BEGIN
+  BEGIN
+    PERFORM public.apply_lottery_assignments(
+      '11111111-1111-1111-1111-111111111111'::uuid, 'codificacao', NULL,
+      '[{"document_id":"33333333-3333-3333-3333-333333333333","user_id":"88888888-8888-8888-8888-888888888888"}]'::jsonb,
+      true
+    );
+    RAISE EXCEPTION 'FALHOU #181: lote criou pendência sem membership';
+  EXCEPTION
+    WHEN foreign_key_violation THEN
+      IF SQLERRM <> 'Assignment pendente exige membro ativo no mesmo projeto.' THEN
+        RAISE;
+      END IF;
+  END;
+
+  SELECT count(*) INTO n_original
+  FROM public.assignments
+  WHERE project_id = '11111111-1111-1111-1111-111111111111'
+    AND document_id = '22222222-2222-2222-2222-222222222222'
+    AND user_id = '77777777-7777-7777-7777-777777777777'
+    AND status = 'pendente';
+
+  IF n_original <> 1 THEN
+    RAISE EXCEPTION 'FALHOU #181: erro do trigger não restaurou a pendência substituída';
+  END IF;
+  RAISE NOTICE 'OK #181: trigger bloqueou lote órfão e o replace sofreu rollback';
 END $$;
 
 ROLLBACK;
