@@ -11,9 +11,7 @@ import {
   computeBacklogRows,
   compositeKeySet,
   diffReviewsToRemove,
-  type AssignmentRow,
   type ExistingFieldReviewRow,
-  type FieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
 } from "@/lib/auto-review-backlog";
@@ -320,10 +318,10 @@ export async function submitAutoReview(
 // field_reviews permite arbitros diferentes por campo, mas este caminho
 // (submit unico → 1 arbitro por doc) prefere coerencia sobre granularidade.
 //
-// Race condition (TOCTOU): se dois submitAutoReview rodam concorrentes para
-// docs diferentes, podem ler o mesmo `minLoad` e sortearem o mesmo arbitro
-// — degrada o balanceamento mas nao a correcao. Tolerado para evitar custo
-// de lock; em projetos com volume, a aleatoriedade entre empatados ja dilui.
+// Dois submits concorrentes ainda podem ler o mesmo `minLoad` e escolher o
+// mesmo árbitro — isso só degrada o balanceamento. A correção não depende
+// dessa leitura: a RPC final valida can_arbitrate sob lock e grava revisão +
+// assignment na mesma transação, serializada com a desabilitação do membro.
 //
 // Idempotente: arbitrator_id so e gravado em field_reviews que ainda nao
 // tem arbitro definido (re-chamadas nao trocam um arbitro ja escolhido).
@@ -414,34 +412,18 @@ async function assignArbitrator(
   const arbitratorId =
     finalPool[Math.floor(Math.random() * finalPool.length)].user_id;
 
-  // Atualiza arbitrator_id APENAS onde ainda nao foi definido (idempotente).
-  // O .select() devolve as linhas que de fato tocamos — usamos isso para
-  // decidir se criamos um assignment de arbitragem.
-  const { data: assigned, error: frErr } = await admin
-    .from("field_reviews")
-    .update({ arbitrator_id: arbitratorId })
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .in("field_name", fieldNames)
-    .is("arbitrator_id", null)
-    .select("field_name");
-  if (frErr) throw new Error(frErr.message);
-
-  if (!assigned || assigned.length === 0) return { count: 0, noPool: false };
-
-  // Cria assignment arbitragem (idempotente em doc+user+type)
-  await admin.from("assignments").upsert(
+  const { data: assigned, error: assignmentError } = await admin.rpc(
+    "assign_arbitration_if_eligible",
     {
-      project_id: projectId,
-      document_id: documentId,
-      user_id: arbitratorId,
-      type: "arbitragem",
-      status: "pendente",
+      p_project_id: projectId,
+      p_document_id: documentId,
+      p_user_id: arbitratorId,
+      p_field_names: fieldNames,
     },
-    { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
   );
+  if (assignmentError) throw new Error(assignmentError.message);
 
-  return { count: assigned.length, noPool: false };
+  return { count: typeof assigned === "number" ? assigned : 0, noPool: false };
 }
 
 export interface BlindChoice {
@@ -1130,71 +1112,3 @@ export async function retryPendingArbitrations(
     };
   }
 }
-
-// Solta todas as arbitragens ainda não concluídas (final_verdict IS NULL) que
-// estavam sob responsabilidade de `userId`. Disparada por setCanArbitrate
-// quando o coordenador desmarca can_arbitrate de um membro: sem isso, os
-// field_reviews já atribuídos àquele membro ficariam presos — ele sai do
-// sorteio de novos casos mas continua "dono" dos antigos, que não aparecem no
-// banner de pendências (esse só conta arbitrator_id IS NULL).
-//
-// Reatribui do zero: limpa arbitrator_id, blind_verdict e blind_decided_at —
-// o novo árbitro sorteado por retryPendingArbitrations refaz a fase cega. Não
-// re-sorteia aqui; quem orquestra chama retryPendingArbitrations em seguida,
-// espelhando o caminho do enable.
-//
-// Ordem das operações é deliberada (sem transação): UPDATE em field_reviews
-// primeiro, DELETE em assignments depois. Se o DELETE falhar, o estado fica
-// autocorrigível — `arbitrator_id IS NULL` reentra no pool de
-// retryPendingArbitrations, e o próximo assignArbitrator faz upsert
-// idempotente em (document_id, user_id, type) sobrescrevendo o assignment
-// órfão. A ordem inversa (DELETE → UPDATE) deixaria o caso preso (mesmo bug
-// que esta função corrige) caso o UPDATE falhasse no meio.
-export async function releaseArbitrationsFromUser(
-  projectId: string,
-  userId: string,
-): Promise<{ released: number; error?: string }> {
-  const admin = createSupabaseAdmin();
-
-  // Filtro `self_verdict='contesta_llm'`: só esses field_reviews chegam a
-  // ter `arbitrator_id` preenchido (são os contestados pelo auto-revisor que
-  // entram em fase de arbitragem). Sem o filtro o SELECT é equivalente, mas
-  // explicitar evita confusão e mantém simetria com o filtro usado em
-  // retryPendingArbitrations.
-  const { data: affected, error: selErr } = await admin
-    .from("field_reviews")
-    .select("id, document_id")
-    .eq("project_id", projectId)
-    .eq("arbitrator_id", userId)
-    .eq("self_verdict", "contesta_llm")
-    .is("final_verdict", null);
-  if (selErr) return { released: 0, error: selErr.message };
-  if (!affected || affected.length === 0) return { released: 0 };
-
-  const ids = affected.map((r) => r.id as string);
-  const { error: updErr } = await admin
-    .from("field_reviews")
-    .update({ arbitrator_id: null, blind_verdict: null, blind_decided_at: null })
-    .in("id", ids);
-  if (updErr) return { released: 0, error: updErr.message };
-
-  // Deleta os assignments de arbitragem órfãos do ex-árbitro nos docs afetados.
-  // assignArbitrator faz upsert idempotente em (document_id, user_id, type) —
-  // sem este delete, o assignment pendente do ex-árbitro nunca seria limpo e
-  // ainda contaria como carga dele no balanceamento. Falha aqui não trava o
-  // fluxo: o UPDATE acima já liberou os field_reviews; o assignment órfão é
-  // sobrescrito no próximo sorteio.
-  const docIds = [...new Set(affected.map((r) => r.document_id as string))];
-  const { error: delErr } = await admin
-    .from("assignments")
-    .delete()
-    .eq("project_id", projectId)
-    .eq("user_id", userId)
-    .eq("type", "arbitragem")
-    .neq("status", "concluido")
-    .in("document_id", docIds);
-  if (delErr) return { released: ids.length, error: delErr.message };
-
-  return { released: ids.length };
-}
-

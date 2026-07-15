@@ -20,6 +20,13 @@ export type RpcCall = {
   args: unknown;
 };
 
+export type FilterCall = {
+  table: string;
+  method: "eq" | "is" | "in" | "neq" | "match";
+  column: string;
+  value: unknown;
+};
+
 export type TableResult = {
   data?: unknown;
   error?: { message: string; code?: string } | null;
@@ -32,32 +39,43 @@ export function makeSupabaseMock(opts?: {
   tableResults?: TableResults;
   defaultResult?: TableResult;
   writeCalls?: WriteCall[];
+  filterCalls?: FilterCall[];
   rpcCalls?: RpcCall[];
   rpcResults?: Record<string, TableResult>;
 }) {
-  const { tableResults, defaultResult, writeCalls, rpcCalls, rpcResults } =
-    opts ?? {};
+  const {
+    tableResults,
+    defaultResult,
+    writeCalls,
+    filterCalls,
+    rpcCalls,
+    rpcResults,
+  } = opts ?? {};
   return {
     // rpc(): registra a chamada e resolve { data, error } como o thenable das
     // queries. Resultado por função em `rpcResults`; sem entrada, sucesso vazio.
     rpc: (fn: string, args: unknown) => {
       rpcCalls?.push({ fn, args });
       const result = rpcResults?.[fn];
+      const response = {
+        data: result?.data ?? null,
+        error: result?.error ?? null,
+      };
       return {
-        then: (resolve: (v: unknown) => unknown) =>
-          resolve({
-            data: result?.data ?? null,
-            error: result?.error ?? null,
-          }),
+        maybeSingle: () => Promise.resolve(response),
+        then: (resolve: (v: unknown) => unknown) => resolve(response),
       };
     },
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      for (const m of [
-        "eq", "is", "in", "neq", "match", "select", "single",
-        "maybeSingle", "order", "limit", "range",
-      ]) {
+      for (const m of ["select", "single", "maybeSingle", "order", "limit", "range"]) {
         builder[m] = () => builder;
+      }
+      for (const method of ["eq", "is", "in", "neq", "match"] as const) {
+        builder[method] = (column: string, value: unknown) => {
+          filterCalls?.push({ table, method, column, value });
+          return builder;
+        };
       }
       builder.update = (payload: unknown) => {
         writeCalls?.push({ table, op: "update", payload });

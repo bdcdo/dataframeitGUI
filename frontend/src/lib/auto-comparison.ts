@@ -152,17 +152,19 @@ export async function assignComparisonReviewer(
     Math.floor(Math.random() * candidatesAtMin.length)
   ].user_id as string;
 
-  const { error } = await admin.from("assignments").upsert(
+  // A seleção acima preserva o balanceamento; a RPC revalida can_compare sob
+  // lock e insere na mesma transação. Assim um disable concorrente ou limpa a
+  // atribuição já criada, ou vence o lock e impede a gravação posterior.
+  const { data: assigned, error } = await admin.rpc(
+    "assign_comparison_if_eligible",
     {
-      project_id: projectId,
-      document_id: documentId,
-      user_id: reviewerId,
-      type: "comparacao",
-      status: "pendente",
+      p_project_id: projectId,
+      p_document_id: documentId,
+      p_user_id: reviewerId,
     },
-    { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
   );
   if (error) throw new Error(error.message);
+  if (assigned !== true) return { assigned: false, noPool: false };
 
   // Mantem a carga in-memory coerente para o proximo doc do batch (retry).
   if (precomputedOpenLoad) {
@@ -531,25 +533,4 @@ export async function scanComparisonBacklog(
   }
 
   return result;
-}
-
-// Solta as comparações PENDENTES atribuídas a `userId` (em_andamento/concluido
-// ficam intactas). Disparada por setCanCompare ao desmarcar can_compare, antes
-// do retry re-sortear. Espelha releaseArbitrationsFromUser, porém mais simples
-// (não há field_reviews para limpar — a comparação é só o assignment).
-export async function releaseComparisonsFromUser(
-  admin: Admin,
-  projectId: string,
-  userId: string,
-): Promise<{ released: number; error?: string }> {
-  const { data: deleted, error } = await admin
-    .from("assignments")
-    .delete()
-    .eq("project_id", projectId)
-    .eq("user_id", userId)
-    .eq("type", "comparacao")
-    .eq("status", "pendente")
-    .select("id");
-  if (error) return { released: 0, error: error.message };
-  return { released: deleted?.length ?? 0 };
 }
