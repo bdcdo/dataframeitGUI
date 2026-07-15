@@ -3,72 +3,27 @@ name: Registrar falha de deploy
 on:
   workflow_call:
     inputs:
-      deploy_result:
-        required: true
-        type: string
-      deploy_workflow:
-        required: true
-        type: string
       deploy_app:
-        required: true
-        type: string
-      deploy_sha:
-        required: true
-        type: string
-      deploy_actor:
-        required: true
-        type: string
-      deploy_run_url:
         required: true
         type: string
 
 jobs:
   notify:
     name: Criar ou comentar incidente
-    if: ${{ inputs.deploy_result == 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
     env:
       GH_TOKEN: ${{ github.token }}
-      GITHUB_REPOSITORY: ${{ github.repository }}
-      DEPLOY_RESULT: ${{ inputs.deploy_result }}
-      DEPLOY_WORKFLOW: ${{ inputs.deploy_workflow }}
       DEPLOY_APP: ${{ inputs.deploy_app }}
-      DEPLOY_SHA: ${{ inputs.deploy_sha }}
-      DEPLOY_ACTOR: ${{ inputs.deploy_actor }}
-      DEPLOY_RUN_URL: ${{ inputs.deploy_run_url }}
-      DEPLOY_OWNER: ${{ github.repository_owner }}
     steps:
       - name: Registrar incidente atribuído ao owner
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${DEPLOY_RESULT:-}" != "failure" ]]; then
-            echo "Deploy sem falha; nenhuma issue será criada."
-            exit 0
-          fi
-
-          required=(
-            GH_TOKEN
-            GITHUB_REPOSITORY
-            DEPLOY_WORKFLOW
-            DEPLOY_APP
-            DEPLOY_SHA
-            DEPLOY_ACTOR
-            DEPLOY_RUN_URL
-            DEPLOY_OWNER
-          )
-
-          for name in "${required[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Variável obrigatória ausente: ${name}" >&2
-              exit 1
-            fi
-          done
-
-          short_sha="${DEPLOY_SHA:0:7}"
+          short_sha="${GITHUB_SHA:0:7}"
+          deploy_run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           incident_title="[Deploy quebrado] ${DEPLOY_APP}"
           event_file="$(mktemp)"
           issue_body_file="$(mktemp)"
@@ -79,33 +34,26 @@ jobs:
 
           | Campo | Valor |
           | --- | --- |
-          | Workflow | ${DEPLOY_WORKFLOW} |
+          | Workflow | ${GITHUB_WORKFLOW} |
           | Aplicação Fly.io | \`${DEPLOY_APP}\` |
-          | Commit | \`${DEPLOY_SHA}\` |
-          | Ator | @${DEPLOY_ACTOR} |
-          | Execução | [abrir logs](${DEPLOY_RUN_URL}) |
+          | Commit | \`${GITHUB_SHA}\` |
+          | Ator | @${GITHUB_ACTOR} |
+          | Execução | [abrir logs](${deploy_run_url}) |
 
           Nova falha registrada automaticamente pelo workflow. Um deploy verde não cria nem atualiza este incidente.
           EOF
 
-          # O endpoint de issues do repositório reflete o estado atual diretamente;
-          # ao contrário da busca textual, não depende de indexação eventual.
-          if ! open_issues="$(
-            gh api --paginate \
-              "repos/${GITHUB_REPOSITORY}/issues?state=open&per_page=100" \
-              --jq '.[] | select(.pull_request == null) | [.number, .title] | @tsv'
-          )"; then
-            echo "Não foi possível consultar incidentes de deploy abertos." >&2
-            exit 1
-          fi
-
-          incident_number=""
-          while IFS=$'\t' read -r number candidate_title; do
-            if [[ "$candidate_title" == "$incident_title" && "$number" =~ ^[0-9]+$ ]]; then
-              incident_number="$number"
-              break
-            fi
-          done <<<"$open_issues"
+          # A listagem de issues lê o estado atual diretamente, sem depender do
+          # índice textual usado por `--search`.
+          export INCIDENT_TITLE="$incident_title"
+          incident_number="$(
+            gh issue list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state open \
+              --limit 1000 \
+              --json number,title \
+              --jq '[.[] | select(.title == env.INCIDENT_TITLE)][0].number // empty'
+          )"
 
           if [[ -n "$incident_number" ]]; then
             gh issue comment "$incident_number" \
@@ -131,6 +79,6 @@ jobs:
 
           gh issue create \
             --repo "$GITHUB_REPOSITORY" \
-            --assignee "$DEPLOY_OWNER" \
+            --assignee "$GITHUB_REPOSITORY_OWNER" \
             --title "$incident_title" \
             --body-file "$issue_body_file"

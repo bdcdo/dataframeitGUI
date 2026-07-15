@@ -59,9 +59,7 @@ A partir daí, cada commit é varrido em busca de segredos antes de entrarem no 
 
 Produção roda inteiramente no **Fly.io** (`gru`), com deploy **automático por CI** a partir de merge na `main`: `backend/**` dispara `fly-deploy.yml` (app `gui-analise-sistematica-api`) e `frontend/**` dispara `frontend-fly-deploy.yml` (app `gui-analise-sistematica-frontend`). Domínio: `dataframeit.com.br`.
 
-Se o job de deploy terminar com resultado `failure`, ele chama o workflow reutilizável `notify-deploy-failure.yml`, que tenta abrir um incidente atribuído ao owner do repositório com aplicação, workflow, commit, ator, link da execução e roteiro de triagem. O notificador não faz checkout e recebe somente `issues: write`; ele enumera as issues abertas diretamente pela API do repositório e compara o título exato da aplicação, de modo que uma falha posterior comenta no incidente aberto que a API retornou. Fechar o incidente após a recuperação permite que uma falha futura abra outro; execuções verdes não chamam o workflow reutilizável nem consultam a API.
-
-Ao alterar os workflows de deploy ou o notificador reutilizável, rode `.github/scripts/test-deploy-failure-notification.sh`: o teste extrai e executa o bloco canônico do próprio YAML, valida a estrutura dos três workflows, executa `bash -n` e substitui `gh` por um stub local para conferir cada argumento da API, da criação e do comentário, além da ausência de mutação no caminho verde. Alterar apenas o notificador não dispara deploy de backend ou frontend.
+Se um deploy falhar, o workflow abre um incidente atribuído ao owner com a aplicação, o commit e o link da execução; novas falhas da mesma aplicação são adicionadas ao incidente aberto. Depois de confirmar a recuperação de produção, feche a issue para que uma falha futura abra outro incidente. Deploy verde não gera ruído.
 
 ### 1. Supabase Cloud
 

@@ -14,6 +14,7 @@ permissions:
 concurrency:
   group: fly-deploy-backend
   cancel-in-progress: false
+  queue: max
 
 jobs:
   deploy:
@@ -38,9 +39,4 @@ jobs:
       issues: write
     uses: ./.github/workflows/notify-deploy-failure.yml
     with:
-      deploy_result: ${{ needs.deploy.result }}
-      deploy_workflow: ${{ github.workflow }}
       deploy_app: gui-analise-sistematica-api
-      deploy_sha: ${{ github.sha }}
-      deploy_actor: ${{ github.actor }}
-      deploy_run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -4,14 +4,16 @@
 # `pre-commit install` basta — voce nao precisa lembrar de rodar nada na mao.
 #
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
-#   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
+#   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, actionlint,
+#                                                deploy notifier, react-doctor
 #   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
 default_install_hook_types: [pre-commit, pre-push]
 # Hook sem `stages:` proprio roda so no pre-commit (os leves: gitleaks, ruff,
-# react-doctor). Os pesados sobrescrevem com `stages: [pre-push]`. Sem este
+# actionlint, deploy notifier, react-doctor). Os pesados sobrescrevem com
+# `stages: [pre-push]`. Sem este
 # default, o pre-commit rodaria os leves tambem no push (default = todos os
 # estagios), furando a divisao descrita abaixo.
 default_stages: [pre-commit]
@@ -35,8 +37,26 @@ repos:
       - id: ruff-format
         files: ^backend/.*\.py$
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        # v1.7.12 é anterior a `concurrency.queue`; o teste local abaixo valida
+        # `queue: max` até o actionlint incorporar rhysd/actionlint#654.
+        args: [-ignore, 'unexpected key "queue" for "concurrency" section']
+
   - repo: local
     hooks:
+      # Contrato e comportamento do notificador de deploy. O hook extrai o
+      # shell canônico do YAML e simula criação/comentário com um `gh` local.
+      - id: deploy-failure-notification
+        name: deploy failure notification
+        entry: .github/scripts/test-deploy-failure-notification.sh
+        language: system
+        files: ^\.github/(workflows/(fly-deploy|frontend-fly-deploy|notify-deploy-failure)\.yml|scripts/test-deploy-failure-notification\.sh)$
+        pass_filenames: false
+        require_serial: true
+
       # react-doctor como gate local de qualidade React (estilo flake8/mypy).
       #
       # Por que --scope changed e nao --staged: o --staged escaneia o arquivo
