@@ -20,6 +20,8 @@ Plataforma web para análise de conteúdo com IA, baseada na lib dataframeit.
 
 ### Frontend
 
+Requer Node.js 24.10 ou mais recente.
+
 ```bash
 npm --prefix frontend install
 cp frontend/.env.local.example frontend/.env.local
@@ -36,6 +38,8 @@ Depois de criar uma worktree, execute na raiz dela um único comando e informe e
 ```
 
 O bootstrap valida as atribuições não comentadas de `.env.local.example` e `.env.e2e.example`, cria symlinks para os dois arquivos da fonte e falha antes de alterar a worktree se a fonte estiver incompleta ou se algum destino já existir. Ele não copia credenciais, não sobrescreve arquivos e não tenta descobrir outro checkout pelo layout dos diretórios.
+
+Nunca adicione `.env.local`, `.env.e2e` ou seus symlinks ao Git. Somente os arquivos `.example`, mantidos sem valores reais, são versionados; o checkout usado como fonte precisa permanecer no mesmo caminho enquanto as worktrees utilizarem os links.
 
 ### Backend
 

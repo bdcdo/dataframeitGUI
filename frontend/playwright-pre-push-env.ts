@@ -1,19 +1,16 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { parse } from "dotenv";
+import {
+  hasConfiguredEnvironmentValue,
+  requiredEnvironmentNames,
+} from "./scripts/worktree-env/env-contract.mjs";
 
-const environmentExamples = [".env.local.example", ".env.e2e.example"];
-
-export const requiredPrePushEnv = environmentExamples.flatMap((filename) =>
-  Object.keys(
-    parse(readFileSync(resolve(__dirname, filename), { encoding: "utf8" })),
-  ),
-);
+export const requiredPrePushEnv = requiredEnvironmentNames(__dirname);
 
 export function assertRequiredPrePushEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): void {
-  const missing = requiredPrePushEnv.filter((name) => !env[name]);
+  const missing = requiredPrePushEnv.filter(
+    (name) => !hasConfiguredEnvironmentValue(env[name]),
+  );
 
   if (missing.length === 0) return;
 

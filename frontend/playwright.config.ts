@@ -1,12 +1,17 @@
 import { defineConfig, devices } from "@playwright/test";
-import { config as loadEnv } from "dotenv";
 import { assertRequiredPrePushEnv } from "./playwright-pre-push-env";
+import {
+  applyEnvironment,
+  readOptionalEnvironmentFile,
+} from "./scripts/worktree-env/env-contract.mjs";
 
 // E2E lê as mesmas credenciais Clerk/Supabase de .env.local; .env.e2e (não
 // versionado) sobrescreve com as credenciais dos usuários de teste. Ver
 // .env.e2e.example e issue #107.
-loadEnv({ path: ".env.local" });
-loadEnv({ path: ".env.e2e", override: true });
+applyEnvironment(process.env, readOptionalEnvironmentFile(".env.local"));
+applyEnvironment(process.env, readOptionalEnvironmentFile(".env.e2e"), {
+  override: true,
+});
 
 // Setado só pelo hook e2e-smoke do pre-push (nao pelo `npm run test:e2e`
 // manual): forca servidor novo, porta dedicada e execucao serial, porque o

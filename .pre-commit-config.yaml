@@ -102,7 +102,7 @@ repos:
         name: vitest run (full suite, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/(.*\.(ts|tsx)|scripts/worktree-env/bootstrap\.sh|\.env\.(local|e2e)\.example)$
+        files: ^frontend/(.*\.(ts|tsx)|scripts/worktree-env/.*\.(mjs|sh)|\.env\.(local|e2e)\.example)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -129,7 +129,7 @@ repos:
         name: playwright e2e smoke (pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && PLAYWRIGHT_PRE_PUSH=1 exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(ts|tsx)|package(-lock)?\.json|\.env\.(local|e2e)\.example|scripts/worktree-env/bootstrap\.sh))$
+        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(ts|tsx)|package(-lock)?\.json|\.env\.(local|e2e)\.example|scripts/worktree-env/.*\.(mjs|sh)))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

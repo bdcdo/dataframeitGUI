@@ -1,5 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  appendFileSync,
+  chmodSync,
   copyFileSync,
   lstatSync,
   mkdirSync,
@@ -11,8 +13,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { parse } from "dotenv";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { requiredEnvironmentNamesForFile } from "../../../scripts/worktree-env/env-contract.mjs";
 
 const trackedFrontend = process.cwd();
 const envFiles = [".env.local", ".env.e2e"] as const;
@@ -29,10 +31,8 @@ for (const name of [
 const requiredByFile = Object.fromEntries(
   envFiles.map((filename) => [
     filename,
-    Object.keys(
-      parse(
-        readFileSync(resolve(trackedFrontend, `${filename}.example`), "utf8"),
-      ),
+    requiredEnvironmentNamesForFile(
+      resolve(trackedFrontend, `${filename}.example`),
     ),
   ]),
 ) as Record<(typeof envFiles)[number], string[]>;
@@ -64,6 +64,12 @@ describe("bootstrap de ambiente para worktrees", () => {
       resolve(trackedFrontend, "scripts/worktree-env/bootstrap.sh"),
       bootstrap,
     );
+    for (const filename of ["bootstrap.mjs", "env-contract.mjs"]) {
+      copyFileSync(
+        resolve(trackedFrontend, "scripts/worktree-env", filename),
+        join(fixtureFrontend, "scripts/worktree-env", filename),
+      );
+    }
     copyFileSync(
       resolve(trackedFrontend, ".env.local.example"),
       join(fixtureFrontend, ".env.local.example"),
@@ -99,6 +105,16 @@ describe("bootstrap de ambiente para worktrees", () => {
     });
   }
 
+  function appendSourceLine(filename: (typeof envFiles)[number], line: string) {
+    appendFileSync(join(sourceFrontend, filename), `${line}\n`);
+  }
+
+  function expectNoDestinations() {
+    for (const filename of envFiles) {
+      expect(() => lstatSync(join(fixtureFrontend, filename))).toThrow();
+    }
+  }
+
   it("cria os dois symlinks sem copiar os arquivos", () => {
     writeCompleteSource();
 
@@ -117,9 +133,24 @@ describe("bootstrap de ambiente para worktrees", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("fonte inexistente");
-    for (const filename of envFiles) {
-      expect(() => lstatSync(join(fixtureFrontend, filename))).toThrow();
+    expectNoDestinations();
+  });
+
+  it("distingue erro de permissão de uma fonte ausente", () => {
+    writeCompleteSource();
+    chmodSync(sourceFrontend, 0o000);
+
+    let result: ReturnType<typeof runBootstrap>;
+    try {
+      result = runBootstrap();
+    } finally {
+      chmodSync(sourceFrontend, 0o700);
     }
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("EACCES");
+    expect(result.stderr).not.toContain("fonte sem");
+    expectNoDestinations();
   });
 
   it("falha antes de criar o segundo destino quando um destino já existe", () => {
@@ -144,9 +175,55 @@ describe("bootstrap de ambiente para worktrees", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("SUPABASE_SERVICE_ROLE_KEY");
     expect(`${result.stdout}${result.stderr}`).not.toContain("TOP-SECRET");
-    for (const filename of envFiles) {
-      expect(() => lstatSync(join(fixtureFrontend, filename))).toThrow();
-    }
+    expectNoDestinations();
+  });
+
+  it("considera a última atribuição quando ela esvazia um valor", () => {
+    writeCompleteSource();
+    appendSourceLine(".env.local", "SUPABASE_SERVICE_ROLE_KEY=");
+
+    const result = runBootstrap();
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("SUPABASE_SERVICE_ROLE_KEY");
+    expectNoDestinations();
+  });
+
+  it("aceita a última atribuição quando ela preenche um valor", () => {
+    writeCompleteSource(new Set(["SUPABASE_SERVICE_ROLE_KEY"]));
+    appendSourceLine(
+      ".env.local",
+      "SUPABASE_SERVICE_ROLE_KEY=TOP-SECRET-final",
+    );
+
+    expect(runBootstrap().status).toBe(0);
+  });
+
+  it("remove comentário inline de valor não delimitado por aspas", () => {
+    writeCompleteSource();
+    appendSourceLine(".env.local", "SUPABASE_SERVICE_ROLE_KEY=# comentário");
+
+    const result = runBootstrap();
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("SUPABASE_SERVICE_ROLE_KEY");
+  });
+
+  it("preserva cerquilha delimitada por aspas", () => {
+    writeCompleteSource();
+    appendSourceLine(".env.local", 'SUPABASE_SERVICE_ROLE_KEY="# valor"');
+
+    expect(runBootstrap().status).toBe(0);
+  });
+
+  it("rejeita valor entre aspas composto somente por espaços", () => {
+    writeCompleteSource();
+    appendSourceLine(".env.local", 'SUPABASE_SERVICE_ROLE_KEY="   "');
+
+    const result = runBootstrap();
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("SUPABASE_SERVICE_ROLE_KEY");
   });
 
   it("preserva todos os destinos preexistentes", () => {

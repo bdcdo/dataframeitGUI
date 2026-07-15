@@ -25,9 +25,7 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 ### Smoke test E2E autenticado
 
-Os testes em `e2e/` autenticam via [Clerk Testing Tokens](https://clerk.com/docs/testing/playwright/overview),
-que dispensam a UI hospedada do Clerk — nenhuma credencial precisa ser colada
-na linha de comando.
+Os testes em `e2e/` autenticam via [Clerk Testing Tokens](https://clerk.com/docs/testing/playwright/overview), que dispensam a UI hospedada do Clerk — nenhuma credencial precisa ser colada na linha de comando.
 
 Setup único:
 
@@ -39,19 +37,12 @@ Rodar:
 ```bash
 npm run test:e2e        # headless
 npm run test:e2e:ui     # modo interativo
+PLAYWRIGHT_PRE_PUSH=1 npm run test:e2e  # gate local completo
 ```
 
 O Playwright sobe o dev server automaticamente. No modo manual, cada papel cuja credencial não estiver definida em `.env.e2e` tem o teste **pulado**. No pre-push, todas as atribuições não comentadas dos dois arquivos `.example` são obrigatórias; master permanece opcional e sua ausência pula apenas aquele caso do dashboard.
 
-O smoke do dashboard (`dashboard.smoke.spec.ts`) roda os papéis **em ordem**,
-num único worker (`test.describe.configure({ mode: "default" })`, que
-sobrescreve o `fullyParallel` da config só para este arquivo). A instância de
-**desenvolvimento** do Clerk tem limites de uso estritos; rodar os papéis em
-paralelo gera um burst de `signIn`/`signOut`/`currentUser` que dispara
-rate-limit (`fetch failed` no backend do Clerk) e torna o smoke flaky — foi a
-causa raiz da #198 (não era credencial nem o sync Clerk↔Supabase). Usamos
-`default` em vez de `serial` porque os papéis são testes isolados: queremos só
-controlar o ritmo, sem que a falha de um papel pule os demais. Por isso o E2E permanece fora do CI: roda automaticamente no pre-push e também pode ser invocado manualmente em ambiente local ou staging.
+O smoke do dashboard (`dashboard.smoke.spec.ts`) roda os papéis **em ordem**, num único worker (`test.describe.configure({ mode: "default" })`, que sobrescreve o `fullyParallel` da config só para este arquivo). A instância de **desenvolvimento** do Clerk tem limites de uso estritos; rodar os papéis em paralelo gera um burst de `signIn`/`signOut`/`currentUser` que dispara rate-limit (`fetch failed` no backend do Clerk) e torna o smoke flaky — foi a causa raiz da #198 (não era credencial nem o sync Clerk↔Supabase). Usamos `default` em vez de `serial` porque os papéis são testes isolados: queremos só controlar o ritmo, sem que a falha de um papel pule os demais. O E2E permanece local: roda automaticamente no pre-push e também pode ser invocado manualmente.
 
 ### Smoke manual de login (mitigação)
 

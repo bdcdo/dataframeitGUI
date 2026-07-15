@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
+import { withClerkCleanup } from "./clerk-cleanup";
 
 // Cada papel mapeia para um usuário Clerk de teste real (no tenant de dev).
 // Os e-mails ficam em .env.e2e (não versionado) — ver .env.e2e.example.
@@ -28,7 +29,7 @@ test.describe.configure({ mode: "default" });
 
 const roles = [
   { role: "coordenador", emailEnv: "E2E_COORDINATOR_EMAIL" },
-  { role: "membro", emailEnv: "E2E_MEMBER_EMAIL" },
+  { role: "pesquisador", emailEnv: "E2E_MEMBER_EMAIL" },
   { role: "master", emailEnv: "E2E_MASTER_EMAIL" },
 ] as const;
 
@@ -51,49 +52,27 @@ for (const { role, emailEnv } of roles) {
     await page.goto("/auth/login");
     await clerk.signIn({ page, emailAddress: identifier! });
 
-    // Espera a sessão Clerk ficar ativa no cliente antes de navegar. O signIn
-    // resolve quando a sessão existe client-side, mas o cookie de sessão pode
-    // não ter propagado para a navegação server-side imediatamente seguinte —
-    // aí `currentUser()` no guard de /dashboard não vê a sessão e manda de
-    // volta ao login (a race do #198).
-    await page.waitForFunction(
-      () =>
-        (window as unknown as { Clerk?: { session?: { status?: string } } })
-          .Clerk?.session?.status === "active",
-      { timeout: 15_000 },
-    );
-
-    let testBodyError: unknown;
-
-    try {
-      await page.goto("/dashboard");
-      await expect(
-        page.getByRole("heading", { name: "Meus Projetos" }),
-      ).toBeVisible();
-    } catch (error) {
-      testBodyError = error;
-      throw error;
-    } finally {
-      const signOutError = await Promise.race([
-        clerk.signOut({ page }).then(() => null).catch((error: unknown) => error),
-        page.waitForTimeout(5_000).then(
+    await withClerkCleanup({
+      page,
+      context: `dashboard (${role})`,
+      run: async () => {
+        // Espera a sessão Clerk ficar ativa no cliente antes de navegar. O signIn
+        // resolve quando a sessão existe client-side, mas o cookie de sessão pode
+        // não ter propagado para a navegação server-side imediatamente seguinte —
+        // aí `currentUser()` no guard de /dashboard não vê a sessão e manda de
+        // volta ao login (a race do #198).
+        await page.waitForFunction(
           () =>
-            new Error(
-              `clerk.signOut não concluiu em 5s durante cleanup do smoke de dashboard (${role})`,
-            ),
-        ),
-      ]);
+            (window as unknown as { Clerk?: { session?: { status?: string } } })
+              .Clerk?.session?.status === "active",
+          { timeout: 15_000 },
+        );
 
-      if (signOutError) {
-        if (testBodyError) {
-          console.warn(
-            `clerk.signOut falhou durante cleanup após falha anterior do smoke de dashboard (${role}):`,
-            signOutError,
-          );
-        } else {
-          throw signOutError;
-        }
-      }
-    }
+        await page.goto("/dashboard");
+        await expect(
+          page.getByRole("heading", { name: "Meus Projetos" }),
+        ).toBeVisible();
+      },
+    });
   });
 }
