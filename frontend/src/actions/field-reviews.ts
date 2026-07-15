@@ -11,9 +11,7 @@ import {
   computeBacklogRows,
   compositeKeySet,
   diffReviewsToRemove,
-  type AssignmentRow,
   type ExistingFieldReviewRow,
-  type FieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
 } from "@/lib/auto-review-backlog";
@@ -320,10 +318,10 @@ export async function submitAutoReview(
 // field_reviews permite arbitros diferentes por campo, mas este caminho
 // (submit unico → 1 arbitro por doc) prefere coerencia sobre granularidade.
 //
-// Race condition (TOCTOU): se dois submitAutoReview rodam concorrentes para
-// docs diferentes, podem ler o mesmo `minLoad` e sortearem o mesmo arbitro
-// — degrada o balanceamento mas nao a correcao. Tolerado para evitar custo
-// de lock; em projetos com volume, a aleatoriedade entre empatados ja dilui.
+// Dois submits concorrentes ainda podem ler o mesmo `minLoad` e escolher o
+// mesmo árbitro — isso só degrada o balanceamento. A correção não depende
+// dessa leitura: a RPC final valida can_arbitrate sob lock e grava revisão +
+// assignment na mesma transação, serializada com a desabilitação do membro.
 //
 // Idempotente: arbitrator_id so e gravado em field_reviews que ainda nao
 // tem arbitro definido (re-chamadas nao trocam um arbitro ja escolhido).
@@ -414,34 +412,18 @@ async function assignArbitrator(
   const arbitratorId =
     finalPool[Math.floor(Math.random() * finalPool.length)].user_id;
 
-  // Atualiza arbitrator_id APENAS onde ainda nao foi definido (idempotente).
-  // O .select() devolve as linhas que de fato tocamos — usamos isso para
-  // decidir se criamos um assignment de arbitragem.
-  const { data: assigned, error: frErr } = await admin
-    .from("field_reviews")
-    .update({ arbitrator_id: arbitratorId })
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .in("field_name", fieldNames)
-    .is("arbitrator_id", null)
-    .select("field_name");
-  if (frErr) throw new Error(frErr.message);
-
-  if (!assigned || assigned.length === 0) return { count: 0, noPool: false };
-
-  // Cria assignment arbitragem (idempotente em doc+user+type)
-  await admin.from("assignments").upsert(
+  const { data: assigned, error: assignmentError } = await admin.rpc(
+    "assign_arbitration_if_eligible",
     {
-      project_id: projectId,
-      document_id: documentId,
-      user_id: arbitratorId,
-      type: "arbitragem",
-      status: "pendente",
+      p_project_id: projectId,
+      p_document_id: documentId,
+      p_user_id: arbitratorId,
+      p_field_names: fieldNames,
     },
-    { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
   );
+  if (assignmentError) throw new Error(assignmentError.message);
 
-  return { count: assigned.length, noPool: false };
+  return { count: typeof assigned === "number" ? assigned : 0, noPool: false };
 }
 
 export interface BlindChoice {

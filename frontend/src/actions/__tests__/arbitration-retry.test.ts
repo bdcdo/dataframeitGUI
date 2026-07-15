@@ -1,22 +1,30 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  callsOf,
   makeSimpleSupabaseMock,
+  type RpcCall,
+  type RpcResult,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 import { authModuleMock } from "@/test-utils/auth-mock";
 
-// Mock supabase chainable — mesmo padrão de field-reviews.test.ts. Captura
-// payloads de write para validar o comportamento de retryPendingArbitrations
-// e assignArbitrator sem subir Postgres.
+// Mock supabase chainable — mesmo padrão de field-reviews.test.ts. Captura a
+// RPC que faz o commit atômico de retryPendingArbitrations/assignArbitrator
+// sem subir Postgres.
 let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
+let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown>;
 
-const updateCallsOf = (table?: string) => callsOf(writeCalls, "update", table);
-const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
+const arbitrationCalls = () =>
+  rpcCalls.filter((call) => call.fn === "assign_arbitration_if_eligible");
 
 function makeClient() {
-  return makeSimpleSupabaseMock({ tableData, writeCalls });
+  return makeSimpleSupabaseMock({
+    tableData,
+    writeCalls,
+    rpcCalls,
+    rpcResults,
+  });
 }
 
 // isProjectCoordinator: hoisted para permitir override por teste.
@@ -35,6 +43,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 beforeEach(() => {
   writeCalls = [];
+  rpcCalls = [];
+  rpcResults = {
+    assign_arbitration_if_eligible: { data: 1 },
+  };
   tableData = {
     field_reviews: [],
     project_members: [],
@@ -59,20 +71,19 @@ describe("retryPendingArbitrations — guards", () => {
     expect(writeCalls).toHaveLength(0);
   });
 
-  it("sem field_reviews pendentes → assigned 0 e nenhum UPDATE", async () => {
+  it("sem field_reviews pendentes → assigned 0 e nenhuma RPC", async () => {
     tableData.field_reviews = [];
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(0);
     expect(r.stillNoPool).toBe(0);
-    expect(updateCallsOf("field_reviews")).toHaveLength(0);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(arbitrationCalls()).toHaveLength(0);
   });
 });
 
 describe("retryPendingArbitrations — agrupamento por (document_id, self_reviewer_id)", () => {
-  it("dois fields do mesmo doc/self_reviewer → 1 chamada de assignArbitrator (1 UPDATE em field_reviews)", async () => {
+  it("dois fields do mesmo doc/self_reviewer → 1 commit atômico", async () => {
     tableData.field_reviews = [
       { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
       { document_id: "doc1", field_name: "q2", self_reviewer_id: "userA" },
@@ -84,22 +95,17 @@ describe("retryPendingArbitrations — agrupamento por (document_id, self_review
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(true);
-    // 1 grupo → 1 UPDATE em field_reviews atribuindo arbitrator_id
-    expect(updateCallsOf("field_reviews")).toHaveLength(1);
-    expect(updateCallsOf("field_reviews")[0].payload).toMatchObject({
-      arbitrator_id: "userB",
+    expect(arbitrationCalls()).toHaveLength(1);
+    expect(arbitrationCalls()[0].args).toEqual({
+      p_project_id: "p1",
+      p_document_id: "doc1",
+      p_user_id: "userB",
+      p_field_names: ["q1", "q2"],
     });
-    // 1 grupo concluído → 1 upsert em assignments (arbitragem)
-    expect(upsertCallsOf("assignments")).toHaveLength(1);
-    expect(upsertCallsOf("assignments")[0].payload).toMatchObject({
-      project_id: "p1",
-      document_id: "doc1",
-      user_id: "userB",
-      type: "arbitragem",
-    });
+    expect(writeCalls).toHaveLength(0);
   });
 
-  it("dois docs distintos → 2 chamadas de assignArbitrator (2 UPDATEs)", async () => {
+  it("dois docs distintos → 2 commits atômicos", async () => {
     tableData.field_reviews = [
       { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
       { document_id: "doc2", field_name: "q1", self_reviewer_id: "userC" },
@@ -110,8 +116,8 @@ describe("retryPendingArbitrations — agrupamento por (document_id, self_review
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(true);
-    expect(updateCallsOf("field_reviews")).toHaveLength(2);
-    expect(upsertCallsOf("assignments")).toHaveLength(2);
+    expect(arbitrationCalls()).toHaveLength(2);
+    expect(writeCalls).toHaveLength(0);
   });
 
   it("self_reviewers diferentes no mesmo doc → 2 grupos (caso raro mas suportado)", async () => {
@@ -124,7 +130,7 @@ describe("retryPendingArbitrations — agrupamento por (document_id, self_review
     ];
     const retry = await loadRetry();
     await retry("p1");
-    expect(updateCallsOf("field_reviews")).toHaveLength(2);
+    expect(arbitrationCalls()).toHaveLength(2);
   });
 });
 
@@ -139,8 +145,27 @@ describe("retryPendingArbitrations — pool vazio", () => {
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(0);
     expect(r.stillNoPool).toBe(1);
-    expect(updateCallsOf("field_reviews")).toHaveLength(0);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(arbitrationCalls()).toHaveLength(0);
+  });
+
+  it("candidato desabilitado antes do commit → RPC não grava", async () => {
+    tableData.field_reviews = [
+      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+    ];
+    tableData.project_members = [
+      { user_id: "userB", role: "pesquisador" },
+    ];
+    rpcResults.assign_arbitration_if_eligible = { data: 0 };
+
+    const retry = await loadRetry();
+
+    expect(await retry("p1")).toMatchObject({
+      success: true,
+      assigned: 0,
+      stillNoPool: 0,
+    });
+    expect(arbitrationCalls()).toHaveLength(1);
+    expect(writeCalls).toHaveLength(0);
   });
 });
 
@@ -158,10 +183,8 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(true);
-    expect(updateCallsOf("field_reviews")).toHaveLength(1);
-    expect(updateCallsOf("field_reviews")[0].payload).toMatchObject({
-      arbitrator_id: "userC",
-    });
+    expect(arbitrationCalls()).toHaveLength(1);
+    expect(arbitrationCalls()[0].args).toMatchObject({ p_user_id: "userC" });
   });
 
   it("todos os elegíveis codificaram o doc → fallback para elegível != auto-revisor", async () => {
@@ -183,11 +206,9 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(1);
     expect(r.stillNoPool).toBe(0);
-    expect(updateCallsOf("field_reviews")).toHaveLength(1);
-    const payload = updateCallsOf("field_reviews")[0].payload as {
-      arbitrator_id: string;
-    };
-    expect(["userB", "userC"]).toContain(payload.arbitrator_id);
+    expect(arbitrationCalls()).toHaveLength(1);
+    const args = arbitrationCalls()[0].args as { p_user_id: string };
+    expect(["userB", "userC"]).toContain(args.p_user_id);
   });
 
   it("único elegível é o próprio auto-revisor → stillNoPool, sem UPDATE", async () => {
@@ -201,7 +222,7 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(0);
     expect(r.stillNoPool).toBe(1);
-    expect(updateCallsOf("field_reviews")).toHaveLength(0);
+    expect(arbitrationCalls()).toHaveLength(0);
   });
 });
 
@@ -224,10 +245,10 @@ describe("retryPendingArbitrations — batch de responses agrupado por doc", () 
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(true);
-    const upd = updateCallsOf("field_reviews");
-    expect(upd).toHaveLength(2);
-    const arbitrators = upd
-      .map((c) => (c.payload as { arbitrator_id: string }).arbitrator_id)
+    const calls = arbitrationCalls();
+    expect(calls).toHaveLength(2);
+    const arbitrators = calls
+      .map((call) => (call.args as { p_user_id: string }).p_user_id)
       .sort();
     // doc1 só pode ir pra userC (userB codificou); doc2 só pra userB
     // (userC codificou). Sem batch correto por doc, ambas as chamadas

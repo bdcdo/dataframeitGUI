@@ -101,11 +101,14 @@ beforeEach(() => {
   serverTableResults = undefined;
   adminTableResults = undefined;
   serverRpcResults = {
+    remove_project_member: {
+      data: { project_id: "p-derived" },
+    },
     set_member_arbitration_permission: {
-      data: { project_id: "p-derived", released: 0 },
+      data: { project_id: "p-derived" },
     },
     set_member_comparison_permission: {
-      data: { project_id: "p-derived", released: 0 },
+      data: { project_id: "p-derived" },
     },
   };
   adminCreateCalls = 0;
@@ -133,35 +136,19 @@ async function loadRemove() {
 }
 
 describe("removeMember", () => {
-  it("deriva o projeto da linha removida para todas as limpezas", async () => {
-    serverTableResults = {
-      project_members: {
-        data: { project_id: "p-canonical", user_id: "user-member" },
-      },
+  it("remove membership, pendências e aliases por uma RPC atômica", async () => {
+    serverRpcResults.remove_project_member = {
+      data: { project_id: "p-canonical" },
     };
     const remove = await loadRemove();
     const r = await remove("member-1");
 
     expect(r?.error).toBeUndefined();
-    expect(adminCreateCalls).toBe(1);
-    expect(filterCalls).toContainEqual({
-      table: "project_members",
-      method: "eq",
-      column: "id",
-      value: "member-1",
+    expect(rpcArgs("remove_project_member")).toEqual({
+      p_member_id: "member-1",
     });
-    expect(filterCalls).toContainEqual({
-      table: "assignments",
-      method: "eq",
-      column: "project_id",
-      value: "p-canonical",
-    });
-    expect(filterCalls).toContainEqual({
-      table: "member_email_links",
-      method: "eq",
-      column: "project_id",
-      value: "p-canonical",
-    });
+    expect(adminCreateCalls).toBe(0);
+    expect(writeCalls).toEqual([]);
     expect(hoisted.revalidatePath).toHaveBeenCalledWith("/projects/p-canonical");
     expect(hoisted.revalidateTag).toHaveBeenCalledWith(
       "project-p-canonical-members",
@@ -169,14 +156,26 @@ describe("removeMember", () => {
     );
   });
 
-  it("linha ausente → não inicia limpeza admin", async () => {
-    serverTableResults = { project_members: { data: null } };
+  it("linha ausente → erro fail-closed", async () => {
+    serverRpcResults.remove_project_member = { data: null };
     const remove = await loadRemove();
 
     expect(await remove("missing")).toEqual({
       error: "Membro não encontrado ou sem permissão.",
     });
     expect(adminCreateCalls).toBe(0);
+  });
+
+  it("falha transacional → propaga erro e não invalida cache", async () => {
+    serverRpcResults.remove_project_member = {
+      error: { message: "falha ao revogar alias" },
+    };
+    const remove = await loadRemove();
+
+    expect(await remove("member-1")).toEqual({
+      error: "falha ao revogar alias",
+    });
+    expect(hoisted.revalidatePath).not.toHaveBeenCalled();
   });
 });
 

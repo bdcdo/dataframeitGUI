@@ -213,50 +213,14 @@ export async function updatePendingMemberEmail(
 
 export async function removeMember(memberId: string) {
   const supabase = await createSupabaseServer();
-  const { data: removed, error } = await supabase
-    .from("project_members")
-    .delete()
-    .eq("id", memberId)
-    .select("project_id, user_id")
+  const { data, error } = await supabase
+    .rpc("remove_project_member", { p_member_id: memberId })
     .maybeSingle();
 
   if (error) return { error: error.message };
+  const removed = data as { project_id: string } | null;
   if (!removed) return { error: "Membro não encontrado ou sem permissão." };
   const projectId = removed.project_id;
-
-  // FR-005 (research D6): atribuições nunca iniciadas voltam ao pool de
-  // documentos não atribuídos. Trabalho começado (outros status) permanece.
-  // Vínculos de e-mail do membro no projeto saem junto (FR-012/contracts):
-  // acessos futuros por alias cessam; histórico permanece.
-  const admin = createSupabaseAdmin();
-  const [{ error: assignmentsError }, { error: linksError }] =
-    await Promise.all([
-      admin
-        .from("assignments")
-        .delete()
-        .eq("project_id", projectId)
-        .eq("user_id", removed.user_id)
-        .eq("status", "pendente"),
-      admin
-        .from("member_email_links")
-        .delete()
-        .eq("project_id", projectId)
-        .eq("member_user_id", removed.user_id),
-    ]);
-  if (assignmentsError) {
-    console.error("[removeMember] erro ao liberar atribuições pendentes", {
-      projectId,
-      userId: removed.user_id,
-      error: assignmentsError.message,
-    });
-  }
-  if (linksError) {
-    console.error("[removeMember] erro ao remover vínculos de e-mail", {
-      projectId,
-      userId: removed.user_id,
-      error: linksError.message,
-    });
-  }
 
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
@@ -330,7 +294,7 @@ export async function setCanArbitrate(
     .maybeSingle();
 
   if (error) return { error: error.message };
-  const member = data as { project_id: string; released: number } | null;
+  const member = data as { project_id: string } | null;
   if (!member) return { error: "Membro não encontrado ou sem permissão." };
   const projectId = member.project_id;
 
@@ -367,7 +331,7 @@ export async function setCanCompare(
     .maybeSingle();
 
   if (error) return { error: error.message };
-  const member = data as { project_id: string; released: number } | null;
+  const member = data as { project_id: string } | null;
   if (!member) return { error: "Membro não encontrado ou sem permissão." };
   const projectId = member.project_id;
 

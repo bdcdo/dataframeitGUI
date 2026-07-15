@@ -7,6 +7,25 @@
 // filter-aware — mantido separado de propósito.
 
 export type WriteCall = { table: string; op: string; payload: unknown };
+export type RpcCall = { fn: string; args: unknown };
+export type RpcResult = {
+  data?: unknown;
+  error?: { message: string } | null;
+};
+
+function makeRpc(state: {
+  rpcCalls?: RpcCall[];
+  rpcResults?: Record<string, RpcResult>;
+}) {
+  return (fn: string, args: unknown) => {
+    state.rpcCalls?.push({ fn, args });
+    const result = state.rpcResults?.[fn];
+    return {
+      then: (resolve: (value: unknown) => unknown) =>
+        resolve({ data: result?.data ?? null, error: result?.error ?? null }),
+    };
+  };
+}
 
 export function callsOf(
   writeCalls: WriteCall[],
@@ -59,8 +78,11 @@ function attachWriteOps(
 export function makeFilterAwareSupabaseMock(state: {
   tableData: Record<string, unknown[]>;
   writeCalls: WriteCall[];
+  rpcCalls?: RpcCall[];
+  rpcResults?: Record<string, RpcResult>;
 }) {
   return {
+    rpc: makeRpc(state),
     from: (table: string) => {
       const eqs: Array<[string, unknown]> = [];
       const neqs: Array<[string, unknown]> = [];
@@ -120,8 +142,11 @@ export function makeFilterAwareSupabaseMock(state: {
 export function makeSimpleSupabaseMock(state: {
   tableData: Record<string, unknown>;
   writeCalls: WriteCall[];
+  rpcCalls?: RpcCall[];
+  rpcResults?: Record<string, RpcResult>;
 }) {
   return {
+    rpc: makeRpc(state),
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
       const opRef: OpRef = { current: "select" };
