@@ -75,14 +75,14 @@ ignore_missing_imports = true
 follow_imports = "silent"
 exclude = ["tests/"]
 
-# Grandfathering (#260, mesmo espirito do per-file-ignores do ruff acima):
+# Grandfathering de tipos (#260):
 # llm_runner.py concentra 103 dos 113 erros do baseline inicial, quase todos
 # union-attr da explosao do alias JSON recursivo em torno de dict cru vindo
-# do LLM. E o mesmo arquivo ja isento de C901 no ruff (run_llm, CCN 35) --
-# tipar corretamente exige o mesmo refactor maior, fora do escopo do PR de
-# tooling. Sem isso, qualquer push que toque o arquivo bloquearia nos 103
-# erros pre-existentes (o hook e file-scoped, nao line-scoped). Ver
-# docs/CODE_QUALITY_TOOLING.md.
+# do LLM. A isencao C901 de run_llm foi removida na #377, mas decompor o fluxo
+# de controle nao estreitou esses tipos recursivos: a isencao mypy continua
+# factual e exige um trabalho proprio de tipagem. Sem ela, qualquer push que
+# toque o arquivo bloquearia nos 103 erros pre-existentes (o hook e
+# file-scoped, nao line-scoped). Ver docs/CODE_QUALITY_TOOLING.md.
 [[tool.mypy.overrides]]
 module = "services.llm_runner"
 ignore_errors = true
