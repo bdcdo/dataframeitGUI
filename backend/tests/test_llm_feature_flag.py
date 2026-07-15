@@ -15,6 +15,7 @@ from config import Settings, settings
 from main import create_app
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+VALID_PROJECT_ID = "00000000-0000-4000-8000-000000000001"
 
 
 def test_settings_defaults_to_llm_enabled(monkeypatch) -> None:
@@ -129,7 +130,7 @@ def test_disabled_switch_does_not_cover_pydantic_namespace(
 
     response = client.post(
         "/api/pydantic/recover-fields",
-        json={"project_id": "p1"},
+        json={"project_id": VALID_PROJECT_ID},
         headers=auth_headers,
     )
 
