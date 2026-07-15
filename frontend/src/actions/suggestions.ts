@@ -4,7 +4,16 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { saveSchemaFromGUI } from "./schema";
-import type { PydanticField } from "@/lib/types";
+import { schemaBaselineIdentity } from "@/lib/schema-utils";
+import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
+
+function projectVersion(project: {
+  schema_version_major?: number | null;
+  schema_version_minor?: number | null;
+  schema_version_patch?: number | null;
+}): string {
+  return `${project.schema_version_major ?? 0}.${project.schema_version_minor ?? 1}.${project.schema_version_patch ?? 0}`;
+}
 
 export async function createSchemaSuggestion(
   projectId: string,
@@ -58,11 +67,17 @@ export async function resolveSchemaSuggestion(
     // Fetch current fields
     const { data: project } = await supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      )
       .eq("id", projectId)
       .single();
 
     const fields = (project?.pydantic_fields as PydanticField[]) || [];
+    const expectedBaseline = schemaBaselineIdentity(
+      fields,
+      projectVersion(project ?? {}),
+    );
     const changes = suggestion.suggested_changes as Record<string, unknown>;
 
     // Apply changes to the matching field
@@ -79,7 +94,11 @@ export async function resolveSchemaSuggestion(
     // Save schema (triggers audit log). Em falha (ex.: RLS filtrou o UPDATE
     // de projects — #178), retorna sem marcar a sugestão como aprovada,
     // evitando a divergência "Aprovada" com schema não aplicado.
-    const saved = await saveSchemaFromGUI(projectId, updatedFields);
+    const saved = await saveSchemaFromGUI(
+      projectId,
+      updatedFields,
+      expectedBaseline,
+    );
     if (saved.error) return { error: saved.error };
   }
 
@@ -115,6 +134,7 @@ export async function approveSchemaSuggestionWithEdits(
   suggestionId: string,
   projectId: string,
   editedFields: PydanticField[],
+  expectedBaseline: SchemaBaselineIdentity,
 ): Promise<{ error?: string }> {
   const gate = await requireCoordinator(
     projectId,
@@ -128,7 +148,7 @@ export async function approveSchemaSuggestionWithEdits(
   // depois que o schema persistiu de fato (o update abaixo aguarda ambos).
   const [supabase, saved] = await Promise.all([
     createSupabaseServer(),
-    saveSchemaFromGUI(projectId, editedFields),
+    saveSchemaFromGUI(projectId, editedFields, expectedBaseline),
   ]);
   if (saved.error) return { error: saved.error };
 

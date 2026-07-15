@@ -1,16 +1,20 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import {
   saveSchemaFromGUI,
   publishMajorVersion,
   backfillSchemaVersionHistory,
   recoverFieldsFromStoredCode,
 } from "@/actions/schema";
-import { validateGUIFields, generatePydanticCode } from "@/lib/schema-utils";
+import {
+  schemaEditorSessionKey,
+  generatePydanticCode,
+  schemaFieldsFingerprint,
+  validateGUIFields,
+} from "@/lib/schema-utils";
 import { toast } from "sonner";
 import { Info } from "lucide-react";
 import { SchemaBuilderGUI } from "./SchemaBuilderGUI";
@@ -18,7 +22,10 @@ import { ValidationErrorPanel } from "./ValidationErrorPanel";
 import { SchemaEditorHeader } from "./SchemaEditorHeader";
 import { SchemaEditorBanners } from "./SchemaEditorBanners";
 import { SchemaEditorDialogs } from "./SchemaEditorDialogs";
+import { SchemaEditorFooter } from "./SchemaEditorFooter";
 import { useSchemaEditorDialogs } from "./useSchemaEditorDialogs";
+import { useSchemaDraft } from "@/hooks/useSchemaDraft";
+import { schemaEditorStatusMessage } from "@/lib/schema-editor-status";
 import type { PydanticField } from "@/lib/types";
 
 const MonacoEditor = dynamic(
@@ -33,7 +40,32 @@ interface SchemaEditorProps {
   currentVersion: string;
 }
 
-export function SchemaEditor({
+// Este boundary transforma a identidade remota do schema na identidade React
+// da sessão. Assim, navegação entre projetos no mesmo segmento dinâmico e um
+// refresh com versão/fingerprint novo remontam todos os estados e refs locais.
+export function SchemaEditorSession(props: SchemaEditorProps) {
+  return (
+    <SchemaEditor
+      key={schemaEditorSessionKey(
+        props.projectId,
+        props.initialFields || [],
+        props.currentVersion,
+      )}
+      {...props}
+    />
+  );
+}
+
+function SchemaEditorLoadingState() {
+  return (
+    <div
+      className="h-[calc(100vh-148px)] animate-pulse bg-muted/20"
+      aria-label="Carregando editor de schema"
+    />
+  );
+}
+
+function SchemaEditor({
   projectId,
   initialCode,
   initialFields,
@@ -45,7 +77,26 @@ export function SchemaEditor({
   // código Pydantic é a fonte de verdade gerada a partir dos campos. Por isso
   // o estado inicial é sempre "gui".
   const [mode, setMode] = useState<"gui" | "code">("gui");
-  const [fields, setFields] = useState<PydanticField[]>(initialFields || []);
+  const {
+    fields,
+    setFields,
+    isDirty,
+    recoveredDraft,
+    savedVersion,
+    conflict,
+    storageAvailable,
+    draftPersisted,
+    prepareSubmission,
+    markSaved,
+    registerRemoteConflict,
+    applyConflictingDraft,
+    discardConflictingDraft,
+    isHydrated,
+  } = useSchemaDraft({
+    projectId,
+    initialFields: initialFields || [],
+    currentVersion,
+  });
   // O código é uma visualização DERIVADA dos campos, não estado próprio. Para um
   // projeto sem campos mas com código armazenado (legado), mostra o código
   // original até que os campos sejam recuperados (ver banner de recuperação).
@@ -73,7 +124,17 @@ export function SchemaEditor({
     dismissHelp,
   } = useSchemaEditorDialogs();
 
+  useEffect(() => {
+    if (recoveredDraft) {
+      toast.info("Rascunho local recuperado. Revise e salve para confirmar as alterações.");
+    }
+  }, [recoveredDraft]);
+
   const handlePublishMajor = () => {
+    if (isDirty || conflict) {
+      toast.warning("Resolva e salve as alterações pendentes antes de publicar uma versão MAJOR.");
+      return;
+    }
     startTransition(async () => {
       try {
         const r = await publishMajorVersion(projectId);
@@ -85,6 +146,17 @@ export function SchemaEditor({
           const b = r.bumped;
           toast.success(`Nova versão MAJOR publicada: ${b.major}.${b.minor}.${b.patch}`);
         }
+        if (r?.bumped) {
+          const b = r.bumped;
+          markSaved(
+            {
+              fields,
+              version: `${b.major}.${b.minor}.${b.patch}`,
+              fingerprint: schemaFieldsFingerprint(fields),
+            },
+            null,
+          );
+        }
         setMajorDialogOpen(false);
         refresh();
       } catch (e: unknown) {
@@ -95,6 +167,10 @@ export function SchemaEditor({
   };
 
   const handleBackfill = () => {
+    if (isDirty || conflict) {
+      toast.warning("Resolva e salve as alterações pendentes antes de reconstruir o histórico.");
+      return;
+    }
     startTransition(async () => {
       try {
         const r = await backfillSchemaVersionHistory(projectId);
@@ -107,6 +183,14 @@ export function SchemaEditor({
         toast.success(
           `v${v.major}.${v.minor}.${v.patch} · ${r.stats.logEntriesUpdated} entradas, ${r.stats.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
           { duration: 10000 },
+        );
+        markSaved(
+          {
+            fields,
+            version: `${v.major}.${v.minor}.${v.patch}`,
+            fingerprint: schemaFieldsFingerprint(fields),
+          },
+          null,
         );
         setBackfillDialogOpen(false);
         refresh();
@@ -150,15 +234,26 @@ export function SchemaEditor({
   // --- Salvar ---
 
   const handleSave = () => {
+    if (conflict) {
+      toast.warning("Aplique ou descarte o rascunho conflitante antes de salvar.");
+      return;
+    }
     startTransition(async () => {
       try {
-        const errs = validateGUIFields(fields);
+        const submission = prepareSubmission();
+        const errs = validateGUIFields(submission.fields);
         if (errs.length > 0) {
           setGuiErrors(errs);
           return;
         }
         setGuiErrors([]);
-        const r = await saveSchemaFromGUI(projectId, fields);
+        const r = await saveSchemaFromGUI(
+          projectId,
+          submission.fields,
+          submission.expectedBaseline,
+        );
+        if (r?.saved) markSaved(r.saved, submission.draftToken);
+        else if (r?.conflict) registerRemoteConflict(r.conflict);
         if (r?.error) {
           toast.error(r.error);
           return;
@@ -170,13 +265,17 @@ export function SchemaEditor({
     });
   };
 
+  if (!isHydrated) {
+    return <SchemaEditorLoadingState />;
+  }
+
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
       <SchemaEditorHeader
         mode={mode}
         onSwitchToGUI={switchToGUI}
         onSwitchToCode={switchToCode}
-        currentVersion={currentVersion}
+        currentVersion={savedVersion}
         fieldCount={fields.length}
         llmOnlyCount={fields.filter((f) => f.target === "llm_only").length}
         isPending={isPending}
@@ -190,6 +289,12 @@ export function SchemaEditor({
         canRecover={canRecover}
         onRecover={handleRecover}
         isPending={isPending}
+        draftConflict={conflict}
+        currentVersion={savedVersion}
+        storageAvailable={storageAvailable}
+        draftPersisted={draftPersisted}
+        onApplyDraft={applyConflictingDraft}
+        onDiscardDraft={discardConflictingDraft}
       />
 
       {/* Conteúdo */}
@@ -231,23 +336,18 @@ export function SchemaEditor({
         </div>
       )}
 
-      {/* Footer */}
-      <div className="flex items-center gap-2 border-t px-4 py-2">
-        {mode === "gui" ? (
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={isPending}
-            className="bg-brand hover:bg-brand/90 text-brand-foreground"
-          >
-            Salvar
-          </Button>
-        ) : (
-          <span className="text-xs text-muted-foreground">
-            Visualização somente leitura — para editar, use o modo Visual.
-          </span>
-        )}
-      </div>
+      <SchemaEditorFooter
+        mode={mode}
+        saveDisabled={isPending || conflict !== null}
+        statusMessage={schemaEditorStatusMessage({
+          isDirty,
+          hasConflict: conflict !== null,
+          storageAvailable,
+          draftPersisted,
+          recoveredDraft,
+        })}
+        onSave={handleSave}
+      />
 
       <SchemaEditorDialogs
         backfillOpen={backfillDialogOpen}
@@ -257,7 +357,7 @@ export function SchemaEditor({
         onMajorOpenChange={setMajorDialogOpen}
         onConfirmPublishMajor={handlePublishMajor}
         isPending={isPending}
-        currentVersion={currentVersion}
+        currentVersion={savedVersion}
       />
     </div>
   );

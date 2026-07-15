@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { PydanticField } from "@/lib/types";
+import { schemaBaselineIdentity } from "@/lib/schema-utils";
 import {
   makeSupabaseMock,
-  type TableResult,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
+import { EMPTY_BASELINE, FIELD, PROJECT_SELECT } from "./schema-test-fixtures";
 
 // Testes do conserto da #178: o UPDATE de projects filtrado pela RLS retorna
 // sucesso com 0 linhas no PostgREST — antes, saveSchemaFromGUI seguia em
@@ -28,10 +28,12 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/api-server", () => ({
   fetchFastAPIServer: fetchMock,
 }));
-vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
-}));
+vi.mock("@/lib/supabase/server", () => {
+  async function createSupabaseServer() {
+    return makeSupabaseMock({ tableResults: serverTableResults, writeCalls });
+  }
+  return { createSupabaseServer };
+});
 
 import {
   saveSchemaFromGUI,
@@ -40,23 +42,6 @@ import {
   saveLlmConfig,
   recoverFieldsFromStoredCode,
 } from "../schema";
-
-const FIELD: PydanticField = {
-  name: "q1",
-  type: "text",
-  options: null,
-  description: "Pergunta 1",
-};
-
-// Estado prévio do projeto lido por saveSchemaFromGUI (schema vazio, v0.1.0).
-const PROJECT_SELECT: TableResult = {
-  data: {
-    pydantic_fields: [],
-    schema_version_major: 0,
-    schema_version_minor: 1,
-    schema_version_patch: 0,
-  },
-};
 
 beforeEach(() => {
   writeCalls = [];
@@ -71,12 +56,19 @@ beforeEach(() => {
 });
 
 describe("saveSchemaFromGUI", () => {
+  function expectSchemaWriteRejected(result: { error?: string }) {
+    expect(result.error).toMatch(/0 campos|apagaria/i);
+    expect(
+      writeCalls.some((call) => call.table === "projects" && call.op === "update"),
+    ).toBe(false);
+  }
+
   it("o caso da #178: UPDATE de projects filtrado (0 linhas) retorna erro e NÃO grava histórico fantasma", async () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [] }],
     };
 
-    const r = await saveSchemaFromGUI("p1", [FIELD]);
+    const r = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
     expect(r.error).toMatch(/sem permissão/i);
 
     const logInserts = writeCalls.filter(
@@ -91,8 +83,12 @@ describe("saveSchemaFromGUI", () => {
       schema_change_log: { data: null, error: null },
     };
 
-    const r = await saveSchemaFromGUI("p1", [FIELD]);
+    const r = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
     expect(r.error).toBeUndefined();
+    expect(r.saved).toMatchObject({
+      version: "0.2.0",
+      fields: [{ name: "q1", hash: expect.any(String) }],
+    });
 
     const ops = writeCalls.map((c) => `${c.table}:${c.op}`);
     expect(ops.indexOf("projects:update")).toBeLessThan(
@@ -114,6 +110,74 @@ describe("saveSchemaFromGUI", () => {
       version_minor: 2,
       version_patch: 0,
     });
+    const projectUpdate = writeCalls.find(
+      (c) => c.table === "projects" && c.op === "update",
+    );
+    expect(projectUpdate?.filters).toEqual(
+      expect.arrayContaining([
+        { method: "eq", args: ["id", "p1"] },
+        { method: "eq", args: ["schema_version_major", 0] },
+        { method: "eq", args: ["schema_version_minor", 1] },
+        { method: "eq", args: ["schema_version_patch", 0] },
+        { method: "is", args: ["pydantic_hash", null] },
+      ]),
+    );
+  });
+
+  it("baseline divergente retorna conflito antes do UPDATE", async () => {
+    serverTableResults = {
+      projects: [{
+        data: {
+          ...(PROJECT_SELECT.data as Record<string, unknown>),
+          schema_version_minor: 2,
+        },
+      }],
+    };
+
+    const r = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(r.conflict?.version).toBe("0.2.0");
+    expect(r.error).toMatch(/outra aba|outra sessão/i);
+    expect(writeCalls.some((call) => call.table === "projects")).toBe(false);
+  });
+
+  it("CAS em 0 rows reconsulta e devolve o snapshot remoto vencedor", async () => {
+    const initial = {
+      ...(PROJECT_SELECT.data as Record<string, unknown>),
+      pydantic_hash: "hash-inicial",
+    };
+    const remoteField = { ...FIELD, description: "Mudança concorrente" };
+    serverTableResults = {
+      projects: [
+        { data: initial },
+        { data: [] },
+        {
+          data: {
+            ...initial,
+            pydantic_fields: [remoteField],
+            pydantic_hash: "hash-remoto",
+            schema_version_minor: 2,
+          },
+        },
+      ],
+    };
+
+    const r = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(r.conflict).toMatchObject({
+      version: "0.2.0",
+      fields: [{ description: "Mudança concorrente" }],
+    });
+    const projectUpdate = writeCalls.find(
+      (call) => call.table === "projects" && call.op === "update",
+    );
+    expect(projectUpdate?.filters).toContainEqual({
+      method: "eq",
+      args: ["pydantic_hash", "hash-inicial"],
+    });
+    expect(
+      writeCalls.some((call) => call.table === "schema_change_log"),
+    ).toBe(false);
   });
 
   it("erro no insert do log retorna erro com mensagem de histórico (schema já salvo)", async () => {
@@ -122,8 +186,9 @@ describe("saveSchemaFromGUI", () => {
       schema_change_log: { data: null, error: { message: "log boom" } },
     };
 
-    const r = await saveSchemaFromGUI("p1", [FIELD]);
+    const r = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
     expect(r.error).toMatch(/histórico.*log boom/);
+    expect(r.saved?.version).toBe("0.2.0");
     // O update de projects aconteceu antes da falha do log.
     expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(true);
   });
@@ -134,9 +199,12 @@ describe("saveSchemaFromGUI", () => {
       projects: [{ data: { ...(PROJECT_SELECT.data as Record<string, unknown>), pydantic_fields: [FIELD] } }],
     };
 
-    const r = await saveSchemaFromGUI("p1", []);
-    expect(r.error).toMatch(/0 campos|apagaria/i);
-    expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(false);
+    const r = await saveSchemaFromGUI(
+      "p1",
+      [],
+      schemaBaselineIdentity([FIELD], "0.1.0"),
+    );
+    expectSchemaWriteRejected(r);
   });
 
   it("guarda anti-wipe (legado): 0 campos com pydantic_fields vazio mas pydantic_code presente é recusado", async () => {
@@ -155,16 +223,15 @@ describe("saveSchemaFromGUI", () => {
       ],
     };
 
-    const r = await saveSchemaFromGUI("p1", []);
-    expect(r.error).toMatch(/0 campos|apagaria/i);
-    expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(false);
+    const r = await saveSchemaFromGUI("p1", [], EMPTY_BASELINE);
+    expectSchemaWriteRejected(r);
   });
 
   it("permite salvar [] quando o schema já estava vazio (sem campos e sem código)", async () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
     };
-    const r = await saveSchemaFromGUI("p1", []);
+    const r = await saveSchemaFromGUI("p1", [], EMPTY_BASELINE);
     expect(r.error).toBeUndefined();
   });
 });

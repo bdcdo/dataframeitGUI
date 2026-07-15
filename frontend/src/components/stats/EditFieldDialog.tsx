@@ -28,7 +28,7 @@ import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
-import type { PydanticField } from "@/lib/types";
+import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 
 export type { PendingSuggestion };
 
@@ -39,6 +39,7 @@ interface EditFieldDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pendingSuggestion?: PendingSuggestion | null;
+  schemaBaseline: SchemaBaselineIdentity;
 }
 
 export function EditFieldDialog({
@@ -48,6 +49,7 @@ export function EditFieldDialog({
   open,
   onOpenChange,
   pendingSuggestion,
+  schemaBaseline,
 }: EditFieldDialogProps) {
   const { refresh } = useRouter();
   const field = allFields.find((f) => f.name === fieldName);
@@ -115,11 +117,16 @@ export function EditFieldDialog({
             pendingSuggestion.id,
             projectId,
             updatedFields,
+            schemaBaseline,
           );
           if (result.error) throw new Error(result.error);
           toast.success("Sugestão aprovada e campo atualizado");
         } else {
-          const result = await saveSchemaFromGUI(projectId, updatedFields);
+          const result = await saveSchemaFromGUI(
+            projectId,
+            updatedFields,
+            schemaBaseline,
+          );
           if (result?.error) throw new Error(result.error);
           toast.success("Campo atualizado");
         }

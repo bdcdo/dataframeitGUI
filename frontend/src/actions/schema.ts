@@ -4,8 +4,17 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { fetchFastAPIServer } from "@/lib/api-server";
-import type { PydanticField } from "@/lib/types";
-import { bumpVersion, planSchemaPersistence } from "@/lib/schema-utils";
+import type {
+  PydanticField,
+  SchemaBaselineIdentity,
+  SchemaSaveResult,
+  SchemaSnapshot,
+} from "@/lib/types";
+import {
+  bumpVersion,
+  planSchemaPersistence,
+  schemaBaselineIdentity,
+} from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { errorMessage } from "@/lib/utils";
 import {
@@ -20,6 +29,184 @@ import {
   type UpdateBucket,
 } from "@/lib/schema-backfill";
 import crypto from "crypto";
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
+
+interface SchemaProjectRow {
+  pydantic_fields: PydanticField[] | null;
+  pydantic_code: string | null;
+  pydantic_hash: string | null;
+  schema_version_major: number | null;
+  schema_version_minor: number | null;
+  schema_version_patch: number | null;
+}
+
+const SCHEMA_PROJECT_SELECT =
+  "pydantic_fields, pydantic_code, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch";
+
+function projectVersion(project: Partial<SchemaProjectRow>): {
+  major: number;
+  minor: number;
+  patch: number;
+} {
+  return {
+    major: project.schema_version_major ?? 0,
+    minor: project.schema_version_minor ?? 1,
+    patch: project.schema_version_patch ?? 0,
+  };
+}
+
+function versionString(version: { major: number; minor: number; patch: number }): string {
+  return `${version.major}.${version.minor}.${version.patch}`;
+}
+
+function projectSnapshot(project: Partial<SchemaProjectRow>): SchemaSnapshot {
+  const fields = project.pydantic_fields ?? [];
+  return {
+    fields,
+    ...schemaBaselineIdentity(fields, versionString(projectVersion(project))),
+  };
+}
+
+function sameCasIdentity(
+  left: Partial<SchemaProjectRow>,
+  right: Partial<SchemaProjectRow>,
+): boolean {
+  const leftVersion = projectVersion(left);
+  const rightVersion = projectVersion(right);
+  return (
+    leftVersion.major === rightVersion.major &&
+    leftVersion.minor === rightVersion.minor &&
+    leftVersion.patch === rightVersion.patch &&
+    (left.pydantic_hash ?? null) === (right.pydantic_hash ?? null)
+  );
+}
+
+function conflictResult(project: Partial<SchemaProjectRow>): SchemaSaveResult {
+  return {
+    conflict: projectSnapshot(project),
+    error:
+      "O schema foi alterado em outra aba ou sessão. O seu rascunho foi preservado para revisão.",
+  };
+}
+
+interface SchemaSaveContext {
+  project: SchemaProjectRow;
+  oldFields: PydanticField[];
+  current: { major: number; minor: number; patch: number };
+}
+
+type SchemaContextLoad =
+  | { context: SchemaSaveContext }
+  | { result: SchemaSaveResult };
+
+type SchemaPersistencePlan = ReturnType<typeof planSchemaPersistence>;
+
+async function loadSchemaSaveContext(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  expectedBaseline: SchemaBaselineIdentity,
+): Promise<SchemaContextLoad> {
+  // `pydantic_code` precisa participar desta leitura: schemas legados podem
+  // ter código persistido sem `pydantic_fields`, e esse estado não pode ser
+  // sobrescrito por um editor visual vazio.
+  const { data } = await supabase
+    .from("projects")
+    .select(SCHEMA_PROJECT_SELECT)
+    .eq("id", projectId)
+    .single();
+  if (!data) {
+    return { result: { error: "Projeto não encontrado ou sem permissão" } };
+  }
+
+  const project = data as SchemaProjectRow;
+  const remoteBaseline = projectSnapshot(project);
+  if (
+    expectedBaseline.version !== remoteBaseline.version ||
+    expectedBaseline.fingerprint !== remoteBaseline.fingerprint
+  ) {
+    return { result: conflictResult(project) };
+  }
+
+  return {
+    context: {
+      project,
+      oldFields: project.pydantic_fields || [],
+      current: projectVersion(project),
+    },
+  };
+}
+
+function schemaWouldBeWiped(
+  fields: PydanticField[],
+  context: SchemaSaveContext,
+): boolean {
+  if (fields.length > 0) return false;
+  return context.oldFields.length > 0 || Boolean(context.project.pydantic_code);
+}
+
+async function resolveSchemaWrite(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  original: SchemaProjectRow,
+  write: { error?: string; casMiss?: boolean },
+): Promise<SchemaSaveResult | null> {
+  if (write.error) return { error: write.error };
+  if (!write.casMiss) return null;
+
+  const { data } = await supabase
+    .from("projects")
+    .select(SCHEMA_PROJECT_SELECT)
+    .eq("id", projectId)
+    .single();
+  if (!data || sameCasIdentity(original, data as SchemaProjectRow)) {
+    return {
+      error: "Não foi possível salvar o schema: sem permissão para alterar este projeto.",
+    };
+  }
+  return conflictResult(data as SchemaProjectRow);
+}
+
+function savedSchemaSnapshot(plan: SchemaPersistencePlan): SchemaSnapshot {
+  const version = versionString(plan.bumped);
+  return {
+    fields: plan.fieldsWithHash,
+    version,
+    fingerprint: schemaBaselineIdentity(plan.fieldsWithHash, version).fingerprint,
+  };
+}
+
+async function persistSchemaAuditLog({
+  supabase,
+  projectId,
+  userId,
+  plan,
+  saved,
+}: {
+  supabase: SupabaseServerClient;
+  projectId: string;
+  userId: string | undefined;
+  plan: SchemaPersistencePlan;
+  saved: SchemaSnapshot;
+}): Promise<SchemaSaveResult | null> {
+  if (!userId || plan.logEntries.length === 0) return null;
+  const { error } = await supabase.from("schema_change_log").insert(
+    plan.logEntries.map((entry) => ({
+      project_id: projectId,
+      changed_by: userId,
+      change_type: plan.changeType ?? "patch",
+      version_major: plan.bumped.major,
+      version_minor: plan.bumped.minor,
+      version_patch: plan.bumped.patch,
+      ...entry,
+    })),
+  );
+  if (!error) return null;
+  return {
+    saved,
+    error: `Schema salvo, mas falha ao registrar o histórico: ${error.message}`,
+  };
+}
 
 interface RecoverResponse {
   valid: boolean;
@@ -66,12 +253,16 @@ export async function recoverFieldsFromStoredCode(
 // manual do código foi descontinuada, então não há Server Action que receba
 // código Pydantic cru do cliente.
 async function saveSchema(
+  supabase: SupabaseServerClient,
   projectId: string,
   code: string,
   fields: PydanticField[],
+  expectedRow: {
+    version: { major: number; minor: number; patch: number };
+    pydanticHash: string | null;
+  },
   versionBump?: { major: number; minor: number; patch: number },
-): Promise<{ error?: string }> {
-  const supabase = await createSupabaseServer();
+): Promise<{ error?: string; casMiss?: boolean }> {
   const hash = crypto.createHash("sha256").update(code).digest("hex").slice(0, 16);
 
   const updatePayload: Record<string, unknown> = {
@@ -85,14 +276,19 @@ async function saveSchema(
     updatePayload.schema_version_patch = versionBump.patch;
   }
 
-  try {
-    await updateOrThrow(supabase, "projects", updatePayload, { id: projectId }, {
-      message:
-        "Não foi possível salvar o schema: sem permissão para alterar este projeto.",
-    });
-  } catch (e) {
-    return { error: errorMessage(e) || "Erro ao salvar o schema" };
-  }
+  let query = supabase
+    .from("projects")
+    .update(updatePayload)
+    .eq("id", projectId)
+    .eq("schema_version_major", expectedRow.version.major)
+    .eq("schema_version_minor", expectedRow.version.minor)
+    .eq("schema_version_patch", expectedRow.version.patch);
+  query = expectedRow.pydanticHash === null
+    ? query.is("pydantic_hash", null)
+    : query.eq("pydantic_hash", expectedRow.pydanticHash);
+  const { data, error } = await query.select("id");
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { casMiss: true };
 
   // is_latest não é flipado para false aqui — staleness é detectada no
   // display via answer_field_hashes (lib/reviews/queries.ts:isFieldStale).
@@ -137,26 +333,21 @@ export async function savePrompt(
 
 export async function saveSchemaFromGUI(
   projectId: string,
-  fields: PydanticField[]
-): Promise<{ error?: string }> {
+  fields: PydanticField[],
+  expectedBaseline: SchemaBaselineIdentity,
+): Promise<SchemaSaveResult> {
   const [supabase, user] = await Promise.all([
     createSupabaseServer(),
     getAuthUser(),
   ]);
 
-  // Fetch old fields + current version. `pydantic_code` entra no select por
-  // causa da guarda anti-wipe abaixo: o caso legado a proteger tem justamente
-  // `pydantic_fields` vazio mas `pydantic_code` presente, então a guarda
-  // precisa enxergar o código para não deixar passar o wipe.
-  const { data: project } = await supabase
-    .from("projects")
-    .select(
-      "pydantic_fields, pydantic_code, schema_version_major, schema_version_minor, schema_version_patch",
-    )
-    .eq("id", projectId)
-    .single();
-
-  const oldFields = (project?.pydantic_fields as PydanticField[]) || [];
+  const loaded = await loadSchemaSaveContext(
+    supabase,
+    projectId,
+    expectedBaseline,
+  );
+  if ("result" in loaded) return loaded.result;
+  const context = loaded.context;
 
   // Guarda anti-wipe: nunca sobrescrever um schema existente com 0 campos. Sem
   // isto, abrir um projeto cujo editor visual ficou vazio (ex.: legado com
@@ -164,59 +355,59 @@ export async function saveSchemaFromGUI(
   // regeneraria `class Analysis(BaseModel): pass`, apagando schema + campos em
   // silêncio. Um schema realmente vazio só é salvável quando já estava vazio.
   //
-  // A condição testa `pydantic_code` ALÉM de `oldFields` justamente porque o
-  // caso legado documentado acima tem `pydantic_fields` vazio (oldFields === [])
-  // mas `pydantic_code` populado: checar só `oldFields.length > 0` deixaria o
-  // wipe passar exatamente no cenário que a guarda existe para impedir.
-  const hasExistingSchema = oldFields.length > 0 || !!project?.pydantic_code;
-  if (fields.length === 0 && hasExistingSchema) {
+  if (schemaWouldBeWiped(fields, context)) {
     return {
       error:
         "Salvar com 0 campos apagaria o schema atual. Adicione ao menos um campo, ou use 'Recuperar do código' se o editor abriu vazio.",
     };
   }
 
-  const current = {
-    major: project?.schema_version_major ?? 0,
-    minor: project?.schema_version_minor ?? 1,
-    patch: project?.schema_version_patch ?? 0,
-  };
-
   // Classificação, versão, log de auditoria, código Pydantic e hash: cálculo
   // puro compartilhado com apply-decisions.ts via planSchemaPersistence
   // (schema-utils.ts) — ver #63/PR #352 (evita drift entre os dois callers).
-  const { changeType, bumped, logEntries, code, fieldsWithHash } = planSchemaPersistence(
-    oldFields,
+  const plan = planSchemaPersistence(
+    context.oldFields,
     fields,
-    current,
+    context.current,
   );
 
-  const saved = await saveSchema(projectId, code, fieldsWithHash, changeType ? bumped : undefined);
-  if (saved.error) return saved;
+  const write = await saveSchema(
+    supabase,
+    projectId,
+    plan.code,
+    plan.fieldsWithHash,
+    {
+      version: context.current,
+      pydanticHash: context.project.pydantic_hash,
+    },
+    plan.changeType ? plan.bumped : undefined,
+  );
+  const writeResult = await resolveSchemaWrite(
+    supabase,
+    projectId,
+    context.project,
+    write,
+  );
+  if (writeResult) return writeResult;
+
+  // O cliente precisa do baseline efetivamente persistido (inclusive a versão
+  // calculada contra o estado remoto) para distinguir novas edições locais do
+  // snapshot que acabou de ser salvo.
+  const savedState = savedSchemaSnapshot(plan);
 
   // Insert audit log entries com change_type + versão alvo. Só roda depois
   // que saveSchema confirmou ≥1 linha atualizada (erro em 0-rows) — antes o
   // log era gravado mesmo com o UPDATE de projects filtrado pela RLS, gerando
   // histórico fantasma (#178).
-  if (logEntries.length > 0 && user) {
-    const { error: logErr } = await supabase.from("schema_change_log").insert(
-      logEntries.map((e) => ({
-        project_id: projectId,
-        changed_by: user.id,
-        change_type: changeType ?? "patch",
-        version_major: bumped.major,
-        version_minor: bumped.minor,
-        version_patch: bumped.patch,
-        ...e,
-      })),
-    );
-    if (logErr) {
-      return {
-        error: `Schema salvo, mas falha ao registrar o histórico: ${logErr.message}`,
-      };
-    }
-  }
-  return {};
+  const auditResult = await persistSchemaAuditLog({
+    supabase,
+    projectId,
+    userId: user?.id,
+    plan,
+    saved: savedState,
+  });
+  if (auditResult) return auditResult;
+  return { saved: savedState };
 }
 
 // ---------- Backfill retroativo usando schema_change_log ----------
@@ -244,8 +435,6 @@ export async function backfillSchemaVersionHistory(
     return { error: errorMessage(e) || "Erro ao reconstruir o histórico de versões" };
   }
 }
-
-type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
 
 async function persistLogClassification(
   supabase: SupabaseServerClient,
@@ -486,11 +675,17 @@ export async function toggleLlmField(
   const supabase = await createSupabaseServer();
   const { data: project } = await supabase
     .from("projects")
-    .select("pydantic_fields")
+    .select(
+      "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+    )
     .eq("id", projectId)
     .single();
 
   let fields = (project?.pydantic_fields as PydanticField[]) || [];
+  const expectedBaseline = schemaBaselineIdentity(
+    fields,
+    versionString(projectVersion(project ?? {})),
+  );
 
   if (enabled) {
     if (!fields.some((f) => f.name === fieldDef.name)) {
@@ -500,7 +695,7 @@ export async function toggleLlmField(
     fields = fields.filter((f) => f.name !== fieldDef.name);
   }
 
-  return saveSchemaFromGUI(projectId, fields);
+  return saveSchemaFromGUI(projectId, fields, expectedBaseline);
 }
 
 export async function saveLlmConfig(
