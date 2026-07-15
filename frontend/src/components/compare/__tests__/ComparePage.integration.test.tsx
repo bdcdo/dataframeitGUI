@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -24,7 +24,7 @@ vi.mock("@/actions/equivalences", () => ({
   unmarkEquivalencePair,
 }));
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 vi.mock("@/components/coding/DocumentReader", () => ({
   DocumentReader: ({ text }: { text: string }) => (
@@ -41,6 +41,7 @@ vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: vi.fn(async () => "test-token") }),
 }));
 
+import { toast } from "sonner";
 import { ComparePage } from "@/components/compare/ComparePage";
 import type { PydanticField } from "@/lib/types";
 import type { CompareResponse } from "@/components/compare/compare-types";
@@ -134,7 +135,19 @@ class ResizeObserverStub {
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
-beforeEach(() => submitVerdict.mockClear());
+// Radix (Popover do CompareFilters) usa APIs de Pointer que o jsdom não tem.
+{
+  const proto = Element.prototype as unknown as Record<string, unknown>;
+  proto.scrollIntoView = () => {};
+  proto.hasPointerCapture = () => false;
+  proto.setPointerCapture = () => {};
+  proto.releasePointerCapture = () => {};
+}
+
+beforeEach(() => {
+  submitVerdict.mockClear();
+  vi.mocked(toast.warning).mockClear();
+});
 afterEach(cleanup);
 
 describe("ComparePage — árvore real (smoke)", () => {
@@ -169,6 +182,46 @@ describe("ComparePage — árvore real (smoke)", () => {
       undefined,
       expect.any(Array),
     );
+  });
+
+  it("'Descartar' no painel real limpa a seleção sem salvar", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.click(screen.getByRole("button", { name: /Ambíguo/i }));
+    expect(screen.getByText("Selecionado:")).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Descartar" }));
+
+    expect(screen.queryByText("Selecionado:")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Descartar" })).toBeNull();
+    expect(submitVerdict).not.toHaveBeenCalled();
+  });
+
+  it("com rascunho pendente, trocar filtro de fila no popover real é bloqueado com aviso", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.click(screen.getByRole("button", { name: /Ambíguo/i }));
+    expect(screen.getByText("Selecionado:")).not.toBeNull();
+
+    // Vetor da revisão do PR #434: CompareFilters faz o próprio push de URL e
+    // recompõe a fila — sem o gate, o rascunho seria descartado em silêncio
+    // pelo guard de contexto (mesma classe do incidente do #430).
+    await user.click(screen.getByRole("button", { name: /Filtros/i }));
+    const dateInput = document.querySelector('input[type="date"]');
+    expect(dateInput).not.toBeNull();
+    fireEvent.change(dateInput as HTMLInputElement, {
+      target: { value: "2026-01-01" },
+    });
+
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+      "Seleção não confirmada — confirme ou descarte antes de avançar.",
+      { id: "compare-nav-guard" },
+    );
+    // Rascunho intacto e filtro não aplicado (input controlado volta a vazio).
+    expect(screen.getByText("Selecionado:")).not.toBeNull();
+    expect((dateInput as HTMLInputElement).value).toBe("");
   });
 
   it("coordenador vê o toggle de fila real (CompareQueueTabs) montado", () => {

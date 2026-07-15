@@ -179,5 +179,5 @@ Seguir estas regras para evitar regressoes de performance:
 Ver `docs/PHASES.md` para roadmap completo.
 
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure, shell commands, and other important information, read the current plan: `specs/003-auth-render-path/plan.md` (feature ativa; artefatos em `specs/003-auth-render-path/`).
+For additional context about technologies to be used, project structure, shell commands, and other important information, read the current plan: `specs/004-export-original-metadata/plan.md` (feature ativa; artefatos em `specs/004-export-original-metadata/`).
 <!-- SPECKIT END -->

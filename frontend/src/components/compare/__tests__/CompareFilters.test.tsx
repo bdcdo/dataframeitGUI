@@ -112,3 +112,70 @@ describe("CompareFilters — alcançabilidade de 'Todas as versões' (#247/#286)
     expect(push.mock.calls[0][0]).not.toContain("version=");
   });
 });
+
+describe("CompareFilters — gate de navegação com rascunho pendente (#430)", () => {
+  // Os filtros de fila recompõem a fila no servidor e podem mudar o doc/campo
+  // atual — mesma classe de perda silenciosa de rascunho do incidente. Como o
+  // componente faz o próprio push, o guard chega por prop (não por wrapper).
+  it("guardNavigation vetando: trocar filtro NÃO faz push", async () => {
+    const user = userEvent.setup();
+    const guard = vi.fn(() => false);
+    render(
+      <CompareFilters
+        respondentNames={[]}
+        defaultMinHumans={2}
+        defaultVersion="latest_major"
+        availableVersions={[]}
+        latestMajorLabel="2.0.0"
+        guardNavigation={guard}
+      />,
+    );
+    await openVersionSelect(user);
+    const listbox = await screen.findByRole("listbox");
+    await user.click(within(listbox).getByText("Todas as versões"));
+
+    expect(guard).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("guardNavigation vetando: 'Limpar' também é bloqueado", async () => {
+    const user = userEvent.setup();
+    const guard = vi.fn(() => false);
+    searchParams = new URLSearchParams("version=all");
+    render(
+      <CompareFilters
+        respondentNames={[]}
+        defaultMinHumans={2}
+        defaultVersion="latest_major"
+        availableVersions={[]}
+        latestMajorLabel="2.0.0"
+        guardNavigation={guard}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Filtros/i }));
+    await user.click(await screen.findByRole("button", { name: /Limpar/i }));
+
+    expect(guard).toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("guardNavigation liberando: o filtro aplica normalmente", async () => {
+    const user = userEvent.setup();
+    render(
+      <CompareFilters
+        respondentNames={[]}
+        defaultMinHumans={2}
+        defaultVersion="latest_major"
+        availableVersions={[]}
+        latestMajorLabel="2.0.0"
+        guardNavigation={() => true}
+      />,
+    );
+    await openVersionSelect(user);
+    const listbox = await screen.findByRole("listbox");
+    await user.click(within(listbox).getByText("Todas as versões"));
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push.mock.calls[0][0]).toContain("version=all");
+  });
+});

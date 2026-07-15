@@ -38,12 +38,23 @@ export interface CompareVerdicts {
   handleUnmarkPair: (pairId: string) => Promise<void>;
 }
 
+export const SAVE_TIMEOUT_MS = 15_000;
+const TIMEOUT_MESSAGE =
+  "O salvamento não respondeu. Verifique a conexão e tente novamente.";
+
 /**
  * Resolve a promise de uma server action em "salvou?", exibindo o toast
- * adequado no caminho de erro. Ponto único para os dois modos de falha:
+ * adequado no caminho de erro. Ponto único para os três modos de falha:
  * rejeição da action (fora do try dela, que o `void` do call site
  * descartaria em silêncio) vira log + mensagem genérica; `{ error }`
- * retornado vira toast com a mensagem da própria action.
+ * retornado vira toast com a mensagem da própria action; e uma promise que
+ * NUNCA settles (fetch dropado num redeploy — issue #430) é resolvida como
+ * erro pelo timeout, senão o `await` do chamador ficaria pendurado para
+ * sempre com a trava de in-flight presa. Após o timeout, o settle tardio da
+ * promise original é ignorado por completo — nenhum efeito pós-save (escrita
+ * otimista, toast de sucesso, avanço de campo) roda fora de hora; se o save
+ * tardio tiver persistido no servidor, reconfirmar recai no upsert
+ * idempotente de `submitVerdict`.
  */
 async function actionSucceeded(
   promise: Promise<{ error?: string }>,
@@ -51,10 +62,27 @@ async function actionSucceeded(
   logContext: Record<string, unknown>,
   rejectionMessage: string,
 ): Promise<boolean> {
-  const result = await promise.catch((error: unknown) => {
-    console.error(logLabel, { error, ...logContext });
-    toast.error(rejectionMessage);
-    return { error: "unexpected" as const };
+  const result = await new Promise<{ error?: string } | void>((resolve) => {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      resolve({ error: TIMEOUT_MESSAGE });
+    }, SAVE_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        // Rejeição tardia: o timeout já reportou o erro; um segundo toast
+        // aqui chegaria fora de contexto.
+        if (timedOut) return;
+        console.error(logLabel, { error, ...logContext });
+        toast.error(rejectionMessage);
+        resolve({ error: "unexpected" });
+      },
+    );
   });
   if (result?.error) {
     if (result.error !== "unexpected") toast.error(result.error);

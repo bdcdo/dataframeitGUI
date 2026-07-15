@@ -98,6 +98,15 @@ function insertedExternalIds(): (string | null)[] {
   );
 }
 
+function insertedRows(): { metadata: unknown; external_id: string | null }[] {
+  const call = writeCalls.find(
+    (c) => c.table === "documents" && c.op === "insert",
+  );
+  return (
+    (call?.payload as { metadata: unknown; external_id: string | null }[]) ?? []
+  );
+}
+
 describe("uploadDocuments — filtro do indice unico (add_all)", () => {
   it("pula external_id ja ATIVO no projeto e insere os demais", async () => {
     // SELECT devolve DOC-1 como ja existente ativo; depois o INSERT (sem erro).
@@ -298,6 +307,76 @@ describe("uploadDocuments — replace_and_add delega à RPC transacional", () =>
     // Nenhuma escrita direta — a atomicidade (rollback) é responsabilidade da RPC.
     expect(writeCalls).toHaveLength(0);
     expect(rpcCalls).toHaveLength(1);
+  });
+});
+
+describe("uploadDocuments — persiste a linha original (metadata)", () => {
+  const meta = {
+    original_row: { texto: "conteúdo", tribunal: "TJSP", classe: "" },
+    original_columns: ["texto", "tribunal", "classe"],
+  };
+
+  it("add_all: grava metadata no INSERT; doc sem metadata vira null", async () => {
+    serverTableResults = { documents: [{ error: null }] };
+    const uploadDocuments = await loadUpload();
+
+    await uploadDocuments(
+      "proj-1",
+      [
+        { text: "conteúdo", metadata: meta },
+        { text: "sem meta" },
+      ],
+      false,
+    );
+
+    const rows = insertedRows();
+    expect(rows[0].metadata).toEqual(meta);
+    expect(rows[1].metadata).toBeNull();
+  });
+
+  it("add_new_only: grava metadata nas linhas novas inseridas", async () => {
+    serverTableResults = { documents: [{ data: [] }, { error: null }] };
+    const uploadDocuments = await loadUpload();
+
+    await uploadDocuments(
+      "proj-1",
+      [{ external_id: "DOC-1", text: "novo", metadata: meta }],
+      false,
+      { mode: "add_new_only" },
+    );
+
+    expect(insertedRows()[0].metadata).toEqual(meta);
+  });
+
+  it("replace_and_add: metadata flui no p_new_documents e no p_duplicate_updates da RPC", async () => {
+    // Pré-filtro do doc novo consulta documents (SELECT sem conflito).
+    serverTableResults = { documents: [{ data: [] }] };
+    const uploadDocuments = await loadUpload();
+
+    await uploadDocuments(
+      "proj-1",
+      [
+        { external_id: "DOC-1", text: "dup por hash", metadata: meta },
+        { external_id: "DOC-2", text: "novo", metadata: meta },
+      ],
+      false,
+      {
+        mode: "replace_and_add",
+        deleteResponses: true,
+        duplicateMap: [
+          { csvIndex: 0, existingDocId: "id-1", matchType: "text_hash" },
+        ],
+      },
+    );
+
+    const call = rpcCalls.find((c) => c.fn === "replace_and_add_documents");
+    const args = (call?.args ?? {}) as Record<string, unknown>;
+    expect((args.p_new_documents as { metadata: unknown }[])[0].metadata).toEqual(
+      meta,
+    );
+    expect(
+      (args.p_duplicate_updates as { metadata: unknown }[])[0].metadata,
+    ).toEqual(meta);
   });
 });
 

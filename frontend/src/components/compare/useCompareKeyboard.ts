@@ -27,7 +27,9 @@ interface UseCompareKeyboardParams {
  * `onNextField`, `onPrepareVerdict`, …) — nenhum `setState` léxico —, o que zera o
  * `no-cascading-set-state` que o effect inline disparava sem precisar de
  * `useReducer`. `onNextField`/`onPrevField` já fazem o clamp de limite
- * internamente, então as teclas `n`/`p` chamam incondicionalmente.
+ * internamente e chegam embrulhados no gate de navegação do container
+ * (`guardNavigation`: in-flight e rascunho pendente — issue #430), então as
+ * teclas `n`/`p` chamam incondicionalmente.
  */
 export function useCompareKeyboard({
   isFullscreen,
@@ -65,11 +67,11 @@ export function useCompareKeyboard({
       }
 
       if (e.key === "n") {
-        if (!isConfirmingVerdict) onNextField();
+        onNextField();
         return;
       }
       if (e.key === "p") {
-        if (!isConfirmingVerdict) onPrevField();
+        onPrevField();
         return;
       }
 
