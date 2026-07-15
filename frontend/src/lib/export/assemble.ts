@@ -260,17 +260,19 @@ export function assembleExport(input: AssembleInput): ExportDataset {
 
   // O inteiro teor sai APENAS na aba Documentos (coluna dedicada `document_text`,
   // uma linha por doc); as colunas auxiliares (tribunal, classe...) são leves e
-  // seguem repetidas por linha no CSV. `textColumns` reúne os nomes marcados como
-  // texto (metadata.text_column) — o cenário dominante é um único mapeamento por
-  // projeto (size === 1). Suposição: uma coluna cujo nome coincide com a coluna
-  // de texto de algum upload é tratada como texto globalmente.
-  const textColumns = new Set<string>();
+  // seguem repetidas por linha no CSV. `text_column` tem escopo por documento:
+  // um nome entra no header auxiliar se ao menos um documento o usa como coluna
+  // auxiliar, mesmo que outro documento use o mesmo nome como inteiro teor.
+  const auxiliaryColumns = new Set<string>();
+  let hasText = false;
   for (const d of baseDocs) {
-    const tc = d.metadata?.text_column;
-    if (tc) textColumns.add(tc);
+    const metadata = d.metadata;
+    if (metadata?.text_column) hasText = true;
+    for (const col of metadata?.original_columns ?? []) {
+      if (col !== metadata?.text_column) auxiliaryColumns.add(col);
+    }
   }
-  const hasText = textColumns.size > 0;
-  const auxRaw = unionRaw.filter((col) => !textColumns.has(col));
+  const auxRaw = unionRaw.filter((col) => auxiliaryColumns.has(col));
 
   const reserved = new Set<string>([
     ...CONTROL_COLUMNS,
@@ -284,8 +286,10 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const auxReserved = hasText ? new Set([...reserved, "document_text"]) : reserved;
   const auxHeaders = resolveOriginalHeaders(auxRaw, auxReserved);
   const auxCells = (docId: string): string[] => {
-    const row = docById.get(docId)?.metadata?.original_row ?? {};
-    return auxRaw.map((col) => row[col] ?? "");
+    const metadata = docById.get(docId)?.metadata;
+    return auxRaw.map((col) =>
+      col === metadata?.text_column ? "" : (metadata?.original_row[col] ?? "")
+    );
   };
   // Texto do documento (uma vez por doc, só na aba Documentos).
   const documentText = (docId: string): string => {

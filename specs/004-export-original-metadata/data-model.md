@@ -21,7 +21,7 @@ Phase 1 do `/speckit-plan`. Sem migration: a única mudança de dados é passar 
 Regras e invariantes:
 
 - `original_row` contém **todas** as colunas da linha, inclusive as mapeadas para `text`/`title`/`external_id` (FR-002). Valores são os textuais do parse (`Record<string, string>`); células ausentes em linhas curtas normalizam para `""`.
-- `text_column` guarda o nome da coluna do CSV mapeada como texto (`mapping.text`). Serve **apenas** ao export, para separar o inteiro teor (coluna dedicada `document_text`, uma vez por documento) das colunas auxiliares (repetidas por linha no CSV) — ver §3. Opcional na leitura (fail-soft): `metadata IS NULL` ou legado sem o campo ⇒ todas as colunas tratadas como auxiliares (comportamento anterior).
+- `text_column` guarda, por documento, o nome da coluna do CSV mapeada como texto (`mapping.text`). Serve **apenas** ao export, para separar o inteiro teor (coluna dedicada `document_text`, uma vez por documento) das colunas auxiliares (repetidas por linha no CSV) — ver §3. Em uploads heterogêneos, o mesmo nome pode ser texto para um documento e auxiliar para outro. Opcional na leitura (fail-soft): `metadata IS NULL` ou legado sem o campo ⇒ todas as colunas tratadas como auxiliares (comportamento anterior).
 - `original_columns` existe porque jsonb não preserva ordem de chaves; é a fonte da ordenação no export. Invariante: `original_columns` ⊇ chaves de `original_row` na prática (ambos vêm de `results.meta.fields` e da própria linha); o export usa `original_columns` como ordem e `original_row` como valores.
 - **Cabeçalhos duplicados no CSV** (achado C2 do /speckit-analyze): verificado contra o pacote instalado (papaparse 5.5.4) em 2026-07-10 — o próprio parse com `header: true` renomeia duplicatas (`nome`, `nome_1`, …) preservando os valores de todas as colunas homônimas ("Duplicate headers found and renamed."). `buildDocs` confia nessa garantia e não normaliza de novo; um teste de regressão protege a dependência desse comportamento. Invariante resultante: `original_columns` não contém duplicatas.
 - `metadata IS NULL` ⇒ documento importado antes da feature (ou criado por caminho sem CSV). O export trata como "colunas originais vazias" (FR-011); nenhum backfill (FR-018).
@@ -55,7 +55,7 @@ Três visões montadas server-side por funções puras de `lib/export/`:
 |---|---|
 | `document_id` | `documents.external_id \|\| documents.id` (regra atual do export) |
 | `document_title` | `documents.title` |
-| `<colunas auxiliares...>` | `metadata.original_row` **exceto** a coluna de texto, ordenadas pela união de `original_columns` (docs por `created_at` asc, primeira aparição vence) |
+| `<colunas auxiliares...>` | `metadata.original_row`, ordenadas pela união de `original_columns` (docs por `created_at` asc, primeira aparição vence). Um nome entra no header se ao menos um documento o usa como auxiliar; a célula fica vazia nos documentos cujo `metadata.text_column` tem esse nome |
 | `document_text` | `metadata.original_row[metadata.text_column]` — o inteiro teor, uma vez por documento. Só existe se algum doc tiver `text_column`; é a **única** coluna do export que carrega o texto |
 
 ### 3.2 Visão Respostas individuais (estrutura atual preservada)
@@ -68,7 +68,7 @@ Três visões montadas server-side por funções puras de `lib/export/`:
 
 ### 3.4 Composição final
 
-- **CSV unificado**: cabeçalho = controle ∪ colunas auxiliares ∪ campos do schema ∪ `reviewer_comments`. Linhas: todas as respostas (3.2) + todos os gabaritos (3.3) + uma linha `source=documento` para cada documento sem resposta E sem gabarito. Colunas auxiliares (sem o texto) repetidas em toda linha do documento; **o inteiro teor NÃO entra no CSV** — vive só na coluna `document_text` da visão Documentos, evitando replicá-lo por linha. BOM `﻿` + escaping manual (herdados do ExportPanel).
+- **CSV unificado**: cabeçalho = controle ∪ colunas auxiliares ∪ campos do schema ∪ `reviewer_comments`. Linhas: todas as respostas (3.2) + todos os gabaritos (3.3) + uma linha `source=documento` para cada documento sem resposta E sem gabarito. Colunas auxiliares repetidas em toda linha do documento; quando um header auxiliar coincide com o `text_column` daquele documento, a célula fica vazia. **O inteiro teor NÃO entra no CSV** — vive só na coluna `document_text` da visão Documentos, evitando replicá-lo por linha. BOM `﻿` + escaping manual (herdados do ExportPanel).
 - **XLSX**: aba `Documentos` (3.1, sempre presente, inclui `document_text`), aba `Respostas` (3.2, se houver), aba `Gabarito` (3.3, se houver). Colunas originais e texto só na aba Documentos.
 
 ### 3.5 Colisão e ordenação (regras determinísticas)
