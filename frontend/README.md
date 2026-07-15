@@ -68,9 +68,9 @@ smoke manual de login no preview/produção:
 1. **Coordenador** — login com a conta de coordenador → confirmar que cai em
    `/dashboard` com "Meus Projetos" (sem voltar para `/auth/login`).
 2. **Membro** — login com a conta de pesquisador → mesmo check.
-3. Em caso de loop login↔dashboard, abrir `/api/debug-token` autenticado e
-   conferir `metadataSupabaseUid`, `tokenSupabaseUid`, `uidMatch` e
-   `supabaseProbe` para localizar o elo quebrado (metadata, claim do JWT ou RLS).
+3. Em caso de loop login↔dashboard, conferir os estados seguros de `/auth/post-login`, os logs server-side de `resolveAuth` e as entregas do webhook. A antiga rota `/api/debug-token` foi removida porque expunha claims e não deve ser recriada como ferramenta de diagnóstico.
+
+O procedimento de troca para a instância Clerk live está no [runbook de cutover](../docs/runbooks/clerk-production-cutover.md).
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

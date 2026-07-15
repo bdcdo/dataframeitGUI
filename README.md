@@ -59,6 +59,8 @@ A partir daí, cada commit é varrido em busca de segredos antes de entrarem no 
 
 Produção roda inteiramente no **Fly.io** (`gru`), com deploy **automático por CI** a partir de merge na `main`: `backend/**` dispara `fly-deploy.yml` (app `gui-analise-sistematica-api`) e `frontend/**` dispara `frontend-fly-deploy.yml` (app `gui-analise-sistematica-frontend`). Domínio: `dataframeit.com.br`.
 
+O cutover coordenado da instância Clerk de desenvolvimento para produção tem um [runbook específico](docs/runbooks/clerk-production-cutover.md). Ele separa preflight read-only, mutações, checkpoints e rollback; não execute a troca apenas substituindo chaves isoladas.
+
 ### 1. Supabase Cloud
 
 1. Criar projeto em [supabase.com](https://supabase.com)
