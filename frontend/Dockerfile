@@ -16,6 +16,7 @@ COPY . .
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_LLM_ENABLED
 # Variaveis NEXT_PUBLIC_* sao embutidas no bundle em build time; sem as do
 # Clerk aqui, o cliente quebra em producao.
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY

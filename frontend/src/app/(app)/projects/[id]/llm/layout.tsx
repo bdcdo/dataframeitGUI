@@ -1,6 +1,7 @@
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import LlmNav from "@/components/llm/LlmNav";
+import { isLlmEnabled } from "@/lib/feature-flags";
 
 export default async function LlmLayout({
   children,
@@ -9,7 +10,10 @@ export default async function LlmLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
+  const { id } = await params;
+  if (!isLlmEnabled()) redirect(`/projects/${id}/analyze/code`);
+
+  const user = await getAuthUser();
   if (!user) notFound();
 
   const { isCoordinator, queryFailed } = await getProjectAccessContext(

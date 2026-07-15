@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # do JWT. O token do template expira em ~60s e é pollado por minutos.
     jwt_leeway_seconds: int = 30
 
+    # Kill-switch operacional de todo o namespace /api/llm/*. Default ligado
+    # para compatibilidade com desenvolvimento/self-hosting; o alfa público
+    # desliga explicitamente no fly.toml.
+    llm_enabled: bool = True
+
     # Endpoints de documentação (/docs, /redoc, /openapi.json). Fechados por
     # padrão (fail-safe): num serviço internet-facing, /openapi.json anônimo
     # vaza o schema de todas as rotas protegidas. Ligar só em dev via

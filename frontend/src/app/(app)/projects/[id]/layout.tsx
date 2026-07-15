@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getProjectAccessContext, resolveAuth } from "@/lib/auth";
 import { completionRedirectPath } from "@/lib/safe-next-path";
 import { getRunningLlmCount } from "@/actions/llm";
+import { isLlmEnabled } from "@/lib/feature-flags";
 import { Header } from "@/components/shell/Header";
 import { ProjectTabs } from "@/components/shell/ProjectTabs";
 import { notFound, redirect } from "next/navigation";
@@ -30,6 +31,7 @@ export default async function ProjectLayout({
     redirect(completionRedirectPath(pathname));
   }
   const user = resolution.user;
+  const llmEnabled = isLlmEnabled();
 
   // project + membership vem de getProjectAccessContext (request-scoped via
   // cache()) — mesma leitura reaproveitada pelos layouts filhos config/llm.
@@ -43,7 +45,7 @@ export default async function ProjectLayout({
         .single(),
       // Best-effort: o badge "LLM rodando" e cosmetico. Uma falha aqui (RLS,
       // rede) nao deve derrubar o layout inteiro do projeto — degrada para 0.
-      getRunningLlmCount(id).catch(() => 0),
+      llmEnabled ? getRunningLlmCount(id).catch(() => 0) : Promise.resolve(0),
     ]);
 
   if (!project) notFound();

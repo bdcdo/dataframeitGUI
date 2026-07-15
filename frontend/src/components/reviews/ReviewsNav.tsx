@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { isLlmEnabled } from "@/lib/feature-flags";
 
 const reviewsTabs: Array<{
   label: string;
   href: string;
+  llmOnly?: boolean;
 }> = [
   { label: "Gabarito", href: "gabarito" },
   { label: "Meu Gabarito", href: "my-verdicts" },
-  { label: "Erros LLM", href: "llm-insights" },
+  { label: "Erros LLM", href: "llm-insights", llmOnly: true },
   { label: "Comentários", href: "comments" },
 ];
 
@@ -23,7 +25,7 @@ export function ReviewsNav({ projectId }: ReviewsNavProps) {
 
   return (
     <nav className="flex items-center gap-1 border-b px-4 py-1">
-      {reviewsTabs.map((tab) => {
+      {reviewsTabs.filter((tab) => !tab.llmOnly || isLlmEnabled()).map((tab) => {
         const href = `/projects/${projectId}/reviews/${tab.href}`;
         const isActive = pathname.startsWith(href);
         return (

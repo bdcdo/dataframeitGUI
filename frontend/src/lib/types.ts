@@ -1,3 +1,7 @@
+import type { AutomationMode } from "@/lib/automation-modes";
+
+export type { AutomationMode } from "@/lib/automation-modes";
+
 export interface Profile {
   id: string;
   email: string;
@@ -14,45 +18,6 @@ export type RoundStrategy = "schema_version" | "manual";
 // "mínimo necessário para liberar a revisão" + quem revê, e governa quais abas
 // de revisão aparecem. Mutuamente exclusivo. Ver lib/auto-review.ts (auto_review_llm)
 // e lib/auto-comparison.ts (compare_*).
-export type AutomationMode =
-  | "none"
-  | "auto_review_llm"
-  | "compare_humans"
-  | "compare_llm";
-
-// Fonte única dos rótulos/descrições dos modos — reaproveitada pelos seletores
-// de criação (projects/new) e de Config › Regras (RulesForm), evitando drift.
-export const AUTOMATION_MODES: ReadonlyArray<{
-  value: AutomationMode;
-  label: string;
-  description: string;
-}> = [
-  {
-    value: "none",
-    label: "Nenhuma automação",
-    description:
-      "Sem revisão automática. Qualquer comparação ou revisão é criada manualmente pelo coordenador.",
-  },
-  {
-    value: "auto_review_llm",
-    label: "Auto-revisão vs LLM",
-    description:
-      "Quando uma pessoa termina de codificar e diverge do LLM, ela mesma revisa os campos divergentes; contestados vão para arbitragem.",
-  },
-  {
-    value: "compare_humans",
-    label: "Comparação humano-vs-humano",
-    description:
-      "Quando duas pessoas codificam o mesmo documento e divergem, um revisor é sorteado para comparar as codificações.",
-  },
-  {
-    value: "compare_llm",
-    label: "Comparação pessoa-vs-LLM",
-    description:
-      "Quando uma pessoa codifica e diverge do LLM, um revisor é sorteado para comparar a codificação humana contra a do LLM.",
-  },
-];
-
 export interface Round {
   id: string;
   project_id: string;

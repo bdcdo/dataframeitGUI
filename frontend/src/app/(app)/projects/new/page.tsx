@@ -13,12 +13,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
+import { isLlmEnabled } from "@/lib/feature-flags";
+import {
+  getAutomationModeOption,
+  getAvailableAutomationModes,
+  getDefaultAutomationMode,
+  isAutomationMode,
+  type AutomationMode,
+} from "@/lib/automation-modes";
 
 export default function NewProjectPage() {
   const [state, formAction, pending] = useActionState(createProject, null);
-  const [mode, setMode] = useState<AutomationMode>("auto_review_llm");
-  const modeMeta = AUTOMATION_MODES.find((m) => m.value === mode);
+  const llmEnabled = isLlmEnabled();
+  const availableModes = getAvailableAutomationModes(llmEnabled);
+  const [mode, setMode] = useState<AutomationMode>(() =>
+    getDefaultAutomationMode(llmEnabled),
+  );
+  const modeMeta = getAutomationModeOption(mode);
 
   return (
     <main className="mx-auto max-w-lg p-6">
@@ -62,13 +73,15 @@ export default function NewProjectPage() {
               <input type="hidden" name="automation_mode" value={mode} />
               <Select
                 value={mode}
-                onValueChange={(v) => setMode(v as AutomationMode)}
+                onValueChange={(value) => {
+                  if (isAutomationMode(value)) setMode(value);
+                }}
               >
                 <SelectTrigger id="automation_mode_trigger" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {AUTOMATION_MODES.map((m) => (
+                  {availableModes.map((m) => (
                     <SelectItem key={m.value} value={m.value}>
                       {m.label}
                     </SelectItem>

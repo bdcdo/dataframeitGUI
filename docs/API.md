@@ -2,6 +2,8 @@
 
 Base URL: `NEXT_PUBLIC_API_URL` (default: `http://localhost:8000`)
 
+Todas as rotas sob `/api/llm/*` herdam um kill-switch estrutural do router. Com `LLM_ENABLED=false`, elas retornam `403` antes de autenticação, banco ou processamento; o namespace `/api/pydantic/*` permanece disponível e continua sujeito apenas às próprias regras de autenticação e autorização.
+
 ## POST /api/pydantic/validate
 
 Compila codigo Pydantic e extrai campos tipados.

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
 import { toast } from "sonner";
 import { Bot, Loader2 } from "lucide-react";
+import { isLlmEnabled } from "@/lib/feature-flags";
 
 // Tolera N falhas consecutivas de poll (token transitório, blip de rede) antes
 // de declarar a execução terminal: o job segue rodando no backend e um erro
@@ -25,7 +26,12 @@ interface RunLlmButtonProps {
   canRunLlm?: boolean;
 }
 
-export function RunLlmButton({
+export function RunLlmButton(props: RunLlmButtonProps) {
+  if (!isLlmEnabled()) return null;
+  return <EnabledRunLlmButton {...props} />;
+}
+
+function EnabledRunLlmButton({
   projectId,
   documentId,
   onComplete,

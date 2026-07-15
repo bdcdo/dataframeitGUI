@@ -110,6 +110,14 @@ async def health():
     return {"status": "ok"}
 
 
+def require_llm_enabled() -> None:
+    if not settings.llm_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Funcionalidades de LLM estão desabilitadas.",
+        )
+
+
 # Docs (/docs, /redoc, /openapi.json) desligados por padrão — fail-safe. Num
 # serviço internet-facing, /openapi.json anônimo enumera o schema de todas as
 # rotas protegidas. Ligar só em dev com ENABLE_DOCS=true (ver config.py).
@@ -152,7 +160,10 @@ def create_app(*, enable_docs: bool = settings.enable_docs) -> FastAPI:
         llm_router,
         prefix="/api/llm",
         tags=["llm"],
-        dependencies=[Depends(require_authenticated_user)],
+        dependencies=[
+            Depends(require_llm_enabled),
+            Depends(require_authenticated_user),
+        ],
     )
     app.include_router(
         pydantic_router,

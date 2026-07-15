@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { isLlmEnabled } from "@/lib/feature-flags";
 import { Eye, EyeOff, Users } from "lucide-react";
 import { LlmRunningBadge } from "@/components/llm/LlmRunningBadge";
 
@@ -27,7 +28,7 @@ const EMPTY_MEMBERS: ProjectMember[] = [];
 const tabs = [
   { label: "Analisar", href: "analyze" },
   { label: "Revisar", href: "reviews" },
-  { label: "LLM", href: "llm", coordinatorOnly: true },
+  { label: "LLM", href: "llm", coordinatorOnly: true, llmOnly: true },
   { label: "Configurações", href: "config", coordinatorOnly: true },
 ];
 
@@ -71,7 +72,9 @@ function ProjectTabsInner({
     : null;
 
   const visibleTabs = tabs.filter(
-    (tab) => !tab.coordinatorOnly || effectiveIsCoordinator
+    (tab) =>
+      (!tab.llmOnly || isLlmEnabled()) &&
+      (!tab.coordinatorOnly || effectiveIsCoordinator),
   );
 
   const toggleViewAs = () => {

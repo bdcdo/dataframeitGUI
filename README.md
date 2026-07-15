@@ -82,6 +82,8 @@ fly deploy -c fly.toml -a gui-analise-sistematica-api   # fallback; o normal é 
 
 Verificar: `curl https://gui-analise-sistematica-api.fly.dev/health`
 
+O alfa público está configurado sem LLM por duas flags versionadas no Fly: `LLM_ENABLED=false` no backend bloqueia estruturalmente todo `/api/llm/*` com `403`, e `NEXT_PUBLIC_LLM_ENABLED=false` no build do frontend remove navegação, botões e páginas dedicadas. Ambas têm default `true` fora do Fly para preservar desenvolvimento e instalações existentes. Reativar exige alterar as duas configurações e fazer novo deploy; `/api/pydantic/*` não depende dessas flags. Com a flag desligada, novos projetos usam `none` por default e só aceitam `none` ou `compare_humans`; configurações e respostas LLM já existentes permanecem legíveis, sem reescrita automática. O editor de schema continua permitindo preparar campos `target="llm_only"` para uma reativação futura, pois salvar essa definição Pydantic não executa modelo nem gera custo.
+
 ### 3. Frontend (Fly.io — `gui-analise-sistematica-frontend`)
 
 Config em `frontend/fly.toml`. As `NEXT_PUBLIC_*` ficam em `[build.args]` (embutidas no bundle em build time, todas públicas por design); os secrets de runtime (`CLERK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CLERK_WEBHOOK_SECRET`) via `fly secrets set`:
@@ -103,9 +105,11 @@ fly deploy -c fly.toml -a gui-analise-sistematica-frontend   # fallback; o norma
 | `SUPABASE_SERVICE_KEY` | Backend (Fly.io) | Service role key |
 | `CLERK_JWKS_URL` | Backend (Fly.io) | URL do JWKS do Clerk (verificação RS256 do JWT) |
 | `CORS_ORIGINS` | Backend (`fly.toml [env]`) | JSON array de origens permitidas |
+| `LLM_ENABLED` | Backend (`fly.toml [env]`) | Kill-switch de `/api/llm/*`; default `true`, alfa `false` |
 | `NEXT_PUBLIC_SUPABASE_URL` | Frontend (`fly.toml [build.args]`) | URL do projeto Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Frontend (`fly.toml [build.args]`) | Anon/publishable key |
 | `NEXT_PUBLIC_API_URL` | Frontend (`fly.toml [build.args]`) | URL do backend no Fly.io |
+| `NEXT_PUBLIC_LLM_ENABLED` | Frontend (`fly.toml [build.args]`) | Visibilidade das superfícies LLM; default `true`, alfa `false` |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Frontend (`fly.toml [build.args]`) | Publishable key do Clerk |
 | `CLERK_SECRET_KEY` | Frontend (Fly secret) | Secret key do Clerk |
 | `SUPABASE_SERVICE_ROLE_KEY` | Frontend (Fly secret) | Service role (server actions) |

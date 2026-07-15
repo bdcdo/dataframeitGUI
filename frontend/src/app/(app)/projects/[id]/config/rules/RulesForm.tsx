@@ -17,7 +17,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
+import { isLlmEnabled } from "@/lib/feature-flags";
+import {
+  AUTOMATION_MODES,
+  automationModeRequiresLlm,
+  getAutomationModeOption,
+  getAvailableAutomationModes,
+  isAutomationMode,
+  isAutomationModeAvailable,
+  type AutomationMode,
+} from "@/lib/automation-modes";
 
 interface RulesFormProps {
   projectId: string;
@@ -47,7 +56,8 @@ function useRulesFormState({
   automationMode,
   comparisonIncludesLlm,
   outOfScopeEnabled,
-}: RulesFormProps) {
+  llmEnabled,
+}: RulesFormProps & { llmEnabled: boolean }) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [rule, setRule] = useState(resolutionRule);
@@ -58,19 +68,43 @@ function useRulesFormState({
   const [outOfScope, setOutOfScope] = useState(outOfScopeEnabled);
   const [saved, setSaved] = useState(false);
 
-  const modeMeta = AUTOMATION_MODES.find((m) => m.value === mode);
+  const modeMeta = getAutomationModeOption(mode);
+  const hasHistoricalLlmMode =
+    !llmEnabled && automationModeRequiresLlm(automationMode);
+  const modeOptions = hasHistoricalLlmMode
+    ? AUTOMATION_MODES.filter(
+        ({ value, requiresLlm }) =>
+          !requiresLlm || value === automationMode,
+      )
+    : getAvailableAutomationModes(llmEnabled);
+
+  function handleModeChange(value: string) {
+    if (!isAutomationMode(value)) return;
+    if (!isAutomationModeAvailable(value, llmEnabled)) return;
+    setMode(value);
+    if (!llmEnabled) setIncludesLlm(false);
+  }
 
   function handleSave() {
     startTransition(async () => {
       try {
-        const r = await updateProject(projectId, {
+        const data: Parameters<typeof updateProject>[1] = {
           resolution_rule: rule,
           min_responses_for_comparison: min,
           allow_researcher_review: allowReview,
-          automation_mode: mode,
-          comparison_includes_llm: includesLlm,
           out_of_scope_enabled: outOfScope,
-        });
+        };
+        // Um valor LLM já salvo continua visível como histórico, mas não volta
+        // no payload enquanto a flag está desligada. Assim outras regras podem
+        // ser editadas sem regravar nem apagar a configuração existente.
+        if (llmEnabled || !automationModeRequiresLlm(mode)) {
+          data.automation_mode = mode;
+        }
+        if (llmEnabled || !includesLlm) {
+          data.comparison_includes_llm = includesLlm;
+        }
+
+        const r = await updateProject(projectId, data);
         if (r?.error) {
           toast.error(r.error);
           return;
@@ -93,7 +127,7 @@ function useRulesFormState({
     allowReview,
     setAllowReview,
     mode,
-    setMode,
+    handleModeChange,
     includesLlm,
     setIncludesLlm,
     outOfScope,
@@ -101,11 +135,14 @@ function useRulesFormState({
     saved,
     isPending,
     modeMeta,
+    modeOptions,
+    hasHistoricalLlmMode,
     handleSave,
   };
 }
 
 export function RulesForm(props: RulesFormProps) {
+  const llmEnabled = isLlmEnabled();
   const {
     rule,
     setRule,
@@ -114,7 +151,7 @@ export function RulesForm(props: RulesFormProps) {
     allowReview,
     setAllowReview,
     mode,
-    setMode,
+    handleModeChange,
     includesLlm,
     setIncludesLlm,
     outOfScope,
@@ -122,8 +159,10 @@ export function RulesForm(props: RulesFormProps) {
     saved,
     isPending,
     modeMeta,
+    modeOptions,
+    hasHistoricalLlmMode,
     handleSave,
-  } = useRulesFormState(props);
+  } = useRulesFormState({ ...props, llmEnabled });
 
   return (
     <Card>
@@ -133,14 +172,19 @@ export function RulesForm(props: RulesFormProps) {
       <CardContent className="space-y-5">
         <div className="space-y-2">
           <Label className="text-sm">Modo de automação</Label>
-          <Select value={mode} onValueChange={(v) => setMode(v as AutomationMode)}>
+          <Select value={mode} onValueChange={handleModeChange}>
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {AUTOMATION_MODES.map((m) => (
-                <SelectItem key={m.value} value={m.value}>
+              {modeOptions.map((m) => (
+                <SelectItem
+                  key={m.value}
+                  value={m.value}
+                  disabled={!isAutomationModeAvailable(m.value, llmEnabled)}
+                >
                   {m.label}
+                  {!llmEnabled && m.requiresLlm ? " (histórico)" : ""}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -153,14 +197,29 @@ export function RulesForm(props: RulesFormProps) {
             preenchido conforme as pessoas codificam (ou via sorteio manual).
             Determina também quais abas de revisão aparecem no projeto.
           </p>
+          {hasHistoricalLlmMode && (
+            <p
+              role="alert"
+              className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
+            >
+              Este projeto mantém o modo LLM já salvo apenas como histórico.
+              Ele não pode ser escolhido novamente enquanto o LLM estiver
+              desabilitado. Selecione Nenhuma automação ou Comparação
+              humano-vs-humano para substituí-lo; respostas e filas existentes
+              continuarão disponíveis.
+            </p>
+          )}
         </div>
 
-        {mode === "compare_humans" && (
+        {mode === "compare_humans" && (llmEnabled || includesLlm) && (
           <div className="flex items-start gap-3">
             <Switch
               id="includesLlm"
               checked={includesLlm}
-              onCheckedChange={setIncludesLlm}
+              onCheckedChange={(checked) => {
+                if (llmEnabled || !checked) setIncludesLlm(checked);
+              }}
+              disabled={!llmEnabled && !includesLlm}
               aria-label="Incluir o LLM no disparo da comparação"
             />
             <div className="space-y-1">
@@ -172,6 +231,13 @@ export function RulesForm(props: RulesFormProps) {
                 concordam mas o LLM diverge. Desligado, só dispara quando os
                 humanos divergem entre si (o LLM ainda aparece na comparação).
               </p>
+              {!llmEnabled && includesLlm && (
+                <p role="alert" className="text-xs text-amber-700">
+                  Esta opção está preservada como configuração histórica. Você
+                  pode desligá-la, mas não reativá-la enquanto o LLM estiver
+                  desabilitado.
+                </p>
+              )}
             </div>
           </div>
         )}

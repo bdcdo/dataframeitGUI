@@ -18,6 +18,9 @@ swap_size_mb = 512
     NEXT_PUBLIC_SUPABASE_URL = "https://nryebmwlmxuwvynfuzsv.supabase.co"
     NEXT_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_nqJGyzUd0ackkC9jSDTo3w_0xjg1hDd"
     NEXT_PUBLIC_API_URL = "https://gui-analise-sistematica-api.fly.dev"
+    # Alfa público sem execução/configuração LLM. Como NEXT_PUBLIC_*, o valor é
+    # embutido no bundle durante o build; reativar exige novo deploy.
+    NEXT_PUBLIC_LLM_ENABLED = "false"
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_aW5ub2NlbnQtZm94aG91bmQtODguY2xlcmsuYWNjb3VudHMuZGV2JA"
     NEXT_PUBLIC_CLERK_SIGN_IN_URL = "/auth/login"
     NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL = "/dashboard"

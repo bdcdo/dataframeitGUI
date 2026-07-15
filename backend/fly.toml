@@ -38,6 +38,9 @@ kill_timeout = "5m"
 
 [env]
   PORT = "8000"
+  # Alfa público: bloqueia estruturalmente todo /api/llm/* antes dos handlers.
+  # Não é secret; reativar exige remover/trocar este valor e fazer novo deploy.
+  LLM_ENABLED = "false"
   CORS_ORIGINS = '["https://dataframeit.com.br", "https://gui-analise-sistematica-frontend.fly.dev", "https://ac.brunodcdo.com.br", "http://localhost:3000"]'
   # ENABLE_DOCS ausente de propósito: o default fail-safe (config.py) mantém
   # /docs, /redoc e /openapi.json fechados em produção. NÃO adicionar aqui.

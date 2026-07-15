@@ -5,33 +5,52 @@ import { getAuthUser } from "@/lib/auth";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import type { AutomationMode } from "@/lib/types";
+import { isLlmEnabled } from "@/lib/feature-flags";
+import {
+  getDefaultAutomationMode,
+  isAutomationMode,
+  isAutomationModeAvailable,
+  type AutomationMode,
+} from "@/lib/automation-modes";
 
-const AUTOMATION_MODE_VALUES: ReadonlyArray<AutomationMode> = Object.freeze([
-  "none",
-  "auto_review_llm",
-  "compare_humans",
-  "compare_llm",
-]);
+const LLM_CONFIGURATION_DISABLED_ERROR =
+  "As configurações de LLM estão desabilitadas neste ambiente.";
 
 export async function createProject(_prev: unknown, formData: FormData) {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
-  const supabase = await createSupabaseServer();
-
   const name = formData.get("name") as string;
   const description = formData.get("description") as string;
-  const rawMode = formData.get("automation_mode") as string | null;
-  const automation_mode: AutomationMode = AUTOMATION_MODE_VALUES.includes(
-    rawMode as AutomationMode,
-  )
-    ? (rawMode as AutomationMode)
-    : "auto_review_llm";
+  const llmEnabled = isLlmEnabled();
+  const rawMode = formData.get("automation_mode");
+  const rawComparisonIncludesLlm = formData.get("comparison_includes_llm");
+  if (
+    !llmEnabled &&
+    ((isAutomationMode(rawMode) &&
+      !isAutomationModeAvailable(rawMode, llmEnabled)) ||
+      rawComparisonIncludesLlm === "true")
+  ) {
+    return { error: LLM_CONFIGURATION_DISABLED_ERROR };
+  }
+  const automationMode = isAutomationMode(rawMode)
+    ? rawMode
+    : getDefaultAutomationMode(llmEnabled);
+  const projectData = {
+    name,
+    description,
+    created_by: user.id,
+    automation_mode: automationMode,
+    // O default histórico do banco é true. No alfa sem LLM precisamos gravar
+    // false explicitamente para que novos projetos não nasçam com uma
+    // automação LLM latente; projetos existentes não são reescritos.
+    ...(!llmEnabled && { comparison_includes_llm: false }),
+  };
+  const supabase = await createSupabaseServer();
 
   const { data: project, error } = await supabase
     .from("projects")
-    .insert({ name, description, created_by: user.id, automation_mode })
+    .insert(projectData)
     .select()
     .single();
 
@@ -69,6 +88,28 @@ export async function updateProject(
     out_of_scope_enabled?: boolean;
   }
 ): Promise<{ error?: string }> {
+  const llmEnabled = isLlmEnabled();
+  if (
+    data.automation_mode !== undefined &&
+    (!isAutomationMode(data.automation_mode) ||
+      !isAutomationModeAvailable(data.automation_mode, llmEnabled))
+  ) {
+    return {
+      error: !isAutomationMode(data.automation_mode)
+        ? "Modo de automação inválido."
+        : LLM_CONFIGURATION_DISABLED_ERROR,
+    };
+  }
+  if (
+    data.comparison_includes_llm !== undefined &&
+    typeof data.comparison_includes_llm !== "boolean"
+  ) {
+    return { error: "Configuração de comparação LLM inválida." };
+  }
+  if (!llmEnabled && data.comparison_includes_llm === true) {
+    return { error: LLM_CONFIGURATION_DISABLED_ERROR };
+  }
+
   const supabase = await createSupabaseServer();
   try {
     await updateOrThrow(supabase, "projects", data, { id: projectId }, {

@@ -167,6 +167,35 @@ describe("saveSchemaFromGUI", () => {
     const r = await saveSchemaFromGUI("p1", []);
     expect(r.error).toBeUndefined();
   });
+
+  it("preserva campos llm_only com a execução LLM desligada", async () => {
+    const previousFlag = process.env.NEXT_PUBLIC_LLM_ENABLED;
+    process.env.NEXT_PUBLIC_LLM_ENABLED = "false";
+    serverTableResults = {
+      projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
+      schema_change_log: { data: null, error: null },
+    };
+
+    try {
+      const r = await saveSchemaFromGUI("p1", [
+        { ...FIELD, target: "llm_only" },
+      ]);
+
+      expect(r.error).toBeUndefined();
+      const projectUpdate = writeCalls.find(
+        ({ table, op }) => table === "projects" && op === "update",
+      );
+      expect(projectUpdate?.payload).toMatchObject({
+        pydantic_fields: [expect.objectContaining({ target: "llm_only" })],
+      });
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env.NEXT_PUBLIC_LLM_ENABLED;
+      } else {
+        process.env.NEXT_PUBLIC_LLM_ENABLED = previousFlag;
+      }
+    }
+  });
 });
 
 describe("recoverFieldsFromStoredCode", () => {
