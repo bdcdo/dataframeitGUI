@@ -41,6 +41,7 @@ Definir as evidências mínimas para impedir regressão de performance ou segura
 - Given medição sem cache de navegador para página protegida representativa.
 - When usuário autenticado com vínculo preparado abre a página.
 - Then p95 de utilizabilidade fica até 300 ms, com 150–250 ms como alvo de qualidade.
+- A decomposição pós-#348 segue o [protocolo versionado da #431](../../../docs/performance/auth-render-timing-431.md); a proposta não altera o limiar nem substitui medição pós-deploy.
 
 ## Evidence format
 
