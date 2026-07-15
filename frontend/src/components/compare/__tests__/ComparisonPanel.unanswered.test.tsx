@@ -47,7 +47,7 @@ function renderPanel(responses: Resp[], fieldHelpText?: string) {
       onPrepareVerdict={vi.fn()}
       onConfirmPendingVerdict={vi.fn()}
       onDiscardPendingVerdict={vi.fn()}
-      isConfirmingVerdict={false}
+      isSavingVerdict={false}
       onMarkReviewed={vi.fn()}
       comment=""
       onCommentChange={vi.fn()}
