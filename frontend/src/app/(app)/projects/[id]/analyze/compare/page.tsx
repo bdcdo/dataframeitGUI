@@ -290,7 +290,10 @@ export default async function ComparePageRoute({
         latestMajorLabel={latestMajorLabel}
         currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
         equivalencesByDocField={equivalencesByDocField}
-        currentUserId={user.id}
+        // Ownership de equivalências segue a identidade de trabalho no projeto:
+        // conta-alias e impersonação enxergam os pares da identidade efetiva.
+        // `isImpersonating` permanece separado para o gate read-only da #428.
+        currentUserId={effectiveUserId}
         isImpersonating={isImpersonating}
         canManageAnyPair={isCoordinator}
         isCoordinator={isCoordinator}

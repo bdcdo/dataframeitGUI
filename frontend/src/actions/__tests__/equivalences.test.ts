@@ -7,30 +7,47 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // esse contrato — nenhuma das três pode voltar a lançar em vez de retornar.
 import {
   makeSupabaseMock,
+  type FilterCall,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
 
 let writeCalls: WriteCall[];
+let filterCalls: FilterCall[];
 let serverTableResults: TableResults | undefined;
+
+const { mockGetEffectiveMemberId, mockSyncCompareAssignment } = vi.hoisted(
+  () => ({
+    mockGetEffectiveMemberId: vi.fn(async () => "canonical-reviewer"),
+    mockSyncCompareAssignment: vi.fn(async () => {}),
+  }),
+);
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "reviewer1" }),
+  getAuthUser: async () => ({ id: "alias-account" }),
+  getEffectiveMemberId: mockGetEffectiveMemberId,
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
+    makeSupabaseMock({
+      tableResults: serverTableResults,
+      writeCalls,
+      filterCalls,
+    }),
 }));
 // syncCompareAssignment é best-effort e teria seu próprio teste dedicado
 // (compare-sync.ts); aqui só interessa não deixá-lo derrubar a action.
 vi.mock("@/lib/compare-sync", () => ({
-  syncCompareAssignment: async () => {},
+  syncCompareAssignment: mockSyncCompareAssignment,
 }));
 
 beforeEach(() => {
   writeCalls = [];
+  filterCalls = [];
   serverTableResults = undefined;
+  mockGetEffectiveMemberId.mockClear();
+  mockSyncCompareAssignment.mockClear();
 });
 
 async function loadActions() {
@@ -89,15 +106,54 @@ describe.each([
     expectedError: "delete pair boom",
     extraChecks: undefined,
   },
-])("$action — falha no upsert/delete", ({ tableResults, call, expectedError, extraChecks }) => {
-  it("retorna { error }, não lança", async () => {
-    serverTableResults = tableResults;
+])(
+  "$action — falha no upsert/delete",
+  ({ tableResults, call, expectedError, extraChecks }) => {
+    it("retorna { error }, não lança", async () => {
+      serverTableResults = tableResults;
+      const fns = await loadActions();
+
+      const result = await call(fns);
+
+      expect(result).toEqual({ error: expectedError });
+      extraChecks?.();
+    });
+  },
+);
+
+describe.each([
+  {
+    action: "confirmEquivalentVerdict",
+    call: (fns: Actions) =>
+      fns.confirmEquivalentVerdict(
+        "p1",
+        "doc1",
+        "q1",
+        ["r1", "r2"],
+        "r1",
+        "resposta fundida",
+      ),
+  },
+  {
+    action: "markLlmEquivalent",
+    call: (fns: Actions) =>
+      fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1"),
+  },
+  {
+    action: "unmarkEquivalencePair",
+    call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
+  },
+])("$action — falha ao resolver identidade", ({ call }) => {
+  it("retorna { error }, não lança nem inicia escrita", async () => {
+    mockGetEffectiveMemberId.mockRejectedValueOnce(
+      new Error("identity lookup boom"),
+    );
     const fns = await loadActions();
 
     const result = await call(fns);
 
-    expect(result).toEqual({ error: expectedError });
-    extraChecks?.();
+    expect(result).toEqual({ error: "identity lookup boom" });
+    expect(writeCalls).toEqual([]);
   });
 });
 
@@ -150,17 +206,25 @@ describe("confirmEquivalentVerdict", () => {
         field_name: "q1",
         response_a_id: "r1",
         response_b_id: "r2",
-        reviewer_id: "reviewer1",
+        reviewer_id: "canonical-reviewer",
       },
     ]);
     expect(upsertsOn("reviews")[0]?.payload).toMatchObject({
       project_id: "p1",
       document_id: "doc1",
       field_name: "q1",
-      reviewer_id: "reviewer1",
+      reviewer_id: "canonical-reviewer",
       verdict: "resposta fundida",
       chosen_response_id: "r2",
     });
+    expect(mockGetEffectiveMemberId).toHaveBeenCalledOnce();
+    expect(mockGetEffectiveMemberId).toHaveBeenCalledWith("p1");
+    expect(mockSyncCompareAssignment).toHaveBeenCalledWith(
+      expect.anything(),
+      "p1",
+      "doc1",
+      "canonical-reviewer",
+    );
   });
 });
 
@@ -169,10 +233,21 @@ describe("markLlmEquivalent", () => {
     serverTableResults = { response_equivalences: { error: null } };
     const { markLlmEquivalent } = await loadActions();
 
-    const result = await markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1");
+    const result = await markLlmEquivalent(
+      "p1",
+      "doc1",
+      "q1",
+      "llm1",
+      "human1",
+    );
 
     expect(result).toEqual({});
-    expect(upsertsOn("response_equivalences")).toHaveLength(1);
+    expect(upsertsOn("response_equivalences")[0]?.payload).toMatchObject({
+      project_id: "p1",
+      reviewer_id: "canonical-reviewer",
+    });
+    expect(mockGetEffectiveMemberId).toHaveBeenCalledOnce();
+    expect(mockGetEffectiveMemberId).toHaveBeenCalledWith("p1");
   });
 });
 
@@ -193,5 +268,22 @@ describe("unmarkEquivalencePair", () => {
     expect(
       writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
     ).toBe(true);
+    expect(
+      filterCalls.some(
+        (call) =>
+          call.table === "reviews" &&
+          call.method === "eq" &&
+          call.args[0] === "reviewer_id" &&
+          call.args[1] === "canonical-reviewer",
+      ),
+    ).toBe(true);
+    expect(mockGetEffectiveMemberId).toHaveBeenCalledOnce();
+    expect(mockGetEffectiveMemberId).toHaveBeenCalledWith("p1");
+    expect(mockSyncCompareAssignment).toHaveBeenCalledWith(
+      expect.anything(),
+      "p1",
+      "doc1",
+      "canonical-reviewer",
+    );
   });
 });

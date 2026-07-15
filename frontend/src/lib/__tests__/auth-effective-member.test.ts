@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // própria conta. getAuthUser/getEffectiveMemberId usam React cache() — cada
 // teste usa um projectId distinto para não colidir com memoização.
 let aliasByProject: Record<string, { member_user_id: string } | null>;
+let aliasErrorByProject: Record<string, { message: string } | null>;
 
 vi.mock("@clerk/nextjs/server", () => ({
   currentUser: async () => ({
@@ -31,7 +32,16 @@ vi.mock("@/lib/supabase/admin", () => ({
     from: (table: string) => {
       let projectId: string | null = null;
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "is", "in", "order", "limit", "maybeSingle", "single", "update"]) {
+      for (const m of [
+        "select",
+        "is",
+        "in",
+        "order",
+        "limit",
+        "maybeSingle",
+        "single",
+        "update",
+      ]) {
         builder[m] = () => builder;
       }
       builder.eq = (col: string, value: string) => {
@@ -42,7 +52,7 @@ vi.mock("@/lib/supabase/admin", () => ({
         if (table === "member_email_links") {
           return resolve({
             data: projectId ? (aliasByProject[projectId] ?? null) : null,
-            error: null,
+            error: projectId ? (aliasErrorByProject[projectId] ?? null) : null,
           });
         }
         if (table === "profiles") {
@@ -58,6 +68,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 beforeEach(() => {
   aliasByProject = {};
+  aliasErrorByProject = {};
 });
 
 async function loadGetEffective() {
@@ -86,6 +97,15 @@ describe("getEffectiveMemberId", () => {
     const getEffectiveMemberId = await loadGetEffective();
     await expect(getEffectiveMemberId("pD")).resolves.toBe("acc1");
   });
+
+  it("falha no lookup não degrada silenciosamente para a conta-alias", async () => {
+    aliasErrorByProject = { pH: { message: "member links indisponível" } };
+    const getEffectiveMemberId = await loadGetEffective();
+
+    await expect(getEffectiveMemberId("pH")).rejects.toThrow(
+      "Falha ao resolver identidade efetiva: member links indisponível",
+    );
+  });
 });
 
 // resolveEffectiveUserId: fonte única da precedência entre impersonação
@@ -106,7 +126,10 @@ describe("resolveEffectiveUserId", () => {
     const resolveEffectiveUserId = await loadResolveEffective();
     await expect(
       resolveEffectiveUserId("pF", { id: "acc1", isMaster: false }, "membro9"),
-    ).resolves.toEqual({ effectiveUserId: "canonico1", isImpersonating: false });
+    ).resolves.toEqual({
+      effectiveUserId: "canonico1",
+      isImpersonating: false,
+    });
   });
 
   it("master sem viewAsUser cai na resolução de alias/si próprio", async () => {

@@ -20,6 +20,12 @@ export type RpcCall = {
   args: unknown;
 };
 
+export type FilterCall = {
+  table: string;
+  method: string;
+  args: unknown[];
+};
+
 export type TableResult = {
   data?: unknown;
   error?: { message: string; code?: string } | null;
@@ -32,11 +38,18 @@ export function makeSupabaseMock(opts?: {
   tableResults?: TableResults;
   defaultResult?: TableResult;
   writeCalls?: WriteCall[];
+  filterCalls?: FilterCall[];
   rpcCalls?: RpcCall[];
   rpcResults?: Record<string, TableResult>;
 }) {
-  const { tableResults, defaultResult, writeCalls, rpcCalls, rpcResults } =
-    opts ?? {};
+  const {
+    tableResults,
+    defaultResult,
+    writeCalls,
+    filterCalls,
+    rpcCalls,
+    rpcResults,
+  } = opts ?? {};
   return {
     // rpc(): registra a chamada e resolve { data, error } como o thenable das
     // queries. Resultado por função em `rpcResults`; sem entrada, sucesso vazio.
@@ -54,10 +67,22 @@ export function makeSupabaseMock(opts?: {
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
       for (const m of [
-        "eq", "is", "in", "neq", "match", "select", "single",
-        "maybeSingle", "order", "limit", "range",
+        "eq",
+        "is",
+        "in",
+        "neq",
+        "match",
+        "select",
+        "single",
+        "maybeSingle",
+        "order",
+        "limit",
+        "range",
       ]) {
-        builder[m] = () => builder;
+        builder[m] = (...args: unknown[]) => {
+          filterCalls?.push({ table, method: m, args });
+          return builder;
+        };
       }
       builder.update = (payload: unknown) => {
         writeCalls?.push({ table, op: "update", payload });

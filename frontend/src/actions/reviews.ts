@@ -6,6 +6,41 @@ import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
 
+type ReviewActionContext =
+  | {
+      ok: true;
+      user: NonNullable<Awaited<ReturnType<typeof getAuthUser>>>;
+      effectiveId: string;
+      supabase: Awaited<ReturnType<typeof createSupabaseServer>>;
+    }
+  | { ok: false; error: string };
+
+// Identidade efetiva e client são pré-condições de qualquer escrita destas
+// actions. Resolver ambas aqui mantém o contrato `{ error? }` inclusive quando
+// o lookup da conta-alias falha: nenhuma mutation começa com identidade
+// incerta, e o erro não vira uma rejeição opaca do Server Action.
+async function resolveReviewActionContext(
+  projectId: string,
+): Promise<ReviewActionContext> {
+  try {
+    const user = await getAuthUser();
+    if (!user) return { ok: false, error: "Não autenticado" };
+
+    const [effectiveId, supabase] = await Promise.all([
+      getEffectiveMemberId(projectId),
+      createSupabaseServer(),
+    ]);
+    return { ok: true, user, effectiveId, supabase };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        errorMessage(error) ||
+        "Falha ao resolver a identidade efetiva do revisor.",
+    };
+  }
+}
+
 export interface ResponseSnapshotEntry {
   id: string;
   respondent_name: string;
@@ -23,18 +58,14 @@ export async function submitVerdict(
   comment?: string,
   responseSnapshot?: ResponseSnapshotEntry[],
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
   // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
   // como o membro canônico — reviewer_id, author_id e o sync do assignment
   // usam o id efetivo, casando com o onConflict do upsert.
   // `getEffectiveMemberId` (admin client, cache()) e `createSupabaseServer`
   // são independentes — rodam em paralelo.
-  const [effectiveId, supabase] = await Promise.all([
-    getEffectiveMemberId(projectId),
-    createSupabaseServer(),
-  ]);
+  const context = await resolveReviewActionContext(projectId);
+  if (!context.ok) return { error: context.error };
+  const { user, effectiveId, supabase } = context;
 
   try {
     const { error } = await supabase.from("reviews").upsert(
@@ -50,7 +81,7 @@ export async function submitVerdict(
       },
       {
         onConflict: "project_id,document_id,field_name,reviewer_id",
-      }
+      },
     );
 
     if (error) throw new Error(error.message);
@@ -120,7 +151,6 @@ export async function submitVerdict(
         if (deleteError) throw new Error(deleteError.message);
       }
     }
-
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao salvar o veredito" };
   }
@@ -149,15 +179,10 @@ export async function markCompareDocReviewed(
   projectId: string,
   documentId: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
   // Conta vinculada fecha o doc como o membro canônico (spec 002).
-  // Awaits independentes em paralelo.
-  const [effectiveId, supabase] = await Promise.all([
-    getEffectiveMemberId(projectId),
-    createSupabaseServer(),
-  ]);
+  const context = await resolveReviewActionContext(projectId);
+  if (!context.ok) return { error: context.error };
+  const { effectiveId, supabase } = context;
 
   const { error } = await supabase
     .from("assignments")
@@ -168,7 +193,9 @@ export async function markCompareDocReviewed(
     .eq("type", "comparacao");
 
   if (error) {
-    return { error: error.message || "Erro ao marcar o documento como revisado" };
+    return {
+      error: error.message || "Erro ao marcar o documento como revisado",
+    };
   }
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);

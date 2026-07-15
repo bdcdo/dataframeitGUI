@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -120,6 +126,19 @@ const props = {
   isImpersonating: false,
 };
 
+const canonicalEquivalence = {
+  d1: {
+    campoA: [
+      {
+        id: "eq-canonical",
+        response_a_id: "r1",
+        response_b_id: "r2",
+        reviewer_id: "canonical-reviewer",
+      },
+    ],
+  },
+};
+
 const renderReal = () =>
   render(
     <TooltipProvider>
@@ -146,6 +165,7 @@ vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
 beforeEach(() => {
   submitVerdict.mockClear();
+  unmarkEquivalencePair.mockClear();
   vi.mocked(toast.warning).mockClear();
 });
 afterEach(cleanup);
@@ -232,5 +252,47 @@ describe("ComparePage — árvore real (smoke)", () => {
     );
     expect(screen.getByRole("tab", { name: "Meus atribuídos" })).not.toBeNull();
     expect(screen.getByRole("tab", { name: "Todos" })).not.toBeNull();
+  });
+
+  it("conta-alias pesquisadora desfaz o par persistido sob sua identidade canônica", async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <ComparePage
+          {...props}
+          currentUserId="canonical-reviewer"
+          equivalencesByDocField={canonicalEquivalence}
+        />
+      </TooltipProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /1 variante/i }));
+    await user.click(
+      await screen.findByRole("button", { name: "Desfazer equivalência" }),
+    );
+
+    await waitFor(() =>
+      expect(unmarkEquivalencePair).toHaveBeenCalledWith("p1", "eq-canonical"),
+    );
+  });
+
+  it("outro pesquisador não vê o controle para desfazer o par canônico", async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <ComparePage
+          {...props}
+          currentUserId="other-researcher"
+          equivalencesByDocField={canonicalEquivalence}
+        />
+      </TooltipProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /1 variante/i }));
+
+    expect(
+      screen.queryByRole("button", { name: "Desfazer equivalência" }),
+    ).toBeNull();
+    expect(unmarkEquivalencePair).not.toHaveBeenCalled();
   });
 });

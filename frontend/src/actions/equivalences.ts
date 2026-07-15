@@ -1,12 +1,42 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
+
+type EquivalenceActionContext =
+  | {
+      ok: true;
+      effectiveId: string;
+      supabase: Awaited<ReturnType<typeof createSupabaseServer>>;
+    }
+  | { ok: false; error: string };
+
+// As três actions compartilham o mesmo contrato: falhas ao resolver a
+// identidade canônica ou criar o client viram `{ error }`, nunca uma rejeição
+// opaca do Server Action. A resolução e a criação são independentes.
+async function resolveEquivalenceActionContext(
+  projectId: string,
+): Promise<EquivalenceActionContext> {
+  try {
+    const [effectiveId, supabase] = await Promise.all([
+      getEffectiveMemberId(projectId),
+      createSupabaseServer(),
+    ]);
+    return { ok: true, effectiveId, supabase };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        errorMessage(error) ||
+        "Falha ao resolver a identidade efetiva do revisor.",
+    };
+  }
+}
 
 // Marks two or more responses as equivalent for a (document, field) and at the
 // same time records the verdict pointing to `gabaritoId` — the response that
@@ -26,13 +56,19 @@ export async function confirmEquivalentVerdict(
     return { error: "Marcar como equivalentes exige 2+ respostas." };
   }
   if (!responseIds.includes(gabaritoId)) {
-    return { error: "Gabarito precisa estar na lista de respostas selecionadas." };
+    return {
+      error: "Gabarito precisa estar na lista de respostas selecionadas.",
+    };
   }
 
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
-  const supabase = await createSupabaseServer();
+  // Identidade de trabalho no projeto (spec 002): a conta vinculada cria a
+  // equivalência e o review como o membro canônico.
+  const context = await resolveEquivalenceActionContext(projectId);
+  if (!context.ok) return { error: context.error };
+  const { effectiveId, supabase } = context;
 
   // Build canonical pairs (a < b) for every combination, dedup.
   const seen = new Set<string>();
@@ -56,7 +92,7 @@ export async function confirmEquivalentVerdict(
         field_name: fieldName,
         response_a_id: a,
         response_b_id: b,
-        reviewer_id: user.id,
+        reviewer_id: effectiveId,
       });
     }
   }
@@ -65,7 +101,8 @@ export async function confirmEquivalentVerdict(
     const { error: equivErr } = await supabase
       .from("response_equivalences")
       .upsert(rows, {
-        onConflict: "project_id,document_id,field_name,response_a_id,response_b_id",
+        onConflict:
+          "project_id,document_id,field_name,response_a_id,response_b_id",
         ignoreDuplicates: true,
       });
     if (equivErr) throw new Error(equivErr.message);
@@ -75,7 +112,7 @@ export async function confirmEquivalentVerdict(
         project_id: projectId,
         document_id: documentId,
         field_name: fieldName,
-        reviewer_id: user.id,
+        reviewer_id: effectiveId,
         verdict: verdictDisplay,
         chosen_response_id: gabaritoId,
         comment: comment || null,
@@ -94,7 +131,7 @@ export async function confirmEquivalentVerdict(
   // falha do sync não deve virar { error } (o client refaria uma escrita já
   // persistida). Loga e segue para a revalidação.
   try {
-    await syncCompareAssignment(supabase, projectId, documentId, user.id);
+    await syncCompareAssignment(supabase, projectId, documentId, effectiveId);
   } catch (e) {
     console.error(
       `[confirmEquivalentVerdict] falha ao sincronizar o assignment: ${errorMessage(e)}`,
@@ -125,7 +162,9 @@ export async function markLlmEquivalent(
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
-  const supabase = await createSupabaseServer();
+  const context = await resolveEquivalenceActionContext(projectId);
+  if (!context.ok) return { error: context.error };
+  const { effectiveId, supabase } = context;
   const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
 
   try {
@@ -136,7 +175,7 @@ export async function markLlmEquivalent(
         field_name: fieldName,
         response_a_id: a,
         response_b_id: b,
-        reviewer_id: user.id,
+        reviewer_id: effectiveId,
       },
       {
         onConflict:
@@ -165,7 +204,9 @@ export async function unmarkEquivalencePair(
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
-  const supabase = await createSupabaseServer();
+  const context = await resolveEquivalenceActionContext(projectId);
+  if (!context.ok) return { error: context.error };
+  const { effectiveId, supabase } = context;
 
   try {
     const { data: row } = await supabase
@@ -194,9 +235,14 @@ export async function unmarkEquivalencePair(
         .eq("project_id", projectId)
         .eq("document_id", row.document_id)
         .eq("field_name", row.field_name)
-        .eq("reviewer_id", user.id);
+        .eq("reviewer_id", effectiveId);
 
-      await syncCompareAssignment(supabase, projectId, row.document_id, user.id);
+      await syncCompareAssignment(
+        supabase,
+        projectId,
+        row.document_id,
+        effectiveId,
+      );
     }
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };

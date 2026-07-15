@@ -16,9 +16,7 @@ export interface AuthUser {
 // crítico só produz os quatro primeiros; `no-project-access` é decidido depois,
 // no dashboard, e `unknown-recoverable` é o fallback da própria tela.
 export type AccessCompletionReason =
-  | "link-pending"
-  | "link-divergent"
-  | "sync-temporary-failure";
+  "link-pending" | "link-divergent" | "sync-temporary-failure";
 
 // Resultado observável da resolução de identidade (contracts/auth-resolution).
 // É a fonte única que distingue os estados que a feature precisa separar —
@@ -92,7 +90,10 @@ export const resolveAuth = cache(async (): Promise<AuthResolution> => {
   // falha técnica recuperável (data-model: validação de Authenticated Actor).
   if (!uid) {
     if (!email) {
-      return { status: "technical-sync-failure", reason: "sync-temporary-failure" };
+      return {
+        status: "technical-sync-failure",
+        reason: "sync-temporary-failure",
+      };
     }
     return { status: "access-completion-required", reason: "link-pending" };
   }
@@ -160,7 +161,7 @@ export const getEffectiveMemberId = cache(
     if (!user) throw new Error("Não autenticado");
 
     const admin = createSupabaseAdmin();
-    const { data: alias } = await admin
+    const { data: alias, error } = await admin
       .from("member_email_links")
       .select("member_user_id")
       .eq("project_id", projectId)
@@ -168,6 +169,14 @@ export const getEffectiveMemberId = cache(
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
+
+    // Uma falha no lookup não equivale a "esta conta não é alias". Cair para
+    // user.id nesse caso dividiria novamente a identidade de trabalho entre a
+    // conta vinculada e o membro canônico, deixando o estado malformado que a
+    // spec 002 torna irrepresentável.
+    if (error) {
+      throw new Error(`Falha ao resolver identidade efetiva: ${error.message}`);
+    }
 
     return alias?.member_user_id ?? user.id;
   },

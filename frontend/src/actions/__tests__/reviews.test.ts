@@ -8,14 +8,33 @@ type OpCall = { op: string; table: string; payload?: Record<string, unknown> };
 let opCalls: OpCall[];
 let tableData: Record<string, unknown>;
 
+const { mockGetEffectiveMemberId, mockCreateSupabaseServer } = vi.hoisted(
+  () => ({
+    mockGetEffectiveMemberId: vi.fn<() => Promise<string>>(),
+    mockCreateSupabaseServer: vi.fn(),
+  }),
+);
+
 function makeClient() {
   return {
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "is", "in", "neq", "not", "order", "limit"]) {
+      for (const m of [
+        "select",
+        "eq",
+        "is",
+        "in",
+        "neq",
+        "not",
+        "order",
+        "limit",
+      ]) {
         builder[m] = () => builder;
       }
-      builder.upsert = () => builder;
+      builder.upsert = (payload: Record<string, unknown>) => {
+        opCalls.push({ op: "upsert", table, payload });
+        return builder;
+      };
       builder.insert = (payload: Record<string, unknown>) => {
         opCalls.push({ op: "insert", table, payload });
         return builder;
@@ -32,7 +51,10 @@ function makeClient() {
         data: tableData[table] ?? null,
         error: null,
       });
-      builder.single = async () => ({ data: tableData[table] ?? null, error: null });
+      builder.single = async () => ({
+        data: tableData[table] ?? null,
+        error: null,
+      });
       builder.then = (resolve: (v: unknown) => unknown) =>
         resolve({ data: tableData[table] ?? null, error: null });
       return builder;
@@ -44,10 +66,10 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "user1" }),
   // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
-  getEffectiveMemberId: async () => "user1",
+  getEffectiveMemberId: mockGetEffectiveMemberId,
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(),
+  createSupabaseServer: mockCreateSupabaseServer,
 }));
 // syncCompareAssignment curto-circuita: assignment ausente => retorno imediato.
 vi.mock("@/lib/compare-sync", () => ({
@@ -57,11 +79,60 @@ vi.mock("@/lib/compare-sync", () => ({
 beforeEach(() => {
   opCalls = [];
   tableData = {};
+  mockGetEffectiveMemberId.mockReset().mockResolvedValue("user1");
+  mockCreateSupabaseServer
+    .mockReset()
+    .mockImplementation(async () => makeClient());
 });
 
-async function loadSubmit() {
-  return (await import("@/actions/reviews")).submitVerdict;
+async function loadActions() {
+  return await import("@/actions/reviews");
 }
+
+async function loadSubmit() {
+  return (await loadActions()).submitVerdict;
+}
+
+describe.each([
+  {
+    failure: "lookup de identidade",
+    arrange: () =>
+      mockGetEffectiveMemberId.mockRejectedValueOnce(
+        new Error("identity lookup boom"),
+      ),
+    expectedError: "identity lookup boom",
+  },
+  {
+    failure: "criação do client",
+    arrange: () =>
+      mockCreateSupabaseServer.mockRejectedValueOnce(
+        new Error("server client boom"),
+      ),
+    expectedError: "server client boom",
+  },
+])("actions de review — falha na $failure", ({ arrange, expectedError }) => {
+  it.each([
+    {
+      action: "submitVerdict",
+      call: async () => {
+        const { submitVerdict } = await loadActions();
+        return submitVerdict("p1", "doc1", "q1", "concordo");
+      },
+    },
+    {
+      action: "markCompareDocReviewed",
+      call: async () => {
+        const { markCompareDocReviewed } = await loadActions();
+        return markCompareDocReviewed("p1", "doc1");
+      },
+    },
+  ])("$action retorna { error } sem iniciar escrita", async ({ call }) => {
+    arrange();
+
+    await expect(call()).resolves.toEqual({ error: expectedError });
+    expect(opCalls).toEqual([]);
+  });
+});
 
 describe("submitVerdict — veredito ambiguo vira comentario automatico", () => {
   it("ambiguo sem comentario existente → insere project_comments kind='ambiguity'", async () => {
@@ -84,7 +155,14 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
   it("ambiguo com comentario do revisor → preserva o texto trimado no corpo", async () => {
     tableData = { project_comments: null };
     const submitVerdict = await loadSubmit();
-    await submitVerdict("p1", "doc1", "q1", "ambiguo", undefined, "  depende do contexto  ");
+    await submitVerdict(
+      "p1",
+      "doc1",
+      "q1",
+      "ambiguo",
+      undefined,
+      "  depende do contexto  ",
+    );
 
     const insert = opCalls.find(
       (c) => c.op === "insert" && c.table === "project_comments",
