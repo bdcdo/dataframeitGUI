@@ -27,7 +27,7 @@ repos:
   # ruff: lint (E/F/I/B/C901) + format do backend Python. File-scoped pelo
   # framework (so os .py alterados), entao o debito legado fica grandfathered —
   # so barra/formata o arquivo que voce tocar. --fix auto-corrige imports e afins.
-  # Config e per-file-ignores (complexidade legada) em backend/pyproject.toml.
+  # Config em backend/pyproject.toml; suppressions pontuais ficam inline no codigo.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.19
     hooks:
@@ -191,9 +191,9 @@ repos:
       # mypy: type-check do backend, escopado aos .py alterados (mesmo padrao
       # do lint-types no frontend). services/llm_runner.py e isento via
       # [[tool.mypy.overrides]] em backend/pyproject.toml — concentrava 103
-      # dos 113 erros do primeiro scan (explosao do alias JSON recursivo) e
-      # ja e o mesmo arquivo isento de C901 no ruff (run_llm, CCN 35); tipar
-      # direito exige o mesmo refactor maior, fora do escopo do #375/#380. Ver
+      # dos 113 erros do primeiro scan (explosao do alias JSON recursivo). A
+      # #377 removeu a isencao C901 ao decompor run_llm, mas nao estreitou
+      # esses tipos; remover a isencao mypy exige trabalho proprio. Ver
       # docs/CODE_QUALITY_TOOLING.md. O restante do baseline inicial (10 erros
       # em 4 arquivos: auth.py, pydantic_routes.py, pydantic_compiler.py,
       # main.py) foi corrigido na #380 — `uv run mypy .` roda limpo hoje fora
