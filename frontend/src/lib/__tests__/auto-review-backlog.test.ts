@@ -23,6 +23,8 @@ const field: PydanticField = {
 };
 
 describe("computeBacklogRows", () => {
+  const activeMemberIds = new Set(["user1"]);
+
   function human(overrides: Partial<HumanResponseRow>): HumanResponseRow {
     return {
       id: "human1",
@@ -48,6 +50,7 @@ describe("computeBacklogRows", () => {
     const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
       "proj1",
       [human({})],
+      activeMemberIds,
       llmByDocId,
       new Map(),
       [field],
@@ -76,7 +79,14 @@ describe("computeBacklogRows", () => {
   });
 
   it("pula quando não há resposta LLM para o documento", () => {
-    const result = computeBacklogRows("proj1", [human({})], new Map(), new Map(), [field]);
+    const result = computeBacklogRows(
+      "proj1",
+      [human({})],
+      activeMemberIds,
+      new Map(),
+      new Map(),
+      [field],
+    );
     expect(result.regenerated).toBe(0);
     expect(result.fieldReviewRows).toEqual([]);
   });
@@ -86,6 +96,7 @@ describe("computeBacklogRows", () => {
     const result = computeBacklogRows(
       "proj1",
       [human({ answers: {} })],
+      activeMemberIds,
       llmByDocId,
       new Map(),
       [field],
@@ -110,6 +121,7 @@ describe("computeBacklogRows", () => {
     const result = computeBacklogRows(
       "proj1",
       [human({})],
+      activeMemberIds,
       llmByDocId,
       equivByDoc,
       [field],
@@ -117,6 +129,24 @@ describe("computeBacklogRows", () => {
 
     expect(result.regenerated).toBe(0);
     expect(result.fieldReviewRows).toEqual([]);
+  });
+
+  it("não recria trabalho pendente para ex-membro a partir de resposta histórica", () => {
+    const llmByDocId = new Map([["doc1", llm({})]]);
+    const result = computeBacklogRows(
+      "proj1",
+      [human({})],
+      new Set(),
+      llmByDocId,
+      new Map(),
+      [field],
+    );
+
+    expect(result).toEqual({
+      assignmentRows: [],
+      fieldReviewRows: [],
+      regenerated: 0,
+    });
   });
 });
 

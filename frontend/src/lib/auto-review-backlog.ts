@@ -52,6 +52,7 @@ export interface FieldReviewRow {
 export function computeBacklogRows(
   projectId: string,
   humanResponses: HumanResponseRow[],
+  activeMemberIds: ReadonlySet<string>,
   llmByDocId: Map<string, LlmResponseRow>,
   equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
@@ -61,6 +62,10 @@ export function computeBacklogRows(
   let regenerated = 0;
 
   for (const human of humanResponses) {
+    // Respostas permanecem como histórico depois da saída do pesquisador, mas
+    // não podem recriar trabalho pendente para uma identidade sem membership.
+    if (!activeMemberIds.has(human.respondent_id)) continue;
+
     const llm = llmByDocId.get(human.document_id);
     if (!llm) continue;
 
