@@ -32,7 +32,7 @@ na linha de comando.
 Setup único:
 
 1. `npx playwright install chromium` (baixa o browser).
-2. Copie `.env.e2e.example` para `.env.e2e` e preencha com e-mail/senha de usuários reais do tenant Clerk de **desenvolvimento**. Coordenador e membro são obrigatórios no pre-push; master é opcional e habilita somente o caso correspondente no smoke do dashboard. `CLERK_SECRET_KEY` e `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` são lidos de `.env.local`.
+2. Copie `.env.e2e.example` para `.env.e2e` e preencha os e-mails de usuários reais do tenant Clerk de **desenvolvimento**. As senhas são opcionais e servem somente para login manual. Coordenador e membro são obrigatórios no pre-push; master é opcional e habilita somente o caso correspondente no smoke do dashboard. `CLERK_SECRET_KEY` e `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` são lidos de `.env.local`.
 
 Rodar:
 
@@ -51,8 +51,7 @@ paralelo gera um burst de `signIn`/`signOut`/`currentUser` que dispara
 rate-limit (`fetch failed` no backend do Clerk) e torna o smoke flaky — foi a
 causa raiz da #198 (não era credencial nem o sync Clerk↔Supabase). Usamos
 `default` em vez de `serial` porque os papéis são testes isolados: queremos só
-controlar o ritmo, sem que a falha de um papel pule os demais. Por isso o E2E
-permanece **manual** (rodado localmente/staging), sem workflow de CI dedicado.
+controlar o ritmo, sem que a falha de um papel pule os demais. Por isso o E2E permanece fora do CI: roda automaticamente no pre-push e também pode ser invocado manualmente em ambiente local ou staging.
 
 ### Smoke manual de login (mitigação)
 
