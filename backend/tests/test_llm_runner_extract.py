@@ -10,13 +10,23 @@ import math
 
 from pydantic import BaseModel
 
-from services.llm_runner import _extract_answers_from_row
+from services.llm_runner import (
+    _extend_model_with_justifications,
+    _extract_answers_from_row,
+)
 
 
 class _Sample(BaseModel):
     field_a: str | None = None
     field_b: list[str] | None = None
     field_c: int | None = None
+
+
+class _LegitimateSuffixField(BaseModel):
+    decision_justification: str | None = None
+
+
+_SampleWithJustifications = _extend_model_with_justifications(_Sample)
 
 
 def test_extract_basic_string_field():
@@ -74,9 +84,33 @@ def test_extract_justifications_present():
         "field_c": None,
         "field_a_justification": "porque sim",
     }
-    answers, justifications = _extract_answers_from_row(row, _Sample)
+    answers, justifications = _extract_answers_from_row(row, _SampleWithJustifications)
     assert answers == {"field_a": "ok"}
     assert justifications == {"field_a": "porque sim"}
+
+
+def test_extract_generated_justification_field_does_not_leak_into_answers():
+    row = {
+        "field_a": "ok",
+        "field_b": None,
+        "field_c": None,
+        "field_a_justification": "porque sim",
+    }
+
+    answers, justifications = _extract_answers_from_row(row, _SampleWithJustifications)
+
+    assert answers == {"field_a": "ok"}
+    assert justifications == {"field_a": "porque sim"}
+
+
+def test_extract_preserves_legitimate_field_ending_in_justification():
+    answers, justifications = _extract_answers_from_row(
+        {"decision_justification": "fundamento do usuário"},
+        _LegitimateSuffixField,
+    )
+
+    assert answers == {"decision_justification": "fundamento do usuário"}
+    assert justifications == {}
 
 
 def test_extract_skips_nan_justification():
@@ -87,7 +121,7 @@ def test_extract_skips_nan_justification():
         "field_c": None,
         "field_a_justification": nan,
     }
-    answers, justifications = _extract_answers_from_row(row, _Sample)
+    answers, justifications = _extract_answers_from_row(row, _SampleWithJustifications)
     assert answers == {"field_a": "ok"}
     assert justifications == {}
 
@@ -99,7 +133,7 @@ def test_extract_skips_empty_string_justification():
         "field_c": None,
         "field_a_justification": "",
     }
-    answers, justifications = _extract_answers_from_row(row, _Sample)
+    answers, justifications = _extract_answers_from_row(row, _SampleWithJustifications)
     assert justifications == {}
 
 

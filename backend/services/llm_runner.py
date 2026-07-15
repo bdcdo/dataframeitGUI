@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 # In-memory job tracking
 _jobs: dict[str, dict] = {}
 
+_JUSTIFICATION_FIELD_SUFFIX = "_justification"
+_GENERATED_JUSTIFICATION_FIELDS_ATTR = "__generated_justification_fields__"
+
 
 def _status_from_row(row: dict) -> dict:
     """Shape a llm_runs row as a StatusResponse-compatible dict."""
@@ -336,8 +339,11 @@ def _extract_answers_from_row(row, model_class) -> tuple[dict, dict]:
     """
     answers: dict = {}
     justifications: dict = {}
+    generated_justification_fields = _generated_justification_fields(model_class)
 
     for field_name in model_class.model_fields:
+        if field_name in generated_justification_fields:
+            continue
         val = row.get(field_name)
         if val is not None and not _is_nan(val):
             if isinstance(val, list):
@@ -345,10 +351,10 @@ def _extract_answers_from_row(row, model_class) -> tuple[dict, dict]:
             else:
                 answers[field_name] = str(val)
 
-        just_col = f"{field_name}_justification"
+        just_col = f"{field_name}{_JUSTIFICATION_FIELD_SUFFIX}"
         # `just_col in row` aceita tanto dict quanto pandas.Series; truthy
         # check em conjunto com _is_nan cobre None, "", e NaN.
-        if just_col in row:
+        if just_col in generated_justification_fields and just_col in row:
             jval = row[just_col]
             if jval and not _is_nan(jval):
                 justifications[field_name] = str(jval)
@@ -426,13 +432,6 @@ class _DataframeitRunConfig:
     run_failure_threshold: float
     model_kwargs: dict
     dfi_kwargs: dict
-
-
-@dataclass(frozen=True)
-class _SaveContext:
-    field_conditions: dict
-    expected_llm_fields: set[str]
-    run_metadata: _RunMetadata
 
 
 DATAFRAMEIT_PARAMS = {
@@ -521,6 +520,11 @@ DEFAULT_JUSTIFICATION_PROMPT = (
 )
 
 
+def _generated_justification_fields(model_class) -> frozenset[str]:
+    """Return fields created by _extend_model_with_justifications."""
+    return getattr(model_class, _GENERATED_JUSTIFICATION_FIELDS_ATTR, frozenset())
+
+
 def _extend_model_with_justifications(model_class):
     """Add a justification field for each existing field in the model.
 
@@ -546,13 +550,24 @@ def _extend_model_with_justifications(model_class):
                 desc = base
         else:
             desc = DEFAULT_JUSTIFICATION_PROMPT.format(name=name)
-        just_name = f"{name}_justification"
+        just_name = f"{name}{_JUSTIFICATION_FIELD_SUFFIX}"
+        if just_name in model_class.model_fields:
+            raise ValueError(
+                f"O campo gerado de justificativa '{just_name}' colide com "
+                "um campo existente no schema. Renomeie o campo existente."
+            )
         extra_fields[just_name] = (str, Field(description=desc))
-    return create_model(
+    extended_model = create_model(
         f"{model_class.__name__}WithJustifications",
         __base__=model_class,
         **extra_fields,
     )
+    setattr(
+        extended_model,
+        _GENERATED_JUSTIFICATION_FIELDS_ATTR,
+        frozenset(extra_fields),
+    )
+    return extended_model
 
 
 # Separador usado para achatar nested BaseModels em top-level (ver
@@ -805,42 +820,15 @@ def _load_documents_for_run(
 
 def _expected_llm_fields(model_class) -> set[str]:
     expected_llm_fields = set()
+    generated_justification_fields = _generated_justification_fields(model_class)
     for name in model_class.model_fields:
-        if name.endswith("_justification"):
+        if name in generated_justification_fields:
             continue
         if _NESTED_FLATTEN_SEP in name:
             expected_llm_fields.add(name.split(_NESTED_FLATTEN_SEP, 1)[0])
         else:
             expected_llm_fields.add(name)
     return expected_llm_fields
-
-
-def _prepare_save_context(
-    *,
-    project_id: str,
-    model_class,
-    llm_provider: str,
-    llm_model: str,
-    pydantic_hash: str,
-    answer_field_hashes: dict,
-    schema_version_major: int,
-    schema_version_minor: int,
-    schema_version_patch: int,
-) -> _SaveContext:
-    return _SaveContext(
-        field_conditions=extract_field_conditions(model_class),
-        expected_llm_fields=_expected_llm_fields(model_class),
-        run_metadata=_RunMetadata(
-            project_id=project_id,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-            pydantic_hash=pydantic_hash,
-            answer_field_hashes=answer_field_hashes,
-            schema_version_major=schema_version_major,
-            schema_version_minor=schema_version_minor,
-            schema_version_patch=schema_version_patch,
-        ),
-    )
 
 
 def _run_dataframeit_batches(
@@ -902,6 +890,8 @@ def _raise_if_run_compromised(
     total_processed: int,
     run_failure_threshold: float,
 ) -> None:
+    if not partial_warnings:
+        return
     partial_ratio = len(partial_warnings) / total_processed if total_processed else 0.0
     if partial_ratio < run_failure_threshold:
         return
@@ -992,6 +982,13 @@ def _reconstruct_nested_answers(
     justifications: dict,
     nested_field_map: dict,
 ) -> None:
+    """Restore the persisted nested shape before evaluating conditions.
+
+    Conditions refer to the parent fields used by the UI and human answers, so
+    reconstruction must happen before pruning. Subfield justifications are
+    joined into one string to preserve the frontend's Record<string, string>
+    contract.
+    """
     for original_name, subs in nested_field_map.items():
         sub_dict: dict = {}
         sub_justs: dict = {}
@@ -1024,6 +1021,7 @@ def _active_expected_fields(
     field_conditions: dict,
     answers: dict,
 ) -> set[str]:
+    """Exclude inactive conditional fields from the coverage denominator."""
     return {
         name
         for name in expected_llm_fields
@@ -1081,9 +1079,21 @@ def _build_processed_llm_row(
     )
 
 
-def _update_processed_counters(
-    jobs_state: dict, processed_row: _ProcessedLlmRow
+def _record_processed_row_outcome(
+    sb,
+    job_id: str,
+    jobs_state: dict,
+    partial_warnings: list[str],
+    dfi_error_samples: dict[str, str],
+    processed_row: _ProcessedLlmRow,
 ) -> None:
+    """Update run diagnostics, counters, warnings, and the throttled heartbeat.
+
+    Provider errors are deduplicated by the complete message hash: grouping by
+    a shared prefix previously merged distinct failures. MD5 is only a compact
+    deduplication key, never a security primitive. Persisting progress here also
+    keeps a live run distinguishable from an abandoned one during scale-to-zero.
+    """
     if processed_row.is_empty:
         jobs_state["processed_empty"] += 1
     elif processed_row.is_partial:
@@ -1091,48 +1101,37 @@ def _update_processed_counters(
     else:
         jobs_state["processed_complete"] += 1
 
-
-def _log_processed_row_if_needed(processed_row: _ProcessedLlmRow) -> None:
-    if not (
-        processed_row.is_partial or processed_row.is_empty or processed_row.dfi_error
-    ):
-        return
-    logger.warning(
-        "LLM row diag doc=%s status=%s error=%s pre_prune=%s post_prune=%s",
-        processed_row.doc_id,
-        processed_row.dfi_status,
-        processed_row.dfi_error,
-        processed_row.answers_pre_prune_keys,
-        sorted(processed_row.answers.keys()),
-    )
-
-
-def _record_dataframeit_error_sample(
-    dfi_error_samples: dict[str, str],
-    processed_row: _ProcessedLlmRow,
-) -> None:
-    if not processed_row.dfi_error:
-        return
-    key = hashlib.md5(
-        processed_row.dfi_error.encode("utf-8", errors="replace"),
-        usedforsecurity=False,
-    ).hexdigest()[:16]
-    if key not in dfi_error_samples:
-        dfi_error_samples[key] = (
-            f"doc={processed_row.doc_id}: {processed_row.dfi_error}"
+    if processed_row.is_partial or processed_row.is_empty or processed_row.dfi_error:
+        logger.warning(
+            "LLM row diag doc=%s status=%s error=%s pre_prune=%s post_prune=%s",
+            processed_row.doc_id,
+            processed_row.dfi_status,
+            processed_row.dfi_error,
+            processed_row.answers_pre_prune_keys,
+            sorted(processed_row.answers.keys()),
         )
 
+    if processed_row.dfi_error:
+        key = hashlib.md5(
+            processed_row.dfi_error.encode("utf-8", errors="replace"),
+            usedforsecurity=False,
+        ).hexdigest()[:16]
+        if key not in dfi_error_samples:
+            dfi_error_samples[key] = (
+                f"doc={processed_row.doc_id}: {processed_row.dfi_error}"
+            )
 
-def _build_partial_warning(processed_row: _ProcessedLlmRow) -> str:
-    missing = sorted(processed_row.active_expected - processed_row.answered)
-    return (
-        f"doc={processed_row.doc_id}: cobertura baixa "
-        f"({len(processed_row.answered)}/{len(processed_row.active_expected)}); "
-        f"faltaram: {missing[:8]}{'...' if len(missing) > 8 else ''}"
-    )
+    if processed_row.is_partial:
+        missing = sorted(processed_row.active_expected - processed_row.answered)
+        suffix = "..." if len(missing) > 8 else ""
+        warning_msg = (
+            f"doc={processed_row.doc_id}: cobertura baixa "
+            f"({len(processed_row.answered)}/{len(processed_row.active_expected)}); "
+            f"faltaram: {missing[:8]}{suffix}"
+        )
+        partial_warnings.append(warning_msg)
+        jobs_state.setdefault("warnings", []).append(warning_msg)
 
-
-def _persist_progress_if_due(sb, job_id: str, jobs_state: dict) -> None:
     now_ts = time.time()
     if now_ts - jobs_state["last_progress_persist"] >= 2.0:
         _persist_run_progress(sb, job_id, jobs_state)
@@ -1144,35 +1143,33 @@ def _process_and_save_rows(
     job_id: str,
     jobs_state: dict,
     result_df: pd.DataFrame,
-    model_class,
-    nested_field_map: dict,
-    field_conditions: dict,
-    expected_llm_fields: set[str],
+    prepared_model: _PreparedLlmModel,
     partial_coverage_threshold: float,
     run: _RunMetadata,
 ) -> tuple[list[str], dict[str, str]]:
+    """Transform and persist each dataframeit row in its canonical shape."""
     partial_warnings: list[str] = []
     dfi_error_samples: dict[str, str] = {}
+    field_conditions = extract_field_conditions(prepared_model.model_class)
+    expected_llm_fields = _expected_llm_fields(prepared_model.model_class)
 
     for _, row in result_df.iterrows():
         processed_row = _build_processed_llm_row(
             row,
-            model_class,
-            nested_field_map,
+            prepared_model.model_class,
+            prepared_model.nested_field_map,
             field_conditions,
             expected_llm_fields,
             partial_coverage_threshold,
         )
-        _update_processed_counters(jobs_state, processed_row)
-        _log_processed_row_if_needed(processed_row)
-        _record_dataframeit_error_sample(dfi_error_samples, processed_row)
-
-        if processed_row.is_partial:
-            warning_msg = _build_partial_warning(processed_row)
-            partial_warnings.append(warning_msg)
-            jobs_state.setdefault("warnings", []).append(warning_msg)
-
-        _persist_progress_if_due(sb, job_id, jobs_state)
+        _record_processed_row_outcome(
+            sb,
+            job_id,
+            jobs_state,
+            partial_warnings,
+            dfi_error_samples,
+            processed_row,
+        )
         sb.table("responses").insert(
             _build_llm_response_row(
                 run=run,
@@ -1290,9 +1287,8 @@ async def run_llm(
             "project_id", project_id
         ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
 
-        save_context = _prepare_save_context(
+        run_metadata = _RunMetadata(
             project_id=project_id,
-            model_class=prepared_model.model_class,
             llm_provider=llm_provider,
             llm_model=llm_model,
             pydantic_hash=pydantic_hash,
@@ -1306,12 +1302,9 @@ async def run_llm(
             job_id,
             _jobs[job_id],
             result_df,
-            prepared_model.model_class,
-            prepared_model.nested_field_map,
-            save_context.field_conditions,
-            save_context.expected_llm_fields,
+            prepared_model,
             run_config.partial_coverage_threshold,
-            save_context.run_metadata,
+            run_metadata,
         )
 
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq(
