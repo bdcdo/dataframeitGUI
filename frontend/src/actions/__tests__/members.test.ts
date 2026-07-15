@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Mock supabase chainable compartilhado (supabase-mock.ts). setCanArbitrate
-// executa um UPDATE em project_members com .select("user_id").single() e
-// dispara releaseArbitrationsFromUser / retryPendingArbitrations (mockados
-// abaixo). `tableResults` permite a testes (addMember) fixarem o retorno por
-// tabela e por cliente (server vs admin); sem entrada, vale o default
-// histórico ({ user_id: "userMemberX" }, ou erro quando clientError é setado).
+// Mock supabase chainable compartilhado (supabase-mock.ts). As permissões de
+// arbitragem/comparação atualizam project_members e disparam os respectivos
+// release/retry (mockados abaixo). `tableResults` fixa retornos por tabela e
+// cliente nos testes existentes; `serverTableRows` ativa o mock filter-aware
+// para as regressões que precisam distinguir o par projectId/memberId.
 import {
   makeSupabaseMock,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
+import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 
 let writeCalls: WriteCall[];
 
@@ -30,6 +30,8 @@ function makeClient(
 let clientError: { message: string } | undefined;
 let serverTableResults: TableResults | undefined;
 let adminTableResults: TableResults | undefined;
+let serverTableRows: Record<string, unknown[]> | undefined;
+let adminCreateCalls: number;
 
 // hoisted mocks — release/retry precisam ser observáveis por teste para
 // distinguir o caminho de habilitar vs desabilitar.
@@ -53,6 +55,23 @@ const hoisted = vi.hoisted(() => ({
   preregister: vi.fn<(email: string) => Promise<string>>(
     async () => "placeholderUid",
   ),
+  retryComparisons: vi.fn<(projectId: string) => Promise<{
+    success: boolean;
+    assigned: number;
+    stillNoPool: number;
+    error?: string;
+  }>>(async () => ({
+    success: true,
+    assigned: 0,
+    stillNoPool: 0,
+  })),
+  releaseComparisons: vi.fn<
+    (
+      admin: unknown,
+      projectId: string,
+      userId: string,
+    ) => Promise<{ released: number; error?: string }>
+  >(async () => ({ released: 0 })),
 }));
 
 vi.mock("next/cache", () => ({
@@ -69,14 +88,26 @@ vi.mock("@/lib/clerk-sync", () => ({
   preregisterSupabaseUser: hoisted.preregister,
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(clientError, serverTableResults),
+  createSupabaseServer: async () =>
+    serverTableRows
+      ? makeFilterAwareSupabaseMock({ tableData: serverTableRows, writeCalls })
+      : makeClient(clientError, serverTableResults),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(clientError, adminTableResults),
+  createSupabaseAdmin: () => {
+    adminCreateCalls++;
+    return makeClient(clientError, adminTableResults);
+  },
 }));
 vi.mock("@/actions/field-reviews", () => ({
   retryPendingArbitrations: hoisted.retry,
   releaseArbitrationsFromUser: hoisted.release,
+}));
+vi.mock("@/actions/comparisons", () => ({
+  retryPendingComparisons: hoisted.retryComparisons,
+}));
+vi.mock("@/lib/auto-comparison", () => ({
+  releaseComparisonsFromUser: hoisted.releaseComparisons,
 }));
 
 beforeEach(() => {
@@ -84,12 +115,46 @@ beforeEach(() => {
   clientError = undefined;
   serverTableResults = undefined;
   adminTableResults = undefined;
+  serverTableRows = undefined;
+  adminCreateCalls = 0;
   hoisted.retry.mockReset();
   hoisted.retry.mockResolvedValue({ success: true, assigned: 0, stillNoPool: 0 });
   hoisted.release.mockReset();
   hoisted.release.mockResolvedValue({ released: 0 });
   hoisted.preregister.mockReset();
   hoisted.preregister.mockResolvedValue("placeholderUid");
+  hoisted.retryComparisons.mockReset();
+  hoisted.retryComparisons.mockResolvedValue({
+    success: true,
+    assigned: 0,
+    stillNoPool: 0,
+  });
+  hoisted.releaseComparisons.mockReset();
+  hoisted.releaseComparisons.mockResolvedValue({ released: 0 });
+});
+
+async function loadRemove() {
+  return (await import("@/actions/members")).removeMember;
+}
+
+describe("removeMember", () => {
+  it("memberId de outro projeto → não remove nem inicia limpeza admin", async () => {
+    serverTableRows = {
+      project_members: [
+        { id: "member-p2", project_id: "p2", user_id: "user-p2" },
+      ],
+    };
+    const remove = await loadRemove();
+    const r = await remove("p1", "member-p2");
+
+    expect(r).toEqual({ error: "Membro não encontrado neste projeto." });
+    expect(adminCreateCalls).toBe(0);
+    expect(
+      writeCalls.filter(
+        (call) => call.table === "assignments" || call.table === "member_email_links",
+      ),
+    ).toEqual([]);
+  });
 });
 
 async function loadSet() {
@@ -97,6 +162,21 @@ async function loadSet() {
 }
 
 describe("setCanArbitrate", () => {
+  it("memberId de outro projeto → não altera permissão nem dispara release/retry", async () => {
+    serverTableRows = {
+      project_members: [
+        { id: "member-p2", project_id: "p2", user_id: "user-p2" },
+      ],
+    };
+    const set = await loadSet();
+    const r = await set("member-p2", false, "p1");
+
+    expect(r.error).toBe("Membro não encontrado neste projeto.");
+    expect(hoisted.release).not.toHaveBeenCalled();
+    expect(hoisted.retry).not.toHaveBeenCalled();
+    expect(adminCreateCalls).toBe(0);
+  });
+
   it("habilita → dispara retry (sem release) e devolve contagem", async () => {
     hoisted.retry.mockResolvedValueOnce({
       success: true,
@@ -126,7 +206,7 @@ describe("setCanArbitrate", () => {
     const set = await loadSet();
     const r = await set("member1", false, "p1");
     expect(r.error).toBeUndefined();
-    // release recebe o user_id do membro (resolvido via .select().single())
+    // release recebe o user_id do membro (resolvido via .select().maybeSingle())
     expect(hoisted.release).toHaveBeenCalledWith("p1", "userMemberX");
     expect(hoisted.retry).toHaveBeenCalledWith("p1");
     expect(r.retried).toEqual({ assigned: 2, stillNoPool: 0 });
@@ -179,11 +259,66 @@ describe("setCanArbitrate", () => {
   });
 });
 
+async function loadSetCompare() {
+  return (await import("@/actions/members")).setCanCompare;
+}
+
+describe("setCanCompare", () => {
+  it("memberId de outro projeto → não altera permissão nem inicia limpeza admin", async () => {
+    serverTableRows = {
+      project_members: [
+        { id: "member-p2", project_id: "p2", user_id: "user-p2" },
+      ],
+    };
+    const set = await loadSetCompare();
+    const r = await set("member-p2", false, "p1");
+
+    expect(r.error).toBe("Membro não encontrado neste projeto.");
+    expect(adminCreateCalls).toBe(0);
+    expect(hoisted.releaseComparisons).not.toHaveBeenCalled();
+    expect(hoisted.retryComparisons).not.toHaveBeenCalled();
+  });
+});
+
+async function loadChangeRole() {
+  return (await import("@/actions/members")).changeRole;
+}
+
+describe("changeRole", () => {
+  it("memberId de outro projeto → não altera o papel", async () => {
+    const otherProjectMember = {
+      id: "member-p2",
+      project_id: "p2",
+      role: "pesquisador",
+    };
+    serverTableRows = { project_members: [otherProjectMember] };
+    const change = await loadChangeRole();
+    const r = await change("member-p2", "coordenador", "p1");
+
+    expect(r).toEqual({ error: "Membro não encontrado neste projeto." });
+    expect(otherProjectMember.role).toBe("pesquisador");
+  });
+});
+
 async function loadSetResolve() {
   return (await import("@/actions/members")).setCanResolve;
 }
 
 describe("setCanResolve", () => {
+  it("memberId de outro projeto → não altera can_resolve", async () => {
+    const otherProjectMember = {
+      id: "member-p2",
+      project_id: "p2",
+      can_resolve: false,
+    };
+    serverTableRows = { project_members: [otherProjectMember] };
+    const set = await loadSetResolve();
+    const r = await set("member-p2", true, "p1");
+
+    expect(r.error).toBe("Membro não encontrado neste projeto.");
+    expect(otherProjectMember.can_resolve).toBe(false);
+  });
+
   it("habilita → UPDATE com can_resolve=true e NÃO dispara retry de arbitragem", async () => {
     const set = await loadSetResolve();
     const r = await set("member1", true, "p1");

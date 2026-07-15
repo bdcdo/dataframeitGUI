@@ -1156,11 +1156,12 @@ export async function releaseArbitrationsFromUser(
 ): Promise<{ released: number; error?: string }> {
   // Autorização no entrypoint: este é um Server Action exportado num arquivo
   // "use server", logo invocável direto via header Next-Action — não basta o
-  // único caller legítimo (removeMember) já ser coordinator-gated. Como o corpo
-  // usa createSupabaseAdmin() (bypassa RLS), sem este gate qualquer autenticado
-  // liberaria a arbitragem em andamento de um `userId` arbitrário em qualquer
-  // `projectId` (CWE-862; mesma classe residual da IDOR #166 / #45). Espelha o
-  // guard das actions-irmãs regenerateAutoReviewBacklog/retryPendingArbitrations.
+  // caller de orquestração (setCanArbitrate) atualizar o membro via RLS. Como
+  // o corpo usa createSupabaseAdmin() (bypassa RLS), sem este gate qualquer
+  // autenticado liberaria a arbitragem em andamento de um `userId` arbitrário
+  // em qualquer `projectId` (CWE-862; mesma classe residual da IDOR #166 / #45).
+  // Espelha o guard das actions-irmãs
+  // regenerateAutoReviewBacklog/retryPendingArbitrations.
   const gate = await requireCoordinator(
     projectId,
     "Apenas coordenadores podem liberar arbitragens de um membro.",
@@ -1210,4 +1211,3 @@ export async function releaseArbitrationsFromUser(
 
   return { released: ids.length };
 }
-

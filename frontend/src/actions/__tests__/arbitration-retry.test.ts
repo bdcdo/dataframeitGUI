@@ -11,6 +11,8 @@ import { authModuleMock } from "@/test-utils/auth-mock";
 // e assignArbitrator sem subir Postgres.
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown>;
+let adminCreateCalls: number;
+let adminFromCalls: string[];
 
 const updateCallsOf = (table?: string) => callsOf(writeCalls, "update", table);
 const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
@@ -18,6 +20,17 @@ const deleteCallsOf = (table?: string) => callsOf(writeCalls, "delete", table);
 
 function makeClient() {
   return makeSimpleSupabaseMock({ tableData, writeCalls });
+}
+
+function makeAdminClient() {
+  adminCreateCalls++;
+  const client = makeClient();
+  return {
+    from: (table: string) => {
+      adminFromCalls.push(table);
+      return client.from(table);
+    },
+  };
 }
 
 // isProjectCoordinator: hoisted para permitir override por teste.
@@ -31,11 +44,13 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(),
+  createSupabaseAdmin: () => makeAdminClient(),
 }));
 
 beforeEach(() => {
   writeCalls = [];
+  adminCreateCalls = 0;
+  adminFromCalls = [];
   tableData = {
     field_reviews: [],
     project_members: [],
@@ -221,6 +236,8 @@ describe("releaseArbitrationsFromUser", () => {
     const r = await release("p1", "userX");
     expect(r.released).toBe(0);
     expect(r.error).toContain("coordenadores");
+    expect(adminCreateCalls).toBe(0);
+    expect(adminFromCalls).toEqual([]);
     expect(writeCalls).toHaveLength(0);
   });
 

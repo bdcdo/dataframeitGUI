@@ -221,10 +221,12 @@ export async function removeMember(projectId: string, memberId: string) {
     .from("project_members")
     .delete()
     .eq("id", memberId)
+    .eq("project_id", projectId)
     .select("user_id")
-    .single();
+    .maybeSingle();
 
   if (error) return { error: error.message };
+  if (!removed) return { error: "Membro não encontrado neste projeto." };
 
   // FR-005 (research D6): atribuições nunca iniciadas voltam ao pool de
   // documentos não atribuídos. Trabalho começado (outros status) permanece.
@@ -267,18 +269,19 @@ export async function removeMember(projectId: string, memberId: string) {
 export async function changeRole(
   memberId: string,
   role: "coordenador" | "pesquisador",
-  projectId: string
+  projectId: string,
 ) {
   const supabase = await createSupabaseServer();
-  const { data, error } = await supabase
+  const { data: member, error } = await supabase
     .from("project_members")
     .update({ role })
     .eq("id", memberId)
-    .select("id");
+    .eq("project_id", projectId)
+    .select("id")
+    .maybeSingle();
 
   if (error) return { error: error.message };
-  if (!data || data.length === 0)
-    return { error: "Sem permissão para alterar papéis neste projeto." };
+  if (!member) return { error: "Membro não encontrado neste projeto." };
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
@@ -292,15 +295,16 @@ export async function setCanResolve(
   projectId: string,
 ): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
-  const { data, error } = await supabase
+  const { data: member, error } = await supabase
     .from("project_members")
     .update({ can_resolve: canResolve })
     .eq("id", memberId)
-    .select("id");
+    .eq("project_id", projectId)
+    .select("id")
+    .maybeSingle();
 
   if (error) return { error: error.message };
-  if (!data || data.length === 0)
-    return { error: "Sem permissão para alterar permissões neste projeto." };
+  if (!member) return { error: "Membro não encontrado neste projeto." };
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);
@@ -329,10 +333,12 @@ export async function setCanArbitrate(
     .from("project_members")
     .update({ can_arbitrate: canArbitrate })
     .eq("id", memberId)
+    .eq("project_id", projectId)
     .select("user_id")
-    .single();
+    .maybeSingle();
 
   if (error) return { error: error.message };
+  if (!member) return { error: "Membro não encontrado neste projeto." };
 
   if (!canArbitrate) {
     const releaseResult = await releaseArbitrationsFromUser(
@@ -376,10 +382,12 @@ export async function setCanCompare(
     .from("project_members")
     .update({ can_compare: canCompare })
     .eq("id", memberId)
+    .eq("project_id", projectId)
     .select("user_id")
-    .single();
+    .maybeSingle();
 
   if (error) return { error: error.message };
+  if (!member) return { error: "Membro não encontrado neste projeto." };
 
   if (!canCompare) {
     const admin = createSupabaseAdmin();
