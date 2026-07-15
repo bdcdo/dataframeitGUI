@@ -45,7 +45,7 @@ O projeto não tinha sequer um script `tsc --noEmit`. O `npm run typecheck` pree
 
 ### ruff — lint, format e complexidade do backend
 
-`ruff` (dependency-group dev em `backend/pyproject.toml`), via o hook oficial `astral-sh/ruff-pre-commit` v0.15.19. Cobre o backend Python, que não tinha nenhum gate. Resolve o eixo de complexidade que a #260 levantou (a pergunta original era sobre o `lizard`): no frontend a complexidade já está coberta por react-doctor + fallow, então a lacuna real era o Python, e o `ruff` entrega `C901` (mccabe) junto com lint (E/F/I/B) e format num binário só — mais que o `lizard`, que só mede CCN.
+`ruff` (dependency-group dev em `backend/pyproject.toml`), via o hook oficial `astral-sh/ruff-pre-commit` v0.15.20. Cobre o backend Python, que não tinha nenhum gate. Resolve o eixo de complexidade que a #260 levantou (a pergunta original era sobre o `lizard`): no frontend a complexidade já está coberta por react-doctor + fallow, então a lacuna real era o Python, e o `ruff` entrega `C901` (mccabe) junto com lint (E/F/I/B) e format num binário só — mais que o `lizard`, que só mede CCN.
 
 Config em `backend/pyproject.toml`: `select = ["E", "F", "I", "B", "C901"]`, `ignore = ["E501"]` (comprimento de linha fica a cargo do `ruff format`), `max-complexity = 10`. Os hooks rodam file-scoped (só os `.py` alterados), com `--fix` no lint, então o débito legado fica grandfathered por arquivo-tocado.
 
@@ -62,7 +62,7 @@ Ao remover a isenção de arquivo inteiro de `pydantic_compiler.py`, o gate reve
 
 ### backend-pytest — a suíte do backend como gate
 
-Enquanto o `ruff` cobre o eixo estático do Python, ele não roda os testes — a suíte de auth que o #195 adicionou (`backend/tests/`) não gateava nada, então uma regressão que enfraquecesse o gate JWT ou quebrasse as fronteiras 401/403/404/503 mergearia com o gate verde e o deploy do Fly shipparia direto para produção (issue #337). O hook local `backend-pytest` fecha essa lacuna: roda `uv run pytest -q` (working-dir `backend/`) no estágio de pre-push sempre que o push toca `backend/**/*.py`. Diferente dos hooks file-scoped, roda a suíte inteira — testes não têm noção de "linha grandfathered". Diferente do semgrep (fail-open em erro de infra), é **fail-closed**: se o `uv` não estiver no PATH o push é barrado com mensagem, porque é um gate de verdade, não um sinal informativo. `[tool.uv] package = false` no `backend/pyproject.toml` faz o `uv run` não tentar empacotar o app (que é um FastAPI flat, não uma lib instalável), evitando a regressão histórica de build. Coerente com a decisão de manter o gate pré-merge nos hooks locais e não em GitHub Actions (sem branch protection no free tier, um job de Actions não bloqueia merge).
+Enquanto o `ruff` cobre o eixo estático do Python, ele não roda os testes — a suíte de auth que o #195 adicionou (`backend/tests/`) não gateava nada, então uma regressão que enfraquecesse o gate JWT ou quebrasse as fronteiras 401/403/404/503 mergearia com o gate verde e o deploy do Fly shipparia direto para produção (issue #337). O hook local `backend-pytest` fecha essa lacuna: roda `uv run pytest -q` (working-dir `backend/`) no estágio de pre-push sempre que o push toca código Python ou os arquivos que definem o grafo e a imagem do backend (`pyproject.toml`, `uv.lock`, `Dockerfile`, `.dockerignore` e `docker-compose.yml`). Diferente dos hooks file-scoped, roda a suíte inteira — testes não têm noção de "linha grandfathered". Diferente do semgrep (fail-open em erro de infra), é **fail-closed**: se o `uv` não estiver no PATH o push é barrado com mensagem, porque é um gate de verdade, não um sinal informativo. `[tool.uv] package = false` no `backend/pyproject.toml` faz o `uv run` não tentar empacotar o app (que é um FastAPI flat, não uma lib instalável), evitando a regressão histórica de build. Coerente com a decisão de manter o gate pré-merge nos hooks locais e não em GitHub Actions (sem branch protection no free tier, um job de Actions não bloqueia merge).
 
 ### e2e-smoke (Playwright) — o gate de fluxos autenticados, e por que MCP/browser não substitui
 
@@ -78,7 +78,7 @@ A cobertura de hoje é deliberadamente rasa (4 specs de fumaça, focados nos flu
 
 ### mypy — o eixo de tipos do backend
 
-`mypy` (dependency-group dev em `backend/pyproject.toml`, `>=1.15`), via hook local de pre-push, escopado aos `.py` alterados (mesmo padrão do `lint-types` do frontend). Fecha a lacuna que o `ruff` deixa: `ruff` cobre lint/format/complexidade, mas não checa tipos — o backend é o boundary de segurança internet-facing (pós-#195/#337) e um `Any` vazando de um `dict` cru do LLM até um argumento tipado é exatamente o footgun que motivou o `no-floating-promises` no frontend, só que do lado dos tipos.
+`mypy` (dependency-group dev em `backend/pyproject.toml`, `>=2.2.0`), via hook local de pre-push, escopado aos `.py` alterados (mesmo padrão do `lint-types` do frontend). Fecha a lacuna que o `ruff` deixa: `ruff` cobre lint/format/complexidade, mas não checa tipos — o backend é o boundary de segurança internet-facing (pós-#195/#337) e um `Any` vazando de um `dict` cru do LLM até um argumento tipado é exatamente o footgun que motivou o `no-floating-promises` no frontend, só que do lado dos tipos.
 
 Config em `backend/pyproject.toml`: `ignore_missing_imports = true` (as libs de LLM — `langchain-*`, `dataframeit` — não publicam stubs; sem isso todo `import-untyped` mascararia os erros reais) e sem `strict` de cara, mesmo raciocínio do subset curado do `lint:types` no frontend. `python_version = "3.12"` casa com o runtime real (Dockerfile e `.venv`), não com o piso `requires-python = ">=3.11"` — simular 3.11 faz o mypy recusar parsear sintaxe 3.12+ em stubs de terceiros (ex.: `type` statement do PEP 695 no stub do `numpy`) e abortar em vez de reportar um erro de tipo normal.
 
@@ -115,7 +115,7 @@ npm run fallow:audit     # gate incremental (new-only vs origin/main)
 npm run scan             # React Scan (precisa de `npm run dev` rodando)
 
 cd backend
-uv run ruff check .      # lint (ruff do dev-group via uv.lock; o hook pina v0.15.19)
+uv run ruff check .      # lint (ruff do dev-group via uv.lock; o hook pina v0.15.20)
 uv run ruff format .     # format
 uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy acima)
 ```

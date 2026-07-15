@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   backend:
     build:
@@ -11,7 +9,10 @@ services:
       - ./backend/.env
     volumes:
       - ./backend:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - /app/.venv
+    command: >-
+      sh -c 'uv sync --locked --no-dev &&
+      exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload'
 
   frontend:
     build:
