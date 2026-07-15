@@ -59,6 +59,8 @@ A partir daí, cada commit é varrido em busca de segredos antes de entrarem no 
 
 Produção roda inteiramente no **Fly.io** (`gru`), com deploy **automático por CI** a partir de merge na `main`: `backend/**` dispara `fly-deploy.yml` (app `gui-analise-sistematica-api`) e `frontend/**` dispara `frontend-fly-deploy.yml` (app `gui-analise-sistematica-frontend`). Domínio: `dataframeit.com.br`.
 
+Se um deploy falhar, o workflow abre um incidente atribuído ao owner com a aplicação, o commit e o link da execução; novas falhas da mesma aplicação são adicionadas ao incidente aberto. Depois de confirmar a recuperação de produção, feche a issue para que uma falha futura abra outro incidente. Deploy verde não gera ruído.
+
 ### 1. Supabase Cloud
 
 1. Criar projeto em [supabase.com](https://supabase.com)

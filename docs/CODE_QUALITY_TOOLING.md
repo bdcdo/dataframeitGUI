@@ -12,7 +12,7 @@ A regra de ouro é que tudo roda sozinho, via git hook ou automação de servido
 
 | Quem dispara | Quando | Ferramentas | Grandfathering |
 |---|---|---|---|
-| `pre-commit` | todo commit (leve, file-scoped) | gitleaks · ruff (lint+format) · react-doctor | só o arquivo/linha tocado é checado |
+| `pre-commit` | todo commit (leve, file-scoped) | gitleaks · ruff (lint+format) · actionlint · deploy notifier · react-doctor | só o arquivo/linha tocado é checado; o notifier roda quando seu workflow ou teste muda |
 | `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · e2e-smoke (Playwright) · lint:types · fallow audit · semgrep · backend-pytest · mypy | new-only / file-scoped (ver cada um); pytest roda a suíte inteira; e2e-smoke falha fechado no pre-push se envs E2E/Clerk obrigatórias faltarem |
 | GitHub (servidor) | automático | Dependabot | n/a — abre PRs de vuln sozinho |
 | on-demand | ao investigar performance | React Scan | n/a — ferramenta de diagnóstico, não gate |
