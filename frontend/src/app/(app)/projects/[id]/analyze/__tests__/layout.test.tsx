@@ -1,73 +1,27 @@
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { projectAccessAuthModuleMock } from "@/test-utils/auth-mock";
+import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 
 const mocks = vi.hoisted(() => ({
   createSupabaseServer: vi.fn(),
   getAuthUser: vi.fn(),
-  isProjectCoordinator: vi.fn(),
-  resolveEffectiveUserId: vi.fn(),
+  getProjectAccessContext: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: mocks.createSupabaseServer,
 }));
 
-vi.mock("@/lib/auth", () => ({
-  getAuthUser: mocks.getAuthUser,
-  isProjectCoordinator: mocks.isProjectCoordinator,
-  resolveEffectiveUserId: mocks.resolveEffectiveUserId,
-}));
+vi.mock("@/lib/auth", () =>
+  projectAccessAuthModuleMock(mocks.getAuthUser, mocks.getProjectAccessContext),
+);
 
 vi.mock("@/components/analyze/AnalyzeNav", () => ({
   AnalyzeNav: () => null,
 }));
 
-type Row = Record<string, unknown>;
-type Filter = { column: string; value: unknown };
-type QueryCall = { table: string; filters: Filter[] };
-
-let tableData: Record<string, Row[]>;
-let queryCalls: QueryCall[];
-
-function makeSupabaseMock() {
-  return {
-    from(table: string) {
-      const call: QueryCall = { table, filters: [] };
-      queryCalls.push(call);
-      const builder: Record<string, unknown> = {};
-      builder.select = () => builder;
-      builder.eq = (column: string, value: unknown) => {
-        call.filters.push({ column, value });
-        return builder;
-      };
-      builder.limit = () => builder;
-
-      const firstMatchingRow = () =>
-        (tableData[table] ?? []).find((row) =>
-          call.filters.every(({ column, value }) => row[column] === value),
-        ) ?? null;
-      builder.maybeSingle = async () => ({
-        data: firstMatchingRow(),
-        error: null,
-      });
-      builder.single = async () => ({
-        data: firstMatchingRow(),
-        error: null,
-      });
-      return builder;
-    },
-  };
-}
-
-function filterValues(table: string, column: string): unknown[] {
-  return queryCalls
-    .filter((call) => call.table === table)
-    .flatMap((call) =>
-      call.filters
-        .filter((filter) => filter.column === column)
-        .map((filter) => filter.value),
-    );
-}
+let tableData: Record<string, unknown[]>;
 
 type AnalyzeNavProps = {
   showArbitragem: boolean;
@@ -88,11 +42,8 @@ async function loadLayout() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  queryCalls = [];
   tableData = {
-    projects: [
-      { id: "project-1", automation_mode: "compare_humans" },
-    ],
+    projects: [{ id: "project-1", automation_mode: "compare_humans" }],
     assignments: [
       {
         id: "assignment-1",
@@ -102,15 +53,21 @@ beforeEach(() => {
       },
     ],
   };
-  mocks.createSupabaseServer.mockResolvedValue(makeSupabaseMock());
+  mocks.createSupabaseServer.mockResolvedValue(
+    makeFilterAwareSupabaseMock({ tableData, writeCalls: [] }),
+  );
   mocks.getAuthUser.mockResolvedValue({
     id: "linked-account",
     isMaster: false,
   });
-  mocks.isProjectCoordinator.mockResolvedValue(false);
-  mocks.resolveEffectiveUserId.mockResolvedValue({
-    effectiveUserId: "canonical-member",
-    isImpersonating: false,
+  mocks.getProjectAccessContext.mockResolvedValue({
+    status: "resolved",
+    accountUserId: "linked-account",
+    memberUserId: "canonical-member",
+    project: { id: "project-1", name: "Projeto", created_by: "coordinator" },
+    membershipRole: "pesquisador",
+    isMaster: false,
+    isCoordinator: false,
   });
 });
 
@@ -123,16 +80,10 @@ describe("AnalyzeLayout — identidade efetiva dos assignments", () => {
       params: Promise.resolve({ id: "project-1" }),
     });
 
-    expect(mocks.resolveEffectiveUserId).toHaveBeenCalledWith(
+    expect(mocks.getProjectAccessContext).toHaveBeenCalledWith(
       "project-1",
       expect.objectContaining({ id: "linked-account", isMaster: false }),
-      undefined,
     );
-    expect(filterValues("assignments", "user_id")).toEqual([
-      "canonical-member",
-      "canonical-member",
-      "canonical-member",
-    ]);
     expect(getAnalyzeNavProps(result)).toMatchObject({
       showAutoReview: true,
       showArbitragem: false,

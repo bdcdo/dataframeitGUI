@@ -33,9 +33,9 @@ export default async function ProjectLayout({
 
   // project + membership vem de getProjectAccessContext (request-scoped via
   // cache()) — mesma leitura reaproveitada pelos layouts filhos config/llm.
-  const [{ project, isCoordinator }, { data: profile }, runningLlmCount] =
+  const [access, { data: profile }, runningLlmCount] =
     await Promise.all([
-      getProjectAccessContext(id, user.id, user.isMaster),
+      getProjectAccessContext(id, user),
       supabase
         .from("profiles")
         .select("first_name")
@@ -46,6 +46,10 @@ export default async function ProjectLayout({
       getRunningLlmCount(id).catch(() => 0),
     ]);
 
+  if (access.status === "unavailable") {
+    throw new Error("Não foi possível verificar seu acesso ao projeto.");
+  }
+  const { project, isCoordinator } = access;
   if (!project) notFound();
 
   // Fetch project members for master impersonation dropdown

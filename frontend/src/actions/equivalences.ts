@@ -1,12 +1,25 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
+
+async function resolveReviewerId(
+  projectId: string,
+): Promise<{ reviewerId: string } | { error: string }> {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+
+  try {
+    return { reviewerId: await getEffectiveMemberId(projectId) };
+  } catch {
+    return { error: "Não foi possível verificar sua identidade no projeto." };
+  }
+}
 
 // Marks two or more responses as equivalent for a (document, field) and at the
 // same time records the verdict pointing to `gabaritoId` — the response that
@@ -29,8 +42,9 @@ export async function confirmEquivalentVerdict(
     return { error: "Gabarito precisa estar na lista de respostas selecionadas." };
   }
 
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const identity = await resolveReviewerId(projectId);
+  if ("error" in identity) return identity;
+  const { reviewerId } = identity;
 
   const supabase = await createSupabaseServer();
 
@@ -56,7 +70,7 @@ export async function confirmEquivalentVerdict(
         field_name: fieldName,
         response_a_id: a,
         response_b_id: b,
-        reviewer_id: user.id,
+        reviewer_id: reviewerId,
       });
     }
   }
@@ -75,7 +89,7 @@ export async function confirmEquivalentVerdict(
         project_id: projectId,
         document_id: documentId,
         field_name: fieldName,
-        reviewer_id: user.id,
+        reviewer_id: reviewerId,
         verdict: verdictDisplay,
         chosen_response_id: gabaritoId,
         comment: comment || null,
@@ -94,7 +108,7 @@ export async function confirmEquivalentVerdict(
   // falha do sync não deve virar { error } (o client refaria uma escrita já
   // persistida). Loga e segue para a revalidação.
   try {
-    await syncCompareAssignment(supabase, projectId, documentId, user.id);
+    await syncCompareAssignment(supabase, projectId, documentId, reviewerId);
   } catch (e) {
     console.error(
       `[confirmEquivalentVerdict] falha ao sincronizar o assignment: ${errorMessage(e)}`,
@@ -122,8 +136,9 @@ export async function markLlmEquivalent(
     return { error: "Respostas já são as mesmas." };
   }
 
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const identity = await resolveReviewerId(projectId);
+  if ("error" in identity) return identity;
+  const { reviewerId } = identity;
 
   const supabase = await createSupabaseServer();
   const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
@@ -136,7 +151,7 @@ export async function markLlmEquivalent(
         field_name: fieldName,
         response_a_id: a,
         response_b_id: b,
-        reviewer_id: user.id,
+        reviewer_id: reviewerId,
       },
       {
         onConflict:
@@ -162,8 +177,9 @@ export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const identity = await resolveReviewerId(projectId);
+  if ("error" in identity) return identity;
+  const { reviewerId } = identity;
 
   const supabase = await createSupabaseServer();
 
@@ -194,9 +210,14 @@ export async function unmarkEquivalencePair(
         .eq("project_id", projectId)
         .eq("document_id", row.document_id)
         .eq("field_name", row.field_name)
-        .eq("reviewer_id", user.id);
+        .eq("reviewer_id", reviewerId);
 
-      await syncCompareAssignment(supabase, projectId, row.document_id, user.id);
+      await syncCompareAssignment(
+        supabase,
+        projectId,
+        row.document_id,
+        reviewerId,
+      );
     }
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };

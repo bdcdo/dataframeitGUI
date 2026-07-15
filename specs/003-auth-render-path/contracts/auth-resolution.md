@@ -21,6 +21,7 @@ Definir o comportamento observável da resolução de identidade autenticada em 
 | Sessão Clerk com vínculo ausente, pendente ou divergente | `access-completion-required`, redireciona para conclusão/reparo |
 | Sessão Clerk sem e-mail utilizável | `technical-sync-failure`, mostra estado recuperável não técnico |
 | Falha técnica na verificação de vínculo | `technical-sync-failure`, fail-closed |
+| Falha técnica na verificação de `master_users` | `technical-sync-failure`, fail-closed; não autentica com `isMaster=false` |
 
 ## Guarantees
 

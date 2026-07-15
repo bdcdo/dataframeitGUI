@@ -6,7 +6,7 @@
 
 ## Summary
 
-Coordenadores passam a poder (1) adicionar e-mails sem conta a um projeto — o membro nasce "pendente", já elegível para atribuições, e entra automaticamente no primeiro acesso (sem e-mail transacional) — e (2) vincular e-mails adicionais a um membro, com efeito restrito ao projeto: qualquer e-mail vinculado acessa como o mesmo membro, com atribuições unificadas. Abordagem técnica: placeholder Supabase-only no pré-registro (remove a criação de usuário Clerk do `addMember`), coluna `profiles.activated_at` para o status pendente, tabela `member_email_links` como registro de vínculo + alias por projeto (RLS estendida + `getEffectiveMemberId`), e unificação de membros via função Postgres transacional `unify_project_members` (RPC). Decisões detalhadas em [research.md](./research.md).
+Coordenadores passam a poder (1) adicionar e-mails sem conta a um projeto — o membro nasce "pendente", já elegível para atribuições, e entra automaticamente no primeiro acesso (sem e-mail transacional) — e (2) vincular e-mails adicionais a um membro, com efeito restrito ao projeto: qualquer e-mail vinculado acessa como o mesmo membro, com atribuições unificadas. Abordagem técnica: placeholder Supabase-only no pré-registro (remove a criação de usuário Clerk do `addMember`), coluna `profiles.activated_at` para o status pendente, tabela `member_email_links` como registro de vínculo + alias único por conta/projeto, RLS com precedência da identidade canônica, `getProjectAccessContext` como contrato público de páginas e unificação de membros via função Postgres transacional `unify_project_members` (RPC). Decisões detalhadas em [research.md](./research.md).
 
 ## Technical Context
 
@@ -24,7 +24,7 @@ Coordenadores passam a poder (1) adicionar e-mails sem conta a um projeto — o 
 
 **Performance Goals**: lista de membros e resolução de identidade efetiva sem queries N+1; funções RLS novas com index em `member_email_links.linked_user_id`.
 
-**Constraints**: RLS continua a única barreira de leitura; mutações privilegiadas só via admin client em server actions com checagem de coordenador; nenhuma quebra do fluxo atual de membros com conta.
+**Constraints**: RLS continua a barreira de leitura e de mutations associadas a linhas do projeto; RPCs transacionais derivam o projeto da linha autorizada, enquanto operações que precisam de admin client só o usam em server actions após checagem canônica de coordenador; nenhuma quebra do fluxo atual de membros com conta.
 
 **Scale/Scope**: dezenas de membros por projeto; unificação é operação rara (transação pequena). ~6 actions, 1 tabela nova, 1 coluna nova, 2-3 funções RLS, UI da tela de membros.
 
@@ -66,27 +66,27 @@ frontend/
 │   └── 2026MMDDHHMMSS_preregister_and_email_links.sql   # activated_at + member_email_links + RLS + unify RPC
 └── src/
     ├── actions/
-    │   ├── members.ts            # addMember (placeholder sem Clerk), removeMember (+limpeza), novas: updatePendingMemberEmail, linkMemberEmail, unifyMembers, unlinkMemberEmail
-    │   ├── responses.ts          # respondent_id → effective member id
-    │   └── field-reviews.ts      # self/arbitrator → effective member id
+    │   ├── members.ts            # addMember (placeholder sem Clerk), removeMember via RPC atômica, novas: updatePendingMemberEmail, linkMemberEmail, unifyMembers, unlinkMemberEmail
+    │   ├── responses.ts          # respondent_id → identidade canônica do membro
+    │   └── field-reviews.ts      # self/arbitrator → identidade canônica do membro
     ├── app/
     │   ├── api/webhooks/clerk/route.ts            # ativação + resolução de vínculos no user.created
     │   └── (app)/projects/[id]/
+    │       ├── layout.tsx                         # porta pública do contexto de acesso canônico
     │       ├── config/members/page.tsx            # query inclui activated_at + links
-    │       ├── analyze/code/page.tsx              # effectiveUserId via alias
-    │       └── my-progress/page.tsx               # idem
+    │       └── analyze/code/page.tsx              # consome memberUserId; impersonação master é separada
     ├── components/members/
     │   ├── MemberList.tsx        # badge Pendente, e-mails vinculados, ações de editar/vincular/desvincular
     │   ├── AddMemberDialog.tsx   # toast "pré-registrado" (sem promessa de e-mail)
     │   ├── LinkEmailDialog.tsx   # novo
     │   └── UnifyMembersDialog.tsx # novo (confirmação com preview)
     └── lib/
-        ├── auth.ts               # activated_at fallback + getEffectiveMemberId
-        ├── clerk-sync.ts         # inalterado (conflito de e-mail já mapeia placeholder)
+        ├── auth.ts               # autenticação read-only + contexto de acesso canônico
+        ├── clerk-sync.ts         # sincronização e ativação idempotentes fora do render path
         └── types.ts              # Profile.activated_at, MemberEmailLink
 ```
 
-**Structure Decision**: tudo no frontend Next.js + migrations Supabase, seguindo a arquitetura existente (FastAPI não participa de CRUD). A mecânica nova concentra-se em `actions/members.ts`, `lib/auth.ts` e uma migration; o restante são pontos de adoção do id efetivo e UI da tela de membros.
+**Structure Decision**: tudo no frontend Next.js + migrations Supabase, seguindo a arquitetura existente (FastAPI não participa de CRUD). A mecânica nova concentra-se em `actions/members.ts`, `lib/auth.ts` e uma migration; o restante são pontos de adoção do contexto canônico e UI da tela de membros.
 
 ## Fases
 

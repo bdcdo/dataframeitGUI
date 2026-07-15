@@ -2,7 +2,7 @@
 
 **Feature**: `002-preregister-members` | Camada: Next.js Server Actions (`frontend/src/actions/members.ts`) + webhook Clerk (`frontend/src/app/api/webhooks/clerk/route.ts`)
 
-Todas as actions exigem chamador coordenador do projeto (FR-014), validado como no `addMember` atual; mutações usam admin client.
+Todas as actions de gestão exigem coordenador do projeto (FR-014). Operações que já partem de uma linha identificada usam o client da sessão e deixam a RLS derivar o projeto e autorizar a mutação; o admin client fica restrito aos fluxos que precisam atravessar identidades, como pré-registro, correção de e-mail, vínculo e unificação, sempre depois de `requireCoordinator`.
 
 ## `addMember(projectId, email, role)` — modificada
 
@@ -17,9 +17,9 @@ Todas as actions exigem chamador coordenador do projeto (FR-014), validado como 
 - Efeito: atualiza `auth.users.email` (admin API) + `profiles.email`. **Efeito global** (FR-005): a correção vale para todos os projetos em que o placeholder está pré-registrado; a action retorna `otherProjectsCount` (projetos além do atual) para a UI exibir aviso de confirmação quando `> 0`.
 - Erros: membro já ativo (corrigir via vínculo/US2); e-mail em uso.
 
-## `removeMember(projectId, memberId)` — modificada
+## `removeMember(memberId)` — modificada
 
-- Além de deletar `project_members`: deleta `assignments` com `status = 'pendente'` do usuário no projeto (FR-005) e os `member_email_links` do projeto cujo `member_user_id` é o removido. A limpeza de `member_email_links` entra na fase da US2 (quando a tabela passa a existir); na US1, a action trata apenas assignments.
+- A RPC transacional `remove_project_member(memberId)` deriva `project_id` e `user_id` da única linha que a RLS permite remover; na mesma transação, deleta `assignments` com `status = 'pendente'` e encerra os `member_email_links` cujo `member_user_id` é o removido. A FK composta também garante o cascade dos aliases, sem depender de limpeza posterior na action.
 
 ## `linkMemberEmail(projectId, memberUserId, email)` — nova
 
@@ -50,8 +50,12 @@ Após o `syncClerkUserToSupabase` atual (que já mapeia signup para placeholder 
 2. Resolve vínculos pendentes: `UPDATE member_email_links SET linked_user_id = <profile> WHERE email = <email> AND linked_user_id IS NULL`.
 3. Ativa os membros canônicos desses vínculos: `UPDATE profiles SET activated_at = now() WHERE id IN (<member_user_id resolvidos no passo 2>) AND activated_at IS NULL` — sem isso, um pendente cuja pessoa entra pelo e-mail vinculado ficaria "pendente" para sempre (SC-005, caminho via alias).
 
-Fallback em `getAuthUser()` (`frontend/src/lib/auth.ts`): se o profile da sessão tem `activated_at IS NULL`, seta `now()` (cobre webhook perdido e contas antigas).
+`getAuthUser()` (`frontend/src/lib/auth.ts`) é read-only e não ativa profiles. O webhook executa a transição normal; se o vínculo continuar incompleto, a tela de conclusão chama a action idempotente `completeAccess()`, que sincroniza o vínculo e ativa o profile fora do caminho de autenticação e renderização.
 
-## Resolução de identidade efetiva — `lib/auth.ts`
+## Contexto de acesso canônico — `lib/auth.ts`
 
-`getEffectiveMemberId(projectId: string): Promise<string>` — retorna `member_user_id` se existir alias (`member_email_links.linked_user_id = user.id` no projeto), senão `user.id`. Substitui `user.id` nos pontos de trabalho por projeto: página de coding, my-progress, `actions/responses.ts` (`respondent_id`), `actions/field-reviews.ts` (self/arbitrator). Compõe com o padrão `viewAsUser` (master) já existente.
+`getProjectAccessContext(projectId, user): Promise<ProjectAccessContext>` é a porta pública única de páginas e layouts para identidade, projeto e papel. O estado `resolved` contém `accountUserId`, `memberUserId`, projeto, papel da membership canônica, `isMaster` e `isCoordinator`; o estado `unavailable` interrompe a rota ou a mutation, enquanto o estágio técnico exato permanece nos logs do servidor.
+
+Se existir `member_email_links.linked_user_id = user.id` no projeto, `memberUserId` é exclusivamente o `member_user_id` vinculado; caso contrário, é `user.id`. Papel e permissões vêm dessa identidade canônica, enquanto ownership (`projects.created_by`) e autoria/auditoria continuam comparando `accountUserId` quando o contrato da operação exige a conta autenticada.
+
+`getEffectiveMemberId(projectId)` permanece apenas como projeção temporária para actions pessoais que ainda precisam de um único id de trabalho; falha de resolução lança erro técnico. `resolveProjectQueueIdentity(context, viewAsUser)` aplica a impersonação global somente para master e mantém separadas a fila própria canônica e a conta que assina a operação.

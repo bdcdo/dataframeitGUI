@@ -60,6 +60,76 @@ describe("resolveAuth — fail-closed (RC-005) e classificação de estado", () 
     });
   });
 
+  it("falha ao ler vínculo sem metadata → technical-sync-failure", async () => {
+    session = makeFakeSession({
+      scenario: "pending",
+      mappingError: "timeout",
+    });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    });
+  });
+
+  it("gate de coordenador não confunde falha técnica com logout", async () => {
+    session = makeFakeSession({
+      scenario: "pending",
+      mappingError: "timeout",
+    });
+    const { requireCoordinator } = await import("@/lib/auth");
+
+    await expect(
+      requireCoordinator("project-1", "Acesso negado"),
+    ).resolves.toEqual({
+      ok: false,
+      code: "authorization_unavailable",
+      error: "Não foi possível verificar sua permissão. Tente novamente.",
+    });
+  });
+
+  it("metadata preparada mantém autenticação durante falha do mapping", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      mappingError: "timeout",
+    });
+    const resolveAuth = await loadResolveAuth();
+    const result = await resolveAuth();
+    expect(result.status).toBe("authenticated");
+    if (result.status === "authenticated") {
+      expect(result.user.id).toBe("sb_user_1");
+    }
+  });
+
+  it("falha ao verificar master → technical-sync-failure", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      masterError: "timeout",
+    });
+    const resolveAuth = await loadResolveAuth();
+
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    });
+  });
+
+  it("gate de coordenador classifica falha de master como autorização indisponível", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      masterError: "timeout",
+    });
+    const { requireCoordinator } = await import("@/lib/auth");
+
+    await expect(
+      requireCoordinator("project-1", "Acesso negado"),
+    ).resolves.toEqual({
+      ok: false,
+      code: "authorization_unavailable",
+      error: "Não foi possível verificar sua permissão. Tente novamente.",
+    });
+  });
+
   it("metadata e mapping divergentes → access-completion-required/link-divergent", async () => {
     session = makeFakeSession({ scenario: "divergent" });
     const resolveAuth = await loadResolveAuth();

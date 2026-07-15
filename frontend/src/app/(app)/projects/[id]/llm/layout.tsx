@@ -1,4 +1,5 @@
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { notFound } from "next/navigation";
 import LlmNav from "@/components/llm/LlmNav";
 
@@ -12,14 +13,10 @@ export default async function LlmLayout({
   const [{ id }, user] = await Promise.all([params, getAuthUser()]);
   if (!user) notFound();
 
-  const { isCoordinator, queryFailed } = await getProjectAccessContext(
-    id,
-    user.id,
-    user.isMaster,
+  const access = requireResolvedProjectAccess(
+    await getProjectAccessContext(id, user),
   );
-  // Fail-open em erro transiente de query (ver getProjectAccessContext): o RLS
-  // continua bloqueando os dados se o usuario realmente nao for coordenador.
-  if (!isCoordinator && !queryFailed) notFound();
+  if (!access.isCoordinator) notFound();
 
   return (
     <div className="flex flex-col">

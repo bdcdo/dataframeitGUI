@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { coordinatorGate } from "@/lib/project-access";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { redirect } from "next/navigation";
 import { normalizeForComparison } from "@/lib/utils";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import { formatAnswer } from "@/lib/reviews/queries";
@@ -45,6 +46,7 @@ export default async function LlmInsightsPage({
     getAuthUser(),
     createSupabaseServer(),
   ]);
+  if (!user) redirect("/auth/login");
 
   const [
     { data: project },
@@ -53,7 +55,7 @@ export default async function LlmInsightsPage({
     { data: documents },
     { data: errorResolutions },
     { data: equivalencePairs },
-    accessContext,
+    accessResult,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -89,19 +91,10 @@ export default async function LlmInsightsPage({
       .from("response_equivalences")
       .select("document_id, field_name, response_a_id, response_b_id")
       .eq("project_id", id),
-    user
-      ? getProjectAccessContext(id, user.id, user.isMaster)
-      : Promise.resolve(null),
+    getProjectAccessContext(id, user),
   ]);
 
-  // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
-  // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so
-  // liga affordances no LlmInsightsView (a view nao recorta dados por papel) e as
-  // mutacoes por tras delas re-checam via isProjectCoordinator (fail-closed).
-  // NB: ao contrario de config/rounds, o layout-pai reviews/layout.tsx NAO
-  // gateia coordenador (so faz `if (!user) redirect`) — a seguranca do fail-open
-  // aqui depende inteiramente do affordance-only acima, nao de um backstop no layout.
-  const isCoordinator = coordinatorGate(accessContext, { failOpen: true });
+  const { isCoordinator } = requireResolvedProjectAccess(accessResult);
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
 

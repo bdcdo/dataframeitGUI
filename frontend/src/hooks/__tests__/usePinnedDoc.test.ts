@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, act, cleanup, waitFor } from "@testing-library/react";
-import { usePinnedDoc, pinnedDocIndex } from "../usePinnedDoc";
+import {
+  usePinnedDoc,
+  pinnedDocIndex,
+  usePinnedDocNavigation,
+} from "../usePinnedDoc";
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -85,5 +89,25 @@ describe("pinnedDocIndex", () => {
 
   it("cai para 0 com lista vazia", () => {
     expect(pinnedDocIndex([], "a")).toBe(0);
+  });
+});
+
+describe("usePinnedDocNavigation", () => {
+  it("navega por índice e limita as pontas da fila", () => {
+    const { result } = renderHook(() =>
+      usePinnedDocNavigation("queue", [
+        { docId: "a" },
+        { docId: "b" },
+        { docId: "c" },
+      ]),
+    );
+
+    act(() => result.current.navigateToIndex(2));
+    expect(result.current.docIndex).toBe(2);
+    expect(sessionStorage.getItem("queue")).toBe("c");
+
+    act(() => result.current.navigateToIndex(-1));
+    expect(result.current.docIndex).toBe(0);
+    expect(sessionStorage.getItem("queue")).toBe("a");
   });
 });

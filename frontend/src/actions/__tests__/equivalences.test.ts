@@ -13,10 +13,12 @@ import {
 
 let writeCalls: WriteCall[];
 let serverTableResults: TableResults | undefined;
+const syncCompareAssignment = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "reviewer1" }),
+  getAuthUser: async () => ({ id: "linked-account" }),
+  getEffectiveMemberId: async () => "canonical-reviewer",
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
@@ -25,10 +27,11 @@ vi.mock("@/lib/supabase/server", () => ({
 // syncCompareAssignment é best-effort e teria seu próprio teste dedicado
 // (compare-sync.ts); aqui só interessa não deixá-lo derrubar a action.
 vi.mock("@/lib/compare-sync", () => ({
-  syncCompareAssignment: async () => {},
+  syncCompareAssignment,
 }));
 
 beforeEach(() => {
+  syncCompareAssignment.mockClear();
   writeCalls = [];
   serverTableResults = undefined;
 });
@@ -150,14 +153,14 @@ describe("confirmEquivalentVerdict", () => {
         field_name: "q1",
         response_a_id: "r1",
         response_b_id: "r2",
-        reviewer_id: "reviewer1",
+        reviewer_id: "canonical-reviewer",
       },
     ]);
     expect(upsertsOn("reviews")[0]?.payload).toMatchObject({
       project_id: "p1",
       document_id: "doc1",
       field_name: "q1",
-      reviewer_id: "reviewer1",
+      reviewer_id: "canonical-reviewer",
       verdict: "resposta fundida",
       chosen_response_id: "r2",
     });
@@ -173,6 +176,9 @@ describe("markLlmEquivalent", () => {
 
     expect(result).toEqual({});
     expect(upsertsOn("response_equivalences")).toHaveLength(1);
+    expect(upsertsOn("response_equivalences")[0]?.payload).toMatchObject({
+      reviewer_id: "canonical-reviewer",
+    });
   });
 });
 
@@ -193,5 +199,11 @@ describe("unmarkEquivalencePair", () => {
     expect(
       writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
     ).toBe(true);
+    expect(syncCompareAssignment).toHaveBeenCalledWith(
+      expect.anything(),
+      "p1",
+      "doc1",
+      "canonical-reviewer",
+    );
   });
 });

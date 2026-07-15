@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
 export async function acknowledgeVerdict(
@@ -13,12 +13,19 @@ export async function acknowledgeVerdict(
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 
+  let respondentId: string;
+  try {
+    respondentId = await getEffectiveMemberId(projectId);
+  } catch {
+    return { error: "Não foi possível verificar sua identidade no projeto." };
+  }
+
   const supabase = await createSupabaseServer();
 
   const { error } = await supabase.from("verdict_acknowledgments").upsert(
     {
       review_id: reviewId,
-      respondent_id: user.id,
+      respondent_id: respondentId,
       status,
       comment: comment || null,
     },

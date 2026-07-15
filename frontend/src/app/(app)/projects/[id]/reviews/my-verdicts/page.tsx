@@ -2,8 +2,10 @@ import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
-import { isAnswerCorrect, resolveEffectiveUserId } from "@/lib/reviews/queries";
-import { coordinatorGate } from "@/lib/project-access";
+import {
+  isAnswerCorrect,
+  resolveViewedRespondentId,
+} from "@/lib/reviews/queries";
 import type { PydanticField } from "@/lib/types";
 
 export interface VerdictItem {
@@ -50,7 +52,7 @@ export default async function MyVerdictsPage({
   // Fail-CLOSED aqui (ao contrario de comments/llm-insights): isCoordinator
   // gateia viewAsUser, que le o gabarito de OUTRO respondente. A policy RLS
   // "Members view responses" deixa qualquer membro ler todas as responses (nao
-  // filtra por respondent_id), entao o recorte por effectiveUserId e so
+  // filtra por respondent_id), entao o recorte por viewedRespondentId e so
   // aplicacional — fail-open exporia gabarito de terceiros em erro transitorio.
   const [{ data: project }, access] = await Promise.all([
     supabase
@@ -58,13 +60,15 @@ export default async function MyVerdictsPage({
       .select("pydantic_fields")
       .eq("id", id)
       .single(),
-    getProjectAccessContext(id, user.id, user.isMaster),
+    getProjectAccessContext(id, user),
   ]);
-  const isCoordinator = coordinatorGate(access, { failOpen: false });
+  if (access.status === "unavailable") {
+    throw new Error("Não foi possível verificar sua identidade no projeto.");
+  }
+  const { isCoordinator, memberUserId } = access;
 
-  const effectiveUserId = resolveEffectiveUserId({
-    selfId: user.id,
-    isMaster: user.isMaster,
+  const viewedRespondentId = resolveViewedRespondentId({
+    ownMemberUserId: memberUserId,
     isCoordinator,
     viewAsUser: sp.viewAsUser,
   });
@@ -74,7 +78,7 @@ export default async function MyVerdictsPage({
     .from("responses")
     .select("document_id, answers")
     .eq("project_id", id)
-    .eq("respondent_id", effectiveUserId)
+    .eq("respondent_id", viewedRespondentId)
     .eq("respondent_type", "humano")
     .eq("is_latest", true);
 
@@ -115,7 +119,7 @@ export default async function MyVerdictsPage({
     supabase
       .from("verdict_acknowledgments")
       .select("review_id, status, comment")
-      .eq("respondent_id", effectiveUserId),
+      .eq("respondent_id", viewedRespondentId),
     isCoordinator
       ? supabase
           .from("responses")
@@ -130,7 +134,7 @@ export default async function MyVerdictsPage({
   const respondentsList = isCoordinator && allRespondents
     ? [...new Map(
         allRespondents
-          .filter((r) => r.respondent_id && r.respondent_id !== user.id)
+          .filter((r) => r.respondent_id && r.respondent_id !== memberUserId)
           .map((r) => [r.respondent_id, { id: r.respondent_id as string, name: r.respondent_name || "Anônimo" }]),
       ).values()]
     : [];
@@ -186,7 +190,11 @@ export default async function MyVerdictsPage({
           userName={[user.firstName, user.lastName].filter(Boolean).join(" ") || "Você"}
           isCoordinator={isCoordinator}
           respondents={respondentsList}
-          currentViewUserId={effectiveUserId !== user.id ? effectiveUserId : undefined}
+          currentViewUserId={
+            viewedRespondentId !== memberUserId
+              ? viewedRespondentId
+              : undefined
+          }
         />
       </Suspense>
     </div>

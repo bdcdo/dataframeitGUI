@@ -9,8 +9,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/hooks/usePinnedDoc", () => ({
-  usePinnedDoc: () => [null, vi.fn()],
-  pinnedDocIndex: () => 0,
+  usePinnedDocNavigation: () => ({
+    docIndex: 0,
+    navigateToIndex: vi.fn(),
+  }),
 }));
 
 vi.mock("../AutoReviewEmptyState", () => ({
@@ -21,16 +23,16 @@ vi.mock("../AutoReviewEmptyState", () => ({
 
 afterEach(cleanup);
 
-function renderEmptyQueue(viewAsUserId: string, currentUserId: string) {
+function renderEmptyQueue(queueUserId: string, ownQueueUserId: string) {
   render(
     <AutoReviewPage
       projectId="project-1"
       fields={[]}
       docs={[]}
       isCoordinator
-      viewAsUserId={viewAsUserId}
+      queueUserId={queueUserId}
       reviewers={[]}
-      currentUserId={currentUserId}
+      ownQueueUserId={ownQueueUserId}
     />,
   );
 }

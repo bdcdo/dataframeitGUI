@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { ConfigNav } from "./ConfigNav";
 
 // Guard server-side centralizado para todas as rotas `config/*`. As abas
@@ -16,15 +17,10 @@ export default async function ConfigLayout({
   const [{ id }, user] = await Promise.all([params, getAuthUser()]);
   if (!user) redirect("/auth/login");
 
-  const { isCoordinator, queryFailed } = await getProjectAccessContext(
-    id,
-    user.id,
-    user.isMaster,
+  const access = requireResolvedProjectAccess(
+    await getProjectAccessContext(id, user),
   );
-  // Fail-open quando a verificação não pôde ser feita (timeout, RLS): nao
-  // derrubamos um coordenador legitimo por erro transiente — o RLS continua
-  // sendo o backstop real dos dados de config.
-  if (!isCoordinator && !queryFailed) {
+  if (!access.isCoordinator) {
     redirect(`/projects/${id}/analyze/code`);
   }
 

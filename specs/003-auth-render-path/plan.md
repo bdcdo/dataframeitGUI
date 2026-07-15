@@ -97,7 +97,7 @@ Decisions recorded:
 2. Clerk + JWT Supabase + RLS continuam sendo o caminho oficial padrão.
 3. Vínculo ausente ou divergente redireciona para conclusão/reparo, sem reparo silencioso no render protegido.
 4. Estados signed out, link pendente, sem projeto e falha técnica são distinguíveis.
-5. `getProjectAccessContext()` e `resolveEffectiveUserId()` preservam autorização por projeto, aliases e `viewAs`.
+5. `getProjectAccessContext(projectId, user)` preserva conta real e membro canônico; `resolveProjectQueueIdentity(access, viewAsUser)` aplica a precedência de fila e `viewAs`.
 6. Regressões de lookup remoto repetido e token customizado legado precisam de check explícito.
 7. Preparação/reparo de vínculo precisa ser idempotente.
 
@@ -114,7 +114,7 @@ Design artifacts generated:
 
 ### Implementation guidance for `/speckit-tasks`
 
-- Reuse `frontend/src/lib/auth.ts` as the primary seam: `getAuthUser()`, `getEffectiveMemberId()`, `resolveEffectiveUserId()` and `getProjectAccessContext()` already encode most of the intended separation.
+- Reuse `frontend/src/lib/auth.ts` as the primary seam: `getAuthUser()`, `getProjectAccessContext(projectId, user)` and `resolveProjectQueueIdentity(access, viewAsUser)` encode the separation between authenticated account, canonical project member and viewed queue identity.
 - Reuse `frontend/src/lib/supabase/server.ts` for the official Clerk/Supabase JWT path; do not replace ordinary protected reads with `createSupabaseAdmin()`.
 - Preserve `frontend/src/lib/clerk-sync.ts` idempotence patterns when moving or isolating link completion/recovery.
 - Introduce any user-facing completion UI under `frontend/src/app/auth/` or an equivalent auth route, using pt-BR and shadcn/ui patterns.

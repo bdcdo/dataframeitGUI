@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
 const PINNED_DOC_EVENT = "pinneddoc:change";
 
@@ -79,4 +79,33 @@ export function pinnedDocIndex(
 ): number {
   const i = ids.findIndex((id) => id === pinnedId);
   return i >= 0 ? i : 0;
+}
+
+/**
+ * Combina persistência, índice atual e navegação limitada de uma fila de docs.
+ * Concentra também a derivação dos ids para que todas as filas transformem um
+ * índice solicitado em um pin válido do mesmo modo.
+ */
+export function usePinnedDocNavigation(
+  storageKey: string,
+  documents: readonly { docId: string }[],
+) {
+  const validDocIds = useMemo(
+    () => documents.map((document) => document.docId),
+    [documents],
+  );
+  const [pinnedDocId, setPinnedDocId] = usePinnedDoc(storageKey, {
+    validIds: validDocIds,
+  });
+  const docIndex = pinnedDocIndex(validDocIds, pinnedDocId);
+  const navigateToIndex = useCallback(
+    (requestedIndex: number) => {
+      const lastIndex = validDocIds.length - 1;
+      const targetId =
+        validDocIds[Math.max(0, Math.min(requestedIndex, lastIndex))];
+      if (targetId) setPinnedDocId(targetId);
+    },
+    [setPinnedDocId, validDocIds],
+  );
+  return { docIndex, navigateToIndex };
 }

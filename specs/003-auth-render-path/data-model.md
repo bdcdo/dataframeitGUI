@@ -88,7 +88,8 @@ Identidade interna usada para escopo de trabalho em um projeto específico.
 **Relationships**
 
 - Deriva de `project_members` e, quando aplicável, de `member_email_links`.
-- É resolvido por `getEffectiveMemberId(projectId)` quando não há impersonação master.
+- É exposto como `memberUserId` por `getProjectAccessContext(projectId, user)`.
+- É projetado para a fila por `resolveProjectQueueIdentity(access, viewAsUser)`, que aplica `viewAs` somente para master.
 
 **Validation rules**
 
@@ -101,21 +102,23 @@ Resultado consolidado da autorização do usuário em um projeto.
 
 **Fields**
 
-- `projectId`: projeto solicitado.
-- `projectExists`: indica se o projeto foi encontrado dentro da RLS.
+- `status`: `resolved` quando identidade, projeto e membership foram lidos sem erro; `unavailable` quando qualquer leitura necessária falhou tecnicamente.
+- `accountUserId`: identidade da conta autenticada; preservada para ownership e auditoria.
+- `memberUserId`: identidade canônica do membro no projeto; usada para membership e filas de trabalho.
+- `project`: projeto encontrado dentro da RLS, ou `null` quando não há visibilidade autorizada.
 - `membershipRole`: papel em `project_members`, quando existe.
 - `isCoordinator`: true para master, criador do projeto ou membro coordenador.
-- `queryFailed`: true quando a leitura de projeto ou membership falhou tecnicamente.
-- `hasProjectAccess`: true quando há visibilidade autorizada ao projeto.
+- `isMaster`: privilégio confirmado do ator real.
 
 **Relationships**
 
-- Usa o `Internal User Profile` como identidade para RLS.
-- É request-scoped por `getProjectAccessContext(projectId, userId, isMaster)`.
+- Usa o `accountUserId` para o ator real e resolve `memberUserId` por projeto antes de consultar o papel.
+- É request-scoped por `getProjectAccessContext(projectId, user)`.
 
 **Validation rules**
 
 - Falha de query não pode ser convertida silenciosamente em “sem acesso”.
+- Todo consumidor deve chamar `requireResolvedProjectAccess` antes de ler `isCoordinator`; `unavailable` sempre falha fechado.
 - Usuário sem permissão recebe negação fechada sem dados do projeto.
 - Usuário sem projetos deve receber estado distinto de falha técnica.
 

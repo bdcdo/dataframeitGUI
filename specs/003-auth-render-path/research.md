@@ -26,8 +26,8 @@
 
 ## D5 — Autorização por projeto e impersonação
 
-- Decision: `getProjectAccessContext()` continua sendo a leitura request-scoped de projeto + papel, e `resolveEffectiveUserId()` continua sendo a fonte única para filas pessoais que combinam aliases e `viewAs` de master.
-- Rationale: O código atual já separa `AuthUser.id` do usuário efetivo em projeto, incluindo `getEffectiveMemberId()` para `member_email_links` e `resolveEffectiveUserId()` para impersonação master. Essa separação é essencial para preservar acesso por e-mail alternativo e impedir que `viewAs` conceda escrita como a identidade visualizada.
+- Decision: `getProjectAccessContext(projectId, user)` é a leitura request-scoped que resolve projeto, papel, `accountUserId` e `memberUserId`; `resolveProjectQueueIdentity(access, viewAsUser)` é a fonte única para a fila visualizada.
+- Rationale: O contexto discriminado `resolved | unavailable` separa a conta autenticada do membro canônico sem propagar autorização parcial. A projeção de fila preserva aliases e aplica `viewAs` somente para master, sem conceder escrita como a identidade visualizada.
 - Alternatives considered: Usar diretamente o `user.id` autenticado em todas as páginas foi rejeitado porque quebra aliases; honrar `viewAs` indiscriminadamente foi rejeitado porque poderia ampliar permissões de escrita.
 
 ## D6 — Observabilidade e regressão de render path

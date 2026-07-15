@@ -33,17 +33,32 @@ export default async function DashboardPage() {
           })) as (Project & { role: string })[],
           error,
         }))
-    : supabase
-        .from("project_members")
-        .select("project_id, role, projects(id, name, description)")
-        .eq("user_id", user.id)
-        .then(({ data, error }) => ({
-          projects: (data || []).map((m) => ({
-            ...(m.projects as unknown as Project),
-            role: m.role,
-          })) as (Project & { role: string })[],
-          error,
-        }));
+    : Promise.all([
+        supabase
+          .from("projects")
+          .select("id, name, description, created_by")
+          .order("created_at", { ascending: false }),
+        supabase.rpc("auth_user_coordinator_project_ids"),
+      ]).then(
+        ([
+          { data, error: projectsError },
+          { data: coordinatorProjectIds, error: coordinatorProjectsError },
+        ]) => {
+          const coordinatorIds = new Set(
+            (coordinatorProjectIds ?? []) as string[],
+          );
+          return {
+            projects: (data || []).map((project) => ({
+              ...(project as unknown as Project),
+              role:
+                project.created_by === user.id || coordinatorIds.has(project.id)
+                  ? "coordenador"
+                  : "pesquisador",
+            })) as (Project & { role: string })[],
+            error: projectsError ?? coordinatorProjectsError,
+          };
+        },
+      );
 
   const [
     { data: profile, error: profileError },

@@ -1,20 +1,33 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+
+async function resolveFieldOrderUserId(
+  projectId: string,
+): Promise<{ userId: string } | { error: string }> {
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
+
+  try {
+    return { userId: await getEffectiveMemberId(projectId) };
+  } catch {
+    return { error: "Não foi possível verificar sua identidade no projeto." };
+  }
+}
 
 export async function getResearcherFieldOrder(
   projectId: string,
 ): Promise<{ order: string[] | null; error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { order: null, error: "Não autenticado" };
+  const identity = await resolveFieldOrderUserId(projectId);
+  if ("error" in identity) return { order: null, error: identity.error };
 
   const supabase = await createSupabaseServer();
   const { data, error } = await supabase
     .from("researcher_field_orders")
     .select("field_order")
     .eq("project_id", projectId)
-    .eq("user_id", user.id)
+    .eq("user_id", identity.userId)
     .maybeSingle();
 
   if (error) {
@@ -33,8 +46,8 @@ export async function saveResearcherFieldOrder(
   projectId: string,
   fieldOrder: string[],
 ): Promise<{ success: boolean; error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { success: false, error: "Não autenticado" };
+  const identity = await resolveFieldOrderUserId(projectId);
+  if ("error" in identity) return { success: false, error: identity.error };
 
   if (!Array.isArray(fieldOrder) || !fieldOrder.every((x) => typeof x === "string")) {
     return { success: false, error: "Ordem inválida" };
@@ -44,7 +57,7 @@ export async function saveResearcherFieldOrder(
   const { error } = await supabase.from("researcher_field_orders").upsert(
     {
       project_id: projectId,
-      user_id: user.id,
+      user_id: identity.userId,
       field_order: fieldOrder,
       updated_at: new Date().toISOString(),
     },

@@ -27,8 +27,8 @@ export async function submitVerdict(
   if (!user) return { error: "Não autenticado" };
 
   // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
-  // como o membro canônico — reviewer_id, author_id e o sync do assignment
-  // usam o id efetivo, casando com o onConflict do upsert.
+  // como o membro canônico em reviewer_id e no sync do assignment. Autoria de
+  // comentários permanece ligada à conta autenticada.
   // `getEffectiveMemberId` (admin client, cache()) e `createSupabaseServer`
   // são independentes — rodam em paralelo.
   const [effectiveId, supabase] = await Promise.all([

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { usePinnedDoc, pinnedDocIndex } from "@/hooks/usePinnedDoc";
+import { usePinnedDocNavigation } from "@/hooks/usePinnedDoc";
 import { useArbitrationDoc } from "@/hooks/useArbitrationDoc";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 import { type ArbitrationDocListEntry } from "./ArbitrationDocList";
@@ -49,17 +49,11 @@ export function ArbitrationPage({
   docs,
   arbitrationBlind,
 }: ArbitrationPageProps) {
-  const storageKey = `${STORAGE_KEY_PREFIX}${projectId}`;
-  const validDocIds = useMemo(() => docs.map((d) => d.docId), [docs]);
   // Seleção persistida em sessionStorage (restore + limpeza de órfão) encapsulada
   // em usePinnedDoc — o hook lê via useSyncExternalStore (sem effect de restore).
-  const [pinnedDocId, setPinnedDocId] = usePinnedDoc(storageKey, {
-    validIds: validDocIds,
-  });
-
-  const docIndex = useMemo(
-    () => pinnedDocIndex(validDocIds, pinnedDocId),
-    [validDocIds, pinnedDocId],
+  const { docIndex, navigateToIndex } = usePinnedDocNavigation(
+    `${STORAGE_KEY_PREFIX}${projectId}`,
+    docs,
   );
 
   const [listCollapsed, setListCollapsed] = useState(false);
@@ -69,19 +63,13 @@ export function ArbitrationPage({
     [fields],
   );
 
-  function handleDocNavigate(newIndex: number) {
-    const clamped = Math.max(0, Math.min(newIndex, docs.length - 1));
-    const target = docs[clamped];
-    if (target) setPinnedDocId(target.docId);
-  }
-
   const doc = docs[docIndex];
   const arb = useArbitrationDoc({
     doc,
     docIndex,
     docsLength: docs.length,
     projectId,
-    onNavigate: handleDocNavigate,
+    onNavigate: navigateToIndex,
   });
 
   const docListEntries: ArbitrationDocListEntry[] = useMemo(
@@ -115,7 +103,7 @@ export function ArbitrationPage({
         submitting={arb.submitting}
         allBlindChosen={arb.allBlindChosen}
         allFinalChosen={arb.allFinalChosen}
-        onNavigate={handleDocNavigate}
+        onNavigate={navigateToIndex}
         onBackToBlind={arb.onBackToBlind}
         onBlindSubmit={() => void arb.handleBlindSubmit()}
         onFinalSubmit={() => void arb.handleFinalSubmit()}
@@ -128,7 +116,7 @@ export function ArbitrationPage({
         docListEntries={docListEntries}
         docIndex={docIndex}
         listCollapsed={listCollapsed}
-        onSelectDoc={handleDocNavigate}
+        onSelectDoc={navigateToIndex}
         onToggleList={() => setListCollapsed((v) => !v)}
         blindChoices={arb.blindChoices}
         finalChoices={arb.effectiveFinalChoices}

@@ -2,6 +2,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { cache } from "react";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSupabaseServer } from "@/lib/supabase/server";
+import type { Project, ProjectMember } from "@/lib/types";
 
 export interface AuthUser {
   id: string; // Supabase UUID
@@ -12,20 +13,17 @@ export interface AuthUser {
   isMaster: boolean;
 }
 
-// Motivo de conclusão de acesso (data-model: Access Completion State). O caminho
-// crítico só produz os quatro primeiros; `no-project-access` é decidido depois,
-// no dashboard, e `unknown-recoverable` é o fallback da própria tela.
-export type AccessCompletionReason =
-  | "link-pending"
-  | "link-divergent"
-  | "sync-temporary-failure";
+// Motivo de conclusão de acesso (data-model: Access Completion State). Os
+// demais estados de apresentação são decididos pelas telas consumidoras.
+type AccessCompletionReason =
+  "link-pending" | "link-divergent" | "sync-temporary-failure";
 
 // Resultado observável da resolução de identidade (contracts/auth-resolution).
 // É a fonte única que distingue os estados que a feature precisa separar —
 // substitui o antigo `AuthUser | null`, que colapsava "sem sessão", "vínculo
 // pendente" e "falha técnica" num único `null` e escondia a diferença dos
 // layouts protegidos.
-export type AuthResolution =
+type AuthResolution =
   | { status: "signed-out" }
   | { status: "authenticated"; user: AuthUser }
   | { status: "access-completion-required"; reason: AccessCompletionReason }
@@ -35,37 +33,44 @@ export type AuthResolution =
 // Clerk primeiro; senão, leitura read-only de `clerk_user_mapping`. Nunca chama
 // `syncClerkUserToSupabase` — a criação/reparo do vínculo é responsabilidade
 // explícita da ação de conclusão de acesso, fora do render protegido.
+type SupabaseIdentityRead =
+  | { status: "resolved"; uid: string; mappingUid: string | null }
+  | { status: "pending" }
+  | { status: "unavailable" };
+
 async function readSupabaseUid(
   clerkUserId: string,
   metadataUid: string | undefined,
-): Promise<{ uid: string | null; mappingUid: string | null }> {
+): Promise<SupabaseIdentityRead> {
   const admin = createSupabaseAdmin();
   const { data: mapping, error: mappingError } = await admin
     .from("clerk_user_mapping")
     .select("supabase_user_id")
     .eq("clerk_user_id", clerkUserId)
     .maybeSingle();
-  // Não engolir a falha em silêncio: numa leitura errada, `mapping` fica nulo e
-  // a resolução segue pela metadata (autoritativa) ou cai em `link-pending`. Não
-  // convertemos o erro em falha técnica de propósito — a metadata do Clerk basta
-  // para autenticar e um blip transitório aqui não deve barrar quem já tem uid —,
-  // mas ele precisa ficar rastreável para suporte em vez de desaparecer.
+  // A metadata do Clerk basta para autenticar quando já existe. Sem metadata,
+  // porém, uma falha desta query não pode ser confundida com vínculo pendente:
+  // não temos evidência de ausência, apenas uma leitura indisponível.
   if (mappingError) {
     console.error("[auth] leitura de clerk_user_mapping falhou", {
       clerkUserId,
       error: mappingError,
     });
+    if (!metadataUid) return { status: "unavailable" };
   }
   const mappingUid = mapping?.supabase_user_id ?? null;
-  return { uid: metadataUid ?? mappingUid, mappingUid };
+  const uid = metadataUid ?? mappingUid;
+  return uid
+    ? { status: "resolved", uid, mappingUid }
+    : { status: "pending" };
 }
 
 /**
  * Resolução de identidade autenticada, request-scoped e read-only.
  *
- * `cache()` deduplica a resolução Clerk + lookups em `clerk_user_mapping` /
- * `master_users` / `profiles` quando vários layouts, pages e helpers da mesma
- * request pedem a identidade (RC-001 / SC-002). Não faz nenhuma escrita: quando
+ * `cache()` deduplica a resolução Clerk + lookups em `clerk_user_mapping` e
+ * `master_users` quando vários layouts, pages e helpers da mesma request pedem
+ * a identidade (RC-001 / SC-002). Não faz nenhuma escrita: quando
  * o vínculo interno está ausente, pendente ou divergente, retorna
  * `access-completion-required` para que a página protegida falhe fechada e
  * redirecione à conclusão de acesso (FR-008), em vez de reparar no render.
@@ -85,17 +90,29 @@ export const resolveAuth = cache(async (): Promise<AuthResolution> => {
   const metadataUid = user.publicMetadata.supabase_uid as string | undefined;
   const email = user.emailAddresses[0]?.emailAddress;
 
-  const { uid, mappingUid } = await readSupabaseUid(user.id, metadataUid);
+  const identity = await readSupabaseUid(user.id, metadataUid);
+
+  if (identity.status === "unavailable") {
+    return {
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    };
+  }
 
   // Vínculo ainda não existe. Com e-mail utilizável, é pendente e recuperável
   // por retry; sem e-mail, não há como concluir o vínculo automaticamente —
   // falha técnica recuperável (data-model: validação de Authenticated Actor).
-  if (!uid) {
+  if (identity.status === "pending") {
     if (!email) {
-      return { status: "technical-sync-failure", reason: "sync-temporary-failure" };
+      return {
+        status: "technical-sync-failure",
+        reason: "sync-temporary-failure",
+      };
     }
     return { status: "access-completion-required", reason: "link-pending" };
   }
+
+  const { uid, mappingUid } = identity;
 
   // Metadata e mapping apontam para identidades incompatíveis: não adivinhar
   // qual vale — encaminhar para reparo (data-model: active → divergent).
@@ -109,14 +126,17 @@ export const resolveAuth = cache(async (): Promise<AuthResolution> => {
     .select("user_id")
     .eq("user_id", uid)
     .maybeSingle();
-  // `isMaster` degrada com segurança para false quando a leitura falha (menos
-  // privilégio), mas não em silêncio: sem log, um master rebaixado por um timeout
-  // transitório seria indistinguível de um não-master legítimo.
+  // Sem confirmar `master_users`, não existe um `AuthUser` completo: rebaixar
+  // silenciosamente um master para não-master esconderia uma falha de autorização.
   if (masterError) {
     console.error("[auth] leitura de master_users falhou", {
       supabaseUid: uid,
       error: masterError,
     });
+    return {
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    };
   }
 
   // Nota (decisão D3): a ativação de perfil (`activated_at`) NÃO acontece aqui.
@@ -149,91 +169,82 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
   return resolution.status === "authenticated" ? resolution.user : null;
 });
 
-// Núcleo da identidade efetiva por ator explícito. Compartilhado com o gate de
-// coordenador para que papel, criador e filas usem o mesmo membro canônico. Não
-// degrada erro de consulta para `userId`: isso faria uma conta-alias parecer um
-// membro sem assignments/papel e esconderia uma falha técnica como fila vazia.
-const resolveEffectiveMemberId = cache(
-  async (projectId: string, userId: string): Promise<string> => {
-    const admin = createSupabaseAdmin();
-    const { data: alias, error } = await admin
-      .from("member_email_links")
-      .select("member_user_id")
-      .eq("project_id", projectId)
-      .eq("linked_user_id", userId)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error("Falha ao resolver identidade efetiva do projeto", {
-        cause: error,
-      });
-    }
-
-    return alias?.member_user_id ?? userId;
-  },
-);
-
-// Identidade efetiva do usuário num projeto (spec 002): se a conta atual está
-// vinculada como alias de um membro (member_email_links.linked_user_id), todo
-// o trabalho no projeto acontece como o membro canônico (member_user_id);
-// senão, como ela própria. `cache()` deduplica por request — páginas e actions
-// do mesmo render pedem a mesma resolução.
-export const getEffectiveMemberId = cache(
-  async (projectId: string): Promise<string> => {
-    const user = await getAuthUser();
-    if (!user) throw new Error("Não autenticado");
-    return resolveEffectiveMemberId(projectId, user.id);
-  },
-);
-
-// Identidade efetiva das páginas de fila pessoal (Codificar, Comparação,
-// Arbitragem, Meus vereditos): a impersonação master (?viewAsUser=) tem
-// precedência; sem ela, contas vinculadas resolvem para o membro canônico do
-// projeto pelo mesmo núcleo de getEffectiveMemberId (spec 002). É a fonte única
-// da precedência —
-// antes cada página reimplementava o par isMaster && viewAsUser, e as que não
-// o fizeram (Comparação/Arbitragem) filtravam a fila pelo id do master logado,
-// mostrando fila vazia durante a impersonação.
-export async function resolveEffectiveUserId(
-  projectId: string,
-  user: Pick<AuthUser, "id" | "isMaster">,
-  viewAsUser: string | undefined,
-): Promise<{ effectiveUserId: string; isImpersonating: boolean }> {
-  if (user.isMaster && viewAsUser) {
-    return { effectiveUserId: viewAsUser, isImpersonating: true };
-  }
-  return {
-    effectiveUserId: await resolveEffectiveMemberId(projectId, user.id),
-    isImpersonating: false,
-  };
-}
-
-interface ProjectAccessContext {
-  project: { id: string; name: string; created_by: string } | null;
-  membershipRole: string | null;
+export interface ResolvedProjectAccessContext {
+  status: "resolved";
+  accountUserId: string;
+  memberUserId: string;
+  project: Pick<Project, "id" | "name" | "created_by"> | null;
+  membershipRole: ProjectMember["role"] | null;
+  isMaster: boolean;
   isCoordinator: boolean;
-  // true quando alguma das queries falhou (timeout, RLS, etc.). Permite ao
-  // chamador distinguir "nao e coordenador" de "nao foi possivel verificar".
-  queryFailed: boolean;
 }
 
-// Centraliza project + membership do usuario numa unica leitura request-scoped.
-// `cache()` deduplica entre o layout pai do projeto, layouts filhos (config,
-// llm, analyze) e pages da mesma request — todos pedem os mesmos dados.
-export const getProjectAccessContext = cache(
+export interface UnavailableProjectAccessContext {
+  status: "unavailable";
+}
+
+export type ProjectAccessContext =
+  ResolvedProjectAccessContext | UnavailableProjectAccessContext;
+
+type ProjectMemberIdentity =
+  { status: "resolved"; memberUserId: string } | { status: "unavailable" };
+
+type ProjectAccessRead =
+  | {
+      status: "resolved";
+      project: ResolvedProjectAccessContext["project"];
+      membershipRole: ProjectMember["role"] | null;
+    }
+  | UnavailableProjectAccessContext;
+
+// A identidade é uma operação independente das leituras de projeto/papel e é
+// reutilizada por actions pessoais que não precisam dessas duas queries.
+const resolveProjectMemberIdentity = cache(
   async (
     projectId: string,
-    userId: string,
-    isMaster: boolean,
-  ): Promise<ProjectAccessContext> => {
-    const supabase = await createSupabaseServer();
+    accountUserId: string,
+  ): Promise<ProjectMemberIdentity> => {
+    try {
+      const admin = createSupabaseAdmin();
+      const { data: alias, error } = await admin
+        .from("member_email_links")
+        .select("member_user_id")
+        .eq("project_id", projectId)
+        .eq("linked_user_id", accountUserId)
+        .maybeSingle();
 
-    const [
-      { data: project, error: projectError },
-      { data: membership, error: membershipError },
-    ] = await Promise.all([
+      if (error) {
+        console.error("resolveProjectMemberIdentity: query failed", {
+          projectId,
+          accountUserId,
+          error: error.message,
+        });
+        return { status: "unavailable" };
+      }
+
+      return {
+        status: "resolved",
+        memberUserId: alias?.member_user_id ?? accountUserId,
+      };
+    } catch (error) {
+      console.error("resolveProjectMemberIdentity: query rejected", {
+        projectId,
+        accountUserId,
+        error,
+      });
+      return { status: "unavailable" };
+    }
+  },
+);
+
+async function readProjectAccess(
+  projectId: string,
+  accountUserId: string,
+  memberUserId: string,
+): Promise<ProjectAccessRead> {
+  try {
+    const supabase = await createSupabaseServer();
+    const [projectResult, membershipResult] = await Promise.all([
       supabase
         .from("projects")
         .select("id, name, created_by")
@@ -243,75 +254,192 @@ export const getProjectAccessContext = cache(
         .from("project_members")
         .select("role")
         .eq("project_id", projectId)
-        .eq("user_id", userId)
+        .eq("user_id", memberUserId)
         .maybeSingle(),
     ]);
 
-    // Falhas de query (timeout, RLS rejeitando o que deveria ler, etc.) nao
-    // devem ser silenciosamente convertidas em "nao e coordenador" — logamos e
-    // sinalizamos via `queryFailed` para nao mascarar lockout de coordenador
-    // legitimo como falta de permissao.
-    if (projectError) {
+    if (projectResult.error) {
       console.error("getProjectAccessContext: project query failed", {
         projectId,
-        userId,
-        error: projectError.message,
+        accountUserId,
+        error: projectResult.error.message,
       });
     }
-    if (membershipError) {
+    if (membershipResult.error) {
       console.error("getProjectAccessContext: membership query failed", {
         projectId,
-        userId,
-        error: membershipError.message,
+        accountUserId,
+        memberUserId,
+        error: membershipResult.error.message,
       });
     }
-
-    const isCoordinator =
-      isMaster ||
-      project?.created_by === userId ||
-      membership?.role === "coordenador";
+    if (projectResult.error || membershipResult.error) {
+      return { status: "unavailable" };
+    }
 
     return {
-      project: project ?? null,
-      membershipRole: membership?.role ?? null,
-      isCoordinator,
-      queryFailed: !!projectError || !!membershipError,
+      status: "resolved",
+      project: projectResult.data ?? null,
+      membershipRole: membershipResult.data?.role ?? null,
+    };
+  } catch (error) {
+    console.error("getProjectAccessContext: access queries failed", {
+      projectId,
+      accountUserId,
+      memberUserId,
+      error,
+    });
+    return { status: "unavailable" };
+  }
+}
+
+// Cache da leitura composta de projeto/papel. Os argumentos primitivos garantem
+// que layouts e pages dedupliquem a mesma resolução mesmo quando recebem
+// objetos AuthUser distintos com os mesmos dados.
+const getProjectAccessContextCached = cache(
+  async (
+    projectId: string,
+    accountUserId: string,
+    isMaster: boolean,
+  ): Promise<ProjectAccessContext> => {
+    const identity = await resolveProjectMemberIdentity(
+      projectId,
+      accountUserId,
+    );
+    if (identity.status === "unavailable") {
+      return { status: "unavailable" };
+    }
+    const { memberUserId } = identity;
+
+    const access = await readProjectAccess(
+      projectId,
+      accountUserId,
+      memberUserId,
+    );
+    if (access.status === "unavailable") {
+      return access;
+    }
+    const { project, membershipRole } = access;
+
+    return {
+      status: "resolved",
+      accountUserId,
+      memberUserId,
+      project,
+      membershipRole,
+      isMaster,
+      // A autoria do projeto pertence à conta que o criou; o papel pertence ao
+      // membro canônico. Não combinar a membership bruta com a canônica.
+      isCoordinator:
+        isMaster ||
+        project?.created_by === accountUserId ||
+        membershipRole === "coordenador",
     };
   },
 );
 
-// Master é coordenador por privilégio global já autenticado e não depende da
-// resolução de alias. Para os demais, essa resolução pode propagar uma falha
-// técnica; as queries de projeto/papel continuam logadas e fail-closed em
-// getProjectAccessContext. Guards de leitura que precisam distinguir a falha
-// devem usar o contexto diretamente e tratar `queryFailed`.
-export async function isProjectCoordinator(
+// Porta pública única para identidade, projeto e papel. O caller fornece o
+// ator autenticado, nunca ids soltos capazes de divergir entre si.
+export function getProjectAccessContext(
   projectId: string,
-  user: AuthUser,
-): Promise<boolean> {
-  if (user.isMaster) return true;
-
-  const effectiveUserId = await resolveEffectiveMemberId(projectId, user.id);
-  const { isCoordinator } = await getProjectAccessContext(
-    projectId,
-    effectiveUserId,
-    false,
-  );
-  return isCoordinator;
+  user: Pick<AuthUser, "id" | "isMaster">,
+): Promise<ProjectAccessContext> {
+  return getProjectAccessContextCached(projectId, user.id, user.isMaster);
 }
 
-// Gate combinado (auth + coordenador) para Server Actions coordinator-only.
-// União discriminada em vez de lançar: cada caller adapta {ok:false,error} pro
-// próprio shape de retorno (heterogêneo entre callers — ver comparisons.ts,
-// field-reviews.ts, documents.ts), então fixar um shape único aqui forçaria
-// os callers a normalizar depois.
+// Projeção temporária para actions pessoais. Não possui cache próprio: toda a
+// deduplicação e toda a semântica de falha pertencem à resolução canônica.
+export async function getEffectiveMemberId(projectId: string): Promise<string> {
+  const user = await getAuthUser();
+  if (!user) throw new Error("Não autenticado");
+
+  const identity = await resolveProjectMemberIdentity(projectId, user.id);
+  if (identity.status === "unavailable") {
+    throw new Error("Não foi possível resolver a identidade do projeto");
+  }
+  return identity.memberUserId;
+}
+
+// Resolve apenas a identidade exibida pela fila. O ?viewAsUser= global só tem
+// efeito para master e não altera o ator autenticado usado pelas mutations.
+export function resolveProjectQueueIdentity(
+  access: ResolvedProjectAccessContext,
+  viewAsUser: string | undefined,
+): {
+  ownMemberUserId: string;
+  queueUserId: string;
+  isImpersonating: boolean;
+} {
+  if (access.isMaster && viewAsUser) {
+    return {
+      ownMemberUserId: access.memberUserId,
+      queueUserId: viewAsUser,
+      isImpersonating: true,
+    };
+  }
+  return {
+    ownMemberUserId: access.memberUserId,
+    queueUserId: access.memberUserId,
+    isImpersonating: false,
+  };
+}
+
+export type RequireCoordinatorResult =
+  | { ok: true; user: AuthUser }
+  | {
+      ok: false;
+      code: "unauthenticated" | "forbidden" | "authorization_unavailable";
+      error: string;
+    };
+
+const AUTHORIZATION_UNAVAILABLE_MESSAGE =
+  "Não foi possível verificar sua permissão. Tente novamente.";
+
+// Gate único das mutations coordinator-only. Falhas técnicas são observáveis e
+// retornadas como estado, nunca rebaixadas para "forbidden" nem propagadas como
+// rejection. Master mantém o atalho global e não consulta identidade/projeto.
 export async function requireCoordinator(
   projectId: string,
   deniedMessage: string,
-): Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }> {
-  const user = await getAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-  const isCoord = await isProjectCoordinator(projectId, user);
-  if (!isCoord) return { ok: false, error: deniedMessage };
+): Promise<RequireCoordinatorResult> {
+  let resolution: AuthResolution;
+  try {
+    resolution = await resolveAuth();
+  } catch (error) {
+    console.error("requireCoordinator: auth resolution failed", {
+      projectId,
+      error,
+    });
+    return {
+      ok: false,
+      code: "authorization_unavailable",
+      error: AUTHORIZATION_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  if (resolution.status === "signed-out") {
+    return { ok: false, code: "unauthenticated", error: "Não autenticado" };
+  }
+  if (resolution.status !== "authenticated") {
+    return {
+      ok: false,
+      code: "authorization_unavailable",
+      error: AUTHORIZATION_UNAVAILABLE_MESSAGE,
+    };
+  }
+  const { user } = resolution;
+  if (user.isMaster) return { ok: true, user };
+
+  const access = await getProjectAccessContext(projectId, user);
+  if (access.status === "unavailable") {
+    return {
+      ok: false,
+      code: "authorization_unavailable",
+      error: AUTHORIZATION_UNAVAILABLE_MESSAGE,
+    };
+  }
+  if (!access.isCoordinator) {
+    return { ok: false, code: "forbidden", error: deniedMessage };
+  }
   return { ok: true, user };
 }

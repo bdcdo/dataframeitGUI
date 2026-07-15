@@ -2,8 +2,7 @@ import { AnalyzeNav } from "@/components/analyze/AnalyzeNav";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
   getAuthUser,
-  isProjectCoordinator,
-  resolveEffectiveUserId,
+  getProjectAccessContext,
 } from "@/lib/auth";
 import { computeAnalyzeTabVisibility } from "@/lib/analyze-tabs";
 import type { AutomationMode } from "@/lib/types";
@@ -26,10 +25,14 @@ export default async function AnalyzeLayout({
   let showCompare = false;
 
   if (user) {
-    const [supabase, { effectiveUserId }] = await Promise.all([
+    const [supabase, access] = await Promise.all([
       createSupabaseServer(),
-      resolveEffectiveUserId(id, user, undefined),
+      getProjectAccessContext(id, user),
     ]);
+    if (access.status === "unavailable") {
+      throw new Error("Não foi possível verificar sua identidade no projeto.");
+    }
+    const { memberUserId, isCoordinator } = access;
     // Queries direcionadas com .limit(1) (O(1) com o index (project_id, user_id,
     // type)) em vez de uma genérica com .limit(50), que poderia mascarar um tipo
     // se o membro canônico tiver muitos assignments de outro.
@@ -38,13 +41,12 @@ export default async function AnalyzeLayout({
       { data: arbitragemRow },
       { data: comparacaoRow },
       { data: project },
-      isCoord,
     ] = await Promise.all([
       supabase
         .from("assignments")
         .select("id")
         .eq("project_id", id)
-        .eq("user_id", effectiveUserId)
+        .eq("user_id", memberUserId)
         .eq("type", "auto_revisao")
         .limit(1)
         .maybeSingle(),
@@ -52,7 +54,7 @@ export default async function AnalyzeLayout({
         .from("assignments")
         .select("id")
         .eq("project_id", id)
-        .eq("user_id", effectiveUserId)
+        .eq("user_id", memberUserId)
         .eq("type", "arbitragem")
         .limit(1)
         .maybeSingle(),
@@ -60,7 +62,7 @@ export default async function AnalyzeLayout({
         .from("assignments")
         .select("id")
         .eq("project_id", id)
-        .eq("user_id", effectiveUserId)
+        .eq("user_id", memberUserId)
         .eq("type", "comparacao")
         .limit(1)
         .maybeSingle(),
@@ -69,13 +71,12 @@ export default async function AnalyzeLayout({
         .select("automation_mode")
         .eq("id", id)
         .single(),
-      isProjectCoordinator(id, user),
     ]);
 
     ({ showAutoReview, showArbitragem, showCompare } =
       computeAnalyzeTabVisibility({
         mode: project?.automation_mode as AutomationMode | undefined,
-        isCoordinator: isCoord,
+        isCoordinator,
         hasAutoRevisaoAssignment: autoReviewRow !== null,
         hasArbitragemAssignment: arbitragemRow !== null,
         hasComparacaoAssignment: comparacaoRow !== null,

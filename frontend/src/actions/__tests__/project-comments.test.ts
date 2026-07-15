@@ -21,10 +21,13 @@ const hoisted = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: vi.fn(async () => hoisted.user),
-  isProjectCoordinator: () => hoisted.isCoord(),
   requireCoordinator: async (_projectId: string, deniedMessage: string) => {
-    if (!hoisted.user) return { ok: false, error: "Não autenticado" };
-    if (!(await hoisted.isCoord())) return { ok: false, error: deniedMessage };
+    if (!hoisted.user) {
+      return { ok: false, code: "unauthenticated", error: "Não autenticado" };
+    }
+    if (!(await hoisted.isCoord())) {
+      return { ok: false, code: "forbidden", error: deniedMessage };
+    }
     return { ok: true, user: hoisted.user };
   },
 }));

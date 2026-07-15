@@ -27,7 +27,7 @@ function makeClient() {
   });
 }
 
-// isProjectCoordinator: hoisted para permitir override por teste.
+// Gate de coordenador hoisted para permitir override por teste.
 const hoisted = vi.hoisted(() => ({
   isCoord: vi.fn<() => Promise<boolean>>(async () => true),
 }));

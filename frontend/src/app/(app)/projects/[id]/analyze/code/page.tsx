@@ -2,8 +2,8 @@ import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
   getAuthUser,
-  isProjectCoordinator,
-  resolveEffectiveUserId,
+  getProjectAccessContext,
+  resolveProjectQueueIdentity,
 } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
@@ -43,11 +43,14 @@ export default async function CodePage({
 
   // Impersonação master (viewAsUser) tem precedência; sem ela, contas
   // vinculadas trabalham como o membro canônico do projeto (spec 002).
-  // resolveEffectiveUserId é a fonte única dessa precedência, compartilhada
+  // resolveProjectQueueIdentity é a fonte única dessa precedência, compartilhada
   // com Comparação e Arbitragem.
-  const { effectiveUserId, isImpersonating } = await resolveEffectiveUserId(
-    id,
-    user,
+  const access = await getProjectAccessContext(id, user);
+  if (access.status === "unavailable") {
+    throw new Error("Não foi possível verificar sua identidade no projeto.");
+  }
+  const { queueUserId, isImpersonating } = resolveProjectQueueIdentity(
+    access,
     sp.viewAsUser,
   );
   const roundParam = sp.round ?? CURRENT_FILTER_VALUE;
@@ -59,7 +62,6 @@ export default async function CodePage({
     { data: assignments },
     { data: rounds },
     { data: pendingExclusions },
-    canRunLlm,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -72,7 +74,7 @@ export default async function CodePage({
       .from("assignments")
       .select("id, status, document_id, documents!inner(id, external_id, title, text)")
       .eq("project_id", id)
-      .eq("user_id", effectiveUserId)
+      .eq("user_id", queueUserId)
       .eq("type", "codificacao")
       .is("documents.excluded_at", null)
       .order("status", { ascending: true }),
@@ -91,16 +93,15 @@ export default async function CodePage({
       .eq("kind", "exclusion_request")
       .is("resolved_at", null)
       .is("rejected_at", null),
-    // Rodar LLM exige coordenador no backend (#195): só então mostrar o botão.
-    isProjectCoordinator(id, user),
   ]);
 
   const pendingExclusionByDoc: Record<string, string> = {};
   const pendingByOthers = new Set<string>();
   for (const pc of pendingExclusions ?? []) {
     if (!pc.document_id) continue;
-    // Autor pode ser a conta autenticada ou o membro canônico (spec 002).
-    if (pc.author_id === user.id || pc.author_id === effectiveUserId) {
+    // Pedidos preservam autoria da conta bruta; identidade de fila nunca
+    // concede controle sobre o pedido criado por outra conta.
+    if (pc.author_id === user.id) {
       pendingExclusionByDoc[pc.document_id] = pc.body as string;
     } else {
       pendingByOthers.add(pc.document_id);
@@ -128,7 +129,7 @@ export default async function CodePage({
       "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch, is_partial, updated_at",
     )
     .eq("project_id", id)
-    .eq("respondent_id", effectiveUserId)
+    .eq("respondent_id", queueUserId)
     .eq("respondent_type", "humano")
     .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
 
@@ -284,7 +285,7 @@ export default async function CodePage({
         existingAnswers={existingAnswers}
         existingJustifications={existingJustifications}
         hasAssignments={allDocuments.length > 0}
-        canRunLlm={canRunLlm}
+        canRunLlm={access.isCoordinator}
         outOfScopeEnabled={project?.out_of_scope_enabled ?? true}
         pendingExclusionByDoc={pendingExclusionByDoc}
         readOnly={isImpersonating || isViewingPreviousRound}

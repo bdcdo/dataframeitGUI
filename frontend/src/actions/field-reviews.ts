@@ -2,7 +2,11 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, getEffectiveMemberId, requireCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getEffectiveMemberId,
+  requireCoordinator,
+} from "@/lib/auth";
 import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
 import { canonicalPair } from "@/lib/equivalence";
@@ -35,6 +39,65 @@ export interface SelfVerdictInput {
   // arbitro na revelacao); em ambiguo registra por que o campo e ambiguo
   // (anexada ao project_comments de discussao).
   justification?: string;
+}
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
+
+interface ProjectCommentDraft {
+  fieldName: string;
+  body: string;
+}
+
+function projectCommentKey(fieldName: string, body: string): string {
+  return JSON.stringify([fieldName, body]);
+}
+
+// Evita repetir o mesmo comentário automático em retries sem confundir uma
+// nota manual no campo com o efeito esperado. Uma corrida concorrente ainda
+// pode duplicar porque project_comments não tem uma UNIQUE para esse payload.
+async function insertMissingProjectComments(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+  authorId: string,
+  drafts: ProjectCommentDraft[],
+): Promise<string | null> {
+  if (drafts.length === 0) return null;
+
+  const { data: existingComments, error: selectError } = await supabase
+    .from("project_comments")
+    .select("field_name, body")
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .in(
+      "field_name",
+      drafts.map((draft) => draft.fieldName),
+    );
+  if (selectError) return selectError.message;
+
+  const existingCommentKeys = new Set(
+    (existingComments ?? []).map((comment) =>
+      projectCommentKey(comment.field_name as string, comment.body as string),
+    ),
+  );
+  const rows = drafts
+    .filter(
+      (draft) =>
+        !existingCommentKeys.has(
+          projectCommentKey(draft.fieldName, draft.body),
+        ),
+    )
+    .map((draft) => ({
+      project_id: projectId,
+      document_id: documentId,
+      field_name: draft.fieldName,
+      author_id: authorId,
+      body: draft.body,
+    }));
+  if (rows.length === 0) return null;
+
+  const { error } = await supabase.from("project_comments").insert(rows);
+  return error?.message ?? null;
 }
 
 // Humano original conclui sua fase de auto-revisao. Para cada campo:
@@ -80,7 +143,7 @@ export async function submitAutoReview(
       }
     }
 
-    const admin = createSupabaseAdmin();
+    const supabase = await createSupabaseServer();
     const now = new Date().toISOString();
 
     // UPDATE paralelo (em vez de N+1 sequencial). Cada UPDATE so toca o seu
@@ -88,7 +151,7 @@ export async function submitAutoReview(
     // a saber quais campos foram efetivamente atualizados.
     const updateResults = await Promise.all(
       verdicts.map((v) =>
-        admin
+        supabase
           .from("field_reviews")
           .update({
             self_verdict: v.verdict,
@@ -119,7 +182,13 @@ export async function submitAutoReview(
     }
 
     // Sync do assignment auto_revisao — ver lib/auto-revisao-sync.ts.
-    await syncAutoRevisaoAssignmentStatus(admin, projectId, documentId, effectiveId, now);
+    await syncAutoRevisaoAssignmentStatus(
+      supabase,
+      projectId,
+      documentId,
+      effectiveId,
+      now,
+    );
 
     // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
     // campos recem-atualizados quanto para os que JA estavam com o verdict
@@ -142,7 +211,7 @@ export async function submitAutoReview(
       }
     >();
     if (sideEffectFieldNames.length > 0) {
-      const { data: stateRows, error: stateErr } = await admin
+      const { data: stateRows, error: stateErr } = await supabase
         .from("field_reviews")
         .select("field_name, self_verdict, human_response_id, llm_response_id")
         .eq("project_id", projectId)
@@ -185,7 +254,7 @@ export async function submitAutoReview(
           reviewer_id: effectiveId,
         };
       });
-      const { error: equivErr } = await admin
+      const { error: equivErr } = await supabase
         .from("response_equivalences")
         .upsert(equivRows, {
           onConflict:
@@ -211,10 +280,13 @@ export async function submitAutoReview(
         responseIds.add(ids.human_response_id);
         responseIds.add(ids.llm_response_id);
       }
-      const { data: respRows } = await admin
+      const { data: respRows, error: responseError } = await supabase
         .from("responses")
         .select("id, answers")
         .in("id", Array.from(responseIds));
+      if (responseError) {
+        return { success: false, error: responseError.message };
+      }
       const answersById = new Map(
         (respRows ?? []).map((r) => [
           r.id as string,
@@ -222,22 +294,7 @@ export async function submitAutoReview(
         ]),
       );
 
-      const { data: existingComments } = await admin
-        .from("project_comments")
-        .select("field_name")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .in(
-          "field_name",
-          ambiguousFields.map((v) => v.fieldName),
-        )
-        .eq("author_id", effectiveId);
-      const alreadyCommented = new Set(
-        (existingComments ?? []).map((r) => r.field_name as string),
-      );
-
-      const commentRows = ambiguousFields.flatMap((v) => {
-        if (alreadyCommented.has(v.fieldName)) return [];
+      const commentDrafts = ambiguousFields.map((v) => {
         const ids = effectByField.get(v.fieldName)!;
         const humanAnswer = formatAnswerTechnical(
           answersById.get(ids.human_response_id)?.[v.fieldName],
@@ -253,20 +310,18 @@ export async function submitAutoReview(
           `Justificativa do pesquisador: ${v.justification!.trim()}`,
           `Precisa de discussão para decidir o gabarito.`,
         ].join("\n\n");
-        return [{
-          project_id: projectId,
-          document_id: documentId,
-          field_name: v.fieldName,
-          author_id: effectiveId,
-          body,
-        }];
+        return { fieldName: v.fieldName, body };
       });
 
-      if (commentRows.length > 0) {
-        const { error: commentErr } = await admin
-          .from("project_comments")
-          .insert(commentRows);
-        if (commentErr) return { success: false, error: commentErr.message };
+      const commentError = await insertMissingProjectComments(
+        supabase,
+        projectId,
+        documentId,
+        user.id,
+        commentDrafts,
+      );
+      if (commentError) {
+        return { success: false, error: commentError };
       }
     }
 
@@ -530,6 +585,222 @@ export interface FinalChoice {
   arbitratorComment?: string;
 }
 
+interface FinalReviewState {
+  id: string;
+  field_name: string;
+  human_response_id: string;
+  llm_response_id: string;
+  blind_verdict: ArbitrationVerdict | null;
+  final_verdict: ArbitrationVerdict | null;
+}
+
+interface FinalVerdictScope {
+  projectId: string;
+  documentId: string;
+  memberUserId: string;
+}
+
+interface FinalResponseState {
+  id: string;
+  answers: unknown;
+}
+
+function validateFinalChoices(choices: FinalChoice[]): string | null {
+  for (const choice of choices) {
+    if (
+      choice.verdict === "llm" &&
+      !choice.questionImprovementSuggestion?.trim()
+    ) {
+      return `Campo "${choice.fieldName}": sugestão de melhoria obrigatória quando você decide pelo LLM contra o humano.`;
+    }
+  }
+  return null;
+}
+
+async function loadFinalReviews(
+  supabase: SupabaseServerClient,
+  scope: FinalVerdictScope,
+  choices: FinalChoice[],
+): Promise<FinalReviewState[]> {
+  // As duas FKs de field_reviews para responses tornam o nested select
+  // ambíguo no PostgREST; as respostas são carregadas separadamente.
+  const { data, error } = await supabase
+    .from("field_reviews")
+    .select(
+      "id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict",
+    )
+    .eq("project_id", scope.projectId)
+    .eq("document_id", scope.documentId)
+    .in(
+      "field_name",
+      choices.map((choice) => choice.fieldName),
+    )
+    .eq("arbitrator_id", scope.memberUserId);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as FinalReviewState[];
+}
+
+function choicesNeedingFinalVerdict(
+  choices: FinalChoice[],
+  reviewsByField: Map<string, FinalReviewState>,
+): FinalChoice[] {
+  const pending: FinalChoice[] = [];
+  for (const choice of choices) {
+    const review = reviewsByField.get(choice.fieldName);
+    if (!review) {
+      throw new Error(
+        `Campo "${choice.fieldName}": linha de revisão não encontrada ou sem permissão.`,
+      );
+    }
+    if (review.blind_verdict == null) {
+      throw new Error(
+        `Campo "${choice.fieldName}": fase cega ainda não decidida.`,
+      );
+    }
+    if (review.final_verdict == null) {
+      pending.push(choice);
+      continue;
+    }
+    if (review.final_verdict !== choice.verdict) {
+      throw new Error(
+        `Campo "${choice.fieldName}": veredito final já registrado como "${review.final_verdict}".`,
+      );
+    }
+  }
+  return pending;
+}
+
+async function loadFinalResponses(
+  supabase: SupabaseServerClient,
+  reviews: FinalReviewState[],
+  choices: FinalChoice[],
+): Promise<Map<string, FinalResponseState>> {
+  if (!choices.some((choice) => choice.verdict === "llm")) return new Map();
+
+  const responseIds = new Set<string>();
+  for (const review of reviews) {
+    responseIds.add(review.human_response_id);
+    responseIds.add(review.llm_response_id);
+  }
+  const { data, error } = await supabase
+    .from("responses")
+    .select("id, answers")
+    .in("id", Array.from(responseIds));
+  if (error) throw new Error(error.message);
+
+  return new Map(
+    ((data ?? []) as FinalResponseState[]).map((response) => [
+      response.id,
+      response,
+    ]),
+  );
+}
+
+async function persistFinalVerdicts(
+  supabase: SupabaseServerClient,
+  scope: FinalVerdictScope,
+  choices: FinalChoice[],
+  decidedAt: string,
+): Promise<void> {
+  // Os filtros impõem a sequência cego → final e tornam explícita a corrida
+  // entre a leitura anterior e outro submit do mesmo árbitro.
+  const results = await Promise.all(
+    choices.map((choice) =>
+      supabase
+        .from("field_reviews")
+        .update({
+          final_verdict: choice.verdict,
+          final_decided_at: decidedAt,
+          question_improvement_suggestion:
+            choice.questionImprovementSuggestion ?? null,
+          arbitrator_comment: choice.arbitratorComment ?? null,
+        })
+        .eq("project_id", scope.projectId)
+        .eq("document_id", scope.documentId)
+        .eq("field_name", choice.fieldName)
+        .eq("arbitrator_id", scope.memberUserId)
+        .not("blind_verdict", "is", null)
+        .is("final_verdict", null)
+        .select("id"),
+    ),
+  );
+
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
+    if (result.error) throw new Error(result.error.message);
+    if (!result.data || result.data.length === 0) {
+      throw new Error(
+        `Campo "${choices[index].fieldName}": UPDATE rejeitado (concorrência ou RLS).`,
+      );
+    }
+  }
+}
+
+function buildFinalVerdictCommentDrafts(
+  choices: FinalChoice[],
+  reviewsByField: Map<string, FinalReviewState>,
+  responsesById: Map<string, FinalResponseState>,
+): ProjectCommentDraft[] {
+  return choices.flatMap((choice) => {
+    if (choice.verdict !== "llm") return [];
+
+    const review = reviewsByField.get(choice.fieldName)!;
+    const humanResponse = responsesById.get(review.human_response_id);
+    const llmResponse = responsesById.get(review.llm_response_id);
+    const humanAnswer = formatAnswerTechnical(
+      (humanResponse?.answers as Record<string, unknown> | undefined)?.[
+        choice.fieldName
+      ],
+    );
+    const llmAnswer = formatAnswerTechnical(
+      (llmResponse?.answers as Record<string, unknown> | undefined)?.[
+        choice.fieldName
+      ],
+    );
+    const body = [
+      `Discordância em "${choice.fieldName}".`,
+      `Humano respondeu: ${humanAnswer}`,
+      `LLM respondeu: ${llmAnswer}`,
+      "Árbitro manteve LLM.",
+      `Sugestão de melhoria: ${choice.questionImprovementSuggestion}`,
+      choice.arbitratorComment
+        ? `Comentário: ${choice.arbitratorComment}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    return [{ fieldName: choice.fieldName, body }];
+  });
+}
+
+async function persistFinalVerdictComments(
+  supabase: SupabaseServerClient,
+  scope: FinalVerdictScope,
+  accountUserId: string,
+  choices: FinalChoice[],
+  reviewsByField: Map<string, FinalReviewState>,
+  responsesById: Map<string, FinalResponseState>,
+): Promise<void> {
+  const drafts = buildFinalVerdictCommentDrafts(
+    choices,
+    reviewsByField,
+    responsesById,
+  );
+  const error = await insertMissingProjectComments(
+    supabase,
+    scope.projectId,
+    scope.documentId,
+    accountUserId,
+    drafts,
+  );
+  if (error) {
+    throw new Error(
+      `Veredicto salvo mas comentário de divergência falhou: ${error}`,
+    );
+  }
+}
+
 // Fase 2: arbitro confirma/troca veredito apos ver justificativa LLM.
 // Se final_verdict='llm' (humano perdeu), exige question_improvement_suggestion
 // e cria entry em project_comments com contexto da divergencia.
@@ -545,222 +816,44 @@ export async function submitFinalVerdicts(
     if (!user) return { success: false, error: "Não autenticado" };
 
     // Conta vinculada arbitra como o membro canônico (spec 002).
-    const effectiveId = await getEffectiveMemberId(projectId);
+    const scope: FinalVerdictScope = {
+      projectId,
+      documentId,
+      memberUserId: await getEffectiveMemberId(projectId),
+    };
 
-    // Validacao: se humano perdeu (final='llm'), sugestao obrigatoria
-    for (const c of choices) {
-      if (c.verdict === "llm" && !c.questionImprovementSuggestion?.trim()) {
-        return {
-          success: false,
-          error: `Campo "${c.fieldName}": sugestão de melhoria obrigatória quando você decide pelo LLM contra o humano.`,
-        };
-      }
-    }
+    const validationError = validateFinalChoices(choices);
+    if (validationError) return { success: false, error: validationError };
 
     const supabase = await createSupabaseServer();
-    const admin = createSupabaseAdmin();
     const now = new Date().toISOString();
 
-    // Estrategia de clientes:
-    //  - supabase (RLS): qualquer operacao onde o proprio arbitro e o ator.
-    //    Policies de field_reviews ("Arbitrator updates own row", SELECT
-    //    arbitrator_id=clerk_uid()) e de assignments ("Researchers update
-    //    own assignments") ja cobrem o caso.
-    //  - admin (service key): apenas onde o arbitro pode nao ter visibilidade
-    //    por RLS — leitura de responses (cross-user, RLS de responses e mais
-    //    restritiva) e INSERT em project_comments (autor != arbitro em alguns
-    //    cenarios, evitar policy-shaped erros).
+    const reviews = await loadFinalReviews(supabase, scope, choices);
+    const reviewsByField = new Map(
+      reviews.map((review) => [review.field_name, review]),
+    );
+    const choicesToUpdate = choicesNeedingFinalVerdict(choices, reviewsByField);
+    const responsesById = await loadFinalResponses(supabase, reviews, choices);
 
-    // 1) Carrega field_reviews com estado atual (inclui blind/final_verdict).
-    // O estado pre-carregado permite que retries apos falha parcial em (4)
-    // detectem "ja gravado com mesmo verdict" como sucesso idempotente em vez
-    // de erro travante.
-    // Duas FKs de field_reviews para responses (human_/llm_response_id) tornam
-    // o nested select ambiguo no PostgREST — buscar respostas separadamente.
-    const { data: frRows, error: frErr } = await supabase
-      .from("field_reviews")
-      .select(
-        "id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict",
-      )
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .in(
-        "field_name",
-        choices.map((c) => c.fieldName),
-      )
-      .eq("arbitrator_id", effectiveId);
-    if (frErr) return { success: false, error: frErr.message };
+    await persistFinalVerdicts(supabase, scope, choicesToUpdate, now);
 
-    const frByField = new Map(
-      (frRows ?? []).map((r) => [r.field_name as string, r]),
+    // A autoria é da conta autenticada; a fila permanece no membro canônico.
+    await persistFinalVerdictComments(
+      supabase,
+      scope,
+      user.id,
+      choices,
+      reviewsByField,
+      responsesById,
     );
 
-    // Pre-validacao por linha + classificacao (skip idempotente vs erro vs update).
-    const choicesToUpdate: FinalChoice[] = [];
-    for (const c of choices) {
-      const fr = frByField.get(c.fieldName);
-      if (!fr) {
-        return {
-          success: false,
-          error: `Campo "${c.fieldName}": linha de revisão não encontrada ou sem permissão.`,
-        };
-      }
-      if (fr.blind_verdict == null) {
-        return {
-          success: false,
-          error: `Campo "${c.fieldName}": fase cega ainda não decidida.`,
-        };
-      }
-      if (fr.final_verdict != null) {
-        // Veredito ja gravado — retry idempotente apenas se for o MESMO verdict.
-        if (fr.final_verdict !== c.verdict) {
-          return {
-            success: false,
-            error: `Campo "${c.fieldName}": veredito final já registrado como "${fr.final_verdict}".`,
-          };
-        }
-        // mesmo verdict → segue para passos 4/5 sem re-UPDATE
-        continue;
-      }
-      choicesToUpdate.push(c);
-    }
-
-    // 2) Respostas: admin porque a RLS de responses restringe leitura cross-user
-    // (arbitro nao precisa ser membro do mesmo "scope" da resposta humana).
-    // So precisa carregar respostas se ha algum verdict='llm' (para o comment).
-    const needsResponseData = choices.some((c) => c.verdict === "llm");
-    const responseById = new Map<string, { id: string; answers: unknown }>();
-    if (needsResponseData) {
-      const responseIds = new Set<string>();
-      for (const r of frRows ?? []) {
-        responseIds.add(r.human_response_id);
-        responseIds.add(r.llm_response_id);
-      }
-      const { data: respRows } = await admin
-        .from("responses")
-        .select("id, answers")
-        .in("id", Array.from(responseIds));
-      for (const r of respRows ?? []) {
-        responseById.set(r.id as string, r);
-      }
-    }
-
-    // 3) UPDATEs em paralelo via supabase (RLS cobre "Arbitrator updates own row").
-    //
-    //  - not("blind_verdict", "is", null): obriga sequência blind → final.
-    //    Sem isto, um árbitro (ou chamada direta à Server Action) pulava a
-    //    fase cega e gravava final_verdict diretamente.
-    //  - is("final_verdict", null): proteção contra race entre o pre-fetch
-    //    acima e este UPDATE (outro submit concorrente do mesmo árbitro).
-    //  - select("id"): detecta UPDATE de 0 linhas (race), erro descritivo.
-    if (choicesToUpdate.length > 0) {
-      const updateResults = await Promise.all(
-        choicesToUpdate.map((c) =>
-          supabase
-            .from("field_reviews")
-            .update({
-              final_verdict: c.verdict,
-              final_decided_at: now,
-              question_improvement_suggestion:
-                c.questionImprovementSuggestion ?? null,
-              arbitrator_comment: c.arbitratorComment ?? null,
-            })
-            .eq("project_id", projectId)
-            .eq("document_id", documentId)
-            .eq("field_name", c.fieldName)
-            .eq("arbitrator_id", effectiveId)
-            .not("blind_verdict", "is", null)
-            .is("final_verdict", null)
-            .select("id"),
-        ),
-      );
-      for (let i = 0; i < updateResults.length; i++) {
-        const res = updateResults[i];
-        if (res.error) return { success: false, error: res.error.message };
-        if (!res.data || res.data.length === 0) {
-          return {
-            success: false,
-            error: `Campo "${choicesToUpdate[i].fieldName}": UPDATE rejeitado (concorrência ou RLS).`,
-          };
-        }
-      }
-    }
-
-    // 4) project_comments para verdict='llm': check-before-insert evita dupes
-    // em retry (sem precisar de UNIQUE constraint que limitaria o uso geral
-    // de comments). Race window minuscula entre SELECT e INSERT — aceitavel
-    // dado o custo de evitar.
-    const llmChoices = choices.filter((c) => c.verdict === "llm");
-    if (llmChoices.length > 0) {
-      const { data: existingComments } = await admin
-        .from("project_comments")
-        .select("field_name")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .in(
-          "field_name",
-          llmChoices.map((c) => c.fieldName),
-        )
-        .eq("author_id", effectiveId);
-      const alreadyCommented = new Set(
-        (existingComments ?? []).map((r) => r.field_name as string),
-      );
-
-      const commentRows = llmChoices.flatMap((c) => {
-        if (alreadyCommented.has(c.fieldName)) return [];
-        const fr = frByField.get(c.fieldName);
-        const humanResp = fr
-          ? responseById.get(fr.human_response_id)
-          : null;
-        const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
-        const humanAnswer = formatAnswerTechnical(
-          (humanResp?.answers as Record<string, unknown> | undefined)?.[
-            c.fieldName
-          ],
-        );
-        const llmAnswer = formatAnswerTechnical(
-          (llmResp?.answers as Record<string, unknown> | undefined)?.[
-            c.fieldName
-          ],
-        );
-        const body = [
-          `Discordância em "${c.fieldName}".`,
-          `Humano respondeu: ${humanAnswer}`,
-          `LLM respondeu: ${llmAnswer}`,
-          `Árbitro manteve LLM.`,
-          `Sugestão de melhoria: ${c.questionImprovementSuggestion}`,
-          c.arbitratorComment ? `Comentário: ${c.arbitratorComment}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-
-        return [{
-          project_id: projectId,
-          document_id: documentId,
-          field_name: c.fieldName,
-          author_id: effectiveId,
-          body,
-        }];
-      });
-
-      if (commentRows.length > 0) {
-        // Falha aqui significa que o veredito ja foi gravado mas o comentario
-        // nao — coordenador perderia a sugestao. Propaga o erro para que retry
-        // do usuario re-tente (e nao duplique, pelo check acima).
-        const { error: commentErr } = await admin
-          .from("project_comments")
-          .insert(commentRows);
-        if (commentErr) {
-          return {
-            success: false,
-            error: `Veredicto salvo mas comentário de divergência falhou: ${commentErr.message}`,
-          };
-        }
-      }
-    }
-
-    // 5) Sync do assignment arbitragem — ver lib/arbitragem-sync.ts.
-    await syncArbitragemAssignmentStatus(supabase, projectId, documentId, effectiveId, now);
+    await syncArbitragemAssignmentStatus(
+      supabase,
+      scope.projectId,
+      scope.documentId,
+      scope.memberUserId,
+      now,
+    );
 
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };

@@ -62,6 +62,19 @@ const hoisted = vi.hoisted(() => ({
     assigned: 0,
     stillNoPool: 0,
   })),
+  requireCoordinator: vi.fn<
+    (
+      projectId: string,
+      deniedMessage: string,
+    ) => Promise<
+      | { ok: true; user: { id: string } }
+      | {
+          ok: false;
+          code: "authorization_unavailable";
+          error: string;
+        }
+    >
+  >(async () => ({ ok: true, user: { id: "userCoord" } })),
 }));
 
 vi.mock("next/cache", () => ({
@@ -69,9 +82,7 @@ vi.mock("next/cache", () => ({
   revalidateTag: hoisted.revalidateTag,
 }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "userCoord" }),
-  isProjectCoordinator: async () => true,
-  requireCoordinator: async () => ({ ok: true, user: { id: "userCoord" } }),
+  requireCoordinator: hoisted.requireCoordinator,
 }));
 vi.mock("@/lib/clerk-sync", () => ({
   syncClerkUserToSupabase: async () => "userX",
@@ -124,6 +135,11 @@ beforeEach(() => {
     assigned: 0,
     stillNoPool: 0,
   });
+  hoisted.requireCoordinator.mockReset();
+  hoisted.requireCoordinator.mockResolvedValue({
+    ok: true,
+    user: { id: "userCoord" },
+  });
 });
 
 function rpcArgs(fn: string): Record<string, unknown> {
@@ -134,6 +150,34 @@ function rpcArgs(fn: string): Record<string, unknown> {
 async function loadRemove() {
   return (await import("@/actions/members")).removeMember;
 }
+
+describe("mutations com projectId explícito — gate canônico", () => {
+  it("interrompe antes de efeitos quando a autorização está indisponível", async () => {
+    hoisted.requireCoordinator.mockResolvedValue({
+      ok: false,
+      code: "authorization_unavailable",
+      error: "Não foi possível verificar sua permissão. Tente novamente.",
+    });
+    const actions = await import("@/actions/members");
+
+    const results = await Promise.all([
+      actions.addMember("p1", "membro@exemplo.com", "pesquisador"),
+      actions.updatePendingMemberEmail("p1", "member1", "novo@exemplo.com"),
+      actions.linkMemberEmail("p1", "member1", "alias@exemplo.com"),
+      actions.unifyMembers("p1", "source", "target"),
+      actions.unlinkMemberEmail("p1", "link1"),
+    ]);
+
+    expect(results).toEqual(
+      Array.from({ length: 5 }, () => ({
+        error: "Não foi possível verificar sua permissão. Tente novamente.",
+      })),
+    );
+    expect(hoisted.requireCoordinator).toHaveBeenCalledTimes(5);
+    expect(adminCreateCalls).toBe(0);
+    expect(writeCalls).toEqual([]);
+  });
+});
 
 describe("removeMember", () => {
   it("remove membership, pendências e aliases por uma RPC atômica", async () => {
@@ -404,17 +448,13 @@ async function loadAdd() {
   return (await import("@/actions/members")).addMember;
 }
 
-// O chamador é coordenador (server client devolve role coordenador); a
-// variação fica por conta dos lookups (profiles, member_email_links) e do
-// insert (admin client).
+// O gate canônico autoriza o chamador; a variação fica por conta dos lookups
+// (profiles, member_email_links) e do insert no admin client.
 function setupAddMember(opts: {
   profile?: { id: string; activated_at: string | null } | null;
   emailLink?: { member_user_id: string } | null;
   insertError?: { message: string; code?: string };
 }) {
-  serverTableResults = {
-    project_members: { data: { role: "coordenador" } },
-  };
   adminTableResults = {
     profiles: { data: opts.profile ?? null },
     member_email_links: { data: opts.emailLink ?? null },
@@ -437,6 +477,10 @@ describe("addMember (pré-registro, spec 002)", () => {
     const r = await add("p1", "  Pessoa@Exemplo.COM ", "pesquisador");
     expect(r.error).toBeUndefined();
     expect(r.pending).toBe(true);
+    expect(hoisted.requireCoordinator).toHaveBeenCalledWith(
+      "p1",
+      "Apenas coordenadores podem adicionar membros.",
+    );
     expect(hoisted.preregister).toHaveBeenCalledWith("pessoa@exemplo.com");
     expect(writeCalls).toContainEqual({
       table: "project_members",

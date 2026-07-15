@@ -21,15 +21,39 @@
 // módulo incondicionalmente para TODOS os arquivos, quebrando esse teste.
 // A duplicação do par vi.hoisted/vi.mock nos poucos arquivos que precisam de
 // override por teste é o preço de não ter um mock global de auth no repo.
-export function authModuleMock(isCoord: () => Promise<boolean>, userId = "userCoord") {
+export function authModuleMock(
+  isCoord: () => Promise<boolean>,
+  userId = "userCoord",
+) {
   return {
     getAuthUser: async () => ({ id: userId }),
-    isProjectCoordinator: () => isCoord(),
     // Espelha requireCoordinator real (lib/auth.ts): getAuthUser nesta
     // factory nunca retorna null, então só o gate de coordenador varia.
     requireCoordinator: async (_projectId: string, deniedMessage: string) => {
-      if (!(await isCoord())) return { ok: false, error: deniedMessage };
+      if (!(await isCoord())) {
+        return { ok: false, code: "forbidden", error: deniedMessage };
+      }
       return { ok: true, user: { id: userId } };
     },
   };
+}
+
+export function projectIdentityAuthModuleMock(
+  getEffectiveMemberId: (projectId: string) => Promise<string>,
+  accountUserId = "linked-account",
+) {
+  return {
+    getAuthUser: async () => ({ id: accountUserId }),
+    getEffectiveMemberId,
+  };
+}
+
+export function projectAccessAuthModuleMock(
+  getAuthUser: () => Promise<unknown>,
+  getProjectAccessContext: (
+    projectId: string,
+    user: unknown,
+  ) => Promise<unknown>,
+) {
+  return { getAuthUser, getProjectAccessContext };
 }

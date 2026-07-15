@@ -2,7 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, requireCoordinator } from "@/lib/auth";
+import { requireCoordinator } from "@/lib/auth";
 import { preregisterSupabaseUser } from "@/lib/clerk-sync";
 import type { MemberEmailLink } from "@/lib/types";
 import { retryPendingArbitrations } from "@/actions/field-reviews";
@@ -23,24 +23,14 @@ export async function addMember(
   rawEmail: string,
   role: "coordenador" | "pesquisador"
 ): Promise<{ error?: string; pending?: boolean }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem adicionar membros.",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const email = normalizeEmail(rawEmail);
   if (!email) return { error: "E-mail inválido." };
-
-  const supabase = await createSupabaseServer();
-
-  // Verify caller is coordinator (via normal client, RLS applies)
-  const { data: callerMember } = await supabase
-    .from("project_members")
-    .select("role")
-    .eq("project_id", projectId)
-    .eq("user_id", user.id)
-    .single();
-  if (callerMember?.role !== "coordenador") {
-    return { error: "Apenas coordenadores podem adicionar membros." };
-  }
 
   // Admin client for lookup + insert (bypasses RLS)
   const admin = createSupabaseAdmin();
@@ -121,22 +111,14 @@ export async function updatePendingMemberEmail(
   memberUserId: string,
   rawNewEmail: string
 ): Promise<{ error?: string; otherProjectsCount?: number }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem corrigir e-mails.",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const newEmail = normalizeEmail(rawNewEmail);
   if (!newEmail) return { error: "E-mail inválido." };
-
-  const supabase = await createSupabaseServer();
-  const { data: callerMember } = await supabase
-    .from("project_members")
-    .select("role")
-    .eq("project_id", projectId)
-    .eq("user_id", user.id)
-    .single();
-  if (callerMember?.role !== "coordenador") {
-    return { error: "Apenas coordenadores podem corrigir e-mails." };
-  }
 
   const admin = createSupabaseAdmin();
 

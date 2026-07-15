@@ -104,16 +104,16 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 ### Tests for User Story 3 ⚠️ (write first, ensure they FAIL before implementation)
 
-- [X] T021 [P] [US3] Test: coordinator (creator / `coordenador` role / master) retains coordination tabs and actions via `getProjectAccessContext`, in `frontend/src/lib/__tests__/project-access-coordinator.test.ts`
-- [X] T022 [P] [US3] Test: direct researcher sees only own-member documents/queues, in `frontend/src/lib/__tests__/project-access-researcher.test.ts`
-- [X] T023 [P] [US3] Test: linked-email researcher resolves to the canonical member via `getEffectiveMemberId`/`resolveEffectiveUserId`, in `frontend/src/lib/__tests__/effective-member-alias.test.ts`
-- [X] T024 [P] [US3] Test: master with `viewAs` reads/navigates as the visualized identity but writes are NOT granted as the visualized user (FR-006), in `frontend/src/lib/__tests__/viewas-no-write.test.ts`
-- [X] T025 [P] [US3] Test: authenticated user without access gets a closed denial with no project data leaked, in `frontend/src/lib/__tests__/project-access-denied.test.ts`
+- [X] T021 [P] [US3] Test: coordinator (creator / `coordenador` role / master) retains coordination via `getProjectAccessContext(projectId, user)`, in `frontend/src/lib/__tests__/auth-effective-member.test.ts`
+- [X] T022 [P] [US3] Test: direct researcher resolves `accountUserId` and `memberUserId` to the same identity, in `frontend/src/lib/__tests__/auth-effective-member.test.ts`
+- [X] T023 [P] [US3] Test: linked-email researcher resolves `memberUserId` to the canonical member while preserving `accountUserId`, in `frontend/src/lib/__tests__/auth-effective-member.test.ts`
+- [X] T024 [P] [US3] Test: master with `viewAs` resolves a visualized queue without substituir o ator autenticado que assina writes (FR-006), in `frontend/src/lib/__tests__/viewas-no-write.test.ts`; controles somente leitura de Comparação seguem no PR #445
+- [X] T025 [P] [US3] Test: `unavailable` interrupts project access instead of becoming a partial authorization context, in `frontend/src/lib/__tests__/project-access.test.ts`
 
 ### Implementation for User Story 3
 
-- [X] T026 [US3] Verify `getProjectAccessContext` and `resolveEffectiveUserId` remain the single sources of project+role and master-impersonation/alias precedence after the Phase 2 refactor, adjusting only if the refactor changed their inputs, in `frontend/src/lib/auth.ts`
-- [X] T027 [US3] Ensure `viewAs`/impersonation scope is read/navigation/visual-only across protected write surfaces (write remains as the real actor when already permitted, otherwise forbidden), auditing `frontend/src/actions/**` and personal-queue call sites
+- [X] T026 [US3] Keep `getProjectAccessContext(projectId, user)` as the source of canonical project identity + role and `resolveProjectQueueIdentity(access, viewAsUser)` as the source of queue/viewAs precedence, in `frontend/src/lib/auth.ts`
+- [X] T027 [US3] Ensure `viewAs` never changes the authenticated actor in `frontend/src/actions/**` and personal-queue call sites; UI somente leitura para Comparação é rastreada separadamente pelo PR #445
 
 **Checkpoint**: All three stories independently functional.
 
@@ -169,12 +169,10 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 ## Parallel Example: User Story 3
 
 ```bash
-# All US3 regression tests can be written in parallel (different files):
-Task: "coordinator retains coordination in project-access-coordinator.test.ts"
-Task: "direct researcher scope in project-access-researcher.test.ts"
-Task: "linked-email alias resolution in effective-member-alias.test.ts"
+# Canonical access scenarios share one fixture; viewAs and the pure fail-closed gate remain isolated:
+Task: "account/member identity and coordinator roles in auth-effective-member.test.ts"
 Task: "viewAs no-write in viewas-no-write.test.ts"
-Task: "no-access closed denial in project-access-denied.test.ts"
+Task: "unavailable access closed denial in project-access.test.ts"
 ```
 
 ---

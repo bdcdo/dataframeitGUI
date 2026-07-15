@@ -7,13 +7,14 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // withResolutionAction é testado uma vez (é idêntico nas 10); as demais 8
 // funções ganham 1 teste de fumaça de caminho feliz cada, o suficiente para
 // pegar regressão na migração pro wrapper.
-import { makeSupabaseMock, type TableResults, type WriteCall } from "./supabase-mock";
+import { createSupabaseMockState } from "./supabase-mock";
 
-let writeCalls: WriteCall[];
-let serverTableResults: TableResults | undefined;
+const supabaseState = createSupabaseMockState();
 
 const hoisted = vi.hoisted(() => ({
-  getUser: vi.fn<() => Promise<{ id: string } | null>>(async () => ({ id: "user1" })),
+  getUser: vi.fn<() => Promise<{ id: string } | null>>(async () => ({
+    id: "user1",
+  })),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
@@ -21,13 +22,11 @@ vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
+  createSupabaseServer: async () => supabaseState.createClient(),
 }));
 
 beforeEach(() => {
-  writeCalls = [];
-  serverTableResults = undefined;
+  supabaseState.reset();
   hoisted.getUser.mockResolvedValue({ id: "user1" });
 });
 
@@ -43,7 +42,7 @@ describe("withResolutionAction — guard (via resolveNote, idêntico nas 10 fun�
     const r = await resolveNote("p1", "resp1", "nota");
 
     expect(r).toEqual({ success: false, error: "Não autenticado" });
-    expect(writeCalls).toHaveLength(0);
+    expect(supabaseState.writeCalls).toHaveLength(0);
   });
 });
 
@@ -54,7 +53,7 @@ describe("resolveNote / reopenNote", () => {
     const r = await resolveNote("p1", "resp1", "nota");
 
     expect(r).toEqual({ success: true });
-    expect(writeCalls).toEqual([
+    expect(supabaseState.writeCalls).toEqual([
       {
         table: "note_resolutions",
         op: "insert",
@@ -73,11 +72,13 @@ describe("resolveNote / reopenNote", () => {
 
     await resolveNote("p1", "resp1");
 
-    expect((writeCalls[0].payload as { note: string | null }).note).toBeNull();
+    expect(
+      (supabaseState.writeCalls[0].payload as { note: string | null }).note,
+    ).toBeNull();
   });
 
   it("resolveNote: erro do Supabase → error, sem revalidar", async () => {
-    serverTableResults = {
+    supabaseState.tableResults = {
       note_resolutions: [{ error: { message: "insert failed" } }],
     };
     const { resolveNote } = await loadStats();
@@ -88,7 +89,7 @@ describe("resolveNote / reopenNote", () => {
   });
 
   it("reopenNote: sucesso → delete e retorna success", async () => {
-    serverTableResults = {
+    supabaseState.tableResults = {
       note_resolutions: [{ data: [{ response_id: "resp1" }] }],
     };
     const { reopenNote } = await loadStats();
@@ -96,11 +97,14 @@ describe("resolveNote / reopenNote", () => {
     const r = await reopenNote("p1", "resp1");
 
     expect(r).toEqual({ success: true });
-    expect(writeCalls[0]).toMatchObject({ table: "note_resolutions", op: "delete" });
+    expect(supabaseState.writeCalls[0]).toMatchObject({
+      table: "note_resolutions",
+      op: "delete",
+    });
   });
 
   it("reopenNote: nada afetado → error de not-found (sem permissão ou já reaberta)", async () => {
-    serverTableResults = { note_resolutions: [{ data: [] }] };
+    supabaseState.tableResults = { note_resolutions: [{ data: [] }] };
     const { reopenNote } = await loadStats();
 
     const r = await reopenNote("p1", "resp1");
@@ -114,7 +118,7 @@ describe("resolveNote / reopenNote", () => {
 
 describe("resolveReviewComment / reopenReviewComment — smoke", () => {
   it("resolveReviewComment: sucesso", async () => {
-    serverTableResults = { reviews: [{ data: [{ id: "rv1" }] }] };
+    supabaseState.tableResults = { reviews: [{ data: [{ id: "rv1" }] }] };
     const { resolveReviewComment } = await loadStats();
 
     const r = await resolveReviewComment("rv1", "p1");
@@ -123,7 +127,7 @@ describe("resolveReviewComment / reopenReviewComment — smoke", () => {
   });
 
   it("reopenReviewComment: sucesso", async () => {
-    serverTableResults = { reviews: [{ data: [{ id: "rv1" }] }] };
+    supabaseState.tableResults = { reviews: [{ data: [{ id: "rv1" }] }] };
     const { reopenReviewComment } = await loadStats();
 
     const r = await reopenReviewComment("rv1", "p1");
@@ -134,7 +138,7 @@ describe("resolveReviewComment / reopenReviewComment — smoke", () => {
 
 describe("resolveDuvida / reopenDuvida — smoke", () => {
   it("resolveDuvida: sucesso", async () => {
-    serverTableResults = {
+    supabaseState.tableResults = {
       verdict_acknowledgments: [{ data: [{ review_id: "rv1" }] }],
     };
     const { resolveDuvida } = await loadStats();
@@ -145,7 +149,7 @@ describe("resolveDuvida / reopenDuvida — smoke", () => {
   });
 
   it("reopenDuvida: sucesso", async () => {
-    serverTableResults = {
+    supabaseState.tableResults = {
       verdict_acknowledgments: [{ data: [{ review_id: "rv1" }] }],
     };
     const { reopenDuvida } = await loadStats();
@@ -166,7 +170,7 @@ describe("resolveDifficulty / reopenDifficulty — smoke", () => {
   });
 
   it("reopenDifficulty: sucesso", async () => {
-    serverTableResults = {
+    supabaseState.tableResults = {
       difficulty_resolutions: [{ data: [{ response_id: "resp1" }] }],
     };
     const { reopenDifficulty } = await loadStats();
@@ -187,7 +191,7 @@ describe("resolveError / reopenError — smoke", () => {
   });
 
   it("reopenError: sucesso", async () => {
-    serverTableResults = {
+    supabaseState.tableResults = {
       error_resolutions: [{ data: [{ document_id: "doc1" }] }],
     };
     const { reopenError } = await loadStats();

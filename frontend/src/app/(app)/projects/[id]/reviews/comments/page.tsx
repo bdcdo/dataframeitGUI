@@ -1,6 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { coordinatorGate } from "@/lib/project-access";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { redirect } from "next/navigation";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { PydanticField } from "@/lib/types";
 import {
@@ -26,6 +27,7 @@ export default async function CommentsPage({
     getAuthUser(),
     createSupabaseServer(),
   ]);
+  if (!user) redirect("/auth/login");
 
   const [
     { data: project },
@@ -38,7 +40,7 @@ export default async function CommentsPage({
     { data: projectComments },
     { data: verdictQuestions },
     { data: noteResolutions },
-    accessContext,
+    accessResult,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -98,9 +100,7 @@ export default async function CommentsPage({
       .from("note_resolutions")
       .select("response_id, resolved_at")
       .eq("project_id", id),
-    user
-      ? getProjectAccessContext(id, user.id, user.isMaster)
-      : Promise.resolve(null),
+    getProjectAccessContext(id, user),
   ]);
 
   const noteResolvedMap = new Map(
@@ -126,14 +126,7 @@ export default async function CommentsPage({
     ]),
   ];
 
-  // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
-  // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so
-  // liga affordances no ReviewCommentsView (a view nao recorta dados por papel)
-  // e as mutacoes por tras delas re-checam via isProjectCoordinator (fail-closed).
-  // NB: ao contrario de config/rounds, o layout-pai reviews/layout.tsx NAO
-  // gateia coordenador (so faz `if (!user) redirect`) — a seguranca do fail-open
-  // aqui depende inteiramente do affordance-only acima, nao de um backstop no layout.
-  const isCoordinator = coordinatorGate(accessContext, { failOpen: true });
+  const { isCoordinator } = requireResolvedProjectAccess(accessResult);
 
   let reviewerMap = new Map<string, string>();
   if (reviewerIds.length > 0) {

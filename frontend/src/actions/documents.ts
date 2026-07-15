@@ -1,7 +1,12 @@
 "use server";
 
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext, requireCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getEffectiveMemberId,
+  getProjectAccessContext,
+  requireCoordinator,
+} from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
@@ -244,12 +249,8 @@ export async function revalidateProjectDocumentsCache(projectId: string) {
 export async function revalidateProjectDocuments(projectId: string) {
   const user = await getAuthUser();
   if (!user) return;
-  const { project } = await getProjectAccessContext(
-    projectId,
-    user.id,
-    user.isMaster,
-  );
-  if (!project) return;
+  const access = await getProjectAccessContext(projectId, user);
+  if (access.status === "unavailable" || !access.project) return;
   await revalidateProjectDocumentsCache(projectId);
 }
 
@@ -392,7 +393,10 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
-  const supabase = await createSupabaseServer();
+  const [supabase, memberUserId] = await Promise.all([
+    createSupabaseServer(),
+    getEffectiveMemberId(projectId),
+  ]);
 
   const [{ data: docs }, { data: responses }, { data: myPending }] =
     await Promise.all([
@@ -426,7 +430,7 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
   responses?.forEach((r) => {
     if (!countMap.has(r.document_id)) countMap.set(r.document_id, new Set());
     countMap.get(r.document_id)!.add(r.respondent_id);
-    if (r.respondent_id === user.id) userRespondedSet.add(r.document_id);
+    if (r.respondent_id === memberUserId) userRespondedSet.add(r.document_id);
   });
 
   const minePendingSet = new Set(
@@ -463,7 +467,10 @@ export async function getDocumentForCoding(
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
-  const supabase = await createSupabaseServer();
+  const [supabase, memberUserId] = await Promise.all([
+    createSupabaseServer(),
+    getEffectiveMemberId(projectId),
+  ]);
 
   // Sem filtro de exclusion_pending_at: quem sinalizou precisa continuar
   // abrindo o doc (bloqueado) para poder desfazer; deep-link de terceiro
@@ -515,7 +522,7 @@ export async function getDocumentForCoding(
     .select("answers, justifications")
     .eq("project_id", projectId)
     .eq("document_id", documentId)
-    .eq("respondent_id", user.id)
+    .eq("respondent_id", memberUserId)
     .eq("respondent_type", "humano")
     .single();
 
