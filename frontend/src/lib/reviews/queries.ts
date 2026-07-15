@@ -6,6 +6,7 @@ import type {
   ReviewedField,
   RespondentAnswer,
 } from "./types";
+import { buildReviewLookupMaps } from "./lookup-maps";
 
 /* ── Raw row shapes ── */
 
@@ -241,10 +242,7 @@ export async function fetchReviewBaseData(
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const projectPydanticHash = project?.pydantic_hash || null;
 
-  const fieldMap = new Map(fields.map((f) => [f.name, f]));
-  const docMap = new Map(
-    documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
-  );
+  const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
   const currentFieldHashes: Record<string, string> = {};
   for (const f of fields) {
     if (f.hash) currentFieldHashes[f.name] = f.hash;

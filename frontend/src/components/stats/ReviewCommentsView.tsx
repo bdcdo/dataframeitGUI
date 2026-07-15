@@ -32,13 +32,14 @@ import {
   reopenProjectComment,
 } from "@/actions/project-comments";
 import { toast } from "sonner";
-import type { PydanticField } from "@/lib/types";
+import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 
 interface ReviewCommentsViewProps {
   projectId: string;
   comments: ReviewComment[];
   fields: PydanticField[];
   isCoordinator: boolean;
+  schemaBaseline: SchemaBaselineIdentity;
   totalLlmDocs?: number;
   llmDocsWithoutAmbiguities?: number;
 }
@@ -138,6 +139,7 @@ export function ReviewCommentsView({
   comments,
   fields,
   isCoordinator,
+  schemaBaseline,
   totalLlmDocs = 0,
   llmDocsWithoutAmbiguities = 0,
 }: ReviewCommentsViewProps) {
@@ -357,6 +359,7 @@ export function ReviewCommentsView({
           projectId={projectId}
           fieldName={editingField}
           allFields={fields}
+          schemaBaseline={schemaBaseline}
           open={!!editingField}
           pendingSuggestion={pendingSuggestion}
           onOpenChange={(open) => {

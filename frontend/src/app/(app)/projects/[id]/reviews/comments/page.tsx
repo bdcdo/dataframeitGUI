@@ -3,6 +3,7 @@ import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { coordinatorGate } from "@/lib/project-access";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { PydanticField } from "@/lib/types";
+import { schemaBaselineIdentity } from "@/lib/schema-utils";
 import {
   mapReviewComments,
   mapNoteComments,
@@ -15,6 +16,7 @@ import {
   type SuggestionRow,
   type VerdictQuestionRow,
 } from "@/lib/reviews/comments-mapper";
+import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
 
 export default async function CommentsPage({
   params,
@@ -42,7 +44,9 @@ export default async function CommentsPage({
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      )
       .eq("id", id)
       .single(),
     supabase
@@ -108,11 +112,9 @@ export default async function CommentsPage({
   );
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
+  const schemaVersion = `${project?.schema_version_major ?? 0}.${project?.schema_version_minor ?? 1}.${project?.schema_version_patch ?? 0}`;
 
-  const fieldMap = new Map(fields.map((f) => [f.name, f]));
-  const docMap = new Map(
-    documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
-  );
+  const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
 
   // Fetch reviewer and respondent (dúvida author) names
   const reviewerIds = [
@@ -125,6 +127,7 @@ export default async function CommentsPage({
       )),
     ]),
   ];
+  const schemaBaseline = schemaBaselineIdentity(fields, schemaVersion);
 
   // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
   // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so
@@ -226,6 +229,7 @@ export default async function CommentsPage({
         projectId={id}
         comments={comments}
         fields={fields}
+        schemaBaseline={schemaBaseline}
         isCoordinator={isCoordinator}
         totalLlmDocs={totalLlmDocs}
         llmDocsWithoutAmbiguities={llmDocsWithoutAmbiguities}

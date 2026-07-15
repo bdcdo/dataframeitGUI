@@ -49,8 +49,9 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
   - (b) `compile_pydantic()` em `backend/services/pydantic_compiler.py` para le-la de volta;
   - (c) as primitivas de versionamento/auditoria em `frontend/src/lib/schema-utils.ts` — `snapshotOf`, `classifyChange`, `diffFields`, `fieldDiffIsStructural` — para que a mudanca da propriedade seja classificada (minor/patch) e registrada em `schema_change_log`. Essas primitivas sao puras e compartilhadas entre `saveSchemaFromGUI` e scripts fora do Next runtime, justamente para evitar drift (ver #63);
   - (d) o diff de historico em `frontend/src/lib/schema-change-diff.ts` (`FieldPropertyDiff`, `diffPydanticField`) e `frontend/src/lib/schema-change-format.ts` (`PROPERTY_LABELS`), consumidos pelo renderizador `FieldChangeDiff.tsx`.
+  - (e) o parser runtime fail-closed em `frontend/src/lib/pydantic-field.ts`, usado para recuperar rascunhos locais sem aceitar propriedades desconhecidas. O mapa de validadores e exaustivo nas propriedades de `PydanticField`, e os unions literais derivam das mesmas tuplas exportadas por `frontend/src/lib/types.ts`; a propriedade nova deve ganhar validacao estrutural e teste de round-trip do draft.
 
-  **Direcao registrada (constituicao, Principios III e VII)**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(d) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
+  **Direcao registrada (constituicao, Principios III e VII)**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(e) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
 - Testes: **Vitest** (frontend), **pytest** (backend)
 
 ## Estrutura

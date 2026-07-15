@@ -104,23 +104,52 @@ export type FieldCondition =
   | { field: string; not_in: ConditionScalar[] }
   | { field: string; exists: boolean };
 
+export const PYDANTIC_FIELD_TYPES = ["single", "multi", "text", "date"] as const;
+export type PydanticFieldType = (typeof PYDANTIC_FIELD_TYPES)[number];
+
+export const PYDANTIC_FIELD_TARGETS = [
+  "all",
+  "llm_only",
+  "human_only",
+  "none",
+] as const;
+export type PydanticFieldTarget = (typeof PYDANTIC_FIELD_TARGETS)[number];
+
+export const PYDANTIC_SUBFIELD_RULES = ["all", "at_least_one"] as const;
+export type PydanticSubfieldRule = (typeof PYDANTIC_SUBFIELD_RULES)[number];
+
 export interface PydanticField {
   name: string;
-  type: "single" | "multi" | "text" | "date";
+  type: PydanticFieldType;
   options: string[] | null;
   description: string;
   help_text?: string;
-  target?: "all" | "llm_only" | "human_only" | "none";
+  target?: PydanticFieldTarget;
   required?: boolean;
   hash?: string;
   subfields?: SubfieldDef[];
-  subfield_rule?: "all" | "at_least_one";
+  subfield_rule?: PydanticSubfieldRule;
   allow_other?: boolean;
   condition?: FieldCondition;
   // Texto-base do prompt da justificativa do LLM para este campo. Quando
   // ausente, o backend usa um default exigente (cita trecho do documento).
   // Ver _extend_model_with_justifications em backend/services/llm_runner.py.
   justification_prompt?: string;
+}
+
+export interface SchemaBaselineIdentity {
+  version: string;
+  fingerprint: string;
+}
+
+export interface SchemaSnapshot extends SchemaBaselineIdentity {
+  fields: PydanticField[];
+}
+
+export interface SchemaSaveResult {
+  saved?: SchemaSnapshot;
+  conflict?: SchemaSnapshot;
+  error?: string;
 }
 
 export interface ProjectMember {

@@ -6,6 +6,7 @@ import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import { formatAnswer } from "@/lib/reviews/queries";
 import { canonicalPair } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
+import { schemaBaselineIdentity } from "@/lib/schema-utils";
 
 export interface LlmError {
   documentId: string;
@@ -57,7 +58,9 @@ export default async function LlmInsightsPage({
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      )
       .eq("id", id)
       .single(),
     supabase
@@ -104,6 +107,8 @@ export default async function LlmInsightsPage({
   const isCoordinator = coordinatorGate(accessContext, { failOpen: true });
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
+  const schemaVersion = `${project?.schema_version_major ?? 0}.${project?.schema_version_minor ?? 1}.${project?.schema_version_patch ?? 0}`;
+  const schemaBaseline = schemaBaselineIdentity(allFields, schemaVersion);
 
   const fieldMap = new Map(allFields.map((f) => [f.name, f]));
   const fieldDescMap = new Map(allFields.map((f) => [f.name, f.description]));
@@ -234,7 +239,7 @@ export default async function LlmInsightsPage({
         errors={errors}
         reviewedEntries={reviewedEntries}
         fields={visibleFields}
-        allFields={allFields}
+        schemaEditor={{ fields: allFields, baseline: schemaBaseline }}
         isCoordinator={isCoordinator}
         summary={{ totalLlmDocs, unreviewedLlmDocs }}
       />
