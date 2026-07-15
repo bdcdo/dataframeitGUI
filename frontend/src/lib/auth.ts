@@ -149,6 +149,32 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
   return resolution.status === "authenticated" ? resolution.user : null;
 });
 
+// Núcleo da identidade efetiva por ator explícito. Compartilhado com o gate de
+// coordenador para que papel, criador e filas usem o mesmo membro canônico. Não
+// degrada erro de consulta para `userId`: isso faria uma conta-alias parecer um
+// membro sem assignments/papel e esconderia uma falha técnica como fila vazia.
+const resolveEffectiveMemberId = cache(
+  async (projectId: string, userId: string): Promise<string> => {
+    const admin = createSupabaseAdmin();
+    const { data: alias, error } = await admin
+      .from("member_email_links")
+      .select("member_user_id")
+      .eq("project_id", projectId)
+      .eq("linked_user_id", userId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("Falha ao resolver identidade efetiva do projeto", {
+        cause: error,
+      });
+    }
+
+    return alias?.member_user_id ?? userId;
+  },
+);
+
 // Identidade efetiva do usuário num projeto (spec 002): se a conta atual está
 // vinculada como alias de um membro (member_email_links.linked_user_id), todo
 // o trabalho no projeto acontece como o membro canônico (member_user_id);
@@ -158,25 +184,15 @@ export const getEffectiveMemberId = cache(
   async (projectId: string): Promise<string> => {
     const user = await getAuthUser();
     if (!user) throw new Error("Não autenticado");
-
-    const admin = createSupabaseAdmin();
-    const { data: alias } = await admin
-      .from("member_email_links")
-      .select("member_user_id")
-      .eq("project_id", projectId)
-      .eq("linked_user_id", user.id)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    return alias?.member_user_id ?? user.id;
+    return resolveEffectiveMemberId(projectId, user.id);
   },
 );
 
 // Identidade efetiva das páginas de fila pessoal (Codificar, Comparação,
 // Arbitragem, Meus vereditos): a impersonação master (?viewAsUser=) tem
 // precedência; sem ela, contas vinculadas resolvem para o membro canônico do
-// projeto via getEffectiveMemberId (spec 002). Fonte única da precedência —
+// projeto pelo mesmo núcleo de getEffectiveMemberId (spec 002). É a fonte única
+// da precedência —
 // antes cada página reimplementava o par isMaster && viewAsUser, e as que não
 // o fizeram (Comparação/Arbitragem) filtravam a fila pelo id do master logado,
 // mostrando fila vazia durante a impersonação.
@@ -189,7 +205,7 @@ export async function resolveEffectiveUserId(
     return { effectiveUserId: viewAsUser, isImpersonating: true };
   }
   return {
-    effectiveUserId: await getEffectiveMemberId(projectId),
+    effectiveUserId: await resolveEffectiveMemberId(projectId, user.id),
     isImpersonating: false,
   };
 }
@@ -264,18 +280,22 @@ export const getProjectAccessContext = cache(
   },
 );
 
-// Helper para server actions: falha cedo com mensagem clara em vez de deixar o
-// RLS retornar erro generico. Fail-closed por design — em erro de query retorna
-// `false`, porque mutation nunca deve fail-open. Guards de leitura (layouts)
-// devem usar `getProjectAccessContext` direto e tratar `queryFailed`.
+// Master é coordenador por privilégio global já autenticado e não depende da
+// resolução de alias. Para os demais, essa resolução pode propagar uma falha
+// técnica; as queries de projeto/papel continuam logadas e fail-closed em
+// getProjectAccessContext. Guards de leitura que precisam distinguir a falha
+// devem usar o contexto diretamente e tratar `queryFailed`.
 export async function isProjectCoordinator(
   projectId: string,
   user: AuthUser,
 ): Promise<boolean> {
+  if (user.isMaster) return true;
+
+  const effectiveUserId = await resolveEffectiveMemberId(projectId, user.id);
   const { isCoordinator } = await getProjectAccessContext(
     projectId,
-    user.id,
-    user.isMaster,
+    effectiveUserId,
+    false,
   );
   return isCoordinator;
 }

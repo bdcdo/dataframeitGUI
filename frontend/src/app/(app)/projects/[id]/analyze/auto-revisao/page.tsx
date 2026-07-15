@@ -1,6 +1,10 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  isProjectCoordinator,
+  resolveEffectiveUserId,
+} from "@/lib/auth";
 import { redirect } from "next/navigation";
 import {
   AutoReviewPage,
@@ -23,13 +27,20 @@ export default async function AutoReviewRoute({
   ]);
   if (!user) redirect("/auth/login");
 
-  const [supabase, isCoordinator] = await Promise.all([
-    createSupabaseServer(),
-    isProjectCoordinator(id, user),
-  ]);
+  const [supabase, isCoordinator, { effectiveUserId: ownEffectiveUserId }] =
+    await Promise.all([
+      createSupabaseServer(),
+      isProjectCoordinator(id, user),
+      // A Auto-revisão ignora de propósito o ?viewAsUser= global: seu viewAs
+      // próprio é autorizado por coordenador e serve apenas para leitura.
+      resolveEffectiveUserId(id, user, undefined),
+    ]);
 
-  // viewAs só é honrado para coordenadores; pesquisador sempre vê a própria fila.
-  const targetUserId = isCoordinator && viewAs ? viewAs : user.id;
+  // O viewAs desta tela pertence ao coordenador e tem precedência sobre a
+  // identidade canônica. Sem ele, a fila pessoal resolve contas-alias como as
+  // demais filas.
+  const targetUserId =
+    isCoordinator && viewAs ? viewAs : ownEffectiveUserId;
 
   const [{ data: project }, { data: assignments }, { data: memberRows }] =
     await Promise.all([
@@ -84,7 +95,7 @@ export default async function AutoReviewRoute({
         isCoordinator={isCoordinator}
         viewAsUserId={targetUserId}
         reviewers={reviewers}
-        currentUserId={user.id}
+        currentUserId={ownEffectiveUserId}
       />
     );
   }
@@ -176,7 +187,7 @@ export default async function AutoReviewRoute({
         isCoordinator={isCoordinator}
         viewAsUserId={targetUserId}
         reviewers={reviewers}
-        currentUserId={user.id}
+        currentUserId={ownEffectiveUserId}
       />
     </Suspense>
   );
