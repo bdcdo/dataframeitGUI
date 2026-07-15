@@ -10,13 +10,9 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
-DECLARE
-  uid UUID;
 BEGIN
-  uid := public.clerk_uid();
-
   -- Sem JWT do Clerk (service role, migrations, scripts admin) bypassa.
-  IF uid IS NULL THEN
+  IF public.clerk_uid() IS NULL THEN
     RETURN NEW;
   END IF;
 
@@ -28,10 +24,9 @@ BEGIN
   -- OLD.project_id ancora a identidade no projeto onde a linha vive. O helper
   -- canônico inclui tanto o UUID do JWT quanto o member_user_id exercido por
   -- uma conta-alias (spec 002), sem duplicar aqui a lógica de vínculo.
-  IF NEW.role IS DISTINCT FROM OLD.role
-     AND OLD.user_id IN (
-       SELECT public.auth_user_member_identity_ids(OLD.project_id)
-     )
+  IF OLD.user_id IN (
+    SELECT public.auth_user_member_identity_ids(OLD.project_id)
+  )
   THEN
     RAISE EXCEPTION 'Members cannot change their own role on project_members'
       USING ERRCODE = '42501';
@@ -43,8 +38,9 @@ $$;
 
 DROP TRIGGER IF EXISTS enforce_project_members_column_guard_trigger ON public.project_members;
 CREATE TRIGGER enforce_project_members_column_guard_trigger
-  BEFORE UPDATE ON public.project_members
+  BEFORE UPDATE OF role ON public.project_members
   FOR EACH ROW
+  WHEN (OLD.role IS DISTINCT FROM NEW.role)
   EXECUTE FUNCTION public.enforce_project_members_column_guard();
 
 -- Não há trigger de INSERT: o bootstrap criador -> coordenador é autorizado na
