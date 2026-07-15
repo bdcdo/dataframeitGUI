@@ -70,7 +70,7 @@ interface ComparisonPanelProps {
   onPrepareVerdict: (pending: PendingVerdict) => void;
   onConfirmPendingVerdict: () => void;
   onDiscardPendingVerdict: () => void;
-  isConfirmingVerdict: boolean;
+  isSavingVerdict: boolean;
   onMarkReviewed: () => void;
   comment: string;
   onCommentChange: (value: string) => void;
@@ -110,7 +110,7 @@ export function ComparisonPanel({
   onPrepareVerdict,
   onConfirmPendingVerdict,
   onDiscardPendingVerdict,
-  isConfirmingVerdict,
+  isSavingVerdict,
   onMarkReviewed,
   comment,
   onCommentChange,
@@ -194,7 +194,7 @@ export function ComparisonPanel({
             options={fieldOptions}
             responses={responses}
             existingVerdict={existingVerdict}
-            isSubmitting={isConfirmingVerdict}
+            isSubmitting={isSavingVerdict}
             onSubmit={(verdictJson) => onVerdict(verdictJson)}
           />
         ) : (
@@ -277,7 +277,7 @@ export function ComparisonPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                disabled={isConfirmingVerdict}
+                disabled={isSavingVerdict}
                 onClick={onDiscardPendingVerdict}
               >
                 Descartar
@@ -285,10 +285,10 @@ export function ComparisonPanel({
             )}
             <Button
               size="sm"
-              disabled={!pendingVerdict || isConfirmingVerdict}
+              disabled={!pendingVerdict || isSavingVerdict}
               onClick={onConfirmPendingVerdict}
             >
-              {isConfirmingVerdict ? "Salvando..." : "Confirmar"}
+              {isSavingVerdict ? "Salvando..." : "Confirmar"}
             </Button>
           </div>
         </div>
@@ -305,7 +305,7 @@ export function ComparisonPanel({
               ref={nextDocButtonRef}
               size="sm"
               className="gap-1"
-              disabled={isConfirmingVerdict}
+              disabled={isSavingVerdict}
               onClick={docStatus.onNextDoc}
             >
               Próximo parecer

@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -10,7 +17,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 // DocumentReader é mockado (usa react-markdown via next/dynamic, ruidoso em
 // jsdom e irrelevante para esta verificação).
 const { submitVerdict, markCompareDocReviewed } = vi.hoisted(() => ({
-  submitVerdict: vi.fn(async () => {}),
+  submitVerdict: vi.fn<
+    (...args: unknown[]) => Promise<{ error?: string } | void>
+  >(async () => {}),
   markCompareDocReviewed: vi.fn(async () => {}),
 }));
 const { confirmEquivalentVerdict, unmarkEquivalencePair } = vi.hoisted(() => ({
@@ -127,6 +136,57 @@ const renderReal = () =>
     </TooltipProvider>,
   );
 
+const renderMulti = () =>
+  render(
+    <TooltipProvider>
+      <ComparePage
+        {...props}
+        fields={[
+          {
+            name: "campoA",
+            type: "multi",
+            options: ["Sim", "Não"],
+            description: "Pergunta A",
+            hash: "hA",
+          },
+        ]}
+        responses={{
+          d1: [
+            resp("r1", "humano", "Ana", { campoA: ["Sim"] }),
+            resp("r2", "llm", "GPT", { campoA: ["Não"] }),
+          ],
+        }}
+        divergentFields={{ d1: ["campoA"] }}
+      />
+    </TooltipProvider>,
+  );
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+async function dispatchConcurrentConfirmations(confirmButton: HTMLElement) {
+  // O mesmo act mantém os três eventos antes do rerender; só a trava síncrona
+  // pode rejeitar o segundo click e o Enter.
+  await act(async () => {
+    confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  });
+  expect(submitVerdict).toHaveBeenCalledTimes(1);
+}
+
+async function finishSave(save: ReturnType<typeof deferred<void>>) {
+  await act(async () => {
+    save.resolve();
+    await save.promise;
+  });
+}
+
 // jsdom não tem ResizeObserver — exigido por react-resizable-panels.
 class ResizeObserverStub {
   observe() {}
@@ -184,61 +244,66 @@ describe("ComparePage — árvore real (smoke)", () => {
     );
   });
 
-  it("campo multi mantém click/Enter em single-flight e exibe o save em andamento", async () => {
-    let finishSave!: () => void;
-    const save = new Promise<void>((resolve) => {
-      finishSave = resolve;
-    });
-    submitVerdict.mockReturnValueOnce(save);
+  it("confirmação de rascunho mantém click/Enter em single-flight no mesmo batch", async () => {
+    const save = deferred<void>();
+    submitVerdict.mockReturnValueOnce(save.promise);
+    const user = userEvent.setup();
+    renderReal();
 
-    render(
-      <TooltipProvider>
-        <ComparePage
-          {...props}
-          fields={[
-            {
-              name: "campoA",
-              type: "multi",
-              options: ["Sim", "Não"],
-              description: "Pergunta A",
-              hash: "hA",
-            },
-          ]}
-          responses={{
-            d1: [
-              resp("r1", "humano", "Ana", { campoA: ["Sim"] }),
-              resp("r2", "llm", "GPT", { campoA: ["Não"] }),
-            ],
-          }}
-          divergentFields={{ d1: ["campoA"] }}
-        />
-      </TooltipProvider>,
+    await user.click(screen.getByRole("button", { name: /Ambíguo/i }));
+    const confirmButton = screen.getByRole("button", { name: "Confirmar" });
+
+    await dispatchConcurrentConfirmations(confirmButton);
+
+    expect(screen.getByRole("button", { name: "Salvando..." })).toHaveProperty(
+      "disabled",
+      true,
     );
+
+    await finishSave(save);
+  });
+
+  it("campo multi mantém click/Enter em single-flight e exibe o save em andamento", async () => {
+    const save = deferred<void>();
+    submitVerdict.mockReturnValueOnce(save.promise);
+    renderMulti();
 
     const confirmButton = screen.getByRole("button", {
       name: "[Enter] Confirmar",
     });
 
-    // Dispatch direto no mesmo act mantém os três eventos antes do rerender.
-    // O state visual ainda está stale; só a trava síncrona pode rejeitar o
-    // segundo click e o Enter sem disparar outra Server Action.
-    await act(async () => {
-      confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
-    });
+    await dispatchConcurrentConfirmations(confirmButton);
 
-    expect(submitVerdict).toHaveBeenCalledTimes(1);
     const savingButton = screen.getByRole("button", { name: "Salvando..." });
     expect(savingButton).toHaveProperty("disabled", true);
     for (const checkbox of screen.getAllByRole("checkbox")) {
       expect(checkbox).toHaveProperty("disabled", true);
     }
 
-    await act(async () => {
-      finishSave();
-      await save;
-    });
+    await finishSave(save);
+  });
+
+  it("campo multi libera a trava após erro e aceita nova tentativa", async () => {
+    submitVerdict
+      .mockResolvedValueOnce({ error: "falha ao salvar" })
+      .mockResolvedValueOnce({});
+    const user = userEvent.setup();
+    renderMulti();
+
+    await user.click(
+      screen.getByRole("button", { name: "[Enter] Confirmar" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "[Enter] Confirmar" }),
+      ).toHaveProperty("disabled", false),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "[Enter] Confirmar" }),
+    );
+    expect(submitVerdict).toHaveBeenCalledTimes(2);
   });
 
   it("'Descartar' no painel real limpa a seleção sem salvar", async () => {

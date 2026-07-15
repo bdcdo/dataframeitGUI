@@ -193,11 +193,9 @@ export function ComparePage({
   const [pendingVerdict, setPendingVerdict] = useState<PendingVerdict | null>(
     null,
   );
-  const [isConfirmingVerdict, setIsConfirmingVerdict] = useState(false);
-  // Fonte síncrona da exclusão mútua: state só atualiza no próximo render e,
-  // portanto, não impede dois eventos (click/Enter) no mesmo batch. Todo save
-  // de veredito passa pelo entrypoint single-flight abaixo, que adquire esta
-  // trava antes de agendar qualquer atualização visual.
+  const [isSavingVerdict, setIsSavingVerdict] = useState(false);
+  // A ref é a fonte síncrona da exclusão mútua porque state só atualiza no
+  // próximo render. O state acima existe apenas para feedback visual.
   const verdictSaveInFlightRef = useRef(false);
   const pendingVerdictCtxRef = useRef<string | null | undefined>(undefined);
   if (verdictCtxKey !== pendingVerdictCtxRef.current) {
@@ -235,19 +233,19 @@ export function ComparePage({
     [],
   );
 
-  // Único entrypoint para todo submit de veredito: confirmação de rascunho,
-  // campo multi e atalhos especiais. A ref torna um segundo save impossível
-  // mesmo antes do rerender que desabilita os controles.
+  // Único entrypoint para todo submit via handleVerdict: confirmação de
+  // rascunho, campo multi e atalhos especiais. A ref torna um segundo save
+  // impossível mesmo antes do rerender que desabilita os controles.
   const submitVerdictSingleFlight = useCallback(
     async (verdict: string, chosenResponseId?: string) => {
       if (verdictSaveInFlightRef.current) return false;
       verdictSaveInFlightRef.current = true;
-      setIsConfirmingVerdict(true);
+      setIsSavingVerdict(true);
       try {
         return await handleVerdict(verdict, chosenResponseId);
       } finally {
         verdictSaveInFlightRef.current = false;
-        setIsConfirmingVerdict(false);
+        setIsSavingVerdict(false);
       }
     },
     [handleVerdict],
@@ -356,7 +354,6 @@ export function ComparePage({
       void submitVerdictSingleFlight(verdict),
     onConfirmPendingVerdict: () => void confirmPendingVerdict(),
     hasPendingVerdict: !!pendingVerdict,
-    isConfirmingVerdict,
   });
 
   const reviewed = docFields.map(
@@ -521,7 +518,7 @@ export function ComparePage({
           onPrepareVerdict: preparePendingVerdict,
           onConfirmPendingVerdict: () => void confirmPendingVerdict(),
           onDiscardPendingVerdict: discardPendingVerdict,
-          isConfirmingVerdict,
+          isSavingVerdict,
           onMarkReviewed: () => void handleMarkReviewed(),
           comment,
           onCommentChange: setComment,

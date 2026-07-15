@@ -79,7 +79,7 @@ function renderPanel(
           }
         }}
         onDiscardPendingVerdict={() => setPendingVerdict(null)}
-        isConfirmingVerdict={false}
+        isSavingVerdict={false}
         onMarkReviewed={vi.fn()}
         comment=""
         onCommentChange={vi.fn()}
@@ -148,7 +148,7 @@ describe("ComparisonPanel — confirmação pendente", () => {
         verdict: "2021-05-10",
         chosenResponseId: "r-llm",
       },
-      isConfirmingVerdict: true,
+      isSavingVerdict: true,
     });
     expect(
       (screen.getByRole("button", { name: /^descartar$/i }) as HTMLButtonElement)
