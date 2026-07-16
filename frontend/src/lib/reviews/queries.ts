@@ -166,6 +166,27 @@ function getRespondentDisplayName(
 
 export const REVIEW_BASE_DATA_LIMIT = 50000;
 
+export function buildReviewLookupMaps(
+  fields: PydanticField[],
+  documents:
+    | Array<{ id: string; title: string | null; external_id: string | null }>
+    | null
+    | undefined,
+): {
+  fieldMap: Map<string, PydanticField>;
+  docMap: Map<string, string>;
+} {
+  return {
+    fieldMap: new Map(fields.map((field) => [field.name, field])),
+    docMap: new Map(
+      (documents ?? []).map((document) => [
+        document.id,
+        document.title || document.external_id || document.id,
+      ]),
+    ),
+  };
+}
+
 export function fetchActiveReviewQueueDocuments(
   supabase: SupabaseClient,
   documentIds: string[],
@@ -253,10 +274,7 @@ export async function fetchReviewBaseData(
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const projectPydanticHash = project?.pydantic_hash || null;
 
-  const fieldMap = new Map(fields.map((f) => [f.name, f]));
-  const docMap = new Map(
-    documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
-  );
+  const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
   const currentFieldHashes: Record<string, string> = {};
   for (const f of fields) {
     if (f.hash) currentFieldHashes[f.name] = f.hash;

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   clearHiddenConditionalAnswers,
   dropHiddenConditionals,
+  sanitizeHumanCodingAnswers,
 } from "@/lib/conditional";
 import type { PydanticField } from "@/lib/types";
 
@@ -302,5 +303,50 @@ describe("dropHiddenConditionals", () => {
     const answers = { q1: "não" }; // q2 nunca respondido
     const result = dropHiddenConditionals(fields, answers);
     expect(result).toBe(answers); // nada a omitir → mesma referência
+  });
+});
+
+describe("sanitizeHumanCodingAnswers", () => {
+  it("deriva do schema atual as chaves, opções e condicionais válidas", () => {
+    const fields = [
+      field({ name: "trigger", options: ["sim", "não"] }),
+      field({ name: "single", options: ["a", "b"] }),
+      field({ name: "multi", type: "multi", options: ["x", "y"] }),
+      field({
+        name: "hidden",
+        condition: { field: "trigger", equals: "sim" },
+      }),
+      field({ name: "llm", target: "llm_only" }),
+    ];
+
+    expect(
+      sanitizeHumanCodingAnswers(fields, {
+        trigger: "não",
+        single: "removida",
+        multi: ["x", "removida", 1],
+        hidden: "a",
+        llm: "a",
+        unknown: "a",
+      }),
+    ).toEqual({ trigger: "não", multi: ["x"] });
+  });
+
+  it("preserva valores livres e condicionais visíveis", () => {
+    const fields = [
+      field({ name: "trigger", options: ["sim", "não"] }),
+      field({ name: "text", type: "text", options: null }),
+      field({
+        name: "visible",
+        condition: { field: "trigger", equals: "sim" },
+      }),
+    ];
+
+    expect(
+      sanitizeHumanCodingAnswers(fields, {
+        trigger: "sim",
+        text: "livre",
+        visible: "a",
+      }),
+    ).toEqual({ trigger: "sim", text: "livre", visible: "a" });
   });
 });

@@ -1,9 +1,33 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildReviewLookupMaps,
   computeTruncation,
   REVIEW_BASE_DATA_LIMIT,
   resolveViewedRespondentId,
 } from "@/lib/reviews/queries";
+import type { PydanticField } from "@/lib/types";
+
+describe("buildReviewLookupMaps", () => {
+  it("indexa campos e usa título, ID externo e ID como fallback do documento", () => {
+    const fields = [
+      { name: "resultado", type: "text", options: null, description: "" },
+    ] as PydanticField[];
+    const documents = [
+      { id: "d1", title: "Título", external_id: "ext-1" },
+      { id: "d2", title: null, external_id: "ext-2" },
+      { id: "d3", title: null, external_id: null },
+    ];
+
+    const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
+
+    expect(fieldMap.get("resultado")).toBe(fields[0]);
+    expect([...docMap]).toEqual([
+      ["d1", "Título"],
+      ["d2", "ext-2"],
+      ["d3", "d3"],
+    ]);
+  });
+});
 
 // Array esparso: `.length` e o teto sem alocar 50k elementos.
 const atLimit = () => Array(REVIEW_BASE_DATA_LIMIT);

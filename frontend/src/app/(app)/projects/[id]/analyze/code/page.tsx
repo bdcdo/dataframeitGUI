@@ -7,7 +7,7 @@ import {
 import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { CodingPage } from "@/components/coding/CodingPage";
-import { dropHiddenConditionals } from "@/lib/conditional";
+import { sanitizeHumanCodingAnswers } from "@/lib/conditional";
 import type {
   Document,
   Assignment,
@@ -230,38 +230,12 @@ export default async function CodePage({
   const fields = allFields.filter(
     (f) => f.target !== "llm_only" && f.target !== "none",
   );
-  const fieldOptionSet = new Map<string, Set<string>>();
-  for (const field of fields) {
-    if ((field.type === "single" || field.type === "multi") && field.options) {
-      fieldOptionSet.set(field.name, new Set(field.options));
-    }
-  }
   const existingAnswers: Record<string, Record<string, unknown>> = {};
   const existingJustifications: Record<string, Record<string, unknown>> = {};
   for (const d of filteredDocuments) {
     const r = responseByDoc.get(d.id);
     if (!r) continue;
-    const clean: Record<string, unknown> = {};
-    for (const field of fields) {
-      const val = r.answers[field.name];
-      if (val === undefined || val === null) continue;
-      if (field.type === "single" && field.options) {
-        if (fieldOptionSet.get(field.name)!.has(val as string)) clean[field.name] = val;
-      } else if (field.type === "multi" && field.options) {
-        const allowed = fieldOptionSet.get(field.name)!;
-        const arr = Array.isArray(val)
-          ? val.filter((v: string) => allowed.has(v))
-          : [];
-        if (arr.length > 0) clean[field.name] = arr;
-      } else {
-        clean[field.name] = val;
-      }
-    }
-    // Remove condicionais órfãs na fronteira de leitura — mesma primitiva do
-    // saveResponse; evita que um documento orfanado por mudança de schema
-    // pós-codificação reapareça pré-preenchido no editor (ver #252). Conjunto
-    // COMPLETO de campos: uma condição pode referenciar qualquer campo.
-    existingAnswers[d.id] = dropHiddenConditionals(allFields, clean);
+    existingAnswers[d.id] = sanitizeHumanCodingAnswers(allFields, r.answers);
     if (r.justifications) {
       existingJustifications[d.id] = r.justifications;
     }

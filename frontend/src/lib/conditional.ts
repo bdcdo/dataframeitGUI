@@ -151,6 +151,64 @@ export function dropHiddenConditionals(
   return next;
 }
 
+// Fronteira canônica de leitura de uma resposta humana persistida. O schema
+// atual define, de uma só vez, quais chaves ainda existem, quais opções ainda
+// são válidas e quais condicionais permanecem visíveis. Assim, uma mudança de
+// schema não devolve ao editor valores órfãos, opções removidas ou campos que
+// nunca foram destinados à codificação humana.
+function sanitizeSingleOption(
+  options: string[],
+  value: unknown,
+): string | undefined {
+  return typeof value === "string" && options.includes(value)
+    ? value
+    : undefined;
+}
+
+function sanitizeMultipleOptions(
+  options: string[],
+  value: unknown,
+): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const allowed = new Set(options);
+  const validValues = value.filter(
+    (item): item is string =>
+      typeof item === "string" && allowed.has(item),
+  );
+  return validValues.length > 0 ? validValues : undefined;
+}
+
+function sanitizeFieldValue(
+  field: PydanticField,
+  value: unknown,
+): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (field.type === "single" && field.options) {
+    return sanitizeSingleOption(field.options, value);
+  }
+  if (field.type === "multi" && field.options) {
+    return sanitizeMultipleOptions(field.options, value);
+  }
+  return value;
+}
+
+export function sanitizeHumanCodingAnswers(
+  fields: PydanticField[],
+  answers: Record<string, unknown>,
+): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+
+  for (const field of fields) {
+    if (field.target === "llm_only" || field.target === "none") continue;
+    const value = sanitizeFieldValue(field, answers[field.name]);
+    if (value !== undefined) clean[field.name] = value;
+  }
+
+  // A visibilidade usa o schema completo: um campo destinado ao humano pode
+  // depender de qualquer campo declarado no projeto.
+  return dropHiddenConditionals(fields, clean);
+}
+
 // Campos que podem servir de gatilho para a condição de `currentFieldName`:
 // apenas campos anteriores (a condição só pode referenciar campos já definidos)
 // e com opções (single/multi). Usado pelos editores de schema.

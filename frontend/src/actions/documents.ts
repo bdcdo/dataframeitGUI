@@ -11,7 +11,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
-import { dropHiddenConditionals } from "@/lib/conditional";
+import { sanitizeHumanCodingAnswers } from "@/lib/conditional";
 import type { DocumentMetadata, PydanticField } from "@/lib/types";
 
 export interface DocumentRow {
@@ -526,38 +526,11 @@ export async function getDocumentForCoding(
 
   const rawAnswers = (response?.answers as Record<string, unknown>) ?? null;
 
-  // Sanitize answers against current schema options
+  // O schema atual é a fonte única das respostas que podem voltar ao editor.
   if (rawAnswers && project?.pydantic_fields) {
-    const fields = (project.pydantic_fields as { name: string; type: string; options: string[] | null; target?: string }[])
-      .filter((f) => f.target !== "llm_only" && f.target !== "none");
-    const fieldOptionSet = new Map<string, Set<string>>();
-    for (const field of fields) {
-      if ((field.type === "single" || field.type === "multi") && field.options) {
-        fieldOptionSet.set(field.name, new Set(field.options));
-      }
-    }
-    const clean: Record<string, unknown> = {};
-    for (const field of fields) {
-      const val = rawAnswers[field.name];
-      if (val === undefined || val === null) continue;
-      if (field.type === "single" && field.options) {
-        if (fieldOptionSet.get(field.name)!.has(val as string)) clean[field.name] = val;
-      } else if (field.type === "multi" && field.options) {
-        const allowed = fieldOptionSet.get(field.name)!;
-        const arr = Array.isArray(val) ? val.filter((v: string) => allowed.has(v)) : [];
-        if (arr.length > 0) clean[field.name] = arr;
-      } else {
-        clean[field.name] = val;
-      }
-    }
-    // Remove condicionais órfãs (cuja condição não é satisfeita pelo próprio
-    // `clean`) — espelha a sanitização de escrita do `saveResponse` na fronteira
-    // de leitura, para um documento orfanado por mudança de schema pós-codificação
-    // não reaparecer pré-preenchido no editor (ver #252). Avalia sobre o conjunto
-    // COMPLETO de campos, pois uma condição pode referenciar qualquer campo.
-    const existingAnswers = dropHiddenConditionals(
+    const existingAnswers = sanitizeHumanCodingAnswers(
       project.pydantic_fields as PydanticField[],
-      clean,
+      rawAnswers,
     );
     return { document: doc, existingAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
   }

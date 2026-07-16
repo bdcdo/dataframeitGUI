@@ -4,6 +4,7 @@ import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { PydanticField } from "@/lib/types";
+import { buildReviewLookupMaps } from "@/lib/reviews/queries";
 import {
   mapReviewComments,
   mapNoteComments,
@@ -108,10 +109,7 @@ export default async function CommentsPage({
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 
-  const fieldMap = new Map(fields.map((f) => [f.name, f]));
-  const docMap = new Map(
-    documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
-  );
+  const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
 
   // Fetch reviewer and respondent (dúvida author) names
   const reviewerIds = [
