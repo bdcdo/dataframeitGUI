@@ -6,8 +6,7 @@ type RetryInfo = { assigned: number; stillNoPool: number };
 
 type ToggleAction<TRetried> = (
   memberId: string,
-  value: boolean,
-  projectId: string
+  value: boolean
 ) => Promise<{ error?: string; retried?: TRetried }>;
 
 // arbitrate/resolve/compare compartilham a mesma forma (optimistic update →
@@ -18,7 +17,6 @@ type ToggleAction<TRetried> = (
 // `undefined` nessa variante — um swap de action por engano quebraria a
 // inferência em vez de degradar silenciosamente em runtime.
 export function useTogglePermission<TRetried = undefined>(
-  projectId: string,
   action: ToggleAction<TRetried>,
   patch: (
     value: boolean
@@ -37,7 +35,7 @@ export function useTogglePermission<TRetried = undefined>(
     startTransition(async () => {
       applyOptimistic({ memberId, patch: patch(value) });
       try {
-        const result = await action(memberId, value, projectId);
+        const result = await action(memberId, value);
         if (result?.error) {
           toast.error(result.error);
           return;

@@ -8,9 +8,13 @@ on:
       - '.github/workflows/frontend-fly-deploy.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: fly-deploy-frontend
   cancel-in-progress: false
+  queue: max
 
 jobs:
   deploy:
@@ -45,3 +49,15 @@ jobs:
           done
           echo "flyctl deploy falhou apos 3 tentativas"
           exit 1
+
+  # Criar ou comentar uma issue nao dispara este workflow, que escuta apenas
+  # push e workflow_dispatch; portanto a notificacao nao forma loop recursivo.
+  notify-failure:
+    name: Registrar falha do deploy
+    needs: deploy
+    if: ${{ always() && needs.deploy.result == 'failure' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/notify-deploy-failure.yml
+    with:
+      deploy_app: gui-analise-sistematica-frontend

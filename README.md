@@ -33,7 +33,7 @@ pnpm dev
 cd backend
 uv sync
 cp .env.example .env  # configurar SUPABASE_URL e SUPABASE_SERVICE_KEY
-uvicorn main:app --reload
+uv run uvicorn main:app --reload
 ```
 
 ### Supabase Local
@@ -58,6 +58,10 @@ A partir daí, cada commit é varrido em busca de segredos antes de entrarem no 
 ## Deploy (Produção)
 
 Produção roda inteiramente no **Fly.io** (`gru`), com deploy **automático por CI** a partir de merge na `main`: `backend/**` dispara `fly-deploy.yml` (app `gui-analise-sistematica-api`) e `frontend/**` dispara `frontend-fly-deploy.yml` (app `gui-analise-sistematica-frontend`). Domínio: `dataframeit.com.br`.
+
+A imagem do backend instala o grafo de produção com `uv sync --locked --no-dev`; `backend/pyproject.toml` e `backend/uv.lock` são as únicas fontes das dependências e versões implantadas.
+
+Se um deploy falhar, o workflow abre um incidente atribuído ao owner com a aplicação, o commit e o link da execução; novas falhas da mesma aplicação são adicionadas ao incidente aberto. Depois de confirmar a recuperação de produção, feche a issue para que uma falha futura abra outro incidente. Deploy verde não gera ruído.
 
 ### 1. Supabase Cloud
 

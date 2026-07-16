@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  makeSupabaseAdminModuleMock,
+  makeSupabaseServerModuleMock,
+} from "@/test-utils/supabase-mock";
 
 // T024 (FR-006): viewAs/impersonação é escopo de LEITURA. resolveEffectiveUserId
 // devolve o par (effectiveUserId, isImpersonating): master + viewAsUser resolve
@@ -10,24 +14,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 let aliasByProject: Record<string, { member_user_id: string } | null>;
 
-vi.mock("@clerk/nextjs/server", () => ({
-  currentUser: async () => ({
-    id: "clerk_master",
-    publicMetadata: { supabase_uid: "master_1" },
-    emailAddresses: [{ emailAddress: "master@exemplo.com" }],
-    firstName: "Master",
-    lastName: "User",
-  }),
-}));
-
-vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => {
-    throw new Error("não usado");
-  },
-}));
-
-vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => ({
+function makeClient() {
+  return {
     from: (table: string) => {
       let projectId: string | null = null;
       const builder: Record<string, unknown> = {};
@@ -42,8 +30,21 @@ vi.mock("@/lib/supabase/admin", () => ({
           : { data: null, error: null };
       return builder;
     },
+  };
+}
+
+vi.mock("@clerk/nextjs/server", () => ({
+  currentUser: async () => ({
+    id: "clerk_master",
+    publicMetadata: { supabase_uid: "master_1" },
+    emailAddresses: [{ emailAddress: "master@exemplo.com" }],
+    firstName: "Master",
+    lastName: "User",
   }),
 }));
+
+vi.mock("@/lib/supabase/server", () => makeSupabaseServerModuleMock(makeClient));
+vi.mock("@/lib/supabase/admin", () => makeSupabaseAdminModuleMock(makeClient));
 
 async function loadResolveEffective() {
   return (await import("@/lib/auth")).resolveEffectiveUserId;

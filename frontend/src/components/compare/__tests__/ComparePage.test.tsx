@@ -51,7 +51,7 @@ interface MockComparisonPanel {
   onPrepareVerdict: (pending: PendingVerdict) => void;
   onConfirmPendingVerdict: () => void;
   onDiscardPendingVerdict: () => void;
-  isConfirmingVerdict: boolean;
+  isSavingVerdict: boolean;
   onConfirmEquivalent: (
     responseIds: string[],
     gabaritoId: string,
@@ -115,10 +115,10 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
       </button>
       <button
         data-testid="confirm-verdict"
-        disabled={comparisonPanel.isConfirmingVerdict}
+        disabled={comparisonPanel.isSavingVerdict}
         onClick={() => comparisonPanel.onConfirmPendingVerdict()}
       >
-        {comparisonPanel.isConfirmingVerdict ? "saving verdict" : "confirm verdict"}
+        {comparisonPanel.isSavingVerdict ? "saving verdict" : "confirm verdict"}
       </button>
       <button
         data-testid="discard-verdict"

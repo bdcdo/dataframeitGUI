@@ -1,0 +1,84 @@
+name: Registrar falha de deploy
+
+on:
+  workflow_call:
+    inputs:
+      deploy_app:
+        required: true
+        type: string
+
+jobs:
+  notify:
+    name: Criar ou comentar incidente
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEPLOY_APP: ${{ inputs.deploy_app }}
+    steps:
+      - name: Registrar incidente atribuído ao owner
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA:0:7}"
+          deploy_run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          incident_title="[Deploy quebrado] ${DEPLOY_APP}"
+          event_file="$(mktemp)"
+          issue_body_file="$(mktemp)"
+          trap 'rm -f "$event_file" "$issue_body_file"' EXIT
+
+          cat >"$event_file" <<EOF
+          ## Falha em ${short_sha}
+
+          | Campo | Valor |
+          | --- | --- |
+          | Workflow | ${GITHUB_WORKFLOW} |
+          | Aplicação Fly.io | \`${DEPLOY_APP}\` |
+          | Commit | \`${GITHUB_SHA}\` |
+          | Ator | @${GITHUB_ACTOR} |
+          | Execução | [abrir logs](${deploy_run_url}) |
+
+          Nova falha registrada automaticamente pelo workflow. Um deploy verde não cria nem atualiza este incidente.
+          EOF
+
+          # A listagem de issues lê o estado atual diretamente, sem depender do
+          # índice textual usado por `--search`.
+          export INCIDENT_TITLE="$incident_title"
+          incident_number="$(
+            gh issue list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state open \
+              --limit 1000 \
+              --json number,title \
+              --jq '[.[] | select(.title == env.INCIDENT_TITLE)][0].number // empty'
+          )"
+
+          if [[ -n "$incident_number" ]]; then
+            gh issue comment "$incident_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file "$event_file"
+            exit 0
+          fi
+
+          cat >"$issue_body_file" <<EOF
+          Esta issue concentra as falhas de deploy de \`${DEPLOY_APP}\` enquanto o incidente permanecer aberto. Falhas posteriores são registradas como comentários; depois da recuperação, feche a issue para que uma nova falha abra um novo incidente.
+
+          EOF
+          cat "$event_file" >>"$issue_body_file"
+          cat >>"$issue_body_file" <<'EOF'
+
+          ## Triagem
+
+          1. Abra a execução e identifique o primeiro step que falhou.
+          2. Reproduza o build ou deploy no commit indicado e registre a causa nesta issue.
+          3. Envie a correção em PR e confirme um deploy verde da mesma aplicação.
+          4. Feche esta issue somente depois de verificar que produção voltou a acompanhar a `main`.
+          EOF
+
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --assignee "$GITHUB_REPOSITORY_OWNER" \
+            --title "$incident_title" \
+            --body-file "$issue_body_file"

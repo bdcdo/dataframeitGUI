@@ -3,6 +3,7 @@
 Cobre #88 — prompt de justificativa exigente e parametrizável.
 """
 
+import pytest
 from pydantic import BaseModel, Field
 
 from services.llm_runner import (
@@ -58,3 +59,12 @@ def test_justification_fields_added_for_every_field():
         assert f"{name}_justification" in extended.model_fields
         # campos originais preservados
         assert name in extended.model_fields
+
+
+def test_justification_extension_rejects_existing_generated_name():
+    class Collision(BaseModel):
+        reason: str
+        reason_justification: str
+
+    with pytest.raises(ValueError, match="reason_justification.*colide"):
+        _extend_model_with_justifications(Collision)

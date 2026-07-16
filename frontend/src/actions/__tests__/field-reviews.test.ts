@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 type WriteCall = { table: string; op: string; payload: unknown };
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown>;
+let projectAccessible: boolean;
+let adminFactoryCalls: number;
 
 const updateCallsOf = (table?: string) =>
   writeCalls.filter((c) => c.op === "update" && (!table || c.table === table));
@@ -19,7 +21,7 @@ function makeClient() {
       let limited = false;
       const builder: Record<string, unknown> = {};
       let op = "select";
-      for (const m of ["select", "eq", "is", "in", "neq"]) {
+      for (const m of ["select", "eq", "is", "in", "neq", "not"]) {
         builder[m] = () => builder;
       }
       builder.limit = () => {
@@ -65,20 +67,29 @@ function makeClient() {
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "user1" }),
+  getAuthUser: async () => ({ id: "user1", isMaster: false }),
   // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
   getEffectiveMemberId: async () => "user1",
+  getProjectAccessContext: async () => ({
+    project: projectAccessible ? { id: "p1" } : null,
+    queryFailed: false,
+  }),
   isProjectCoordinator: async () => false,
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(),
+  createSupabaseAdmin: () => {
+    adminFactoryCalls += 1;
+    return makeClient();
+  },
 }));
 
 beforeEach(() => {
   writeCalls = [];
+  projectAccessible = true;
+  adminFactoryCalls = 0;
   tableData = {
     // UPDATE de field_reviews retorna a linha tocada (via .select). O SELECT de
     // estado real (efeitos de equivalente/ambiguo) le esta mesma linha — testes
@@ -108,7 +119,25 @@ async function loadSubmit() {
   return (await import("@/actions/field-reviews")).submitAutoReview;
 }
 
+async function loadSubmitFinal() {
+  return (await import("@/actions/field-reviews")).submitFinalVerdicts;
+}
+
 describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", () => {
+  it("sem acesso atual ao projeto → falha antes de usar o admin client", async () => {
+    projectAccessible = false;
+    const submitAutoReview = await loadSubmit();
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "admite_erro" },
+    ]);
+    expect(r).toEqual({
+      success: false,
+      error: "Projeto não encontrado ou inacessível.",
+    });
+    expect(adminFactoryCalls).toBe(0);
+    expect(writeCalls).toHaveLength(0);
+  });
+
   it("contesta_llm sem justificativa → erro e nenhum UPDATE", async () => {
     const submitAutoReview = await loadSubmit();
     const r = await submitAutoReview("p1", "doc1", [
@@ -314,5 +343,69 @@ describe("submitAutoReview — envio parcial e conclusão do assignment", () => 
     ]);
     expect(r.success).toBe(true);
     expect(assignmentConcluido()).toBeDefined();
+  });
+});
+
+describe("submitFinalVerdicts — service role somente após os gates", () => {
+  const finalReview = (overrides: Record<string, unknown> = {}) => ({
+    id: "fr1",
+    field_name: "q1",
+    human_response_id: "hr1",
+    llm_response_id: "lr1",
+    blind_verdict: "humano",
+    final_verdict: null,
+    ...overrides,
+  });
+
+  it("linha ausente/RLS falha antes de criar o admin client", async () => {
+    tableData.field_reviews = [];
+    const submitFinalVerdicts = await loadSubmitFinal();
+    const result = await submitFinalVerdicts("p1", "doc1", [
+      { fieldName: "q1", verdict: "humano" },
+    ]);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Campo "q1": linha de revisão não encontrada ou sem permissão.',
+    });
+    expect(adminFactoryCalls).toBe(0);
+  });
+
+  it("fase cega pendente falha antes de criar o admin client", async () => {
+    tableData.field_reviews = [finalReview({ blind_verdict: null })];
+    const submitFinalVerdicts = await loadSubmitFinal();
+    const result = await submitFinalVerdicts("p1", "doc1", [
+      { fieldName: "q1", verdict: "humano" },
+    ]);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("fase cega ainda não decidida");
+    expect(adminFactoryCalls).toBe(0);
+  });
+
+  it("decisão humana válida não precisa de admin client", async () => {
+    tableData.field_reviews = [finalReview()];
+    const submitFinalVerdicts = await loadSubmitFinal();
+    const result = await submitFinalVerdicts("p1", "doc1", [
+      { fieldName: "q1", verdict: "humano" },
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(adminFactoryCalls).toBe(0);
+  });
+
+  it("decisão LLM cria o admin client uma vez, depois dos gates", async () => {
+    tableData.field_reviews = [finalReview()];
+    const submitFinalVerdicts = await loadSubmitFinal();
+    const result = await submitFinalVerdicts("p1", "doc1", [
+      {
+        fieldName: "q1",
+        verdict: "llm",
+        questionImprovementSuggestion: "Clarificar a pergunta",
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(adminFactoryCalls).toBe(1);
   });
 });

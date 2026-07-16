@@ -4,14 +4,16 @@
 # `pre-commit install` basta — voce nao precisa lembrar de rodar nada na mao.
 #
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
-#   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, react-doctor
+#   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, actionlint,
+#                                                deploy notifier, react-doctor
 #   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
 default_install_hook_types: [pre-commit, pre-push]
 # Hook sem `stages:` proprio roda so no pre-commit (os leves: gitleaks, ruff,
-# react-doctor). Os pesados sobrescrevem com `stages: [pre-push]`. Sem este
+# actionlint, deploy notifier, react-doctor). Os pesados sobrescrevem com
+# `stages: [pre-push]`. Sem este
 # default, o pre-commit rodaria os leves tambem no push (default = todos os
 # estagios), furando a divisao descrita abaixo.
 default_stages: [pre-commit]
@@ -25,9 +27,9 @@ repos:
   # ruff: lint (E/F/I/B/C901) + format do backend Python. File-scoped pelo
   # framework (so os .py alterados), entao o debito legado fica grandfathered —
   # so barra/formata o arquivo que voce tocar. --fix auto-corrige imports e afins.
-  # Config e per-file-ignores (complexidade legada) em backend/pyproject.toml.
+  # Config em backend/pyproject.toml; suppressions pontuais ficam inline no codigo.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.19
+    rev: v0.15.20
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -35,8 +37,26 @@ repos:
       - id: ruff-format
         files: ^backend/.*\.py$
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        # v1.7.12 é anterior a `concurrency.queue`; o teste local abaixo valida
+        # `queue: max` até o actionlint incorporar rhysd/actionlint#654.
+        args: [-ignore, 'unexpected key "queue" for "concurrency" section']
+
   - repo: local
     hooks:
+      # Contrato e comportamento do notificador de deploy. O hook extrai o
+      # shell canônico do YAML e simula criação/comentário com um `gh` local.
+      - id: deploy-failure-notification
+        name: deploy failure notification
+        entry: .github/scripts/test-deploy-failure-notification.sh
+        language: system
+        files: ^\.github/(workflows/(fly-deploy|frontend-fly-deploy|notify-deploy-failure)\.yml|scripts/test-deploy-failure-notification\.sh)$
+        pass_filenames: false
+        require_serial: true
+
       # react-doctor como gate local de qualidade React (estilo flake8/mypy).
       #
       # Por que --scope changed e nao --staged: o --staged escaneia o arquivo
@@ -155,7 +175,8 @@ repos:
         stages: [pre-push]
 
       # pytest do backend como gate de pre-push: roda a suite inteira (auth,
-      # rotas, cors) quando o push toca backend/**. Diferente do semgrep
+      # rotas, cors) quando o push toca codigo ou o grafo/deploy do backend.
+      # Diferente do semgrep
       # (fail-open em erro de infra), pytest e fail-CLOSED — sem `uv` o push
       # e barrado com mensagem, pois e um gate de verdade. `package = false`
       # no backend/pyproject.toml faz `uv run` nao tentar empacotar (issue #337).
@@ -163,7 +184,7 @@ repos:
         name: pytest backend (pre-push)
         entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para rodar os testes do backend" >&2; exit 1; }; cd backend && exec uv run pytest -q'
         language: system
-        files: ^backend/.*\.py$
+        files: ^(backend/(.*\.py|pyproject\.toml|uv\.lock|Dockerfile|\.dockerignore)|docker-compose\.yml)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -171,9 +192,9 @@ repos:
       # mypy: type-check do backend, escopado aos .py alterados (mesmo padrao
       # do lint-types no frontend). services/llm_runner.py e isento via
       # [[tool.mypy.overrides]] em backend/pyproject.toml — concentrava 103
-      # dos 113 erros do primeiro scan (explosao do alias JSON recursivo) e
-      # ja e o mesmo arquivo isento de C901 no ruff (run_llm, CCN 35); tipar
-      # direito exige o mesmo refactor maior, fora do escopo do #375/#380. Ver
+      # dos 113 erros do primeiro scan (explosao do alias JSON recursivo). A
+      # #377 removeu a isencao C901 ao decompor run_llm, mas nao estreitou
+      # esses tipos; remover a isencao mypy exige trabalho proprio. Ver
       # docs/CODE_QUALITY_TOOLING.md. O restante do baseline inicial (10 erros
       # em 4 arquivos: auth.py, pydantic_routes.py, pydantic_compiler.py,
       # main.py) foi corrigido na #380 — `uv run mypy .` roda limpo hoje fora

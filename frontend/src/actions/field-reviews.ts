@@ -2,7 +2,12 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, getEffectiveMemberId, requireCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getEffectiveMemberId,
+  getProjectAccessContext,
+  requireCoordinator,
+} from "@/lib/auth";
 import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
 import { canonicalPair } from "@/lib/equivalence";
@@ -11,9 +16,7 @@ import {
   computeBacklogRows,
   compositeKeySet,
   diffReviewsToRemove,
-  type AssignmentRow,
   type ExistingFieldReviewRow,
-  type FieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
 } from "@/lib/auto-review-backlog";
@@ -64,10 +67,6 @@ export async function submitAutoReview(
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
 
-    // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
-    // como o membro canônico.
-    const effectiveId = await getEffectiveMemberId(projectId);
-
     // contesta_llm e ambiguo exigem justificativa — o arbitro precisa do
     // contraponto humano na revelacao; ambiguo leva o porque para a discussao.
     for (const v of verdicts) {
@@ -80,6 +79,18 @@ export async function submitAutoReview(
               : `Campo "${v.fieldName}": justificativa obrigatória quando você contesta o LLM.`,
         };
       }
+    }
+
+    // Esta action usa service role para materializar efeitos que um pesquisador
+    // não pode escrever diretamente (equivalência, comentário e arbitragem).
+    // Revalidar o acesso no entrypoint impede que uma linha histórica seja usada
+    // para acionar o bypass depois da remoção do projeto.
+    const [{ project, queryFailed }, effectiveId] = await Promise.all([
+      getProjectAccessContext(projectId, user.id, user.isMaster),
+      getEffectiveMemberId(projectId),
+    ]);
+    if (queryFailed || !project) {
+      return { success: false, error: "Projeto não encontrado ou inacessível." };
     }
 
     const admin = createSupabaseAdmin();
@@ -284,6 +295,7 @@ export async function submitAutoReview(
     let warning: string | undefined;
     if (contested.length > 0) {
       const result = await assignArbitrator(
+        admin,
         projectId,
         documentId,
         effectiveId,
@@ -320,10 +332,10 @@ export async function submitAutoReview(
 // field_reviews permite arbitros diferentes por campo, mas este caminho
 // (submit unico → 1 arbitro por doc) prefere coerencia sobre granularidade.
 //
-// Race condition (TOCTOU): se dois submitAutoReview rodam concorrentes para
-// docs diferentes, podem ler o mesmo `minLoad` e sortearem o mesmo arbitro
-// — degrada o balanceamento mas nao a correcao. Tolerado para evitar custo
-// de lock; em projetos com volume, a aleatoriedade entre empatados ja dilui.
+// Dois submits concorrentes ainda podem ler o mesmo `minLoad` e escolher o
+// mesmo árbitro — isso só degrada o balanceamento. A correção não depende
+// dessa leitura: a RPC final valida can_arbitrate sob lock e grava revisão +
+// assignment na mesma transação, serializada com a desabilitação do membro.
 //
 // Idempotente: arbitrator_id so e gravado em field_reviews que ainda nao
 // tem arbitro definido (re-chamadas nao trocam um arbitro ja escolhido).
@@ -334,14 +346,13 @@ export async function submitAutoReview(
 //    usa para alertar o pesquisador; sem esse sinal, o submit completa
 //    silenciosamente e os campos ficam presos sem árbitro)
 async function assignArbitrator(
+  admin: SupabaseDataClient,
   projectId: string,
   documentId: string,
   excludeUserId: string,
   fieldNames: string[],
   precomputedCoderIds?: Set<string>,
 ): Promise<{ count: number; noPool: boolean }> {
-  const admin = createSupabaseAdmin();
-
   // Codificadores humanos deste documento — quem já tem resposta registrada
   // para o doc (recurso de comparação N+). Quando o caller pré-buscou em
   // batch (retryPendingArbitrations), reusa o set para evitar N queries.
@@ -414,34 +425,18 @@ async function assignArbitrator(
   const arbitratorId =
     finalPool[Math.floor(Math.random() * finalPool.length)].user_id;
 
-  // Atualiza arbitrator_id APENAS onde ainda nao foi definido (idempotente).
-  // O .select() devolve as linhas que de fato tocamos — usamos isso para
-  // decidir se criamos um assignment de arbitragem.
-  const { data: assigned, error: frErr } = await admin
-    .from("field_reviews")
-    .update({ arbitrator_id: arbitratorId })
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .in("field_name", fieldNames)
-    .is("arbitrator_id", null)
-    .select("field_name");
-  if (frErr) throw new Error(frErr.message);
-
-  if (!assigned || assigned.length === 0) return { count: 0, noPool: false };
-
-  // Cria assignment arbitragem (idempotente em doc+user+type)
-  await admin.from("assignments").upsert(
+  const { data: assigned, error: assignmentError } = await admin.rpc(
+    "assign_arbitration_if_eligible",
     {
-      project_id: projectId,
-      document_id: documentId,
-      user_id: arbitratorId,
-      type: "arbitragem",
-      status: "pendente",
+      p_project_id: projectId,
+      p_document_id: documentId,
+      p_user_id: arbitratorId,
+      p_field_names: fieldNames,
     },
-    { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
   );
+  if (assignmentError) throw new Error(assignmentError.message);
 
-  return { count: assigned.length, noPool: false };
+  return { count: typeof assigned === "number" ? assigned : 0, noPool: false };
 }
 
 export interface BlindChoice {
@@ -576,7 +571,6 @@ export async function submitFinalVerdicts(
     }
 
     const supabase = await createSupabaseServer();
-    const admin = createSupabaseAdmin();
     const now = new Date().toISOString();
 
     // Estrategia de clientes:
@@ -643,12 +637,18 @@ export async function submitFinalVerdicts(
       choicesToUpdate.push(c);
     }
 
+    // A service role só é necessária para decisões pelo LLM (leitura das duas
+    // responses + comentário canônico). Instanciar depois de validar todas as
+    // linhas garante que documento/campo/arbitrator/RLS falhem antes de a chave
+    // administrativa sequer ser lida; decisões humanas não criam admin client.
+    const llmChoices = choices.filter((c) => c.verdict === "llm");
+    const admin = llmChoices.length > 0 ? createSupabaseAdmin() : null;
+
     // 2) Respostas: admin porque a RLS de responses restringe leitura cross-user
     // (arbitro nao precisa ser membro do mesmo "scope" da resposta humana).
     // So precisa carregar respostas se ha algum verdict='llm' (para o comment).
-    const needsResponseData = choices.some((c) => c.verdict === "llm");
     const responseById = new Map<string, { id: string; answers: unknown }>();
-    if (needsResponseData) {
+    if (admin) {
       const responseIds = new Set<string>();
       for (const r of frRows ?? []) {
         responseIds.add(r.human_response_id);
@@ -708,8 +708,7 @@ export async function submitFinalVerdicts(
     // em retry (sem precisar de UNIQUE constraint que limitaria o uso geral
     // de comments). Race window minuscula entre SELECT e INSERT — aceitavel
     // dado o custo de evitar.
-    const llmChoices = choices.filter((c) => c.verdict === "llm");
-    if (llmChoices.length > 0) {
+    if (admin) {
       const { data: existingComments } = await admin
         .from("project_comments")
         .select("field_name")
@@ -803,7 +802,11 @@ export async function submitFinalVerdicts(
 //
 // Bulk-otimizado: queries em batch + upserts/deletes em batch, independente do
 // numero de respostas.
-type SupabaseAdminClient = ReturnType<typeof createSupabaseAdmin>;
+// Os dois factories retornam o mesmo cliente Supabase; o papel efetivo vem da
+// chave/token usado na criação. Helpers coordinator-only recebem o cliente
+// autenticado para preservar RLS, enquanto fluxos disparados por pesquisador
+// podem passar o admin client explicitamente.
+type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 
 interface BacklogInputs {
   fields: PydanticField[];
@@ -817,7 +820,7 @@ interface BacklogInputs {
 // convertido em { success: false, error } pelo try/catch de
 // regenerateAutoReviewBacklog.
 async function fetchBacklogInputs(
-  admin: SupabaseAdminClient,
+  admin: SupabaseDataClient,
   projectId: string,
 ): Promise<BacklogInputs> {
   const [
@@ -880,7 +883,7 @@ async function fetchBacklogInputs(
 // concluidos sao preservados. As duas leituras refletem o estado pos-
 // delete/upsert e sao independentes entre si — buscadas em paralelo.
 async function removeOrphanAssignments(
-  admin: SupabaseAdminClient,
+  admin: SupabaseDataClient,
   projectId: string,
 ): Promise<void> {
   const [
@@ -934,9 +937,9 @@ export async function regenerateAutoReviewBacklog(
     );
     if (!gate.ok) return { success: false, error: gate.error };
 
-    const admin = createSupabaseAdmin();
+    const supabase = await createSupabaseServer();
     const { fields, humanResponses, llmResponses, equivalences, existingReviews } =
-      await fetchBacklogInputs(admin, projectId);
+      await fetchBacklogInputs(supabase, projectId);
 
     if (fields.length === 0) {
       return { success: true, scanned: 0, regenerated: 0 };
@@ -959,6 +962,14 @@ export async function regenerateAutoReviewBacklog(
       fieldReviewRows,
     );
 
+    // A migration de hardening da #134 remove todo INSERT autenticado em
+    // field_reviews: a fila só pode ser materializada por um serviço após um
+    // gate explícito. Validar a configuração do factory antes de qualquer
+    // mutation evita apagar/upsertar metade do backlog quando o secret estiver
+    // ausente; sem linhas novas, nenhuma service role é criada.
+    const admin =
+      fieldReviewRows.length > 0 ? createSupabaseAdmin() : null;
+
     // Defesa em profundidade: `.is("self_verdict", null)` fecha a janela TOCTOU
     // entre a leitura de `existingReviews` (fetchBacklogInputs) e este DELETE.
     // Se um pesquisador resolver um campo nesse intervalo, o DB recusa a linha
@@ -966,7 +977,7 @@ export async function regenerateAutoReviewBacklog(
     // efetivamente apagadas, fonte da contagem `removed` retornada.
     let actuallyRemoved = 0;
     if (idsToDelete.length > 0) {
-      const { data: deleted, error } = await admin
+      const { data: deleted, error } = await supabase
         .from("field_reviews")
         .delete()
         .in("id", idsToDelete)
@@ -977,13 +988,13 @@ export async function regenerateAutoReviewBacklog(
     }
 
     if (assignmentRows.length > 0) {
-      const { error } = await admin.from("assignments").upsert(assignmentRows, {
+      const { error } = await supabase.from("assignments").upsert(assignmentRows, {
         onConflict: "document_id,user_id,type",
         ignoreDuplicates: true,
       });
       if (error) return { success: false, error: error.message };
     }
-    if (fieldReviewRows.length > 0) {
+    if (admin) {
       // NB: ignoreDuplicates reconcilia o *conjunto* de field_reviews
       // (doc+field), nao os ponteiros. Uma linha ja existente mantem seus
       // human_response_id/llm_response_id antigos mesmo que o LLM tenha
@@ -997,7 +1008,7 @@ export async function regenerateAutoReviewBacklog(
       if (error) return { success: false, error: error.message };
     }
 
-    await removeOrphanAssignments(admin, projectId);
+    await removeOrphanAssignments(supabase, projectId);
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -1037,8 +1048,8 @@ export async function retryPendingArbitrations(
     if (!gate.ok)
       return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
-    const admin = createSupabaseAdmin();
-    const { data: pending, error } = await admin
+    const supabase = await createSupabaseServer();
+    const { data: pending, error } = await supabase
       .from("field_reviews")
       .select("document_id, field_name, self_reviewer_id")
       .eq("project_id", projectId)
@@ -1076,7 +1087,7 @@ export async function retryPendingArbitrations(
     ];
     const codersByDoc = new Map<string, Set<string>>();
     if (allDocIds.length > 0) {
-      const { data: allCoders } = await admin
+      const { data: allCoders } = await supabase
         .from("responses")
         .select("document_id, respondent_id")
         .eq("project_id", projectId)
@@ -1108,6 +1119,7 @@ export async function retryPendingArbitrations(
       // openCounts recalculado; paralelizar degradaria a distribuição.
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const result = await assignArbitrator(
+        supabase,
         projectId,
         g.documentId,
         g.selfReviewerId,
@@ -1130,71 +1142,3 @@ export async function retryPendingArbitrations(
     };
   }
 }
-
-// Solta todas as arbitragens ainda não concluídas (final_verdict IS NULL) que
-// estavam sob responsabilidade de `userId`. Disparada por setCanArbitrate
-// quando o coordenador desmarca can_arbitrate de um membro: sem isso, os
-// field_reviews já atribuídos àquele membro ficariam presos — ele sai do
-// sorteio de novos casos mas continua "dono" dos antigos, que não aparecem no
-// banner de pendências (esse só conta arbitrator_id IS NULL).
-//
-// Reatribui do zero: limpa arbitrator_id, blind_verdict e blind_decided_at —
-// o novo árbitro sorteado por retryPendingArbitrations refaz a fase cega. Não
-// re-sorteia aqui; quem orquestra chama retryPendingArbitrations em seguida,
-// espelhando o caminho do enable.
-//
-// Ordem das operações é deliberada (sem transação): UPDATE em field_reviews
-// primeiro, DELETE em assignments depois. Se o DELETE falhar, o estado fica
-// autocorrigível — `arbitrator_id IS NULL` reentra no pool de
-// retryPendingArbitrations, e o próximo assignArbitrator faz upsert
-// idempotente em (document_id, user_id, type) sobrescrevendo o assignment
-// órfão. A ordem inversa (DELETE → UPDATE) deixaria o caso preso (mesmo bug
-// que esta função corrige) caso o UPDATE falhasse no meio.
-export async function releaseArbitrationsFromUser(
-  projectId: string,
-  userId: string,
-): Promise<{ released: number; error?: string }> {
-  const admin = createSupabaseAdmin();
-
-  // Filtro `self_verdict='contesta_llm'`: só esses field_reviews chegam a
-  // ter `arbitrator_id` preenchido (são os contestados pelo auto-revisor que
-  // entram em fase de arbitragem). Sem o filtro o SELECT é equivalente, mas
-  // explicitar evita confusão e mantém simetria com o filtro usado em
-  // retryPendingArbitrations.
-  const { data: affected, error: selErr } = await admin
-    .from("field_reviews")
-    .select("id, document_id")
-    .eq("project_id", projectId)
-    .eq("arbitrator_id", userId)
-    .eq("self_verdict", "contesta_llm")
-    .is("final_verdict", null);
-  if (selErr) return { released: 0, error: selErr.message };
-  if (!affected || affected.length === 0) return { released: 0 };
-
-  const ids = affected.map((r) => r.id as string);
-  const { error: updErr } = await admin
-    .from("field_reviews")
-    .update({ arbitrator_id: null, blind_verdict: null, blind_decided_at: null })
-    .in("id", ids);
-  if (updErr) return { released: 0, error: updErr.message };
-
-  // Deleta os assignments de arbitragem órfãos do ex-árbitro nos docs afetados.
-  // assignArbitrator faz upsert idempotente em (document_id, user_id, type) —
-  // sem este delete, o assignment pendente do ex-árbitro nunca seria limpo e
-  // ainda contaria como carga dele no balanceamento. Falha aqui não trava o
-  // fluxo: o UPDATE acima já liberou os field_reviews; o assignment órfão é
-  // sobrescrito no próximo sorteio.
-  const docIds = [...new Set(affected.map((r) => r.document_id as string))];
-  const { error: delErr } = await admin
-    .from("assignments")
-    .delete()
-    .eq("project_id", projectId)
-    .eq("user_id", userId)
-    .eq("type", "arbitragem")
-    .neq("status", "concluido")
-    .in("document_id", docIds);
-  if (delErr) return { released: ids.length, error: delErr.message };
-
-  return { released: ids.length };
-}
-

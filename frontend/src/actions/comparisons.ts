@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
@@ -33,10 +33,10 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     if (!gate.ok)
       return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
-    const admin = createSupabaseAdmin();
+    const supabase = await createSupabaseServer();
 
     // Só compare_humans/compare_llm têm backlog de comparação a drenar.
-    const { data: project } = await admin
+    const { data: project } = await supabase
       .from("projects")
       .select("automation_mode")
       .eq("id", projectId)
@@ -46,13 +46,17 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       return { success: true, assigned: 0, stillNoPool: 0 };
     }
 
-    const backlog = await scanComparisonBacklog(admin, projectId, mode as ComparisonMode);
+    const backlog = await scanComparisonBacklog(
+      supabase,
+      projectId,
+      mode as ComparisonMode,
+    );
     if (backlog.length === 0) return { success: true, assigned: 0, stillNoPool: 0 };
 
     // Carga aberta pré-computada uma vez; assignComparisonReviewer a incrementa
     // entre docs para preservar o balanceamento sem N queries (sequencial: cada
     // atribuição enxerga a carga atualizada da anterior).
-    const { data: openCounts } = await admin
+    const { data: openCounts } = await supabase
       .from("assignments")
       .select("user_id")
       .eq("project_id", projectId)
@@ -67,7 +71,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       // a carga atualizada da anterior; paralelizar degradaria o balanceamento.
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const result = await assignComparisonReviewer(
-        admin,
+        supabase,
         projectId,
         documentId,
         coderIds,

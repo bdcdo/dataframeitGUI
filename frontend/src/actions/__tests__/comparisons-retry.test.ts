@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  callsOf,
   makeFilterAwareSupabaseMock,
+  makeSupabaseAdminModuleMock,
+  makeSupabaseServerModuleMock,
+  type RpcCall,
+  type RpcResult,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 import { authModuleMock } from "@/test-utils/auth-mock";
@@ -13,12 +16,20 @@ import {
 
 // Mock supabase filter-aware (mesmo padrão de lib/__tests__/auto-comparison.test.ts).
 let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
+let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown[]>;
 
-const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
+const assignmentCalls = () =>
+  rpcCalls.filter((call) => call.fn === "assign_comparison_if_eligible");
 
 function makeClient() {
-  return makeFilterAwareSupabaseMock({ tableData, writeCalls });
+  return makeFilterAwareSupabaseMock({
+    tableData,
+    writeCalls,
+    rpcCalls,
+    rpcResults,
+  });
 }
 
 const hoisted = vi.hoisted(() => ({
@@ -27,12 +38,15 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => authModuleMock(hoisted.isCoord));
-vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(),
-}));
+vi.mock("@/lib/supabase/server", () => makeSupabaseServerModuleMock(makeClient));
+vi.mock("@/lib/supabase/admin", () => makeSupabaseAdminModuleMock(makeClient));
 
 beforeEach(() => {
   writeCalls = [];
+  rpcCalls = [];
+  rpcResults = {
+    assign_comparison_if_eligible: { data: true },
+  };
   tableData = {
     projects: [makeProjectRow()],
     project_members: [],
@@ -70,7 +84,7 @@ describe("retryPendingComparisons — guards", () => {
     const r = await retry("p1");
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(0);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 });
 
@@ -83,10 +97,10 @@ describe("retryPendingComparisons — atribui backlog divergente", () => {
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(1);
     expect(r.stillNoPool).toBe(0);
-    expect(upsertCallsOf("assignments")[0].payload).toMatchObject({
-      document_id: "doc1",
-      user_id: "userC",
-      type: "comparacao",
+    expect(assignmentCalls()[0].args).toEqual({
+      p_project_id: "p1",
+      p_document_id: "doc1",
+      p_user_id: "userC",
     });
   });
 

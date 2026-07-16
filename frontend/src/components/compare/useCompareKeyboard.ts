@@ -18,7 +18,6 @@ interface UseCompareKeyboardParams {
   onSubmitSpecialVerdict: (verdict: "ambiguo" | "pular") => void;
   onConfirmPendingVerdict: () => void;
   hasPendingVerdict: boolean;
-  isConfirmingVerdict: boolean;
 }
 
 /**
@@ -45,7 +44,6 @@ export function useCompareKeyboard({
   onSubmitSpecialVerdict,
   onConfirmPendingVerdict,
   hasPendingVerdict,
-  isConfirmingVerdict,
 }: UseCompareKeyboardParams): void {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -75,7 +73,7 @@ export function useCompareKeyboard({
         return;
       }
 
-      if (!isCurrentFieldDivergent || isConfirmingVerdict) return;
+      if (!isCurrentFieldDivergent) return;
 
       const isMultiField =
         currentField?.type === "multi" && currentField.options?.length;
@@ -121,7 +119,6 @@ export function useCompareKeyboard({
     isCurrentFieldDivergent,
     isFullscreen,
     hasPendingVerdict,
-    isConfirmingVerdict,
     onConfirmPendingVerdict,
     onExitFullscreen,
     onNextField,

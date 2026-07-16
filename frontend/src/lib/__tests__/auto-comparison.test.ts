@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  callsOf,
   makeFilterAwareSupabaseMock,
+  type RpcCall,
+  type RpcResult,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 import {
@@ -16,13 +17,20 @@ import {
 // comparação consulta `responses` duas vezes na mesma chamada (humano vs LLM) —
 // um mock que ignora filtros devolveria o mesmo array para ambas.
 let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
+let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown[]>;
 
-const upsertCallsOf = (table?: string) => callsOf(writeCalls, "upsert", table);
-const deleteCallsOf = (table?: string) => callsOf(writeCalls, "delete", table);
+const assignmentCalls = () =>
+  rpcCalls.filter((call) => call.fn === "assign_comparison_if_eligible");
 
 function makeClient() {
-  return makeFilterAwareSupabaseMock({ tableData, writeCalls });
+  return makeFilterAwareSupabaseMock({
+    tableData,
+    writeCalls,
+    rpcCalls,
+    rpcResults,
+  });
 }
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
@@ -51,6 +59,10 @@ const llm = (q1: string, extra: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   writeCalls = [];
+  rpcCalls = [];
+  rpcResults = {
+    assign_comparison_if_eligible: { data: true },
+  };
   tableData = {
     projects: [makeProjectRow()],
     project_members: [],
@@ -86,15 +98,16 @@ describe("assignComparisonReviewer — pool e balanceamento", () => {
     );
     expect(r.assigned).toBe(true);
     expect(r.noPool).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(1);
-    expect(upsertCallsOf("assignments")[0].payload).toMatchObject({
-      user_id: "userC",
-      type: "comparacao",
-      status: "pendente",
+    expect(assignmentCalls()).toHaveLength(1);
+    expect(assignmentCalls()[0].args).toEqual({
+      p_project_id: "p1",
+      p_document_id: "doc1",
+      p_user_id: "userC",
     });
+    expect(writeCalls).toHaveLength(0);
   });
 
-  it("pool vazio (todos codificaram) → noPool, sem upsert", async () => {
+  it("pool vazio (todos codificaram) → noPool, sem commit", async () => {
     const { assignComparisonReviewer } = await loadLib();
     tableData.project_members = [makeProjectMember("userA"), makeProjectMember("userB")];
     const r = await assignComparisonReviewer(
@@ -105,7 +118,7 @@ describe("assignComparisonReviewer — pool e balanceamento", () => {
     );
     expect(r.noPool).toBe(true);
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 
   it("ninguém can_compare → noPool", async () => {
@@ -135,9 +148,26 @@ describe("assignComparisonReviewer — pool e balanceamento", () => {
       new Set(["userA"]),
     );
     expect(r.assigned).toBe(true);
-    expect(upsertCallsOf("assignments")[0].payload).toMatchObject({
-      user_id: "userC",
+    expect(assignmentCalls()[0].args).toMatchObject({
+      p_user_id: "userC",
     });
+  });
+
+  it("candidato desabilitado antes do commit → não cria assignment", async () => {
+    const { assignComparisonReviewer } = await loadLib();
+    tableData.project_members = [makeProjectMember("userC")];
+    rpcResults.assign_comparison_if_eligible = { data: false };
+
+    const result = await assignComparisonReviewer(
+      makeClient() as never,
+      "p1",
+      "doc1",
+      new Set(["userA"]),
+    );
+
+    expect(result).toEqual({ assigned: false, noPool: false });
+    expect(assignmentCalls()).toHaveLength(1);
+    expect(writeCalls).toHaveLength(0);
   });
 });
 
@@ -148,10 +178,9 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(true);
-    expect(upsertCallsOf("assignments")).toHaveLength(1);
-    expect(upsertCallsOf("assignments")[0].payload).toMatchObject({
-      user_id: "userC",
-      type: "comparacao",
+    expect(assignmentCalls()).toHaveLength(1);
+    expect(assignmentCalls()[0].args).toMatchObject({
+      p_user_id: "userC",
     });
   });
 
@@ -161,7 +190,7 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 
   it("abaixo do mínimo (1 humano) → não dispara", async () => {
@@ -170,7 +199,7 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 
   it("codificação incompleta não conta para o mínimo", async () => {
@@ -194,7 +223,7 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     ];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 
   it("comparison_includes_llm=true: humanos concordam mas LLM diverge → dispara", async () => {
@@ -224,9 +253,8 @@ describe("createAutoComparisonIfDiverges — compare_llm", () => {
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     expect(r.assigned).toBe(true);
-    expect(upsertCallsOf("assignments")[0].payload).toMatchObject({
-      user_id: "userC",
-      type: "comparacao",
+    expect(assignmentCalls()[0].args).toMatchObject({
+      p_user_id: "userC",
     });
   });
 
@@ -276,7 +304,7 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 
   it("divergência só entre codificações de MAJOR anterior (semver) não materializa", async () => {
@@ -297,7 +325,7 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 
   it("divergência na MAJOR corrente ainda materializa (semver)", async () => {
@@ -312,7 +340,7 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(true);
-    expect(upsertCallsOf("assignments")).toHaveLength(1);
+    expect(assignmentCalls()).toHaveLength(1);
   });
 
   it("mistura: 1 corrente + 1 antiga divergem → antiga descartada, sobra 1 < mínimo", async () => {
@@ -324,7 +352,7 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     tableData.project_members = [makeProjectMember("userC")];
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_humans");
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 
   it("compare_llm: humano corrente diverge de LLM de schema antigo → LLM descartado, sem 2ª resposta", async () => {
@@ -338,7 +366,7 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     const r = await createAutoComparisonIfDiverges("p1", "doc1", "compare_llm");
     // LLM antigo não qualifica → falta a 2ª resposta → não dispara.
     expect(r.assigned).toBe(false);
-    expect(upsertCallsOf("assignments")).toHaveLength(0);
+    expect(assignmentCalls()).toHaveLength(0);
   });
 });
 
@@ -367,26 +395,5 @@ describe("scanComparisonBacklog — piso de versão latest_major (#247)", () => 
     );
     expect(backlog).toHaveLength(1);
     expect(backlog[0].documentId).toBe("doc1");
-  });
-});
-
-describe("releaseComparisonsFromUser", () => {
-  it("deleta comparacao pendente do usuário", async () => {
-    const { releaseComparisonsFromUser } = await loadLib();
-    tableData.assignments = [
-      { id: "a1", project_id: "p1", user_id: "userX", type: "comparacao", status: "pendente" },
-      { id: "a2", project_id: "p1", user_id: "userX", type: "comparacao", status: "em_andamento" },
-    ];
-    const r = await releaseComparisonsFromUser(makeClient() as never, "p1", "userX");
-    // só a pendente é contada (o filtro status=pendente exclui em_andamento)
-    expect(r.released).toBe(1);
-    expect(deleteCallsOf("assignments")).toHaveLength(1);
-  });
-
-  it("nada pendente → released 0", async () => {
-    const { releaseComparisonsFromUser } = await loadLib();
-    tableData.assignments = [];
-    const r = await releaseComparisonsFromUser(makeClient() as never, "p1", "userX");
-    expect(r.released).toBe(0);
   });
 });

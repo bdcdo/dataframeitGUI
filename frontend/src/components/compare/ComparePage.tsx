@@ -193,12 +193,14 @@ export function ComparePage({
   const [pendingVerdict, setPendingVerdict] = useState<PendingVerdict | null>(
     null,
   );
-  const [isConfirmingVerdict, setIsConfirmingVerdict] = useState(false);
+  const [isSavingVerdict, setIsSavingVerdict] = useState(false);
+  // A ref é a fonte síncrona da exclusão mútua porque state só atualiza no
+  // próximo render. O state acima existe apenas para feedback visual.
+  const verdictSaveInFlightRef = useRef(false);
   const pendingVerdictCtxRef = useRef<string | null | undefined>(undefined);
   if (verdictCtxKey !== pendingVerdictCtxRef.current) {
     pendingVerdictCtxRef.current = verdictCtxKey;
     setPendingVerdict(null);
-    setIsConfirmingVerdict(false);
   }
 
   const {
@@ -225,27 +227,28 @@ export function ComparePage({
       // um salvamento em andamento seria descartado silenciosamente pelo
       // `setPendingVerdict(null)` que confirmPendingVerdict roda ao concluir.
       // Ignorar aqui — ponto único — mantém o rascunho que está sendo salvo.
-      if (isConfirmingVerdict) return;
+      if (verdictSaveInFlightRef.current) return;
       setPendingVerdict(next);
     },
-    [isConfirmingVerdict],
+    [],
   );
 
-  const submitSpecialVerdict = useCallback(
-    async (verdict: "ambiguo" | "pular") => {
-      // Campos multi salvam direto (sem rascunho). Reusa `isConfirmingVerdict`
-      // como trava de in-flight para o teclado não disparar dois submitVerdict
-      // concorrentes quando 'a'/'s' são pressionados em sucessão rápida — o
-      // guard do useCompareKeyboard já bloqueia a segunda tecla enquanto true.
-      if (isConfirmingVerdict) return;
-      setIsConfirmingVerdict(true);
+  // Único entrypoint para todo submit via handleVerdict: confirmação de
+  // rascunho, campo multi e atalhos especiais. A ref torna um segundo save
+  // impossível mesmo antes do rerender que desabilita os controles.
+  const submitVerdictSingleFlight = useCallback(
+    async (verdict: string, chosenResponseId?: string) => {
+      if (verdictSaveInFlightRef.current) return false;
+      verdictSaveInFlightRef.current = true;
+      setIsSavingVerdict(true);
       try {
-        await handleVerdict(verdict);
+        return await handleVerdict(verdict, chosenResponseId);
       } finally {
-        setIsConfirmingVerdict(false);
+        verdictSaveInFlightRef.current = false;
+        setIsSavingVerdict(false);
       }
     },
-    [handleVerdict, isConfirmingVerdict],
+    [handleVerdict],
   );
 
   // `handleVerdict` sempre settla (o timeout de `actionSucceeded` em
@@ -253,26 +256,21 @@ export function ComparePage({
   // então o `finally` é garantido e a trava nunca fica presa. No timeout o
   // rascunho é MANTIDO: a usuária reconfirma sem re-selecionar.
   const confirmPendingVerdict = useCallback(async () => {
-    if (!pendingVerdict || isConfirmingVerdict) return;
-    setIsConfirmingVerdict(true);
-    try {
-      const saved = await handleVerdict(
-        pendingVerdict.verdict,
-        pendingVerdict.kind === "response"
-          ? pendingVerdict.chosenResponseId
-          : undefined,
-      );
-      if (saved) setPendingVerdict(null);
-    } finally {
-      setIsConfirmingVerdict(false);
-    }
-  }, [handleVerdict, isConfirmingVerdict, pendingVerdict]);
+    if (!pendingVerdict) return;
+    const saved = await submitVerdictSingleFlight(
+      pendingVerdict.verdict,
+      pendingVerdict.kind === "response"
+        ? pendingVerdict.chosenResponseId
+        : undefined,
+    );
+    if (saved) setPendingVerdict(null);
+  }, [pendingVerdict, submitVerdictSingleFlight]);
 
   const discardPendingVerdict = useCallback(() => {
     // Durante o in-flight o rascunho é o que está sendo salvo — descartá-lo
     // deixaria a UI sem referente do save em andamento.
-    if (!isConfirmingVerdict) setPendingVerdict(null);
-  }, [isConfirmingVerdict]);
+    if (!verdictSaveInFlightRef.current) setPendingVerdict(null);
+  }, []);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const toggleFullscreen = useCallback(
@@ -289,7 +287,7 @@ export function ComparePage({
   // `handleVerdict` e não passa por aqui.
   const guardNavigation = useCallback(() => {
     // In-flight: bloqueio silencioso (o botão já exibe "Salvando...").
-    if (isConfirmingVerdict) return false;
+    if (verdictSaveInFlightRef.current) return false;
     if (pendingVerdict) {
       // `id` fixo: tentativas repetidas (tecla `n` segurada, onValueChange
       // duplo do Radix Tabs) atualizam o mesmo toast em vez de empilhar.
@@ -300,7 +298,7 @@ export function ComparePage({
       return false;
     }
     return true;
-  }, [isConfirmingVerdict, pendingVerdict]);
+  }, [pendingVerdict]);
 
   const navigateDoc = useCallback(
     (index: number) => {
@@ -352,10 +350,10 @@ export function ComparePage({
     onNextField: nextField,
     onPrevField: prevField,
     onPrepareVerdict: preparePendingVerdict,
-    onSubmitSpecialVerdict: (verdict) => void submitSpecialVerdict(verdict),
+    onSubmitSpecialVerdict: (verdict) =>
+      void submitVerdictSingleFlight(verdict),
     onConfirmPendingVerdict: () => void confirmPendingVerdict(),
     hasPendingVerdict: !!pendingVerdict,
-    isConfirmingVerdict,
   });
 
   const reviewed = docFields.map(
@@ -515,12 +513,12 @@ export function ComparePage({
             : { complete: false },
           onFieldNavigate: navigateField,
           onVerdict: (verdict, chosenResponseId) =>
-            void handleVerdict(verdict, chosenResponseId),
+            void submitVerdictSingleFlight(verdict, chosenResponseId),
           pendingVerdict,
           onPrepareVerdict: preparePendingVerdict,
           onConfirmPendingVerdict: () => void confirmPendingVerdict(),
           onDiscardPendingVerdict: discardPendingVerdict,
-          isConfirmingVerdict,
+          isSavingVerdict,
           onMarkReviewed: () => void handleMarkReviewed(),
           comment,
           onCommentChange: setComment,
