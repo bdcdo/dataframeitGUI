@@ -1,4 +1,5 @@
 import { normalizeForComparison } from "@/lib/utils";
+import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import type {
@@ -57,21 +58,6 @@ export interface ReviewComputationContext {
 }
 
 /* ── Pure helpers ── */
-
-function isFieldStale(
-  answerFieldHashes: AnswerFieldHashes,
-  pydanticHash: string | null,
-  fieldName: string,
-  currentFieldHashes: Record<string, string>,
-  projectPydanticHash: string | null,
-): boolean {
-  if (answerFieldHashes) {
-    const saved = answerFieldHashes[fieldName];
-    const current = currentFieldHashes[fieldName];
-    return !saved || !current || saved !== current;
-  }
-  return !!projectPydanticHash && pydanticHash !== projectPydanticHash;
-}
 
 export function isAnswerCorrect(
   answer: unknown,
@@ -245,10 +231,7 @@ export async function fetchReviewBaseData(
   const docMap = new Map(
     documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
   );
-  const currentFieldHashes: Record<string, string> = {};
-  for (const f of fields) {
-    if (f.hash) currentFieldHashes[f.name] = f.hash;
-  }
+  const currentFieldHashes = buildFieldHashMap(fields);
 
   // Fetch profile names
   const respondentIds = new Set<string>();
@@ -342,13 +325,13 @@ export function computeReviewedDocuments(
 
       const respondentAnswers: RespondentAnswer[] = docResponses.map((r) => {
         const answer = r.answers[review.field_name];
-        const stale = isFieldStale(
-          r.answer_field_hashes,
-          r.pydantic_hash,
-          review.field_name,
-          ctx.currentFieldHashes,
-          ctx.projectPydanticHash,
-        );
+        const stale = isFieldStale({
+          answerFieldHashes: r.answer_field_hashes,
+          pydanticHash: r.pydantic_hash,
+          fieldName: review.field_name,
+          currentFieldHashes: ctx.currentFieldHashes,
+          projectPydanticHash: ctx.projectPydanticHash,
+        });
         const correct = isAnswerCorrect(answer, review.verdict, field.type);
         return {
           respondentKey: getRespondentKey(r),

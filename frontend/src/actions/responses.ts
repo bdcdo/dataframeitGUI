@@ -5,12 +5,23 @@ import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { dropHiddenConditionals } from "@/lib/conditional";
 import { mergeSubmittedAnswers } from "@/lib/answer-merge";
+import { buildFieldHashMap, mergeFieldHashes } from "@/lib/answer-staleness";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 export interface SaveResponseOpts {
   notes?: string;
   isAutoSave?: boolean;
+}
+
+// Response já existente do mesmo respondente para o mesmo documento. `answers`
+// e `answer_field_hashes` são lidos porque o save PRESERVA o que a leitura
+// descartou (#484) — ver `answersToPersist` em saveResponse.
+interface ExistingResponseRow {
+  id: string;
+  is_partial: boolean | null;
+  answers: Record<string, unknown> | null;
+  answer_field_hashes: AnswerFieldHashes;
 }
 
 // Fetch profile, existing response, and project config in parallel.
@@ -32,13 +43,13 @@ async function fetchSaveContext(
         .single(),
       supabase
         .from("responses")
-        .select("id, is_partial, answers")
+        .select("id, is_partial, answers, answer_field_hashes")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
         .eq("respondent_id", effectiveId)
         .eq("respondent_type", "humano")
         .eq("is_latest", true)
-        .maybeSingle(),
+        .maybeSingle<ExistingResponseRow>(),
       supabase
         .from("projects")
         .select(
@@ -56,14 +67,6 @@ async function fetchSaveContext(
   return { profile, existing, project, projErr, doc };
 }
 
-function buildAnswerFieldHashes(fields: PydanticField[]): Record<string, string> {
-  const hashes: Record<string, string> = {};
-  for (const f of fields) {
-    if (f.hash) hashes[f.name] = f.hash;
-  }
-  return hashes;
-}
-
 interface SaveResponseProjectFields {
   pydantic_hash: string | null;
   schema_version_major: number | null;
@@ -74,8 +77,8 @@ interface SaveResponseProjectFields {
 }
 
 interface BuildResponsePayloadParams {
-  fields: PydanticField[];
-  sanitizedAnswers: Record<string, unknown>;
+  answersToPersist: Record<string, unknown>;
+  answerFieldHashes: Record<string, string>;
   project: SaveResponseProjectFields | null | undefined;
   existing: { is_partial: boolean | null } | null | undefined;
   isAutoSave: boolean;
@@ -83,8 +86,8 @@ interface BuildResponsePayloadParams {
 }
 
 function buildResponsePayload({
-  fields,
-  sanitizedAnswers,
+  answersToPersist,
+  answerFieldHashes,
   project,
   existing,
   isAutoSave,
@@ -105,10 +108,10 @@ function buildResponsePayload({
   const isPartialToWrite = isAutoSave && existing?.is_partial !== false;
 
   const payload = {
-    answers: sanitizedAnswers,
+    answers: answersToPersist,
     justifications,
     pydantic_hash: project?.pydantic_hash ?? null,
-    answer_field_hashes: buildAnswerFieldHashes(fields),
+    answer_field_hashes: answerFieldHashes,
     schema_version_major: project?.schema_version_major ?? 0,
     schema_version_minor: project?.schema_version_minor ?? 1,
     schema_version_patch: project?.schema_version_patch ?? 0,
@@ -226,18 +229,35 @@ export async function saveResponse(
     // atuais; sem isto, salvar um campo apaga do banco o valor de outro que o
     // formulário nem chegou a exibir (#484). Os dois conjuntos são distintos de
     // propósito e NÃO devem ser unificados: `sanitizedAnswers` responde "o
-    // pesquisador respondeu o formulário atual?" e é o que segue alimentando
-    // isCodingComplete/automação em syncCodingAssignmentStatus, enquanto
-    // `answersToPersist` responde "o que sabemos sobre este documento?".
-    // Unificar faria um valor invisível na tela concluir a codificação sozinho.
+    // pesquisador respondeu o formulário atual?" e `answersToPersist` responde
+    // "o que sabemos sobre este documento?".
+    //
+    // Escopo da distinção: ela protege o gate INLINE abaixo
+    // (syncCodingAssignmentStatus), que recebe `sanitizedAnswers` e portanto não
+    // deixa um valor invisível na tela promover a codificação a concluída. Ela
+    // NÃO alcança quem avalia a completude retroativamente relendo do banco
+    // (auto-review-backlog, auto-comparison), que só enxerga o conjunto
+    // persistido e conta o valor herdado como resposta — ver #492.
     const answersToPersist = dropHiddenConditionals(
       fields,
-      mergeSubmittedAnswers(existing?.answers as Record<string, unknown> | null, sanitizedAnswers),
+      mergeSubmittedAnswers(existing?.answers, sanitizedAnswers),
+    );
+
+    // Campos cujo valor veio de `existing` sem passar pelo formulário atual.
+    // Carimbá-los com o hash de agora os faria passar por respostas ao schema
+    // vigente e apagaria o badge "desatualizada" justamente neles — ver
+    // mergeFieldHashes.
+    const inheritedFieldNames = Object.keys(answersToPersist).filter(
+      (name) => !(name in sanitizedAnswers),
     );
 
     const payload = buildResponsePayload({
-      fields,
-      sanitizedAnswers: answersToPersist,
+      answersToPersist,
+      answerFieldHashes: mergeFieldHashes(
+        existing?.answer_field_hashes ?? null,
+        buildFieldHashMap(fields),
+        inheritedFieldNames,
+      ),
       project,
       existing,
       isAutoSave,

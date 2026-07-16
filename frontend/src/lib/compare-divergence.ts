@@ -1,6 +1,7 @@
 import { normalizeForComparison } from "@/lib/utils";
 import { isFieldVisible } from "@/lib/conditional";
 import { buildResponseGroupKeys, type EquivalencePair } from "@/lib/equivalence";
+import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 interface ResponseLike {
@@ -15,16 +16,11 @@ interface ResponseLike {
   answerFieldHashes?: AnswerFieldHashes;
 }
 
-// True a menos que a response comprovadamente não tivesse o campo no schema
-// contra o qual foi codificada (answer_field_hashes presente, não-vazio e sem
-// a chave). Um objeto vazio é tratado como legacy: ou o projeto não tinha
-// campos, ou os PydanticFields não tinham `.hash` populado — em ambos os casos
-// não dá para inferir staleness, então a response permanece na comparação (não
-// excluir todos os campos silenciosamente).
+// Excluir da comparação um campo que a response não tinha evita um falso
+// "(vazio)" divergente. A regra vive em `fieldExistedWhenCoded`; aqui só
+// desembrulhamos o `ResponseLike`.
 function responseHadField(r: ResponseLike, fieldName: string): boolean {
-  if (!r.answerFieldHashes) return true;
-  if (Object.keys(r.answerFieldHashes).length === 0) return true;
-  return Object.prototype.hasOwnProperty.call(r.answerFieldHashes, fieldName);
+  return fieldExistedWhenCoded(r.answerFieldHashes, fieldName);
 }
 
 // Returns the names of fields whose responses diverge.
