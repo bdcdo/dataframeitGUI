@@ -596,8 +596,38 @@ export interface SchemaLogEntry {
   after_value: Record<string, unknown>;
 }
 
+// Sentinelas de `field_name` para entradas de auditoria cujo escopo é o projeto,
+// não um campo. `schema_change_log.field_name` é NOT NULL, então essas entradas
+// precisam de algum nome; os parênteses garantem que ele jamais colida com um
+// campo real, porque PYTHON_IDENTIFIER rejeita "(" (ver `pydanticFieldNameIssue`
+// em pydantic-field.ts). Quem reconstrói snapshots a partir do log precisa
+// pulá-las: elas não descrevem o estado de nenhum campo.
+export const PROJECT_LOG_FIELD_NAME = "(projeto)";
+export const ORDER_LOG_FIELD_NAME = "(ordem)";
+
+export function isProjectScopedLogEntry(fieldName: string): boolean {
+  return (
+    fieldName === PROJECT_LOG_FIELD_NAME || fieldName === ORDER_LOG_FIELD_NAME
+  );
+}
+
+// A ordem é comparada apenas entre os campos presentes nos dois lados: assim
+// adicionar ou remover um campo não é relatado como reordenação, e o que sobra
+// é a mudança de ordem propriamente dita.
+function commonFieldOrder(
+  fields: PydanticField[],
+  present: ReadonlyMap<string, PydanticField>,
+): string[] {
+  return fields.filter((f) => present.has(f.name)).map((f) => f.name);
+}
+
 // Monta as entradas de auditoria por campo (added / removed / modified)
 // comparando o estado antigo e o novo do schema.
+//
+// Reordenar campos também gera entrada: a ordem é auditável por si (define a
+// sequência em que o pesquisador responde as perguntas) e é o que sustenta a
+// invariante `classifyChange(...) != null ⇒ diffFields(...).length > 0`, exigida
+// por `commit_project_schema`, que recusa uma mudança de versão sem histórico.
 export function diffFields(
   oldFields: PydanticField[],
   newFields: PydanticField[],
@@ -706,6 +736,17 @@ export function diffFields(
         after_value: after,
       });
     }
+  }
+
+  const oldOrder = commonFieldOrder(oldFields, newMap);
+  const newOrder = commonFieldOrder(newFields, oldMap);
+  if (stableStringify(oldOrder) !== stableStringify(newOrder)) {
+    logEntries.push({
+      field_name: ORDER_LOG_FIELD_NAME,
+      change_summary: "ordem dos campos alterada",
+      before_value: { order: oldOrder },
+      after_value: { order: newOrder },
+    });
   }
 
   return logEntries;

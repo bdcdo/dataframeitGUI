@@ -13,6 +13,7 @@ import type {
 import {
   bumpVersion,
   planSchemaPersistence,
+  PROJECT_LOG_FIELD_NAME,
   type SchemaPersistencePlan,
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
@@ -182,11 +183,68 @@ function commitSnapshot(row: SchemaCommitRow): SchemaSnapshot | null {
   };
 }
 
-function mapCommitResult(
-  data: SchemaCommitRow | null,
-  error: { message: string } | null,
+type SchemaCommitRpc =
+  | "commit_project_schema"
+  | "approve_schema_suggestion"
+  | "apply_schema_backfill";
+
+interface SchemaRpcCopy {
+  generic: string;
+  byCode: Record<string, string>;
+}
+
+// As RAISE EXCEPTION das RPCs são de duas naturezas, e só uma delas interessa ao
+// usuário. Violação de contrato (22023, 23514, 42501: payload malformado, log
+// vazio, salto semver incompatível) um cliente correto não produz — a mensagem
+// do Postgres é diagnóstico de desenvolvedor, vai para o log do servidor, e o
+// usuário recebe copy genérica porque não há ação que ele possa tomar. Já P0001
+// descreve uma condição real de negócio e merece copy própria. O mapeamento é
+// por (rpc, código) e não só por código porque P0001 é ambíguo entre as RPCs:
+// significa "sugestão não pendente" numa e "cobertura mudou" na outra.
+const SCHEMA_RPC_COPY: Record<SchemaCommitRpc, SchemaRpcCopy> = {
+  commit_project_schema: {
+    generic: "Não foi possível salvar o schema. Tente novamente.",
+    byCode: {},
+  },
+  approve_schema_suggestion: {
+    generic: "Não foi possível aplicar a sugestão. Tente novamente.",
+    byCode: { P0001: "Sugestão não encontrada ou já resolvida." },
+  },
+  apply_schema_backfill: {
+    generic: "Não foi possível reconstruir o histórico. Tente novamente.",
+    byCode: {
+      P0001:
+        "Os dados do projeto mudaram durante a reconstrução. Tente novamente.",
+    },
+  },
+};
+
+interface SchemaRpcError {
+  code?: string;
+  message: string;
+}
+
+function mapRpcError(
+  rpc: SchemaCommitRpc,
+  error: SchemaRpcError,
 ): SchemaSaveResult {
-  if (error) return { status: "error", message: error.message };
+  const copy = SCHEMA_RPC_COPY[rpc];
+  const specific = error.code ? copy.byCode[error.code] : undefined;
+  if (!specific) {
+    console.error(`[schema] ${rpc} falhou`, {
+      code: error.code,
+      message: error.message,
+    });
+  }
+  return { status: "error", message: specific ?? copy.generic };
+}
+
+function mapCommitResult(
+  rpc: SchemaCommitRpc,
+  data: SchemaCommitRow | null,
+  error: SchemaRpcError | null,
+): SchemaSaveResult {
+  if (error) return mapRpcError(rpc, error);
   if (!data) {
     return { status: "error", message: "A operação não retornou o estado do schema." };
   }
@@ -328,7 +386,7 @@ function prepareSchemaCommit(
   };
 }
 
-function schemaCommitRpc(suggestionId?: string) {
+function schemaCommitRpc(suggestionId?: string): SchemaCommitRpc {
   return suggestionId ? "approve_schema_suggestion" : "commit_project_schema";
 }
 
@@ -366,9 +424,10 @@ async function persistSchema(
   const prepared = prepareSchemaCommit(fields, context, suggestionId);
   if ("result" in prepared) return prepared.result;
 
+  const rpc = schemaCommitRpc(suggestionId);
   const { data, error } = await supabase
     .rpc(
-      schemaCommitRpc(suggestionId),
+      rpc,
       schemaCommitArgs(
         projectId,
         expectedBaseline.revision,
@@ -378,7 +437,7 @@ async function persistSchema(
       ),
     )
     .single();
-  const result = mapCommitResult(data as SchemaCommitRow | null, error);
+  const result = mapCommitResult(rpc, data as SchemaCommitRow | null, error);
   if (result.status === "saved") revalidateSchemaConsumers(projectId);
   return result;
 }
@@ -569,7 +628,11 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
       })),
     })
     .single();
-  const commit = mapCommitResult(data as SchemaCommitRow | null, error);
+  const commit = mapCommitResult(
+    "apply_schema_backfill",
+    data as SchemaCommitRow | null,
+    error,
+  );
   if (commit.status === "error") return commit;
   if (commit.status === "conflict") return commit;
   revalidateSchemaConsumers(projectId);
@@ -601,7 +664,7 @@ export async function publishMajorVersion(
       p_version_patch: bumped.patch,
       p_change_type: "major",
       p_log_entries: [{
-        field_name: "(projeto)",
+        field_name: PROJECT_LOG_FIELD_NAME,
         change_summary: `Nova versão MAJOR publicada: ${versionString(bumped)}`,
         before_value: current,
         after_value: bumped,
@@ -609,7 +672,11 @@ export async function publishMajorVersion(
       p_changed_by: userId,
     })
     .single();
-  const result = mapCommitResult(data as SchemaCommitRow | null, error);
+  const result = mapCommitResult(
+    "commit_project_schema",
+    data as SchemaCommitRow | null,
+    error,
+  );
   if (result.status === "saved") revalidateSchemaConsumers(projectId);
   return result;
 }

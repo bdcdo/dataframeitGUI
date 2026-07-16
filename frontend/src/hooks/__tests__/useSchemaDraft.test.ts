@@ -27,14 +27,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const SCOPE = { projectId: "project-1", userId: "user-1" };
+
 function renderDraft(
   version = "0.1.0",
   revision = 1,
   fields = BASE_FIELDS,
+  scope = SCOPE,
 ) {
   return renderHook(() =>
     useSchemaDraft({
-      projectId: "project-1",
+      projectId: scope.projectId,
+      userId: scope.userId,
       initialFields: fields,
       currentVersion: version,
       currentRevision: revision,
@@ -52,13 +56,49 @@ function snapshot(
 
 function storedDraft(): SchemaDraftEnvelope | null {
   return parseSchemaDraft(
-    window.localStorage.getItem(schemaDraftStorageKey("project-1")),
+    window.localStorage.getItem(schemaDraftStorageKey(SCOPE)),
   );
 }
 
 function flushDebounce() {
   void act(() => vi.advanceTimersByTime(300));
 }
+
+// O localStorage é do navegador, não da sessão, e nada o limpa no logout. Numa
+// máquina compartilhada, um rascunho escopado só por projeto vazaria de um
+// coordenador para o outro — e quem salvasse assinaria no `schema_change_log`
+// uma mudança que o colega escreveu, porque `p_changed_by` vem do servidor.
+describe("useSchemaDraft — isolamento entre usuários", () => {
+  const OTHER = { projectId: "project-1", userId: "user-2" };
+
+  it("o rascunho de um usuário não é recuperado por outro no mesmo projeto", () => {
+    const first = renderDraft();
+    act(() => first.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    expect(storedDraft()).not.toBeNull();
+
+    const second = renderDraft("0.1.0", 1, BASE_FIELDS, OTHER);
+
+    expect(second.result.current.recoveredDraft).toBe(false);
+    expect(second.result.current.isDirty).toBe(false);
+    expect(second.result.current.fields).toEqual(BASE_FIELDS);
+  });
+
+  it("cada usuário tem sua própria chave e um não apaga o rascunho do outro", () => {
+    const first = renderDraft();
+    act(() => first.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+
+    const second = renderDraft("0.1.0", 1, BASE_FIELDS, OTHER);
+    act(() => second.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+
+    expect(Object.keys(window.localStorage).sort()).toEqual(
+      [schemaDraftStorageKey(SCOPE), schemaDraftStorageKey(OTHER)].sort(),
+    );
+    expect(storedDraft()).not.toBeNull();
+  });
+});
 
 describe("useSchemaDraft", () => {
   it("usa uma chave por projeto, salva com debounce e recupera o draft", () => {
@@ -70,7 +110,7 @@ describe("useSchemaDraft", () => {
     flushDebounce();
 
     expect(Object.keys(window.localStorage)).toEqual([
-      schemaDraftStorageKey("project-1"),
+      schemaDraftStorageKey(SCOPE),
     ]);
     expect(storedDraft()).toMatchObject({
       formatVersion: 4,
@@ -169,7 +209,7 @@ describe("useSchemaDraft", () => {
       fields: [{ ...BASE_FIELDS[0], help_text: "Outra aba" }],
     };
     window.localStorage.setItem(
-      schemaDraftStorageKey("project-1"),
+      schemaDraftStorageKey(SCOPE),
       JSON.stringify(otherTab),
     );
 
@@ -232,7 +272,7 @@ describe("useSchemaDraft", () => {
       fields: [{ ...EDITED_FIELDS[0], help_text: "Outra aba" }],
     };
     window.localStorage.setItem(
-      schemaDraftStorageKey("project-1"),
+      schemaDraftStorageKey(SCOPE),
       JSON.stringify(newer),
     );
 

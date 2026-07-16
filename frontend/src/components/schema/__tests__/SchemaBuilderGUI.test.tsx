@@ -41,7 +41,12 @@ describe("SchemaBuilderGUI — nomes únicos", () => {
     ]);
   });
 
-  it("não constrói estado duplicado ao renomear", async () => {
+  // Limitação conhecida, não comportamento desejado: o rename para um nome já
+  // existente é recusado para preservar a unicidade que `mergeSchemas` exige, e
+  // o efeito colateral é que o valor trava no último nome livre digitado ("q").
+  // O teste fixa o contrato atual para que a issue #473 (id estável no campo)
+  // tenha um ponto de partida explícito ao removê-lo.
+  it("recusa o rename que duplicaria outro campo (ver #473)", async () => {
     render(<ControlledBuilder initial={[field("q1"), field("q2")]} />);
     await userEvent.click(screen.getByRole("button", { name: /q2/i }));
     const input = screen.getByPlaceholderText("nome_do_campo");

@@ -8,6 +8,7 @@ import {
   computeFieldHash,
   bumpVersion,
   fieldDiffIsStructural,
+  isProjectScopedLogEntry,
   type ChangeType,
 } from "@/lib/schema-utils";
 import type { SchemaVersion } from "@/lib/compare-version";
@@ -167,8 +168,10 @@ export function reconstructSnapshotsByVersion(
     // Revert all entries at this version
     const group = entriesByVersion.get(key)!;
     for (const e of group) {
-      // Skip project-level entries (publishMajorVersion)
-      if (e.field_name === "(projeto)") continue;
+      // Entradas de escopo do projeto (publicação MAJOR, reordenação) não
+      // descrevem o estado de nenhum campo — reverter uma delas inventaria um
+      // campo com o nome do sentinel no snapshot.
+      if (isProjectScopedLogEntry(e.field_name)) continue;
       const isAdd = Object.keys(e.before).length === 0;
       const isRemove = Object.keys(e.after).length === 0;
       if (isAdd) {

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -32,6 +33,7 @@ const subscribeToNothing = () => () => {};
 
 interface UseSchemaDraftParams {
   projectId: string;
+  userId: string;
   initialFields: PydanticField[];
   currentVersion: string;
   currentRevision: number;
@@ -93,8 +95,20 @@ interface StorageDelete {
   deleted: boolean;
 }
 
-export function schemaDraftStorageKey(projectId: string): string {
-  return `${DRAFT_KEY_PREFIX}${projectId}`;
+// O rascunho pertence a um par usuário+projeto, nunca a um projeto sozinho: o
+// localStorage é do navegador, não da sessão, e nada o limpa no logout. Sem o
+// usuário na chave, dois coordenadores que dividem a mesma máquina veem o
+// rascunho um do outro — e, pior, quem salvar assina no `schema_change_log` uma
+// mudança que o outro escreveu, porque `p_changed_by` vem do `getAuthUser()` do
+// servidor. Receber o escopo inteiro (em vez de `projectId: string`) é o que
+// impede uma chave sem usuário de ser construída.
+export interface SchemaDraftScope {
+  projectId: string;
+  userId: string;
+}
+
+export function schemaDraftStorageKey(scope: SchemaDraftScope): string {
+  return `${DRAFT_KEY_PREFIX}${scope.userId}:${scope.projectId}`;
 }
 
 function sameRevision(
@@ -120,13 +134,13 @@ function stateBaseline(state: SchemaDraftState): SchemaSnapshot {
   return state.conflict.remote;
 }
 
-function readStoredDraft(projectId: string): StorageRead {
+function readStoredDraft(scope: SchemaDraftScope): StorageRead {
   if (typeof window === "undefined") return { available: false, draft: null };
   try {
     return {
       available: true,
       draft: parseSchemaDraft(
-        window.localStorage.getItem(schemaDraftStorageKey(projectId)),
+        window.localStorage.getItem(schemaDraftStorageKey(scope)),
       ),
     };
   } catch {
@@ -135,20 +149,20 @@ function readStoredDraft(projectId: string): StorageRead {
 }
 
 function writeDraftIfTokenMatches(
-  projectId: string,
+  scope: SchemaDraftScope,
   draft: SchemaDraftEnvelope,
   expectedToken: string | null,
 ): StorageWrite {
   if (typeof window === "undefined") return { status: "unavailable" };
   try {
     const stored = parseSchemaDraft(
-      window.localStorage.getItem(schemaDraftStorageKey(projectId)),
+      window.localStorage.getItem(schemaDraftStorageKey(scope)),
     );
     if ((stored?.writeToken ?? null) !== expectedToken) {
       return { status: "blocked" };
     }
     window.localStorage.setItem(
-      schemaDraftStorageKey(projectId),
+      schemaDraftStorageKey(scope),
       JSON.stringify(draft),
     );
     return { status: "written" };
@@ -158,19 +172,19 @@ function writeDraftIfTokenMatches(
 }
 
 function deleteDraftIfTokenMatches(
-  projectId: string,
+  scope: SchemaDraftScope,
   writeToken: string | null,
 ): StorageDelete {
   if (!writeToken) return { available: true, deleted: false };
   if (typeof window === "undefined") return { available: false, deleted: false };
   try {
     const stored = parseSchemaDraft(
-      window.localStorage.getItem(schemaDraftStorageKey(projectId)),
+      window.localStorage.getItem(schemaDraftStorageKey(scope)),
     );
     if (stored?.writeToken !== writeToken) {
       return { available: true, deleted: false };
     }
-    window.localStorage.removeItem(schemaDraftStorageKey(projectId));
+    window.localStorage.removeItem(schemaDraftStorageKey(scope));
     return { available: true, deleted: true };
   } catch {
     return { available: false, deleted: false };
@@ -239,16 +253,18 @@ function cleanState(
 
 function initialState({
   projectId,
+  userId,
   initialFields,
   currentVersion,
   currentRevision,
 }: UseSchemaDraftParams): SchemaDraftState {
+  const scope: SchemaDraftScope = { projectId, userId };
   const remote: SchemaSnapshot = {
     fields: initialFields,
     version: currentVersion,
     revision: currentRevision,
   };
-  const stored = readStoredDraft(projectId);
+  const stored = readStoredDraft(scope);
   if (!stored.draft) return cleanState(remote, stored.available);
 
   const draft = stored.draft;
@@ -259,7 +275,7 @@ function initialState({
   };
   if (sameRevision(draft.base, remote)) {
     if (sameFields(draft.fields, remote.fields)) {
-      const deleted = deleteDraftIfTokenMatches(projectId, draft.writeToken);
+      const deleted = deleteDraftIfTokenMatches(scope, draft.writeToken);
       return cleanState(remote, deleted.available);
     }
     return {
@@ -280,7 +296,7 @@ function initialState({
     };
   }
   if (sameFields(merge.fields, remote.fields)) {
-    const deleted = deleteDraftIfTokenMatches(projectId, draft.writeToken);
+    const deleted = deleteDraftIfTokenMatches(scope, draft.writeToken);
     return cleanState(remote, deleted.available);
   }
   const rebased = createDraft(merge.fields, remote);
@@ -288,20 +304,20 @@ function initialState({
     rebased,
     true,
     storage,
-    writeDraftIfTokenMatches(projectId, rebased, draft.writeToken),
+    writeDraftIfTokenMatches(scope, rebased, draft.writeToken),
   );
 }
 
 function stateAfterFieldsChange(
   current: SchemaDraftState,
   fields: PydanticField[],
-  projectId: string,
+  scope: SchemaDraftScope,
 ): SchemaDraftState {
   if (current.kind === "conflict") return current;
   const baseline = stateBaseline(current);
   if (sameFields(fields, baseline.fields)) {
     const deleted = deleteDraftIfTokenMatches(
-      projectId,
+      scope,
       current.storage.persistedToken,
     );
     return cleanState(baseline, deleted.available);
@@ -318,11 +334,11 @@ function stateAfterSave(
   current: SchemaDraftState,
   saved: SchemaSnapshot,
   submittedWriteToken: string | null,
-  projectId: string,
+  scope: SchemaDraftScope,
 ): SchemaDraftState {
   const fields = stateFields(current);
   if (sameFields(fields, saved.fields)) {
-    const deleted = deleteDraftIfTokenMatches(projectId, submittedWriteToken);
+    const deleted = deleteDraftIfTokenMatches(scope, submittedWriteToken);
     return cleanState(saved, deleted.available);
   }
   const draft = createDraft(fields, saved);
@@ -331,7 +347,7 @@ function stateAfterSave(
     false,
     current.storage,
     writeDraftIfTokenMatches(
-      projectId,
+      scope,
       draft,
       current.storage.persistedToken,
     ),
@@ -358,7 +374,7 @@ function localChangeForRemoteMerge(state: SchemaDraftState): {
 function stateAfterRemoteChange(
   current: SchemaDraftState,
   remote: SchemaSnapshot,
-  projectId: string,
+  scope: SchemaDraftScope,
 ): SchemaDraftState {
   if (remote.revision <= stateBaseline(current).revision) return current;
   const { draft, resolutions } = localChangeForRemoteMerge(current);
@@ -371,7 +387,7 @@ function stateAfterRemoteChange(
   if (unresolvedSchemaConflicts(merge).length === 0) {
     if (sameFields(merge.fields, remote.fields)) {
       const deleted = deleteDraftIfTokenMatches(
-        projectId,
+        scope,
         current.storage.persistedToken,
       );
       return cleanState(remote, deleted.available);
@@ -382,13 +398,13 @@ function stateAfterRemoteChange(
       true,
       current.storage,
       writeDraftIfTokenMatches(
-        projectId,
+        scope,
         rebased,
         current.storage.persistedToken,
       ),
     );
   }
-  const stored = readStoredDraft(projectId);
+  const stored = readStoredDraft(scope);
   const expectedToken = current.storage.persistedToken;
   const storedToken = stored.draft?.writeToken ?? null;
   const expectedDraftStillStored = storedToken === expectedToken;
@@ -442,7 +458,7 @@ function stateAfterConflictResolution(
 
 function stateAfterResolvedDraftApplication(
   current: SchemaDraftState,
-  projectId: string,
+  scope: SchemaDraftScope,
 ): { state: SchemaDraftState; applied: boolean } {
   if (
     current.kind !== "conflict" ||
@@ -453,7 +469,7 @@ function stateAfterResolvedDraftApplication(
   const { remote, merge } = current.conflict;
   if (sameFields(merge.fields, remote.fields)) {
     const deleted = deleteDraftIfTokenMatches(
-      projectId,
+      scope,
       current.storage.persistedToken,
     );
     return { state: cleanState(remote, deleted.available), applied: true };
@@ -465,7 +481,7 @@ function stateAfterResolvedDraftApplication(
       true,
       current.storage,
       writeDraftIfTokenMatches(
-        projectId,
+        scope,
         draft,
         current.storage.persistedToken,
       ),
@@ -476,11 +492,11 @@ function stateAfterResolvedDraftApplication(
 
 function stateAfterConflictDiscard(
   current: SchemaDraftState,
-  projectId: string,
+  scope: SchemaDraftScope,
 ): SchemaDraftState {
   if (current.kind !== "conflict") return current;
   const deleted = deleteDraftIfTokenMatches(
-    projectId,
+    scope,
     current.storage.persistedToken,
   );
   return cleanState(current.conflict.remote, deleted.available);
@@ -499,7 +515,7 @@ function pendingDraftWriteToken(state: SchemaDraftState): string | null {
 
 function persistDirtyState(
   current: SchemaDraftState,
-  projectId: string,
+  scope: SchemaDraftScope,
   writeToken?: string,
 ): SchemaDraftState {
   if (current.kind !== "dirty" || persistedDraft(current)) return current;
@@ -509,7 +525,7 @@ function persistDirtyState(
     current.recoveredDraft,
     current.storage,
     writeDraftIfTokenMatches(
-      projectId,
+      scope,
       current.draft,
       current.storage.persistedToken,
     ),
@@ -564,7 +580,14 @@ function useDraftPersistenceLifecycle(
 }
 
 export function useSchemaDraft(params: UseSchemaDraftParams) {
-  const { projectId, initialFields, currentVersion, currentRevision } = params;
+  const { projectId, userId, initialFields, currentVersion, currentRevision } =
+    params;
+  // Identidade estável: `scope` entra nas deps dos effects abaixo, e um objeto
+  // novo a cada render os re-dispararia a cada tecla.
+  const scope = useMemo<SchemaDraftScope>(
+    () => ({ projectId, userId }),
+    [projectId, userId],
+  );
   const isHydrated = useSyncExternalStore(
     subscribeToNothing,
     () => true,
@@ -581,9 +604,9 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
 
   const persistDraft = useCallback(
     (writeToken?: string) => {
-      setState(persistDirtyState(stateRef.current, projectId, writeToken));
+      setState(persistDirtyState(stateRef.current, scope, writeToken));
     },
-    [projectId, setState],
+    [scope, setState],
   );
 
   useEffect(() => {
@@ -594,22 +617,22 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
       stateAfterRemoteChange(
         stateRef.current,
         { fields: initialFields, version: currentVersion, revision: currentRevision },
-        projectId,
+        scope,
       ),
     );
-  }, [currentRevision, currentVersion, initialFields, persistDraft, projectId, setState]);
+  }, [currentRevision, currentVersion, initialFields, persistDraft, scope, setState]);
 
   useEffect(
     () => () => {
-      persistDirtyState(stateRef.current, projectId);
+      persistDirtyState(stateRef.current, scope);
     },
-    [projectId],
+    [scope],
   );
 
   const pendingWriteToken = pendingDraftWriteToken(state);
 
   const setFields = (fields: PydanticField[]) => {
-    setState(stateAfterFieldsChange(stateRef.current, fields, projectId));
+    setState(stateAfterFieldsChange(stateRef.current, fields, scope));
   };
 
   const prepareSubmission = (): SchemaDraftSubmission => {
@@ -622,13 +645,13 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
     submittedWriteToken: string | null,
   ) => {
     setState(
-      stateAfterSave(stateRef.current, saved, submittedWriteToken, projectId),
+      stateAfterSave(stateRef.current, saved, submittedWriteToken, scope),
     );
   };
 
   const registerRemoteConflict = (remote: SchemaSnapshot) => {
     persistDraft();
-    setState(stateAfterRemoteChange(stateRef.current, remote, projectId));
+    setState(stateAfterRemoteChange(stateRef.current, remote, scope));
   };
 
   const resolveConflict = (conflictId: string, choice: SchemaMergeChoice) => {
@@ -638,14 +661,14 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
   const applyResolvedDraft = (): boolean => {
     const result = stateAfterResolvedDraftApplication(
       stateRef.current,
-      projectId,
+      scope,
     );
     setState(result.state);
     return result.applied;
   };
 
   const discardConflictingDraft = () => {
-    setState(stateAfterConflictDiscard(stateRef.current, projectId));
+    setState(stateAfterConflictDiscard(stateRef.current, scope));
   };
 
   const fields = stateFields(state);

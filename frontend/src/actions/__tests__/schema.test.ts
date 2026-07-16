@@ -156,8 +156,36 @@ describe("saveSchemaFromGUI", () => {
 
     const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
 
-    expect(result).toEqual({ status: "error", message: "histórico indisponível" });
+    expect(result.status).toBe("error");
     expect("snapshot" in result).toBe(false);
+  });
+
+  // Violação de contrato (payload malformado, log vazio, semver incompatível) é
+  // diagnóstico de desenvolvedor: o usuário não tem ação possível e a UI é
+  // pt-BR. A mensagem crua do Postgres vai para o log do servidor, não ao toast.
+  it("erro de contrato da RPC não vaza a mensagem do Postgres", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = {
+      commit_project_schema: {
+        error: {
+          code: "22023",
+          message: "p_log_entries must be a non-empty JSON array",
+        },
+      },
+    };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Não foi possível salvar o schema. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[schema] commit_project_schema falhou",
+      expect.objectContaining({ code: "22023" }),
+    );
+    consoleError.mockRestore();
   });
 
   it("recusa schema vazio na fronteira canônica", async () => {
