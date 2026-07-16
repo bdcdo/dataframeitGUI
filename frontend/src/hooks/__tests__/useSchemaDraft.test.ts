@@ -414,6 +414,90 @@ describe("useSchemaDraft", () => {
     });
   });
 
+  // Resolver tudo escolhendo "remote" deixa o merge idêntico ao remoto: não
+  // sobrou intenção local nenhuma, então o rascunho deve sumir do storage em vez
+  // de ficar como um "não salvo" que não difere de nada.
+  it("resolver todos os conflitos a favor do remoto limpa o rascunho", () => {
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    const remoteFields = [{ ...BASE_FIELDS[0], description: "Pergunta remota" }];
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot(remoteFields, "0.1.1", 2),
+      ),
+    );
+
+    const conflictId = unresolvedSchemaConflicts(
+      view.result.current.conflict!.merge,
+    )[0].id;
+    act(() => view.result.current.resolveConflict(conflictId, "remote"));
+    act(() => expect(view.result.current.applyResolvedDraft()).toBe(true));
+
+    expect(view.result.current.conflict).toBeNull();
+    expect(view.result.current.isDirty).toBe(false);
+    expect(view.result.current.fields).toEqual(remoteFields);
+    expect(storedDraft()).toBeNull();
+  });
+
+  it("no mount, rascunho de revisão antiga é rebasado quando não há colisão", () => {
+    const first = renderDraft("0.1.0", 1);
+    act(() => first.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    first.unmount();
+
+    // A aba reabre já com uma revisão remota nova que mexeu em outra
+    // propriedade — nada colide, então o rascunho é reaproveitado sobre ela.
+    const remoteFields = [{ ...BASE_FIELDS[0], help_text: "Ajuda remota" }];
+    const second = renderDraft("0.1.1", 2, remoteFields);
+
+    expect(second.result.current.conflict).toBeNull();
+    expect(second.result.current.origin).toBe("rebased");
+    expect(second.result.current.fields).toEqual([
+      { ...EDITED_FIELDS[0], help_text: "Ajuda remota" },
+    ]);
+    expect(second.result.current.baseline).toEqual({ revision: 2 });
+    expect(storedDraft()?.base.revision).toBe(2);
+  });
+
+  it("no mount, rascunho já contemplado pela revisão remota é descartado", () => {
+    const first = renderDraft("0.1.0", 1);
+    act(() => first.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    first.unmount();
+
+    // Alguém salvou remotamente exatamente a mesma edição: não há trabalho local
+    // a preservar, e manter o rascunho mostraria "não salvo" sem diferença real.
+    const second = renderDraft("0.1.1", 2, EDITED_FIELDS);
+
+    expect(second.result.current.isDirty).toBe(false);
+    expect(second.result.current.origin).toBe("session");
+    expect(storedDraft()).toBeNull();
+  });
+
+  // O envelope é plantado direto no storage: o rascunho precisa EXISTIR e ser
+  // redundante para exercitar a limpeza. Chegar aqui pela UI não serve — reverter
+  // a edição já apaga o rascunho antes do unmount, e o mount cairia no ramo
+  // "não há rascunho", que é outro caminho.
+  it("no mount, rascunho redundante na mesma revisão é limpo do storage", () => {
+    const redundante: SchemaDraftEnvelope = {
+      formatVersion: 4,
+      writeToken: "rascunho-redundante",
+      base: snapshot(BASE_FIELDS, "0.1.0", 1),
+      fields: BASE_FIELDS,
+    };
+    window.localStorage.setItem(
+      schemaDraftStorageKey(SCOPE),
+      JSON.stringify(redundante),
+    );
+
+    const view = renderDraft("0.1.0", 1, BASE_FIELDS);
+
+    expect(view.result.current.isDirty).toBe(false);
+    expect(view.result.current.origin).toBe("session");
+    expect(storedDraft()).toBeNull();
+  });
+
   it("preserva a intenção local quando chega outra revisão durante o conflito", () => {
     const view = renderDraft();
     act(() => view.result.current.setFields(EDITED_FIELDS));
