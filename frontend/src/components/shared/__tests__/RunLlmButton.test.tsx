@@ -11,11 +11,9 @@ const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 
 vi.mock("@/lib/api", () => ({
   fetchFastAPI,
-  // Réplica do real: busca o token do template "supabase" e lança se vier nulo.
-  requireSupabaseToken: async (
-    gt: (opts: { template: string }) => Promise<string | null>,
-  ) => {
-    const t = await gt({ template: "supabase" });
+  // Réplica do real: busca o session token e lança se vier nulo.
+  requireSupabaseToken: async (gt: () => Promise<string | null>) => {
+    const t = await gt();
     if (!t) throw new Error("MissingAuthTokenError");
     return t;
   },
@@ -46,8 +44,10 @@ describe("RunLlmButton", () => {
     await userEvent.click(screen.getByRole("button"));
 
     await waitFor(() => expect(fetchFastAPI).toHaveBeenCalled());
-    // Token buscado com o template "supabase" (não o de sessão default)...
-    expect(getToken).toHaveBeenCalledWith({ template: "supabase" });
+    // Session token, sem template: o JWT template legado saiu (#348). Passar um
+    // `{ template }` aqui voltaria a gerar um token com `aud`, que o backend
+    // (que agora valida `iss`) não espera mais.
+    expect(getToken).toHaveBeenCalledWith();
     // ...e repassado como 3º argumento (Authorization: Bearer) ao fetch.
     const [path, opts, token] = fetchFastAPI.mock.calls[0];
     expect(path).toBe("/api/llm/run");

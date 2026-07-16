@@ -1,40 +1,36 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-/** Token do template "supabase" indisponível (deslogado, sessão expirada ou o
- * template não existe na instância do Clerk). Distinto de um 401 do backend:
- * aqui o request nem chega a sair, então o caller mostra uma causa acionável em
- * vez de um "API error: 401" genérico. */
+/** Session token indisponível (deslogado ou sessão expirada). Distinto de um 401
+ * do backend: aqui o request nem chega a sair, então o caller mostra uma causa
+ * acionável em vez de um "API error: 401" genérico. */
 class MissingAuthTokenError extends Error {
   constructor() {
-    super(
-      "Sessão indisponível ou template 'supabase' não configurado no Clerk.",
-    );
+    super("Sessão indisponível. Faça login novamente.");
     this.name = "MissingAuthTokenError";
   }
 }
 
-type GetToken = (opts: { template: string }) => Promise<string | null>;
+type GetToken = () => Promise<string | null>;
 
-/** Busca o JWT do template "supabase" e falha fechado (lança) quando vem nulo,
- * em vez de mandar um request sem `Authorization` que o backend rejeitaria com
- * um 401 ambíguo. Use em client components antes de cada request/poll. */
+/** Busca o session token do Clerk e falha fechado (lança) quando vem nulo, em
+ * vez de mandar um request sem `Authorization` que o backend rejeitaria com um
+ * 401 ambíguo. Use em client components antes de cada request/poll. */
 export async function requireSupabaseToken(getToken: GetToken): Promise<string> {
-  const token = await getToken({ template: "supabase" });
+  const token = await getToken();
   if (!token) throw new MissingAuthTokenError();
   return token;
 }
 
 /**
  * Chama o backend FastAPI. O backend exige `Authorization: Bearer <jwt>`
- * (token do Clerk, template "supabase") em todas as rotas autenticadas.
+ * (session token do Clerk) em todas as rotas autenticadas.
  *
  * O token NÃO é obtido aqui porque este helper roda tanto em server actions
  * quanto em client components — cada contexto pega o token de um jeito:
  *  - server actions: `fetchFastAPIServer` (lib/api-server.ts) via `auth()`;
- *  - client components: `useAuth().getToken({ template: "supabase" })`,
- *    passando o resultado em `token`.
- * O token do template expira rápido (~60s), então o caller deve buscar um
- * token fresco imediatamente antes de cada request (inclusive a cada poll).
+ *  - client components: `useAuth().getToken()`, passando o resultado em `token`.
+ * O session token expira rápido (~60s), então o caller deve buscar um token
+ * fresco imediatamente antes de cada request (inclusive a cada poll).
  */
 export async function fetchFastAPI<T>(
   path: string,
