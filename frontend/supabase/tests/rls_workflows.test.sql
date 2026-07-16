@@ -1697,6 +1697,195 @@ BEGIN
 END;
 $$;
 
+-- ========== Comparação concluída é histórico da rodada ==========
+--
+-- `assignments_one_active_comparacao_per_doc` admite UMA comparação ativa por
+-- documento; `concluido` fica fora do predicado. Um documento re-sorteado tem,
+-- portanto, o parecer antigo `concluido` convivendo com a comparação nova
+-- `pendente` — e qualquer RPC que regrida o antigo o reinsere no predicado,
+-- colidindo com o novo. O documento dedicado abaixo é o único do fixture com
+-- duas comparações: com uma só, toda regressão passa e o contrato fica vácuo.
+--
+-- Os claims precisam sair junto com o role: os guards de coluna decidem por
+-- `clerk_uid()`, não pelo papel corrente, e com o JWT de um teste anterior ainda
+-- setado a resposta do LLM abaixo seria lida como escrita humana.
+RESET ROLE;
+SELECT set_config('request.jwt.claims', '{}', true);
+INSERT INTO public.documents (id, project_id, title, text) VALUES
+  (
+    '83000000-0000-0000-0000-000000000011',
+    '82000000-0000-0000-0000-000000000001', 'Documento re-sorteado', 'texto'
+  );
+
+INSERT INTO public.responses (
+  id, project_id, document_id, respondent_id, respondent_type,
+  respondent_name, answers, justifications, is_latest, pydantic_hash,
+  schema_version_major, schema_version_minor, schema_version_patch,
+  version_inferred_from, answer_field_hashes
+) VALUES
+  (
+    '84000000-0000-0000-0000-000000000061',
+    '82000000-0000-0000-0000-000000000001',
+    '83000000-0000-0000-0000-000000000011',
+    '81000000-0000-0000-0000-000000000002', 'humano', 'Pesquisador',
+    '{"campo":"humano re-sorteado"}', '{}',
+    true, 'schema-a', 1, 0, 0, 'live_save', '{"campo":"hash-campo"}'
+  ),
+  (
+    '84000000-0000-0000-0000-000000000062',
+    '82000000-0000-0000-0000-000000000001',
+    '83000000-0000-0000-0000-000000000011',
+    NULL, 'llm', 'LLM',
+    '{"campo":"llm re-sorteado"}', '{}',
+    true, 'schema-a', 1, 0, 0, NULL, '{"campo":"hash-campo"}'
+  );
+
+INSERT INTO public.assignments (
+  project_id, document_id, user_id, status, type
+) VALUES
+  (
+    '82000000-0000-0000-0000-000000000001',
+    '83000000-0000-0000-0000-000000000011',
+    '81000000-0000-0000-0000-000000000002', 'pendente', 'comparacao'
+  );
+
+-- A rodada do 02: conclui o parecer registrando uma equivalência.
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}', true
+);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.assert_succeeds(
+  $sql$
+    SELECT public.submit_compare_review(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000011',
+      'campo', 'equivalente', NULL, NULL,
+      ARRAY[
+        '84000000-0000-0000-0000-000000000061',
+        '84000000-0000-0000-0000-000000000062'
+      ]::uuid[],
+      ARRAY[
+        '84000000-0000-0000-0000-000000000061',
+        '84000000-0000-0000-0000-000000000062'
+      ]::uuid[],
+      true
+    )
+  $sql$,
+  'parecer do 02 conclui com equivalência antes do re-sorteio'
+);
+RESET ROLE;
+SELECT set_config('request.jwt.claims', '{}', true);
+
+-- O re-sorteio: a comparação nova do 03 passa a ser a ativa do documento.
+INSERT INTO public.assignments (
+  project_id, document_id, user_id, status, type
+) VALUES
+  (
+    '82000000-0000-0000-0000-000000000001',
+    '83000000-0000-0000-0000-000000000011',
+    '81000000-0000-0000-0000-000000000003', 'pendente', 'comparacao'
+  );
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}', true
+);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.assert_succeeds(
+  $sql$
+    SELECT public.submit_compare_review(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000011',
+      'campo', 'humano', '84000000-0000-0000-0000-000000000061', NULL,
+      ARRAY[
+        '84000000-0000-0000-0000-000000000061',
+        '84000000-0000-0000-0000-000000000062'
+      ]::uuid[],
+      NULL,
+      false
+    )
+  $sql$,
+  'reabrir parecer histórico não derruba a gravação do review'
+);
+RESET ROLE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+       SELECT 1 FROM public.reviews
+       WHERE project_id = '82000000-0000-0000-0000-000000000001'
+         AND document_id = '83000000-0000-0000-0000-000000000011'
+         AND reviewer_id = '81000000-0000-0000-0000-000000000002'
+         AND verdict = 'humano'
+     ) THEN
+    RAISE EXCEPTION 'submit_compare_review não gravou o review sob parecer histórico';
+  END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM public.assignments
+       WHERE project_id = '82000000-0000-0000-0000-000000000001'
+         AND document_id = '83000000-0000-0000-0000-000000000011'
+         AND user_id = '81000000-0000-0000-0000-000000000002'
+         AND type = 'comparacao'
+         AND status = 'concluido'
+     ) THEN
+    RAISE EXCEPTION 'submit_compare_review regrediu parecer histórico com comparação ativa no documento';
+  END IF;
+END;
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}', true
+);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.assert_succeeds(
+  $sql$
+    SELECT public.remove_response_equivalence(
+      '82000000-0000-0000-0000-000000000001',
+      (
+        SELECT id FROM public.response_equivalences
+        WHERE project_id = '82000000-0000-0000-0000-000000000001'
+          AND document_id = '83000000-0000-0000-0000-000000000011'
+      )
+    )
+  $sql$,
+  'autor remove equivalência mesmo com outra comparação ativa no documento'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF EXISTS (
+       SELECT 1 FROM public.response_equivalences
+       WHERE project_id = '82000000-0000-0000-0000-000000000001'
+         AND document_id = '83000000-0000-0000-0000-000000000011'
+     ) THEN
+    RAISE EXCEPTION 'remoção de equivalência não apagou a linha sob comparação ativa';
+  END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM public.assignments
+       WHERE project_id = '82000000-0000-0000-0000-000000000001'
+         AND document_id = '83000000-0000-0000-0000-000000000011'
+         AND user_id = '81000000-0000-0000-0000-000000000002'
+         AND type = 'comparacao'
+         AND status = 'concluido'
+         AND completed_at IS NOT NULL
+     ) THEN
+    RAISE EXCEPTION 'remoção de equivalência regrediu parecer histórico com comparação ativa no documento';
+  END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM public.assignments
+       WHERE project_id = '82000000-0000-0000-0000-000000000001'
+         AND document_id = '83000000-0000-0000-0000-000000000011'
+         AND user_id = '81000000-0000-0000-0000-000000000003'
+         AND type = 'comparacao'
+         AND status = 'pendente'
+     ) THEN
+    RAISE EXCEPTION 'remoção de equivalência alterou a comparação ativa de terceiro';
+  END IF;
+END;
+$$;
+
 SELECT set_config(
   'request.jwt.claims',
   '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}', true

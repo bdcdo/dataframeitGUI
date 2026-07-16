@@ -2866,6 +2866,46 @@ $$;
 REVOKE ALL ON FUNCTION public.assert_current_field_responses(uuid, uuid, text, uuid[])
   FROM PUBLIC, anon, authenticated, service_role;
 
+-- Uma comparação ATIVA por documento é invariante de banco, imposta pelo índice
+-- parcial `assignments_one_active_comparacao_per_doc`: `concluido` fica FORA do
+-- predicado, então uma comparação concluída é histórico da rodada, não trabalho
+-- em aberto. Consequência para toda RPC que tire um assignment de `concluido`:
+-- a linha volta a entrar no predicado do índice e colide com a comparação ativa
+-- corrente do documento (23505).
+--
+-- O predicado abaixo repete o do índice de propósito — é a guarda PREVENTIVA,
+-- consultada antes do UPDATE. Capturar depois com `EXCEPTION WHEN
+-- unique_violation` não serve: aqui a violação chega tarde, quando o INSERT do
+-- review e os DELETEs da mesma transação já rodaram, e o rollback os levaria
+-- junto. Preferir o guard também é a escolha já registrada na migration que
+-- criou o índice.
+--
+-- Sob concorrência (outra transação inserindo a comparação ativa entre o SELECT
+-- e o UPDATE) o índice segue sendo o serializador de última instância e o 23505
+-- volta a ser possível; o guard elimina o caso determinístico, não a corrida.
+CREATE FUNCTION public.compare_doc_has_other_active_assignment(
+  p_project_id uuid,
+  p_document_id uuid,
+  p_assignment_id uuid
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.assignments AS other
+    WHERE other.project_id = p_project_id
+      AND other.document_id = p_document_id
+      AND other.type = 'comparacao'
+      AND other.id IS DISTINCT FROM p_assignment_id
+      AND other.status IS DISTINCT FROM 'concluido'
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.compare_doc_has_other_active_assignment(uuid, uuid, uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
+
 DROP FUNCTION IF EXISTS public.submit_compare_review(
   uuid, uuid, text, uuid, text, uuid, text, uuid[], uuid[]
 );
@@ -3024,13 +3064,25 @@ BEGIN
       AND comment.kind = 'ambiguity';
   END IF;
 
+  -- `p_complete_assignment = false` sobre um assignment já `concluido` é uma
+  -- REGRESSÃO: reinsere a linha no predicado do índice de comparação ativa. Se
+  -- o documento já tem outra comparação ativa, a concluída é histórico de uma
+  -- rodada anterior e permanece como está — sem o guard, o 23505 abortaria a
+  -- transação e derrubaria junto o review recém-gravado acima.
   UPDATE public.assignments AS assignment
   SET status = CASE WHEN p_complete_assignment THEN 'concluido' ELSE 'em_andamento' END,
       completed_at = CASE WHEN p_complete_assignment THEN transaction_timestamp() ELSE NULL END
   WHERE assignment.project_id = p_project_id
     AND assignment.document_id = p_document_id
     AND assignment.user_id = actor_id
-    AND assignment.type = 'comparacao';
+    AND assignment.type = 'comparacao'
+    AND (
+      p_complete_assignment
+      OR assignment.status IS DISTINCT FROM 'concluido'
+      OR NOT public.compare_doc_has_other_active_assignment(
+           p_project_id, p_document_id, assignment.id
+         )
+    );
 
   RETURN jsonb_build_object('reviewId', review_id);
 END;
@@ -3196,6 +3248,18 @@ BEGIN
     AND review.field_name = equivalence.field_name
     AND review.reviewer_id = actor_id;
 
+  -- Reabre apenas a comparação de quem removeu a equivalência. Reabrir a de
+  -- terceiros regrediria o parecer histórico de outro revisor e, com duas
+  -- concluídas no mesmo documento, as duas entrariam juntas no predicado do
+  -- índice de comparação ativa — violando-o uma contra a outra.
+  --
+  -- O guard cobre o caso restante: a concluída do próprio actor só reabre se o
+  -- documento não tiver outra comparação ativa. Com uma nova rodada já sorteada,
+  -- o parecer antigo permanece concluído por ser histórico.
+  --
+  -- `pendente` vs. `em_andamento` se decide pelo que sobra do actor no documento
+  -- APÓS o DELETE acima: qualquer review dele em outro campo mantém o trabalho
+  -- em andamento; nenhum, e a comparação volta ao início.
   UPDATE public.assignments AS assignment
   SET status = CASE
         WHEN EXISTS (
@@ -3203,23 +3267,19 @@ BEGIN
           FROM public.reviews AS review
           WHERE review.project_id = p_project_id
             AND review.document_id = equivalence.document_id
-            AND review.reviewer_id = assignment.user_id
+            AND review.reviewer_id = actor_id
         ) THEN 'em_andamento'
         ELSE 'pendente'
       END,
       completed_at = NULL
   WHERE assignment.project_id = p_project_id
     AND assignment.document_id = equivalence.document_id
+    AND assignment.user_id = actor_id
     AND assignment.type = 'comparacao'
     AND assignment.status = 'concluido'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM public.reviews AS review
-      WHERE review.project_id = p_project_id
-        AND review.document_id = equivalence.document_id
-        AND review.field_name = equivalence.field_name
-        AND review.reviewer_id = assignment.user_id
-    );
+    AND NOT public.compare_doc_has_other_active_assignment(
+          p_project_id, equivalence.document_id, assignment.id
+        );
 
   RETURN jsonb_build_object(
     'documentId', equivalence.document_id,
