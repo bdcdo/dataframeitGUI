@@ -26,7 +26,6 @@ import type {
   SchemaMergeChoice,
   SchemaMergeConflict,
 } from "@/lib/schema-merge";
-import { unresolvedSchemaConflicts } from "@/lib/schema-merge";
 
 interface SchemaEditorDialogsProps {
   backfillOpen: boolean;

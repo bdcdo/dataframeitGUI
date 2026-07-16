@@ -110,6 +110,21 @@ function generatedSchemaCode(
   return initialCode ?? "";
 }
 
+// Os dois helpers abaixo têm um chamador só, mas não são supérfluos: `SchemaEditor`
+// já é grande, e inliná-los empurra o ramo para dentro dele e estoura o gate de
+// complexidade cognitiva do fallow. Mantê-los aqui é o que segura o custo fora do
+// componente.
+function currentValidationErrors(
+  attempted: boolean,
+  fields: PydanticField[],
+): string[] {
+  return attempted ? validateGUIFields(fields) : [];
+}
+
+function pendingConflictCount(conflict: SchemaDraftConflict | null): number | null {
+  return conflict ? unresolvedSchemaConflicts(conflict.merge).length : null;
+}
+
 function SchemaEditor({
   projectId,
   userId,
@@ -315,13 +330,10 @@ function SchemaEditor({
     return <SchemaEditorLoadingState />;
   }
 
-  const guiErrors = validationAttempted ? validateGUIFields(fields) : [];
-  // Conflitos sem escolha; `null` quando não há conflito. O rodapé e o diálogo
-  // precisam do mesmo número, e recomputá-lo em cada um deixaria os dois livres
-  // para discordar.
-  const conflictCount = conflict
-    ? unresolvedSchemaConflicts(conflict.merge).length
-    : null;
+  const guiErrors = currentValidationErrors(validationAttempted, fields);
+  // O rodapé e o diálogo precisam do mesmo número; recomputá-lo em cada um
+  // deixaria os dois livres para discordar.
+  const conflictCount = pendingConflictCount(conflict);
 
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
