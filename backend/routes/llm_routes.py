@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self, TypeVar
 from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.concurrency import run_in_threadpool
 from pydantic import (
+    AfterValidator,
     BaseModel,
     Field,
     StringConstraints,
@@ -32,15 +33,6 @@ from services.supabase_client import get_supabase
 router = APIRouter()
 
 
-DocumentIds = Annotated[list[uuid.UUID], Field(min_length=1, max_length=10_000)]
-FieldName = Annotated[
-    str,
-    StringConstraints(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
-    ),
-]
 UniqueValue = TypeVar("UniqueValue", uuid.UUID, str)
 
 
@@ -50,21 +42,33 @@ def _ensure_unique(values: list[UniqueValue], field_name: str) -> list[UniqueVal
     return values
 
 
+def _reject_duplicate_document_ids(values: list[uuid.UUID]) -> list[uuid.UUID]:
+    return _ensure_unique(values, "document_ids")
+
+
+# Uniqueness travels with the type so both request models inherit it from one
+# place; only the reject reason (dunder names) differs for field_names below.
+DocumentIds = Annotated[
+    list[uuid.UUID],
+    Field(min_length=1, max_length=10_000),
+    AfterValidator(_reject_duplicate_document_ids),
+]
+FieldName = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    ),
+]
+
+
 class RunRequest(StrictRequestModel):
     project_id: uuid.UUID
     document_ids: DocumentIds | None = None
     filter_mode: Literal["all", "pending", "max_responses", "random_sample"] = "all"
     max_response_count: Annotated[int, Field(strict=True, ge=0, le=1_000)] | None = None
     sample_size: Annotated[int, Field(strict=True, ge=1, le=10_000)] | None = None
-
-    @field_validator("document_ids")
-    @classmethod
-    def document_ids_are_unique(
-        cls, value: list[uuid.UUID] | None
-    ) -> list[uuid.UUID] | None:
-        if value is None:
-            return None
-        return _ensure_unique(value, "document_ids")
 
     @model_validator(mode="after")
     def required_filter_parameter_present(self) -> Self:
@@ -82,15 +86,6 @@ class RunFieldRequest(StrictRequestModel):
     project_id: uuid.UUID
     field_names: Annotated[list[FieldName], Field(min_length=1, max_length=500)]
     document_ids: DocumentIds | None = None
-
-    @field_validator("document_ids")
-    @classmethod
-    def document_ids_are_unique(
-        cls, value: list[uuid.UUID] | None
-    ) -> list[uuid.UUID] | None:
-        if value is None:
-            return None
-        return _ensure_unique(value, "document_ids")
 
     @field_validator("field_names")
     @classmethod
