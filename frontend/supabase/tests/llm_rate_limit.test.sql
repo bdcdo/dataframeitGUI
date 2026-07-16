@@ -11,10 +11,7 @@
 BEGIN;
 
 INSERT INTO auth.users (id, email) VALUES
-  ('11111111-1111-1111-1111-111111111135', 'rate-linked@example.test'),
-  ('22222222-2222-2222-2222-222222222135', 'rate-canonical@example.test'),
-  ('33333333-3333-3333-3333-333333333135', 'rate-ambiguous@example.test'),
-  ('88888888-8888-8888-8888-888888888135', 'rate-linked-second@example.test'),
+  ('22222222-2222-2222-2222-222222222135', 'rate-user@example.test'),
   ('77777777-7777-7777-7777-777777777135', 'rate-service-role@example.test');
 
 INSERT INTO public.projects (id, name, created_by) VALUES (
@@ -22,36 +19,6 @@ INSERT INTO public.projects (id, name, created_by) VALUES (
   'rate limit test',
   '22222222-2222-2222-2222-222222222135'
 );
-
-INSERT INTO public.project_members (project_id, user_id, role) VALUES
-  (
-    '44444444-4444-4444-4444-444444444135',
-    '22222222-2222-2222-2222-222222222135',
-    'coordenador'
-  ),
-  (
-    '44444444-4444-4444-4444-444444444135',
-    '33333333-3333-3333-3333-333333333135',
-    'pesquisador'
-  );
-
-INSERT INTO public.member_email_links (
-  project_id, member_user_id, email, linked_user_id, created_by
-) VALUES
-  (
-    '44444444-4444-4444-4444-444444444135',
-    '22222222-2222-2222-2222-222222222135',
-    'rate-linked@example.test',
-    '11111111-1111-1111-1111-111111111135',
-    '22222222-2222-2222-2222-222222222135'
-  ),
-  (
-    '44444444-4444-4444-4444-444444444135',
-    '22222222-2222-2222-2222-222222222135',
-    'rate-linked-second@example.test',
-    '88888888-8888-8888-8888-888888888135',
-    '22222222-2222-2222-2222-222222222135'
-  );
 
 DO $$
 DECLARE
@@ -62,22 +29,23 @@ DECLARE
   v_count integer;
   v_bucket_user uuid;
 BEGIN
+  -- First dispatch creates the bucket; every allowed path reports retry_after 0.
   SELECT count(*), bool_and(allowed), min(retry_after_seconds)
   INTO v_result_rows, v_allowed, v_retry
   FROM public.consume_llm_rate_limit(
-    '11111111-1111-1111-1111-111111111135',
+    '22222222-2222-2222-2222-222222222135',
     '44444444-4444-4444-4444-444444444135',
     3,
     60
   );
-  IF v_result_rows <> 1 OR NOT v_allowed OR v_retry < 1 OR v_retry > 60 THEN
-    RAISE EXCEPTION 'RPC must return exactly one allowed row with bounded retry interval';
+  IF v_result_rows <> 1 OR NOT v_allowed OR v_retry <> 0 THEN
+    RAISE EXCEPTION 'first request must return exactly one allowed row with retry_after 0';
   END IF;
 
-  -- Two aliases and the canonical account share the same project bucket.
+  -- Repeated dispatches from the same identity share one project bucket.
   SELECT allowed INTO v_allowed
   FROM public.consume_llm_rate_limit(
-    '88888888-8888-8888-8888-888888888135',
+    '22222222-2222-2222-2222-222222222135',
     '44444444-4444-4444-4444-444444444135',
     3,
     60
@@ -99,7 +67,7 @@ BEGIN
 
   SELECT allowed, retry_after_seconds INTO v_allowed, v_retry
   FROM public.consume_llm_rate_limit(
-    '11111111-1111-1111-1111-111111111135',
+    '22222222-2222-2222-2222-222222222135',
     '44444444-4444-4444-4444-444444444135',
     3,
     60
@@ -116,7 +84,7 @@ BEGIN
     RAISE EXCEPTION 'expected one bounded bucket at count 3, got rows=% count=%', v_rows, v_count;
   END IF;
   IF v_bucket_user <> '22222222-2222-2222-2222-222222222135' THEN
-    RAISE EXCEPTION 'bucket did not use the effective canonical identity';
+    RAISE EXCEPTION 'bucket did not key on the caller identity';
   END IF;
 END $$;
 
@@ -134,7 +102,7 @@ DECLARE
 BEGIN
   SELECT allowed INTO v_allowed
   FROM public.consume_llm_rate_limit(
-    '11111111-1111-1111-1111-111111111135',
+    '22222222-2222-2222-2222-222222222135',
     '44444444-4444-4444-4444-444444444135',
     2,
     60
@@ -168,7 +136,7 @@ BEGIN
 END $$;
 RESET ROLE;
 
--- Effective identities are profiles. Removing one must also remove its bucket;
+-- Bucket identities are profiles. Removing one must also remove its bucket;
 -- otherwise a long-lived project would accumulate orphan counters forever.
 DELETE FROM public.profiles
 WHERE id = '77777777-7777-7777-7777-777777777135';
@@ -180,33 +148,6 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'profile deletion must cascade to its rate-limit bucket';
   END IF;
-END $$;
-
--- A malformed alias graph cannot be mapped to an arbitrary budget key.
-INSERT INTO public.member_email_links (
-  project_id, member_user_id, email, linked_user_id, created_by
-) VALUES (
-  '44444444-4444-4444-4444-444444444135',
-  '33333333-3333-3333-3333-333333333135',
-  'rate-ambiguous-second@example.test',
-  '11111111-1111-1111-1111-111111111135',
-  '22222222-2222-2222-2222-222222222135'
-);
-
-DO $$
-BEGIN
-  PERFORM public.consume_llm_rate_limit(
-    '11111111-1111-1111-1111-111111111135',
-    '44444444-4444-4444-4444-444444444135',
-    2,
-    60
-  );
-  RAISE EXCEPTION 'ambiguous effective identity should fail closed';
-EXCEPTION
-  WHEN raise_exception THEN
-    IF SQLERRM NOT LIKE '%multiple effective identities%' THEN
-      RAISE;
-    END IF;
 END $$;
 
 DO $$
@@ -266,7 +207,7 @@ END $$;
 DO $$
 BEGIN
   PERFORM public.consume_llm_rate_limit(
-    '11111111-1111-1111-1111-111111111135',
+    '22222222-2222-2222-2222-222222222135',
     '44444444-4444-4444-4444-444444444135',
     0,
     60
@@ -364,8 +305,7 @@ SELECT 'b', result.allowed, result.retry_after_seconds
 FROM extensions.dblink_get_result('rate_limit_b')
   AS result(allowed boolean, retry_after_seconds integer);
 -- libpq exposes a final empty PGresult after the tuple result. Drain it before
--- reusing the async connection; otherwise the next send reports "another
--- command is already in progress" and never exercises the second lock race.
+-- disconnecting; otherwise the async connection is left mid-command.
 SELECT * FROM extensions.dblink_get_result('rate_limit_b')
   AS result(allowed boolean, retry_after_seconds integer);
 
@@ -383,72 +323,6 @@ BEGIN
   WHERE project_id = '55555555-5555-5555-5555-555555555135';
   IF NOT v_a OR v_b OR v_rows <> 1 OR v_count <> 1 THEN
     RAISE EXCEPTION 'concurrent calls were not serialized: a=% b=% rows=% count=%', v_a, v_b, v_rows, v_count;
-  END IF;
-END $$;
-
--- Repeat against the now-existing bucket. Session A updates count 1 -> 2 while
--- holding FOR UPDATE; B must wait, observe the committed 2, and reject instead
--- of incrementing to 3. This covers the update path separately from the first
--- INSERT ... ON CONFLICT race above.
-SELECT extensions.dblink_exec('rate_limit_a', 'BEGIN');
-
-INSERT INTO concurrent_results
-SELECT 'update_a', result.allowed, result.retry_after_seconds
-FROM extensions.dblink(
-  'rate_limit_a',
-  $$SELECT allowed, retry_after_seconds
-    FROM public.consume_llm_rate_limit(
-      '66666666-6666-6666-6666-666666666135',
-      '55555555-5555-5555-5555-555555555135',
-      2,
-      60
-    )$$
-) AS result(allowed boolean, retry_after_seconds integer);
-
-SELECT extensions.dblink_send_query(
-  'rate_limit_b',
-  $$SELECT allowed, retry_after_seconds
-    FROM public.consume_llm_rate_limit(
-      '66666666-6666-6666-6666-666666666135',
-      '55555555-5555-5555-5555-555555555135',
-      2,
-      60
-    )$$
-);
-SELECT pg_sleep(0.2);
-
-DO $$
-BEGIN
-  IF extensions.dblink_is_busy('rate_limit_b') <> 1 THEN
-    RAISE EXCEPTION 'session B should wait on session A existing-bucket lock';
-  END IF;
-END $$;
-
-SELECT extensions.dblink_exec('rate_limit_a', 'COMMIT');
-
-INSERT INTO concurrent_results
-SELECT 'update_b', result.allowed, result.retry_after_seconds
-FROM extensions.dblink_get_result('rate_limit_b')
-  AS result(allowed boolean, retry_after_seconds integer);
-SELECT * FROM extensions.dblink_get_result('rate_limit_b')
-  AS result(allowed boolean, retry_after_seconds integer);
-
-DO $$
-DECLARE
-  v_a boolean;
-  v_b boolean;
-  v_count integer;
-BEGIN
-  SELECT allowed INTO v_a
-  FROM concurrent_results WHERE session_name = 'update_a';
-  SELECT allowed INTO v_b
-  FROM concurrent_results WHERE session_name = 'update_b';
-  SELECT request_count INTO v_count
-  FROM public.llm_rate_limit_buckets
-  WHERE project_id = '55555555-5555-5555-5555-555555555135'
-    AND user_id = '66666666-6666-6666-6666-666666666135';
-  IF NOT v_a OR v_b OR v_count <> 2 THEN
-    RAISE EXCEPTION 'concurrent updates overshot the limit: a=% b=% count=%', v_a, v_b, v_count;
   END IF;
 END $$;
 

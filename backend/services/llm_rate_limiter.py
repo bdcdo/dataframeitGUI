@@ -29,7 +29,8 @@ def _parse_decision(data: object) -> RateLimitDecision:
     retry_after = row.get("retry_after_seconds")
     if allowed.__class__ is not bool or retry_after.__class__ is not int:
         raise ValueError("consume_llm_rate_limit returned an invalid row shape")
-    if retry_after < 1:
+    # retry_after is only used to answer 429; allowed decisions return 0.
+    if not allowed and retry_after < 1:
         raise ValueError("consume_llm_rate_limit returned an invalid retry interval")
     return RateLimitDecision(allowed=allowed, retry_after_seconds=retry_after)
 
@@ -37,10 +38,9 @@ def _parse_decision(data: object) -> RateLimitDecision:
 def enforce_llm_rate_limit(project_id: str, user_id: str) -> None:
     """Consume one shared LLM dispatch token or reject the request.
 
-    The database function resolves project-scoped aliases to the canonical
-    member identity before locking the bucket. Any database or contract failure
-    rejects the dispatch before ``init_job`` so paid work never starts while the
-    limiter state is unknown.
+    The database function locks the ``(project_id, user_id)`` bucket atomically.
+    Any database or contract failure rejects the dispatch before ``init_job`` so
+    paid work never starts while the limiter state is unknown.
     """
 
     try:

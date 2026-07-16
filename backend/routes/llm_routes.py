@@ -67,13 +67,14 @@ class RunRequest(StrictRequestModel):
         return _ensure_unique(value, "document_ids")
 
     @model_validator(mode="after")
-    def filter_parameter_matches_mode(self) -> Self:
-        if (self.filter_mode == "random_sample") != (self.sample_size is not None):
-            raise ValueError("sample_size is required only for random_sample")
-        if (self.filter_mode == "max_responses") != (
-            self.max_response_count is not None
-        ):
-            raise ValueError("max_response_count is required only for max_responses")
+    def required_filter_parameter_present(self) -> Self:
+        # Only enforce that the parameter each mode needs is present. A parameter
+        # supplied for another mode is ignored downstream (run_llm reads each one
+        # solely in its own mode), so there is no reason to reject it here.
+        if self.filter_mode == "random_sample" and self.sample_size is None:
+            raise ValueError("sample_size is required for random_sample")
+        if self.filter_mode == "max_responses" and self.max_response_count is None:
+            raise ValueError("max_response_count is required for max_responses")
         return self
 
 

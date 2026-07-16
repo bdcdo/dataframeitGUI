@@ -102,14 +102,6 @@ def test_every_request_body_rejects_unknown_fields(
             "/api/llm/run",
             {
                 "project_id": PROJECT_ID,
-                "filter_mode": "all",
-                "sample_size": 1,
-            },
-        ),
-        (
-            "/api/llm/run",
-            {
-                "project_id": PROJECT_ID,
                 "filter_mode": "max_responses",
             },
         ),

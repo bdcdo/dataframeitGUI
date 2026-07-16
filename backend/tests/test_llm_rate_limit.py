@@ -107,7 +107,7 @@ def test_limiter_returns_clear_429_and_retry_after(monkeypatch) -> None:
         _RpcQuery(error=RuntimeError("database unavailable")),
         _RpcQuery(data=[]),
         _RpcQuery(data=[{"allowed": 1, "retry_after_seconds": 10}]),
-        _RpcQuery(data=[{"allowed": True, "retry_after_seconds": 0}]),
+        _RpcQuery(data=[{"allowed": False, "retry_after_seconds": 0}]),
     ],
 )
 def test_limiter_fails_closed_on_infrastructure_or_contract_error(
