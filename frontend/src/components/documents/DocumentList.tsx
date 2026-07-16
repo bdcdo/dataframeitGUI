@@ -10,6 +10,13 @@ import { Trash2, RotateCcw } from "lucide-react";
 import type { Document } from "@/lib/types";
 import { formatDate } from "@/lib/date-format";
 
+// `excluded_at` so existe em documento excluido; o traco e a convencao de
+// campo vazio da tabela. Mantido aqui, e nao no helper, porque e decisao de
+// apresentacao desta lista — o helper so formata.
+function formatExcludedAt(iso: string | null | undefined): string {
+  return iso ? formatDate(iso) : "—";
+}
+
 export type DocumentSummary = Pick<Document, "id" | "external_id" | "title"> & {
   responseCount?: number;
   excluded_at?: string | null;
@@ -152,7 +159,7 @@ export function DocumentList({
                 {showExcluded ? (
                   <>
                     <td className="px-4 py-2 whitespace-nowrap text-muted-foreground">
-                      {doc.excluded_at ? formatDate(doc.excluded_at) : "—"}
+                      {formatExcludedAt(doc.excluded_at)}
                     </td>
                     <td className="px-4 py-2 text-muted-foreground">
                       {doc.excluded_by_name || "—"}
