@@ -16,6 +16,7 @@ import {
   formatType,
   propertyLabel,
 } from "@/lib/schema-change-format";
+import { isProjectScopedLogEntry } from "@/lib/schema-utils";
 import type { SchemaChangeEntry, FieldCondition, SubfieldDef } from "@/lib/types";
 
 interface FieldChangeDiffProps {
@@ -28,10 +29,51 @@ const SUBFIELD_RULE_LABELS: Record<string, string> = {
   at_least_one: "Pelo menos um",
 };
 
+// Entradas de escopo de projeto — `(ordem)` e `(projeto)` — não descrevem o
+// estado de campo nenhum: seus before/after são `{order: [...]}` e
+// `{major, minor, patch}`. `diffPydanticField` não reconhece nenhuma dessas
+// chaves e devolve `[]`, e o corpo do diff então não abre — a mudança existia no
+// banco, era auditável, e a tela mostrava uma linha vazia com o nome e mais
+// nada. É o `change_summary` que as descreve, e este é o único lugar que o lê.
+function ProjectScopedChange({ entry }: { entry: SchemaChangeEntry }) {
+  const before = entry.beforeValue?.order;
+  const after = entry.afterValue?.order;
+  const isOrder = Array.isArray(before) && Array.isArray(after);
+
+  return (
+    <div className="flex items-start gap-2 rounded-md p-1">
+      <span
+        className="flex size-4 shrink-0 items-center justify-center text-muted-foreground"
+        aria-label="Mudança no projeto"
+      >
+        •
+      </span>
+      <div className="min-w-0 flex-1 space-y-1">
+        <span className="text-xs text-foreground">{entry.changeSummary}</span>
+        {/* A ordem precisa da SEQUÊNCIA, não do conjunto: numa reordenação pura
+            os dois lados têm exatamente os mesmos nomes, e um diff por
+            adicionados/removidos (como o de `options`) não teria o que mostrar. */}
+        {isOrder && (
+          <div className="font-mono text-[11px]">
+            <InlineDiff
+              before={(before as string[]).join(" → ")}
+              after={(after as string[]).join(" → ")}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDiffProps) {
   const kind = detectFieldChangeKind(entry);
   const diffs = diffPydanticField(entry.beforeValue, entry.afterValue);
   const [expanded, setExpanded] = useState(defaultExpanded);
+
+  if (isProjectScopedLogEntry(entry.fieldName)) {
+    return <ProjectScopedChange entry={entry} />;
+  }
 
   const beforeName =
     (entry.beforeValue?.name as string | undefined) ?? entry.fieldName;

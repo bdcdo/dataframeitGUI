@@ -20,9 +20,16 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { propertyLabel } from "@/lib/schema-change-format";
+import {
+  formatCondition,
+  formatTarget,
+  formatType,
+  propertyLabel,
+} from "@/lib/schema-change-format";
+import type { FieldCondition } from "@/lib/types";
 import type { SchemaDraftConflict } from "@/hooks/useSchemaDraft";
 import type {
+  MergeableFieldProperty,
   SchemaMergeChoice,
   SchemaMergeConflict,
 } from "@/lib/schema-merge";
@@ -91,6 +98,32 @@ function conflictChoiceValue(
     return choice === "local" ? conflict.localField : conflict.remoteField;
   }
   return choice === "local" ? conflict.localOrder : conflict.remoteOrder;
+}
+
+// As propriedades cujo valor cru não é a copy que o usuário lê em lugar nenhum
+// da UI. Sem isto o diálogo pedia que ele escolhesse entre `all` e `llm_only` —
+// termos do schema Pydantic, não do produto —, enquanto o histórico mostrava
+// "Todos" e "Só LLM" para a mesma mudança, pelos mesmos formatadores.
+const PROPERTY_FORMATTERS: Partial<
+  Record<MergeableFieldProperty, (value: unknown) => string>
+> = {
+  target: formatTarget,
+  type: formatType,
+  condition: (value) => formatCondition(value as FieldCondition | null),
+};
+
+function readableConflictValue(
+  conflict: SchemaMergeConflict,
+  choice: SchemaMergeChoice,
+): string {
+  const value = conflictChoiceValue(conflict, choice);
+  if (conflict.kind === "property") {
+    const format = PROPERTY_FORMATTERS[conflict.property];
+    // Só quando há valor: o formatador descreve o conteúdo, e "ausente" /
+    // "removido" são estados que `readableValue` já nomeia melhor.
+    if (format && value !== undefined && value !== null) return format(value);
+  }
+  return readableValue(value);
 }
 
 /** Dialogs de confirmação do editor de schema: backfill de histórico e MAJOR. */
@@ -198,7 +231,7 @@ export function SchemaEditorDialogs({
                             {choice === "local" ? "Minha alteração" : "Alteração salva"}
                           </span>
                           <span className="mt-1 block break-words text-xs text-muted-foreground">
-                            {readableValue(conflictChoiceValue(item, choice))}
+                            {readableConflictValue(item, choice)}
                           </span>
                         </span>
                       </label>

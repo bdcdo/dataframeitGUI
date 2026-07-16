@@ -80,4 +80,26 @@ describe("SchemaEditorDialogs — merge concorrente", () => {
     await userEvent.click(apply);
     expect(onApplyResolvedDraft).toHaveBeenCalledOnce();
   });
+
+  // `all` e `llm_only` são termos do schema Pydantic, não do produto: o diálogo
+  // pedia que o usuário escolhesse entre eles enquanto o histórico já mostrava
+  // "Todos" e "Só LLM" para a mesma mudança, pelos mesmos formatadores.
+  it("mostra o alvo pela copy do produto, não pelo valor cru", () => {
+    const localTarget = [{ ...base[0], target: "llm_only" as const }];
+    const remoteTarget = [{ ...base[0], target: "human_only" as const }];
+    renderDialogs({
+      draft: {
+        formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,
+        writeToken: "draft-1",
+        base: { fields: base, version: "0.1.0", revision: 1 },
+        fields: localTarget,
+      },
+      remote: { fields: remoteTarget, version: "0.2.0", revision: 2 },
+      merge: mergeSchemas(base, localTarget, remoteTarget),
+    });
+
+    expect(screen.getByText("Só LLM")).toBeTruthy();
+    expect(screen.getByText("Só humano")).toBeTruthy();
+    expect(screen.queryByText("llm_only")).toBeNull();
+  });
 });
