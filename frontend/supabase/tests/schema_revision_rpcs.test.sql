@@ -60,6 +60,14 @@ INSERT INTO public.projects (
     '[]',
     'class Analysis: pass',
     'hash-master'
+  ),
+  (
+    '82000000-0000-0000-0000-000000000007',
+    'schema service role test',
+    '81000000-0000-0000-0000-000000000001',
+    '[]',
+    'class Analysis: pass',
+    'hash-service'
   );
 
 INSERT INTO public.project_members (project_id, user_id, role) VALUES
@@ -152,6 +160,12 @@ GRANT SELECT, UPDATE ON public.responses TO authenticated;
 GRANT SELECT, UPDATE ON public.schema_suggestions TO authenticated;
 GRANT SELECT ON public.project_members TO authenticated;
 
+-- No remoto, `service_role` já tem DML no `public` por default privileges; o
+-- ambiente local não concede, então sem isto o teste de service_role falharia
+-- por uma lacuna do ambiente e não pelo comportamento sob teste.
+GRANT SELECT, UPDATE ON public.projects TO service_role;
+GRANT SELECT, INSERT ON public.schema_change_log TO service_role;
+
 CREATE TEMP TABLE schema_rpc_results (
   name text PRIMARY KEY,
   status text NOT NULL,
@@ -161,7 +175,7 @@ CREATE TEMP TABLE schema_rpc_results (
   minor int,
   patch int
 );
-GRANT SELECT, INSERT ON schema_rpc_results TO authenticated;
+GRANT SELECT, INSERT ON schema_rpc_results TO authenticated, service_role;
 
 -- ----- ACL -----
 DO $$
@@ -199,6 +213,44 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'OK ACL: RPCs de schema não estão expostas a anon';
+
+  -- As RPCs são SECURITY INVOKER e chamam `schema_write_gate` por dentro, então
+  -- o EXECUTE do gate é conferido contra o papel efetivo. `service_role` não
+  -- herda de `authenticated`: sem grant próprio no gate, o GRANT das RPCs
+  -- promete um caminho que morre em `permission denied` na primeira linha útil.
+  IF NOT has_function_privilege(
+    'service_role',
+    'public.schema_write_gate(uuid,bigint,integer,integer,integer)',
+    'EXECUTE'
+  ) OR NOT has_function_privilege(
+    'authenticated',
+    'public.schema_write_gate(uuid,bigint,integer,integer,integer)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU ACL: papel chamador sem EXECUTE em schema_write_gate';
+  END IF;
+
+  IF has_function_privilege(
+    'anon',
+    'public.schema_write_gate(uuid,bigint,integer,integer,integer)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU ACL: anon pode executar schema_write_gate';
+  END IF;
+
+  IF NOT has_function_privilege(
+    'service_role',
+    'public.commit_project_schema(uuid,bigint,jsonb,text,integer,integer,integer,text,jsonb,uuid)',
+    'EXECUTE'
+  ) OR NOT has_function_privilege(
+    'service_role',
+    'public.apply_schema_backfill(uuid,bigint,integer,integer,integer,jsonb,jsonb)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU ACL: service_role sem EXECUTE nas RPCs de schema';
+  END IF;
+
+  RAISE NOTICE 'OK ACL: service_role alcança o gate e as RPCs que o chamam';
 END;
 $$;
 
@@ -883,6 +935,71 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'OK master: bypass commita projeto onde não é membro nem criador';
+END;
+$$;
+
+-- ----- Service role escreve schema sem JWT: o gate interno tem que ser alcançável -----
+-- `apply-decisions.ts` chama `commit_project_schema` com a service key, sem JWT.
+-- Sem `clerk_uid()`, a autorização e a amarração de autoria são puladas de
+-- propósito — mas a RPC só chega lá se `service_role` puder executar o gate.
+-- A asserção de ACL acima é estática; esta percorre a chamada interna de fato.
+SELECT set_config('request.jwt.claims', '{}', true);
+SET LOCAL ROLE service_role;
+
+INSERT INTO schema_rpc_results
+SELECT 'commit-service-role', result.*
+FROM public.commit_project_schema(
+  '82000000-0000-0000-0000-000000000007',
+  0,
+  '[{"name":"service_field"}]',
+  'class Analysis: service',
+  0,
+  2,
+  0,
+  'minor',
+  '[{"field_name":"service_field","change_summary":"adicionado","before_value":{},"after_value":{"name":"service_field"}}]',
+  '81000000-0000-0000-0000-000000000001'
+) AS result;
+
+RESET ROLE;
+
+DO $$
+DECLARE
+  v_result schema_rpc_results%ROWTYPE;
+  v_project record;
+BEGIN
+  SELECT * INTO v_result
+  FROM schema_rpc_results
+  WHERE name = 'commit-service-role';
+
+  IF v_result.status <> 'saved' OR v_result.revision <> 1 THEN
+    RAISE EXCEPTION 'FALHOU service_role: retorno inesperado: %',
+      row_to_json(v_result);
+  END IF;
+
+  SELECT pydantic_fields, schema_revision INTO v_project
+  FROM public.projects
+  WHERE id = '82000000-0000-0000-0000-000000000007';
+
+  IF v_project.pydantic_fields <> '[{"name":"service_field"}]'::jsonb
+     OR v_project.schema_revision <> 1 THEN
+    RAISE EXCEPTION 'FALHOU service_role: projeto não recebeu a escrita: %',
+      row_to_json(v_project);
+  END IF;
+
+  -- Sem JWT não há autoria a conferir, então o payload assina o log. É o que
+  -- permite a um script de manutenção creditar a mudança a quem a decidiu.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.schema_change_log
+    WHERE project_id = '82000000-0000-0000-0000-000000000007'
+      AND changed_by = '81000000-0000-0000-0000-000000000001'
+      AND field_name = 'service_field'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU service_role: log não registrou a autoria do payload';
+  END IF;
+
+  RAISE NOTICE 'OK service_role: escrita de schema atravessa o gate sem JWT';
 END;
 $$;
 

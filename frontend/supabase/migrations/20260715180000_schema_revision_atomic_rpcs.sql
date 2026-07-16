@@ -164,12 +164,18 @@ BEGIN
 END;
 $$;
 
+-- `service_role` precisa do EXECUTE porque as RPCs que chamam este gate são
+-- SECURITY INVOKER: o privilégio da chamada interna é conferido contra o papel
+-- efetivo, e `service_role` não herda de `authenticated`. Sem isto, toda RPC de
+-- schema chamada com a service key morre em `permission denied` aqui dentro —
+-- e o caminho é projetado, não acidental: a guarda de autorização abaixo é
+-- pulada justamente quando `clerk_uid()` é nulo, que é o caso da service key.
 REVOKE ALL ON FUNCTION public.schema_write_gate(
   uuid, bigint, int, int, int
-) FROM PUBLIC;
+) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.schema_write_gate(
   uuid, bigint, int, int, int
-) TO authenticated;
+) TO authenticated, service_role;
 
 -- Commit único de projects + schema_change_log.
 CREATE OR REPLACE FUNCTION public.commit_project_schema(
