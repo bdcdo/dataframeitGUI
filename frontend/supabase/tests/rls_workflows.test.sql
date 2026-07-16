@@ -771,13 +771,158 @@ SELECT pg_temp.assert_affected_rows(
 );
 RESET ROLE;
 
+-- A conta vinculada submete o review e o comentário automático pela mesma RPC.
+-- O savepoint impede que o cenário de regressão da #474 altere as fixtures dos
+-- contratos seguintes.
+SAVEPOINT issue_474_alias_ambiguity;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000004"}', true
+);
+SET LOCAL ROLE authenticated;
+
+SELECT pg_temp.assert_rejected(
+  $sql$
+    INSERT INTO public.project_comments (
+      project_id, document_id, field_name, author_id, body, kind
+    ) VALUES (
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000001',
+      'campo',
+      '81000000-0000-0000-0000-000000000004',
+      'identidade física indevida',
+      'ambiguity'
+    )
+  $sql$,
+  'alias tentou criar comentário com a identidade física',
+  '42501',
+  '%authenticated comments require caller authorship%'
+);
+
+SELECT pg_temp.assert_succeeds(
+  $sql$
+    SELECT public.submit_compare_review(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000001',
+      'campo',
+      'ambiguo',
+      NULL,
+      '  duas leituras possíveis  ',
+      ARRAY[
+        '84000000-0000-0000-0000-000000000001',
+        '84000000-0000-0000-0000-000000000002'
+      ]::uuid[],
+      NULL,
+      false
+    )
+  $sql$,
+  'alias marcou o campo como ambíguo'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.reviews
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND field_name = 'campo'
+      AND reviewer_id = '81000000-0000-0000-0000-000000000002'
+      AND verdict = 'ambiguo'
+      AND comment = 'duas leituras possíveis'
+  ) THEN
+    RAISE EXCEPTION 'alias não gravou o review sob a identidade canônica';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.project_comments
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND field_name = 'campo'
+      AND author_id = '81000000-0000-0000-0000-000000000002'
+      AND kind = 'ambiguity'
+      AND body = 'Campo marcado como ambíguo na revisão (aba Comparar): duas leituras possíveis'
+  ) THEN
+    RAISE EXCEPTION 'alias não criou o comentário de ambiguidade canônico';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM public.project_comments
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND field_name = 'campo'
+      AND author_id = '81000000-0000-0000-0000-000000000004'
+      AND kind = 'ambiguity'
+  ) THEN
+    RAISE EXCEPTION 'comentário de ambiguidade ficou sob a identidade física do alias';
+  END IF;
+END;
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000004"}', true
+);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.assert_succeeds(
+  $sql$
+    SELECT public.submit_compare_review(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000001',
+      'campo',
+      'concordo',
+      '84000000-0000-0000-0000-000000000001',
+      NULL,
+      ARRAY[
+        '84000000-0000-0000-0000-000000000001',
+        '84000000-0000-0000-0000-000000000002'
+      ]::uuid[],
+      NULL,
+      false
+    )
+  $sql$,
+  'alias removeu a ambiguidade pelo mesmo contrato canônico'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.reviews
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND field_name = 'campo'
+      AND reviewer_id = '81000000-0000-0000-0000-000000000002'
+      AND verdict = 'concordo'
+  ) THEN
+    RAISE EXCEPTION 'alias não atualizou o review canônico';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM public.project_comments
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND field_name = 'campo'
+      AND kind = 'ambiguity'
+  ) THEN
+    RAISE EXCEPTION 'alias deixou comentário de ambiguidade órfão';
+  END IF;
+END;
+$$;
+
+ROLLBACK TO SAVEPOINT issue_474_alias_ambiguity;
+RELEASE SAVEPOINT issue_474_alias_ambiguity;
+
 DELETE FROM public.member_email_links
 WHERE project_id = '82000000-0000-0000-0000-000000000001'
   AND linked_user_id = '81000000-0000-0000-0000-000000000004';
 
 DO $$
 BEGIN
-  RAISE NOTICE 'OK acesso: 7 RPCs exigem projeto atual e alias usa identidade canônica';
+  RAISE NOTICE 'OK acesso: 7 RPCs exigem projeto atual e alias usa identidade canônica, inclusive na ambiguidade';
 END;
 $$;
 

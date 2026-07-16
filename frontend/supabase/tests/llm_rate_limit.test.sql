@@ -223,6 +223,9 @@ END $$;
 -- Real two-session proof: session B remains blocked while session A owns the
 -- new bucket row, then observes A's committed count and rejects at limit 1.
 CREATE EXTENSION IF NOT EXISTS dblink WITH SCHEMA extensions;
+-- `supabase db reset` may preinstall dblink in `public`; IF NOT EXISTS does not
+-- honor WITH SCHEMA for an extension that already exists.
+ALTER EXTENSION dblink SET SCHEMA extensions;
 CREATE TEMP TABLE concurrent_results (
   session_name text PRIMARY KEY,
   allowed boolean NOT NULL,
