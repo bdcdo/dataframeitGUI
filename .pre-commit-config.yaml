@@ -153,11 +153,19 @@ repos:
       # fallow audit: grafo do projeto (dead-code + complexidade + duplicacao)
       # escopado aos arquivos alterados. --gate new-only (default) so barra
       # achados INTRODUZIDOS — o baseline legado (56 dead-code, 121 clones, 260
-      # hotspots) fica grandfathered. Sem --base: o fallow usa a merge-base com
-      # origin/main (o `main` local costuma estar defasado). Ver doc.
+      # hotspots) fica grandfathered.
+      #
+      # --base origin/main e explicito de proposito. Sem ele, o default do fallow
+      # e a merge-base contra o UPSTREAM DA BRANCH, caindo para origin/main so
+      # quando nao ha upstream (ver `fallow audit --help`). Numa branch ja pushada
+      # o upstream e o head remoto dela, entao o gate passaria a medir apenas o
+      # delta desde o ultimo push — e, depois de mergear a main na branch, trataria
+      # os arquivos vindos da main como introduzidos aqui, barrando o push por
+      # achado alheio. Fixar em origin/main faz o gate responder a pergunta certa:
+      # o que ESTE PR introduz em relacao ao alvo do merge.
       - id: fallow-audit
         name: fallow audit (new findings block, pre-push)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/fallow && exec ./node_modules/.bin/fallow audit || { echo "fallow ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/fallow && exec ./node_modules/.bin/fallow audit --base origin/main || { echo "fallow ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(mts|ts|tsx)$
         pass_filenames: false
