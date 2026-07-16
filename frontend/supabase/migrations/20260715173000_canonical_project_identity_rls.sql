@@ -56,6 +56,17 @@ ALTER TABLE public.clerk_user_mapping
   ADD CONSTRAINT clerk_user_mapping_deleted_marker_check
   CHECK (NOT clerk_deleted OR access_sync_version = 0);
 
+-- Sem este backfill o DEFAULT 0 revogaria todo acesso no instante da migration:
+-- clerk_uid() exige access_sync_version >= 1, e is_master() deriva de
+-- clerk_uid(), então nem o master conseguiria reconciliar as contas presas. Os
+-- mappings pré-existentes já eram a fonte de verdade antes deste schema, então
+-- marcá-los como concluídos preserva o estado atual; a exigência de snapshot
+-- Clerk verificado passa a valer no próximo reconcile de cada conta. Roda antes
+-- de enforce_clerk_mapping_identity existir, que barraria este UPDATE.
+UPDATE public.clerk_user_mapping
+  SET access_sync_version = 1
+  WHERE NOT clerk_deleted;
+
 -- A ligação Clerk↔Supabase é permanente. Exclusão revoga o acesso sem liberar
 -- o UUID para outra conta; placeholders ainda não reclamados não têm mapping.
 CREATE OR REPLACE FUNCTION public.enforce_clerk_mapping_identity()
@@ -288,6 +299,23 @@ GRANT EXECUTE ON FUNCTION public.clerk_uid()
   TO anon, authenticated, service_role;
 
 -- ========== 1. Invariantes de member_email_links ==========
+-- A policy "Coordinators manage member_email_links" é FOR ALL sem WITH CHECK,
+-- então o Postgres reusa o USING no INSERT/UPDATE e um coordenador poderia
+-- gravar a linha direto pelo PostgREST, sem passar por
+-- write_member_email_link_with_identity_proof — isto é, vinculando uma conta
+-- qualquer como alias de um membro sem nenhuma prova de posse do e-mail, e
+-- passando a escrever como aquele membro. Os default privileges do Supabase
+-- concedem DML no schema public (é por isso que clerk_user_mapping e
+-- master_users revogam explicitamente), então o REVOKE é o que de fato torna a
+-- RPC o único caminho que cria ou altera um alias.
+--
+-- DELETE continua com authenticated: unlinkMemberEmail o usa pelo cliente de
+-- sessão, e apagar um vínculo só remove identidade — não confere nenhuma. A
+-- policy de coordenador já restringe o alcance ao próprio projeto. SELECT
+-- também fica: a leitura é decidida pela RLS.
+REVOKE INSERT, UPDATE ON public.member_email_links
+  FROM anon, authenticated;
+
 -- A migration aborta diante de dados malformados. Não há escolha automática
 -- de um alias "vencedor" nem remoção silenciosa de vínculos.
 DO $$
@@ -459,11 +487,12 @@ $$;
 -- linked_user_id é o primeiro campo porque todas as resoluções partem da
 -- conta autenticada. Vários e-mails da mesma conta podem apontar para o mesmo
 -- membro; o trigger serializado abaixo rejeita apenas targets distintos.
-CREATE INDEX member_email_links_linked_user_project_idx
+CREATE INDEX IF NOT EXISTS member_email_links_linked_user_project_idx
   ON public.member_email_links (linked_user_id, project_id)
   WHERE linked_user_id IS NOT NULL;
 
-DROP INDEX public.idx_member_email_links_linked_user;
+-- O índice antigo (linked_user_id sozinho) vira prefixo redundante do novo.
+DROP INDEX IF EXISTS public.idx_member_email_links_linked_user;
 
 -- Histórico concluído pode convergir para a mesma identidade após uma
 -- unificação. Enquanto a arbitragem está aberta, porém, autor e árbitro devem
@@ -548,14 +577,26 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
-  IF public.clerk_uid() IS NOT NULL
-     AND NEW.source_field_review_id
-       IS DISTINCT FROM OLD.source_field_review_id
+  IF public.clerk_uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- OLD não existe no INSERT, então os dois eventos não podem compartilhar a
+  -- mesma comparação: no INSERT qualquer valor não nulo já é reserva indevida.
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.source_field_review_id IS NOT NULL THEN
+      RAISE EXCEPTION
+        'source_field_review_id is reserved for automatic project comments'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF NEW.source_field_review_id
+          IS DISTINCT FROM OLD.source_field_review_id
   THEN
     RAISE EXCEPTION
       'source_field_review_id is reserved for automatic project comments'
       USING ERRCODE = '42501';
   END IF;
+
   RETURN NEW;
 END;
 $$;
@@ -566,7 +607,8 @@ REVOKE ALL ON FUNCTION public.enforce_project_comment_source_guard()
 DROP TRIGGER IF EXISTS enforce_project_comment_source_guard_trigger
   ON public.project_comments;
 CREATE TRIGGER enforce_project_comment_source_guard_trigger
-  BEFORE UPDATE OF source_field_review_id ON public.project_comments
+  BEFORE INSERT OR UPDATE OF source_field_review_id
+  ON public.project_comments
   FOR EACH ROW
   EXECUTE FUNCTION public.enforce_project_comment_source_guard();
 

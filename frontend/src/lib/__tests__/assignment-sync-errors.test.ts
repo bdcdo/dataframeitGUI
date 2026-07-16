@@ -34,31 +34,53 @@ function clientWithResults(results: Record<string, QueryResult>) {
 }
 
 describe("sync de assignment de auto-revisão", () => {
-  it("propaga falha da leitura de pendências", async () => {
+  it("propaga falha da operação atômica", async () => {
     const { syncAutoRevisaoAssignmentStatus: sync } = await import(
       "@/lib/auto-revisao-sync"
     );
     const client = clientWithResults({
-      "field_reviews:select": { error: { message: "leitura indisponível" } },
+      "rpc:sync_auto_review_assignment_status": {
+        error: { message: "sync indisponível" },
+      },
     });
 
-    await expect(
-      sync(client as never, "p1", "doc1", "member1", "2026-07-15T00:00:00Z"),
-    ).rejects.toThrow("leitura indisponível");
+    await expect(sync(client as never, "p1", "doc1", "member1")).rejects.toThrow(
+      "sync indisponível",
+    );
   });
 
-  it("propaga falha ao concluir o assignment", async () => {
+  // O fechamento não pode voltar a ser SELECT→UPDATE por fora da RPC: era essa
+  // a corrida que deixava o documento fora da fila com campo pendente vivo.
+  it("delega o fechamento à RPC, sem ler ou escrever tabelas direto", async () => {
     const { syncAutoRevisaoAssignmentStatus: sync } = await import(
       "@/lib/auto-revisao-sync"
     );
-    const client = clientWithResults({
-      "field_reviews:select": { data: [], error: null },
-      "assignments:update": { error: { message: "update indisponível" } },
-    });
+    const touchedTables: string[] = [];
+    const rpcCalls: { name: string; args: unknown }[] = [];
+    const client = {
+      rpc(name: string, args: unknown) {
+        rpcCalls.push({ name, args });
+        return Promise.resolve({ data: true, error: null });
+      },
+      from(table: string) {
+        touchedTables.push(table);
+        throw new Error(`acesso direto a ${table} fora da RPC`);
+      },
+    };
 
-    await expect(
-      sync(client as never, "p1", "doc1", "member1", "2026-07-15T00:00:00Z"),
-    ).rejects.toThrow("update indisponível");
+    await sync(client as never, "p1", "doc1", "member1");
+
+    expect(touchedTables).toEqual([]);
+    expect(rpcCalls).toEqual([
+      {
+        name: "sync_auto_review_assignment_status",
+        args: {
+          p_project_id: "p1",
+          p_document_id: "doc1",
+          p_user_id: "member1",
+        },
+      },
+    ]);
   });
 });
 

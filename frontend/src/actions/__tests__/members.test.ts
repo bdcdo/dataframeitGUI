@@ -125,7 +125,12 @@ vi.mock("next/cache", () => ({
 vi.mock("@/lib/auth", () => ({
   requireCoordinator: hoisted.requireCoordinator,
 }));
-vi.mock("@/lib/clerk-sync", () => ({
+// ClerkIdentityConflictError vem do módulo real: o instanceof que separa
+// conflito estrutural de falha transitória exige a mesma classe dos dois lados.
+vi.mock("@/lib/clerk-sync", async (importOriginal) => ({
+  ClerkIdentityConflictError: (
+    await importOriginal<typeof import("@/lib/clerk-sync")>()
+  ).ClerkIdentityConflictError,
   preregisterSupabaseUser: hoisted.preregister,
   reconcileVerifiedClerkEmailOwner: hoisted.reconcileClerkEmailOwner,
 }));
@@ -726,6 +731,27 @@ describe("addMember (pré-registro, spec 002)", () => {
         "Não foi possível verificar a posse atual do e-mail. Tente novamente.",
     });
     expect(adminCreateCalls).toBe(1);
+    expect(writeCalls).toEqual([]);
+  });
+
+  it("conflito estrutural de identidade não é oferecido como retry", async () => {
+    // "Tente novamente" num conflito que nunca resolve deixa o coordenador em
+    // loop; a mensagem precisa dizer o que está no caminho.
+    const { ClerkIdentityConflictError } = await import("@/lib/clerk-sync");
+    hoisted.reconcileClerkEmailOwner.mockRejectedValue(
+      new ClerkIdentityConflictError(
+        "Mais de uma conta Clerk possui o e-mail verificado",
+      ),
+    );
+    adminTableResults = {
+      profiles: { data: null },
+      member_email_links: { data: null },
+    };
+    const add = await loadAdd();
+
+    expect(await add("p1", "novo@exemplo.com", "pesquisador")).toEqual({
+      error: "Mais de uma conta Clerk possui o e-mail verificado",
+    });
     expect(writeCalls).toEqual([]);
   });
 

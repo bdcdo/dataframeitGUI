@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireCoordinator } from "@/lib/auth";
 import {
+  ClerkIdentityConflictError,
   preregisterSupabaseUser,
   reconcileVerifiedClerkEmailOwner,
 } from "@/lib/clerk-sync";
@@ -83,6 +84,12 @@ async function resolveVerifiedClerkEmailOwner(
       ...context,
       error,
     });
+    // Conflito estrutural não melhora com insistência: devolver "tente
+    // novamente" deixaria o coordenador repetindo um vínculo que nunca vai
+    // completar. A mensagem própria do erro descreve o que está no caminho.
+    if (error instanceof ClerkIdentityConflictError) {
+      return { status: "error", error: error.message };
+    }
     return {
       status: "error",
       error:

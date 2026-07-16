@@ -6,8 +6,23 @@ import { getVerifiedEmailIdentity } from "@/lib/clerk-primary-email";
 
 type SupabaseAdmin = ReturnType<typeof createSupabaseAdmin>;
 
+/**
+ * Conflito estrutural de identidade: o estado do Clerk e o do banco são
+ * coerentes entre si, mas incompatíveis com a operação pedida. Repetir a
+ * chamada produz o mesmo resultado, então quem trata precisa oferecer uma saída
+ * — não um "tente novamente". Falhas de rede, indisponibilidade e corridas
+ * continuam sendo Error comum, onde o retry faz sentido.
+ */
+export class ClerkIdentityConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClerkIdentityConflictError";
+  }
+}
+
 type SupabaseUserMapping = {
   supabaseUserId: string;
+  clerkDeleted: boolean;
 };
 
 type PreregisteredProfile = {
@@ -21,7 +36,7 @@ async function readSupabaseUserMapping(
 ): Promise<SupabaseUserMapping | null> {
   const { data, error } = await admin
     .from("clerk_user_mapping")
-    .select("supabase_user_id")
+    .select("supabase_user_id, clerk_deleted")
     .eq("clerk_user_id", clerkUserId)
     .maybeSingle();
   if (error) {
@@ -32,6 +47,7 @@ async function readSupabaseUserMapping(
   return data
     ? {
         supabaseUserId: data.supabase_user_id,
+        clerkDeleted: data.clerk_deleted,
       }
     : null;
 }
@@ -41,7 +57,9 @@ async function requireUnclaimedPlaceholder(
   profile: PreregisteredProfile,
 ): Promise<string> {
   if (profile.activated_at !== null) {
-    throw new Error("Este e-mail já pertence a uma conta ativa");
+    throw new ClerkIdentityConflictError(
+      "Este e-mail já pertence a uma conta ativa",
+    );
   }
 
   const { data: mapping, error } = await admin
@@ -53,7 +71,9 @@ async function requireUnclaimedPlaceholder(
     throw new Error(`Erro ao verificar mapping Clerk: ${error.message}`);
   }
   if (mapping) {
-    throw new Error("Este pré-registro já pertence a uma conta Clerk");
+    throw new ClerkIdentityConflictError(
+      "Este pré-registro já pertence a uma conta Clerk",
+    );
   }
   return profile.id;
 }
@@ -149,7 +169,7 @@ async function claimSupabaseUserMapping(
   admin: SupabaseAdmin,
   clerkUserId: string,
   email: string,
-): Promise<SupabaseUserMapping | null> {
+): Promise<string | null> {
   const { data, error } = await admin.rpc("claim_clerk_supabase_identity", {
     p_clerk_user_id: clerkUserId,
     p_email: email,
@@ -157,16 +177,18 @@ async function claimSupabaseUserMapping(
   if (error) {
     throw new Error(`Erro ao vincular identidade Clerk: ${error.message}`);
   }
-  return data ? { supabaseUserId: data as string } : null;
+  return (data as string | null) ?? null;
 }
 
+// `existing` vem do chamador, que já precisou ler o mapping para decidir se a
+// conta foi excluída; reler aqui custaria uma consulta por reconciliação.
 async function ensureSupabaseUserMapping(
   admin: SupabaseAdmin,
   clerkUserId: string,
   email: string,
-): Promise<SupabaseUserMapping> {
-  const existing = await readSupabaseUserMapping(admin, clerkUserId);
-  if (existing) return existing;
+  existing: SupabaseUserMapping | null,
+): Promise<string> {
+  if (existing) return existing.supabaseUserId;
 
   // A RPC serializa o claim com as demais operações de identidade. Só um
   // placeholder pendente e ainda sem mapping pode ser reclamado; profiles
@@ -254,13 +276,23 @@ async function reconcileCurrentClerkUserAccess(
 > {
   const emailIdentity = getVerifiedEmailIdentity(user);
   const admin = createSupabaseAdmin();
+  const existingMapping = await readSupabaseUserMapping(admin, user.id);
+
+  // Exclusão de conta é terminal e o Svix não garante ordem de entrega: um
+  // user.updated enfileirado antes do user.deleted ainda pode chegar depois.
+  // Sem este corte, applyClerkAccessSnapshot recusaria o snapshot pela guarda
+  // de conta excluída, as duas tentativas devolveriam "superseded" e o webhook
+  // responderia 500 em ciclo de retry para um evento que deveria ser no-op.
+  if (existingMapping?.clerkDeleted) {
+    return { status: "applied", supabaseUserId: null };
+  }
+
   if (!emailIdentity) {
-    const mapping = await readSupabaseUserMapping(admin, user.id);
-    if (mapping) {
+    if (existingMapping) {
       const applied = await applyClerkAccessSnapshot(
         admin,
         user,
-        mapping.supabaseUserId,
+        existingMapping.supabaseUserId,
         [],
         false,
       );
@@ -269,15 +301,16 @@ async function reconcileCurrentClerkUserAccess(
     return { status: "applied", supabaseUserId: null };
   }
 
-  const mapping = await ensureSupabaseUserMapping(
+  const supabaseUserId = await ensureSupabaseUserMapping(
     admin,
     user.id,
     emailIdentity.primaryEmail,
+    existingMapping,
   );
   const applied = await applyClerkAccessSnapshot(
     admin,
     user,
-    mapping.supabaseUserId,
+    supabaseUserId,
     emailIdentity.verifiedEmails,
     true,
   );
@@ -287,10 +320,10 @@ async function reconcileCurrentClerkUserAccess(
   // disparado por esta escrita observa o mesmo UID e não escreve metadata de
   // novo, encerrando o ciclo de webhook.
   const observedSupabaseUid = user.publicMetadata.supabase_uid;
-  if (observedSupabaseUid !== mapping.supabaseUserId) {
-    await persistSupabaseUidInClerkMetadata(user.id, mapping.supabaseUserId);
+  if (observedSupabaseUid !== supabaseUserId) {
+    await persistSupabaseUidInClerkMetadata(user.id, supabaseUserId);
   }
-  return { status: "applied", supabaseUserId: mapping.supabaseUserId };
+  return { status: "applied", supabaseUserId };
 }
 
 export async function reconcileClerkUserAccess(
@@ -407,7 +440,9 @@ export async function reconcileVerifiedClerkEmailOwner(
     getVerifiedEmailIdentity(user)?.verifiedEmails.includes(email),
   );
   if (owners.length > 1) {
-    throw new Error("Mais de uma conta Clerk possui o e-mail verificado");
+    throw new ClerkIdentityConflictError(
+      "Mais de uma conta Clerk possui o e-mail verificado",
+    );
   }
   const owner = owners[0];
   if (!owner) return { status: "unowned" };
@@ -424,7 +459,9 @@ export async function reconcileVerifiedClerkEmailOwner(
     if (!result) return { status: "changed" };
     if (result.status === "applied") {
       if (!result.supabaseUserId) {
-        throw new Error("Snapshot verificado sem identidade Supabase");
+        throw new ClerkIdentityConflictError(
+          "Snapshot verificado sem identidade Supabase",
+        );
       }
       return {
         status: "resolved",

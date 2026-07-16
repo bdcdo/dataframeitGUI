@@ -2810,4 +2810,58 @@ BEGIN
 END;
 $$;
 
+-- ========== A prova de identidade é o único caminho de escrita ==========
+-- A policy "Coordinators manage member_email_links" é FOR ALL sem WITH CHECK,
+-- então a RLS sozinha liberaria o INSERT/UPDATE direto pelo PostgREST e um
+-- coordenador vincularia qualquer conta como alias de qualquer membro sem
+-- prova de posse do e-mail. Quem fecha isso é o REVOKE, não a policy.
+--
+-- O privilégio é interrogado com has_table_privilege em vez de tentar o INSERT
+-- porque este ambiente não concede DML do schema public por padrão, ao
+-- contrário do Supabase remoto: um INSERT recusado aqui passaria mesmo sem o
+-- REVOKE, e o teste seria cego justamente ao caso de produção.
+DO $$
+BEGIN
+  IF has_table_privilege(
+    'authenticated', 'public.member_email_links', 'INSERT'
+  ) THEN
+    RAISE EXCEPTION
+      'FALHOU prova de identidade: authenticated pode inserir alias direto';
+  END IF;
+
+  IF has_table_privilege(
+    'authenticated', 'public.member_email_links', 'UPDATE'
+  ) THEN
+    RAISE EXCEPTION
+      'FALHOU prova de identidade: authenticated pode alterar alias direto';
+  END IF;
+
+  IF has_table_privilege('anon', 'public.member_email_links', 'INSERT')
+     OR has_table_privilege('anon', 'public.member_email_links', 'UPDATE')
+  THEN
+    RAISE EXCEPTION
+      'FALHOU prova de identidade: anon pode gravar alias';
+  END IF;
+
+  -- A RPC é SECURITY DEFINER, então o REVOKE acima não a alcança: ela continua
+  -- sendo o caminho legítimo de criação/alteração de vínculo.
+  IF NOT has_function_privilege(
+    'authenticated',
+    'public.write_member_email_link_with_identity_proof'
+      || '(UUID, UUID, TEXT, UUID, UUID, UUID, UUID, BIGINT)',
+    'EXECUTE'
+  ) AND NOT has_function_privilege(
+    'service_role',
+    'public.write_member_email_link_with_identity_proof'
+      || '(UUID, UUID, TEXT, UUID, UUID, UUID, UUID, BIGINT)',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION
+      'FALHOU prova de identidade: nenhum role pode executar a RPC de vínculo';
+  END IF;
+
+  RAISE NOTICE 'OK: alias só nasce pela RPC de prova de identidade';
+END;
+$$;
+
 ROLLBACK;

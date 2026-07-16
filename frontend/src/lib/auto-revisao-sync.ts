@@ -1,35 +1,20 @@
 import "server-only";
 
-import type { createSupabaseAdmin } from "@/lib/supabase/admin";
+import type { SupabaseServerClient } from "@/lib/supabase/server";
 
-// Marca o assignment auto_revisao como concluido APENAS quando nao sobra
-// nenhum field_review pendente do doc — o envio e parcial, entao um submit
-// de subconjunto nao pode tirar o doc da fila.
+// A RPC serializa a liberação/reabertura concorrente e o fechamento pela mesma
+// chave; SELECT→UPDATE em requests separados poderia esconder um campo pendente
+// novo e tirar o documento da fila com trabalho por fazer.
 export async function syncAutoRevisaoAssignmentStatus(
-  admin: ReturnType<typeof createSupabaseAdmin>,
+  supabase: SupabaseServerClient,
   projectId: string,
   documentId: string,
   userId: string,
-  now: string,
 ): Promise<void> {
-  const { data: stillPending, error: pendingError } = await admin
-    .from("field_reviews")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .eq("self_reviewer_id", userId)
-    .is("self_verdict", null)
-    .limit(1);
-  if (pendingError) throw new Error(pendingError.message);
-
-  if (!stillPending || stillPending.length === 0) {
-    const { error: updateError } = await admin
-      .from("assignments")
-      .update({ status: "concluido", completed_at: now })
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("user_id", userId)
-      .eq("type", "auto_revisao");
-    if (updateError) throw new Error(updateError.message);
-  }
+  const { error } = await supabase.rpc("sync_auto_review_assignment_status", {
+    p_project_id: projectId,
+    p_document_id: documentId,
+    p_user_id: userId,
+  });
+  if (error) throw new Error(error.message);
 }

@@ -505,26 +505,14 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
 });
 
 describe("submitAutoReview — envio parcial e conclusão do assignment", () => {
-  const assignmentWasCompleted = () =>
-    Boolean(
-      updateCallsOf("assignments").find(
-        (u) => (u.payload as Record<string, unknown>).status === "concluido",
-      ),
-    );
-
-  it.each([
-    {
-      label: "ainda há campo pendente",
-      pending: [{ id: "fr2" }],
-      expectedCompletion: false,
-    },
-    {
-      label: "nenhum campo pendente restante",
-      pending: [],
-      expectedCompletion: true,
-    },
-  ])("$label", async ({ pending, expectedCompletion }) => {
-    tableData.field_reviews_pending = pending;
+  // Se sobra campo pendente é decisão da RPC, que resolve num único statement
+  // sob lock. A action não pode reintroduzir o SELECT→UPDATE por fora: era
+  // nessa janela que um campo liberado no meio sumia da fila do pesquisador.
+  // A regra em si é coberta por supabase/tests/auto_review_assignment_sync.test.sql.
+  it("delega o fechamento à RPC com a identidade canônica do ator", async () => {
+    // Conta-alias: a fila pertence ao membro canônico, não ao UUID da sessão.
+    // Fechar por accountUserId deixaria o documento preso na fila (issue #416).
+    auth.resolveMemberUserId.mockResolvedValue("canonical-member");
 
     const result = await submitAutoReview({
       fieldName: "q1",
@@ -532,7 +520,23 @@ describe("submitAutoReview — envio parcial e conclusão do assignment", () => 
     });
 
     expect(result.success).toBe(true);
-    expect(assignmentWasCompleted()).toBe(expectedCompletion);
+    expect(
+      rpcCalls.find((c) => c.fn === "sync_auto_review_assignment_status")?.args,
+    ).toEqual({
+      p_project_id: "p1",
+      p_document_id: "doc1",
+      p_user_id: "canonical-member",
+    });
+  });
+
+  it("não conclui o assignment por fora da RPC", async () => {
+    await submitAutoReview({ fieldName: "q1", verdict: "admite_erro" });
+
+    expect(
+      updateCallsOf("assignments").filter(
+        (u) => (u.payload as Record<string, unknown>).status === "concluido",
+      ),
+    ).toEqual([]);
   });
 });
 

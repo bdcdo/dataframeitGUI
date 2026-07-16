@@ -10,7 +10,11 @@ let createUserResult: {
   error: { message: string } | null;
 };
 let mappingReadResult: {
-  data: { supabase_user_id: string; access_sync_version: number } | null;
+  data: {
+    supabase_user_id: string;
+    access_sync_version: number;
+    clerk_deleted?: boolean;
+  } | null;
   error: { message: string } | null;
 };
 let linkRpcError: { message: string } | null;
@@ -374,6 +378,27 @@ describe("reconcileClerkUserAccess (mapping Clerk-Supabase)", () => {
     );
 
     expectSnapshotAttemptWithoutMetadataPublication();
+  });
+
+  it("user.updated atrasado após exclusão não reabre o ciclo de reconciliação", async () => {
+    // O Svix não garante ordem: um user.updated enfileirado antes do
+    // user.deleted ainda chega depois. Sem o corte, o snapshot seria recusado
+    // pela guarda de conta excluída, as duas tentativas voltariam "superseded"
+    // e o webhook responderia 500 em retry para um evento que é no-op.
+    mappingReadResult.data = {
+      supabase_user_id: "canonicalUid",
+      access_sync_version: 0,
+      clerk_deleted: true,
+    };
+    const { reconcileClerkUserAccess } = await loadClerkSync();
+
+    const uid = await reconcileClerkUserAccess(
+      reconciliationInput({ observedSupabaseUid: "canonicalUid" }),
+    );
+
+    expect(uid).toBeNull();
+    expect(updateUserMetadataSpy).not.toHaveBeenCalled();
+    expect(effectOrder).toEqual(["clerk_user_mapping:select"]);
   });
 
   it("mapping legado versão 0 só conclui depois dos efeitos Supabase", async () => {

@@ -413,7 +413,6 @@ export async function submitAutoReview(
     if (validationError) return { success: false, error: validationError };
 
     const supabase = await createSupabaseServer();
-    const now = new Date().toISOString();
     const scope: AutoReviewScope = {
       projectId,
       documentId,
@@ -437,7 +436,6 @@ export async function submitAutoReview(
       scope.projectId,
       scope.documentId,
       scope.memberUserId,
-      now,
     );
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
