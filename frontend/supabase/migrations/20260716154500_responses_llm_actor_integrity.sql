@@ -1,4 +1,4 @@
--- Impede que um membro plante uma resposta "do LLM" com a própria autoria.
+-- Impede que uma sessão de usuário grave uma resposta atribuída ao LLM.
 --
 -- A policy "Users manage own responses" (20260611130000_member_email_links.sql)
 -- é FOR ALL com USING mas sem WITH CHECK, e o Postgres reusa o USING no
@@ -10,13 +10,31 @@
 -- LLM por respondent_type; uma "resposta do LLM" idêntica à codificação humana
 -- não gera field_review, e o campo entra no dataset como consenso, sem revisão.
 --
--- A correção é uma invariante de schema, não outra policy: o LLM não é uma
--- pessoa e nunca tem respondent_id. Isso fecha o vetor pelos dois lados sem
--- tocar no fluxo legítimo — o backend insere respostas LLM sem respondent_id
--- (backend/services/llm_runner.py) e saveResponse grava sempre 'humano'. Com o
--- CHECK, 'llm' + respondent_id próprio viola a constraint, e 'llm' +
--- respondent_id NULL não satisfaz o braço de identidade da policy.
+-- A correção explicita dois contratos complementares. Pela RLS, toda sessão
+-- JWT de usuário só pode escrever resposta humana em nome da própria identidade
+-- (direta ou canônica via alias) num projeto acessível; master segue limitado a
+-- resposta humana própria. Respostas LLM ficam no backend sem sessão de usuário,
+-- via service role. No schema, o LLM não é uma pessoa e nunca tem respondent_id,
+-- inclusive quando a escrita privilegiada ignora RLS.
 BEGIN;
+
+-- Estabiliza o conjunto validado pelo preflight até a criação da constraint.
+-- SHARE ROW EXCLUSIVE bloqueia escritas concorrentes sem impedir leituras.
+LOCK TABLE public.responses IN SHARE ROW EXCLUSIVE MODE;
+
+-- Preserva integralmente o USING vigente. O WITH CHECK restringe apenas o
+-- estado novo produzido por INSERT/UPDATE em sessões sujeitas a RLS.
+ALTER POLICY "Users manage own responses" ON public.responses
+  WITH CHECK (
+    respondent_type = 'humano'
+    AND respondent_id IN (
+      SELECT public.auth_user_member_identity_ids(project_id)
+    )
+    AND (
+      project_id IN (SELECT public.auth_user_accessible_project_ids())
+      OR public.is_master()
+    )
+  );
 
 -- ADD CONSTRAINT valida as linhas existentes e abortaria a migration com um
 -- erro genérico. O preflight nomeia o problema em vez de deixar o deploy
@@ -25,7 +43,7 @@ BEGIN;
 -- se aquilo é resposta do LLM ou codificação de alguém.
 DO $$
 DECLARE
-  v_offenders INTEGER;
+  v_offenders BIGINT;
 BEGIN
   SELECT pg_catalog.count(*)
   INTO v_offenders

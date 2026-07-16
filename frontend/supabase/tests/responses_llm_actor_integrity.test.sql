@@ -1,145 +1,305 @@
--- Regressão: membro não pode plantar resposta "do LLM" com a própria autoria.
---
--- Como rodar após `npx supabase db reset`:
---   docker exec -i supabase_db_frontend psql -U postgres -d postgres \
---     -X -v ON_ERROR_STOP=1 < supabase/tests/responses_llm_actor_integrity.test.sql
--- Sucesso = nenhuma exceção e os NOTICE "OK ..." no final. Qualquer FALHOU aborta.
---
--- IMPORTANTE — por que este arquivo concede DML explicitamente: o Supabase
--- remoto concede INSERT/UPDATE/DELETE a `authenticated` no schema public por
--- default privileges, mas o ambiente local não. Um teste que apenas tentasse o
--- INSERT malicioso passaria aqui por falta de privilégio (42501) e continuaria
--- cego ao que produção permite. Os GRANTs abaixo replicam a superfície do
--- remoto para que a RLS e as constraints sejam de fato exercidas.
+-- Contrato de autoria das responses: toda sessão JWT grava somente sua
+-- resposta humana; o backend privilegiado grava o braço LLM sem respondent_id.
 
 BEGIN;
 
+CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
+
+SELECT plan(10);
+
+CREATE OR REPLACE FUNCTION pg_temp.rejected_sqlstate(statement TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  actual_sqlstate TEXT;
+BEGIN
+  EXECUTE statement;
+  RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS actual_sqlstate = RETURNED_SQLSTATE;
+  RETURN actual_sqlstate;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pg_temp.rejected_constraint(statement TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  actual_constraint TEXT;
+BEGIN
+  EXECUTE statement;
+  RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS actual_constraint = CONSTRAINT_NAME;
+  RETURN actual_constraint;
+END;
+$$;
+
+-- O trigger de auth cria automaticamente os profiles correspondentes.
 INSERT INTO auth.users (id, email) VALUES
-  ('11100000-0000-0000-0000-000000000001', 'coord@example.test'),
-  ('11100000-0000-0000-0000-000000000002', 'pesquisador@example.test');
+  ('48310000-0000-0000-0000-000000000001', 'coordinator-483@example.test'),
+  ('48310000-0000-0000-0000-000000000002', 'researcher-483@example.test'),
+  ('48310000-0000-0000-0000-000000000003', 'creator-483@example.test'),
+  ('48310000-0000-0000-0000-000000000004', 'master-483@example.test'),
+  ('48310000-0000-0000-0000-000000000005', 'outsider-483@example.test'),
+  ('48310000-0000-0000-0000-000000000006', 'alias-483@example.test');
 
-INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id)
-SELECT id::text, id
-FROM auth.users
-WHERE id::text LIKE '11100000-0000-0000-0000-%';
-
-INSERT INTO public.projects (id, name, created_by) VALUES
-  ('22200000-0000-0000-0000-000000000001', 'llm actor integrity',
-   '11100000-0000-0000-0000-000000000001');
-
-INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES
-  ('33300000-0000-0000-0000-000000000001', '22200000-0000-0000-0000-000000000001',
-   'doc', 'texto', 'h-doc');
+INSERT INTO public.projects (id, name, created_by) VALUES (
+  '48320000-0000-0000-0000-000000000001',
+  'responses actor integrity',
+  '48310000-0000-0000-0000-000000000003'
+);
 
 INSERT INTO public.project_members (project_id, user_id, role) VALUES
-  ('22200000-0000-0000-0000-000000000001',
-   '11100000-0000-0000-0000-000000000002', 'pesquisador');
+  (
+    '48320000-0000-0000-0000-000000000001',
+    '48310000-0000-0000-0000-000000000001',
+    'coordenador'
+  ),
+  (
+    '48320000-0000-0000-0000-000000000001',
+    '48310000-0000-0000-0000-000000000002',
+    'pesquisador'
+  );
+
+INSERT INTO public.master_users (user_id) VALUES
+  ('48310000-0000-0000-0000-000000000004');
+
+INSERT INTO public.member_email_links (
+  project_id,
+  member_user_id,
+  email,
+  linked_user_id,
+  created_by
+) VALUES (
+  '48320000-0000-0000-0000-000000000001',
+  '48310000-0000-0000-0000-000000000002',
+  'alias-483@example.test',
+  '48310000-0000-0000-0000-000000000006',
+  '48310000-0000-0000-0000-000000000003'
+);
+
+INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES
+  (
+    '48330000-0000-0000-0000-000000000001',
+    '48320000-0000-0000-0000-000000000001',
+    'backend llm', 'texto', 'hash-483-1'
+  ),
+  (
+    '48330000-0000-0000-0000-000000000002',
+    '48320000-0000-0000-0000-000000000001',
+    'human response', 'texto', 'hash-483-2'
+  ),
+  (
+    '48330000-0000-0000-0000-000000000003',
+    '48320000-0000-0000-0000-000000000001',
+    'alias response', 'texto', 'hash-483-3'
+  );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.responses TO authenticated;
 
+SELECT lives_ok(
+  $sql$
+    INSERT INTO public.responses (
+      project_id, document_id, respondent_type, respondent_name, answers
+    ) VALUES (
+      '48320000-0000-0000-0000-000000000001',
+      '48330000-0000-0000-0000-000000000001',
+      'llm', 'openai/gpt-5', '{"q1":"backend"}'
+    )
+  $sql$,
+  'backend privilegiado grava LLM sem respondent_id'
+);
+
+SELECT is(
+  pg_temp.rejected_constraint(
+    $sql$
+      INSERT INTO public.responses (
+        project_id, document_id, respondent_id, respondent_type, answers
+      ) VALUES (
+        '48320000-0000-0000-0000-000000000001',
+        '48330000-0000-0000-0000-000000000001',
+        '48310000-0000-0000-0000-000000000002',
+        'llm', '{"q1":"forjado"}'
+      )
+    $sql$
+  ),
+  'responses_llm_has_no_human_actor_check',
+  'constraint nomeada rejeita LLM com ator humano até em escrita privilegiada'
+);
+
 SELECT set_config(
   'request.jwt.claims',
-  '{"sub":"11100000-0000-0000-0000-000000000002",'
-    || '"supabase_uid":"11100000-0000-0000-0000-000000000002"}',
+  '{"supabase_uid":"48310000-0000-0000-0000-000000000002"}',
   true
 );
 SET LOCAL ROLE authenticated;
-
--- ========== O braço LLM não aceita autor humano ==========
-DO $$
-BEGIN
-  -- A policy autoriza pelo respondent_id, então este INSERT passa pela RLS: o
-  -- pesquisador é dono da linha. Quem recusa é a constraint de schema — sem
-  -- ela, esta resposta entraria como "a do LLM", idêntica à codificação
-  -- humana, e o campo sairia como consenso sem nunca gerar field_review.
-  BEGIN
-    INSERT INTO public.responses
-      (project_id, document_id, respondent_id, respondent_type, answers, is_latest)
-    VALUES
-      ('22200000-0000-0000-0000-000000000001',
-       '33300000-0000-0000-0000-000000000001',
-       '11100000-0000-0000-0000-000000000002',
-       'llm', '{"q1":"forjado"}', true);
-    RAISE EXCEPTION
-      'FALHOU integridade: membro plantou resposta llm com a própria autoria';
-  EXCEPTION
-    WHEN check_violation THEN
-      RAISE NOTICE 'OK: resposta llm com autor humano recusada';
-  END;
-END;
-$$;
-
--- ========== Sem autor, a policy é quem recusa ==========
-DO $$
-BEGIN
-  -- Contornar a constraint zerando o respondent_id não ajuda: nenhum braço da
-  -- policy cobre a linha (não é dele, e ele não é coordenador nem master).
-  BEGIN
-    INSERT INTO public.responses
-      (project_id, document_id, respondent_id, respondent_type, answers, is_latest)
-    VALUES
-      ('22200000-0000-0000-0000-000000000001',
-       '33300000-0000-0000-0000-000000000001',
-       NULL, 'llm', '{"q1":"forjado"}', true);
-    RAISE EXCEPTION
-      'FALHOU integridade: membro plantou resposta llm anônima';
-  EXCEPTION
-    WHEN insufficient_privilege THEN
-      RAISE NOTICE 'OK: resposta llm sem autor recusada pela RLS';
-  END;
-END;
-$$;
-
--- ========== A codificação humana legítima continua passando ==========
-DO $$
-DECLARE
-  n INTEGER;
-BEGIN
-  INSERT INTO public.responses
-    (project_id, document_id, respondent_id, respondent_type, answers, is_latest)
-  VALUES
-    ('22200000-0000-0000-0000-000000000001',
-     '33300000-0000-0000-0000-000000000001',
-     '11100000-0000-0000-0000-000000000002',
-     'humano', '{"q1":"a"}', true);
-
-  SELECT count(*) INTO n FROM public.responses
-  WHERE project_id = '22200000-0000-0000-0000-000000000001'
-    AND respondent_type = 'humano';
-  IF n <> 1 THEN
-    RAISE EXCEPTION 'FALHOU: codificação humana legítima foi bloqueada';
-  END IF;
-
-  RAISE NOTICE 'OK: codificação humana do próprio membro segue permitida';
-END;
-$$;
-
--- ========== O backend continua podendo gravar o braço LLM ==========
+SELECT lives_ok(
+  $sql$
+    INSERT INTO public.responses (
+      id, project_id, document_id, respondent_id, respondent_type, answers
+    ) VALUES (
+      '48340000-0000-0000-0000-000000000001',
+      '48320000-0000-0000-0000-000000000001',
+      '48330000-0000-0000-0000-000000000002',
+      '48310000-0000-0000-0000-000000000002',
+      'humano', '{"q1":"legitimo"}'
+    )
+  $sql$,
+  'pesquisador grava a própria resposta humana'
+);
+SELECT is(
+  pg_temp.rejected_sqlstate(
+    $sql$
+      INSERT INTO public.responses (
+        project_id, document_id, respondent_type, answers
+      ) VALUES (
+        '48320000-0000-0000-0000-000000000001',
+        '48330000-0000-0000-0000-000000000001',
+        'llm', '{"q1":"forjado"}'
+      )
+    $sql$
+  ),
+  '42501',
+  'pesquisador não grava resposta LLM anônima'
+);
 RESET ROLE;
-SELECT set_config('request.jwt.claims', '', true);
 
-DO $$
-DECLARE
-  n INTEGER;
-BEGIN
-  -- llm_runner grava sem respondent_id: é assim que a constraint distingue o
-  -- LLM de uma pessoa.
-  INSERT INTO public.responses
-    (project_id, document_id, respondent_type, respondent_name, answers, is_latest)
-  VALUES
-    ('22200000-0000-0000-0000-000000000001',
-     '33300000-0000-0000-0000-000000000001',
-     'llm', 'openai/gpt-5', '{"q1":"b"}', true);
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"48310000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+SELECT is(
+  pg_temp.rejected_sqlstate(
+    $sql$
+      INSERT INTO public.responses (
+        project_id, document_id, respondent_type, answers
+      ) VALUES (
+        '48320000-0000-0000-0000-000000000001',
+        '48330000-0000-0000-0000-000000000001',
+        'llm', '{"q1":"coordenador"}'
+      )
+    $sql$
+  ),
+  '42501',
+  'coordenador não grava resposta LLM'
+);
+RESET ROLE;
 
-  SELECT count(*) INTO n FROM public.responses
-  WHERE project_id = '22200000-0000-0000-0000-000000000001'
-    AND respondent_type = 'llm';
-  IF n <> 1 THEN
-    RAISE EXCEPTION 'FALHOU: backend não conseguiu gravar a resposta do LLM';
-  END IF;
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"48310000-0000-0000-0000-000000000003"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+SELECT is(
+  pg_temp.rejected_sqlstate(
+    $sql$
+      INSERT INTO public.responses (
+        project_id, document_id, respondent_type, answers
+      ) VALUES (
+        '48320000-0000-0000-0000-000000000001',
+        '48330000-0000-0000-0000-000000000001',
+        'llm', '{"q1":"criador"}'
+      )
+    $sql$
+  ),
+  '42501',
+  'criador não grava resposta LLM'
+);
+RESET ROLE;
 
-  RAISE NOTICE 'OK: backend grava o braço llm sem respondent_id';
-END;
-$$;
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"48310000-0000-0000-0000-000000000004"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+SELECT is(
+  pg_temp.rejected_sqlstate(
+    $sql$
+      INSERT INTO public.responses (
+        project_id, document_id, respondent_type, answers
+      ) VALUES (
+        '48320000-0000-0000-0000-000000000001',
+        '48330000-0000-0000-0000-000000000001',
+        'llm', '{"q1":"master"}'
+      )
+    $sql$
+  ),
+  '42501',
+  'master não grava resposta LLM'
+);
+RESET ROLE;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"48310000-0000-0000-0000-000000000005"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+SELECT is(
+  pg_temp.rejected_sqlstate(
+    $sql$
+      INSERT INTO public.responses (
+        project_id, document_id, respondent_id, respondent_type, answers
+      ) VALUES (
+        '48320000-0000-0000-0000-000000000001',
+        '48330000-0000-0000-0000-000000000002',
+        '48310000-0000-0000-0000-000000000005',
+        'humano', '{"q1":"outsider"}'
+      )
+    $sql$
+  ),
+  '42501',
+  'outsider não grava resposta humana em projeto alheio'
+);
+RESET ROLE;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"48310000-0000-0000-0000-000000000006"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+SELECT lives_ok(
+  $sql$
+    INSERT INTO public.responses (
+      project_id, document_id, respondent_id, respondent_type, answers
+    ) VALUES (
+      '48320000-0000-0000-0000-000000000001',
+      '48330000-0000-0000-0000-000000000003',
+      '48310000-0000-0000-0000-000000000002',
+      'humano', '{"q1":"alias"}'
+    )
+  $sql$,
+  'conta-alias grava com a identidade canônica do projeto'
+);
+RESET ROLE;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"48310000-0000-0000-0000-000000000002"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+SELECT is(
+  pg_temp.rejected_sqlstate(
+    $sql$
+      UPDATE public.responses
+      SET respondent_type = 'llm', respondent_id = NULL
+      WHERE id = '48340000-0000-0000-0000-000000000001'
+    $sql$
+  ),
+  '42501',
+  'pesquisador não converte sua resposta humana em LLM anônima'
+);
+RESET ROLE;
+
+SELECT * FROM finish();
 
 ROLLBACK;
