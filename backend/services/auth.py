@@ -256,16 +256,18 @@ def require_project_coordinator(project_id: str, user: AuthUser) -> None:
 def require_writable_user(user: AuthUser, impersonating: bool) -> None:
     """Interlock de somente-leitura da impersonação master (issue #428).
 
-    Espelha `requireWritableUser` do frontend (lib/auth.ts): um master em modo
-    "visualizar como outro membro" (?viewAsUser=) não dispara execução/escrita.
-    Defesa em profundidade — o botão já fica `disabled` no client; aqui o
-    servidor recusa (403) caso a chamada chegue mesmo assim.
+    Único gate server-side de escrita da impersonação: as Server Actions Next
+    escrevem via RLS (Clerk JWT), mas esta rota usa service-key (sem RLS por
+    trás), então o interlock vive aqui. Um master em modo "visualizar como outro
+    membro" (?viewAsUser=) não dispara execução de LLM: o botão já fica
+    `disabled` no client (RunLlmButton) e o servidor recusa (403) caso a chamada
+    chegue mesmo assim.
 
     `impersonating` vem do client (searchParam per-tab que o backend não recebe
     de outra forma); logo esta barreira não detém um master adversarial, que
     simplesmente sai do view-as — só a escrita ACIDENTAL durante a observação.
-    Não-master ignora o sinal (mesma predicação do frontend). Fail-closed: falha
-    de infra ao verificar master vira 503, não liberação.
+    Não-master ignora o sinal. Fail-closed: falha de infra ao verificar master
+    vira 503, não liberação.
     """
     if not impersonating:
         return
