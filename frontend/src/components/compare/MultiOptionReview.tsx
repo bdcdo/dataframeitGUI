@@ -11,6 +11,7 @@ import {
   TooltipContent,
   TooltipProvider,
 } from "@/components/ui/tooltip";
+import { readOnlyTitle } from "./compare-types";
 
 interface MultiOptionResponse {
   id: string;
@@ -28,6 +29,7 @@ interface ExistingVerdict {
 }
 
 interface MultiOptionReviewProps {
+  readOnly: boolean;
   options: string[];
   responses: MultiOptionResponse[];
   existingVerdict: ExistingVerdict | null;
@@ -36,6 +38,7 @@ interface MultiOptionReviewProps {
 }
 
 export function MultiOptionReview({
+  readOnly,
   options,
   responses,
   existingVerdict,
@@ -80,12 +83,12 @@ export function MultiOptionReview({
   );
 
   const toggleOption = (opt: string) => {
-    if (isSubmitting) return;
+    if (readOnly || isSubmitting) return;
     setChoices((prev) => ({ ...prev, [opt]: !prev[opt] }));
   };
 
   const handleSubmit = () => {
-    if (isSubmitting) return;
+    if (readOnly || isSubmitting) return;
     onSubmit(JSON.stringify(choices));
   };
 
@@ -103,6 +106,8 @@ export function MultiOptionReview({
 
       const { handleSubmit, toggleOption, options } = keyHandlersRef.current;
 
+      if (readOnly) return;
+
       if (e.key === "Enter") {
         e.preventDefault();
         handleSubmit();
@@ -116,7 +121,7 @@ export function MultiOptionReview({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [readOnly]);
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -126,9 +131,11 @@ export function MultiOptionReview({
             key={stat.option}
             className={cn(
               "flex items-center gap-2.5 rounded-lg border p-2.5 transition-colors",
-              isSubmitting
-                ? "cursor-not-allowed opacity-60"
-                : "cursor-pointer hover:bg-accent/50",
+              readOnly
+                ? "cursor-default"
+                : isSubmitting
+                  ? "cursor-not-allowed opacity-60"
+                  : "cursor-pointer hover:bg-accent/50",
               stat.isDivergent
                 ? "border-amber-500/30 bg-amber-500/5"
                 : "border-muted",
@@ -136,7 +143,7 @@ export function MultiOptionReview({
           >
             <Checkbox
               checked={choices[stat.option] ?? false}
-              disabled={isSubmitting}
+              disabled={readOnly || isSubmitting}
               onCheckedChange={() => toggleOption(stat.option)}
             />
             <div className="min-w-0 flex-1">
@@ -181,10 +188,15 @@ export function MultiOptionReview({
         <Button
           size="sm"
           className="mt-2 w-full"
-          disabled={isSubmitting}
+          disabled={readOnly || isSubmitting}
           onClick={handleSubmit}
+          title={readOnlyTitle(readOnly)}
         >
-          {isSubmitting ? "Salvando..." : "[Enter] Confirmar"}
+          {readOnly
+            ? "Somente leitura"
+            : isSubmitting
+              ? "Salvando..."
+              : "[Enter] Confirmar"}
         </Button>
       </div>
     </TooltipProvider>

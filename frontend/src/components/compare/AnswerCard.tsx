@@ -21,6 +21,7 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from "@/components/ui/popover";
+import { readOnlyTitle } from "./compare-types";
 
 export interface EquivalentVariant {
   pairId: string; // response_equivalences.id
@@ -49,6 +50,7 @@ type EquivalenceMode =
     };
 
 interface AnswerCardProps {
+  readOnly: boolean;
   index: number;
   displayAnswer: string;
   respondentNames: string[];
@@ -72,6 +74,7 @@ interface AnswerCardProps {
 }
 
 export function AnswerCard({
+  readOnly,
   index,
   displayAnswer,
   respondentNames,
@@ -94,6 +97,12 @@ export function AnswerCard({
   const selected = equivalenceMode?.selected === true;
   // Gabarito radio is only reachable on the selected branch (invariant in type).
   const gabarito = equivalenceMode?.selected ? equivalenceMode.gabarito : null;
+  const voteTitle = readOnlyTitle(readOnly);
+  const equivalenceTitle = readOnlyTitle(
+    readOnly,
+    "Selecionar para marcar como equivalente",
+  );
+  const unmarkTitle = readOnlyTitle(readOnly, "Desfazer equivalência");
 
   return (
     <div
@@ -123,8 +132,13 @@ export function AnswerCard({
         type="button"
         data-vote-target
         onClick={onVote}
+        disabled={readOnly}
         aria-label={`Selecionar esta resposta para confirmar: ${displayAnswer || "(vazia)"}`}
-        className="absolute inset-0 z-[1] cursor-pointer rounded-lg focus:outline-none"
+        title={voteTitle}
+        className={cn(
+          "absolute inset-0 z-[1] rounded-lg focus:outline-none",
+          readOnly ? "cursor-default" : "cursor-pointer",
+        )}
       />
       <div className="flex items-start gap-2">
         {equivalenceMode && (
@@ -132,8 +146,9 @@ export function AnswerCard({
             <Checkbox
               checked={equivalenceMode.selected}
               onCheckedChange={() => equivalenceMode.onToggle()}
+              disabled={readOnly}
               aria-label="Selecionar para marcar como equivalente"
-              title="Selecionar como equivalente"
+              title={equivalenceTitle}
             />
           </div>
         )}
@@ -209,8 +224,9 @@ export function AnswerCard({
                             <button
                               type="button"
                               onClick={() => onUnmarkPair!(v.pairId)}
+                              disabled={readOnly}
                               className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                              title="Desfazer equivalência"
+                              title={unmarkTitle}
                               aria-label="Desfazer equivalência"
                             >
                               <X className="size-3" />
@@ -275,6 +291,7 @@ export function AnswerCard({
               type="radio"
               checked={gabarito.isGabarito}
               onChange={() => gabarito.onSetGabarito()}
+              disabled={readOnly}
               className="size-3 accent-brand"
             />
             <span className={cn(gabarito.isGabarito && "font-medium text-brand")}>

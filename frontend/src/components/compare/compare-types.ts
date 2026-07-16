@@ -32,6 +32,27 @@ export interface CompareDocument {
   text: string;
 }
 
+/**
+ * Impersonação master (`?viewAsUser=`) torna a Comparação somente-leitura: a
+ * navegação continua, mas nenhum controle prepara ou persiste decisão. Segue a
+ * mesma convenção `readOnly: boolean` já usada no Codificar
+ * (`code/page.tsx` → `SubmitBar`). Texto único de tooltip/aviso para os
+ * controles desabilitados (issue #428). Consumido só via `readOnlyTitle`
+ * abaixo, então fica local ao módulo.
+ */
+const COMPARE_READ_ONLY_REASON = "Indisponível no modo somente leitura";
+
+/**
+ * Tooltip do controle: o motivo padrão de somente-leitura quando `readOnly`,
+ * senão o texto ativo do controle (ou nenhum). Fonte única do texto (issue #428).
+ */
+export function readOnlyTitle(
+  readOnly: boolean,
+  activeTitle?: string,
+): string | undefined {
+  return readOnly ? COMPARE_READ_ONLY_REASON : activeTitle;
+}
+
 export type PendingVerdict =
   | { kind: "response"; verdict: string; chosenResponseId: string }
   | { kind: "ambiguous"; verdict: "ambiguo" }

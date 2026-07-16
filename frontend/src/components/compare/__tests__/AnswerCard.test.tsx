@@ -13,6 +13,7 @@ function renderCard(props: Partial<Parameters<typeof AnswerCard>[0]> = {}) {
   render(
     <TooltipProvider>
       <AnswerCard
+        readOnly={false}
         index={0}
         displayAnswer="Deferido"
         respondentNames={["Ana"]}

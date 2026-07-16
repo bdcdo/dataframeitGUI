@@ -12,16 +12,27 @@ import type { ResponseSnapshotEntry } from "@/actions/reviews";
 // same time records the verdict pointing to `gabaritoId` — the response that
 // represents the canonical answer in the database. The action is idempotent:
 // duplicate pairs are ignored via the UNIQUE constraint.
-export async function confirmEquivalentVerdict(
-  projectId: string,
-  documentId: string,
-  fieldName: string,
-  responseIds: string[],
-  gabaritoId: string,
-  verdictDisplay: string,
-  comment?: string,
-  responseSnapshot?: ResponseSnapshotEntry[],
-): Promise<{ error?: string }> {
+export interface ConfirmEquivalentVerdictInput {
+  projectId: string;
+  documentId: string;
+  fieldName: string;
+  responseIds: string[];
+  gabaritoId: string;
+  verdictDisplay: string;
+  comment?: string;
+  responseSnapshot?: ResponseSnapshotEntry[];
+}
+
+export async function confirmEquivalentVerdict({
+  projectId,
+  documentId,
+  fieldName,
+  responseIds,
+  gabaritoId,
+  verdictDisplay,
+  comment,
+  responseSnapshot,
+}: ConfirmEquivalentVerdictInput): Promise<{ error?: string }> {
   if (responseIds.length < 2) {
     return { error: "Marcar como equivalentes exige 2+ respostas." };
   }

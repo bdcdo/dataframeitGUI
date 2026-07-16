@@ -34,6 +34,8 @@ interface AddNoteButtonProps {
   variant?: "default" | "ghost" | "outline";
   size?: "default" | "sm" | "icon";
   label?: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export function AddNoteButton({
@@ -46,6 +48,8 @@ export function AddNoteButton({
   variant = "ghost",
   size = "sm",
   label,
+  disabled = false,
+  disabledReason,
 }: AddNoteButtonProps) {
   const { refresh } = useRouter();
   const [open, setOpen] = useState(false);
@@ -75,7 +79,7 @@ export function AddNoteButton({
   const contextLabel = contextParts.length > 0 ? contextParts.join(" → ") : null;
 
   const handleSubmit = () => {
-    if (!body.trim()) return;
+    if (disabled || !body.trim()) return;
     startTransition(async () => {
       const fieldValue = selectedField === "_none" ? null : selectedField;
       const result = await createProjectComment(
@@ -97,9 +101,20 @@ export function AddNoteButton({
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!disabled) setOpen(nextOpen);
+      }}
+    >
       <DialogTrigger asChild>
-        <Button variant={variant} size={size} className="gap-1.5 text-xs">
+        <Button
+          variant={variant}
+          size={size}
+          className="gap-1.5 text-xs"
+          disabled={disabled}
+          title={disabled ? disabledReason : undefined}
+        >
           <MessageSquarePlus className="size-3.5" />
           {label ?? "Nota"}
         </Button>
@@ -154,7 +169,7 @@ export function AddNoteButton({
             </Button>
             <Button
               size="sm"
-              disabled={isPending || !body.trim()}
+              disabled={disabled || isPending || !body.trim()}
               onClick={handleSubmit}
             >
               {isPending && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}

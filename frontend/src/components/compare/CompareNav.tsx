@@ -10,6 +10,7 @@ import { RunLlmButton } from "@/components/shared/RunLlmButton";
 import type { PydanticField } from "@/lib/types";
 
 interface CompareNavProps {
+  readOnly: boolean;
   title: string;
   docIndex: number;
   totalDocs: number;
@@ -36,6 +37,7 @@ interface CompareNavProps {
 }
 
 export function CompareNav({
+  readOnly,
   title,
   docIndex,
   totalDocs,
@@ -97,6 +99,9 @@ export function CompareNav({
             projectId={projectId}
             documentId={documentId}
             canRunLlm={canRunLlm}
+            disabled={readOnly}
+            disabledReason="A execução de LLM fica indisponível ao visualizar como outro membro"
+            impersonating={readOnly}
           />
         )}
         <Button variant="ghost" size="icon" className="size-6" onClick={onToggleFullscreen} title="Tela cheia">
