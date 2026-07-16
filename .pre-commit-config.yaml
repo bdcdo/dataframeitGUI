@@ -74,7 +74,7 @@ repos:
         name: react-doctor (changed lines, fail on new errors)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/react-doctor && exec ./node_modules/.bin/react-doctor . --scope changed --base HEAD --blocking error || { echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/.*\.(ts|tsx)$
+        files: ^frontend/.*\.(mts|ts|tsx)$
         pass_filenames: false
         require_serial: true
 
@@ -86,7 +86,7 @@ repos:
         name: typecheck (tsc --noEmit, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/tsc && exec ./node_modules/.bin/tsc --noEmit || { echo "tsc ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/.*\.(ts|tsx)$
+        files: ^frontend/.*\.(mts|ts|tsx)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -95,13 +95,13 @@ repos:
       # roda full sem grandfathering — qualquer teste que quebre barra o push.
       # E o gate de regressao de teste que nem o build da Vercel nem o `next
       # build` do deploy Fly pegavam. Falha fechado se o binario estiver ausente.
-      # Escopo por .ts/.tsx alterado (nao por arquivo de teste): mudar codigo de
-      # producao roda a suite inteira, que e o comportamento desejado.
+      # Toda fonte JS/TS em modulo ESM dispara a suite inteira, inclusive regras
+      # e configs ESLint. O glob por extensao nao acopla o hook a nomes de arquivo.
       - id: vitest
         name: vitest run (full suite, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/.*\.(ts|tsx)$
+        files: ^frontend/.*\.(mjs|mts|ts|tsx)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -128,7 +128,7 @@ repos:
         name: playwright e2e smoke (pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && PLAYWRIGHT_PRE_PUSH=1 exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(ts|tsx)|package(-lock)?\.json|\.env\.e2e\.example))$
+        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(mts|ts|tsx)|package(-lock)?\.json|\.env\.e2e\.example))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -140,7 +140,7 @@ repos:
         name: typescript-eslint type-checked (changed files, pre-push)
         entry: bash -c 'cd frontend && files=$(printf "%s\n" "$@" | sed "s|^frontend/||"); [ -z "$files" ] && exit 0; test -x ./node_modules/.bin/eslint && exec ./node_modules/.bin/eslint --config eslint.config.typed.mjs $files || { echo "eslint ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }' --
         language: system
-        files: ^frontend/.*\.(ts|tsx)$
+        files: ^frontend/.*\.(mts|ts|tsx)$
         pass_filenames: true
         require_serial: true
         stages: [pre-push]
@@ -154,7 +154,7 @@ repos:
         name: fallow audit (new findings block, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/fallow && exec ./node_modules/.bin/fallow audit || { echo "fallow ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/.*\.(ts|tsx)$
+        files: ^frontend/.*\.(mts|ts|tsx)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

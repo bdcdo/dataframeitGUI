@@ -13,7 +13,7 @@ A regra de ouro é que tudo roda sozinho, via git hook ou automação de servido
 | Quem dispara | Quando | Ferramentas | Grandfathering |
 |---|---|---|---|
 | `pre-commit` | todo commit (leve, file-scoped) | gitleaks · ruff (lint+format) · actionlint · deploy notifier · react-doctor | só o arquivo/linha tocado é checado; o notifier roda quando seu workflow ou teste muda |
-| `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · e2e-smoke (Playwright) · lint:types · fallow audit · semgrep · backend-pytest · mypy | new-only / file-scoped (ver cada um); pytest roda a suíte inteira; e2e-smoke falha fechado no pre-push se envs E2E/Clerk obrigatórias faltarem |
+| `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · vitest · e2e-smoke (Playwright) · lint:types · fallow audit · semgrep · backend-pytest · mypy | new-only / file-scoped (ver cada um); Vitest e pytest rodam as suítes inteiras; e2e-smoke falha fechado no pre-push se envs E2E/Clerk obrigatórias faltarem |
 | GitHub (servidor) | automático | Dependabot | n/a — abre PRs de vuln sozinho |
 | on-demand | ao investigar performance | React Scan | n/a — ferramenta de diagnóstico, não gate |
 
@@ -42,6 +42,12 @@ A escolha se justificou empiricamente: o primeiro scan encontrou 59 errors em ce
 ### typecheck (tsc) — o prerequisito que faltava
 
 O projeto não tinha sequer um script `tsc --noEmit`. O `npm run typecheck` preenche isso e roda no pre-push (projeto inteiro, sem grandfathering — hoje passa com **0 erros**, então qualquer erro de tipo novo barra o push). O compilador nativo em Go (tsgo / TypeScript 7) está em RC mas ainda não foi adotado (ver "Monitorar"); quando o GA sair, basta trocar `tsc` por `tsgo` nesse script.
+
+### Exports de Server Actions — contrato do projeto
+
+O Next.js exige que cada export de valor de um arquivo cuja diretiva é `"use server"` seja uma função `async`; `tsc --noEmit` não detecta essa restrição, e a ausência desse gate causou os três deploys quebrados registrados na [#413](https://github.com/bdcdo/dataframeitGUI/issues/413). A regra local aplicada pelo ESLint permite funções async exportadas diretamente — declaração nomeada, arrow ou function expression em `const`, e default async — e exports exclusivamente de tipo. Valores puros, generators, aliases e reexports de valor ficam bloqueados; a regra não resolve bindings indiretos para manter o gate sintático e file-scoped. Assinaturas de overload e declarações ambientes (`declare function`) passam porque são apagadas na compilação e não exportam valor — a implementação do overload continua sujeita à regra.
+
+Quem aplica a regra é o hook **`lint-types`** (pre-push, arquivos alterados), e não o `npm run lint`, que nenhum hook executa: a regra mora em `eslint.config.mjs` e chega ao hook porque `eslint.config.typed.mjs` faz `...base`. Essa dependência é o único caminho de enforcement — desacoplar as duas configs removeria o gate da #413 em silêncio, sem nenhum teste falhando.
 
 ### ruff — lint, format e complexidade do backend
 
