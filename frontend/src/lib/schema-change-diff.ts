@@ -1,5 +1,11 @@
 import { stableStringify } from "./schema-utils";
+import {
+  resolveAllowOther,
+  resolveRequired,
+  resolveTarget,
+} from "./pydantic-field";
 import type { FieldCondition, SchemaChangeEntry, SubfieldDef } from "./types";
+import type { PydanticFieldTarget } from "./pydantic-field";
 
 export type FieldChangeKind = "added" | "removed" | "renamed" | "modified";
 
@@ -115,31 +121,31 @@ export function diffPydanticField(
       diffs.push({ property: "type", before: before.type, after: after.type });
     }
   }
+  // Os resolvedores canonicos, e nao `?? null` / `Boolean(...)`, porque este
+  // diff le payloads de duas eras: os gravados antes da unificacao de defaults
+  // trazem `null` onde a propriedade estava ausente, os novos ja trazem o
+  // default resolvido. `Boolean(null)` e `false`, mas o default de `required` e
+  // `true` — era por isso que marcar um campo como opcional gravava o log e nao
+  // renderizava linha nenhuma (`Boolean(null) !== Boolean(false)` e falso).
   if (has(before, "target") || has(after, "target")) {
-    if ((before.target ?? null) !== (after.target ?? null)) {
-      diffs.push({
-        property: "target",
-        before: before.target ?? null,
-        after: after.target ?? null,
-      });
+    const b = resolveTarget(before.target as PydanticFieldTarget | null | undefined);
+    const a = resolveTarget(after.target as PydanticFieldTarget | null | undefined);
+    if (b !== a) {
+      diffs.push({ property: "target", before: b, after: a });
     }
   }
   if (has(before, "required") || has(after, "required")) {
-    if (Boolean(before.required) !== Boolean(after.required)) {
-      diffs.push({
-        property: "required",
-        before: Boolean(before.required),
-        after: Boolean(after.required),
-      });
+    const b = resolveRequired(before.required as boolean | null | undefined);
+    const a = resolveRequired(after.required as boolean | null | undefined);
+    if (b !== a) {
+      diffs.push({ property: "required", before: b, after: a });
     }
   }
   if (has(before, "allow_other") || has(after, "allow_other")) {
-    if (Boolean(before.allow_other) !== Boolean(after.allow_other)) {
-      diffs.push({
-        property: "allow_other",
-        before: Boolean(before.allow_other),
-        after: Boolean(after.allow_other),
-      });
+    const b = resolveAllowOther(before.allow_other as boolean | null | undefined);
+    const a = resolveAllowOther(after.allow_other as boolean | null | undefined);
+    if (b !== a) {
+      diffs.push({ property: "allow_other", before: b, after: a });
     }
   }
   if (has(before, "subfield_rule") || has(after, "subfield_rule")) {

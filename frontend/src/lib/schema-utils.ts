@@ -3,6 +3,11 @@ import type {
   FieldCondition,
   PydanticField,
 } from "@/lib/types";
+import {
+  resolveAllowOther,
+  resolveRequired,
+  resolveTarget,
+} from "@/lib/pydantic-field";
 
 // ---------- Geração de código Pydantic (pure, client-safe) ----------
 
@@ -66,8 +71,19 @@ function conditionToPython(condition: FieldCondition): string {
 
 function fieldExtra(field: PydanticField): string {
   const extras: string[] = [];
-  if (field.target && field.target !== "all") {
+  if (resolveTarget(field.target) !== "all") {
     extras.push(`"target": "${field.target}"`);
+  }
+  // Só o caso não-default entra, como em `target` e `allowOther`. Emitir
+  // `"required": True` mudaria o texto do código de TODO projeto, e
+  // `pydantic_hash` é sha256 do texto: no save seguinte, as respostas LLM
+  // legadas — as sem `answer_field_hashes` e sem semver gravado, cujo único
+  // vínculo com o schema é esse hash — sairiam da fila de Comparação. É o
+  // estrago que a 20260505000001_revive_orphan_llm_responses.sql conserta.
+  // Omitindo no default, o texto fica byte-idêntico para quem não usa campo
+  // opcional, e o blast radius se limita a quem já perdia a propriedade aqui.
+  if (!resolveRequired(field.required)) {
+    extras.push(`"required": False`);
   }
   if (field.type === "date") {
     extras.push(`"field_type": "date"`);
@@ -438,78 +454,23 @@ export type ChangeType = "major" | "minor" | "patch";
 // - MINOR: adicionar/remover campo, adicionar/remover opção, mudar
 //   type/target/required/subfields/condition
 // - Retorna null quando não há mudança alguma.
+//
+// Derivado de `diffFields`, e não uma segunda enumeração das propriedades:
+// as duas precisam concordar por construção. A invariante que o save depende
+// (`classifyChange != null ⇒ diffFields != []`) vira tautologia aqui, em vez de
+// algo a manter à mão em duas listas — foi justamente a divergência entre elas
+// que quebrou o save ao reordenar campos (a reordenação classificava como patch
+// e não gerava entrada, e a RPC recusa log vazio).
 export function classifyChange(
   oldFields: PydanticField[],
   newFields: PydanticField[],
 ): ChangeType | null {
-  const oldNames = new Set(oldFields.map((f) => f.name));
-  const newNames = new Set(newFields.map((f) => f.name));
-
-  const addedOrRemoved =
-    newFields.some((f) => !oldNames.has(f.name)) ||
-    oldFields.some((f) => !newNames.has(f.name));
-
-  if (addedOrRemoved) return "minor";
-
-  let hasStructural = false;
-  let hasTextual = false;
-
-  const oldMap = new Map(oldFields.map((f) => [f.name, f]));
-  for (const n of newFields) {
-    const o = oldMap.get(n.name);
-    if (!o) continue;
-
-    if (o.type !== n.type) hasStructural = true;
-    if ((o.target ?? "all") !== (n.target ?? "all")) hasStructural = true;
-    if ((o.required ?? true) !== (n.required ?? true)) hasStructural = true;
-    if ((o.subfield_rule ?? null) !== (n.subfield_rule ?? null)) hasStructural = true;
-    if ((o.allow_other ?? false) !== (n.allow_other ?? false)) hasStructural = true;
-    if (stableStringify(o.subfields ?? null) !== stableStringify(n.subfields ?? null)) {
-      hasStructural = true;
-    }
-    if (stableStringify(o.condition ?? null) !== stableStringify(n.condition ?? null)) {
-      hasStructural = true;
-    }
-
-    const optsOld = o.options ?? [];
-    const optsNew = n.options ?? [];
-    const setOld = new Set(optsOld);
-    const setNew = new Set(optsNew);
-    const sameSet =
-      setOld.size === setNew.size && [...setOld].every((x) => setNew.has(x));
-    if (!sameSet) {
-      hasStructural = true;
-    } else if (optsOld.length !== optsNew.length) {
-      hasStructural = true;
-    } else {
-      for (let i = 0; i < optsOld.length; i++) {
-        if (optsOld[i] !== optsNew[i]) {
-          hasTextual = true;
-          break;
-        }
-      }
-    }
-
-    if (o.description !== n.description) hasTextual = true;
-    if ((o.help_text || "") !== (n.help_text || "")) hasTextual = true;
-    if ((o.justification_prompt || "") !== (n.justification_prompt || "")) {
-      hasTextual = true;
-    }
-  }
-
-  // Reordenação da lista de campos conta como PATCH
-  if (!hasStructural && !hasTextual) {
-    for (let i = 0; i < newFields.length; i++) {
-      if (newFields[i].name !== oldFields[i]?.name) {
-        hasTextual = true;
-        break;
-      }
-    }
-  }
-
-  if (hasStructural) return "minor";
-  if (hasTextual) return "patch";
-  return null;
+  const entries = diffFields(oldFields, newFields);
+  if (entries.length === 0) return null;
+  const structural = entries.some((entry) =>
+    fieldDiffIsStructural(entry.before_value, entry.after_value),
+  );
+  return structural ? "minor" : "patch";
 }
 
 export function bumpVersion(
@@ -527,6 +488,13 @@ export function bumpVersion(
 
 // Serializa um PydanticField para gravar em
 // schema_change_log.before_value / after_value.
+//
+// As tres propriedades com default implicito passam pelos resolvedores
+// canonicos em vez de `?? null`: `snapshotOf` tambem define "campo igual" para
+// `sameFieldContent` (schema-merge), e normalizar diferente de `classifyChange`
+// fazia um campo sem `target` divergir de um com `target: "all"` — conflito de
+// merge sem edicao nenhuma. Payloads gravados antes desta mudanca tem `null`
+// nessas chaves; o diff de historico resolve os dois para o mesmo default.
 export function snapshotOf(field: PydanticField): Record<string, unknown> {
   return {
     name: field.name,
@@ -534,11 +502,11 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     description: field.description,
     help_text: field.help_text ?? null,
     options: field.options ?? null,
-    target: field.target ?? null,
-    required: field.required ?? null,
+    target: resolveTarget(field.target),
+    required: resolveRequired(field.required),
     subfields: field.subfields ?? null,
     subfield_rule: field.subfield_rule ?? null,
-    allow_other: field.allow_other ?? null,
+    allow_other: resolveAllowOther(field.allow_other),
     condition: field.condition ?? null,
     justification_prompt: field.justification_prompt ?? null,
   };
@@ -584,7 +552,13 @@ export function fieldDiffIsStructural(
     const bSet = new Set(bArr);
     const aSet = new Set(aArr);
     const sameSet = bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
-    if (!sameSet) return true;
+    // Mesmo conjunto com contagens diferentes (uma opcao duplicada some) muda o
+    // que o respondente pode escolher, entao e estrutural — so reordenar dentro
+    // do mesmo multiconjunto e que e textual. Sem o teste de comprimento, esta
+    // funcao classificaria como patch o que `classifyChange` classifica como
+    // minor, e o backfill reclassificaria entradas historicas divergindo do
+    // save que as gravou.
+    if (!sameSet || bArr.length !== aArr.length) return true;
   }
   return false;
 }
@@ -688,25 +662,25 @@ export function diffFields(
       before.type = old.type;
       after.type = f.type;
     }
-    if ((old.target ?? "all") !== (f.target ?? "all")) {
+    if (resolveTarget(old.target) !== resolveTarget(f.target)) {
       diffs.push("alvo");
-      before.target = old.target ?? null;
-      after.target = f.target ?? null;
+      before.target = resolveTarget(old.target);
+      after.target = resolveTarget(f.target);
     }
-    if ((old.required ?? true) !== (f.required ?? true)) {
+    if (resolveRequired(old.required) !== resolveRequired(f.required)) {
       diffs.push("obrigatório");
-      before.required = old.required ?? null;
-      after.required = f.required ?? null;
+      before.required = resolveRequired(old.required);
+      after.required = resolveRequired(f.required);
     }
     if ((old.subfield_rule ?? null) !== (f.subfield_rule ?? null)) {
       diffs.push("regra de subcampos");
       before.subfield_rule = old.subfield_rule ?? null;
       after.subfield_rule = f.subfield_rule ?? null;
     }
-    if ((old.allow_other ?? false) !== (f.allow_other ?? false)) {
+    if (resolveAllowOther(old.allow_other) !== resolveAllowOther(f.allow_other)) {
       diffs.push("permite outro");
-      before.allow_other = old.allow_other ?? false;
-      after.allow_other = f.allow_other ?? false;
+      before.allow_other = resolveAllowOther(old.allow_other);
+      after.allow_other = resolveAllowOther(f.allow_other);
     }
     const oldSubs = stableStringify(old.subfields ?? null);
     const newSubs = stableStringify(f.subfields ?? null);

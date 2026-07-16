@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useResetOnKeyChange } from "@/hooks/useResetOnKeyChange";
 import type { FieldCondition, PydanticField, SubfieldDef } from "@/lib/types";
+import { resolveAllowOther } from "@/lib/pydantic-field";
 
 export interface PendingSuggestion {
   id: string;
@@ -44,7 +45,9 @@ export function useEditFieldForm(
   const [description, setDescription] = useState(initial.description);
   const [helpText, setHelpText] = useState(initial.helpText);
   const [options, setOptions] = useState<string[]>(initial.options);
-  const [allowOther, setAllowOther] = useState<boolean>(field?.allow_other ?? false);
+  const [allowOther, setAllowOther] = useState<boolean>(
+    resolveAllowOther(field?.allow_other),
+  );
   const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
   const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
   const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);
@@ -61,7 +64,7 @@ export function useEditFieldForm(
     setDescription(init.description);
     setHelpText(init.helpText);
     setOptions(init.options);
-    setAllowOther(f?.allow_other ?? false);
+    setAllowOther(resolveAllowOther(f?.allow_other));
     setSubfields(f?.subfields);
     setSubfieldRule(f?.subfield_rule ?? "all");
     setCondition(f?.condition);

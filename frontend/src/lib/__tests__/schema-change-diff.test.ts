@@ -157,4 +157,41 @@ describe("diffPydanticField", () => {
       "required",
     ]);
   });
+
+  // `schema_change_log` guarda payloads de duas eras: até a unificação dos
+  // defaults, `diffFields` gravava `?? null` para a propriedade ausente. O
+  // histórico antigo tem que continuar legível e resolver para o mesmo default
+  // do campo vivo — `null` é "ausente", e ausente em `required` significa
+  // obrigatório.
+  describe("defaults implícitos em payload histórico", () => {
+    it("marcar como opcional renderiza a linha (null → false)", () => {
+      expect(diffPydanticField({ required: null }, { required: false })).toEqual([
+        { property: "required", before: true, after: false },
+      ]);
+    });
+
+    it("voltar a obrigatório renderiza a linha (false → null)", () => {
+      expect(diffPydanticField({ required: false }, { required: null })).toEqual([
+        { property: "required", before: false, after: true },
+      ]);
+    });
+
+    it("null e true descrevem o mesmo estado, sem linha", () => {
+      expect(diffPydanticField({ required: null }, { required: true })).toEqual([]);
+    });
+
+    it("target ausente resolve para all", () => {
+      expect(diffPydanticField({ target: null }, { target: "all" })).toEqual([]);
+      expect(diffPydanticField({ target: null }, { target: "llm_only" })).toEqual([
+        { property: "target", before: "all", after: "llm_only" },
+      ]);
+    });
+
+    it("allow_other ausente resolve para false", () => {
+      expect(diffPydanticField({ allow_other: null }, { allow_other: false })).toEqual([]);
+      expect(diffPydanticField({ allow_other: null }, { allow_other: true })).toEqual([
+        { property: "allow_other", before: false, after: true },
+      ]);
+    });
+  });
 });

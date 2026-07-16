@@ -1,5 +1,6 @@
 import { isFieldVisible } from "@/lib/conditional";
 import { isIncompleteOther } from "@/lib/other-option";
+import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 // Espelha `responseHadField` de compare-divergence: um campo só "existia" quando
@@ -28,9 +29,9 @@ function requiredHumanFields(
 ): PydanticField[] {
   return fields.filter(
     (f) =>
-      (f.target || "all") !== "llm_only" &&
-      f.target !== "none" &&
-      f.required !== false &&
+      resolveTarget(f.target) !== "llm_only" &&
+      resolveTarget(f.target) !== "none" &&
+      resolveRequired(f.required) &&
       isFieldVisible(f, answers) &&
       fieldExistedWhenCoded(answerFieldHashes, f.name),
   );
