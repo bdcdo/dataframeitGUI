@@ -576,5 +576,63 @@ BEGIN
 END;
 $$;
 
+-- ========== Reconcile apaga órfão e preserva fila com trabalho pendente ==========
+DO $$
+DECLARE
+  v_changed INTEGER;
+BEGIN
+  -- Órfão real: fila pendente sem nenhum field_review pendente no par (o
+  -- segundo membro nunca teve review no doc 1). A remoção vivia na action em
+  -- TypeScript; agora é a própria RPC que apaga, na mesma transação.
+  INSERT INTO public.assignments (project_id, document_id, user_id, type, status)
+  VALUES ('b0000000-0000-0000-0000-000000000001',
+          'c0000000-0000-0000-0000-000000000001',
+          'a0000000-0000-0000-0000-000000000004',
+          'auto_revisao', 'pendente');
+
+  -- Órfão em documento soft-deleted também é lixo: o filtro de escopo existe
+  -- para não CRIAR fila fora de escopo, não para preservar fila sem trabalho.
+  UPDATE public.documents SET exclusion_pending_at = now()
+  WHERE id = 'c0000000-0000-0000-0000-000000000002';
+  INSERT INTO public.assignments (project_id, document_id, user_id, type, status)
+  VALUES ('b0000000-0000-0000-0000-000000000001',
+          'c0000000-0000-0000-0000-000000000002',
+          'a0000000-0000-0000-0000-000000000004',
+          'auto_revisao', 'pendente');
+
+  v_changed := public.reconcile_auto_review_assignments_with_pending(
+    'b0000000-0000-0000-0000-000000000001'
+  );
+
+  IF v_changed <> 2 THEN
+    RAISE EXCEPTION 'FALHOU órfãos: esperava 2 remoções, mudou %', v_changed;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.assignments
+    WHERE user_id = 'a0000000-0000-0000-0000-000000000004'
+      AND document_id IN ('c0000000-0000-0000-0000-000000000001',
+                          'c0000000-0000-0000-0000-000000000002')
+      AND type = 'auto_revisao'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU órfãos: assignment sem field_review pendente sobreviveu';
+  END IF;
+
+  -- Fila com field_review pendente NÃO é órfã: o q4 do doc 3 segue sem
+  -- veredito, então o assignment do segundo membro permanece pendente.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.assignments
+    WHERE document_id = 'c0000000-0000-0000-0000-000000000003'
+      AND user_id = 'a0000000-0000-0000-0000-000000000004'
+      AND type = 'auto_revisao'
+      AND status = 'pendente'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU órfãos: apagou fila com trabalho pendente';
+  END IF;
+
+  RAISE NOTICE 'OK: reconcile apaga órfãos e preserva fila com pendência real';
+END;
+$$;
+
 RESET ROLE;
 ROLLBACK;

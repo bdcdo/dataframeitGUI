@@ -1484,8 +1484,10 @@ BEGIN
 END;
 $$;
 
--- Excluir um documento remove seu comentário automático antes de o FK legado
--- tentar aplicar SET NULL, enquanto comentários manuais continuam preservados.
+-- Excluir um documento desanexa a proveniência do comentário automático antes
+-- de o FK legado aplicar SET NULL em document_id (ordem das ações referenciais
+-- não é garantida e o CHECK de contexto exigiria documento com origem
+-- preenchida). Automáticos e manuais passam a ter o mesmo ciclo de vida.
 INSERT INTO public.documents (id, project_id, title, text)
 VALUES (
   '40000000-0000-0000-0000-00000000000d',
@@ -1565,10 +1567,12 @@ WHERE id = '40000000-0000-0000-0000-00000000000d';
 
 DO $$
 BEGIN
-  IF EXISTS (
+  IF NOT EXISTS (
     SELECT 1
     FROM public.project_comments
     WHERE id = '47000000-0000-0000-0000-00000000000d'
+      AND source_field_review_id IS NULL
+      AND document_id IS NULL
   ) OR NOT EXISTS (
     SELECT 1
     FROM public.project_comments
@@ -1576,11 +1580,127 @@ BEGIN
       AND document_id IS NULL
   ) THEN
     RAISE EXCEPTION
-      'FALHOU cascade: comentário automático não saiu ou manual não foi preservado';
+      'FALHOU detach: comentário automático ou manual não sobreviveu ao documento';
   END IF;
 
   RAISE NOTICE
-    'OK: excluir documento remove comentário automático e preserva o manual';
+    'OK: excluir documento desanexa o comentário automático e preserva ambos';
+END;
+$$;
+
+-- Apagar a field_review de origem (caso da regeneração do backlog) desanexa a
+-- proveniência sem destruir o comentário nem as respostas humanas penduradas
+-- nele por parent_id. O JWT de sessão fica presente durante o DELETE para
+-- provar que o guard de proveniência distingue ação referencial (profundidade
+-- de trigger > 1) de escrita direta pela API.
+INSERT INTO public.documents (id, project_id, title, text)
+VALUES (
+  '40000000-0000-0000-0000-00000000000e',
+  '20000000-0000-0000-0000-000000000001',
+  'Documento para thread de comentários',
+  'texto descartável'
+);
+
+INSERT INTO public.responses
+  (id, project_id, document_id, respondent_id, respondent_type, answers)
+VALUES
+  (
+    '42000000-0000-0000-0000-00000000000f',
+    '20000000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-00000000000e',
+    '10000000-0000-0000-0000-000000000002',
+    'humano',
+    '{}'
+  ),
+  (
+    '42000000-0000-0000-0000-000000000010',
+    '20000000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-00000000000e',
+    NULL,
+    'llm',
+    '{}'
+  );
+
+INSERT INTO public.field_reviews (
+  id,
+  project_id,
+  document_id,
+  field_name,
+  human_response_id,
+  llm_response_id,
+  self_reviewer_id
+) VALUES (
+  '43000000-0000-0000-0000-00000000000e',
+  '20000000-0000-0000-0000-000000000001',
+  '40000000-0000-0000-0000-00000000000e',
+  'campo-thread',
+  '42000000-0000-0000-0000-00000000000f',
+  '42000000-0000-0000-0000-000000000010',
+  '10000000-0000-0000-0000-000000000002'
+);
+
+INSERT INTO public.project_comments (
+  id,
+  project_id,
+  document_id,
+  field_name,
+  author_id,
+  body,
+  source_field_review_id,
+  parent_id
+) VALUES
+  (
+    '47000000-0000-0000-0000-00000000000f',
+    '20000000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-00000000000e',
+    'campo-thread',
+    '10000000-0000-0000-0000-000000000001',
+    'Comentário automático com discussão',
+    '43000000-0000-0000-0000-00000000000e',
+    NULL
+  ),
+  (
+    '47000000-0000-0000-0000-000000000010',
+    '20000000-0000-0000-0000-000000000001',
+    '40000000-0000-0000-0000-00000000000e',
+    'campo-thread',
+    '10000000-0000-0000-0000-000000000002',
+    'Resposta humana na thread',
+    NULL,
+    '47000000-0000-0000-0000-00000000000f'
+  );
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"10000000-0000-0000-0000-000000000003","supabase_uid":"10000000-0000-0000-0000-000000000003"}',
+  true
+);
+
+DELETE FROM public.field_reviews
+WHERE id = '43000000-0000-0000-0000-00000000000e';
+
+SELECT set_config('request.jwt.claims', '{}', true);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.project_comments
+    WHERE id = '47000000-0000-0000-0000-00000000000f'
+      AND source_field_review_id IS NULL
+      AND document_id = '40000000-0000-0000-0000-00000000000e'
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM public.project_comments
+    WHERE id = '47000000-0000-0000-0000-000000000010'
+      AND parent_id = '47000000-0000-0000-0000-00000000000f'
+  ) THEN
+    RAISE EXCEPTION
+      'FALHOU thread: apagar a revisão de origem destruiu a discussão humana';
+  END IF;
+
+  RAISE NOTICE
+    'OK: apagar field_review desanexa a proveniência e preserva a thread';
 END;
 $$;
 
@@ -2510,9 +2630,11 @@ BEGIN
   FROM pg_constraint
   WHERE conrelid = 'public.project_comments'::regclass
     AND conname = 'project_comments_source_field_review_id_fkey';
+  -- SET NULL restrito à coluna de origem: apagar a revisão desanexa a
+  -- proveniência sem destruir o comentário nem a thread pendurada nele.
   IF definition IS NULL
      OR definition NOT ILIKE
-       '%FOREIGN KEY (source_field_review_id, project_id, document_id, field_name) REFERENCES field_reviews(id, project_id, document_id, field_name) ON DELETE CASCADE%'
+       '%FOREIGN KEY (source_field_review_id, project_id, document_id, field_name) REFERENCES field_reviews(id, project_id, document_id, field_name) ON DELETE SET NULL (source_field_review_id)%'
   THEN
     RAISE EXCEPTION
       'FALHOU contrato: proveniência não fixa projeto, documento e campo';

@@ -1,7 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
-import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { coordinatorGate } from "@/lib/project-access";
 import { normalizeForComparison } from "@/lib/utils";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import { formatAnswer } from "@/lib/reviews/queries";
@@ -93,7 +93,16 @@ export default async function LlmInsightsPage({
     getProjectAccessContext(id, user),
   ]);
 
-  const { isCoordinator } = requireResolvedProjectAccess(accessResult);
+  // Fail-open em contexto de acesso indisponível (erro transitório de query):
+  // não rebaixa um coordenador legítimo a não-coordenador por falha transiente.
+  // Seguro aqui porque isCoordinator só liga affordances no LlmInsightsView
+  // (a view não recorta dados por papel) e as mutações por trás delas
+  // re-checam via requireCoordinator (fail-closed).
+  // NB: ao contrário de config/rounds, o layout-pai reviews/layout.tsx NÃO
+  // gateia coordenador (só exige usuário autenticado) — a segurança do
+  // fail-open aqui depende inteiramente do affordance-only acima, não de um
+  // backstop no layout.
+  const isCoordinator = coordinatorGate(accessResult, { failOpen: true });
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
 

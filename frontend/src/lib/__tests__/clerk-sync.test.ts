@@ -702,6 +702,7 @@ describe("reconcileClerkUserAccess", () => {
           p_clerk_user_id: "clerk_1",
           p_supabase_user_id: "accountUid",
           p_snapshot_version: 100,
+          p_verified_emails: ["ana@exemplo.com"],
         },
       },
       {
@@ -808,6 +809,7 @@ describe("reconcileClerkUserAccess", () => {
           p_clerk_user_id: "clerk_1",
           p_supabase_user_id: "accountUid",
           p_snapshot_version: 100,
+          p_verified_emails: [],
         },
       },
       {

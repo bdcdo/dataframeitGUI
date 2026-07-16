@@ -82,7 +82,8 @@ INSERT INTO auth.users (id, email) VALUES
   ('91000000-0000-0000-0000-000000000008', 'claim-active@example.test'),
   ('91000000-0000-0000-0000-000000000009', 'proof-target@example.test'),
   ('91000000-0000-0000-0000-00000000000a', 'proof-source@example.test'),
-  ('91000000-0000-0000-0000-00000000000b', 'proof-account@example.test');
+  ('91000000-0000-0000-0000-00000000000b', 'proof-account@example.test'),
+  ('91000000-0000-0000-0000-00000000000c', 'replay-account@example.test');
 
 UPDATE public.profiles
 SET activated_at = now()
@@ -101,7 +102,8 @@ INSERT INTO public.clerk_user_mapping (
   ('clerk_matrix_old', '91000000-0000-0000-0000-000000000005', 1),
   ('clerk_cascade_test', '91000000-0000-0000-0000-000000000006', 0),
   ('clerk_active_owner', '91000000-0000-0000-0000-000000000008', 1),
-  ('clerk_proof_account', '91000000-0000-0000-0000-00000000000b', 1);
+  ('clerk_proof_account', '91000000-0000-0000-0000-00000000000b', 1),
+  ('clerk_replay_test', '91000000-0000-0000-0000-00000000000c', 0);
 
 UPDATE public.clerk_user_mapping
 SET access_snapshot_version = 55
@@ -476,7 +478,8 @@ BEGIN
   IF NOT public.begin_clerk_access_snapshot(
     'clerk_snapshot_test',
     '91000000-0000-0000-0000-000000000001',
-    100
+    100,
+    ARRAY['snapshot-v100@example.test']
   ) THEN
     RAISE EXCEPTION 'FALHOU protocolo: begin 100 recusado';
   END IF;
@@ -531,31 +534,36 @@ DROP TRIGGER fail_snapshot_profile_update_trigger ON public.profiles;
 -- `>`, deixando `V > V` falso: a reentrega seguia para o UPDATE incondicional e
 -- zerava o marker de uma conta sincronizada, revogando o acesso dela até um
 -- retry concluir a segunda fase (ou para sempre, se ela falhasse).
+-- Conta dedicada: o teste precisa concluir uma geração para reentregá-la, e
+-- fazer isso na conta compartilhada avançaria a generation dela e quebraria o
+-- protocolo 100→200 exercitado logo abaixo (foi exatamente o que aconteceu
+-- quando este bloco usava clerk_snapshot_test com geração 300).
 DO $$
 DECLARE
   v_sync_version integer;
 BEGIN
-  -- Conta saudável: geração 300 concluída, marker 1.
   IF NOT public.begin_clerk_access_snapshot(
-    'clerk_snapshot_test',
-    '91000000-0000-0000-0000-000000000001',
-    300
-  ) OR NOT public.complete_clerk_access_snapshot(
-    'clerk_snapshot_test',
-    '91000000-0000-0000-0000-000000000001',
+    'clerk_replay_test',
+    '91000000-0000-0000-0000-00000000000c',
     300,
-    ARRAY['snapshot-v300@example.test'],
+    ARRAY['replay-account@example.test']
+  ) OR NOT public.complete_clerk_access_snapshot(
+    'clerk_replay_test',
+    '91000000-0000-0000-0000-00000000000c',
+    300,
+    ARRAY['replay-account@example.test'],
     'Nome 300',
-    'Snapshot',
+    'Replay',
     true
   ) THEN
     RAISE EXCEPTION 'FALHOU replay: não consegui sincronizar a geração 300';
   END IF;
 
   IF public.begin_clerk_access_snapshot(
-    'clerk_snapshot_test',
-    '91000000-0000-0000-0000-000000000001',
-    300
+    'clerk_replay_test',
+    '91000000-0000-0000-0000-00000000000c',
+    300,
+    ARRAY['replay-account@example.test']
   ) THEN
     RAISE EXCEPTION
       'FALHOU replay: begin aceitou reentrega de uma geração já concluída';
@@ -564,7 +572,7 @@ BEGIN
   SELECT access_sync_version
   INTO v_sync_version
   FROM public.clerk_user_mapping
-  WHERE clerk_user_id = 'clerk_snapshot_test';
+  WHERE clerk_user_id = 'clerk_replay_test';
 
   IF v_sync_version <> 1 THEN
     RAISE EXCEPTION
@@ -576,6 +584,74 @@ BEGIN
 END;
 $$;
 
+-- Revogação por posse mora na fase 1: quando um e-mail migra de conta e o
+-- snapshot do novo dono nunca conclui a fase 2 (superseded, clerk_deleted,
+-- falha), o dono anterior não pode conservar um link que resolve para a
+-- identidade do membro. O begin sozinho revoga o dono anterior e os links da
+-- própria conta para e-mails que saíram; a concessão fica pendente
+-- (fail-closed) até um complete.
+INSERT INTO auth.users (id, email) VALUES
+  ('91000000-0000-0000-0000-00000000000d', 'possession-old-owner@example.test'),
+  ('91000000-0000-0000-0000-00000000000e', 'possession-new-owner@example.test');
+
+INSERT INTO public.clerk_user_mapping (
+  clerk_user_id,
+  supabase_user_id,
+  access_sync_version
+) VALUES
+  ('clerk_possession_test', '91000000-0000-0000-0000-00000000000e', 0);
+
+INSERT INTO public.member_email_links (
+  id,
+  project_id,
+  member_user_id,
+  email,
+  linked_user_id,
+  created_by
+) VALUES
+  ('91200000-0000-0000-0000-000000000011', '91100000-0000-0000-0000-000000000001', '91000000-0000-0000-0000-000000000002', 'possession-migrated@example.test', '91000000-0000-0000-0000-00000000000d', '91000000-0000-0000-0000-000000000004'),
+  ('91200000-0000-0000-0000-000000000012', '91100000-0000-0000-0000-000000000001', '91000000-0000-0000-0000-000000000002', 'possession-stale@example.test', '91000000-0000-0000-0000-00000000000e', '91000000-0000-0000-0000-000000000004');
+
+DO $$
+BEGIN
+  -- Caixa alta e espaços provam que o begin normaliza igual à reconciliação.
+  IF NOT public.begin_clerk_access_snapshot(
+    'clerk_possession_test',
+    '91000000-0000-0000-0000-00000000000e',
+    100,
+    ARRAY['  POSSESSION-MIGRATED@EXAMPLE.TEST  ']
+  ) THEN
+    RAISE EXCEPTION 'FALHOU posse: begin da conta nova foi recusado';
+  END IF;
+
+  -- Nenhum complete rodou: o dono anterior já perdeu a resolução e o link
+  -- stale da própria conta caiu junto. A concessão ao novo dono continua
+  -- pendente.
+  IF EXISTS (
+    SELECT 1
+    FROM public.member_email_links
+    WHERE email = 'possession-migrated@example.test'
+      AND linked_user_id IS NOT NULL
+  ) OR EXISTS (
+    SELECT 1
+    FROM public.member_email_links
+    WHERE email = 'possession-stale@example.test'
+      AND linked_user_id IS NOT NULL
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM public.clerk_user_mapping
+    WHERE clerk_user_id = 'clerk_possession_test'
+      AND access_sync_version = 0
+      AND access_snapshot_version = 100
+  ) THEN
+    RAISE EXCEPTION
+      'FALHOU posse: begin sem complete deixou acesso residual ou concedeu';
+  END IF;
+
+  RAISE NOTICE 'OK: fase 1 revoga por posse; sem complete não há acesso residual';
+END;
+$$;
+
 DO $$
 DECLARE
   v_uid uuid;
@@ -583,11 +659,13 @@ BEGIN
   IF NOT public.begin_clerk_access_snapshot(
     'clerk_snapshot_test',
     '91000000-0000-0000-0000-000000000001',
-    100
+    100,
+    ARRAY['snapshot-v100@example.test']
   ) OR NOT public.begin_clerk_access_snapshot(
     'clerk_snapshot_test',
     '91000000-0000-0000-0000-000000000001',
-    200
+    200,
+    ARRAY['snapshot-v200-a@example.test', 'snapshot-v200-b@example.test', 'conflict-a@example.test', 'conflict-b@example.test', 'direct-membership@example.test', 'revocation@example.test']
   ) THEN
     RAISE EXCEPTION 'FALHOU protocolo: begin 100/200 não foi monotônico';
   END IF;
@@ -681,7 +759,8 @@ BEGIN
   IF public.begin_clerk_access_snapshot(
     'clerk_snapshot_test',
     '91000000-0000-0000-0000-000000000001',
-    199
+    199,
+    ARRAY[]::TEXT[]
   ) OR NOT EXISTS (
     SELECT 1
     FROM public.clerk_user_mapping
@@ -740,7 +819,8 @@ BEGIN
   ) OR public.begin_clerk_access_snapshot(
     'clerk_snapshot_test',
     '91000000-0000-0000-0000-000000000001',
-    300
+    300,
+    ARRAY['snapshot-v300@example.test']
   ) OR public.complete_clerk_access_snapshot(
     'clerk_snapshot_test',
     '91000000-0000-0000-0000-000000000001',

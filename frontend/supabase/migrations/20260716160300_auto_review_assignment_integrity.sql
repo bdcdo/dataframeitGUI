@@ -331,6 +331,7 @@ SET search_path = ''
 AS $$
 DECLARE
   v_pair RECORD;
+  v_is_member BOOLEAN;
   v_changed INTEGER;
   v_changed_total INTEGER := 0;
 BEGIN
@@ -339,25 +340,63 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- Só membros atuais podem ter fila recriada. Pares são processados em ordem
-  -- estável e cada um repete a disciplina membership→advisory→reviews→assignment.
+  -- A reconciliação tem dois sentidos e ambos vivem aqui, na mesma transação:
+  -- reabrir/criar fila de membro atual com veredito por fazer e apagar fila
+  -- pendente órfã (sem nenhum field_review pendente no par). A remoção de
+  -- órfãos morava na action em TypeScript (removeOrphanAssignments), em
+  -- leitura e DELETE auto-commitados separados: uma detecção concorrente podia
+  -- criar field_review+assignment entre os dois passos e ter a fila recém-
+  -- criada apagada como "órfã". Aqui a decisão é tomada sob o mesmo advisory
+  -- lock que todos os produtores seguram ao materializar o par.
+  --
+  -- Os dois sentidos são enumerados numa união única ordenada por
+  -- membro→documento: dois loops separados quebrariam a ordem global de
+  -- aquisição dos advisory locks entre reconciliações concorrentes e abririam
+  -- janela de deadlock. Cada par repete a disciplina
+  -- membership→advisory→reviews→assignment.
   FOR v_pair IN
-    SELECT DISTINCT
-      review.self_reviewer_id AS reviewer_id,
-      review.document_id
-    FROM public.field_reviews AS review
-    JOIN public.project_members AS member
-      ON member.project_id = review.project_id
-     AND member.user_id = review.self_reviewer_id
-    JOIN public.documents AS document
-      ON document.id = review.document_id
-     AND document.project_id = review.project_id
-    WHERE review.project_id = p_project_id
-      AND review.self_verdict IS NULL
-      -- Mesmo escopo da atribuição: documento fora de escopo não reabre fila.
-      AND document.excluded_at IS NULL
-      AND document.exclusion_pending_at IS NULL
-    ORDER BY review.self_reviewer_id, review.document_id
+    SELECT pair.reviewer_id, pair.document_id
+    FROM (
+      -- Sentido 1: membro atual com veredito por fazer em documento em escopo.
+      SELECT
+        review.self_reviewer_id AS reviewer_id,
+        review.document_id
+      FROM public.field_reviews AS review
+      JOIN public.project_members AS member
+        ON member.project_id = review.project_id
+       AND member.user_id = review.self_reviewer_id
+      JOIN public.documents AS document
+        ON document.id = review.document_id
+       AND document.project_id = review.project_id
+      WHERE review.project_id = p_project_id
+        AND review.self_verdict IS NULL
+        -- Mesmo escopo da atribuição: documento fora de escopo não reabre fila.
+        AND document.excluded_at IS NULL
+        AND document.exclusion_pending_at IS NULL
+      UNION
+      -- Sentido 2: assignment pendente sem field_review pendente. Sem filtro de
+      -- documento nem de membership, de propósito: órfão de documento
+      -- soft-deleted ou de ex-membro é lixo do mesmo jeito. O filtro de escopo
+      -- dos demais pontos (e da pós-condição desta migration) existe para não
+      -- CRIAR fila fora de escopo — não para preservar fila sem trabalho
+      -- pendente por trás.
+      SELECT
+        assignment.user_id AS reviewer_id,
+        assignment.document_id
+      FROM public.assignments AS assignment
+      WHERE assignment.project_id = p_project_id
+        AND assignment.type = 'auto_revisao'
+        AND assignment.status = 'pendente'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.field_reviews AS review
+          WHERE review.project_id = assignment.project_id
+            AND review.document_id = assignment.document_id
+            AND review.self_reviewer_id = assignment.user_id
+            AND review.self_verdict IS NULL
+        )
+    ) AS pair
+    ORDER BY pair.reviewer_id, pair.document_id
   LOOP
     PERFORM 1
     FROM public.project_members AS member
@@ -365,11 +404,9 @@ BEGIN
       AND member.user_id = v_pair.reviewer_id
     FOR UPDATE;
 
-    -- A membership pode ter desaparecido entre a enumeração e o lock. Nesse
-    -- caso o par deixa de ser elegível e não recebe assignment órfão.
-    IF NOT FOUND THEN
-      CONTINUE;
-    END IF;
+    -- Sem membership o par não pode ganhar fila nova; segue elegível apenas
+    -- para a remoção de órfão decidida abaixo.
+    v_is_member := FOUND;
 
     PERFORM public.lock_auto_review_assignment(
       p_project_id,
@@ -385,7 +422,44 @@ BEGIN
     ORDER BY review.id
     FOR UPDATE;
 
-    IF NOT EXISTS (
+    -- O estado que decide entre reabrir e apagar é o de DEPOIS dos locks:
+    -- em READ COMMITTED cada statement abaixo lê um snapshot novo, então quem
+    -- materializou o par concorrentemente já commitou (ou está esperando o
+    -- nosso commit no advisory lock) e não há meia-escrita visível.
+    v_changed := 0;
+    IF v_is_member AND EXISTS (
+      SELECT 1
+      FROM public.field_reviews AS review
+      JOIN public.documents AS document
+        ON document.id = review.document_id
+       AND document.project_id = review.project_id
+      WHERE review.project_id = p_project_id
+        AND review.document_id = v_pair.document_id
+        AND review.self_reviewer_id = v_pair.reviewer_id
+        AND review.self_verdict IS NULL
+        AND document.excluded_at IS NULL
+        AND document.exclusion_pending_at IS NULL
+    ) THEN
+      INSERT INTO public.assignments (
+        project_id,
+        document_id,
+        user_id,
+        type,
+        status
+      ) VALUES (
+        p_project_id,
+        v_pair.document_id,
+        v_pair.reviewer_id,
+        'auto_revisao',
+        'pendente'
+      )
+      ON CONFLICT (document_id, user_id, type) DO UPDATE
+      SET status = 'pendente',
+          completed_at = NULL
+      WHERE assignments.status = 'concluido';
+
+      GET DIAGNOSTICS v_changed = ROW_COUNT;
+    ELSIF NOT EXISTS (
       SELECT 1
       FROM public.field_reviews AS review
       WHERE review.project_id = p_project_id
@@ -393,28 +467,21 @@ BEGIN
         AND review.self_reviewer_id = v_pair.reviewer_id
         AND review.self_verdict IS NULL
     ) THEN
-      CONTINUE;
+      -- Nenhum veredito por fazer no par: a fila pendente é órfã. (O caso
+      -- intermediário — pendência real sem membro atual ou em documento fora
+      -- de escopo — não é órfão e fica intacto: remover a fila ali apagaria
+      -- trabalho que volta a ser elegível quando a membership/o documento
+      -- forem restaurados.)
+      DELETE FROM public.assignments AS assignment
+      WHERE assignment.project_id = p_project_id
+        AND assignment.document_id = v_pair.document_id
+        AND assignment.user_id = v_pair.reviewer_id
+        AND assignment.type = 'auto_revisao'
+        AND assignment.status = 'pendente';
+
+      GET DIAGNOSTICS v_changed = ROW_COUNT;
     END IF;
 
-    INSERT INTO public.assignments (
-      project_id,
-      document_id,
-      user_id,
-      type,
-      status
-    ) VALUES (
-      p_project_id,
-      v_pair.document_id,
-      v_pair.reviewer_id,
-      'auto_revisao',
-      'pendente'
-    )
-    ON CONFLICT (document_id, user_id, type) DO UPDATE
-    SET status = 'pendente',
-        completed_at = NULL
-    WHERE assignments.status = 'concluido';
-
-    GET DIAGNOSTICS v_changed = ROW_COUNT;
     v_changed_total := v_changed_total + v_changed;
   END LOOP;
 

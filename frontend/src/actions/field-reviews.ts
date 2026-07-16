@@ -9,7 +9,6 @@ import { canonicalPair } from "@/lib/equivalence";
 import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-queue";
 import {
   computeBacklogRows,
-  compositeKeySet,
   diffReviewsToRemove,
   type AutoReviewCandidate,
   type ExistingFieldReviewRow,
@@ -1097,51 +1096,9 @@ async function fetchBacklogInputs(
   };
 }
 
-// As etapas puras (computeBacklogRows, diffReviewsToRemove, compositeKeySet)
-// vivem em @/lib/auto-review-backlog — "use server" só pode exportar funções
-// async (regra do Next), então o que é puro e testável fica fora deste arquivo.
-
-// Remove assignments auto_revisao orfaos: sem nenhum field_review restante
-// para o doc+pesquisador e ainda `pendente`. Assignments ja iniciados ou
-// concluidos sao preservados. As duas leituras refletem o estado pos-
-// delete/upsert e sao independentes entre si — buscadas em paralelo.
-async function removeOrphanAssignments(
-  admin: SupabaseDataClient,
-  projectId: string,
-): Promise<void> {
-  const [
-    { data: remainingReviews, error: remainingErr },
-    { data: autoAssignments, error: autoErr },
-  ] = await Promise.all([
-    admin
-      .from("field_reviews")
-      .select("document_id, self_reviewer_id")
-      .eq("project_id", projectId),
-    admin
-      .from("assignments")
-      .select("id, document_id, user_id")
-      .eq("project_id", projectId)
-      .eq("type", "auto_revisao")
-      .eq("status", "pendente"),
-  ]);
-  if (remainingErr) throw new Error(remainingErr.message);
-  if (autoErr) throw new Error(autoErr.message);
-  const docUserWithReviews = compositeKeySet(
-    remainingReviews ?? [],
-    (r) => `${r.document_id}|${r.self_reviewer_id}`,
-  );
-
-  const orphanAssignmentIds = (autoAssignments ?? []).flatMap((a) =>
-    docUserWithReviews.has(`${a.document_id}|${a.user_id}`) ? [] : [a.id],
-  );
-  if (orphanAssignmentIds.length > 0) {
-    const { error } = await admin
-      .from("assignments")
-      .delete()
-      .in("id", orphanAssignmentIds);
-    if (error) throw new Error(error.message);
-  }
-}
+// As etapas puras (computeBacklogRows, diffReviewsToRemove) vivem em
+// @/lib/auto-review-backlog — "use server" só pode exportar funções async
+// (regra do Next), então o que é puro e testável fica fora deste arquivo.
 
 function deferredAdminClient(): () => SupabaseDataClient {
   let client: SupabaseDataClient | null = null;
@@ -1170,7 +1127,6 @@ async function deletePendingFieldReviews(
 }
 
 async function persistBacklogReconciliation(
-  supabase: SupabaseDataClient,
   projectId: string,
   idsToDelete: string[],
   candidates: AutoReviewCandidate[],
@@ -1189,10 +1145,12 @@ async function persistBacklogReconciliation(
     if (error) throw new Error(error.message);
   }
   // Reconcilia o projeto inteiro, inclusive filas fechadas cedo por execuções
-  // anteriores. A RPC usa a mesma ordem de locks da criação transacional.
+  // anteriores e assignments órfãos (pendentes sem field_review pendente): a
+  // RPC reabre e apaga sob a mesma ordem de locks da criação transacional —
+  // fazer o delete de órfãos aqui fora, em passos auto-commitados, deixava uma
+  // janela em que a fila recém-criada por detecção concorrente era apagada.
   await reconcileAutoReviewAssignmentsWithPending(getAdmin, projectId);
 
-  await removeOrphanAssignments(supabase, projectId);
   return actuallyRemoved;
 }
 
@@ -1255,7 +1213,6 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
     );
 
     const actuallyRemoved = await persistBacklogReconciliation(
-      supabase,
       projectId,
       idsToDelete,
       candidates,

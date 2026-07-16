@@ -134,9 +134,8 @@ export function computeBacklogRows(
   return { candidates, fieldReviewRows, regenerated };
 }
 
-// Compartilhado entre diffReviewsToRemove e removeOrphanAssignments (na
-// action): as duas reconciliam uma coleção recém-computada contra uma
-// existente via chave composta document_id+algo. Puro.
+// Reconcilia uma coleção recém-computada contra uma existente via chave
+// composta document_id+algo. Puro.
 export function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
   return new Set(rows.map(keyFn));
 }

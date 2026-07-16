@@ -543,9 +543,15 @@ ALTER TABLE public.field_reviews
 -- Cada field_review produz no máximo um comentário automático: ambiguidades
 -- terminam na auto-revisão, enquanto contestações só comentam se o árbitro
 -- mantiver a resposta da LLM. Comentários manuais e o histórico deixam a
--- origem NULL. A FK torna a proveniência representável sem prefixos de texto;
--- ON DELETE CASCADE remove o efeito derivado junto da revisão e não bloqueia a
--- cascata já existente ao excluir o projeto.
+-- origem NULL. A FK torna a proveniência representável sem prefixos de texto.
+--
+-- ON DELETE anula somente a coluna de origem (forma com lista de colunas do
+-- PG 15+, porque a FK composta inclui colunas NOT NULL): apagar a revisão não
+-- pode apagar o comentário, já que respostas humanas penduradas nele via
+-- parent_id (ON DELETE CASCADE em 20260406000000) morreriam junto — a
+-- regeneração do backlog apaga field_reviews pendentes e destruiria threads de
+-- discussão inteiras. O comentário sobrevive como comentário comum, sem
+-- proveniência.
 ALTER TABLE public.project_comments
   ADD COLUMN source_field_review_id UUID;
 
@@ -557,7 +563,7 @@ ALTER TABLE public.project_comments
   ADD CONSTRAINT project_comments_source_field_review_id_fkey
   FOREIGN KEY (source_field_review_id, project_id, document_id, field_name)
   REFERENCES public.field_reviews(id, project_id, document_id, field_name)
-  ON DELETE CASCADE,
+  ON DELETE SET NULL (source_field_review_id),
   ADD CONSTRAINT project_comments_source_field_review_context_check
   CHECK (
     source_field_review_id IS NULL
@@ -578,6 +584,15 @@ SET search_path = ''
 AS $$
 BEGIN
   IF public.clerk_uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- O SET NULL referencial da FK de origem e o detach disparado pelo trigger
+  -- de documents executam este trigger em profundidade aninhada (as ações
+  -- referenciais rodam como triggers internos). O guard mira somente escrita
+  -- direta pela API: em profundidade > 1 a mudança veio de mecânica interna do
+  -- banco, não de um cliente, mesmo com JWT de sessão presente.
+  IF pg_catalog.pg_trigger_depth() > 1 THEN
     RETURN NEW;
   END IF;
 
@@ -613,18 +628,22 @@ CREATE TRIGGER enforce_project_comment_source_guard_trigger
   EXECUTE FUNCTION public.enforce_project_comment_source_guard();
 
 -- O FK histórico de project_comments.document_id preserva comentários manuais
--- com ON DELETE SET NULL. Comentários automáticos, porém, exigem documento e
--- campo para que a FK composta continue vinculada à revisão de origem. A
--- remoção antes das ações referenciais evita que o SET NULL viole essa
--- invariante, sem mudar o ciclo de vida dos comentários manuais.
-CREATE OR REPLACE FUNCTION public.delete_automatic_comments_before_document()
+-- com ON DELETE SET NULL. O CHECK de contexto exige documento e campo enquanto
+-- a origem estiver preenchida, e a ordem entre as duas ações referenciais
+-- (anular document_id vs. anular source_field_review_id via cascata de
+-- field_reviews) não é garantida — se document_id anular primeiro, o CHECK
+-- falha. Desanexar a proveniência antes das ações referenciais elimina a
+-- corrida e dá aos comentários automáticos o mesmo ciclo de vida dos manuais:
+-- a thread sobrevive à exclusão do documento.
+CREATE OR REPLACE FUNCTION public.detach_automatic_comments_before_document()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
-  DELETE FROM public.project_comments AS comment
+  UPDATE public.project_comments AS comment
+  SET source_field_review_id = NULL
   WHERE comment.document_id = OLD.id
     AND comment.source_field_review_id IS NOT NULL;
 
@@ -632,15 +651,15 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.delete_automatic_comments_before_document()
+REVOKE ALL ON FUNCTION public.detach_automatic_comments_before_document()
   FROM PUBLIC, anon, authenticated, service_role;
 
-DROP TRIGGER IF EXISTS delete_automatic_comments_before_document_trigger
+DROP TRIGGER IF EXISTS detach_automatic_comments_before_document_trigger
   ON public.documents;
-CREATE TRIGGER delete_automatic_comments_before_document_trigger
+CREATE TRIGGER detach_automatic_comments_before_document_trigger
   BEFORE DELETE ON public.documents
   FOR EACH ROW
-  EXECUTE FUNCTION public.delete_automatic_comments_before_document();
+  EXECUTE FUNCTION public.detach_automatic_comments_before_document();
 
 -- Gestão de aliases é rara e globalmente serializada. O trigger por statement
 -- toma a trava antes que UPDATE bloqueie qualquer linha; o trigger por linha
@@ -736,6 +755,29 @@ CREATE TRIGGER enforce_terminal_member_email_alias_trigger
   FOR EACH ROW
   EXECUTE FUNCTION public.enforce_terminal_member_email_alias();
 
+-- Normalização canônica da lista de e-mails verificados de um snapshot Clerk.
+-- Fonte única entre a fase 1 (begin, revogações) e a reconciliação (complete,
+-- concessões): as duas precisam enxergar exatamente o mesmo conjunto, senão um
+-- e-mail com caixa/espaço divergente seria revogado numa fase e não concedido
+-- na outra.
+CREATE OR REPLACE FUNCTION public.normalized_verified_emails(
+  p_verified_emails TEXT[]
+) RETURNS TEXT[]
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT COALESCE(
+    array_agg(DISTINCT pg_catalog.lower(pg_catalog.btrim(email))),
+    ARRAY[]::TEXT[]
+  )
+  FROM unnest(p_verified_emails) AS verified(email)
+  WHERE pg_catalog.btrim(email) <> '';
+$$;
+
+REVOKE ALL ON FUNCTION public.normalized_verified_emails(TEXT[])
+  FROM PUBLIC, anon, authenticated, service_role;
+
 -- Reconcilia a lista completa de e-mails verificados de uma conta numa única
 -- transação. Links removidos no Clerk perdem o acesso primeiro. Links
 -- redundantes para a própria membership são apagados, e projetos em que a
@@ -750,17 +792,10 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
-  v_verified_emails TEXT[];
+  v_verified_emails TEXT[] :=
+    public.normalized_verified_emails(p_verified_emails);
   v_conflict_projects UUID[];
 BEGIN
-  SELECT COALESCE(
-    array_agg(DISTINCT lower(btrim(email))),
-    ARRAY[]::TEXT[]
-  )
-  INTO v_verified_emails
-  FROM unnest(p_verified_emails) AS verified(email)
-  WHERE btrim(email) <> '';
-
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('canonical-project-identity', 0)
   );
@@ -818,10 +853,18 @@ REVOKE ALL ON FUNCTION public.reconcile_member_email_links(UUID, TEXT[])
 -- A primeira fase escolhe a geração e derruba o marker numa transação própria.
 -- Se a segunda fase falhar, este estado 0 já está commitado e tokens do snapshot
 -- anterior permanecem rejeitados até um retry concluir os efeitos.
+--
+-- As revogações de alias por posse de e-mail também moram aqui, e não na
+-- reconciliação da fase 2: quando um e-mail migra de conta e o snapshot do
+-- novo dono nunca conclui a segunda fase (superseded, clerk_deleted, falha), o
+-- dono anterior conservaria um link resolvendo para a identidade do membro.
+-- Fase 1 revoga, fase 2 concede — o pior caso vira alias sem resolução
+-- (fail-closed), nunca acesso residual.
 CREATE OR REPLACE FUNCTION public.begin_clerk_access_snapshot(
   p_clerk_user_id TEXT,
   p_supabase_user_id UUID,
-  p_snapshot_version BIGINT
+  p_snapshot_version BIGINT,
+  p_verified_emails TEXT[]
 ) RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -831,6 +874,8 @@ DECLARE
   v_current_snapshot_version BIGINT;
   v_clerk_deleted BOOLEAN;
   v_access_sync_version INTEGER;
+  v_verified_emails TEXT[] :=
+    public.normalized_verified_emails(p_verified_emails);
 BEGIN
   IF p_snapshot_version < 0 THEN
     RAISE EXCEPTION 'snapshot Clerk inválido' USING ERRCODE = '22023';
@@ -880,15 +925,32 @@ BEGIN
   WHERE clerk_user_id = p_clerk_user_id
     AND supabase_user_id = p_supabase_user_id;
 
+  -- Revogação por posse, já na geração escolhida: e-mails deste snapshot
+  -- deixam de resolver para qualquer outra conta, e os links desta conta para
+  -- e-mails que saíram caem juntos. A reconciliação da fase 2 refaz ambos de
+  -- forma idempotente antes de conceder; este passo só garante que a concessão
+  -- pendente nunca deixe um dono anterior com acesso residual.
+  UPDATE public.member_email_links
+  SET linked_user_id = NULL
+  WHERE (
+      email = ANY(v_verified_emails)
+      AND linked_user_id IS NOT NULL
+      AND linked_user_id <> p_supabase_user_id
+    )
+    OR (
+      linked_user_id = p_supabase_user_id
+      AND NOT (email = ANY(v_verified_emails))
+    );
+
   RETURN true;
 END;
 $$;
 
 REVOKE ALL ON FUNCTION public.begin_clerk_access_snapshot(
-  TEXT, UUID, BIGINT
+  TEXT, UUID, BIGINT, TEXT[]
 ) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.begin_clerk_access_snapshot(
-  TEXT, UUID, BIGINT
+  TEXT, UUID, BIGINT, TEXT[]
 ) TO service_role;
 
 -- A segunda fase só toca a geração ainda escolhida pela primeira. Profile,
@@ -1116,6 +1178,14 @@ CREATE TRIGGER enforce_terminal_project_membership_update_trigger
 -- ========== 2. Funções de acesso com precedência canônica ==========
 -- Relação canônica única: cada helper de projeto, papel e permissão deriva
 -- desta mesma membership terminal, sem repetir o UNION raw-versus-alias.
+--
+-- Custo importa: clerk_uid() deixou de ser extração de claim e passou a
+-- consultar clerk_user_mapping, então o CTE o computa uma única vez por
+-- avaliação em vez de uma vez por braço. UNION ALL substitui UNION porque
+-- enforce_terminal_project_membership garante que um mesmo projeto nunca
+-- aparece nos dois braços (conta vinculada não recebe membership própria); o
+-- DISTINCT do braço de alias cobre o único caso de duplicata restante, dois
+-- e-mails da mesma conta apontando ao mesmo membro no mesmo projeto.
 CREATE OR REPLACE FUNCTION public.auth_user_project_memberships()
 RETURNS TABLE (
   project_id UUID,
@@ -1129,7 +1199,11 @@ LANGUAGE sql
 SECURITY DEFINER
 STABLE
 SET search_path = ''
+ROWS 16
 AS $$
+  WITH session_account AS (
+    SELECT public.clerk_uid() AS account_id
+  )
   SELECT
     pm.project_id,
     pm.user_id,
@@ -1137,25 +1211,33 @@ AS $$
     pm.can_arbitrate,
     pm.can_resolve,
     pm.can_compare
-  FROM public.project_members pm
-  WHERE pm.user_id = public.clerk_uid()
-  UNION
-  SELECT
+  FROM session_account
+  JOIN public.project_members pm
+    ON pm.user_id = session_account.account_id
+  UNION ALL
+  SELECT DISTINCT
     pm.project_id,
     pm.user_id,
     pm.role,
     pm.can_arbitrate,
     pm.can_resolve,
     pm.can_compare
-  FROM public.member_email_links mel
+  FROM session_account
+  JOIN public.member_email_links mel
+    ON mel.linked_user_id = session_account.account_id
   JOIN public.project_members pm
     ON pm.project_id = mel.project_id
    AND pm.user_id = mel.member_user_id
-  WHERE mel.linked_user_id = public.clerk_uid()
 $$;
 
+-- As policies da seção 2b referenciam a relação canônica diretamente e
+-- executam com o papel da sessão, então EXECUTE acompanha as demais helpers.
+-- SECURITY DEFINER devolve apenas as memberships do próprio JWT — expor a
+-- função não expõe nada além do que auth_user_project_ids() já expunha.
 REVOKE ALL ON FUNCTION public.auth_user_project_memberships()
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.auth_user_project_memberships()
+  TO authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.auth_user_project_ids()
 RETURNS SETOF UUID
@@ -1180,19 +1262,24 @@ AS $$
   WHERE membership.role = 'coordenador'
 $$;
 
+-- Deriva direto de auth_user_project_memberships (uma camada a menos que via
+-- auth_user_project_ids) e computa clerk_uid() uma vez para o braço de
+-- criador. UNION com dedup fica: o criador costuma ser também membro.
 CREATE OR REPLACE FUNCTION public.auth_user_accessible_project_ids()
 RETURNS SETOF UUID
 LANGUAGE sql
 SECURITY DEFINER
 STABLE
 SET search_path = ''
+ROWS 16
 AS $$
-  SELECT canonical.project_id
-  FROM public.auth_user_project_ids() AS canonical(project_id)
+  SELECT membership.project_id
+  FROM public.auth_user_project_memberships() AS membership
   UNION
   SELECT p.id
-  FROM public.projects p
-  WHERE p.created_by = public.clerk_uid()
+  FROM (SELECT public.clerk_uid() AS account_id) AS session_account
+  JOIN public.projects p
+    ON p.created_by = session_account.account_id
 $$;
 
 CREATE OR REPLACE FUNCTION public.auth_user_coordinator_or_creator_project_ids()
@@ -1201,13 +1288,16 @@ LANGUAGE sql
 SECURITY DEFINER
 STABLE
 SET search_path = ''
+ROWS 16
 AS $$
-  SELECT canonical.project_id
-  FROM public.auth_user_coordinator_project_ids() AS canonical(project_id)
+  SELECT membership.project_id
+  FROM public.auth_user_project_memberships() AS membership
+  WHERE membership.role = 'coordenador'
   UNION
   SELECT p.id
-  FROM public.projects p
-  WHERE p.created_by = public.clerk_uid()
+  FROM (SELECT public.clerk_uid() AS account_id) AS session_account
+  JOIN public.projects p
+    ON p.created_by = session_account.account_id
 $$;
 
 CREATE OR REPLACE FUNCTION public.auth_user_resolver_project_ids()
@@ -1251,6 +1341,111 @@ GRANT EXECUTE ON FUNCTION public.auth_user_resolver_project_ids()
   TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.auth_user_member_identity_ids(UUID)
   TO anon, authenticated, service_role;
+
+-- ========== 2b. Policies de identidade sem correlação por linha ==========
+-- `col IN (SELECT auth_user_member_identity_ids(project_id))` correlaciona a
+-- subquery pelo project_id DA LINHA: o planner reexecuta o helper — e toda a
+-- cadeia clerk_uid()→mapping→UNION — uma vez por linha varrida, não uma vez
+-- por query. Com clerk_uid() consultando tabela, o bench local mediu ~9× de
+-- regressão em `SELECT count(*) FROM responses` (153ms→1.341ms em 4k linhas).
+-- A forma por tupla `(project_id, col) IN (SELECT project_id, user_id FROM
+-- auth_user_project_memberships())` é semanticamente idêntica e
+-- não-correlacionada: o helper roda uma vez e cada linha custa um probe de
+-- hash. As policies abaixo vêm de 20260611130000/20260716154500 (já aplicadas
+-- no remoto) e são recriadas aqui apenas nessa forma; predicados inalterados.
+DROP POLICY IF EXISTS "Users manage own responses" ON public.responses;
+CREATE POLICY "Users manage own responses" ON public.responses
+  FOR ALL
+  USING (
+    (project_id, respondent_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
+    )
+    OR project_id IN (
+      SELECT public.auth_user_coordinator_or_creator_project_ids()
+    )
+    OR (SELECT public.is_master())
+  )
+  WITH CHECK (
+    respondent_type = 'humano'
+    AND (project_id, respondent_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
+    )
+    AND (
+      project_id IN (SELECT public.auth_user_accessible_project_ids())
+      OR (SELECT public.is_master())
+    )
+  );
+
+DROP POLICY IF EXISTS "Reviewers manage reviews" ON public.reviews;
+CREATE POLICY "Reviewers manage reviews" ON public.reviews
+  FOR ALL
+  USING (
+    (project_id, reviewer_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
+    )
+    OR project_id IN (
+      SELECT public.auth_user_coordinator_or_creator_project_ids()
+    )
+    OR (SELECT public.is_master())
+  );
+
+DROP POLICY IF EXISTS "Members view own field_reviews" ON public.field_reviews;
+CREATE POLICY "Members view own field_reviews" ON public.field_reviews
+  FOR SELECT
+  USING (
+    (SELECT public.is_master())
+    OR project_id IN (
+      SELECT public.auth_user_coordinator_or_creator_project_ids()
+    )
+    OR (
+      project_id IN (SELECT public.auth_user_accessible_project_ids())
+      AND (
+        (project_id, self_reviewer_id) IN (
+          SELECT membership.project_id, membership.user_id
+          FROM public.auth_user_project_memberships() AS membership
+        )
+        OR (project_id, arbitrator_id) IN (
+          SELECT membership.project_id, membership.user_id
+          FROM public.auth_user_project_memberships() AS membership
+        )
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS "Self reviewer updates own row" ON public.field_reviews;
+CREATE POLICY "Self reviewer updates own row" ON public.field_reviews
+  FOR UPDATE
+  USING (
+    (project_id, self_reviewer_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
+    )
+  )
+  WITH CHECK (
+    (project_id, self_reviewer_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
+    )
+  );
+
+DROP POLICY IF EXISTS "Arbitrator updates own row" ON public.field_reviews;
+CREATE POLICY "Arbitrator updates own row" ON public.field_reviews
+  FOR UPDATE
+  USING (
+    (project_id, arbitrator_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
+    )
+  )
+  WITH CHECK (
+    (project_id, arbitrator_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
+    )
+  );
 
 -- RLS identifica quem pode tocar a linha; este trigger limita o que cada ator
 -- pode mudar. Sem a guarda de colunas, self-reviewer e árbitro poderiam manter
@@ -1453,7 +1648,7 @@ CREATE POLICY "Coordinators release field_reviews"
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   )
   WITH CHECK (
     project_id IN (
@@ -1461,7 +1656,7 @@ CREATE POLICY "Coordinators release field_reviews"
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 -- A RLS autoriza coordenadores a gerenciar memberships de terceiros. Este
@@ -1479,8 +1674,8 @@ DROP POLICY IF EXISTS "Project members view teammate profiles" ON public.profile
 CREATE POLICY "Users and teammates view profiles" ON public.profiles
   FOR SELECT
   USING (
-    id = public.clerk_uid()
-    OR public.is_master()
+    id = (SELECT public.clerk_uid())
+    OR (SELECT public.is_master())
     OR EXISTS (
       SELECT 1
       FROM public.project_members teammate
@@ -1520,7 +1715,7 @@ CREATE POLICY "Members can view acknowledgments"
             AS accessible(project_id)
         )
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 DROP POLICY IF EXISTS "Respondents can upsert own acknowledgments"
@@ -1587,7 +1782,7 @@ CREATE POLICY "Coordinators can update verdict_acknowledgments"
             AS managed(project_id)
         )
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   )
   WITH CHECK (
     EXISTS (
@@ -1600,7 +1795,7 @@ CREATE POLICY "Coordinators can update verdict_acknowledgments"
             AS managed(project_id)
         )
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 DROP POLICY IF EXISTS "Members view response_equivalences"
@@ -1614,7 +1809,7 @@ CREATE POLICY "Members view response_equivalences"
       FROM public.auth_user_accessible_project_ids()
         AS accessible(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 DROP POLICY IF EXISTS "Reviewers manage response_equivalences"
@@ -1623,30 +1818,28 @@ CREATE POLICY "Reviewers manage response_equivalences"
   ON public.response_equivalences
   FOR ALL
   USING (
-    reviewer_id IN (
-      SELECT identity.user_id
-      FROM public.auth_user_member_identity_ids(project_id)
-        AS identity(user_id)
+    (project_id, reviewer_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
     )
     OR project_id IN (
       SELECT managed.project_id
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   )
   WITH CHECK (
-    reviewer_id IN (
-      SELECT identity.user_id
-      FROM public.auth_user_member_identity_ids(project_id)
-        AS identity(user_id)
+    (project_id, reviewer_id) IN (
+      SELECT membership.project_id, membership.user_id
+      FROM public.auth_user_project_memberships() AS membership
     )
     OR project_id IN (
       SELECT managed.project_id
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 DROP POLICY IF EXISTS "Users view own field order"
@@ -1656,10 +1849,9 @@ CREATE POLICY "Users view own field order"
   FOR SELECT
   USING (
     (
-      user_id IN (
-        SELECT identity.user_id
-        FROM public.auth_user_member_identity_ids(project_id)
-          AS identity(user_id)
+      (project_id, user_id) IN (
+        SELECT membership.project_id, membership.user_id
+        FROM public.auth_user_project_memberships() AS membership
       )
       AND
       project_id IN (
@@ -1669,8 +1861,8 @@ CREATE POLICY "Users view own field order"
       )
     )
     OR (
-      public.is_master()
-      AND user_id = public.clerk_uid()
+      (SELECT public.is_master())
+      AND user_id = (SELECT public.clerk_uid())
     )
   );
 
@@ -1681,10 +1873,9 @@ CREATE POLICY "Users insert own field order"
   FOR INSERT
   WITH CHECK (
     (
-      user_id IN (
-        SELECT identity.user_id
-        FROM public.auth_user_member_identity_ids(project_id)
-          AS identity(user_id)
+      (project_id, user_id) IN (
+        SELECT membership.project_id, membership.user_id
+        FROM public.auth_user_project_memberships() AS membership
       )
       AND
       project_id IN (
@@ -1694,8 +1885,8 @@ CREATE POLICY "Users insert own field order"
       )
     )
     OR (
-      public.is_master()
-      AND user_id = public.clerk_uid()
+      (SELECT public.is_master())
+      AND user_id = (SELECT public.clerk_uid())
     )
   );
 
@@ -1706,10 +1897,9 @@ CREATE POLICY "Users update own field order"
   FOR UPDATE
   USING (
     (
-      user_id IN (
-        SELECT identity.user_id
-        FROM public.auth_user_member_identity_ids(project_id)
-          AS identity(user_id)
+      (project_id, user_id) IN (
+        SELECT membership.project_id, membership.user_id
+        FROM public.auth_user_project_memberships() AS membership
       )
       AND
       project_id IN (
@@ -1719,16 +1909,15 @@ CREATE POLICY "Users update own field order"
       )
     )
     OR (
-      public.is_master()
-      AND user_id = public.clerk_uid()
+      (SELECT public.is_master())
+      AND user_id = (SELECT public.clerk_uid())
     )
   )
   WITH CHECK (
     (
-      user_id IN (
-        SELECT identity.user_id
-        FROM public.auth_user_member_identity_ids(project_id)
-          AS identity(user_id)
+      (project_id, user_id) IN (
+        SELECT membership.project_id, membership.user_id
+        FROM public.auth_user_project_memberships() AS membership
       )
       AND
       project_id IN (
@@ -1738,8 +1927,8 @@ CREATE POLICY "Users update own field order"
       )
     )
     OR (
-      public.is_master()
-      AND user_id = public.clerk_uid()
+      (SELECT public.is_master())
+      AND user_id = (SELECT public.clerk_uid())
     )
   );
 
@@ -1750,10 +1939,9 @@ CREATE POLICY "Users delete own field order"
   FOR DELETE
   USING (
     (
-      user_id IN (
-        SELECT identity.user_id
-        FROM public.auth_user_member_identity_ids(project_id)
-          AS identity(user_id)
+      (project_id, user_id) IN (
+        SELECT membership.project_id, membership.user_id
+        FROM public.auth_user_project_memberships() AS membership
       )
       AND
       project_id IN (
@@ -1763,8 +1951,8 @@ CREATE POLICY "Users delete own field order"
       )
     )
     OR (
-      public.is_master()
-      AND user_id = public.clerk_uid()
+      (SELECT public.is_master())
+      AND user_id = (SELECT public.clerk_uid())
     )
   );
 
@@ -1781,7 +1969,7 @@ CREATE POLICY "Members can view project comments"
       FROM public.auth_user_accessible_project_ids()
         AS accessible(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 DROP POLICY IF EXISTS "Members can create project comments"
@@ -1790,7 +1978,7 @@ CREATE POLICY "Members can create project comments"
   ON public.project_comments
   FOR INSERT
   WITH CHECK (
-    author_id = public.clerk_uid()
+    author_id = (SELECT public.clerk_uid())
     AND source_field_review_id IS NULL
     AND (
       project_id IN (
@@ -1798,7 +1986,7 @@ CREATE POLICY "Members can create project comments"
         FROM public.auth_user_accessible_project_ids()
           AS accessible(project_id)
       )
-      OR public.is_master()
+      OR (SELECT public.is_master())
     )
   );
 
@@ -1818,7 +2006,7 @@ CREATE POLICY "Members can delete ambiguity comments"
         FROM public.auth_user_accessible_project_ids()
           AS accessible(project_id)
       )
-      OR public.is_master()
+      OR (SELECT public.is_master())
     )
   );
 
@@ -1833,7 +2021,7 @@ CREATE POLICY "Coordinators can update project comments"
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   )
   WITH CHECK (
     project_id IN (
@@ -1841,7 +2029,7 @@ CREATE POLICY "Coordinators can update project comments"
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 DROP POLICY IF EXISTS "Members can view suggestions"
@@ -1855,7 +2043,7 @@ CREATE POLICY "Members can view suggestions"
       FROM public.auth_user_accessible_project_ids()
         AS accessible(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 DROP POLICY IF EXISTS "Members can create suggestions"
@@ -1864,14 +2052,14 @@ CREATE POLICY "Members can create suggestions"
   ON public.schema_suggestions
   FOR INSERT
   WITH CHECK (
-    suggested_by = public.clerk_uid()
+    suggested_by = (SELECT public.clerk_uid())
     AND (
       project_id IN (
         SELECT accessible.project_id
         FROM public.auth_user_accessible_project_ids()
           AS accessible(project_id)
       )
-      OR public.is_master()
+      OR (SELECT public.is_master())
     )
   );
 
@@ -1886,7 +2074,7 @@ CREATE POLICY "Coordinators can update suggestions"
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   )
   WITH CHECK (
     project_id IN (
@@ -1894,7 +2082,7 @@ CREATE POLICY "Coordinators can update suggestions"
       FROM public.auth_user_coordinator_or_creator_project_ids()
         AS managed(project_id)
     )
-    OR public.is_master()
+    OR (SELECT public.is_master())
   );
 
 -- ========== 5. Unificação compatível com a identidade única ==========

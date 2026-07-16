@@ -111,6 +111,11 @@ describe("regenerateAutoReviewBacklog — escrita transacional em lote", () => {
       },
     ]);
     expect(writeCalls.filter((call) => call.op === "upsert")).toEqual([]);
+    // A remoção de assignments órfãos vive dentro da RPC de reconciliação
+    // (mesma transação/locks); a action não pode voltar a deletar direto.
+    expect(
+      writeCalls.filter((call) => call.table === "assignments"),
+    ).toEqual([]);
     expect(adminFactory).toHaveBeenCalledTimes(1);
   });
 

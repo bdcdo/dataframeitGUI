@@ -242,9 +242,12 @@ async function applyClerkAccessSnapshot(
     p_supabase_user_id: supabaseUserId,
     p_snapshot_version: user.updatedAt,
   };
+  // A fase 1 recebe os e-mails porque as revogações de alias por posse moram
+  // nela: se a fase 2 nunca rodar, nenhum dono anterior conserva acesso
+  // residual (a concessão fica pendente, fail-closed).
   const { data: began, error: beginError } = await admin.rpc(
     "begin_clerk_access_snapshot",
-    snapshotIdentity,
+    { ...snapshotIdentity, p_verified_emails: [...verifiedEmails] },
   );
   if (beginError) {
     throw new Error(
