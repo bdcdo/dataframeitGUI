@@ -31,14 +31,14 @@ export interface CompareDoc {
   text: string;
 }
 
-// A row da fila e o tipo wire (`CompareResponse`, o mesmo que <ComparePage>
+// A row da fila é o tipo wire (`CompareResponse`, o mesmo que <ComparePage>
 // recebe na prop `responses`) mais o `document_id`, que a query traz e o
-// agrupamento por documento usa. O `extends` e o que impede o drift: antes os
-// dois shapes eram declarados campo a campo em modulos diferentes sob o mesmo
-// nome, e ja tinham divergido — o wire ficou sem `document_id` enquanto o mesmo
+// agrupamento por documento usa. O `extends` é o que impede o drift: antes os
+// dois shapes eram declarados campo a campo em módulos diferentes sob o mesmo
+// nome, e já tinham divergido — o wire ficou sem `document_id` enquanto o mesmo
 // objeto atravessava a fronteira RSC -> client em `compare/page.tsx`
 // (`responsesMap` sai daqui e entra na prop tipada com o wire), compilando em
-// silencio porque no call site nao e object literal e nao ha excess property
+// silêncio porque no call site não é object literal e não há excess property
 // check.
 export interface CompareQueueResponse extends CompareResponse {
   document_id: string;
@@ -91,11 +91,11 @@ export interface VersionLogRow {
   version_patch: number | null;
 }
 
-// Local de proposito: e a row de SELECT que `compare/page.tsx` passa
-// posicionalmente (checagem estrutural, sem importar o nome), nao um tipo de
-// dominio. Exporta-lo colidia com o `AssignmentRow` homonimo de
-// `auto-review-backlog.ts`, que e um payload de INSERT com outro shape
-// (tem project_id; type/status sao literais la, string solto aqui).
+// Local de propósito: é a row de SELECT que `compare/page.tsx` passa
+// posicionalmente (checagem estrutural, sem importar o nome), não um tipo de
+// domínio. Exportá-lo colidia com o `AssignmentRow` homônimo de
+// `auto-review-backlog.ts`, que é um payload de INSERT com outro shape
+// (tem project_id; type/status são literais lá, string solto aqui).
 interface AssignmentRow {
   document_id: string;
   user_id: string;

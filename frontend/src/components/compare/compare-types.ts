@@ -2,6 +2,8 @@
 // `CompareWorkspace`. Extraídos de `ComparePage` para evitar import circular de
 // tipos quando os hooks foram destacados do container.
 
+import type { AnswerFieldHashes } from "@/lib/types";
+
 export interface EquivalencePairWire {
   id: string;
   response_a_id: string;
@@ -18,7 +20,7 @@ export interface CompareResponse {
   justifications: Record<string, string> | null;
   is_latest: boolean;
   pydantic_hash: string | null;
-  answer_field_hashes: Record<string, string> | null;
+  answer_field_hashes: AnswerFieldHashes;
   schema_version_major: number | null;
   schema_version_minor: number | null;
   schema_version_patch: number | null;
