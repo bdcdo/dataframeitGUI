@@ -8,13 +8,20 @@
 -- continua 'concluido'. O documento fica fora da fila com veredito por fazer, e
 -- só volta por intervenção manual.
 --
--- Os dois upserts também rodam em requests separadas, sem trava: um stub criado
--- entre a leitura de pendências e o fechamento não é enxergado, porque sob READ
--- COMMITTED cada statement lê um snapshot novo.
+-- Os dois upserts também rodam em requests separadas, sem trava, e o fechamento
+-- (syncAutoRevisaoAssignmentStatus, em TypeScript) lê as pendências e grava
+-- 'concluido' em duas requests próprias: um stub criado entre a leitura e o
+-- UPDATE não é enxergado, porque sob READ COMMITTED cada statement lê um
+-- snapshot novo. Corrigir só o produtor não fecharia essa janela — uma trava com
+-- um único tomador não serializa nada —, então esta migration move o fechamento
+-- para o banco e faz os dois lados compartilharem a mesma chave.
 --
--- A arbitragem já resolve isso: assign_arbitration_if_eligible pega
--- lock_arbitration_assignment e reabre com DO UPDATE ... WHERE
--- status = 'concluido'. Esta migration dá o par equivalente à auto-revisão.
+-- A arbitragem resolve o problema irmão por outro desenho:
+-- assign_arbitration_if_eligible (migration 20260715160000) é SECURITY INVOKER e
+-- serializa por FOR UPDATE em project_members. Aqui a serialização não pode
+-- pendurar-se na linha de membership: quem produz é o backend no fluxo de
+-- saveResponse e quem fecha é o submit da própria fila, então a chave precisa
+-- ser o par (documento, auto-revisor) — daí a trava consultiva abaixo.
 BEGIN;
 
 -- Atribuição e fechamento da mesma fila compartilham uma única chave, então em
@@ -40,18 +47,18 @@ AS $$
   )
 $$;
 
--- Ambos os chamadores (sync_auto_review_assignment_status e
--- assign_auto_review_if_eligible) são SECURITY DEFINER e rodam como owner, então
--- nenhum role precisa deste EXECUTE — concedê-lo só abriria a trava da fila
--- alheia a qualquer sessão.
+-- Ambos os chamadores (assign_auto_review_if_eligible e
+-- sync_auto_review_assignment_status) são SECURITY DEFINER e rodam como owner,
+-- que mantém o EXECUTE independentemente destes REVOKE. Nenhum role de runtime
+-- precisa da trava avulsa, e concedê-la deixaria qualquer sessão segurar a fila
+-- alheia até o fim da transação — daí service_role entrar no REVOKE também: as
+-- default privileges do schema public dariam EXECUTE a ele por omissão.
 REVOKE ALL ON FUNCTION public.lock_auto_review_assignment(UUID, UUID, UUID)
-  FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.lock_auto_review_assignment(UUID, UUID, UUID)
-  TO service_role;
+  FROM PUBLIC, anon, authenticated, service_role;
 
 -- Chamada pelo backend (service_role) no fluxo de saveResponse, onde
--- clerk_uid() é NULL — por isso não há gate de identidade como no sync, e o
--- REVOKE abaixo é o que mantém a função fora do alcance de authenticated.
+-- clerk_uid() é NULL — por isso não há gate de identidade, e o REVOKE abaixo é o
+-- que mantém a função fora do alcance de authenticated.
 CREATE OR REPLACE FUNCTION public.assign_auto_review_if_eligible(
   p_project_id UUID,
   p_document_id UUID,
@@ -139,6 +146,67 @@ REVOKE ALL ON FUNCTION public.assign_auto_review_if_eligible(
 GRANT EXECUTE ON FUNCTION public.assign_auto_review_if_eligible(
   UUID, UUID, UUID, TEXT[], UUID, UUID
 ) TO service_role;
+
+-- O outro tomador da trava. Antes o fechamento era SELECT de pendências seguido
+-- de UPDATE, em duas requests do cliente admin: entre as duas, um stub recém
+-- liberado para o mesmo (documento, auto-revisor) ficava invisível e o
+-- assignment ia para 'concluido' com self_verdict IS NULL vivo. Trazido para o
+-- banco, o EXISTS e o UPDATE passam a ler o mesmo snapshot sob a trava que
+-- assign_auto_review_if_eligible também pega, então em qualquer ordem
+-- concorrente ou o fechamento enxerga o campo novo, ou a atribuição reabre o
+-- assignment depois do fechamento.
+--
+-- Chamada pelo backend (service_role) no submit da auto-revisão, onde clerk_uid()
+-- é NULL: como no produtor, não há gate de identidade e o REVOKE é o que mantém
+-- a função fora do alcance de authenticated.
+CREATE OR REPLACE FUNCTION public.sync_auto_review_assignment_status(
+  p_project_id UUID,
+  p_document_id UUID,
+  p_user_id UUID
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  PERFORM public.lock_auto_review_assignment(
+    p_project_id,
+    p_document_id,
+    p_user_id
+  );
+
+  -- O envio é parcial: enquanto sobrar um campo sem veredito, o documento
+  -- continua na fila.
+  IF EXISTS (
+    SELECT 1
+    FROM public.field_reviews AS review
+    WHERE review.project_id = p_project_id
+      AND review.document_id = p_document_id
+      AND review.self_reviewer_id = p_user_id
+      AND review.self_verdict IS NULL
+  ) THEN
+    RETURN false;
+  END IF;
+
+  UPDATE public.assignments AS assignment
+  SET status = 'concluido',
+      completed_at = pg_catalog.statement_timestamp()
+  WHERE assignment.project_id = p_project_id
+    AND assignment.document_id = p_document_id
+    AND assignment.user_id = p_user_id
+    AND assignment.type = 'auto_revisao'
+    AND assignment.status IS DISTINCT FROM 'concluido';
+
+  RETURN FOUND;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION
+  public.sync_auto_review_assignment_status(UUID, UUID, UUID)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION
+  public.sync_auto_review_assignment_status(UUID, UUID, UUID)
+  TO service_role;
 
 -- Reconciliação em lote para a regeneração manual do backlog, que insere
 -- assignments e field_reviews em passos separados e pela mesma razão não

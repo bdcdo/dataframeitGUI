@@ -132,7 +132,7 @@ export async function submitAutoReview(
     }
 
     // Sync do assignment auto_revisao — ver lib/auto-revisao-sync.ts.
-    await syncAutoRevisaoAssignmentStatus(admin, projectId, documentId, effectiveId, now);
+    await syncAutoRevisaoAssignmentStatus(admin, projectId, documentId, effectiveId);
 
     // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
     // campos recem-atualizados quanto para os que JA estavam com o verdict

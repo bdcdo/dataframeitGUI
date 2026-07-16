@@ -5,7 +5,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Builder chainable e thenable — `await builder` (ou apos .select()) resolve
 // { data, error }.
 type WriteCall = { table: string; op: string; payload: unknown };
+type RpcCall = { fn: string; args: unknown };
 let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
 let tableData: Record<string, unknown>;
 let projectAccessible: boolean;
 let adminFactoryCalls: number;
@@ -15,6 +17,10 @@ const updateCallsOf = (table?: string) =>
 
 function makeClient() {
   return {
+    rpc: async (fn: string, args: unknown) => {
+      rpcCalls.push({ fn, args });
+      return { data: tableData[`rpc:${fn}`] ?? null, error: null };
+    },
     from: (table: string) => {
       // `limited` distingue a query de "ainda há campo pendente?" (usa .limit)
       // do UPDATE de field_reviews (usa .select) — ambos batem na mesma tabela.
@@ -88,6 +94,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 
 beforeEach(() => {
   writeCalls = [];
+  rpcCalls = [];
   projectAccessible = true;
   adminFactoryCalls = 0;
   tableData = {
@@ -319,30 +326,29 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
   });
 });
 
-describe("submitAutoReview — envio parcial e conclusão do assignment", () => {
-  const assignmentConcluido = () =>
-    updateCallsOf("assignments").find(
-      (u) => (u.payload as Record<string, unknown>).status === "concluido",
-    );
-
-  it("ainda há campo pendente → assignment NÃO é concluído", async () => {
-    tableData.field_reviews_pending = [{ id: "fr2" }];
+describe("submitAutoReview — conclusão do assignment", () => {
+  // "Sobrou campo pendente?" é decidido dentro de sync_auto_review_assignment_status,
+  // sob a mesma trava que assign_auto_review_if_eligible pega — ler as pendências
+  // aqui e gravar 'concluido' em seguida deixaria um stub criado no intervalo
+  // invisível, e o documento sairia da fila com veredito por fazer. Ao TypeScript
+  // resta delegar: o comportamento parcial-vs-completo é coberto em
+  // supabase/tests/auto_review_assignment_reopen.test.sql, contra o Postgres real.
+  it("delega o fechamento à RPC, sem escrever em assignments", async () => {
     const submitAutoReview = await loadSubmit();
     const r = await submitAutoReview("p1", "doc1", [
       { fieldName: "q1", verdict: "admite_erro" },
     ]);
     expect(r.success).toBe(true);
-    expect(assignmentConcluido()).toBeUndefined();
-  });
 
-  it("nenhum campo pendente restante → assignment é concluído", async () => {
-    tableData.field_reviews_pending = [];
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "admite_erro" },
-    ]);
-    expect(r.success).toBe(true);
-    expect(assignmentConcluido()).toBeDefined();
+    expect(rpcCalls).toContainEqual({
+      fn: "sync_auto_review_assignment_status",
+      args: {
+        p_project_id: "p1",
+        p_document_id: "doc1",
+        p_user_id: "user1",
+      },
+    });
+    expect(updateCallsOf("assignments")).toHaveLength(0);
   });
 });
 

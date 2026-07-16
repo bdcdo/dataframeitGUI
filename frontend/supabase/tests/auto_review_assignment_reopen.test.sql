@@ -201,4 +201,97 @@ BEGIN
 END;
 $$;
 
+-- ========== Fechamento: o outro lado do par ==========
+-- Estado herdado do bloco anterior: q1 pendente de novo, q2 já resolvido,
+-- assignment reaberto. O envio é parcial, então enquanto q1 não tiver veredito o
+-- documento continua na fila.
+DO $$
+DECLARE
+  v_closed BOOLEAN;
+  current_status TEXT;
+BEGIN
+  v_closed := public.sync_auto_review_assignment_status(
+    'b0000000-0000-0000-0000-000000000001',
+    'c0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001'
+  );
+
+  IF v_closed THEN
+    RAISE EXCEPTION 'FALHOU: fechou a fila com campo pendente vivo';
+  END IF;
+
+  SELECT status INTO current_status FROM public.assignments
+  WHERE id = 'e0000000-0000-0000-0000-000000000001';
+  IF current_status <> 'pendente' THEN
+    RAISE EXCEPTION 'FALHOU: envio parcial tirou o doc da fila (status=%)',
+      current_status;
+  END IF;
+
+  -- O pesquisador resolve o que faltava: agora sim a fila fecha.
+  UPDATE public.field_reviews
+    SET self_verdict = 'admite_erro', self_reviewed_at = now()
+    WHERE id = 'f0000000-0000-0000-0000-000000000001';
+
+  v_closed := public.sync_auto_review_assignment_status(
+    'b0000000-0000-0000-0000-000000000001',
+    'c0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001'
+  );
+
+  IF NOT v_closed THEN
+    RAISE EXCEPTION 'FALHOU: fila sem pendência não fechou';
+  END IF;
+
+  SELECT status INTO current_status FROM public.assignments
+  WHERE id = 'e0000000-0000-0000-0000-000000000001';
+  IF current_status <> 'concluido' THEN
+    RAISE EXCEPTION 'FALHOU: assignment ficou em % após resolver tudo',
+      current_status;
+  END IF;
+
+  RAISE NOTICE 'OK: envio parcial mantém o doc na fila; completo fecha';
+END;
+$$;
+
+-- ========== Grants ==========
+-- Quem cria e quem fecha a auto-revisão é o backend, e a trava não é chamável
+-- por role de runtime nenhum: os dois entrypoints são SECURITY DEFINER e rodam
+-- como owner. Sem estas asserções o REVOKE quebraria em silêncio — as default
+-- privileges do schema public dão EXECUTE a anon/authenticated/service_role por
+-- omissão em toda função nova.
+DO $$
+DECLARE
+  v_fn TEXT;
+  v_entrypoints TEXT[] := ARRAY[
+    'public.assign_auto_review_if_eligible(uuid,uuid,uuid,text[],uuid,uuid)',
+    'public.sync_auto_review_assignment_status(uuid,uuid,uuid)',
+    'public.reopen_auto_review_assignments_with_pending(uuid)'
+  ];
+BEGIN
+  FOREACH v_fn IN ARRAY v_entrypoints LOOP
+    IF has_function_privilege('anon', v_fn, 'EXECUTE')
+       OR has_function_privilege('authenticated', v_fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'FALHOU: % alcançável por role de cliente', v_fn;
+    END IF;
+    IF NOT has_function_privilege('service_role', v_fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'FALHOU: % inalcançável pelo backend', v_fn;
+    END IF;
+  END LOOP;
+
+  FOREACH v_fn IN ARRAY ARRAY[
+    'public.lock_auto_review_assignment(uuid,uuid,uuid)'
+  ] LOOP
+    IF has_function_privilege('anon', v_fn, 'EXECUTE')
+       OR has_function_privilege('authenticated', v_fn, 'EXECUTE')
+       OR has_function_privilege('service_role', v_fn, 'EXECUTE') THEN
+      RAISE EXCEPTION
+        'FALHOU: % chamável avulsa — uma sessão poderia segurar a fila alheia',
+        v_fn;
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE 'OK: entrypoints service_role-only e trava fora de alcance';
+END;
+$$;
+
 ROLLBACK;
