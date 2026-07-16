@@ -22,6 +22,7 @@ import {
   unresolvedSchemaConflicts,
 } from "@/lib/schema-merge";
 import { serializeSchemaFields } from "@/lib/schema-utils";
+import { makeId } from "@/lib/utils";
 import type {
   PydanticField,
   SchemaBaselineIdentity,
@@ -222,7 +223,7 @@ function createDraft(
 ): SchemaDraftEnvelope {
   return {
     formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,
-    writeToken: globalThis.crypto.randomUUID(),
+    writeToken: makeId("draft"),
     base,
     fields,
   };
