@@ -1,20 +1,7 @@
 import { isFieldVisible } from "@/lib/conditional";
 import { isIncompleteOther } from "@/lib/other-option";
+import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-
-// Espelha `responseHadField` de compare-divergence: um campo só "existia" quando
-// a codificação foi feita se `answer_field_hashes` estiver presente, não-vazio e
-// contiver a chave do campo. Ausente/{} = legacy (não dá para inferir staleness)
-// → assume que o campo existia. Sem isto, um campo obrigatório adicionado ao
-// schema DEPOIS da codificação faria toda codificação antiga parecer incompleta.
-function fieldExistedWhenCoded(
-  answerFieldHashes: AnswerFieldHashes | undefined,
-  fieldName: string,
-): boolean {
-  if (!answerFieldHashes) return true;
-  if (Object.keys(answerFieldHashes).length === 0) return true;
-  return Object.prototype.hasOwnProperty.call(answerFieldHashes, fieldName);
-}
 
 // Campos que o humano precisa responder para a codificação contar como
 // completa: visíveis para humano (target != "llm_only"/"none"), obrigatórios

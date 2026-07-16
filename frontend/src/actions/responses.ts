@@ -3,13 +3,23 @@
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
-import { dropHiddenConditionals } from "@/lib/conditional";
+import { buildPersistedResponseSnapshot } from "@/lib/response-snapshot";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 export interface SaveResponseOpts {
   notes?: string;
   isAutoSave?: boolean;
+}
+
+// Response já existente do mesmo respondente para o mesmo documento. `answers`
+// e `answer_field_hashes` são lidos porque o save PRESERVA o que a leitura
+// descartou (#484) — ver `answersToPersist` em saveResponse.
+interface ExistingResponseRow {
+  id: string;
+  is_partial: boolean | null;
+  answers: Record<string, unknown> | null;
+  answer_field_hashes: AnswerFieldHashes;
 }
 
 // Fetch profile, existing response, and project config in parallel.
@@ -31,13 +41,13 @@ async function fetchSaveContext(
         .single(),
       supabase
         .from("responses")
-        .select("id, is_partial")
+        .select("id, is_partial, answers, answer_field_hashes")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
         .eq("respondent_id", effectiveId)
         .eq("respondent_type", "humano")
         .eq("is_latest", true)
-        .maybeSingle(),
+        .maybeSingle<ExistingResponseRow>(),
       supabase
         .from("projects")
         .select(
@@ -55,14 +65,6 @@ async function fetchSaveContext(
   return { profile, existing, project, projErr, doc };
 }
 
-function buildAnswerFieldHashes(fields: PydanticField[]): Record<string, string> {
-  const hashes: Record<string, string> = {};
-  for (const f of fields) {
-    if (f.hash) hashes[f.name] = f.hash;
-  }
-  return hashes;
-}
-
 interface SaveResponseProjectFields {
   pydantic_hash: string | null;
   schema_version_major: number | null;
@@ -73,8 +75,8 @@ interface SaveResponseProjectFields {
 }
 
 interface BuildResponsePayloadParams {
-  fields: PydanticField[];
-  sanitizedAnswers: Record<string, unknown>;
+  answersToPersist: Record<string, unknown>;
+  answerFieldHashes: Exclude<AnswerFieldHashes, null>;
   project: SaveResponseProjectFields | null | undefined;
   existing: { is_partial: boolean | null } | null | undefined;
   isAutoSave: boolean;
@@ -82,8 +84,8 @@ interface BuildResponsePayloadParams {
 }
 
 function buildResponsePayload({
-  fields,
-  sanitizedAnswers,
+  answersToPersist,
+  answerFieldHashes,
   project,
   existing,
   isAutoSave,
@@ -104,10 +106,10 @@ function buildResponsePayload({
   const isPartialToWrite = isAutoSave && existing?.is_partial !== false;
 
   const payload = {
-    answers: sanitizedAnswers,
+    answers: answersToPersist,
     justifications,
     pydantic_hash: project?.pydantic_hash ?? null,
-    answer_field_hashes: buildAnswerFieldHashes(fields),
+    answer_field_hashes: answerFieldHashes,
     schema_version_major: project?.schema_version_major ?? 0,
     schema_version_minor: project?.schema_version_minor ?? 1,
     schema_version_patch: project?.schema_version_patch ?? 0,
@@ -215,15 +217,19 @@ export async function saveResponse(
 
     const fields = (project?.pydantic_fields as PydanticField[]) || [];
 
-    // Drop values of fields whose visibility condition is not satisfied —
-    // prevents orphaned answers from earlier trigger values ending up in the
-    // persisted payload. Ponto-fixo compartilhado com o clean de leitura
-    // (getDocumentForCoding / code/page.tsx) — ver #252.
-    const sanitizedAnswers = dropHiddenConditionals(fields, answers);
+    // O formulário devolve um snapshot sanitizado, não um patch. A reconciliação
+    // compara esse snapshot com a projeção que foi apresentada e preserva o
+    // valor bruto + sua proveniência quando o campo não mudou (#484).
+    const snapshot = buildPersistedResponseSnapshot({
+      fields,
+      storedAnswers: existing?.answers,
+      storedHashes: existing?.answer_field_hashes,
+      rawSubmittedAnswers: answers,
+    });
 
     const payload = buildResponsePayload({
-      fields,
-      sanitizedAnswers,
+      answersToPersist: snapshot.persistedAnswers,
+      answerFieldHashes: snapshot.answerFieldHashes,
       project,
       existing,
       isAutoSave,
@@ -247,7 +253,7 @@ export async function saveResponse(
         documentId,
         userId: effectiveId,
         fields,
-        sanitizedAnswers,
+        sanitizedAnswers: snapshot.submittedAnswers,
         isAutoSave,
         automationMode: project?.automation_mode,
       });

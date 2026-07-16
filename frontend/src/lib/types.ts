@@ -208,14 +208,11 @@ export type AssignedDoc = Document & {
   assignment?: Pick<Assignment, "id" | "status">;
 };
 
-// Snapshot por-campo do schema contra o qual a response foi codificada
-// (1 chave por campo existente na época, valor = field.hash). Gravado em
-// saveResponse iterando o schema completo (não os campos respondidos), então
-// "chave ausente" significa "campo não existia no schema na época" — base
-// para a heurística de staleness em compare-divergence e reviews/queries.
-// `null`/`{}` significam legacy (response pré-coluna ou schema sem hashes):
-// não dá para inferir staleness.
-export type AnswerFieldHashes = Record<string, string> | null;
+// Snapshot por campo do schema contra o qual cada resposta foi codificada.
+// String = hash conhecido; chave presente com null = o campo existia, mas sua
+// proveniência é desconhecida; chave ausente em mapa não vazio = o campo não
+// existia. `null`/`{}` são snapshots legacy sem informação por campo.
+export type AnswerFieldHashes = Record<string, string | null> | null;
 
 // Vereditos da auto-revisao. Todos resolvem o campo; só `contesta_llm` abre
 // arbitragem. `equivalente` registra o par humano↔LLM em response_equivalences;

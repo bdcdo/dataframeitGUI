@@ -412,7 +412,7 @@ class _RunMetadata:
     llm_provider: str
     llm_model: str
     pydantic_hash: str
-    answer_field_hashes: dict
+    answer_field_hashes: dict[str, str | None]
     schema_version_major: int
     schema_version_minor: int
     schema_version_patch: int
@@ -1238,9 +1238,7 @@ async def run_llm(
 
         # Build per-field hash snapshot for staleness detection
         answer_field_hashes = {
-            f["name"]: f["hash"]
-            for f in (project.get("pydantic_fields") or [])
-            if f.get("hash")
+            f["name"]: f.get("hash") for f in (project.get("pydantic_fields") or [])
         }
 
         docs = _load_documents_for_run(
