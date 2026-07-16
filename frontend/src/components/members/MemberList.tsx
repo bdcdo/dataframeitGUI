@@ -26,15 +26,23 @@ interface MemberListProps {
   projectId: string;
   members: MemberRowData[];
   emailLinks: MemberEmailLink[];
-  currentUserId: string;
+  effectiveUserId: string;
 }
 
-async function removeMemberWithToast(memberId: string) {
-  const result = await removeMember(memberId);
-  if (result?.error) {
-    toast.error(result.error);
-  } else {
+async function removeMemberWithToast(memberId: string): Promise<boolean> {
+  try {
+    const result = await removeMember(memberId);
+    if (result?.error) {
+      toast.error(result.error);
+      return false;
+    }
+
     toast.success("Membro removido");
+    return true;
+  } catch (error) {
+    console.error("[MemberList] erro ao remover membro", error);
+    toast.error("Não foi possível remover o membro. Tente novamente.");
+    return false;
   }
 }
 
@@ -54,7 +62,7 @@ export function MemberList({
   projectId,
   members,
   emailLinks,
-  currentUserId,
+  effectiveUserId,
 }: MemberListProps) {
   const {
     editingEmailMemberId,
@@ -129,7 +137,7 @@ export function MemberList({
           key={m.id}
           member={m}
           projectId={projectId}
-          currentUserId={currentUserId}
+          effectiveUserId={effectiveUserId}
           links={linksByMember.get(m.user_id) ?? []}
           editingEmailMemberId={editingEmailMemberId}
           onEditingEmailChange={setEditingEmailMemberId}
@@ -144,7 +152,7 @@ export function MemberList({
           onChangeRole={(memberId, newRole) =>
             void changeRoleWithToast(memberId, newRole)
           }
-          onRemove={(memberId) => void removeMemberWithToast(memberId)}
+          onRemove={removeMemberWithToast}
         />
       ))}
       {linkingMember && (

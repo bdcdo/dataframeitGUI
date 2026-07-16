@@ -12,7 +12,7 @@ import { memberDisplayName, type MemberRow as MemberRowData } from "./member-lis
 interface MemberRowProps {
   member: MemberRowData;
   projectId: string;
-  currentUserId: string;
+  effectiveUserId: string;
   links: MemberEmailLink[];
   editingEmailMemberId: string | null;
   onEditingEmailChange: (memberId: string | null) => void;
@@ -25,13 +25,13 @@ interface MemberRowProps {
   onToggleResolve: (memberId: string, value: boolean) => void;
   onToggleCompare: (memberId: string, value: boolean) => void;
   onChangeRole: (memberId: string, newRole: "coordenador" | "pesquisador") => void;
-  onRemove: (memberId: string) => void;
+  onRemove: (memberId: string) => Promise<boolean>;
 }
 
 export function MemberRow({
   member,
   projectId,
-  currentUserId,
+  effectiveUserId,
   links,
   editingEmailMemberId,
   onEditingEmailChange,
@@ -97,7 +97,7 @@ export function MemberRow({
         />
         <MemberRoleControls
           member={member}
-          currentUserId={currentUserId}
+          effectiveUserId={effectiveUserId}
           onChangeRole={onChangeRole}
           onRemove={onRemove}
         />

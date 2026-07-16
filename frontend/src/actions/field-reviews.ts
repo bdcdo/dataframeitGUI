@@ -811,9 +811,45 @@ type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 interface BacklogInputs {
   fields: PydanticField[];
   humanResponses: HumanResponseRow[];
+  activeMemberIds: Set<string>;
   llmResponses: LlmResponseRow[];
   equivalences: EquivalenceRow[];
   existingReviews: ExistingFieldReviewRow[];
+}
+
+const ACTIVE_MEMBER_PAGE_SIZE = 1_000;
+
+// O PostgREST local limita cada resposta a 1.000 linhas. Paginação por chave
+// evita que esse teto transforme membros ativos, silenciosamente, em
+// ex-membros durante o reconcile.
+async function fetchActiveMemberIds(
+  admin: SupabaseDataClient,
+  projectId: string,
+): Promise<Set<string>> {
+  const activeMemberIds = new Set<string>();
+  let afterUserId: string | null = null;
+
+  for (;;) {
+    const baseQuery = admin
+      .from("project_members")
+      .select("user_id")
+      .eq("project_id", projectId)
+      .order("user_id", { ascending: true })
+      .limit(ACTIVE_MEMBER_PAGE_SIZE);
+    const result: {
+      data: { user_id: string }[] | null;
+      error: { message: string } | null;
+    } = afterUserId
+      ? await baseQuery.gt("user_id", afterUserId)
+      : await baseQuery;
+    if (result.error) throw new Error(result.error.message);
+
+    const page: { user_id: string }[] = result.data ?? [];
+    for (const member of page) activeMemberIds.add(member.user_id);
+    if (page.length < ACTIVE_MEMBER_PAGE_SIZE) return activeMemberIds;
+
+    afterUserId = page.at(-1)!.user_id;
+  }
 }
 
 // Batch de leitura inicial do backlog — lança em qualquer erro de query,
@@ -826,6 +862,7 @@ async function fetchBacklogInputs(
   const [
     { data: project, error: projErr },
     { data: humanResponses, error: humanErr },
+    activeMemberIds,
     { data: llmResponses, error: llmErr },
     { data: equivalences, error: equivErr },
     { data: existingReviews, error: existingErr },
@@ -841,6 +878,7 @@ async function fetchBacklogInputs(
       .eq("project_id", projectId)
       .eq("respondent_type", "humano")
       .eq("is_partial", false),
+    fetchActiveMemberIds(admin, projectId),
     admin
       .from("responses")
       .select("id, document_id, answers, answer_field_hashes")
@@ -868,6 +906,7 @@ async function fetchBacklogInputs(
   return {
     fields: (project?.pydantic_fields as PydanticField[]) ?? [],
     humanResponses: (humanResponses ?? []) as HumanResponseRow[],
+    activeMemberIds,
     llmResponses: (llmResponses ?? []) as LlmResponseRow[],
     equivalences: (equivalences ?? []) as EquivalenceRow[],
     existingReviews: (existingReviews ?? []) as ExistingFieldReviewRow[],
@@ -938,8 +977,14 @@ export async function regenerateAutoReviewBacklog(
     if (!gate.ok) return { success: false, error: gate.error };
 
     const supabase = await createSupabaseServer();
-    const { fields, humanResponses, llmResponses, equivalences, existingReviews } =
-      await fetchBacklogInputs(supabase, projectId);
+    const {
+      fields,
+      humanResponses,
+      activeMemberIds,
+      llmResponses,
+      equivalences,
+      existingReviews,
+    } = await fetchBacklogInputs(supabase, projectId);
 
     if (fields.length === 0) {
       return { success: true, scanned: 0, regenerated: 0 };
@@ -952,6 +997,7 @@ export async function regenerateAutoReviewBacklog(
     const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
       projectId,
       humanResponses,
+      activeMemberIds,
       llmByDocId,
       equivByDoc,
       fields,
