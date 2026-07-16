@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
@@ -60,6 +60,16 @@ function SchemaEditorLoadingState() {
   );
 }
 
+function generatedSchemaCode(
+  mode: "gui" | "code",
+  fields: PydanticField[],
+  initialCode: string | null,
+): string {
+  if (mode !== "code") return "";
+  if (fields.length > 0) return generatePydanticCode(fields);
+  return initialCode ?? "";
+}
+
 function SchemaEditor({
   projectId,
   initialCode,
@@ -103,15 +113,7 @@ function SchemaEditor({
   // Só é computado no modo "código" (único lugar que o consome, no Monaco): em
   // modo visual cada edição muda `fields`, e regenerar o código a cada keystroke
   // seria trabalho desperdiçado já que o editor de código nem está montado.
-  const code = useMemo(
-    () =>
-      mode !== "code"
-        ? ""
-        : fields.length > 0
-          ? generatePydanticCode(fields)
-          : initialCode || "",
-    [mode, fields, initialCode],
-  );
+  const code = generatedSchemaCode(mode, fields, initialCode);
   const [guiErrors, setGuiErrors] = useState<string[]>([]);
   const [isPending, startTransition] = useTransition();
   const {
