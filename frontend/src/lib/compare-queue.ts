@@ -18,8 +18,11 @@ import {
 } from "@/lib/compare-version";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import type { EquivalencePair } from "@/lib/equivalence";
-import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { respondentKey } from "@/components/compare/compare-types";
+import type { PydanticField } from "@/lib/types";
+import {
+  respondentKey,
+  type CompareResponse,
+} from "@/components/compare/compare-types";
 
 export interface CompareDoc {
   id: string;
@@ -28,21 +31,17 @@ export interface CompareDoc {
   text: string;
 }
 
-export interface CompareResponse {
-  id: string;
+// A row da fila e o tipo wire (`CompareResponse`, o mesmo que <ComparePage>
+// recebe na prop `responses`) mais o `document_id`, que a query traz e o
+// agrupamento por documento usa. O `extends` e o que impede o drift: antes os
+// dois shapes eram declarados campo a campo em modulos diferentes sob o mesmo
+// nome, e ja tinham divergido — o wire ficou sem `document_id` enquanto o mesmo
+// objeto atravessava a fronteira RSC -> client em `compare/page.tsx`
+// (`responsesMap` sai daqui e entra na prop tipada com o wire), compilando em
+// silencio porque no call site nao e object literal e nao ha excess property
+// check.
+export interface CompareQueueResponse extends CompareResponse {
   document_id: string;
-  respondent_type: "humano" | "llm";
-  respondent_name: string;
-  respondent_id: string | null;
-  answers: Record<string, unknown>;
-  justifications: Record<string, string> | null;
-  is_latest: boolean;
-  pydantic_hash: string | null;
-  answer_field_hashes: AnswerFieldHashes;
-  schema_version_major: number | null;
-  schema_version_minor: number | null;
-  schema_version_patch: number | null;
-  created_at: string;
 }
 
 export interface DocCoverage {
@@ -72,11 +71,11 @@ export interface EquivalenceRow {
 // Row solta o suficiente para aceitar o resultado do select do Supabase (que
 // também traz o join `documents`, cujo tipo inferido não bate 1:1 com
 // Omit<CompareDoc, "text">) sem replicar seu tipo inferido — mesma pragmática
-// de `as unknown as CompareResponse` que o page.tsx já usava. Sem index
+// de `as unknown as CompareQueueResponse` que o page.tsx já usava. Sem index
 // signature de propósito: bastam os campos abaixo (structural typing ignora
 // os demais campos da row real/de teste), e um index signature exigiria o
 // mesmo em qualquer valor passado (inclusive em fixtures de teste tipadas
-// como CompareResponse).
+// como CompareQueueResponse).
 interface RawResponseRow {
   document_id: string;
   respondent_name: string | null;
@@ -92,7 +91,12 @@ export interface VersionLogRow {
   version_patch: number | null;
 }
 
-export interface AssignmentRow {
+// Local de proposito: e a row de SELECT que `compare/page.tsx` passa
+// posicionalmente (checagem estrutural, sem importar o nome), nao um tipo de
+// dominio. Exporta-lo colidia com o `AssignmentRow` homonimo de
+// `auto-review-backlog.ts`, que e um payload de INSERT com outro shape
+// (tem project_id; type/status sao literais la, string solto aqui).
+interface AssignmentRow {
   document_id: string;
   user_id: string;
   type: string;
@@ -140,16 +144,16 @@ export function buildEquivalenceMap(
 }
 
 export function indexResponsesByDoc(allResponses: readonly RawResponseRow[] | null): {
-  responsesByDoc: Map<string, CompareResponse[]>;
+  responsesByDoc: Map<string, CompareQueueResponse[]>;
   docsMetaMap: Map<string, Omit<CompareDoc, "text">>;
 } {
-  const responsesByDoc = new Map<string, CompareResponse[]>();
+  const responsesByDoc = new Map<string, CompareQueueResponse[]>();
   const docsMetaMap = new Map<string, Omit<CompareDoc, "text">>();
 
   allResponses?.forEach((r) => {
     const docId = r.document_id;
     if (!responsesByDoc.has(docId)) responsesByDoc.set(docId, []);
-    responsesByDoc.get(docId)!.push(r as unknown as CompareResponse);
+    responsesByDoc.get(docId)!.push(r as unknown as CompareQueueResponse);
     // `documents` é 1:1 por doc (join pela FK document_id) — grava só na
     // primeira ocorrência em vez de sobrescrever a cada resposta do mesmo doc.
     if (r.documents && !docsMetaMap.has(docId)) {
@@ -256,7 +260,7 @@ export interface QualifyDocumentsContext {
 export interface QualifiedDocumentsResult {
   qualifiedDocIds: string[];
   divergentFields: Record<string, string[]>;
-  responsesMap: Record<string, CompareResponse[]>;
+  responsesMap: Record<string, CompareQueueResponse[]>;
   coverageByDoc: Record<string, DocCoverage>;
 }
 
@@ -272,9 +276,9 @@ interface ResponseFilterParams {
 }
 
 function filterQualifiedResponses(
-  docResponses: CompareResponse[],
+  docResponses: CompareQueueResponse[],
   params: ResponseFilterParams,
-): CompareResponse[] {
+): CompareQueueResponse[] {
   return docResponses.filter((r) => {
     if (!responseQualifiesForVersion(r, params.minVersion, params.projectVersionCtx)) return false;
     if (params.sinceMs !== null && new Date(r.created_at).getTime() < params.sinceMs) return false;
@@ -294,7 +298,7 @@ interface CoverageMetrics {
 }
 
 function computeCoverageMetrics(
-  qualifiedResponses: CompareResponse[],
+  qualifiedResponses: CompareQueueResponse[],
   assignedUsers: Set<string>,
 ): CoverageMetrics {
   // Conta respondentes humanos DISTINTOS (não linhas) — `respondentKey`
@@ -335,14 +339,14 @@ function meetsCoverageThresholds(metrics: CoverageMetrics, filters: CompareFilte
 }
 
 interface QualifiedDocument {
-  qualifiedResponses: CompareResponse[];
+  qualifiedResponses: CompareQueueResponse[];
   divergent: string[];
   coverage: DocCoverage;
 }
 
 function qualifyDocument(
   docId: string,
-  docResponses: CompareResponse[],
+  docResponses: CompareQueueResponse[],
   ctx: QualifyDocumentsContext,
 ): QualifiedDocument | null {
   const qualifiedResponses = filterQualifiedResponses(docResponses, {
@@ -388,13 +392,13 @@ function qualifyDocument(
 }
 
 export function qualifyDocumentsForCompare(
-  responsesByDoc: Map<string, CompareResponse[]>,
+  responsesByDoc: Map<string, CompareQueueResponse[]>,
   docsMetaMap: Map<string, Omit<CompareDoc, "text">>,
   ctx: QualifyDocumentsContext,
 ): QualifiedDocumentsResult {
   const qualifiedDocIds: string[] = [];
   const divergentFields: Record<string, string[]> = {};
-  const responsesMap: Record<string, CompareResponse[]> = {};
+  const responsesMap: Record<string, CompareQueueResponse[]> = {};
   const coverageByDoc: Record<string, DocCoverage> = {};
 
   for (const [docId, docResponses] of responsesByDoc) {

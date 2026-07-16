@@ -30,7 +30,12 @@ export interface ExistingFieldReviewRow {
   self_verdict: string | null;
 }
 
-export interface AssignmentRow {
+// Local de proposito: e o payload de INSERT desta rodada de backlog (literais
+// estreitos), nao um tipo de dominio. Nenhum modulo importa o nome — o shape
+// chega em `field-reviews.ts` por inferencia, via o retorno de
+// `computeBacklogRows`. Exporta-lo colidia com o `AssignmentRow` homonimo de
+// `compare-queue.ts`, que e uma row de SELECT com outro shape.
+interface AssignmentRow {
   project_id: string;
   document_id: string;
   user_id: string;
