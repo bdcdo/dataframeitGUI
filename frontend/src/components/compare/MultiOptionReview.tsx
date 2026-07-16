@@ -11,7 +11,7 @@ import {
   TooltipContent,
   TooltipProvider,
 } from "@/components/ui/tooltip";
-import { COMPARE_READ_ONLY_REASON } from "./compare-types";
+import { readOnlyTitle } from "./compare-types";
 
 interface MultiOptionResponse {
   id: string;
@@ -190,7 +190,7 @@ export function MultiOptionReview({
           className="mt-2 w-full"
           disabled={readOnly || isSubmitting}
           onClick={handleSubmit}
-          title={readOnly ? COMPARE_READ_ONLY_REASON : undefined}
+          title={readOnlyTitle(readOnly)}
         >
           {readOnly
             ? "Somente leitura"

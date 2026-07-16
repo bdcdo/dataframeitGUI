@@ -42,6 +42,17 @@ export interface CompareDocument {
 export const COMPARE_READ_ONLY_REASON =
   "Indisponível no modo somente leitura";
 
+/**
+ * Tooltip do controle: o motivo padrão de somente-leitura quando `readOnly`,
+ * senão o texto ativo do controle (ou nenhum). Fonte única do texto (issue #428).
+ */
+export function readOnlyTitle(
+  readOnly: boolean,
+  activeTitle?: string,
+): string | undefined {
+  return readOnly ? COMPARE_READ_ONLY_REASON : activeTitle;
+}
+
 export type PendingVerdict =
   | { kind: "response"; verdict: string; chosenResponseId: string }
   | { kind: "ambiguous"; verdict: "ambiguo" }

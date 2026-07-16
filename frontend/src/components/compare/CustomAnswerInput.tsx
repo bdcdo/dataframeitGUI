@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { COMPARE_READ_ONLY_REASON } from "./compare-types";
+import { readOnlyTitle } from "./compare-types";
 
 interface CustomAnswerInputProps {
   readOnly: boolean;
@@ -64,7 +64,7 @@ export function CustomAnswerInput({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         disabled={readOnly}
-        title={readOnly ? COMPARE_READ_ONLY_REASON : undefined}
+        title={readOnlyTitle(readOnly)}
       >
         Nenhuma correta
       </Button>

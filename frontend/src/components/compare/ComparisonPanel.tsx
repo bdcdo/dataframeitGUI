@@ -16,7 +16,7 @@ import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import {
-  COMPARE_READ_ONLY_REASON,
+  readOnlyTitle,
   pendingVerdictLabel,
   type PendingVerdict,
 } from "./compare-types";
@@ -267,11 +267,7 @@ export function ComparisonPanel({
               className="h-6 text-xs"
               onClick={onMarkReviewed}
               disabled={readOnly}
-              title={
-                readOnly
-                  ? COMPARE_READ_ONLY_REASON
-                  : undefined
-              }
+              title={readOnlyTitle(readOnly)}
             >
               Marcar doc como revisado
             </Button>

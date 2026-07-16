@@ -11,10 +11,7 @@ import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
-import {
-  COMPARE_READ_ONLY_REASON,
-  type PendingVerdict,
-} from "./compare-types";
+import { readOnlyTitle, type PendingVerdict } from "./compare-types";
 
 interface DivergenceActionsPanelProps {
   readOnly: boolean;
@@ -51,10 +48,11 @@ export function DivergenceActionsPanel({
   onCommentChange,
 }: DivergenceActionsPanelProps) {
   const [suggestOpen, setSuggestOpen] = useState(false);
-  const writeTitle = readOnly ? COMPARE_READ_ONLY_REASON : undefined;
-  const suggestionTitle = readOnly
-    ? COMPARE_READ_ONLY_REASON
-    : "Sugerir alteração ao codebook neste campo";
+  const writeTitle = readOnlyTitle(readOnly);
+  const suggestionTitle = readOnlyTitle(
+    readOnly,
+    "Sugerir alteração ao codebook neste campo",
+  );
 
   return (
     <>

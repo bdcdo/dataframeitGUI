@@ -52,11 +52,6 @@ function runLlmLabels(
   };
 }
 
-function RunLlmStatusIcon({ running }: { running: boolean }) {
-  if (running) return <Loader2 className="size-3.5 animate-spin" />;
-  return <Bot className="size-3.5" />;
-}
-
 export function RunLlmButton({
   projectId,
   documentId,
@@ -91,7 +86,11 @@ export function RunLlmButton({
       title={title}
       aria-label={ariaLabel}
     >
-      <RunLlmStatusIcon running={running} />
+      {running ? (
+        <Loader2 className="size-3.5 animate-spin" />
+      ) : (
+        <Bot className="size-3.5" />
+      )}
       {!isIcon && "Rodar LLM"}
     </Button>
   );

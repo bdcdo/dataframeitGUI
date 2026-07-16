@@ -21,7 +21,7 @@ import {
   PopoverTrigger,
   PopoverContent,
 } from "@/components/ui/popover";
-import { COMPARE_READ_ONLY_REASON } from "./compare-types";
+import { readOnlyTitle } from "./compare-types";
 
 export interface EquivalentVariant {
   pairId: string; // response_equivalences.id
@@ -73,10 +73,6 @@ interface AnswerCardProps {
   canUnmarkPair?: (variant: EquivalentVariant) => boolean;
 }
 
-function voteTargetCursorClass(disabled: boolean): string {
-  return disabled ? "cursor-default" : "cursor-pointer";
-}
-
 export function AnswerCard({
   readOnly,
   index,
@@ -101,13 +97,12 @@ export function AnswerCard({
   const selected = equivalenceMode?.selected === true;
   // Gabarito radio is only reachable on the selected branch (invariant in type).
   const gabarito = equivalenceMode?.selected ? equivalenceMode.gabarito : null;
-  const voteTitle = readOnly ? COMPARE_READ_ONLY_REASON : undefined;
-  const equivalenceTitle = readOnly
-    ? COMPARE_READ_ONLY_REASON
-    : "Selecionar para marcar como equivalente";
-  const unmarkTitle = readOnly
-    ? COMPARE_READ_ONLY_REASON
-    : "Desfazer equivalência";
+  const voteTitle = readOnlyTitle(readOnly);
+  const equivalenceTitle = readOnlyTitle(
+    readOnly,
+    "Selecionar para marcar como equivalente",
+  );
+  const unmarkTitle = readOnlyTitle(readOnly, "Desfazer equivalência");
 
   return (
     <div
@@ -142,7 +137,7 @@ export function AnswerCard({
         title={voteTitle}
         className={cn(
           "absolute inset-0 z-[1] rounded-lg focus:outline-none",
-          voteTargetCursorClass(readOnly),
+          readOnly ? "cursor-default" : "cursor-pointer",
         )}
       />
       <div className="flex items-start gap-2">
