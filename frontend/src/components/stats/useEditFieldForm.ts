@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useResetOnKeyChange } from "@/hooks/useResetOnKeyChange";
 import type { FieldCondition, PydanticField, SubfieldDef } from "@/lib/types";
-import { resolveAllowOther } from "@/lib/pydantic-field";
+import { resolveAllowOther, resolveSubfieldRule } from "@/lib/pydantic-field";
 
 export interface PendingSuggestion {
   id: string;
@@ -49,7 +49,9 @@ export function useEditFieldForm(
     resolveAllowOther(field?.allow_other),
   );
   const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
-  const [subfieldRule, setSubfieldRule] = useState<"all" | "at_least_one">(field?.subfield_rule ?? "all");
+  const [subfieldRule, setSubfieldRule] = useState(
+    resolveSubfieldRule(field?.subfield_rule),
+  );
   const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);
   const [justificationPrompt, setJustificationPrompt] = useState<string>(
     field?.justification_prompt ?? "",
@@ -66,7 +68,7 @@ export function useEditFieldForm(
     setOptions(init.options);
     setAllowOther(resolveAllowOther(f?.allow_other));
     setSubfields(f?.subfields);
-    setSubfieldRule(f?.subfield_rule ?? "all");
+    setSubfieldRule(resolveSubfieldRule(f?.subfield_rule));
     setCondition(f?.condition);
     setJustificationPrompt(f?.justification_prompt ?? "");
   });

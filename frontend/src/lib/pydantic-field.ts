@@ -251,11 +251,12 @@ export type ConditionScalar = z.infer<typeof conditionScalarSchema>;
 export type FieldCondition = z.infer<typeof fieldConditionSchema>;
 export type PydanticField = z.infer<typeof pydanticFieldSchema>;
 export type PydanticFieldTarget = z.infer<typeof pydanticFieldTargetSchema>;
+export type PydanticSubfieldRule = z.infer<typeof pydanticSubfieldRuleSchema>;
 export type SubfieldDef = z.infer<typeof subfieldDefSchema>;
 
-// `required`, `target` e `allow_other` sao opcionais: ausente significa o
-// default, nao "sem valor". Estes resolvedores sao a unica derivacao desses
-// defaults — antes cada consumidor tinha a sua (`?? true`, `?? null`,
+// `required`, `target`, `allow_other` e `subfield_rule` sao opcionais: ausente
+// significa o default, nao "sem valor". Estes resolvedores sao a unica derivacao
+// desses defaults — antes cada consumidor tinha a sua (`?? true`, `?? null`,
 // `Boolean(...)`, `!== false`), e as versoes divergiam entre si:
 //
 //   - `snapshotOf` normalizava `?? null` e `classifyChange` normalizava
@@ -282,6 +283,23 @@ export function resolveTarget(
 
 export function resolveAllowOther(value: boolean | null | undefined): boolean {
   return value ?? false;
+}
+
+// A quarta, e a que faltava: `_assemble_field_dict` grava `subfield_rule or "all"`
+// sempre que ha subcampos, o `EditFieldDialog` promove `?? "all"` ao salvar, e o
+// gerador omite a chave quando e "all" — tres consumidores concordando que ausente
+// significa "all", enquanto `snapshotOf` normalizava para `null`. Bastava um
+// coordenador corrigir a descricao de um campo legado pela aba Comentarios para o
+// default virar explicito e o save inteiro ser classificado como MINOR, com
+// entrada de auditoria de uma mudanca que ninguem fez.
+//
+// Quem nao tem subcampos nao tem o que regrar, mas nao precisa de tratamento
+// proprio: os dois lados de qualquer comparacao resolvem para "all" e a
+// propriedade some do diff sozinha.
+export function resolveSubfieldRule(
+  value: PydanticSubfieldRule | null | undefined,
+): PydanticSubfieldRule {
+  return value ?? "all";
 }
 
 export const PYDANTIC_FIELD_PROPERTY_KEYS = Object.freeze(

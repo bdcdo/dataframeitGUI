@@ -6,6 +6,7 @@ import type {
 import {
   resolveAllowOther,
   resolveRequired,
+  resolveSubfieldRule,
   resolveTarget,
 } from "@/lib/pydantic-field";
 
@@ -100,13 +101,14 @@ function fieldExtra(field: PydanticField): string {
   if ((field.type === "single" || field.type === "multi") && field.allow_other) {
     extras.push(`"allowOther": True`);
   }
+  // A guarda de subcampos fica aqui, e não no resolvedor: quem decide se a chave
+  // existe no código é `_assemble_field_dict` (`if subfields:`), e é com ele que
+  // este emissor tem que concordar para o round-trip fechar.
   if (
-    field.subfields &&
-    field.subfields.length > 0 &&
-    field.subfield_rule &&
-    field.subfield_rule !== "all"
+    field.subfields?.length &&
+    resolveSubfieldRule(field.subfield_rule) === "at_least_one"
   ) {
-    extras.push(`"subfield_rule": "${field.subfield_rule}"`);
+    extras.push(`"subfield_rule": "at_least_one"`);
   }
   if (field.help_text?.trim()) {
     extras.push(`"help_text": "${escapeString(field.help_text.trim())}"`);
@@ -489,12 +491,13 @@ export function bumpVersion(
 // Serializa um PydanticField para gravar em
 // schema_change_log.before_value / after_value.
 //
-// As tres propriedades com default implicito passam pelos resolvedores
-// canonicos em vez de `?? null`: `snapshotOf` tambem define "campo igual" para
-// `sameFieldContent` (schema-merge), e normalizar diferente de `classifyChange`
-// fazia um campo sem `target` divergir de um com `target: "all"` — conflito de
-// merge sem edicao nenhuma. Payloads gravados antes desta mudanca tem `null`
-// nessas chaves; o diff de historico resolve os dois para o mesmo default.
+// As quatro propriedades com default implicito passam pelos resolvedores
+// canonicos em vez de `?? null`: `snapshotOf` e a serializacao que `classifyChange`
+// classifica, que a deteccao de dirty compara e que `mergeSchemas` le propriedade
+// a propriedade, entao normalizar diferente em qualquer um deles fabrica conflito
+// de merge sem edicao nenhuma — foi o que `hash`, `target` e `subfield_rule` ja
+// causaram, um por rodada de revisao. Payloads gravados antes desta mudanca tem
+// `null` nessas chaves; o diff de historico resolve os dois para o mesmo default.
 export function snapshotOf(field: PydanticField): Record<string, unknown> {
   return {
     name: field.name,
@@ -505,7 +508,7 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     target: resolveTarget(field.target),
     required: resolveRequired(field.required),
     subfields: field.subfields ?? null,
-    subfield_rule: field.subfield_rule ?? null,
+    subfield_rule: resolveSubfieldRule(field.subfield_rule),
     allow_other: resolveAllowOther(field.allow_other),
     condition: field.condition ?? null,
     justification_prompt: field.justification_prompt ?? null,
@@ -672,10 +675,12 @@ export function diffFields(
       before.required = resolveRequired(old.required);
       after.required = resolveRequired(f.required);
     }
-    if ((old.subfield_rule ?? null) !== (f.subfield_rule ?? null)) {
+    const oldRule = resolveSubfieldRule(old.subfield_rule);
+    const newRule = resolveSubfieldRule(f.subfield_rule);
+    if (oldRule !== newRule) {
       diffs.push("regra de subcampos");
-      before.subfield_rule = old.subfield_rule ?? null;
-      after.subfield_rule = f.subfield_rule ?? null;
+      before.subfield_rule = oldRule;
+      after.subfield_rule = newRule;
     }
     if (resolveAllowOther(old.allow_other) !== resolveAllowOther(f.allow_other)) {
       diffs.push("permite outro");

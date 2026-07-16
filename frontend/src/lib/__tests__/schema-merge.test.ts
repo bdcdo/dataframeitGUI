@@ -276,6 +276,49 @@ describe("mergeSchemas — default implícito não é edição", () => {
     expect(mergeSchemas([], [implicito], [explicito]).conflicts).toEqual([]);
   });
 
+  // A quarta propriedade com default implícito, e a que faltava. Os produtores do
+  // `"all"` explícito são dois — `compile_pydantic`, que grava `subfield_rule or
+  // "all"` sempre que há subcampos, e o EditFieldDialog, que promove o default ao
+  // salvar qualquer edição do campo. Este é o ramo `remoto === base → local vence`:
+  // o local muda a regra de verdade enquanto o remoto só explicitou o default.
+  const semRegra: PydanticField = {
+    ...q1,
+    subfields: [{ key: "a", label: "A" }],
+    subfield_rule: undefined,
+  };
+  const comRegraAll: PydanticField = { ...semRegra, subfield_rule: "all" };
+
+  it("edição local da regra não conflita com remoto que só explicitou o default", () => {
+    const merge = mergeSchemas(
+      [semRegra],
+      [{ ...semRegra, subfield_rule: "at_least_one" }],
+      [comRegraAll],
+    );
+    expect(merge.conflicts).toEqual([]);
+    expect(merge.fields[0].subfield_rule).toBe("at_least_one");
+  });
+
+  it("add-add que difere só na regra implícita não é conflito", () => {
+    expect(mergeSchemas([], [semRegra], [comRegraAll]).conflicts).toEqual([]);
+  });
+
+  // A regra tem só dois valores, então ela nunca chega a conflitar sozinha: se o
+  // local diverge do remoto E do base, o remoto só pode ser igual ao base, e o
+  // ramo "remoto não mudou, local vence" resolve. O que o resolvedor conserta não
+  // é a escolha do usuário — é a de `equal(remote, base)` enxergar `undefined` e
+  // `"all"` como o mesmo valor para chegar nesse ramo. Sem ele, os três divergiam
+  // e o merge inventava um conflito que este caso prova não existir.
+  it("a regra local sobrevive a uma edição remota de outra propriedade", () => {
+    const merge = mergeSchemas(
+      [semRegra],
+      [{ ...semRegra, subfield_rule: "at_least_one" }],
+      [{ ...comRegraAll, description: "Corrigida na aba Comentários" }],
+    );
+    expect(unresolvedSchemaConflicts(merge)).toEqual([]);
+    expect(merge.fields[0].subfield_rule).toBe("at_least_one");
+    expect(merge.fields[0].description).toBe("Corrigida na aba Comentários");
+  });
+
   it("mudar o target de verdade continua conflitando", () => {
     const merge = mergeSchemas(
       [semTarget],

@@ -110,6 +110,44 @@ describe("classifyChange", () => {
     ];
     expect(classifyChange(oldF, newF)).toBe("patch");
   });
+
+  // `subfield_rule` é a quarta propriedade cujo default é implícito, e a última a
+  // ganhar resolvedor. Um campo legado com subcampos e sem regra é o mesmo campo
+  // que um com `"all"` — e o EditFieldDialog promove o default a explícito ao
+  // salvar (`useEditFieldForm` inicializa o select com o default resolvido), então
+  // corrigir SÓ a descrição pela aba Comentários gravava `subfield_rule: "all"`.
+  // Sem o resolvedor, `null !== "all"` virava mudança estrutural: o save saía como
+  // MINOR, com entrada de auditoria de uma regra que ninguém tocou, enquanto o
+  // `pydantic_hash` ficava idêntico porque o gerador nunca emite o default.
+  const withSubfields = (over: Partial<PydanticField> = {}) =>
+    baseField({
+      name: "q1",
+      type: "text",
+      options: null,
+      subfields: [{ key: "a", label: "A" }],
+      ...over,
+    });
+
+  it("promover o default de subfield_rule a explícito não é mudança", () => {
+    const legado = [withSubfields()];
+    const salvoPeloDialogo = [withSubfields({ subfield_rule: "all" })];
+    expect(classifyChange(legado, salvoPeloDialogo)).toBeNull();
+  });
+
+  it("editar só a descrição de campo legado com subcampos é patch, não minor", () => {
+    const legado = [withSubfields({ description: "antes" })];
+    const salvoPeloDialogo = [
+      withSubfields({ description: "depois", subfield_rule: "all" }),
+    ];
+    expect(classifyChange(legado, salvoPeloDialogo)).toBe("patch");
+    expect(diffFields(legado, salvoPeloDialogo)).toHaveLength(1);
+  });
+
+  it("mudar a regra de verdade continua sendo minor", () => {
+    const legado = [withSubfields()];
+    const mudada = [withSubfields({ subfield_rule: "at_least_one" })];
+    expect(classifyChange(legado, mudada)).toBe("minor");
+  });
 });
 
 // O jsonb do Postgres normaliza a ordem das chaves; condition/subfields lidos

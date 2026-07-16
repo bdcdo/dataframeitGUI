@@ -81,6 +81,13 @@ describe("readSchemaDraft", () => {
 });
 
 describe("parseSchemaDraft", () => {
+  // Esta equivalência é o que sustenta `mergeFieldProperties` comparar indexando
+  // `snapshotOf(field)[property]`: ele itera as chaves do Zod menos `name`/`hash`,
+  // e precisa que todas existam no snapshot. Uma propriedade nova só no Zod faria
+  // o merge comparar `undefined` contra `undefined` nos três lados e nunca
+  // enxergar a divergência — conflito silenciosamente perdido, em vez de
+  // fabricado. Por isso a asserção vale pelos dois lados e não é redundante com o
+  // round-trip abaixo.
   it("mantém o schema Zod alinhado ao snapshot canônico mais hash derivado", () => {
     expect(PYDANTIC_FIELD_PROPERTY_KEYS).toEqual(
       [...Object.keys(snapshotOf(complete)), "hash"].sort(),

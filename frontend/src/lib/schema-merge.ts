@@ -1,9 +1,4 @@
-import {
-  PYDANTIC_FIELD_PROPERTY_KEYS,
-  resolveAllowOther,
-  resolveRequired,
-  resolveTarget,
-} from "@/lib/pydantic-field";
+import { PYDANTIC_FIELD_PROPERTY_KEYS } from "@/lib/pydantic-field";
 import { snapshotOf, stableStringify } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
@@ -76,37 +71,11 @@ function equal(left: unknown, right: unknown): boolean {
 // escreve — e aí um campo legado sem hash viraria "editado remotamente" assim
 // que o primeiro save injetasse o hash, fabricando um conflito que o usuário
 // não causou. `snapshotOf` é a mesma serialização canônica usada pela detecção
-// de dirty e pelo log de auditoria.
+// de dirty, pelo log de auditoria e — propriedade a propriedade — por
+// `mergeFieldProperties`, que compara o snapshot em vez do campo cru justamente
+// para que não exista uma segunda noção de "campo igual" a manter de acordo.
 function sameFieldContent(left: PydanticField, right: PydanticField): boolean {
   return equal(snapshotOf(left), snapshotOf(right));
-}
-
-// A contraparte de `snapshotOf` para o merge propriedade a propriedade, que não
-// pode usar o snapshot inteiro porque precisa saber QUAL propriedade divergiu.
-// Ambas normalizam pelos mesmos resolvedores, e é isso que as mantém uma só
-// noção de "campo igual" — comparar o valor cru aqui reintroduziria a divergência
-// que os resolvedores existem para eliminar (ver `pydantic-field.ts`).
-//
-// O caso vivo é `target`: `compile_pydantic` sempre grava `target: "all"`
-// explícito, então todo campo legado que passa por uma recuperação de código
-// volta com a forma explícita enquanto a UI mantém a ausente. Sem resolver, uma
-// revisão remota que não tocou no alvo deixa de casar com o base, o ramo "remoto
-// não mudou, local vence" não dispara, e o usuário recebe um diálogo para
-// resolver um conflito que ninguém causou.
-function resolveForCompare(
-  property: MergeableFieldProperty,
-  value: PydanticField[MergeableFieldProperty],
-): unknown {
-  switch (property) {
-    case "required":
-      return resolveRequired(value as PydanticField["required"]);
-    case "target":
-      return resolveTarget(value as PydanticField["target"]);
-    case "allow_other":
-      return resolveAllowOther(value as PydanticField["allow_other"]);
-    default:
-      return value;
-  }
 }
 
 function clone<T>(value: T): T {
@@ -187,17 +156,28 @@ function mergeFieldProperties(
 ): FieldMergeOutcome {
   const field = clone(remoteField);
   const conflicts: SchemaMergeConflict[] = [];
+  // A comparação lê o SNAPSHOT, não o campo cru: `snapshotOf` já é a serialização
+  // canônica que `sameFieldContent` usa, então indexá-lo aqui torna as duas uma só
+  // noção de "campo igual" POR CONSTRUÇÃO. Antes havia uma segunda tabela
+  // propriedade→resolvedor nesta função, e mantê-la de acordo com `snapshotOf` era
+  // manual: foi ela que deixou `hash` e depois `target` fabricarem conflito que
+  // ninguém causou. `schema-draft.test.ts` fixa a equivalência de que isto depende
+  // (as chaves de `snapshotOf` são as de `PydanticField` menos `hash`).
+  const baseSnapshot = snapshotOf(baseField);
+  const localSnapshot = snapshotOf(localField);
+  const remoteSnapshot = snapshotOf(remoteField);
   for (const rawProperty of PYDANTIC_FIELD_PROPERTY_KEYS) {
     if (NON_MERGEABLE_PROPERTIES.has(rawProperty)) continue;
     const property = rawProperty as MergeableFieldProperty;
+    // O valor CRU é o que vai para o campo e para o conflito: a forma persistida é
+    // o texto de que o `pydantic_hash` deriva, e é o valor original que o usuário
+    // reconhece. Só a comparação passa pelo snapshot.
     const baseValue = baseField[property];
     const localValue = localField[property];
     const remoteValue = remoteField[property];
-    // Só a comparação é resolvida: `assignProperty` grava o valor original,
-    // porque a forma persistida é o texto de que o `pydantic_hash` deriva.
-    const base = resolveForCompare(property, baseValue);
-    const local = resolveForCompare(property, localValue);
-    const remote = resolveForCompare(property, remoteValue);
+    const base = baseSnapshot[property];
+    const local = localSnapshot[property];
+    const remote = remoteSnapshot[property];
     if (equal(local, remote) || equal(local, base)) continue;
     if (equal(remote, base)) {
       assignProperty(field, property, localValue);
