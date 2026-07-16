@@ -7,6 +7,7 @@ import {
   computeCapacity,
   resolveWeight,
   resolveCap,
+  resolveResearchersPerDoc,
   type LotteryBalancing,
   type LotteryDocStats,
   type LotteryParticipant,
@@ -555,6 +556,33 @@ describe("resolveCap", () => {
   it("trunca para inteiro (coluna INTEGER)", () => {
     expect(resolveCap(3)).toBe(3);
     expect(resolveCap(2.9)).toBe(2);
+  });
+});
+
+describe("resolveResearchersPerDoc", () => {
+  // Regressão #490: o sorteio de Comparação herdava o default 2 da Codificação.
+  it("comparação ignora o valor pedido — sempre um revisor por documento", () => {
+    expect(resolveResearchersPerDoc("comparacao", 2)).toBe(1);
+    expect(resolveResearchersPerDoc("comparacao", 5)).toBe(1);
+    expect(resolveResearchersPerDoc("comparacao", undefined)).toBe(1);
+    expect(resolveResearchersPerDoc("comparacao", null)).toBe(1);
+  });
+
+  it("codificação repassa o valor — a dupla independente é o método lá", () => {
+    expect(resolveResearchersPerDoc("codificacao", 2)).toBe(2);
+    expect(resolveResearchersPerDoc("codificacao", 3)).toBe(3);
+  });
+
+  it("codificação sanitiza ausente, NaN, zero e negativo → 1", () => {
+    expect(resolveResearchersPerDoc("codificacao", undefined)).toBe(1);
+    expect(resolveResearchersPerDoc("codificacao", null)).toBe(1);
+    expect(resolveResearchersPerDoc("codificacao", NaN)).toBe(1);
+    expect(resolveResearchersPerDoc("codificacao", 0)).toBe(1);
+    expect(resolveResearchersPerDoc("codificacao", -2)).toBe(1);
+  });
+
+  it("codificação trunca fracionário", () => {
+    expect(resolveResearchersPerDoc("codificacao", 2.9)).toBe(2);
   });
 });
 

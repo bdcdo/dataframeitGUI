@@ -12,6 +12,7 @@ import {
   computeCapacity,
   resolveWeight,
   resolveCap,
+  resolveResearchersPerDoc,
   type LotteryBalancing,
   type LotteryDocStats,
   type LotteryFilters,
@@ -66,6 +67,13 @@ export async function cycleAssignment(
         .from("assignments")
         .update({ type: "comparacao" })
         .eq("id", pendingCod.id);
+      // Este ciclo enxerga só o par (documento, usuário) — não sabe de
+      // comparações de OUTROS usuários no mesmo documento. Quem barra é o índice
+      // assignments_one_active_comparacao_per_doc (um revisor por documento).
+      // Traduzir em vez de vazar o texto do Postgres para o toast do coordenador.
+      if (error?.code === "23505") {
+        return { error: "Este documento já tem um revisor de comparação atribuído." };
+      }
       if (error) throw new Error(error.message);
     } else if (pendingComp && !pendingCod) {
       // comparacao → vazio
@@ -114,14 +122,12 @@ export async function clearPendingAssignments(
 
 // --- Smart Lottery (spec 001) ---
 
-export interface LotteryParams {
+interface LotteryParamsBase {
   projectId: string;
-  type?: "codificacao" | "comparacao";
   mode: LotteryMode;
   balancing: LotteryBalancing;
   /** semente da prévia (research D13); ausente = gerar nova */
   seed?: number;
-  researchersPerDoc: number;
   docsPerResearcher?: number;
   docSubsetSize?: number;
   label?: string;
@@ -135,6 +141,23 @@ export interface LotteryParams {
    */
   participantSettings?: Record<string, { weight?: number; cap?: number | null }>;
 }
+
+/**
+ * União discriminada por `type`: "comparação com 2 revisores" deixa de ser
+ * construível — o braço `comparacao` não tem o campo. A regra é um revisor de
+ * comparação por documento (ver COMPARISON_REVIEWERS_PER_DOC, issue #490).
+ *
+ * ATENÇÃO: isto é garantia de COMPILAÇÃO, para o client. Server Action é
+ * endpoint HTTP público e o projeto não valida com zod — um payload forjado
+ * chega com `{ type: "comparacao", researchersPerDoc: 5 }` sem passar por
+ * type-check nenhum. As garantias de runtime são `resolveResearchersPerDoc` em
+ * computeLottery (que ignora o valor recebido) e, no banco, o índice
+ * assignments_one_active_comparacao_per_doc. O `researchersPerDoc?: never`
+ * existe só para o excess property check pegar o literal no client.
+ */
+export type LotteryParams =
+  | (LotteryParamsBase & { type: "codificacao"; researchersPerDoc: number })
+  | (LotteryParamsBase & { type: "comparacao"; researchersPerDoc?: never });
 
 interface LotteryAssignment {
   document_id: string;
@@ -275,9 +298,20 @@ async function computeLottery(params: LotteryParams): Promise<{
   eligibleCount: number;
   seed: number;
   batchData: Record<string, unknown>;
+  /** tipo normalizado aqui — quem grava reusa em vez de renormalizar */
+  assignmentType: "codificacao" | "comparacao";
 }> {
   const supabase = await createSupabaseServer();
-  const assignmentType = params.type || "codificacao";
+  // Normaliza em vez de confiar no literal: o payload chega por HTTP e não passa
+  // por zod. Qualquer coisa que não seja "comparacao" é codificação.
+  const assignmentType =
+    params.type === "comparacao" ? "comparacao" : "codificacao";
+  // Para comparação o valor pedido é ignorado (sempre 1) — a união discriminada
+  // já proíbe o campo no client, e este é o guard para quem vem de fora dela.
+  const researchersPerDoc = resolveResearchersPerDoc(
+    assignmentType,
+    (params as { researchersPerDoc?: number }).researchersPerDoc,
+  );
   const filters = params.filters || {};
 
   if (filters.batchFilter?.only && filters.batchFilter?.exclude?.length) {
@@ -339,14 +373,37 @@ async function computeLottery(params: LotteryParams): Promise<{
     (a) => a.type === assignmentType && preservedStatuses.includes(a.status)
   );
 
+  // Anti-duplicidade de par: continua derivando de `preserved` (dependente do
+  // modo) — em replace as pendentes são deletadas na mesma transação do RPC,
+  // então o par pode voltar a ser sorteado sem violar UNIQUE(doc, user, type).
   const preservedSet = new Set(preserved.map((a) => `${a.document_id}:${a.user_id}`));
+
+  // Ocupação de vaga ≠ anti-duplicidade de par. Para comparação a vaga só é
+  // ocupada por uma atribuição ATIVA: o invariante é "no máximo 1 comparação
+  // ativa por documento" (o mesmo do guard do gatilho automático e do índice
+  // assignments_one_active_comparacao_per_doc), não "1 comparação na história do
+  // documento". Sem isto, com um revisor por doc, um documento com parecer
+  // concluído jamais voltaria ao sorteio — impedindo a re-rodada por versão de
+  // schema que o índice existe para permitir. Para codificação, `occupying` é o
+  // próprio `preserved`: comportamento idêntico ao anterior (duas codificações
+  // concluídas seguem ocupando o documento).
+  const occupying =
+    assignmentType === "comparacao"
+      ? preserved.filter((a) => a.status !== "concluido")
+      : preserved;
 
   const docAssignedCount: Record<string, number> = {};
   const docAssignedUsers: Record<string, Set<string>> = {};
-  const preservedByUser: Record<string, number> = {};
-  for (const a of preserved) {
+  for (const a of occupying) {
     docAssignedCount[a.document_id] = (docAssignedCount[a.document_id] || 0) + 1;
     (docAssignedUsers[a.document_id] ??= new Set()).add(a.user_id);
+  }
+
+  // Carga acumulada segue em `preserved`: uma comparação concluída é trabalho
+  // feito — conta para o equilíbrio `history` e é o "existing" da prévia, ainda
+  // que não ocupe mais a vaga do documento.
+  const preservedByUser: Record<string, number> = {};
+  for (const a of preserved) {
     preservedByUser[a.user_id] = (preservedByUser[a.user_id] || 0) + 1;
   }
 
@@ -356,7 +413,7 @@ async function computeLottery(params: LotteryParams): Promise<{
 
   // Docs com vaga, considerando o conjunto preservado do modo
   let eligibleDocIds = filteredDocs
-    .filter((d) => (docAssignedCount[d.id] || 0) < params.researchersPerDoc)
+    .filter((d) => (docAssignedCount[d.id] || 0) < researchersPerDoc)
     .map((d) => d.id);
   const eligibleCount = eligibleDocIds.length;
 
@@ -407,7 +464,7 @@ async function computeLottery(params: LotteryParams): Promise<{
     eligibleDocIds,
     participants,
     {
-      researchersPerDoc: params.researchersPerDoc,
+      researchersPerDoc,
       balancing: params.balancing,
       preservedPairs: preservedSet,
       docAssignedUsers: Object.fromEntries(
@@ -423,7 +480,8 @@ async function computeLottery(params: LotteryParams): Promise<{
 
   const batchData = {
     project_id: params.projectId,
-    researchers_per_doc: params.researchersPerDoc,
+    // O lote registra o que aconteceu (o efetivo), não o que foi pedido.
+    researchers_per_doc: researchersPerDoc,
     docs_per_researcher: params.docsPerResearcher || null,
     doc_subset_size: params.docSubsetSize || null,
     label: params.label || null,
@@ -445,6 +503,7 @@ async function computeLottery(params: LotteryParams): Promise<{
     eligibleCount,
     seed,
     batchData,
+    assignmentType,
   };
 }
 
@@ -488,7 +547,6 @@ export async function smartRandomize(
   if (!user) return { error: "Não autenticado" };
 
   const supabase = await createSupabaseServer();
-  const assignmentType = params.type || "codificacao";
 
   let count: number;
   let preserved: number;
@@ -496,7 +554,8 @@ export async function smartRandomize(
   // Operação crítica: computeLottery + registro do lote + RPC transacional. Só
   // um erro aqui (nada gravado, ou gravação abortada) deve virar { error }.
   try {
-    const { newAssignments, preservedCount, batchData } = await computeLottery(params);
+    const { newAssignments, preservedCount, batchData, assignmentType } =
+      await computeLottery(params);
 
     // O batch é criado antes de qualquer mudança em assignments: se falhar
     // (ex.: migration ausente), nada foi deletado ainda
@@ -520,18 +579,26 @@ export async function smartRandomize(
       document_id: a.document_id,
       user_id: a.user_id,
     }));
-    const { error: rpcError } = await supabase.rpc("apply_lottery_assignments", {
-      p_project_id: params.projectId,
-      p_type: assignmentType,
-      p_batch_id: batch.id,
-      p_assignments: assignmentRows,
-      p_replace: params.mode === "replace",
-    });
+    const { data: inserted, error: rpcError } = await supabase.rpc(
+      "apply_lottery_assignments",
+      {
+        p_project_id: params.projectId,
+        p_type: assignmentType,
+        p_batch_id: batch.id,
+        p_assignments: assignmentRows,
+        p_replace: params.mode === "replace",
+      },
+    );
     if (rpcError) {
       throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
     }
 
-    count = newAssignments.length;
+    // Contagem REAL do RPC, não o tamanho do que se pretendia gravar: o
+    // ON CONFLICT DO NOTHING pula linhas quando o gatilho automático cria a
+    // comparação do documento entre a leitura do computeLottery (fora da
+    // transação) e este INSERT. Reportar o pretendido faria o coordenador ver
+    // um número que não está no banco.
+    count = typeof inserted === "number" ? inserted : newAssignments.length;
     preserved = preservedCount;
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao sortear" };
