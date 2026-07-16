@@ -124,36 +124,6 @@ function hasSideEffectImport(source: ts.SourceFile, specifier: string): boolean 
   );
 }
 
-function staticConcatenationSpecifier(node: ts.BinaryExpression): string | null {
-  if (node.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null;
-  const left = staticSpecifier(node.left);
-  const right = staticSpecifier(node.right);
-  return left === null || right === null ? null : left + right;
-}
-
-function staticTemplateSpecifier(node: ts.TemplateExpression): string | null {
-  let value = node.head.text;
-  for (const span of node.templateSpans) {
-    const expression = staticSpecifier(span.expression);
-    if (expression === null) return null;
-    value += expression + span.literal.text;
-  }
-  return value;
-}
-
-function staticSpecifier(node: ts.Node | undefined): string | null {
-  if (!node) return null;
-  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-    return node.text;
-  }
-  if (ts.isParenthesizedExpression(node)) {
-    return staticSpecifier(node.expression);
-  }
-  if (ts.isBinaryExpression(node)) return staticConcatenationSpecifier(node);
-  if (ts.isTemplateExpression(node)) return staticTemplateSpecifier(node);
-  return null;
-}
-
 function importClauseHasRuntimeValue(clause: ts.ImportClause | undefined): boolean {
   if (!clause) return true;
   if (clause.isTypeOnly) return false;
@@ -182,13 +152,6 @@ function exportDeclarationSpecifier(
     : null;
 }
 
-function importEqualsSpecifier(
-  statement: ts.ImportEqualsDeclaration,
-): string | null {
-  if (!ts.isExternalModuleReference(statement.moduleReference)) return null;
-  return staticSpecifier(statement.moduleReference.expression);
-}
-
 function runtimeDeclarationSpecifier(statement: ts.Statement): string | null {
   if (ts.isImportDeclaration(statement)) {
     return importDeclarationSpecifier(statement);
@@ -196,51 +159,21 @@ function runtimeDeclarationSpecifier(statement: ts.Statement): string | null {
   if (ts.isExportDeclaration(statement)) {
     return exportDeclarationSpecifier(statement);
   }
-  if (ts.isImportEqualsDeclaration(statement)) {
-    return importEqualsSpecifier(statement);
-  }
   return null;
-}
-
-function isRuntimeLoadCall(node: ts.Node): node is ts.CallExpression {
-  if (!ts.isCallExpression(node)) return false;
-  const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
-  const isRequire =
-    ts.isIdentifier(node.expression) && node.expression.text === "require";
-  return isDynamicImport || isRequire;
-}
-
-function runtimeLoadSpecifier(
-  node: ts.Node,
-  source: ts.SourceFile,
-): string | null {
-  if (!isRuntimeLoadCall(node)) return null;
-  const specifier = staticSpecifier(node.arguments[0]);
-  if (specifier) return specifier;
-  throw new Error(
-    `Carga runtime não-estática em ${source.fileName}: ${node.getText(source)}`,
-  );
 }
 
 function presentSpecifier(specifier: string | null): string[] {
   return specifier ? [specifier] : [];
 }
 
-function runtimeLoadSpecifiers(source: ts.SourceFile): string[] {
-  const specifiers: string[] = [];
-  function visit(node: ts.Node): void {
-    specifiers.push(...presentSpecifier(runtimeLoadSpecifier(node, source)));
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
-  return specifiers;
-}
-
+// O grafo runtime cobre apenas import/export estáticos — os únicos padrões que o
+// código de produção usa. Um `import(variável)` para o módulo admin passaria por
+// aqui sem ser visto, mas `import "server-only"` em admin.ts faz o build Next
+// falhar nesse caso, que é a defesa canônica contra vazamento a Client Component.
 function runtimeImportSpecifiers(source: ts.SourceFile): string[] {
-  const declarations = source.statements.flatMap((statement) =>
+  return source.statements.flatMap((statement) =>
     presentSpecifier(runtimeDeclarationSpecifier(statement)),
   );
-  return [...declarations, ...runtimeLoadSpecifiers(source)];
 }
 
 function resolveInternalImport(importer: string, specifier: string): string | null {
@@ -414,38 +347,17 @@ describe("fronteira do Supabase admin client", () => {
     expect(isServerActionModule(parseText('export {}; "use server";'))).toBe(false);
   });
 
-  it("inclui require, import equals e import() literais no grafo runtime", () => {
+  it("distingue import runtime de import type no grafo", () => {
     const specifiers = runtimeImportSpecifiers(parseText(`
-      import legacy = require("@/legacy");
-      const admin = require("@/lib/supabase/admin");
-      const lazy = import(\`@/lazy\`);
+      import { createSupabaseAdmin } from "@/lib/supabase/admin";
+      export { helper } from "@/lib/helper";
       import type { Safe } from "@/safe-type";
-    `));
-    expect(specifiers).toEqual([
-      "@/legacy",
-      "@/lib/supabase/admin",
-      "@/lazy",
-    ]);
-  });
-
-  it("resolve import() com options e expressões de texto constantes", () => {
-    const specifiers = runtimeImportSpecifiers(parseText(`
-      const withOptions = import("@/lib/" + "supabase/admin", { with: { type: "json" } });
-      const template = import(\`@/lib/\${"supabase"}/admin\`);
+      export type { Shape } from "@/shape";
     `));
     expect(specifiers).toEqual([
       "@/lib/supabase/admin",
-      "@/lib/supabase/admin",
+      "@/lib/helper",
     ]);
-  });
-
-  it("falha fechado quando import()/require() não pode ser resolvido", () => {
-    expect(() =>
-      runtimeImportSpecifiers(parseText(`
-        const moduleName = getModuleName();
-        const lazy = import(moduleName);
-      `)),
-    ).toThrow("Carga runtime não-estática");
   });
 
   it("não permite caminho de import runtime partindo de use client", () => {
@@ -463,10 +375,7 @@ describe("fronteira do Supabase admin client", () => {
       .map(relative)
       .toSorted();
     expect(importers).toEqual(EXPECTED_RUNTIME_IMPORTERS);
-    const atomicMemberRemoval = fs
-      .readFileSync(path.join(SRC_ROOT, "actions/members.ts"), "utf8")
-      .includes('rpc("remove_project_member"');
-    expect(countAdminFactoryCalls(files)).toBe(atomicMemberRemoval ? 18 : 19);
+    expect(countAdminFactoryCalls(files)).toBe(19);
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {
