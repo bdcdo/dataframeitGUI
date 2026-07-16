@@ -58,11 +58,18 @@ CREATE TRIGGER enforce_project_schema_revision_trigger
   FOR EACH ROW
   EXECUTE FUNCTION public.enforce_project_schema_revision();
 
--- Porta de entrada comum de toda escrita de schema: valida o payload de
--- identidade, resolve visibilidade e autorização, trava a linha e confere o
--- compare-and-swap da revisão. `commit_project_schema` e `apply_schema_backfill`
--- exigem exatamente esta sequência, e mantê-la em duplicata deixava as duas
--- livres para divergirem numa correção futura.
+-- Porta de entrada comum de toda escrita guardada pela revisão do schema:
+-- resolve visibilidade e autorização, trava a linha e confere o compare-and-swap
+-- da revisão. `schema_write_gate` (e, por ele, `commit_project_schema` e
+-- `apply_schema_backfill`) e `resolve_schema_suggestion` exigem exatamente esta
+-- sequência, e mantê-la em duplicata deixava-as livres para divergirem numa
+-- correção futura.
+--
+-- A validação da versão-alvo NÃO mora aqui: quem resolve uma sugestão sem
+-- mudança de schema não escreve versão nenhuma, e só teria um trio de argumentos
+-- a inventar. Ela é a única parte que distingue os dois usos, então é ela que
+-- fica no `schema_write_gate` — a alternativa era um parâmetro opcional que
+-- significasse "ignore este trio", ou seja, um modo a mais para manter de acordo.
 --
 -- Devolve 'ok' com o estado travado, ou o estado terminal ('not_found',
 -- 'forbidden', 'conflict') que o chamador repassa. O `FOR UPDATE` vale para a
@@ -71,12 +78,9 @@ CREATE TRIGGER enforce_project_schema_revision_trigger
 --
 -- SECURITY INVOKER: as policies seguem sendo a fonte de autorização, e a checagem
 -- explícita só converte os resultados filtrados pela RLS em estados estáveis.
-CREATE OR REPLACE FUNCTION public.schema_write_gate(
+CREATE OR REPLACE FUNCTION public.schema_revision_gate(
   p_project_id uuid,
-  p_expected_revision bigint,
-  p_version_major int,
-  p_version_minor int,
-  p_version_patch int
+  p_expected_revision bigint
 ) RETURNS TABLE(
   status text,
   schema_revision bigint,
@@ -98,14 +102,8 @@ DECLARE
   v_patch int;
 BEGIN
   IF p_expected_revision IS NULL
-     OR p_version_major IS NULL
-     OR p_version_minor IS NULL
-     OR p_version_patch IS NULL
-     OR p_expected_revision < 0
-     OR p_version_major < 0
-     OR p_version_minor < 0
-     OR p_version_patch < 0 THEN
-    RAISE EXCEPTION 'Schema revisions and versions must be non-negative'
+     OR p_expected_revision < 0 THEN
+    RAISE EXCEPTION 'Schema revisions must be non-negative'
       USING ERRCODE = '22023';
   END IF;
 
@@ -168,8 +166,59 @@ $$;
 -- SECURITY INVOKER: o privilégio da chamada interna é conferido contra o papel
 -- efetivo, e `service_role` não herda de `authenticated`. Sem isto, toda RPC de
 -- schema chamada com a service key morre em `permission denied` aqui dentro —
--- e o caminho é projetado, não acidental: a guarda de autorização abaixo é
+-- e o caminho é projetado, não acidental: a guarda de autorização acima é
 -- pulada justamente quando `clerk_uid()` é nulo, que é o caso da service key.
+REVOKE ALL ON FUNCTION public.schema_revision_gate(
+  uuid, bigint
+) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.schema_revision_gate(
+  uuid, bigint
+) TO authenticated, service_role;
+
+-- Acrescenta ao gate a validação do trio de versão que o chamador vai gravar.
+-- Aceitar nulo aqui gravaria versão nula em `projects`, que `compare-version.ts`
+-- lê como "projeto anterior ao versionamento" — o mesmo rebaixamento silencioso
+-- que `p_pydantic_code` nulo causaria via `pydantic_hash`.
+CREATE OR REPLACE FUNCTION public.schema_write_gate(
+  p_project_id uuid,
+  p_expected_revision bigint,
+  p_version_major int,
+  p_version_minor int,
+  p_version_patch int
+) RETURNS TABLE(
+  status text,
+  schema_revision bigint,
+  pydantic_fields jsonb,
+  schema_version_major int,
+  schema_version_minor int,
+  schema_version_patch int
+)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+BEGIN
+  IF p_version_major IS NULL
+     OR p_version_minor IS NULL
+     OR p_version_patch IS NULL
+     OR p_version_major < 0
+     OR p_version_minor < 0
+     OR p_version_patch < 0 THEN
+    RAISE EXCEPTION 'Schema versions must be non-negative'
+      USING ERRCODE = '22023';
+  END IF;
+
+  RETURN QUERY
+    SELECT g.status,
+           g.schema_revision,
+           g.pydantic_fields,
+           g.schema_version_major,
+           g.schema_version_minor,
+           g.schema_version_patch
+    FROM public.schema_revision_gate(p_project_id, p_expected_revision) AS g;
+END;
+$$;
+
 REVOKE ALL ON FUNCTION public.schema_write_gate(
   uuid, bigint, int, int, int
 ) FROM PUBLIC, anon;
@@ -442,6 +491,87 @@ REVOKE ALL ON FUNCTION public.approve_schema_suggestion(
 ) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.approve_schema_suggestion(
   uuid, uuid, bigint, jsonb, text, int, int, int, text, jsonb, uuid
+) TO authenticated, service_role;
+
+-- Aprovar uma sugestão cujo conteúdo o schema JÁ tem — porque o coordenador
+-- aplicou a mudança à mão antes de aprovar — não commita coisa alguma: não há
+-- diff, e `commit_project_schema` recusa log vazio por contrato. Sem esta porta,
+-- `approve_schema_suggestion` era a única forma de aprovar, o commit interno
+-- falhava, e o único desfecho possível para uma sugestão atendida era REJEITÁ-LA.
+--
+-- O gate — e não um `EXISTS` sobre `projects` dentro do WHERE — é o que confere
+-- autorização e o compare-and-swap: o `FOR UPDATE` dele segura a linha do projeto
+-- até o fim da transação, então o "o schema não mudou" que autoriza a aprovação
+-- ainda é verdade quando o UPDATE grava. Um CAS sem o lock valeria só no instante
+-- da leitura, e um commit concorrente poderia deixar a sugestão aprovada logo
+-- depois de o schema deixar de contê-la.
+CREATE OR REPLACE FUNCTION public.resolve_schema_suggestion(
+  p_suggestion_id uuid,
+  p_project_id uuid,
+  p_expected_revision bigint,
+  p_resolved_by uuid
+) RETURNS TABLE(
+  status text,
+  schema_revision bigint,
+  pydantic_fields jsonb,
+  schema_version_major int,
+  schema_version_minor int,
+  schema_version_patch int
+)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+  v_status text;
+  v_revision bigint;
+  v_fields jsonb;
+  v_major int;
+  v_minor int;
+  v_patch int;
+  v_suggestion_id uuid;
+BEGIN
+  SELECT g.status,
+         g.schema_revision,
+         g.pydantic_fields,
+         g.schema_version_major,
+         g.schema_version_minor,
+         g.schema_version_patch
+  INTO v_status, v_revision, v_fields, v_major, v_minor, v_patch
+  FROM public.schema_revision_gate(p_project_id, p_expected_revision) AS g;
+
+  IF v_status <> 'ok' THEN
+    RETURN QUERY
+      SELECT v_status, v_revision, v_fields, v_major, v_minor, v_patch;
+    RETURN;
+  END IF;
+
+  UPDATE public.schema_suggestions AS suggestion
+  SET status = 'approved',
+      resolved_by = p_resolved_by,
+      resolved_at = now()
+  WHERE suggestion.id = p_suggestion_id
+    AND suggestion.project_id = p_project_id
+    AND suggestion.status = 'pending'
+  RETURNING suggestion.id INTO v_suggestion_id;
+
+  IF v_suggestion_id IS NULL THEN
+    RAISE EXCEPTION 'Suggestion is missing, belongs to another project, or is not pending'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 'saved' e não 'ok': o chamador é o mesmo `mapCommitResult` das demais, e o
+  -- schema resultante é exatamente o que o gate travou.
+  RETURN QUERY
+    SELECT 'saved', v_revision, v_fields, v_major, v_minor, v_patch;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.resolve_schema_suggestion(
+  uuid, uuid, bigint, uuid
+) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.resolve_schema_suggestion(
+  uuid, uuid, bigint, uuid
 ) TO authenticated, service_role;
 
 -- Backfill transacional: o cálculo e o agrupamento permanecem puros no

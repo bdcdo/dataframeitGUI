@@ -68,6 +68,17 @@ INSERT INTO public.projects (
     '[]',
     'class Analysis: pass',
     'hash-service'
+  ),
+  (
+    -- Projeto próprio para `resolve_schema_suggestion`: os testes de aprovação
+    -- acima avançam a revisão do 04, e depender dessa ordem tornaria estes
+    -- frágeis a qualquer inserção no meio do arquivo.
+    '82000000-0000-0000-0000-000000000008',
+    'schema suggestion no-op test',
+    '81000000-0000-0000-0000-000000000001',
+    '[{"name":"suggested_field","type":"text","options":null,"description":"Depois"}]',
+    'class Analysis: after',
+    'hash-noop'
   );
 
 INSERT INTO public.project_members (project_id, user_id, role) VALUES
@@ -88,6 +99,16 @@ INSERT INTO public.project_members (project_id, user_id, role) VALUES
   ),
   (
     '82000000-0000-0000-0000-000000000004',
+    '81000000-0000-0000-0000-000000000002',
+    'pesquisador'
+  ),
+  (
+    '82000000-0000-0000-0000-000000000008',
+    '81000000-0000-0000-0000-000000000001',
+    'coordenador'
+  ),
+  (
+    '82000000-0000-0000-0000-000000000008',
     '81000000-0000-0000-0000-000000000002',
     'pesquisador'
   );
@@ -116,6 +137,16 @@ INSERT INTO public.schema_suggestions (
   '81000000-0000-0000-0000-000000000002',
   '{"description":"Nunca aprovada"}',
   'sentinela de autorização'
+),
+(
+  -- Sugestão cujo conteúdo o schema do projeto 08 JÁ tem: aprová-la não commita
+  -- nada, e é o caso que `approve_schema_suggestion` não consegue atender.
+  '85000000-0000-0000-0000-000000000003',
+  '82000000-0000-0000-0000-000000000008',
+  'suggested_field',
+  '81000000-0000-0000-0000-000000000002',
+  '{"description":"Depois"}',
+  'já aplicada à mão'
 );
 
 INSERT INTO public.documents (id, project_id, title, text) VALUES
@@ -192,6 +223,10 @@ BEGIN
     'authenticated',
     'public.apply_schema_backfill(uuid,bigint,integer,integer,integer,jsonb,jsonb)',
     'EXECUTE'
+  ) OR NOT has_function_privilege(
+    'authenticated',
+    'public.resolve_schema_suggestion(uuid,uuid,bigint,uuid)',
+    'EXECUTE'
   ) THEN
     RAISE EXCEPTION 'FALHOU ACL: authenticated sem EXECUTE nas RPCs de schema';
   END IF;
@@ -207,6 +242,10 @@ BEGIN
   ) OR has_function_privilege(
     'anon',
     'public.apply_schema_backfill(uuid,bigint,integer,integer,integer,jsonb,jsonb)',
+    'EXECUTE'
+  ) OR has_function_privilege(
+    'anon',
+    'public.resolve_schema_suggestion(uuid,uuid,bigint,uuid)',
     'EXECUTE'
   ) THEN
     RAISE EXCEPTION 'FALHOU ACL: anon pode executar RPC de schema';
@@ -1612,5 +1651,183 @@ BEGIN
   RAISE NOTICE 'OK backfill duplicatas: rejeição por id repetido não tocou as três tabelas';
 END;
 $$;
+
+-- ----- resolve_schema_suggestion: aprovar o que o schema já contém -----
+-- O coordenador aplicou a mudança à mão e só depois foi aprovar a sugestão. Não
+-- há diff, `commit_project_schema` recusa log vazio por contrato, e aprovar pela
+-- RPC de commit deixava a sugestão pendente para sempre — com rejeitá-la como
+-- única saída para uma sugestão que foi ATENDIDA.
+
+-- Autorização: pesquisador não resolve, e a recusa não pode tocar a sugestão.
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  v_result record;
+BEGIN
+  SELECT * INTO v_result
+  FROM public.resolve_schema_suggestion(
+    '85000000-0000-0000-0000-000000000003',
+    '82000000-0000-0000-0000-000000000008',
+    0,
+    '81000000-0000-0000-0000-000000000002'
+  );
+
+  IF v_result.status <> 'forbidden' THEN
+    RAISE EXCEPTION 'FALHOU resolve autz: pesquisador recebeu %', v_result.status;
+  END IF;
+END;
+$$;
+
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT status FROM public.schema_suggestions
+      WHERE id = '85000000-0000-0000-0000-000000000003') <> 'pending' THEN
+    RAISE EXCEPTION 'FALHOU resolve autz: recusa resolveu a sugestão mesmo assim';
+  END IF;
+  RAISE NOTICE 'OK resolve autz: pesquisador não resolve e a sugestão segue pendente';
+END;
+$$;
+
+-- CAS: revisão divergente é conflito, não aprovação. Sem isto, um commit
+-- concorrente entre a leitura do contexto e esta escrita deixaria a sugestão
+-- marcada como atendida logo depois de o schema deixar de contê-la.
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  v_result record;
+BEGIN
+  SELECT * INTO v_result
+  FROM public.resolve_schema_suggestion(
+    '85000000-0000-0000-0000-000000000003',
+    '82000000-0000-0000-0000-000000000008',
+    99,
+    '81000000-0000-0000-0000-000000000001'
+  );
+
+  IF v_result.status <> 'conflict' OR v_result.schema_revision <> 0 THEN
+    RAISE EXCEPTION 'FALHOU resolve CAS: retorno inesperado %', row_to_json(v_result);
+  END IF;
+END;
+$$;
+
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT status FROM public.schema_suggestions
+      WHERE id = '85000000-0000-0000-0000-000000000003') <> 'pending' THEN
+    RAISE EXCEPTION 'FALHOU resolve CAS: conflito aprovou a sugestão';
+  END IF;
+  RAISE NOTICE 'OK resolve CAS: revisão divergente não resolve a sugestão';
+END;
+$$;
+
+-- Caminho feliz: aprova sem tocar o schema.
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  v_result record;
+BEGIN
+  SELECT * INTO v_result
+  FROM public.resolve_schema_suggestion(
+    '85000000-0000-0000-0000-000000000003',
+    '82000000-0000-0000-0000-000000000008',
+    0,
+    '81000000-0000-0000-0000-000000000001'
+  );
+
+  IF v_result.status <> 'saved' OR v_result.schema_revision <> 0 THEN
+    RAISE EXCEPTION 'FALHOU resolve: retorno inesperado %', row_to_json(v_result);
+  END IF;
+END;
+$$;
+
+RESET ROLE;
+
+DO $$
+DECLARE
+  v_suggestion record;
+BEGIN
+  SELECT status, resolved_by INTO v_suggestion
+  FROM public.schema_suggestions
+  WHERE id = '85000000-0000-0000-0000-000000000003';
+
+  IF v_suggestion.status <> 'approved'
+     OR v_suggestion.resolved_by <> '81000000-0000-0000-0000-000000000001' THEN
+    RAISE EXCEPTION 'FALHOU resolve: sugestão não foi aprovada (%)', row_to_json(v_suggestion);
+  END IF;
+
+  -- A revisão e a versão não podem se mexer: bumpar por uma aprovação sem
+  -- mudança invalidaria a baseline das outras abas e registraria no histórico
+  -- uma alteração que ninguém fez.
+  IF (SELECT schema_revision FROM public.projects
+      WHERE id = '82000000-0000-0000-0000-000000000008') <> 0 THEN
+    RAISE EXCEPTION 'FALHOU resolve: aprovação sem mudança avançou a revisão';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.schema_change_log
+    WHERE project_id = '82000000-0000-0000-0000-000000000008'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU resolve: aprovação sem mudança escreveu no histórico';
+  END IF;
+
+  RAISE NOTICE 'OK resolve: sugestão atendida é aprovada sem commitar schema';
+END;
+$$;
+
+-- Reaprovar não é idempotente em silêncio: a sugestão já saiu de pendente, e
+-- P0001 é o que o chamador traduz em copy própria.
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  v_result record;
+BEGIN
+  BEGIN
+    SELECT * INTO v_result
+    FROM public.resolve_schema_suggestion(
+      '85000000-0000-0000-0000-000000000003',
+      '82000000-0000-0000-0000-000000000008',
+      0,
+      '81000000-0000-0000-0000-000000000001'
+    );
+    RAISE EXCEPTION 'FALHOU resolve repetido: sugestão já resolvida foi aceita';
+  EXCEPTION
+    WHEN sqlstate 'P0001' THEN
+      IF SQLERRM NOT LIKE 'Suggestion is missing%' THEN
+        RAISE;
+      END IF;
+      RAISE NOTICE 'OK resolve repetido: sugestão já resolvida volta como P0001';
+  END;
+END;
+$$;
+
+RESET ROLE;
 
 ROLLBACK;

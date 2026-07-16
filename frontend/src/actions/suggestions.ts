@@ -9,7 +9,6 @@ import type {
   SchemaBaselineIdentity,
   SchemaSaveResult,
 } from "@/lib/types";
-import { parsePydanticFields } from "@/lib/pydantic-field";
 import {
   schemaSuggestionChangesSchema,
   type SchemaSuggestionChanges,
@@ -21,65 +20,6 @@ function schemaSaveError(result: SchemaSaveResult): string | null {
     return "O schema mudou enquanto a sugestão era revisada. Recarregue a página e reaplique a sugestão sobre a versão atual.";
   }
   return result.message;
-}
-
-type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
-
-async function applyApprovedSuggestion(
-  supabase: SupabaseServerClient,
-  suggestionId: string,
-  projectId: string,
-): Promise<string | null> {
-  const { data: suggestion } = await supabase
-    .from("schema_suggestions")
-    .select("field_name, suggested_changes")
-    .eq("id", suggestionId)
-    .eq("project_id", projectId)
-    .eq("status", "pending")
-    .single();
-  if (!suggestion) return "Sugestão não encontrada";
-
-  const { data: project } = await supabase
-    .from("projects")
-    .select(
-      "pydantic_fields, schema_revision",
-    )
-    .eq("id", projectId)
-    .single();
-  // `schema_revision` é NOT NULL: só a ausência da linha (inexistente ou
-  // filtrada pela RLS) é um estado real aqui.
-  if (!project) return "Projeto não encontrado ou sem permissão";
-
-  const parsedChanges = schemaSuggestionChangesSchema.safeParse(
-    suggestion.suggested_changes,
-  );
-  if (!parsedChanges.success) return "A sugestão armazenada é inválida";
-  const fields = parsePydanticFields(project.pydantic_fields);
-  if (!fields) return "O schema persistido é inválido";
-  const changes = parsedChanges.data;
-  const updatedFields = fields.map((field) =>
-    field.name === suggestion.field_name
-      ? {
-          ...field,
-          ...(changes.description !== undefined && {
-            description: changes.description,
-          }),
-          ...(changes.help_text !== undefined && {
-            help_text: changes.help_text || undefined,
-          }),
-          ...(changes.options !== undefined && {
-            options: changes.options?.length
-              ? changes.options
-              : null,
-          }),
-        }
-      : field,
-  );
-  return schemaSaveError(
-    await saveSchemaAndApproveSuggestion(projectId, suggestionId, updatedFields, {
-      revision: project.schema_revision,
-    }),
-  );
 }
 
 export async function createSchemaSuggestion(
@@ -111,10 +51,13 @@ export async function createSchemaSuggestion(
   return {};
 }
 
-export async function resolveSchemaSuggestion(
+// Só rejeitar: aprovar exige o schema resultante, e quem o tem é
+// `approveSchemaSuggestionWithEdits` — que passa pelas RPCs de schema, onde o
+// compare-and-swap por revisão e o log de auditoria vivem. Um segundo caminho de
+// aprovação aqui não teria como oferecer nenhum dos dois.
+export async function rejectSchemaSuggestion(
   suggestionId: string,
   projectId: string,
-  action: "approved" | "rejected",
   rejectionReason?: string,
 ): Promise<{ error?: string }> {
   const gate = await requireCoordinator(
@@ -125,13 +68,6 @@ export async function resolveSchemaSuggestion(
   const user = gate.user;
 
   const supabase = await createSupabaseServer();
-
-  if (action === "approved") {
-    const saveError = await applyApprovedSuggestion(supabase, suggestionId, projectId);
-    if (saveError) return { error: saveError };
-    revalidatePath(`/projects/${projectId}/reviews/comments`);
-    return {};
-  }
 
   const { data: updated, error } = await supabase
     .from("schema_suggestions")

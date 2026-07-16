@@ -108,11 +108,33 @@ async function loadSchemaSaveContext(
 ): Promise<SchemaContextLoad> {
   // O snapshot completo também atende a publicação MAJOR, que reapresenta o
   // mesmo código e os mesmos campos à RPC ao alterar somente a versão.
-  const { data } = await supabase
+  // `maybeSingle` e não `single`: com `single`, zero linhas é um ERRO
+  // (`PGRST116`, 406), então nenhuma leitura conseguiria separar "projeto
+  // inexistente ou filtrado pela RLS" de "a query falhou" sem casar com o código
+  // do erro no call site. `maybeSingle` faz da ausência um valor (`data` nulo,
+  // `error` nulo), e aí `error` passa a significar só o que não deveria
+  // acontecer.
+  const { data, error } = await supabase
     .from("projects")
     .select(SCHEMA_PROJECT_SELECT)
     .eq("id", projectId)
-    .single();
+    .maybeSingle();
+  // Falha de query — timeout num projeto grande, conexão caída — não é "sem
+  // permissão". Mesma regra do mapRpcError e da paginação do backfill: o texto
+  // do Postgres é diagnóstico de servidor, some do toast, mas não pode sumir do
+  // log.
+  if (error) {
+    console.error("[schema] leitura do projeto falhou", {
+      code: error.code,
+      message: error.message,
+    });
+    return {
+      result: {
+        status: "error",
+        message: "Não foi possível ler o schema do projeto. Tente novamente.",
+      },
+    };
+  }
   if (!data) {
     return {
       result: {
@@ -185,6 +207,7 @@ function commitSnapshot(row: SchemaCommitRow): SchemaSnapshot | null {
 type SchemaCommitRpc =
   | "commit_project_schema"
   | "approve_schema_suggestion"
+  | "resolve_schema_suggestion"
   | "apply_schema_backfill";
 
 interface SchemaRpcCopy {
@@ -206,6 +229,10 @@ const SCHEMA_RPC_COPY: Record<SchemaCommitRpc, SchemaRpcCopy> = {
     byCode: {},
   },
   approve_schema_suggestion: {
+    generic: "Não foi possível aplicar a sugestão. Tente novamente.",
+    byCode: { P0001: "Sugestão não encontrada ou já resolvida." },
+  },
+  resolve_schema_suggestion: {
     generic: "Não foi possível aplicar a sugestão. Tente novamente.",
     byCode: { P0001: "Sugestão não encontrada ou já resolvida." },
   },
@@ -282,9 +309,13 @@ function revalidateSchemaConsumers(projectId: string): void {
   revalidateTag(`project-${projectId}-progress`, { expire: 60 });
 }
 
+// `fields` é o que o FastAPI devolveu, não um `PydanticField[]` provado: o
+// genérico de `fetchFastAPIServer` é uma afirmação sobre a resposta, e quem a
+// verifica é o parse abaixo. Tipar como `unknown` é o que impede o call site de
+// pular essa verificação.
 interface RecoverResponse {
   valid: boolean;
-  fields: PydanticField[];
+  fields: unknown;
   model_name: string | null;
   errors: string[];
 }
@@ -309,7 +340,19 @@ export async function recoverFieldsFromStoredCode(
           "Não foi possível reconstruir os campos a partir do código armazenado.",
       };
     }
-    return { fields: result.fields };
+    // A validação é aqui, na fronteira, e não no componente: era o único ponto
+    // do fluxo que entregava campos ao estado do editor sem passar pelo Zod, e
+    // um campo malformado só apareceria depois — no save, contra a copy genérica
+    // de "schema enviado é inválido", já com o rascunho local gravado por cima
+    // do trabalho anterior.
+    const fields = parsePydanticFields(result.fields);
+    if (!fields) {
+      return {
+        error:
+          "O código armazenado reconstruiu campos que não são válidos. Corrija o schema no banco antes de recuperar.",
+      };
+    }
+    return { fields };
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao recuperar campos do código" };
   }
@@ -351,11 +394,20 @@ interface PreparedSchemaCommit {
   targetVersion: { major: number; minor: number; patch: number };
 }
 
+// Os campos submetidos não mudam nada no schema atual. Não é erro nem estado
+// degenerado: quem edita e desfaz cai aqui, e também quem aprova uma sugestão
+// depois de já ter aplicado a mudança à mão. Quem decide o desfecho é o
+// chamador, porque ele difere — sem sugestão não há o que fazer, com sugestão
+// ainda há a sugestão a resolver.
+type PreparedSchema =
+  | PreparedSchemaCommit
+  | { unchanged: true }
+  | { result: SchemaSaveResult };
+
 function prepareSchemaCommit(
   fields: PydanticField[],
   context: SchemaSaveContext,
-  suggestionId?: string,
-): PreparedSchemaCommit | { result: SchemaSaveResult } {
+): PreparedSchema {
   const parsedFields = parseSaveablePydanticFields(fields);
   if (!parsedFields) {
     return { result: {
@@ -369,15 +421,7 @@ function prepareSchemaCommit(
     context.current,
   );
   if (!plan.changeType && plan.logEntries.length === 0) {
-    if (suggestionId) {
-      return { result: {
-        status: "error",
-        message: "A sugestão não produz nenhuma alteração no schema atual.",
-      } };
-    }
-    return {
-      result: { status: "saved", snapshot: projectSnapshot(context.project) },
-    };
+    return { unchanged: true };
   }
   return {
     plan,
@@ -408,6 +452,33 @@ function schemaCommitArgs(
   };
 }
 
+// Aprova a sugestão sem tocar no schema, que já contém o que ela pedia. A RPC
+// confere a autorização e o mesmo compare-and-swap por revisão das demais: não
+// há commit, mas há a janela entre a leitura do contexto e esta escrita, e
+// aprovar contra um schema que mudou nesse meio-tempo registraria como atendida
+// uma sugestão que deixou de ser.
+async function resolveSuggestionWithoutCommit(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  suggestionId: string,
+  expectedBaseline: SchemaBaselineIdentity,
+  userId: string,
+): Promise<SchemaSaveResult> {
+  const { data, error } = await supabase
+    .rpc("resolve_schema_suggestion", {
+      p_suggestion_id: suggestionId,
+      p_project_id: projectId,
+      p_expected_revision: expectedBaseline.revision,
+      p_resolved_by: userId,
+    })
+    .single();
+  return mapCommitResult(
+    "resolve_schema_suggestion",
+    data as SchemaCommitRow | null,
+    error,
+  );
+}
+
 async function persistSchema(
   projectId: string,
   fields: PydanticField[],
@@ -416,8 +487,23 @@ async function persistSchema(
   suggestionId?: string,
 ): Promise<SchemaSaveResult> {
   const { supabase, userId, context } = loaded;
-  const prepared = prepareSchemaCommit(fields, context, suggestionId);
+  const prepared = prepareSchemaCommit(fields, context);
   if ("result" in prepared) return prepared.result;
+  if ("unchanged" in prepared) {
+    if (!suggestionId) {
+      return { status: "saved", snapshot: projectSnapshot(context.project) };
+    }
+    const resolved = await resolveSuggestionWithoutCommit(
+      supabase,
+      projectId,
+      suggestionId,
+      expectedBaseline,
+      userId,
+    );
+    // Sem commit não há consumidor de schema a revalidar: o que mudou foi só o
+    // status da sugestão, e quem o mostra é a página revalidada pelo chamador.
+    return resolved;
+  }
 
   const rpc: SchemaCommitRpc = suggestionId
     ? "approve_schema_suggestion"
