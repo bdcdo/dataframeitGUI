@@ -13,6 +13,11 @@ export type RpcResult = {
   error?: { message: string } | null;
 };
 
+export type QueryError = {
+  message: string;
+  code?: string;
+};
+
 function makeRpc(state: {
   rpcCalls?: RpcCall[];
   rpcResults?: Record<string, RpcResult>;
@@ -99,6 +104,7 @@ export function makeFilterAwareSupabaseMock(state: {
   writeCalls: WriteCall[];
   rpcCalls?: RpcCall[];
   rpcResults?: Record<string, RpcResult>;
+  queryErrors?: Record<string, QueryError | null>;
 }) {
   return {
     rpc: makeRpc(state),
@@ -143,7 +149,7 @@ export function makeFilterAwareSupabaseMock(state: {
         });
         return limitN != null ? filtered.slice(0, limitN) : filtered;
       };
-      const err = () => state.tableData[`__error:${table}:${opRef.current}`] ?? null;
+      const err = () => state.queryErrors?.[`${table}:${opRef.current}`] ?? null;
       builder.single = () =>
         Promise.resolve({ data: rows()[0] ?? null, error: err() });
       builder.maybeSingle = () =>
@@ -163,6 +169,7 @@ export function makeSimpleSupabaseMock(state: {
   writeCalls: WriteCall[];
   rpcCalls?: RpcCall[];
   rpcResults?: Record<string, RpcResult>;
+  queryErrors?: Record<string, QueryError | null>;
 }) {
   return {
     rpc: makeRpc(state),
@@ -179,7 +186,7 @@ export function makeSimpleSupabaseMock(state: {
             state.tableData[`${table}:${opRef.current}`] ??
             state.tableData[table] ??
             null,
-          error: state.tableData[`__error:${table}:${opRef.current}`] ?? null,
+          error: state.queryErrors?.[`${table}:${opRef.current}`] ?? null,
         });
       return builder;
     },
