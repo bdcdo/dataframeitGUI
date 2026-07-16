@@ -23,6 +23,48 @@ interface RunLlmButtonProps {
    * sempre retornaria 403. Default true para não exigir o prop de callers que
    * já só renderizam em contexto de coordenador. */
   canRunLlm?: boolean;
+  /** Bloqueio contextual adicional para telas em modo somente leitura. */
+  disabled?: boolean;
+  disabledReason?: string;
+  /** Repassa o modo somente-leitura da impersonação master ao backend, que é o
+   * interlock de execução (issue #428). Default false: telas fora da Comparação
+   * seguem executando. O botão já fica `disabled` no client; o sinal é o
+   * backstop server-side caso a chamada chegue mesmo assim. */
+  impersonating?: boolean;
+}
+
+interface RunLlmControlState {
+  disabled: boolean;
+  iconTitle: string;
+  textTitle: string | undefined;
+  iconAriaLabel: string;
+}
+
+function getRunLlmControlState(
+  disabled: boolean,
+  disabledReason: string | undefined,
+  running: boolean,
+): RunLlmControlState {
+  if (disabled) {
+    const reason = disabledReason ?? "Indisponível no modo somente leitura";
+    return {
+      disabled: true,
+      iconTitle: reason,
+      textTitle: reason,
+      iconAriaLabel: `Rodar LLM indisponível: ${reason}`,
+    };
+  }
+  return {
+    disabled: running,
+    iconTitle: "Rodar LLM neste documento",
+    textTitle: undefined,
+    iconAriaLabel: "Rodar LLM neste documento",
+  };
+}
+
+function RunLlmStatusIcon({ running }: { running: boolean }) {
+  if (running) return <Loader2 className="size-3.5 animate-spin" />;
+  return <Bot className="size-3.5" />;
 }
 
 export function RunLlmButton({
@@ -32,12 +74,20 @@ export function RunLlmButton({
   size = "icon",
   variant = "ghost",
   canRunLlm = true,
+  disabled = false,
+  disabledReason,
+  impersonating = false,
 }: RunLlmButtonProps) {
   const { getToken } = useAuth();
   const [running, setRunning] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelledRef = useRef(false);
   const failuresRef = useRef(0);
+  const controlState = getRunLlmControlState(
+    disabled,
+    disabledReason,
+    running,
+  );
 
   const cleanup = useCallback(() => {
     cancelledRef.current = true;
@@ -108,7 +158,7 @@ export function RunLlmButton({
   );
 
   const handleRun = async () => {
-    if (running) return;
+    if (controlState.disabled) return;
     setRunning(true);
 
     try {
@@ -121,6 +171,7 @@ export function RunLlmButton({
             project_id: projectId,
             document_ids: [documentId],
             filter_mode: "all",
+            impersonating,
           }),
         },
         token
@@ -143,14 +194,11 @@ export function RunLlmButton({
         size="icon"
         className="size-6"
         onClick={() => void handleRun()}
-        disabled={running}
-        title="Rodar LLM neste documento"
+        disabled={controlState.disabled}
+        title={controlState.iconTitle}
+        aria-label={controlState.iconAriaLabel}
       >
-        {running ? (
-          <Loader2 className="size-3.5 animate-spin" />
-        ) : (
-          <Bot className="size-3.5" />
-        )}
+        <RunLlmStatusIcon running={running} />
       </Button>
     );
   }
@@ -160,14 +208,11 @@ export function RunLlmButton({
       variant={variant}
       size={size}
       onClick={() => void handleRun()}
-      disabled={running}
+      disabled={controlState.disabled}
+      title={controlState.textTitle}
       className="gap-1.5"
     >
-      {running ? (
-        <Loader2 className="size-3.5 animate-spin" />
-      ) : (
-        <Bot className="size-3.5" />
-      )}
+      <RunLlmStatusIcon running={running} />
       Rodar LLM
     </Button>
   );

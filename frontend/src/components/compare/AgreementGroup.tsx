@@ -43,6 +43,7 @@ interface ExistingVerdict {
 }
 
 interface AgreementGroupProps {
+  readOnly: boolean;
   responses: AgreementResponse[];
   existingVerdict: ExistingVerdict | null;
   pendingVerdict: PendingVerdict | null;
@@ -82,6 +83,7 @@ interface RenderedGroup {
 }
 
 export function AgreementGroup({
+  readOnly,
   responses,
   existingVerdict,
   pendingVerdict,
@@ -233,7 +235,7 @@ export function AgreementGroup({
               size="sm"
               variant="outline"
               className="h-7 shrink-0 gap-1"
-              disabled={isSubmitting}
+              disabled={readOnly || isSubmitting}
               onClick={handleConfirmAll}
               title="Pré-seleciona todas as respostas como equivalentes; a mais comum fica como gabarito sugerido. Revise o gabarito e aplique no botão de confirmação abaixo."
             >
@@ -282,6 +284,7 @@ export function AgreementGroup({
               isChosen={isChosen}
               isPending={isPending}
               versions={versions}
+              readOnly={readOnly}
               onVote={() => onVote(group.displayAnswer, group.responses[0].id)}
               equivalenceMode={
                 !allowEquivalence
@@ -325,7 +328,7 @@ export function AgreementGroup({
             <Button
               size="sm"
               className="h-7 gap-1"
-              disabled={isSubmitting || !effectiveGabarito}
+              disabled={readOnly || isSubmitting || !effectiveGabarito}
               onClick={handleConfirm}
             >
               <Link2 className="size-3.5" />

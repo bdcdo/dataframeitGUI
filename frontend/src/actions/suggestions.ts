@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, requireCoordinator } from "@/lib/auth";
+import { requireWritableUser, requireCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { saveSchemaFromGUI } from "./schema";
 import type { PydanticField } from "@/lib/types";
@@ -11,16 +11,19 @@ export async function createSchemaSuggestion(
   fieldName: string,
   suggestedChanges: Record<string, unknown>,
   reason: string,
+  impersonating?: boolean,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  // Interlock de somente-leitura: master impersonando não sugere (issue #428). O
+  // sinal é opcional (default false) — telas fora da Comparação seguem gravando.
+  const writable = await requireWritableUser({ impersonating });
+  if (!writable.ok) return { error: writable.error };
 
   const supabase = await createSupabaseServer();
 
   const { error } = await supabase.from("schema_suggestions").insert({
     project_id: projectId,
     field_name: fieldName,
-    suggested_by: user.id,
+    suggested_by: writable.user.id,
     suggested_changes: suggestedChanges,
     reason: reason || null,
   });

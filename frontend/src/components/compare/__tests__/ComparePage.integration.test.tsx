@@ -16,25 +16,55 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 // que um veredito confirmado no painel real chega ao Server Action. Só o
 // DocumentReader é mockado (usa react-markdown via next/dynamic, ruidoso em
 // jsdom e irrelevante para esta verificação).
-const { submitVerdict, markCompareDocReviewed } = vi.hoisted(() => ({
+const compareMocks = vi.hoisted(() => ({
   submitVerdict: vi.fn<
     (...args: unknown[]) => Promise<{ error?: string } | void>
   >(async () => {}),
   markCompareDocReviewed: vi.fn(async () => {}),
-}));
-const { confirmEquivalentVerdict, unmarkEquivalencePair } = vi.hoisted(() => ({
   confirmEquivalentVerdict: vi.fn(async () => {}),
   unmarkEquivalencePair: vi.fn(async () => {}),
+  createProjectComment: vi.fn(async () => ({ error: null })),
+  createSchemaSuggestion: vi.fn(async () => ({ error: null })),
+  fetchFastAPI: vi.fn(async () => ({ job_id: "job-1" })),
+  requireSupabaseToken: vi.fn(async () => "test-token"),
+  getToken: vi.fn(async () => "test-token"),
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+  },
 }));
 
-vi.mock("@/actions/reviews", () => ({ submitVerdict, markCompareDocReviewed }));
-vi.mock("@/actions/equivalences", () => ({
+const {
+  submitVerdict,
+  markCompareDocReviewed,
   confirmEquivalentVerdict,
   unmarkEquivalencePair,
+  createProjectComment,
+  createSchemaSuggestion,
+  fetchFastAPI,
+} = compareMocks;
+
+vi.mock("@/actions/reviews", () => ({
+  submitVerdict: compareMocks.submitVerdict,
+  markCompareDocReviewed: compareMocks.markCompareDocReviewed,
 }));
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+vi.mock("@/actions/equivalences", () => ({
+  confirmEquivalentVerdict: compareMocks.confirmEquivalentVerdict,
+  unmarkEquivalencePair: compareMocks.unmarkEquivalencePair,
 }));
+vi.mock("@/actions/project-comments", () => ({
+  createProjectComment: compareMocks.createProjectComment,
+}));
+vi.mock("@/actions/suggestions", () => ({
+  createSchemaSuggestion: compareMocks.createSchemaSuggestion,
+}));
+vi.mock("@/lib/api", () => ({
+  fetchFastAPI: compareMocks.fetchFastAPI,
+  requireSupabaseToken: compareMocks.requireSupabaseToken,
+}));
+vi.mock("sonner", () => ({ toast: compareMocks.toast }));
 vi.mock("@/components/coding/DocumentReader", () => ({
   DocumentReader: ({ text }: { text: string }) => (
     <div data-testid="doc-reader">{text}</div>
@@ -47,10 +77,9 @@ vi.mock("next/navigation", () => ({
 }));
 // A árvore real monta RunCard, que usa useAuth().getToken para anexar o JWT.
 vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({ getToken: vi.fn(async () => "test-token") }),
+  useAuth: () => ({ getToken: compareMocks.getToken }),
 }));
 
-import { toast } from "sonner";
 import { ComparePage } from "@/components/compare/ComparePage";
 import type { PydanticField } from "@/lib/types";
 import type { CompareResponse } from "@/components/compare/compare-types";
@@ -129,10 +158,10 @@ const props = {
   isImpersonating: false,
 };
 
-const renderReal = () =>
+const renderReal = (overrides: Partial<typeof props> = {}) =>
   render(
     <TooltipProvider>
-      <ComparePage {...props} />
+      <ComparePage {...props} {...overrides} />
     </TooltipProvider>,
   );
 
@@ -205,10 +234,19 @@ vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 }
 
 beforeEach(() => {
-  submitVerdict.mockClear();
-  vi.mocked(toast.warning).mockClear();
+  vi.clearAllMocks();
 });
 afterEach(cleanup);
+
+function expectNoCompareWrites(): void {
+  expect(submitVerdict).not.toHaveBeenCalled();
+  expect(confirmEquivalentVerdict).not.toHaveBeenCalled();
+  expect(markCompareDocReviewed).not.toHaveBeenCalled();
+  expect(unmarkEquivalencePair).not.toHaveBeenCalled();
+  expect(createProjectComment).not.toHaveBeenCalled();
+  expect(createSchemaSuggestion).not.toHaveBeenCalled();
+  expect(fetchFastAPI).not.toHaveBeenCalled();
+}
 
 describe("ComparePage — árvore real (smoke)", () => {
   it("monta os filhos reais e exibe o texto do documento e as respostas", () => {
@@ -241,6 +279,7 @@ describe("ComparePage — árvore real (smoke)", () => {
       undefined,
       undefined,
       expect.any(Array),
+      false,
     );
   });
 
@@ -306,6 +345,105 @@ describe("ComparePage — árvore real (smoke)", () => {
     expect(submitVerdict).toHaveBeenCalledTimes(2);
   });
 
+  it("fora da impersonação, número + Enter continuam salvando o veredito", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.keyboard("1{Enter}");
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    expect(submitVerdict).toHaveBeenCalledWith(
+      "p1",
+      "d1",
+      "campoA",
+      "Deferido",
+      "r1",
+      undefined,
+      expect.any(Array),
+      false,
+    );
+  });
+
+  it("impersonação mantém navegação, mas bloqueia controles e atalhos de escrita", async () => {
+    const user = userEvent.setup();
+    renderReal({ isImpersonating: true, canManageAnyPair: true });
+
+    expect(
+      screen.getByRole("status").textContent,
+    ).toMatch(/Comparação está somente leitura/i);
+
+    const voteButton = screen.getByRole("button", {
+      name: /Selecionar esta resposta para confirmar: Deferido/i,
+    }) as HTMLButtonElement;
+    const ambiguousButton = screen.getByRole("button", {
+      name: /Ambíguo/i,
+    }) as HTMLButtonElement;
+    const comment = screen.getByPlaceholderText(
+      "Comentário (opcional)",
+    ) as HTMLInputElement;
+    const addNote = screen.getByRole("button", {
+      name: "Anotar",
+    }) as HTMLButtonElement;
+    const suggest = screen.getByRole("button", {
+      name: "Sugerir",
+    }) as HTMLButtonElement;
+    const runLlm = screen.getByRole("button", {
+      name: /Rodar LLM indisponível/i,
+    }) as HTMLButtonElement;
+
+    expect(voteButton.disabled).toBe(true);
+    expect(ambiguousButton.disabled).toBe(true);
+    expect(comment.disabled).toBe(true);
+    expect(addNote.disabled).toBe(true);
+    expect(suggest.disabled).toBe(true);
+    expect(runLlm.disabled).toBe(true);
+    expect(
+      (screen.getAllByRole("checkbox")[0] as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await user.click(voteButton);
+    await user.click(ambiguousButton);
+    await user.keyboard("1as{Enter}");
+
+    expect(screen.queryByText("Selecionado:")).toBeNull();
+    expectNoCompareWrites();
+
+    // Navegação de leitura continua disponível no mesmo listener.
+    await user.keyboard("n");
+    expect(screen.getByText("Pergunta B")).not.toBeNull();
+    await user.keyboard("p");
+    expect(screen.getByText("Pergunta A")).not.toBeNull();
+  });
+
+  it("entrar em impersonação descarta o rascunho da identidade anterior sem salvar", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderReal();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Selecionar esta resposta para confirmar: Deferido/i,
+      }),
+    );
+    expect(screen.getByText("Selecionado:")).not.toBeNull();
+
+    rerender(
+      <TooltipProvider>
+        <ComparePage {...props} isImpersonating />
+      </TooltipProvider>,
+    );
+
+    expect(screen.queryByText("Selecionado:")).toBeNull();
+    const confirmButton = screen.getByRole("button", {
+      name: "Somente leitura",
+    }) as HTMLButtonElement;
+    expect(confirmButton.disabled).toBe(true);
+
+    await user.click(confirmButton);
+    await user.keyboard("{Enter}");
+
+    expectNoCompareWrites();
+  });
+
   it("'Descartar' no painel real limpa a seleção sem salvar", async () => {
     const user = userEvent.setup();
     renderReal();
@@ -337,7 +475,7 @@ describe("ComparePage — árvore real (smoke)", () => {
       target: { value: "2026-01-01" },
     });
 
-    expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+    expect(compareMocks.toast.warning).toHaveBeenCalledWith(
       "Seleção não confirmada — confirme ou descarte antes de avançar.",
       { id: "compare-nav-guard" },
     );

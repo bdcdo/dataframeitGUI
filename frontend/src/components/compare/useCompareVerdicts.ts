@@ -15,6 +15,7 @@ import type { ReviewsByDoc, VerdictInfo } from "@/lib/compare-reviews";
 import type { CompareDocument, FieldResponse } from "./compare-types";
 
 interface UseCompareVerdictsParams {
+  readOnly: boolean;
   projectId: string;
   currentDoc: CompareDocument | undefined;
   currentFieldName: string;
@@ -104,6 +105,20 @@ function buildSnapshot(fieldResponses: FieldResponse[]): ResponseSnapshotEntry[]
     }));
 }
 
+function canSubmitCompareVerdict(
+  readOnly: boolean,
+  currentDoc: CompareDocument | undefined,
+  currentFieldName: string,
+  isCurrentFieldDivergent: boolean,
+): currentDoc is CompareDocument {
+  return (
+    !readOnly &&
+    currentDoc !== undefined &&
+    currentFieldName.length > 0 &&
+    isCurrentFieldDivergent
+  );
+}
+
 /**
  * Handlers de submissão de veredito (regular e por equivalência) + marcar
  * revisado / desfazer equivalência. Extraído de `ComparePage` para tirar ~140
@@ -117,6 +132,7 @@ function buildSnapshot(fieldResponses: FieldResponse[]): ResponseSnapshotEntry[]
  * comentário recém-salvo continua visível na caixa, em vez de sumir.
  */
 export function useCompareVerdicts({
+  readOnly,
   projectId,
   currentDoc,
   currentFieldName,
@@ -130,7 +146,14 @@ export function useCompareVerdicts({
 }: UseCompareVerdictsParams): CompareVerdicts {
   const handleVerdict = useCallback(
     async (verdict: string, chosenResponseId?: string) => {
-      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) {
+      if (
+        !canSubmitCompareVerdict(
+          readOnly,
+          currentDoc,
+          currentFieldName,
+          isCurrentFieldDivergent,
+        )
+      ) {
         return false;
       }
 
@@ -149,6 +172,7 @@ export function useCompareVerdicts({
           chosenResponseId,
           verdictComment,
           buildSnapshot(fieldResponses),
+          readOnly,
         ),
         "Failed to submit compare verdict",
         {
@@ -186,6 +210,7 @@ export function useCompareVerdicts({
       return true;
     },
     [
+      readOnly,
       projectId,
       currentDoc,
       currentFieldName,
@@ -205,7 +230,16 @@ export function useCompareVerdicts({
       gabaritoId: string,
       verdictDisplay: string,
     ) => {
-      if (!currentDoc || !currentFieldName || !isCurrentFieldDivergent) return;
+      if (
+        !canSubmitCompareVerdict(
+          readOnly,
+          currentDoc,
+          currentFieldName,
+          isCurrentFieldDivergent,
+        )
+      ) {
+        return;
+      }
 
       const verdictComment = comment || undefined;
       const docId = currentDoc.id;
@@ -225,6 +259,7 @@ export function useCompareVerdicts({
           verdictDisplay,
           verdictComment,
           buildSnapshot(fieldResponses),
+          readOnly,
         ),
         "Failed to confirm equivalent verdict",
         { projectId, documentId: docId, fieldName },
@@ -251,6 +286,7 @@ export function useCompareVerdicts({
       }
     },
     [
+      readOnly,
       projectId,
       currentDoc,
       currentFieldName,
@@ -265,21 +301,22 @@ export function useCompareVerdicts({
   );
 
   const handleMarkReviewed = useCallback(async () => {
-    if (!currentDoc) return;
+    if (readOnly || !currentDoc) return;
     const saved = await actionSucceeded(
-      markCompareDocReviewed(projectId, currentDoc.id),
+      markCompareDocReviewed(projectId, currentDoc.id, readOnly),
       "Failed to mark compare doc reviewed",
       { projectId, documentId: currentDoc.id },
       "Não foi possível marcar o documento como revisado. Tente novamente.",
     );
     if (!saved) return;
     toast.success("Documento marcado como revisado.");
-  }, [projectId, currentDoc]);
+  }, [readOnly, projectId, currentDoc]);
 
   const handleUnmarkPair = useCallback(
     async (pairId: string) => {
+      if (readOnly) return;
       const saved = await actionSucceeded(
-        unmarkEquivalencePair(projectId, pairId),
+        unmarkEquivalencePair(projectId, pairId, readOnly),
         "Failed to unmark equivalence pair",
         { projectId, pairId },
         "Não foi possível remover a equivalência. Tente novamente.",
@@ -287,7 +324,7 @@ export function useCompareVerdicts({
       if (!saved) return;
       toast.success("Equivalência removida.");
     },
-    [projectId],
+    [readOnly, projectId],
   );
 
   return {

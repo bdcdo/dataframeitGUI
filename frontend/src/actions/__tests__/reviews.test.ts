@@ -45,6 +45,17 @@ vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "user1" }),
   // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
   getEffectiveMemberId: async () => "user1",
+  // Espelha o contrato real: bloqueia só quando o caller sinaliza impersonação
+  // (issue #428). Sem o sinal, caminho feliz segue gravando.
+  requireWritableUser: async ({
+    impersonating,
+  }: { impersonating?: boolean } = {}) =>
+    impersonating
+      ? {
+          ok: false as const,
+          error: "Ação indisponível ao visualizar como outro membro.",
+        }
+      : { ok: true as const, user: { id: "user1" } },
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
@@ -119,5 +130,36 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
     await submitVerdict("p1", "doc1", "q1", "concordo");
 
     expect(opCalls.some((c) => c.op === "delete")).toBe(false);
+  });
+});
+
+// Interlock server-side (issue #428): master impersonando (impersonating=true)
+// é barrado ANTES de qualquer escrita — a barreira não é só client-side.
+describe("interlock de somente-leitura", () => {
+  const readOnlyError = "Ação indisponível ao visualizar como outro membro.";
+
+  it("submitVerdict com impersonating=true → { error }, nenhuma escrita", async () => {
+    const submitVerdict = await loadSubmit();
+    const result = await submitVerdict(
+      "p1",
+      "doc1",
+      "q1",
+      "concordo",
+      "r1",
+      undefined,
+      undefined,
+      true,
+    );
+
+    expect(result).toEqual({ error: readOnlyError });
+    expect(opCalls).toHaveLength(0);
+  });
+
+  it("markCompareDocReviewed com impersonating=true → { error }, nenhuma escrita", async () => {
+    const { markCompareDocReviewed } = await import("@/actions/reviews");
+    const result = await markCompareDocReviewed("p1", "doc1", true);
+
+    expect(result).toEqual({ error: readOnlyError });
+    expect(opCalls).toHaveLength(0);
   });
 });

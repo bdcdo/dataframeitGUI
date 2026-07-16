@@ -253,6 +253,39 @@ def require_project_coordinator(project_id: str, user: AuthUser) -> None:
         )
 
 
+def require_writable_user(user: AuthUser, impersonating: bool) -> None:
+    """Interlock de somente-leitura da impersonação master (issue #428).
+
+    Espelha `requireWritableUser` do frontend (lib/auth.ts): um master em modo
+    "visualizar como outro membro" (?viewAsUser=) não dispara execução/escrita.
+    Defesa em profundidade — o botão já fica `disabled` no client; aqui o
+    servidor recusa (403) caso a chamada chegue mesmo assim.
+
+    `impersonating` vem do client (searchParam per-tab que o backend não recebe
+    de outra forma); logo esta barreira não detém um master adversarial, que
+    simplesmente sai do view-as — só a escrita ACIDENTAL durante a observação.
+    Não-master ignora o sinal (mesma predicação do frontend). Fail-closed: falha
+    de infra ao verificar master vira 503, não liberação.
+    """
+    if not impersonating:
+        return
+    try:
+        sb = get_supabase()
+        is_master = _is_master(sb, user.id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Falha ao verificar master (user_id=%s)", user.id)
+        raise HTTPException(
+            status_code=503, detail="Não foi possível verificar autorização"
+        ) from e
+    if is_master:
+        raise HTTPException(
+            status_code=403,
+            detail="Ação indisponível ao visualizar como outro membro.",
+        )
+
+
 def require_job_access(job_id: str, user: AuthUser) -> None:
     """Autoriza qualquer membro do projeto dono do job.
 

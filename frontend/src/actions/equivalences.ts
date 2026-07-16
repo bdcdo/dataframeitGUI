@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, requireWritableUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
@@ -21,6 +21,7 @@ export async function confirmEquivalentVerdict(
   verdictDisplay: string,
   comment?: string,
   responseSnapshot?: ResponseSnapshotEntry[],
+  impersonating?: boolean,
 ): Promise<{ error?: string }> {
   if (responseIds.length < 2) {
     return { error: "Marcar como equivalentes exige 2+ respostas." };
@@ -29,8 +30,10 @@ export async function confirmEquivalentVerdict(
     return { error: "Gabarito precisa estar na lista de respostas selecionadas." };
   }
 
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  // Interlock de somente-leitura: master impersonando não grava (issue #428).
+  const writable = await requireWritableUser({ impersonating });
+  if (!writable.ok) return { error: writable.error };
+  const user = writable.user;
 
   const supabase = await createSupabaseServer();
 
@@ -161,9 +164,12 @@ export async function markLlmEquivalent(
 export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
+  impersonating?: boolean,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  // Interlock de somente-leitura: master impersonando não grava (issue #428).
+  const writable = await requireWritableUser({ impersonating });
+  if (!writable.ok) return { error: writable.error };
+  const user = writable.user;
 
   const supabase = await createSupabaseServer();
 

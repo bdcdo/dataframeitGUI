@@ -31,8 +31,10 @@ function renderGroup(
       ) => Promise<void>
     >(async () => {});
   const onVote = vi.fn();
+  const onUnmarkPair = vi.fn(async () => {});
   render(
     <AgreementGroup
+      readOnly={false}
       responses={[
         resp({ id: "ni-1", respondent_name: "Ana", answer: "NI" }),
         resp({ id: "ni-2", respondent_name: "Bia", answer: "NI" }),
@@ -49,13 +51,13 @@ function renderGroup(
       allowEquivalence={true}
       equivalences={[]}
       onConfirmEquivalent={onConfirmEquivalent}
-      onUnmarkPair={vi.fn(async () => {})}
+      onUnmarkPair={onUnmarkPair}
       currentUserId="u1"
       canManageAnyPair={false}
       {...props}
     />,
   );
-  return { onConfirmEquivalent, onVote };
+  return { onConfirmEquivalent, onUnmarkPair, onVote };
 }
 
 describe("AgreementGroup — 'Todas são similares' (issue #247, ponto 5)", () => {
@@ -134,5 +136,49 @@ describe("AgreementGroup — 'Todas são similares' (issue #247, ponto 5)", () =
     expect(
       screen.queryByRole("button", { name: /todas são similares/i }),
     ).toBeNull();
+  });
+
+  it("somente leitura preserva variantes visíveis sem permitir voto, equivalência ou desfazer", async () => {
+    const user = userEvent.setup();
+    const { onConfirmEquivalent, onUnmarkPair, onVote } = renderGroup({
+      readOnly: true,
+      equivalences: [
+        {
+          id: "pair-1",
+          response_a_id: "ni-1",
+          response_b_id: "na-1",
+          reviewer_id: "u1",
+        },
+      ],
+    });
+
+    const vote = screen.getByRole("button", {
+      name: /Selecionar esta resposta para confirmar: NI/i,
+    }) as HTMLButtonElement;
+    const markAll = screen.getByRole("button", {
+      name: /Todas são similares/i,
+    }) as HTMLButtonElement;
+    const checkbox = screen.getAllByRole("checkbox")[0] as HTMLButtonElement;
+
+    expect(vote.disabled).toBe(true);
+    expect(markAll.disabled).toBe(true);
+    expect(checkbox.disabled).toBe(true);
+
+    await user.click(
+      screen.getByRole("button", { name: /1 variante/i }),
+    );
+    const unmark = await screen.findByRole("button", {
+      name: "Desfazer equivalência",
+    });
+    expect((unmark as HTMLButtonElement).disabled).toBe(true);
+
+    await user.click(vote);
+    await user.click(markAll);
+    await user.click(checkbox);
+    await user.click(unmark);
+
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onConfirmEquivalent).not.toHaveBeenCalled();
+    expect(onUnmarkPair).not.toHaveBeenCalled();
   });
 });

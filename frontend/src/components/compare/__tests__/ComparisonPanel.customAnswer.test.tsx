@@ -30,7 +30,11 @@ function renderPanel(
   const onVerdict = vi.fn();
   // `pendingVerdict` do chamador é só o estado INICIAL: o spread não pode
   // sobrescrever o valor stateful, senão preparar/descartar não re-renderiza.
-  const { pendingVerdict: initialPendingVerdict, ...staticProps } = props;
+  const {
+    pendingVerdict: initialPendingVerdict,
+    readOnly = false,
+    ...staticProps
+  } = props;
 
   function Harness() {
     const [pendingVerdict, setPendingVerdict] =
@@ -39,6 +43,7 @@ function renderPanel(
       );
     return (
       <ComparisonPanel
+        readOnly={readOnly}
         projectId="p1"
         documentId="d1"
         documentTitle="Nota técnica 1"
@@ -153,6 +158,20 @@ describe("ComparisonPanel — confirmação pendente", () => {
     expect(
       (screen.getByRole("button", { name: /^descartar$/i }) as HTMLButtonElement)
         .disabled,
+    ).toBe(true);
+  });
+});
+
+describe("ComparisonPanel — modo somente leitura", () => {
+  it("desabilita a conclusão manual de documento concordante", () => {
+    renderPanel({ readOnly: true, isDivergent: false });
+
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Marcar doc como revisado",
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
   });
 });

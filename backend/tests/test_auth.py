@@ -555,6 +555,57 @@ def test_run_forbidden_for_non_coordinator(client, monkeypatch):
     assert resp.status_code == 403
 
 
+def test_run_forbidden_for_master_impersonating(client, monkeypatch):
+    # Interlock de somente-leitura (issue #428): master é coordenador em todo
+    # projeto, então passa o gate de coordenador; mas com impersonating=true a
+    # execução é barrada (403) antes de init_job/run_llm — espelha o
+    # requireWritableUser do frontend.
+    use_supabase(monkeypatch, FakeSupabase(master_users=[{"user_id": USER}]))
+    resp = client.post(
+        "/api/llm/run",
+        json={"project_id": PROJECT, "impersonating": True},
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_run_allows_master_when_not_impersonating(client, monkeypatch):
+    # Sem o sinal de impersonação, o master roda normalmente: o interlock só
+    # morde quando impersonating=true (default false não bloqueia).
+    fake = FakeSupabase(master_users=[{"user_id": USER}])
+    use_supabase(monkeypatch, fake)
+    monkeypatch.setattr(llm_routes_mod, "enforce_llm_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(llm_routes_mod, "init_job", lambda *a, **k: None)
+    monkeypatch.setattr(llm_routes_mod, "run_llm", lambda *a, **k: None)
+    resp = client.post(
+        "/api/llm/run",
+        json={"project_id": PROJECT},
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 200
+    assert "job_id" in resp.json()
+
+
+def test_run_allows_non_master_coordinator_even_with_flag(client, monkeypatch):
+    # Não-master ignora o sinal (mesma predicação do frontend): um coordenador
+    # legítimo que por acaso enviasse impersonating=true não é bloqueado.
+    fake = FakeSupabase(
+        master_users=[],
+        projects=[{"id": PROJECT, "created_by": USER}],
+        project_members=[],
+    )
+    use_supabase(monkeypatch, fake)
+    monkeypatch.setattr(llm_routes_mod, "enforce_llm_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(llm_routes_mod, "init_job", lambda *a, **k: None)
+    monkeypatch.setattr(llm_routes_mod, "run_llm", lambda *a, **k: None)
+    resp = client.post(
+        "/api/llm/run",
+        json={"project_id": PROJECT, "impersonating": True},
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 200
+
+
 def test_recover_fields_forbidden_for_non_coordinator(client, monkeypatch):
     # Token válido, mas o usuário não é coordenador do projeto → 403 antes de
     # qualquer leitura de pydantic_code (a guard é a primeira linha do handler).

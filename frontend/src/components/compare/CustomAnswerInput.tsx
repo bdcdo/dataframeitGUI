@@ -4,8 +4,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { COMPARE_READ_ONLY_REASON } from "./compare-types";
 
 interface CustomAnswerInputProps {
+  readOnly: boolean;
   // Chamado com o valor digitado quando o revisor escolhe usar uma resposta
   // nova. O pai apenas prepara o rascunho; a gravação ocorre no botão global
   // Confirmar.
@@ -27,6 +29,7 @@ interface CustomAnswerInputProps {
 // remontagem também re-semeia `value` a partir de `currentValue`, então o
 // veredito salvo reaparece ao voltar ao campo sem precisar de useEffect.
 export function CustomAnswerInput({
+  readOnly,
   onSubmit,
   currentValue = null,
   pendingValue = null,
@@ -42,6 +45,7 @@ export function CustomAnswerInput({
   const isActive = currentValue != null || pendingValue != null;
 
   const submit = () => {
+    if (readOnly) return;
     const trimmed = value.trim();
     if (!trimmed) return;
     onSubmit(trimmed);
@@ -59,6 +63,8 @@ export function CustomAnswerInput({
         className={cn((open || isActive) && "border-brand bg-brand/10 text-brand")}
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
+        disabled={readOnly}
+        title={readOnly ? COMPARE_READ_ONLY_REASON : undefined}
       >
         Nenhuma correta
       </Button>
@@ -68,6 +74,7 @@ export function CustomAnswerInput({
             autoFocus
             placeholder="Resposta correta…"
             value={value}
+            disabled={readOnly}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -77,7 +84,11 @@ export function CustomAnswerInput({
             }}
             className="min-w-[180px] flex-1 text-sm"
           />
-          <Button size="sm" disabled={!value.trim()} onClick={submit}>
+          <Button
+            size="sm"
+            disabled={readOnly || !value.trim()}
+            onClick={submit}
+          >
             Usar resposta nova
           </Button>
         </div>

@@ -18,6 +18,7 @@ from services.auth import (
     require_authenticated_user,
     require_job_access,
     require_project_coordinator,
+    require_writable_user,
 )
 from services.llm_rate_limiter import enforce_llm_rate_limit
 from services.llm_runner import (
@@ -69,6 +70,9 @@ class RunRequest(StrictRequestModel):
     filter_mode: Literal["all", "pending", "max_responses", "random_sample"] = "all"
     max_response_count: Annotated[int, Field(strict=True, ge=0, le=1_000)] | None = None
     sample_size: Annotated[int, Field(strict=True, ge=1, le=10_000)] | None = None
+    # Sinal de somente-leitura da impersonação master (issue #428). Default False:
+    # a Comparação envia True quando o master visualiza como outro membro.
+    impersonating: bool = False
 
     @model_validator(mode="after")
     def required_filter_parameter_present(self) -> Self:
@@ -132,8 +136,10 @@ async def run(
     background_tasks: BackgroundTasks,
     user: AuthUser = Depends(require_authenticated_user),
 ):
-    # run_in_threadpool: o guard é síncrono e faz I/O bloqueante no Supabase;
-    # chamado direto aqui rodaria no thread do event loop. Tira do loop.
+    # run_in_threadpool: os guards são síncronos e fazem I/O bloqueante no
+    # Supabase; chamados direto aqui rodariam no thread do event loop. Tira do
+    # loop. O interlock de somente-leitura vem antes de init_job/run_llm — um
+    # master impersonando é barrado (403) sem criar job fantasma.
     project_id = str(req.project_id)
     document_ids = (
         [str(document_id) for document_id in req.document_ids]
@@ -141,6 +147,7 @@ async def run(
         else None
     )
     await run_in_threadpool(require_project_coordinator, project_id, user)
+    await run_in_threadpool(require_writable_user, user, req.impersonating)
     await run_in_threadpool(enforce_llm_rate_limit, project_id, user.id)
     job_id = str(uuid.uuid4())
     # Síncrono: insere a row de llm_runs ANTES do background task. Se falhar
