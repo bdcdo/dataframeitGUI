@@ -173,6 +173,29 @@ describe("computeDivergentFieldNames", () => {
     expect(computeDivergentFieldNames(fields, responses)).toEqual([]);
   });
 
+  // A comparação de multi considera a UNIÃO das opções do schema com as
+  // efetivamente marcadas, então uma opção removida do schema depois da
+  // codificação não some da comparação — sumi-la fabricaria uma concordância
+  // que não existe. É a mesma primitiva que a UI usa para montar as linhas
+  // (ver ComparisonPanel), para que a divergência siga resolvível (#484).
+  it("multi: opção fora das opções atuais ainda diverge", () => {
+    const fields = [field({ name: "tags", type: "multi", options: ["x"] })];
+    const responses = [
+      { id: "1", answers: { tags: ["x", "z"] } },
+      { id: "2", answers: { tags: ["x"] } },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual(["tags"]);
+  });
+
+  it("multi: opção fora das opções atuais marcada por todos não diverge", () => {
+    const fields = [field({ name: "tags", type: "multi", options: ["x"] })];
+    const responses = [
+      { id: "1", answers: { tags: ["x", "z"] } },
+      { id: "2", answers: { tags: ["z", "x"] } },
+    ];
+    expect(computeDivergentFieldNames(fields, responses)).toEqual([]);
+  });
+
   it("staleness: a field absent from a response's answerFieldHashes is excluded from comparison", () => {
     // `b` foi adicionado ao schema depois que a response 1 foi codificada:
     // o answerFieldHashes dela não tem a chave `b`. Sem a resposta 1, sobra
