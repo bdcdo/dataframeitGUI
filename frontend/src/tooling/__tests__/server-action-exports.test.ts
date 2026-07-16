@@ -47,6 +47,23 @@ describe('regra de exports em módulos "use server"', () => {
     ).resolves.toEqual([]);
   });
 
+  // Assinaturas de overload e declaracoes ambientes sao `TSDeclareFunction`:
+  // nao emitem valor, entao nao ha export de valor a bloquear. A implementacao
+  // do overload e um statement proprio e continua sujeita a regra.
+  it("permite overloads async e declarações ambientes", async () => {
+    await expect(
+      messagesFor(`
+        "use server";
+        export declare function ambient(): Promise<void>;
+        export async function overloaded(value: string): Promise<number>;
+        export async function overloaded(value: number): Promise<number>;
+        export async function overloaded(value: string | number): Promise<number> {
+          return Number(value);
+        }
+      `),
+    ).resolves.toEqual([]);
+  });
+
   it("aplica a regra a módulos .mts", async () => {
     await expect(
       messagesFor(
@@ -63,24 +80,31 @@ describe('regra de exports em módulos "use server"', () => {
   });
 
   it.each([
-    ["função síncrona", "export function sync() { return 1; }"],
-    ["constante", "export const value = 1;"],
-    ["arrow síncrona", "export const sync = () => 1;"],
-    ["binding mutável", "export let action = async () => 1;"],
-    ["async generator", "export async function* stream() { yield 1; }"],
+    ["função síncrona", "export function sync() { return 1; }", "valueExport"],
+    ["constante", "export const value = 1;", "valueExport"],
+    ["arrow síncrona", "export const sync = () => 1;", "valueExport"],
+    ["enum", "export enum Mode { Draft }", "valueExport"],
+    ["binding mutável", "export let action = async () => 1;", "valueExport"],
     [
       "declarators mistos",
       "export const valid = async () => 1, invalid = () => 2;",
+      "valueExport",
     ],
-  ])("bloqueia %s", async (caseName, exported) => {
+    [
+      "async generator",
+      "export async function* stream() { yield 1; }",
+      "generatorExport",
+    ],
+    [
+      "generator em const",
+      "export const stream = async function* () { yield 1; };",
+      "generatorExport",
+    ],
+  ])("bloqueia %s", async (_caseName, exported, expectedMessageId) => {
     const messages = await messagesFor(`"use server";\n${exported}`);
 
     expect(messages).toHaveLength(1);
-    if (caseName === "função síncrona") {
-      expect(messages[0]?.message).toContain(
-        'Módulos "use server" só podem exportar funções async diretas ou tipos',
-      );
-    }
+    expect(messages[0]?.messageId).toBe(expectedMessageId);
   });
 
   it("bloqueia aliases, reexports e default de valor", async () => {
@@ -92,6 +116,24 @@ describe('regra de exports em módulos "use server"', () => {
       export default 1;
     `);
 
-    expect(messages).toHaveLength(3);
+    expect(messages.map((message) => message.messageId)).toEqual([
+      "indirectExport",
+      "indirectExport",
+      "valueExport",
+    ]);
+  });
+
+  it("orienta a correção conforme o tipo de export inválido", async () => {
+    const [pureValue] = await messagesFor(`"use server";\nexport const n = 1;`);
+    expect(pureValue?.message).toContain(
+      "Mova valores puros para um módulo sem a diretiva",
+    );
+
+    const [alias] = await messagesFor(
+      `"use server";\nconst internal = async () => 1;\nexport { internal };`,
+    );
+    expect(alias?.message).toContain(
+      "Declare a função async diretamente neste módulo",
+    );
   });
 });

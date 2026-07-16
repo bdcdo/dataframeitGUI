@@ -45,7 +45,9 @@ O projeto não tinha sequer um script `tsc --noEmit`. O `npm run typecheck` pree
 
 ### Exports de Server Actions — contrato do projeto
 
-O Next.js exige que cada export de valor de um arquivo cuja diretiva é `"use server"` seja uma função `async`; `tsc --noEmit` não detecta essa restrição, e a ausência desse gate causou os três deploys quebrados registrados na [#413](https://github.com/bdcdo/dataframeitGUI/issues/413). A regra local aplicada pelo ESLint permite funções async exportadas diretamente — declaração nomeada, arrow ou function expression em `const`, e default async — e exports exclusivamente de tipo. Valores puros, generators, aliases e reexports de valor ficam bloqueados; a regra não resolve bindings indiretos para manter o gate sintático e file-scoped.
+O Next.js exige que cada export de valor de um arquivo cuja diretiva é `"use server"` seja uma função `async`; `tsc --noEmit` não detecta essa restrição, e a ausência desse gate causou os três deploys quebrados registrados na [#413](https://github.com/bdcdo/dataframeitGUI/issues/413). A regra local aplicada pelo ESLint permite funções async exportadas diretamente — declaração nomeada, arrow ou function expression em `const`, e default async — e exports exclusivamente de tipo. Valores puros, generators, aliases e reexports de valor ficam bloqueados; a regra não resolve bindings indiretos para manter o gate sintático e file-scoped. Assinaturas de overload e declarações ambientes (`declare function`) passam porque são apagadas na compilação e não exportam valor — a implementação do overload continua sujeita à regra.
+
+Quem aplica a regra é o hook **`lint-types`** (pre-push, arquivos alterados), e não o `npm run lint`, que nenhum hook executa: a regra mora em `eslint.config.mjs` e chega ao hook porque `eslint.config.typed.mjs` faz `...base`. Essa dependência é o único caminho de enforcement — desacoplar as duas configs removeria o gate da #413 em silêncio, sem nenhum teste falhando.
 
 ### ruff — lint, format e complexidade do backend
 

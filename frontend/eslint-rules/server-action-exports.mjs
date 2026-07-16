@@ -20,10 +20,16 @@ function hasUseServerDirective(program) {
   );
 }
 
-function isAsyncFunction(node) {
+function unwrapTypeScript(node) {
   while (TRANSPARENT_TYPESCRIPT_EXPRESSIONS.has(node?.type)) {
     node = node.expression;
   }
+
+  return node;
+}
+
+function isAsyncFunction(node) {
+  node = unwrapTypeScript(node);
 
   return (
     ASYNC_FUNCTION_TYPES.has(node?.type) &&
@@ -32,9 +38,14 @@ function isAsyncFunction(node) {
   );
 }
 
+function isGeneratorFunction(node) {
+  node = unwrapTypeScript(node);
+
+  return ASYNC_FUNCTION_TYPES.has(node?.type) && node.generator === true;
+}
+
 function isAsyncVariableDeclaration(declaration) {
   return (
-    declaration.type === "VariableDeclaration" &&
     declaration.kind === "const" &&
     declaration.declarations.every(
       (declarator) =>
@@ -44,29 +55,52 @@ function isAsyncVariableDeclaration(declaration) {
   );
 }
 
-function exportIsAllowed(statement) {
-  if (statement.exportKind === "type") return true;
+// Devolve o messageId da violacao, ou null quando o export e valido.
+function declarationViolation(declaration) {
+  // `TSDeclareFunction` cobre assinaturas de overload e declaracoes ambientes:
+  // ambas somem na compilacao e nao exportam valor algum. A implementacao do
+  // overload e um statement proprio e e verificada por conta dela.
+  if (declaration.type === "TSDeclareFunction") return null;
 
-  if (statement.type === "ExportAllDeclaration") return false;
+  if (isAsyncFunction(declaration)) return null;
+  if (isGeneratorFunction(declaration)) return "generatorExport";
 
-  if (statement.type === "ExportDefaultDeclaration") {
-    return (
-      statement.declaration.type === "TSInterfaceDeclaration" ||
-      isAsyncFunction(statement.declaration)
-    );
+  if (declaration.type === "VariableDeclaration") {
+    if (
+      declaration.declarations.some((declarator) =>
+        isGeneratorFunction(declarator.init),
+      )
+    ) {
+      return "generatorExport";
+    }
+    if (isAsyncVariableDeclaration(declaration)) return null;
   }
 
-  if (statement.type !== "ExportNamedDeclaration") return true;
+  return "valueExport";
+}
+
+function exportViolation(statement) {
+  if (statement.exportKind === "type") return null;
+
+  if (statement.type === "ExportAllDeclaration") return "indirectExport";
+
+  if (statement.type === "ExportDefaultDeclaration") {
+    if (statement.declaration.type === "TSInterfaceDeclaration") return null;
+    return declarationViolation(statement.declaration);
+  }
+
+  if (statement.type !== "ExportNamedDeclaration") return null;
 
   const declaration = statement.declaration;
   if (!declaration) {
     return statement.specifiers.every(
       (specifier) => specifier.exportKind === "type",
-    );
+    )
+      ? null
+      : "indirectExport";
   }
 
-  if (isAsyncFunction(declaration)) return true;
-  return isAsyncVariableDeclaration(declaration);
+  return declarationViolation(declaration);
 }
 
 const asyncValueExports = {
@@ -80,6 +114,10 @@ const asyncValueExports = {
     messages: {
       valueExport:
         'Módulos "use server" só podem exportar funções async diretas ou tipos. Mova valores puros para um módulo sem a diretiva.',
+      indirectExport:
+        'Módulos "use server" não podem exportar aliases nem reexports: o gate é sintático e não resolve bindings. Declare a função async diretamente neste módulo.',
+      generatorExport:
+        'Server Actions precisam devolver uma Promise, e generators não são exports válidos em módulos "use server".',
     },
   },
   create(context) {
@@ -88,8 +126,9 @@ const asyncValueExports = {
         if (!hasUseServerDirective(program)) return;
 
         for (const statement of program.body) {
-          if (!exportIsAllowed(statement)) {
-            context.report({ node: statement, messageId: "valueExport" });
+          const messageId = exportViolation(statement);
+          if (messageId) {
+            context.report({ node: statement, messageId });
           }
         }
       },
