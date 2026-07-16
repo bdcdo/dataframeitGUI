@@ -250,7 +250,39 @@ const saveablePydanticFieldsSchema = pydanticFieldsSchema.superRefine(
 export type ConditionScalar = z.infer<typeof conditionScalarSchema>;
 export type FieldCondition = z.infer<typeof fieldConditionSchema>;
 export type PydanticField = z.infer<typeof pydanticFieldSchema>;
+export type PydanticFieldTarget = z.infer<typeof pydanticFieldTargetSchema>;
 export type SubfieldDef = z.infer<typeof subfieldDefSchema>;
+
+// `required`, `target` e `allow_other` sao opcionais: ausente significa o
+// default, nao "sem valor". Estes resolvedores sao a unica derivacao desses
+// defaults — antes cada consumidor tinha a sua (`?? true`, `?? null`,
+// `Boolean(...)`, `!== false`), e as versoes divergiam entre si:
+//
+//   - `snapshotOf` normalizava `?? null` e `classifyChange` normalizava
+//     `?? "all"`, entao um campo legado sem `target` e um recuperado por
+//     `compile_pydantic` (que sempre grava `target: "all"`) eram iguais para o
+//     versionamento e diferentes para `sameFieldContent` — conflito de merge
+//     fabricado, o mesmo sintoma que o `hash` ja causou.
+//   - o diff de historico usava `Boolean(...)`, e `Boolean(null)` e `false`
+//     enquanto o default de `required` e `true`: marcar um campo como opcional
+//     gravava o log mas nao renderizava linha nenhuma.
+//
+// Aceitam `null` junto de `undefined` porque `schema_change_log` guarda
+// payloads gravados com `?? null` antes desta mudanca: o historico antigo tem
+// que resolver para o mesmo default que o campo vivo.
+export function resolveRequired(value: boolean | null | undefined): boolean {
+  return value ?? true;
+}
+
+export function resolveTarget(
+  value: PydanticFieldTarget | null | undefined,
+): PydanticFieldTarget {
+  return value ?? "all";
+}
+
+export function resolveAllowOther(value: boolean | null | undefined): boolean {
+  return value ?? false;
+}
 
 export const PYDANTIC_FIELD_PROPERTY_KEYS = Object.freeze(
   Object.keys(pydanticFieldSchema.shape).sort(),

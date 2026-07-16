@@ -223,3 +223,48 @@ describe("mergeSchemas — hash não é conteúdo do campo", () => {
     expect(unresolvedSchemaConflicts(merge)).toHaveLength(1);
   });
 });
+
+// Mesma classe do bloco acima: uma propriedade que o usuário não editou não
+// pode virar conflito. Aqui o gatilho é o default implícito — um campo legado
+// tem `target` ausente, e `compile_pydantic` sempre reconstrói o campo com
+// `target: "all"` explícito. Os dois descrevem o mesmo campo.
+describe("mergeSchemas — default implícito não é edição", () => {
+  const semTarget: PydanticField = { ...q1, target: undefined };
+  const comTargetAll: PydanticField = { ...q1, target: "all" };
+
+  it("remoto ganhar target explícito não conflita com deleção local", () => {
+    const merge = mergeSchemas([semTarget], [], [comTargetAll]);
+    expect(merge.conflicts).toEqual([]);
+    expect(merge.fields).toEqual([]);
+  });
+
+  it("add-add que difere só no target implícito não é conflito", () => {
+    const merge = mergeSchemas([], [semTarget], [comTargetAll]);
+    expect(merge.conflicts).toEqual([]);
+  });
+
+  it("target implícito não vira conflito enquanto há edição local real", () => {
+    const merge = mergeSchemas(
+      [semTarget],
+      [{ ...semTarget, description: "Editada localmente" }],
+      [comTargetAll],
+    );
+    expect(unresolvedSchemaConflicts(merge)).toEqual([]);
+    expect(merge.fields[0].description).toBe("Editada localmente");
+  });
+
+  it("required e allow_other implícitos também não conflitam", () => {
+    const implicito: PydanticField = { ...q2, required: undefined, allow_other: undefined };
+    const explicito: PydanticField = { ...q2, required: true, allow_other: false };
+    expect(mergeSchemas([], [implicito], [explicito]).conflicts).toEqual([]);
+  });
+
+  it("mudar o target de verdade continua conflitando", () => {
+    const merge = mergeSchemas(
+      [semTarget],
+      [{ ...semTarget, target: "human_only" }],
+      [{ ...semTarget, target: "llm_only" }],
+    );
+    expect(unresolvedSchemaConflicts(merge)).toHaveLength(1);
+  });
+});

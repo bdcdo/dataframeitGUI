@@ -25,7 +25,11 @@ import { DateSentinelEditor } from "./DateSentinelEditor";
 import { useOptionRemovalGuard } from "./useOptionRemovalGuard";
 import { stripOptionFromConditions } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
-import { pydanticFieldNameIssue } from "@/lib/pydantic-field";
+import {
+  pydanticFieldNameIssue,
+  resolveRequired,
+  resolveTarget,
+} from "@/lib/pydantic-field";
 
 interface FieldCardProps {
   id: string;
@@ -146,7 +150,7 @@ function FieldTargetControls({
   field: PydanticField;
   updateField: UpdateField;
 }) {
-  const target = field.target || "all";
+  const target = resolveTarget(field.target);
   return (
     <>
       <div className="space-y-1.5">
@@ -191,7 +195,7 @@ function FieldTargetControls({
             </p>
           </div>
           <Switch
-            checked={field.required !== false}
+            checked={resolveRequired(field.required)}
             onCheckedChange={(checked) =>
               updateField({ required: checked ? undefined : false })
             }
@@ -215,7 +219,7 @@ function FieldAnswerEditors({
 }) {
   const options = field.options ?? [];
   const isChoiceField = ["single", "multi"].includes(field.type);
-  const target = field.target ?? "all";
+  const target = resolveTarget(field.target);
   return (
     <>
       {isChoiceField && (

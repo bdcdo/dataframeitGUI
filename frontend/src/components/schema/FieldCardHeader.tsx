@@ -7,6 +7,7 @@ import { CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GripVertical, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
+import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
 import { TYPE_LABELS, TYPE_COLORS, TARGET_LABELS } from "@/lib/field-labels";
 
 interface FieldCardHeaderProps {
@@ -49,12 +50,12 @@ export function FieldCardHeader({
           <Badge className={cn("text-xs shrink-0", TYPE_COLORS[field.type])}>
             {TYPE_LABELS[field.type]}
           </Badge>
-          {field.target && field.target !== "all" && (
+          {resolveTarget(field.target) !== "all" && (
             <Badge className="text-xs shrink-0 bg-amber-500/10 text-amber-700">
-              {TARGET_LABELS[field.target]}
+              {TARGET_LABELS[resolveTarget(field.target)]}
             </Badge>
           )}
-          {field.required === false && (
+          {!resolveRequired(field.required) && (
             <Badge className="text-xs shrink-0 bg-muted text-muted-foreground">
               Opcional
             </Badge>
@@ -70,6 +71,7 @@ export function FieldCardHeader({
         variant="ghost"
         size="icon"
         className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+        aria-label={`Remover campo ${field.name}`}
         onClick={onRemove}
       >
         <Trash2 className="size-3.5" />

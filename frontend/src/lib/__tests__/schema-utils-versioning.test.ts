@@ -198,6 +198,107 @@ describe("snapshotOf", () => {
     expect(snap).toHaveProperty("condition");
     expect(snap).toHaveProperty("subfields");
   });
+
+  // snapshotOf define "campo igual" para o merge (sameFieldContent). Se ele
+  // resolvesse os defaults diferente de classifyChange, um campo sem `target` e
+  // um com `target: "all"` seriam o mesmo campo para o versionamento e campos
+  // diferentes para o merge — conflito fabricado sem edição.
+  it("resolve os defaults implícitos em vez de gravar null", () => {
+    const snap = snapshotOf(baseField({ name: "q1", options: ["A"] }));
+    expect(snap.target).toBe("all");
+    expect(snap.required).toBe(true);
+    expect(snap.allow_other).toBe(false);
+  });
+
+  it("um campo sem default explícito serializa igual a um com", () => {
+    const implicito = baseField({ name: "q1", options: ["A"] });
+    const explicito = baseField({
+      name: "q1",
+      options: ["A"],
+      target: "all",
+      required: true,
+      allow_other: false,
+    });
+    expect(snapshotOf(implicito)).toEqual(snapshotOf(explicito));
+  });
+});
+
+// classifyChange é derivado de diffFields + fieldDiffIsStructural. Estes casos
+// travam a concordância entre os três: uma tabela de propriedades que voltasse a
+// existir em classifyChange divergiria aqui.
+describe("classifyChange — concordância com diffFields", () => {
+  const derive = (o: PydanticField[], n: PydanticField[]) => {
+    const entries = diffFields(o, n);
+    if (entries.length === 0) return null;
+    return entries.some((e) => fieldDiffIsStructural(e.before_value, e.after_value))
+      ? "minor"
+      : "patch";
+  };
+
+  const q = (over: Partial<PydanticField> = {}) =>
+    baseField({ name: "q1", options: ["A", "B"], ...over });
+
+  const casos: Array<[string, PydanticField[], PydanticField[]]> = [
+    ["nada muda", [q()], [q()]],
+    ["descrição", [q()], [q({ description: "outra" })]],
+    ["tipo", [q()], [q({ type: "multi" })]],
+    ["alvo", [q()], [q({ target: "llm_only" })]],
+    ["obrigatoriedade", [q()], [q({ required: false })]],
+    ["permite outro", [q()], [q({ allow_other: true })]],
+    ["opções reordenadas", [q()], [q({ options: ["B", "A"] })]],
+    ["opção adicionada", [q()], [q({ options: ["A", "B", "C"] })]],
+    ["instruções", [q()], [q({ help_text: "ajuda" })]],
+    ["prompt de justificativa", [q()], [q({ justification_prompt: "cite" })]],
+    ["campo adicionado", [q()], [q(), baseField({ name: "q2", type: "text" })]],
+    ["campo removido", [q(), baseField({ name: "q2", type: "text" })], [q()]],
+    [
+      "reordenação pura",
+      [q(), baseField({ name: "q2", type: "text" })],
+      [baseField({ name: "q2", type: "text" }), q()],
+    ],
+    ["default implícito virou explícito", [q()], [q({ target: "all", required: true })]],
+  ];
+
+  for (const [nome, oldFields, newFields] of casos) {
+    it(`concorda com a derivação: ${nome}`, () => {
+      expect(classifyChange(oldFields, newFields)).toBe(derive(oldFields, newFields));
+    });
+  }
+
+  it("tornar o default explícito não é mudança alguma", () => {
+    expect(classifyChange([q()], [q({ target: "all", required: true, allow_other: false })])).toBeNull();
+  });
+
+  // A invariante que o save depende: a RPC recusa `p_log_entries` vazio, então
+  // toda mudança classificada precisa render pelo menos uma entrada.
+  it("classifyChange != null ⇒ diffFields != []", () => {
+    for (const [nome, oldFields, newFields] of casos) {
+      if (classifyChange(oldFields, newFields) !== null) {
+        expect(diffFields(oldFields, newFields), nome).not.toHaveLength(0);
+      }
+    }
+  });
+});
+
+describe("fieldDiffIsStructural — multiconjunto de opções", () => {
+  // Mesmo Set, contagens diferentes: some uma opção duplicada. Muda o que o
+  // respondente pode escolher, então é estrutural — e precisa bater com o que
+  // classifyChange decide, senão o backfill reclassifica o histórico divergindo
+  // do save que o gravou.
+  it("perder uma opção duplicada é estrutural", () => {
+    expect(
+      fieldDiffIsStructural(
+        { options: ["A", "A", "B"] },
+        { options: ["A", "B"] },
+      ),
+    ).toBe(true);
+  });
+
+  it("reordenar dentro do mesmo multiconjunto segue textual", () => {
+    expect(
+      fieldDiffIsStructural({ options: ["A", "B"] }, { options: ["B", "A"] }),
+    ).toBe(false);
+  });
 });
 
 describe("diffFields", () => {
@@ -337,5 +438,29 @@ describe("generatePydanticCode round-trip surface", () => {
     expect(code).toContain(
       '"justification_prompt": "Cite o trecho do parecer."',
     );
+  });
+
+  it("emits required in json_schema_extra when the field is optional", () => {
+    const code = generatePydanticCode([
+      baseField({ name: "q1", options: ["A", "B"], required: false }),
+    ]);
+    expect(code).toContain('"required": False');
+  });
+
+  // `pydantic_hash` é sha256 do texto do código. Emitir a chave no caso default
+  // mudaria o texto de todo projeto no próximo save, e respostas LLM legadas
+  // (sem answer_field_hashes e sem semver) sairiam da fila de Comparação porque
+  // o hash é o único vínculo delas com o schema. O texto tem que ficar
+  // byte-idêntico para quem não usa campo opcional.
+  it("never emits required for the implicit default", () => {
+    const implicito = generatePydanticCode([
+      baseField({ name: "q1", options: ["A", "B"] }),
+    ]);
+    const explicito = generatePydanticCode([
+      baseField({ name: "q1", options: ["A", "B"], required: true }),
+    ]);
+    expect(implicito).not.toContain('"required"');
+    expect(explicito).not.toContain('"required"');
+    expect(explicito).toBe(implicito);
   });
 });

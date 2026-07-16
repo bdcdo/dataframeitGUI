@@ -29,6 +29,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
+import { resolveTarget } from "@/lib/pydantic-field";
 
 export type { PendingSuggestion };
 
@@ -247,8 +248,8 @@ export function EditFieldDialog({
 
           {/* Prompt de justificativa do LLM — só faz sentido quando o campo
               é enviado ao LLM. Vazio = backend usa o default exigente. */}
-          {(field.target || "all") !== "human_only" &&
-            field.target !== "none" && (
+          {resolveTarget(field.target) !== "human_only" &&
+            resolveTarget(field.target) !== "none" && (
               <JustificationPromptField
                 value={justificationPrompt}
                 onChange={setJustificationPrompt}
