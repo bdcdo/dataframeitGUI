@@ -84,6 +84,179 @@ function FieldNameInput({
   );
 }
 
+type UpdateField = (patch: Partial<PydanticField>) => void;
+
+function fieldTypePatch(
+  field: PydanticField,
+  type: PydanticField["type"],
+): Partial<PydanticField> {
+  if (type === "text") return { type, options: null };
+  if (type === "date") return { type };
+  if (!field.options?.length) return { type, options: ["Opção 1"] };
+  return { type };
+}
+
+function FieldTypeControls({
+  field,
+  updateField,
+}: {
+  field: PydanticField;
+  updateField: UpdateField;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Tipo de resposta</Label>
+      <div className="flex gap-1">
+        {(["single", "multi", "text", "date"] as const).map((type) => (
+          <Button
+            key={type}
+            variant="outline"
+            size="sm"
+            className={cn(
+              "text-xs",
+              field.type === type && "bg-brand/10 text-brand border-brand/40",
+            )}
+            onClick={() => updateField(fieldTypePatch(field, type))}
+          >
+            {TYPE_LABELS[type]}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FieldTargetControls({
+  field,
+  updateField,
+}: {
+  field: PydanticField;
+  updateField: UpdateField;
+}) {
+  const target = field.target || "all";
+  return (
+    <>
+      <div className="space-y-1.5">
+        <Label className="text-xs">Quem responde</Label>
+        <div className="flex gap-1 flex-wrap">
+          {(
+            [
+              ["all", "Todos"],
+              ["llm_only", "Apenas LLM"],
+              ["human_only", "Apenas humano"],
+              ["none", "Oculto (ninguém vê)"],
+            ] as const
+          ).map(([value, label]) => (
+            <Button
+              key={value}
+              variant="outline"
+              size="sm"
+              className={cn(
+                "text-xs",
+                target === value && "bg-brand/10 text-brand border-brand/40",
+              )}
+              onClick={() =>
+                updateField(
+                  value === "human_only" || value === "none"
+                    ? { target: value, justification_prompt: undefined }
+                    : { target: value },
+                )
+              }
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {target !== "llm_only" && target !== "none" && (
+        <div className="flex items-center justify-between">
+          <div>
+            <Label className="text-xs">Obrigatório</Label>
+            <p className="text-xs text-muted-foreground">
+              Campos opcionais não bloqueiam a conclusão da tarefa
+            </p>
+          </div>
+          <Switch
+            checked={field.required !== false}
+            onCheckedChange={(checked) =>
+              updateField({ required: checked ? undefined : false })
+            }
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function FieldAnswerEditors({
+  field,
+  allFields,
+  updateField,
+  onBeforeRemoveOption,
+}: {
+  field: PydanticField;
+  allFields: PydanticField[];
+  updateField: UpdateField;
+  onBeforeRemoveOption: (option: string) => Promise<boolean>;
+}) {
+  const options = field.options ?? [];
+  const isChoiceField = ["single", "multi"].includes(field.type);
+  const target = field.target ?? "all";
+  return (
+    <>
+      {isChoiceField && (
+        <OptionsAllowOtherEditor
+          options={options}
+          onChange={(options) => updateField({ options })}
+          onBeforeRemoveOption={onBeforeRemoveOption}
+          allowOther={field.allow_other === true}
+          onAllowOtherChange={(checked) =>
+            updateField({ allow_other: checked ? true : undefined })
+          }
+        />
+      )}
+      {field.type === "date" && (
+        <DateSentinelEditor
+          options={options}
+          onChange={(options) =>
+            updateField({ options: options.length > 0 ? options : null })
+          }
+          onBeforeRemoveOption={onBeforeRemoveOption}
+        />
+      )}
+      {field.type === "text" && (
+        <SubfieldsEditor
+          subfields={field.subfields}
+          subfieldRule={field.subfield_rule}
+          options={options}
+          onChange={updateField}
+          onBeforeRemoveOption={onBeforeRemoveOption}
+        />
+      )}
+
+      <ConditionEditor
+        fieldName={field.name}
+        condition={field.condition}
+        candidateTriggers={candidateTriggersFor(allFields, field.name)}
+        onChange={(condition) => updateField({ condition })}
+      />
+
+      {target !== "human_only" && target !== "none" && (
+        <JustificationPromptField
+          value={field.justification_prompt || ""}
+          onChange={(value) =>
+            updateField({ justification_prompt: value || undefined })
+          }
+          onBlur={(value) =>
+            updateField({ justification_prompt: value.trim() || undefined })
+          }
+        />
+      )}
+    </>
+  );
+}
+
 export function FieldCard({
   id,
   field,
@@ -126,20 +299,6 @@ export function FieldCard({
     );
     onAllFieldsChange(final);
     return false; // já aplicado pelo onAllFieldsChange
-  };
-
-  const handleTypeChange = (type: PydanticField["type"]) => {
-    if (type === "text") {
-      updateField({ type, options: null });
-    } else if (type === "date") {
-      // Preserve existing options when switching to date — they become
-      // sentinels rendered alongside the date picker (ex: "Não identificável").
-      updateField({ type });
-    } else if (!field.options || field.options.length === 0) {
-      updateField({ type, options: ["Opção 1"] });
-    } else {
-      updateField({ type });
-    }
   };
 
   return (
@@ -195,136 +354,14 @@ export function FieldCard({
               />
             </div>
 
-            {/* Tipo */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Tipo de resposta</Label>
-              <div className="flex gap-1">
-                {(["single", "multi", "text", "date"] as const).map((t) => (
-                  <Button
-                    key={t}
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      "text-xs",
-                      field.type === t &&
-                        "bg-brand/10 text-brand border-brand/40"
-                    )}
-                    onClick={() => handleTypeChange(t)}
-                  >
-                    {TYPE_LABELS[t]}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            {/* Destino */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Quem responde</Label>
-              <div className="flex gap-1 flex-wrap">
-                {(
-                  [
-                    ["all", "Todos"],
-                    ["llm_only", "Apenas LLM"],
-                    ["human_only", "Apenas humano"],
-                    ["none", "Oculto (ninguém vê)"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <Button
-                    key={value}
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      "text-xs",
-                      (field.target || "all") === value &&
-                        "bg-brand/10 text-brand border-brand/40"
-                    )}
-                    onClick={() =>
-                      // Sair do escopo LLM (human_only/none) limpa o prompt de
-                      // justificativa junto — o input some e o valor não ficaria
-                      // editável nem visível. Mesmo padrão de handleTypeChange.
-                      updateField(
-                        value === "human_only" || value === "none"
-                          ? { target: value, justification_prompt: undefined }
-                          : { target: value },
-                      )
-                    }
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            {/* Obrigatório (não faz sentido para llm_only nem oculto) */}
-            {(field.target || "all") !== "llm_only" && field.target !== "none" && (
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-xs">Obrigatório</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Campos opcionais não bloqueiam a conclusão da tarefa
-                  </p>
-                </div>
-                <Switch
-                  checked={field.required !== false}
-                  onCheckedChange={(checked) =>
-                    updateField({ required: checked ? undefined : false })
-                  }
-                />
-              </div>
-            )}
-
-            {/* Opções (single/multi) ou Respostas padronizadas (text) */}
-            {(field.type === "single" || field.type === "multi") && (
-              <OptionsAllowOtherEditor
-                options={field.options || []}
-                onChange={(opts) => updateField({ options: opts })}
-                onBeforeRemoveOption={handleBeforeRemoveOption}
-                allowOther={field.allow_other === true}
-                onAllowOtherChange={(checked) =>
-                  updateField({ allow_other: checked ? true : undefined })
-                }
-              />
-            )}
-            {field.type === "date" && (
-              <DateSentinelEditor
-                options={field.options || []}
-                onChange={(opts) =>
-                  updateField({ options: opts.length > 0 ? opts : null })
-                }
-                onBeforeRemoveOption={handleBeforeRemoveOption}
-              />
-            )}
-            {field.type === "text" && (
-              <SubfieldsEditor
-                subfields={field.subfields}
-                subfieldRule={field.subfield_rule}
-                options={field.options || []}
-                onChange={updateField}
-                onBeforeRemoveOption={handleBeforeRemoveOption}
-              />
-            )}
-
-            <ConditionEditor
-              fieldName={field.name}
-              condition={field.condition}
-              candidateTriggers={candidateTriggersFor(allFields, field.name)}
-              onChange={(condition) => updateField({ condition })}
+            <FieldTypeControls field={field} updateField={updateField} />
+            <FieldTargetControls field={field} updateField={updateField} />
+            <FieldAnswerEditors
+              field={field}
+              allFields={allFields}
+              updateField={updateField}
+              onBeforeRemoveOption={handleBeforeRemoveOption}
             />
-
-            {/* Prompt de justificativa do LLM — só faz sentido quando o campo
-                é enviado ao LLM. Vazio = backend usa o default exigente. */}
-            {(field.target || "all") !== "human_only" &&
-              field.target !== "none" && (
-                <JustificationPromptField
-                  value={field.justification_prompt || ""}
-                  onChange={(v) =>
-                    updateField({ justification_prompt: v || undefined })
-                  }
-                  onBlur={(v) =>
-                    updateField({ justification_prompt: v.trim() || undefined })
-                  }
-                />
-              )}
           </div>
         </CollapsibleContent>
       </div>

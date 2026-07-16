@@ -459,16 +459,13 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
   const pendingWriteToken =
     state.kind === "dirty-memory" ? state.draft.writeToken : null;
 
-  const setFields = useCallback(
-    (fields: PydanticField[]) => {
-      const current = stateRef.current;
-      if (current.kind === "conflict") return;
-      setState(stateAfterFieldsChange(current, fields, projectId));
-    },
-    [projectId, setState],
-  );
+  const setFields = (fields: PydanticField[]) => {
+    const current = stateRef.current;
+    if (current.kind === "conflict") return;
+    setState(stateAfterFieldsChange(current, fields, projectId));
+  };
 
-  const prepareSubmission = useCallback((): SchemaDraftSubmission => {
+  const prepareSubmission = (): SchemaDraftSubmission => {
     if (stateRef.current.kind === "conflict") {
       throw new Error("Resolva todos os conflitos antes de salvar o schema.");
     }
@@ -482,48 +479,42 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
           ? current.draft.writeToken
           : null,
     };
-  }, [persistDraft]);
+  };
 
-  const markSaved = useCallback(
-    (saved: SchemaSnapshot, submittedWriteToken: string | null) => {
-      setState(
-        stateAfterSave(stateRef.current, saved, submittedWriteToken, projectId),
-      );
-    },
-    [projectId, setState],
-  );
+  const markSaved = (
+    saved: SchemaSnapshot,
+    submittedWriteToken: string | null,
+  ) => {
+    setState(
+      stateAfterSave(stateRef.current, saved, submittedWriteToken, projectId),
+    );
+  };
 
-  const registerRemoteConflict = useCallback(
-    (remote: SchemaSnapshot) => {
-      persistDraft();
-      setState(stateAfterRemoteChange(stateRef.current, remote, projectId));
-    },
-    [persistDraft, projectId, setState],
-  );
+  const registerRemoteConflict = (remote: SchemaSnapshot) => {
+    persistDraft();
+    setState(stateAfterRemoteChange(stateRef.current, remote, projectId));
+  };
 
-  const resolveConflict = useCallback(
-    (conflictId: string, choice: SchemaMergeChoice) => {
-      const current = stateRef.current;
-      if (current.kind !== "conflict") return;
-      if (!current.conflict.merge.conflicts.some(({ id }) => id === conflictId)) return;
-      const resolutions = { ...current.resolutions, [conflictId]: choice };
-      const merge = mergeSchemas(
-        current.conflict.draft.base.fields,
-        current.conflict.draft.fields,
-        current.conflict.remote.fields,
-        resolutions,
-      );
-      setState({
-        ...current,
-        fields: merge.fields,
-        conflict: { ...current.conflict, merge },
-        resolutions,
-      });
-    },
-    [setState],
-  );
+  const resolveConflict = (conflictId: string, choice: SchemaMergeChoice) => {
+    const current = stateRef.current;
+    if (current.kind !== "conflict") return;
+    if (!current.conflict.merge.conflicts.some(({ id }) => id === conflictId)) return;
+    const resolutions = { ...current.resolutions, [conflictId]: choice };
+    const merge = mergeSchemas(
+      current.conflict.draft.base.fields,
+      current.conflict.draft.fields,
+      current.conflict.remote.fields,
+      resolutions,
+    );
+    setState({
+      ...current,
+      fields: merge.fields,
+      conflict: { ...current.conflict, merge },
+      resolutions,
+    });
+  };
 
-  const applyResolvedDraft = useCallback((): boolean => {
+  const applyResolvedDraft = (): boolean => {
     const current = stateRef.current;
     if (
       current.kind !== "conflict" ||
@@ -557,9 +548,9 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
       ),
     );
     return true;
-  }, [projectId, setState]);
+  };
 
-  const discardConflictingDraft = useCallback(() => {
+  const discardConflictingDraft = () => {
     const current = stateRef.current;
     if (current.kind !== "conflict") return;
     const deleted = deleteDraftIfTokenMatches(
@@ -573,7 +564,7 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
       recoveredDraft: false,
       storageAvailable: deleted.available,
     });
-  }, [projectId, setState]);
+  };
 
   const isDirty =
     state.kind === "dirty-memory" ||

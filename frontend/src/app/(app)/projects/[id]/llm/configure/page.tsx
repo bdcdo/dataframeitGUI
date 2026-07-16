@@ -2,6 +2,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { LlmConfigurePane } from "@/components/llm/LlmConfigurePane";
 import type { PydanticField } from "@/lib/types";
 
+// fallow-ignore-next-line complexity -- esta mudança só propaga a revisão do schema; a composição preexistente da página permanece fora deste refactor.
 export default async function LlmConfigurePage({
   params,
 }: {
