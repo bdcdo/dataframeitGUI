@@ -63,7 +63,8 @@ repos:
       # staged inteiro (file-scoped), o que quebraria o grandfathering — tocar uma
       # linha de um arquivo com error legado em OUTRA linha barraria o commit. Ja
       # --scope changed --base HEAD reporta so issues nas linhas alteradas vs HEAD
-      # (verificado na 0.5.8); como o pre-commit faz auto-stash dos unstaged, o
+      # (line-scoped, reproduzido na 0.5.8; ver docs/LINT_CONFIG.md); como o
+      # pre-commit faz auto-stash dos unstaged, o
       # working tree fica == staged, entao enxerga o que vai ser commitado.
       #
       # --blocking error bloqueia so diagnosticos error-level: codigo novo e

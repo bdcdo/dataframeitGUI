@@ -25,8 +25,8 @@ interface AutoReviewPageContentProps {
 
 // Renderizado pelo pai com `key={doc.docId}`: ao trocar de documento, o
 // componente remonta e `fieldIndex` volta a 0 — sem effect (no-adjust-state-on-
-// prop-change) nem ajuste durante render (useState-prev e marcado pela 0.5.8;
-// useRef-prev e barrado pelo eslint react-hooks/refs). Keyar por docId (e nao
+// prop-change) nem ajuste durante render (useState-prev e marcado pelo
+// react-doctor; useRef-prev e barrado pelo eslint react-hooks/refs). Keyar por docId (e nao
 // por indice) tambem reseta corretamente quando um doc resolvido sai da fila e
 // outro assume o mesmo indice. O ResizablePanelGroup fica no pai, fora desta
 // remontagem, preservando o tamanho do split entre navegacoes.

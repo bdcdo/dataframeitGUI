@@ -1,4 +1,5 @@
 import type { FieldCondition } from "./types";
+import { formatDate } from "./date-format";
 import { TYPE_LABELS } from "./field-labels";
 import type { FieldPropertyDiff } from "./schema-change-diff";
 
@@ -14,7 +15,7 @@ export function formatRelativeDate(iso: string): string {
   const days = Math.floor(hours / 24);
   if (days === 1) return "ontem";
   if (days < 7) return `há ${days} dias`;
-  return new Date(iso).toLocaleDateString("pt-BR");
+  return formatDate(iso);
 }
 
 export function formatVersion(

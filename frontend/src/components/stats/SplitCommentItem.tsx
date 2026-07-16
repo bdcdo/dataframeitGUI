@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { CheckCircle2, RotateCcw, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatVerdictAnswer } from "@/lib/reviews/verdict-format";
+import { formatDate } from "@/lib/date-format";
 import {
   type ReviewComment,
   type ResponseSnapshotEntry,
@@ -122,13 +123,11 @@ export function SplitCommentItem({
 
       {/* Footer */}
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground" suppressHydrationWarning>
-          {comment.reviewerName} &middot;{" "}
-          {new Date(comment.createdAt).toLocaleDateString("pt-BR")}
+        <p className="text-xs text-muted-foreground">
+          {comment.reviewerName} &middot; {formatDate(comment.createdAt)}
           {isResolved && (
             <span className="ml-2 text-green-600">
-              (resolvido em{" "}
-              {new Date(comment.resolvedAt!).toLocaleDateString("pt-BR")})
+              (resolvido em {formatDate(comment.resolvedAt!)})
             </span>
           )}
         </p>

@@ -12,6 +12,7 @@ import {
   Equal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/date-format";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
 import type { LlmError } from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
 
@@ -28,12 +29,7 @@ interface LlmErrorCardProps {
 
 function formatReviewedAt(iso: string): string {
   try {
-    const d = new Date(iso);
-    return d.toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
+    return formatDate(iso);
   } catch {
     return iso;
   }
