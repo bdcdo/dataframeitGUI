@@ -1008,6 +1008,19 @@ export async function regenerateAutoReviewBacklog(
       if (error) return { success: false, error: error.message };
     }
 
+    if (admin) {
+      // Precisa vir depois dos field_reviews: o upsert de assignments acima usa
+      // ignoreDuplicates e não reabre linha concluída, então um campo devolvido
+      // ao backlog ficaria pendente num documento fora da fila. Reconcilia o
+      // projeto inteiro, não só as linhas deste lote — filas fechadas cedo por
+      // execuções anteriores também voltam.
+      const { error } = await admin.rpc(
+        "reopen_auto_review_assignments_with_pending",
+        { p_project_id: projectId },
+      );
+      if (error) return { success: false, error: error.message };
+    }
+
     await removeOrphanAssignments(supabase, projectId);
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
