@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildReviewLookupMaps,
   computeTruncation,
   REVIEW_BASE_DATA_LIMIT,
   resolveViewedRespondentId,
 } from "@/lib/reviews/queries";
+import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
 import type { PydanticField } from "@/lib/types";
 
 describe("buildReviewLookupMaps", () => {

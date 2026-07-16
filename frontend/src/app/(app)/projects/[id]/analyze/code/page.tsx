@@ -7,7 +7,7 @@ import {
 import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { CodingPage } from "@/components/coding/CodingPage";
-import { sanitizeHumanCodingAnswers } from "@/lib/conditional";
+import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type {
   Document,
   Assignment,
@@ -235,7 +235,9 @@ export default async function CodePage({
   for (const d of filteredDocuments) {
     const r = responseByDoc.get(d.id);
     if (!r) continue;
-    existingAnswers[d.id] = sanitizeHumanCodingAnswers(allFields, r.answers);
+    // Fronteira de leitura do modo Atribuídos — mesma primitiva do modo
+    // Explorar (getDocumentForCoding), que lê o mesmo dado por outro caminho.
+    existingAnswers[d.id] = sanitizeStoredAnswers(allFields, r.answers);
     if (r.justifications) {
       existingJustifications[d.id] = r.justifications;
     }

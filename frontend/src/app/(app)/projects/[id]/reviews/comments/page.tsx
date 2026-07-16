@@ -4,7 +4,6 @@ import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { PydanticField } from "@/lib/types";
-import { buildReviewLookupMaps } from "@/lib/reviews/queries";
 import {
   mapReviewComments,
   mapNoteComments,
@@ -17,6 +16,7 @@ import {
   type SuggestionRow,
   type VerdictQuestionRow,
 } from "@/lib/reviews/comments-mapper";
+import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
 
 export default async function CommentsPage({
   params,

@@ -19,7 +19,12 @@ interface State {
   responseInsertPayload: Record<string, unknown> | null;
   responseUpdatePayload: Record<string, unknown> | null;
   assignmentUpdatePayload: Record<string, unknown> | null;
-  existingResponse: { id: string; is_partial: boolean } | null;
+  existingResponse: {
+    id: string;
+    is_partial: boolean;
+    answers?: Record<string, unknown>;
+    answer_field_hashes?: Record<string, string | null> | null;
+  } | null;
   currentAssignmentStatus: string | null;
   pydanticFields: Array<{
     name: string;
@@ -27,6 +32,7 @@ interface State {
     required?: boolean;
     options?: string[];
     target?: string;
+    hash?: string;
   }>;
   schemaVersion: { major: number; minor: number; patch: number };
   documentExcludedAt: string | null;
@@ -224,6 +230,39 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     await saveResponse("proj-1", "doc-1", { q1: "a" });
     expect(state.responseUpdatePayload?.is_partial).toBe(false);
     expect(state.assignmentUpdatePayload?.status).toBe("concluido");
+  });
+
+  it("preserva resposta stale e seu hash sem usá-la para concluir a codificação", async () => {
+    state.pydanticFields = [
+      {
+        name: "q_stale",
+        type: "single",
+        required: true,
+        options: ["X", "Y"],
+        hash: "h-stale-new",
+      },
+      { name: "q_txt", type: "text", required: true, hash: "h-text" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q_stale: "A", q_txt: "antigo" },
+      answer_field_hashes: { q_stale: "h-stale-old", q_txt: "h-text" },
+    };
+
+    const saveResponse = await loadSaveResponse();
+    const result = await saveResponse("proj-1", "doc-1", { q_txt: "novo" });
+
+    expect(result.success).toBe(true);
+    expect(state.responseUpdatePayload?.answers).toEqual({
+      q_stale: "A",
+      q_txt: "novo",
+    });
+    expect(state.responseUpdatePayload?.answer_field_hashes).toEqual({
+      q_stale: "h-stale-old",
+      q_txt: "h-text",
+    });
+    expect(state.assignmentUpdatePayload?.status).toBe("em_andamento");
   });
 
   it("auto-save com campo obrigatorio vazio mantem pendente em em_andamento", async () => {

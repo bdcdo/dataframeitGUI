@@ -1,4 +1,5 @@
 import { normalizeForComparison } from "@/lib/utils";
+import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import type {
@@ -6,6 +7,7 @@ import type {
   ReviewedField,
   RespondentAnswer,
 } from "./types";
+import { buildReviewLookupMaps } from "./lookup-maps";
 
 /* ── Raw row shapes ── */
 
@@ -44,7 +46,7 @@ export interface ReviewComputationContext {
   fields: PydanticField[];
   comparableFields: PydanticField[];
   projectPydanticHash: string | null;
-  currentFieldHashes: Record<string, string>;
+  currentFieldHashes: Record<string, string | null>;
   fieldMap: Map<string, PydanticField>;
   docMap: Map<string, string>;
   responsesByDoc: Map<string, ResponseRow[]>;
@@ -57,21 +59,6 @@ export interface ReviewComputationContext {
 }
 
 /* ── Pure helpers ── */
-
-function isFieldStale(
-  answerFieldHashes: AnswerFieldHashes,
-  pydanticHash: string | null,
-  fieldName: string,
-  currentFieldHashes: Record<string, string>,
-  projectPydanticHash: string | null,
-): boolean {
-  if (answerFieldHashes) {
-    const saved = answerFieldHashes[fieldName];
-    const current = currentFieldHashes[fieldName];
-    return !saved || !current || saved !== current;
-  }
-  return !!projectPydanticHash && pydanticHash !== projectPydanticHash;
-}
 
 export function isAnswerCorrect(
   answer: unknown,
@@ -166,27 +153,6 @@ function getRespondentDisplayName(
 
 export const REVIEW_BASE_DATA_LIMIT = 50000;
 
-export function buildReviewLookupMaps(
-  fields: PydanticField[],
-  documents:
-    | Array<{ id: string; title: string | null; external_id: string | null }>
-    | null
-    | undefined,
-): {
-  fieldMap: Map<string, PydanticField>;
-  docMap: Map<string, string>;
-} {
-  return {
-    fieldMap: new Map(fields.map((field) => [field.name, field])),
-    docMap: new Map(
-      (documents ?? []).map((document) => [
-        document.id,
-        document.title || document.external_id || document.id,
-      ]),
-    ),
-  };
-}
-
 export function fetchActiveReviewQueueDocuments(
   supabase: SupabaseClient,
   documentIds: string[],
@@ -275,10 +241,7 @@ export async function fetchReviewBaseData(
   const projectPydanticHash = project?.pydantic_hash || null;
 
   const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
-  const currentFieldHashes: Record<string, string> = {};
-  for (const f of fields) {
-    if (f.hash) currentFieldHashes[f.name] = f.hash;
-  }
+  const currentFieldHashes = buildFieldHashMap(fields);
 
   // Fetch profile names
   const respondentIds = new Set<string>();
@@ -372,13 +335,13 @@ export function computeReviewedDocuments(
 
       const respondentAnswers: RespondentAnswer[] = docResponses.map((r) => {
         const answer = r.answers[review.field_name];
-        const stale = isFieldStale(
-          r.answer_field_hashes,
-          r.pydantic_hash,
-          review.field_name,
-          ctx.currentFieldHashes,
-          ctx.projectPydanticHash,
-        );
+        const stale = isFieldStale({
+          answerFieldHashes: r.answer_field_hashes,
+          pydanticHash: r.pydantic_hash,
+          fieldName: review.field_name,
+          currentFieldHashes: ctx.currentFieldHashes,
+          projectPydanticHash: ctx.projectPydanticHash,
+        });
         const correct = isAnswerCorrect(answer, review.verdict, field.type);
         return {
           respondentKey: getRespondentKey(r),

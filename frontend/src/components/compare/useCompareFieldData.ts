@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { normalizeForComparison } from "@/lib/utils";
 import { buildResponseGroupKeys } from "@/lib/equivalence";
+import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { PydanticField } from "@/lib/types";
 import type {
   CompareDocument,
@@ -47,24 +48,16 @@ export function useCompareFieldData({
 }: UseCompareFieldDataParams): CompareFieldData {
   const docResponses = currentDoc ? responses[currentDoc.id] || [] : [];
 
-  const currentFieldHashes = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const f of fields) {
-      if (f.hash) map[f.name] = f.hash;
-    }
-    return map;
-  }, [fields]);
+  const currentFieldHashes = useMemo(() => buildFieldHashMap(fields), [fields]);
 
   const fieldResponses: FieldResponse[] = docResponses.map((r) => {
-    let isFieldStale = false;
-    if (r.answer_field_hashes) {
-      const savedHash = r.answer_field_hashes[currentFieldName];
-      const currentHash = currentFieldHashes[currentFieldName];
-      isFieldStale = !savedHash || !currentHash || savedHash !== currentHash;
-    } else {
-      isFieldStale =
-        !!projectPydanticHash && r.pydantic_hash !== projectPydanticHash;
-    }
+    const stale = isFieldStale({
+      answerFieldHashes: r.answer_field_hashes,
+      pydanticHash: r.pydantic_hash,
+      fieldName: currentFieldName,
+      currentFieldHashes,
+      projectPydanticHash,
+    });
     const version =
       r.schema_version_major !== null
         ? `${r.schema_version_major}.${r.schema_version_minor ?? 0}.${r.schema_version_patch ?? 0}`
@@ -79,7 +72,7 @@ export function useCompareFieldData({
         : undefined,
       justification: r.justifications?.[currentFieldName],
       is_latest: r.is_latest,
-      isFieldStale,
+      isFieldStale: stale,
       schemaVersion: version,
     };
   });

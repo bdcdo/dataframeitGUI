@@ -11,7 +11,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
-import { sanitizeHumanCodingAnswers } from "@/lib/conditional";
+import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type { DocumentMetadata, PydanticField } from "@/lib/types";
 
 export interface DocumentRow {
@@ -524,18 +524,18 @@ export async function getDocumentForCoding(
     .eq("respondent_type", "humano")
     .single();
 
-  const rawAnswers = (response?.answers as Record<string, unknown>) ?? null;
+  // Fronteira de leitura do modo Explorar — mesma primitiva do modo Atribuídos
+  // (analyze/code/page.tsx), que lê o mesmo dado por outro caminho.
+  const existingAnswers = sanitizeStoredAnswers(
+    (project?.pydantic_fields as PydanticField[]) ?? [],
+    response?.answers as Record<string, unknown> | null,
+  );
 
-  // O schema atual é a fonte única das respostas que podem voltar ao editor.
-  if (rawAnswers && project?.pydantic_fields) {
-    const existingAnswers = sanitizeHumanCodingAnswers(
-      project.pydantic_fields as PydanticField[],
-      rawAnswers,
-    );
-    return { document: doc, existingAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
-  }
-
-  return { document: doc, existingAnswers: rawAnswers, existingJustifications: (response?.justifications as Record<string, unknown>) ?? null };
+  return {
+    document: doc,
+    existingAnswers,
+    existingJustifications: (response?.justifications as Record<string, unknown>) ?? null,
+  };
 }
 
 export async function getDocumentText(

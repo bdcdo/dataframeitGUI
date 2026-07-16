@@ -13,6 +13,7 @@ function getNestedValue(
   let current: unknown = data;
   for (const part of parts) {
     if (current === null || typeof current !== "object") return undefined;
+    if (!Object.hasOwn(current, part)) return undefined;
     current = (current as Record<string, unknown>)[part];
     if (current === undefined) return undefined;
   }
@@ -95,7 +96,7 @@ function resolveHiddenConditionals(
       if (!f.condition) continue;
       if (cleared.has(f.name)) continue;
       if (isFieldVisible(f, view)) continue;
-      const v = view[f.name];
+      const v = Object.hasOwn(view, f.name) ? view[f.name] : undefined;
       if (v !== undefined && v !== null && v !== "") {
         if (view === answers) view = { ...answers };
         view[f.name] = null;
@@ -141,7 +142,7 @@ export function dropHiddenConditionals(
   const orphans: string[] = [];
   for (const f of fields) {
     if (!f.condition) continue;
-    if (!(f.name in answers)) continue;
+    if (!Object.hasOwn(answers, f.name)) continue;
     if (isFieldVisible(f, view)) continue;
     orphans.push(f.name);
   }
@@ -149,64 +150,6 @@ export function dropHiddenConditionals(
   const next = { ...answers };
   for (const name of orphans) delete next[name];
   return next;
-}
-
-// Fronteira canônica de leitura de uma resposta humana persistida. O schema
-// atual define, de uma só vez, quais chaves ainda existem, quais opções ainda
-// são válidas e quais condicionais permanecem visíveis. Assim, uma mudança de
-// schema não devolve ao editor valores órfãos, opções removidas ou campos que
-// nunca foram destinados à codificação humana.
-function sanitizeSingleOption(
-  options: string[],
-  value: unknown,
-): string | undefined {
-  return typeof value === "string" && options.includes(value)
-    ? value
-    : undefined;
-}
-
-function sanitizeMultipleOptions(
-  options: string[],
-  value: unknown,
-): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const allowed = new Set(options);
-  const validValues = value.filter(
-    (item): item is string =>
-      typeof item === "string" && allowed.has(item),
-  );
-  return validValues.length > 0 ? validValues : undefined;
-}
-
-function sanitizeFieldValue(
-  field: PydanticField,
-  value: unknown,
-): unknown {
-  if (value === undefined || value === null) return undefined;
-  if (field.type === "single" && field.options) {
-    return sanitizeSingleOption(field.options, value);
-  }
-  if (field.type === "multi" && field.options) {
-    return sanitizeMultipleOptions(field.options, value);
-  }
-  return value;
-}
-
-export function sanitizeHumanCodingAnswers(
-  fields: PydanticField[],
-  answers: Record<string, unknown>,
-): Record<string, unknown> {
-  const clean: Record<string, unknown> = {};
-
-  for (const field of fields) {
-    if (field.target === "llm_only" || field.target === "none") continue;
-    const value = sanitizeFieldValue(field, answers[field.name]);
-    if (value !== undefined) clean[field.name] = value;
-  }
-
-  // A visibilidade usa o schema completo: um campo destinado ao humano pode
-  // depender de qualquer campo declarado no projeto.
-  return dropHiddenConditionals(fields, clean);
 }
 
 // Campos que podem servir de gatilho para a condição de `currentFieldName`:

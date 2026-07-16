@@ -260,7 +260,15 @@ def test_run_llm_happy_path(monkeypatch):
     row_specs = {
         d["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for d in docs
     }
-    sb = _build_supabase(_project_row(), docs)
+    sb = _build_supabase(
+        _project_row(
+            pydantic_fields=[
+                {"name": "campo_a", "hash": "ha"},
+                {"name": "campo_b"},
+            ]
+        ),
+        docs,
+    )
 
     _run_llm_sync(monkeypatch, sb, row_specs)
 
@@ -271,6 +279,10 @@ def test_run_llm_happy_path(monkeypatch):
         row["is_partial"] is False and row["is_latest"] is True for row in inserts
     )
     assert all(row["llm_error"] is None for row in inserts)
+    assert all(
+        row["answer_field_hashes"] == {"campo_a": "ha", "campo_b": None}
+        for row in inserts
+    )
 
     completion = _last_update_where(sb.table("llm_runs"), status="completed")
     assert completion is not None
