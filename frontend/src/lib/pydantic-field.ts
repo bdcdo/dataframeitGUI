@@ -6,11 +6,16 @@ const conditionScalarSchema = z.union([
   z.boolean(),
 ]);
 
-const subfieldDefSchema = z.strictObject({
-  key: z.string(),
-  label: z.string(),
-  required: z.boolean().optional(),
-});
+const subfieldDefSchema = z
+  .strictObject({
+    key: z.string(),
+    label: z.string(),
+    required: z.boolean().optional(),
+  })
+  .transform(({ required, ...subfield }) => ({
+    ...subfield,
+    required: resolveSubfieldRequired(required),
+  }));
 
 const fieldConditionSchema = z.union([
   z.strictObject({ field: z.string(), equals: conditionScalarSchema }),
@@ -282,6 +287,31 @@ export function resolveTarget(
 
 export function resolveAllowOther(value: boolean | null | undefined): boolean {
   return value ?? false;
+}
+
+function resolveSubfieldRequired(
+  value: boolean | null | undefined,
+): boolean {
+  return value ?? false;
+}
+
+type LegacySubfieldDef = Omit<SubfieldDef, "required"> & {
+  required?: boolean | null;
+};
+
+// `required` nasceu opcional nos payloads persistidos, mas e parte obrigatoria
+// do contrato atual. Esta e a fronteira canonica usada para comparar snapshots
+// antigos com o estado vivo sem fabricar uma mudanca `undefined -> false`.
+// O spread preserva propriedades futuras: a normalizacao nao pode mascarar uma
+// mudanca real em outra parte do SubfieldDef.
+export function normalizeSubfields(
+  subfields: readonly LegacySubfieldDef[] | null | undefined,
+): Array<LegacySubfieldDef & { required: boolean }> | null {
+  if (!subfields) return null;
+  return subfields.map((subfield) => ({
+    ...subfield,
+    required: resolveSubfieldRequired(subfield.required),
+  }));
 }
 
 export const PYDANTIC_FIELD_PROPERTY_KEYS = Object.freeze(

@@ -14,6 +14,7 @@ import {
 import { Check, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OTHER_PREFIX } from "@/lib/other-option";
+import { NOT_INFORMED } from "@/lib/field-answer";
 import {
   arePartsValid,
   buildDateValue,
@@ -28,9 +29,10 @@ interface FieldRendererProps {
   field: PydanticField;
   value: unknown;
   onChange: (value: unknown) => void;
+  isInvalid?: boolean;
+  missingSubfields?: string[];
 }
 
-const NOT_INFORMED = "Não informada";
 const isOtherValue = (v: unknown): v is string =>
   typeof v === "string" && v.startsWith(OTHER_PREFIX);
 const otherText = (v: string) => v.slice(OTHER_PREFIX.length);
@@ -273,7 +275,13 @@ function DateFieldRenderer({
   );
 }
 
-export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
+export function FieldRenderer({
+  field,
+  value,
+  onChange,
+  isInvalid = false,
+  missingSubfields = [],
+}: FieldRendererProps) {
   if (field.type === "single" && field.options) {
     const otherChecked = isOtherValue(value);
     const otherValue = otherChecked ? otherText(value as string) : "";
@@ -397,10 +405,31 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
       value && typeof value === "object" && !Array.isArray(value)
         ? (value as Record<string, string>)
         : {};
-    const isNotInformed = value === "Não informada";
+    const isNotInformed = value === NOT_INFORMED;
+    const missingSubfieldKeys = new Set(missingSubfields);
+    const ruleDescriptionId = `${field.name}-subfield-rule`;
+    const validationDescriptionId = `${field.name}-subfield-validation`;
+    const describedBy = [
+      field.subfield_rule === "at_least_one" ? ruleDescriptionId : null,
+      isInvalid ? validationDescriptionId : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
 
     return (
-      <div className="space-y-2">
+      <div
+        className="space-y-2"
+        role="group"
+        data-invalid={isInvalid || undefined}
+        aria-describedby={describedBy || undefined}
+      >
+        {isInvalid && (
+          <p id={validationDescriptionId} role="alert" className="sr-only">
+            {field.subfield_rule === "at_least_one"
+              ? "Preencha ao menos um subcampo ou selecione Não informada."
+              : "Preencha os subcampos obrigatórios ou selecione Não informada."}
+          </p>
+        )}
         <div className="flex items-center gap-1.5">
           <Button
             type="button"
@@ -410,7 +439,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
               "h-7 text-xs",
               isNotInformed && "bg-brand-muted text-brand border-brand",
             )}
-            onClick={() => onChange(isNotInformed ? {} : "Não informada")}
+            onClick={() => onChange(isNotInformed ? {} : NOT_INFORMED)}
           >
             {isNotInformed && <Check className="mr-1 size-3" />}
             Não informada
@@ -419,7 +448,10 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <span
+                    id={ruleDescriptionId}
+                    className="flex items-center gap-1 text-xs text-muted-foreground"
+                  >
                     <Info className="size-3.5" />
                     Preencha pelo menos um
                   </span>
@@ -433,24 +465,35 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         </div>
         {!isNotInformed && (
           <div className="space-y-2">
-            {field.subfields.map((sf) => (
-              <div key={sf.key} className="flex items-center gap-2">
-                <label className="w-32 shrink-0 text-right text-xs text-muted-foreground">
-                  {sf.label}
-                  {sf.required && field.subfield_rule !== "at_least_one" && (
-                    <span className="text-destructive ml-0.5">*</span>
-                  )}
-                </label>
-                <Input
-                  className="text-sm"
-                  value={objValue[sf.key] || ""}
-                  onChange={(e) =>
-                    onChange({ ...objValue, [sf.key]: e.target.value })
-                  }
-                  placeholder={sf.label}
-                />
-              </div>
-            ))}
+            {field.subfields.map((sf) => {
+              const inputId = `${field.name}-${sf.key}`;
+              const subfieldIsRequired =
+                sf.required === true && field.subfield_rule !== "at_least_one";
+              return (
+                <div key={sf.key} className="flex items-center gap-2">
+                  <label
+                    htmlFor={inputId}
+                    className="w-32 shrink-0 text-right text-xs text-muted-foreground"
+                  >
+                    {sf.label}
+                    {subfieldIsRequired && (
+                      <span className="text-destructive ml-0.5">*</span>
+                    )}
+                  </label>
+                  <Input
+                    id={inputId}
+                    className="text-sm"
+                    value={typeof objValue[sf.key] === "string" ? objValue[sf.key] : ""}
+                    onChange={(e) =>
+                      onChange({ ...objValue, [sf.key]: e.target.value })
+                    }
+                    placeholder={sf.label}
+                    aria-required={subfieldIsRequired}
+                    aria-invalid={isInvalid && missingSubfieldKeys.has(sf.key)}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

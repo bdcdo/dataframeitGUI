@@ -1,25 +1,15 @@
 import { useCallback, useState, type RefObject } from "react";
 import { toast } from "sonner";
-import { isIncompleteOther } from "@/lib/other-option";
+import { assessFieldAnswer } from "@/lib/field-answer";
 import { getScrollBehavior } from "@/lib/scroll";
 import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
 import type { PydanticField } from "@/lib/types";
 
-const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
-  if (val === undefined || val === null || val === "") return false;
-  if (field.type === "single" && isIncompleteOther(val)) return false;
-  if (field.type === "multi" && Array.isArray(val)) {
-    if (val.length === 0) return false;
-    if (val.some(isIncompleteOther)) return false;
-  }
-  return true;
-};
-
 /**
  * Estado de destaque de obrigatórias faltantes + validação de envio. O
- * highlight de um campo some assim que ele recebe resposta (`handleAnswerWithClear`),
- * e a validação de envio bloqueia por `submitting`/`outOfScopeBlocked` além de
- * checar as obrigatórias visíveis.
+ * highlight de um campo só some quando a resposta inteira se torna válida
+ * (`handleAnswerWithClear`), e a validação de envio bloqueia por
+ * `submitting`/`outOfScopeBlocked` além de checar as obrigatórias visíveis.
  */
 export function useQuestionValidation(
   visibleFields: PydanticField[],
@@ -39,13 +29,19 @@ export function useQuestionValidation(
 } {
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
-  const requiredFields = visibleFields.filter((f) => resolveRequired(f.required));
+  const requiredFields = visibleFields.filter(
+    (field) =>
+      resolveTarget(field.target) !== "llm_only" &&
+      resolveTarget(field.target) !== "none" &&
+      resolveRequired(field.required),
+  );
   const answeredRequiredCount = requiredFields.filter((f) =>
-    isAnsweredValue(f, answers[f.name]),
+    assessFieldAnswer(f, answers[f.name]).state === "valid",
   ).length;
 
   const isAnswered = useCallback(
-    (field: PydanticField) => isAnsweredValue(field, answers[field.name]),
+    (field: PydanticField) =>
+      assessFieldAnswer(field, answers[field.name]).state === "valid",
     [answers],
   );
 
@@ -54,12 +50,14 @@ export function useQuestionValidation(
       onAnswer(fieldName, value);
       setHighlightedFields((prev) => {
         if (!prev.has(fieldName)) return prev;
+        const field = visibleFields.find((candidate) => candidate.name === fieldName);
+        if (!field || assessFieldAnswer(field, value).state !== "valid") return prev;
         const next = new Set(prev);
         next.delete(fieldName);
         return next;
       });
     },
-    [onAnswer],
+    [onAnswer, visibleFields],
   );
 
   const handleSubmitWithValidation = useCallback(() => {

@@ -100,6 +100,66 @@ describe("isCodingComplete", () => {
   });
 });
 
+describe("isCodingComplete — campos compostos", () => {
+  const composite = (
+    partial: Partial<PydanticField> = {},
+  ): PydanticField =>
+    field({
+      name: "dados",
+      type: "text",
+      options: null,
+      subfields: [
+        { key: "nome", label: "Nome", required: true },
+        { key: "cidade", label: "Cidade", required: false },
+      ],
+      subfield_rule: "all",
+      ...partial,
+    });
+
+  it("aceita o sentinel exato 'Não informada'", () => {
+    expect(isCodingComplete([composite()], { dados: "Não informada" })).toBe(true);
+    expect(isCodingComplete([composite()], { dados: "Não informada " })).toBe(false);
+  });
+
+  it("campo principal opcional não bloqueia vazio nem resposta parcial", () => {
+    const fields = [composite({ required: false })];
+    expect(isCodingComplete(fields, {})).toBe(true);
+    expect(isCodingComplete(fields, { dados: { cidade: "Recife" } })).toBe(true);
+  });
+
+  it("regra all exige cada subcampo marcado como obrigatório", () => {
+    const fields = [composite()];
+    expect(isCodingComplete(fields, { dados: { cidade: "Recife" } })).toBe(false);
+    expect(isCodingComplete(fields, { dados: { nome: "Ana" } })).toBe(true);
+  });
+
+  it("regra all sem subcampo obrigatório exige ao menos um configurado", () => {
+    const fields = [
+      composite({
+        subfields: [
+          { key: "nome", label: "Nome", required: false },
+          { key: "cidade", label: "Cidade", required: false },
+        ],
+      }),
+    ];
+    expect(isCodingComplete(fields, { dados: {} })).toBe(false);
+    expect(isCodingComplete(fields, { dados: { cidade: "Recife" } })).toBe(true);
+  });
+
+  it("regra at_least_one ignora flags individuais e exige um configurado", () => {
+    const fields = [composite({ subfield_rule: "at_least_one" })];
+    expect(isCodingComplete(fields, { dados: { cidade: "Recife" } })).toBe(true);
+    expect(isCodingComplete(fields, { dados: { nome: "  " } })).toBe(false);
+  });
+
+  it("chaves desconhecidas e valores malformados não satisfazem o grupo", () => {
+    const fields = [composite({ subfield_rule: "at_least_one" })];
+    expect(isCodingComplete(fields, { dados: { desconhecida: "valor" } })).toBe(false);
+    expect(isCodingComplete(fields, { dados: { nome: 123 } })).toBe(false);
+    expect(isCodingComplete(fields, { dados: [] })).toBe(false);
+  });
+});
+
 // Staleness-awareness (#174 follow-up): quando answer_field_hashes é fornecido,
 // um campo obrigatório ausente do snapshot não existia quando a resposta foi
 // codificada e não deve reprovar a completude. Sem isto, um campo adicionado ao

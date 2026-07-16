@@ -11,9 +11,11 @@ import random
 import re
 import time
 import traceback
+import types
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Literal, Union, get_args, get_origin
 
 import pandas as pd
 
@@ -28,6 +30,8 @@ _jobs: dict[str, dict] = {}
 
 _JUSTIFICATION_FIELD_SUFFIX = "_justification"
 _GENERATED_JUSTIFICATION_FIELDS_ATTR = "__generated_justification_fields__"
+_NESTED_SENTINEL_FIELDS_ATTR = "__nested_sentinel_fields__"
+_NOT_INFORMED_SENTINEL = "Não informada"
 
 
 def _status_from_row(row: dict) -> dict:
@@ -419,9 +423,26 @@ class _RunMetadata:
 
 
 @dataclass(frozen=True)
+class _NestedSubfieldSpec:
+    name: str
+    flat_name: str
+    required: bool
+
+
+@dataclass(frozen=True)
+class _NestedFieldSpec:
+    name: str
+    sentinel_field_name: str
+    required: bool
+    rule: Literal["all", "at_least_one"]
+    condition: dict | None
+    subfields: tuple[_NestedSubfieldSpec, ...]
+
+
+@dataclass(frozen=True)
 class _PreparedLlmModel:
     model_class: object
-    nested_field_map: dict
+    nested_fields: tuple[_NestedFieldSpec, ...]
 
 
 @dataclass(frozen=True)
@@ -525,6 +546,11 @@ def _generated_justification_fields(model_class) -> frozenset[str]:
     return getattr(model_class, _GENERATED_JUSTIFICATION_FIELDS_ATTR, frozenset())
 
 
+def _nested_sentinel_fields(model_class) -> frozenset[str]:
+    """Return synthetic fields that represent the explicit no-answer choice."""
+    return getattr(model_class, _NESTED_SENTINEL_FIELDS_ATTR, frozenset())
+
+
 def _extend_model_with_justifications(model_class):
     """Add a justification field for each existing field in the model.
 
@@ -537,7 +563,12 @@ def _extend_model_with_justifications(model_class):
     from pydantic import Field, create_model
 
     extra_fields = {}
+    sentinel_fields = _nested_sentinel_fields(model_class)
     for name, info in model_class.model_fields.items():
+        # O sentinel é um controle do grupo, não uma resposta independente.
+        # Pedir justificativa para ele criaria um campo artificial persistido.
+        if name in sentinel_fields:
+            continue
         extra = extract_json_schema_extra(info)
         custom = extra.get("justification_prompt")
         if isinstance(custom, str) and custom.strip():
@@ -567,6 +598,7 @@ def _extend_model_with_justifications(model_class):
         _GENERATED_JUSTIFICATION_FIELDS_ATTR,
         frozenset(extra_fields),
     )
+    setattr(extended_model, _NESTED_SENTINEL_FIELDS_ATTR, sentinel_fields)
     return extended_model
 
 
@@ -576,50 +608,245 @@ def _extend_model_with_justifications(model_class):
 _NESTED_FLATTEN_SEP = "__"
 
 
+def _nested_model_from_annotation(annotation):
+    """Unwrap ``Optional[NestedModel]`` and return the nested model class."""
+    from pydantic import BaseModel
+
+    origin = get_origin(annotation)
+    candidates = (
+        get_args(annotation) if origin in (Union, types.UnionType) else (annotation,)
+    )
+
+    non_none = [candidate for candidate in candidates if candidate is not type(None)]
+    if len(non_none) != 1:
+        return None
+    candidate = non_none[0]
+    if (
+        isinstance(candidate, type)
+        and issubclass(candidate, BaseModel)
+        and candidate is not BaseModel
+    ):
+        return candidate
+    return None
+
+
+def _subfield_is_required(field_info) -> bool:
+    """Resolve required from compiled schema metadata, then from annotation."""
+    extra = extract_json_schema_extra(field_info)
+    explicit = extra.get("subfield_required")
+    if explicit is not None:
+        if not isinstance(explicit, bool):
+            raise ValueError("subfield_required deve ser booleano")
+        return explicit
+    return field_info.is_required()
+
+
+def _nested_rule(field_name: str, field_info) -> Literal["all", "at_least_one"]:
+    raw = extract_json_schema_extra(field_info).get("subfield_rule", "all")
+    if raw not in ("all", "at_least_one"):
+        raise ValueError(f"subfield_rule inválida no campo '{field_name}': {raw!r}")
+    return raw
+
+
+def _nested_parent_is_required(field_name: str, field_info) -> bool:
+    raw = extract_json_schema_extra(field_info).get("required", True)
+    if not isinstance(raw, bool):
+        raise ValueError(f"required deve ser booleano no campo '{field_name}'")
+    return raw
+
+
+def _nested_group_validation_data(
+    instance, specs: tuple[_NestedFieldSpec, ...]
+) -> dict:
+    """Build the original, nested answer shape used by condition evaluation."""
+    data = {
+        name: getattr(instance, name, None)
+        for name in type(instance).model_fields
+        if _NESTED_FLATTEN_SEP not in name
+    }
+    for spec in specs:
+        sentinel = getattr(instance, spec.sentinel_field_name, None)
+        if sentinel == _NOT_INFORMED_SENTINEL:
+            data[spec.name] = sentinel
+            continue
+        sub_values = {
+            subfield.name: getattr(instance, subfield.flat_name, None)
+            for subfield in spec.subfields
+            if getattr(instance, subfield.flat_name, None) is not None
+        }
+        data[spec.name] = sub_values or None
+    return data
+
+
+def _populated_subfield_names(instance, spec: _NestedFieldSpec) -> set[str]:
+    populated: set[str] = set()
+    for subfield in spec.subfields:
+        value = getattr(instance, subfield.flat_name, None)
+        if isinstance(value, str) and value.strip():
+            populated.add(subfield.name)
+    return populated
+
+
+def _validate_nested_group(
+    instance, spec: _NestedFieldSpec, condition_data: dict
+) -> None:
+    if spec.condition is not None and not evaluate_condition(
+        spec.condition, condition_data, spec.name
+    ):
+        return
+
+    sentinel = getattr(instance, spec.sentinel_field_name, None)
+    populated = _populated_subfield_names(instance, spec)
+    if sentinel == _NOT_INFORMED_SENTINEL and populated:
+        raise ValueError(
+            f"O campo '{spec.name}' não pode combinar "
+            f"'{_NOT_INFORMED_SENTINEL}' com subcampos preenchidos."
+        )
+    if sentinel == _NOT_INFORMED_SENTINEL or not spec.required:
+        return
+    if spec.rule == "at_least_one":
+        if not populated:
+            raise ValueError(
+                f"O campo '{spec.name}' exige ao menos um subcampo "
+                f"preenchido ou '{_NOT_INFORMED_SENTINEL}'."
+            )
+        return
+
+    required_subfields = {
+        subfield.name for subfield in spec.subfields if subfield.required
+    }
+    if required_subfields:
+        missing = sorted(required_subfields - populated)
+        if missing:
+            raise ValueError(
+                f"O campo '{spec.name}' exige os subcampos: " + ", ".join(missing) + "."
+            )
+    elif not populated:
+        raise ValueError(
+            f"O campo '{spec.name}' exige ao menos um subcampo "
+            f"preenchido ou '{_NOT_INFORMED_SENTINEL}'."
+        )
+
+
+def _build_nested_group_validator(specs: tuple[_NestedFieldSpec, ...]):
+    """Create the inherited Pydantic validator for all flattened groups."""
+    from pydantic import model_validator
+
+    @model_validator(mode="after")
+    def validate_nested_groups(instance):
+        condition_data = _nested_group_validation_data(instance, specs)
+        for spec in specs:
+            _validate_nested_group(instance, spec, condition_data)
+        return instance
+
+    return validate_nested_groups
+
+
 def _flatten_nested_basemodels(model_class):
-    """Expande fields cujo tipo é um BaseModel em campos top-level.
+    """Flatten nested models without losing their group-level contract.
 
-    Motivação: alguns providers (Gemini em especial) achatam silenciosamente
-    subfields de BaseModel aninhado no topo do JSON de saída. Como os
-    subfields desses modelos costumam ter defaults (Optional[str]=None),
-    o Pydantic aceita o dict vazio para o BaseModel pai sem erro, e a
-    resposta é persistida com quase nenhum campo real. Achatar antes de
-    enviar ao LLM elimina essa classe de falha silenciosa.
-
-    Retorna (FlatModel, field_map) onde field_map[original_name] é uma
-    lista de (flat_name, sub_name) usada para reconstruir o dict aninhado
-    após o parse. Quando nenhum field é BaseModel, retorna o próprio
-    model_class com field_map vazio.
+    Cada grupo ganha um campo sintético com o nome original e o único valor
+    ``"Não informada"``. Os subcampos ficam opcionais no modelo achatado e a
+    obrigatoriedade passa a ser expressa por um validator de modelo, porque
+    ``all``/``at_least_one`` e condições são invariantes do grupo, não de um
+    subcampo isolado. O validator é herdado pelo modelo de justificativas e é
+    exercitado pelo structured output do dataframeit.
     """
-    from pydantic import BaseModel, create_model
+    from pydantic import BaseModel, Field, create_model
 
     flat_fields: dict = {}
-    field_map: dict[str, list[tuple[str, str]]] = {}
+    nested_specs: list[_NestedFieldSpec] = []
+    occupied_names = set(model_class.model_fields)
 
     for name, info in model_class.model_fields.items():
-        ann = info.annotation
-        if (
-            isinstance(ann, type)
-            and issubclass(ann, BaseModel)
-            and ann is not BaseModel
-        ):
-            field_map[name] = []
-            for sub_name, sub_info in ann.model_fields.items():
-                flat_name = f"{name}{_NESTED_FLATTEN_SEP}{sub_name}"
-                flat_fields[flat_name] = (sub_info.annotation, sub_info)
-                field_map[name].append((flat_name, sub_name))
-        else:
+        nested_model = _nested_model_from_annotation(info.annotation)
+        if nested_model is None:
             flat_fields[name] = (info.annotation, info)
+            continue
+        if _NESTED_FLATTEN_SEP in name:
+            raise ValueError(
+                f"O nome do campo composto '{name}' não pode conter "
+                f"'{_NESTED_FLATTEN_SEP}'."
+            )
+        if not nested_model.model_fields:
+            raise ValueError(f"O campo composto '{name}' precisa ter subcampos.")
 
-    if not field_map:
-        return model_class, field_map
+        extra = extract_json_schema_extra(info)
+        subfield_specs: list[_NestedSubfieldSpec] = []
+        group_instruction = (
+            f"Grupo '{name}': preencha os subcampos conforme a descrição ou "
+            f"selecione '{_NOT_INFORMED_SENTINEL}' no campo '{name}'."
+        )
+        flat_fields[name] = (
+            Literal[_NOT_INFORMED_SENTINEL] | None,
+            Field(
+                default=None,
+                description=group_instruction,
+                json_schema_extra=extra or None,
+            ),
+        )
 
+        for sub_name, sub_info in nested_model.model_fields.items():
+            flat_name = f"{name}{_NESTED_FLATTEN_SEP}{sub_name}"
+            if flat_name in occupied_names or flat_name in flat_fields:
+                raise ValueError(
+                    f"O campo achatado '{flat_name}' colide com outro campo do schema."
+                )
+            occupied_names.add(flat_name)
+            sub_extra = extract_json_schema_extra(sub_info)
+            description = sub_info.description or sub_name
+            flat_fields[flat_name] = (
+                sub_info.annotation | None,
+                Field(
+                    default=None,
+                    description=f"{description}. {group_instruction}",
+                    json_schema_extra=sub_extra or None,
+                ),
+            )
+            subfield_specs.append(
+                _NestedSubfieldSpec(
+                    name=sub_name,
+                    flat_name=flat_name,
+                    required=_subfield_is_required(sub_info),
+                )
+            )
+
+        nested_specs.append(
+            _NestedFieldSpec(
+                name=name,
+                sentinel_field_name=name,
+                required=_nested_parent_is_required(name, info),
+                rule=_nested_rule(name, info),
+                condition=(
+                    extra.get("condition")
+                    if isinstance(extra.get("condition"), dict)
+                    else None
+                ),
+                subfields=tuple(subfield_specs),
+            )
+        )
+
+    if not nested_specs:
+        return model_class, ()
+
+    specs = tuple(nested_specs)
     flat_model = create_model(
         f"{model_class.__name__}Flat",
         __base__=BaseModel,
+        __validators__={"validate_nested_groups": _build_nested_group_validator(specs)},
         **flat_fields,
     )
-    return flat_model, field_map
+    flat_model.__doc__ = (
+        "Responda cada grupo composto preenchendo os subcampos aplicáveis ou "
+        f"selecionando exatamente '{_NOT_INFORMED_SENTINEL}' no campo do grupo; "
+        "nunca combine as duas formas."
+    )
+    setattr(
+        flat_model,
+        _NESTED_SENTINEL_FIELDS_ATTR,
+        frozenset(spec.sentinel_field_name for spec in specs),
+    )
+    return flat_model, specs
 
 
 def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
@@ -778,6 +1005,20 @@ def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
     )
 
 
+def _ensure_search_mode_compatible(
+    prepared_model: _PreparedLlmModel,
+    config: _DataframeitRunConfig,
+) -> None:
+    """Fail before dataframeit fragments a model with group validators."""
+    if prepared_model.nested_fields and config.dfi_kwargs.get("search_per_field"):
+        group_names = ", ".join(spec.name for spec in prepared_model.nested_fields)
+        raise ValueError(
+            "search_per_field não pode ser usado com campos compostos "
+            f"({group_names}), pois separa os subcampos e ignora a validação "
+            "do grupo. Desative search_per_field para executar esta análise."
+        )
+
+
 def _prepare_llm_model(
     pydantic_code: str,
     pydantic_fields: list[dict],
@@ -787,12 +1028,12 @@ def _prepare_llm_model(
     if not model_class:
         raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
     model_class = _filter_model_for_llm(model_class, pydantic_fields)
-    model_class, nested_field_map = _flatten_nested_basemodels(model_class)
+    model_class, nested_fields = _flatten_nested_basemodels(model_class)
     if include_justifications:
         model_class = _extend_model_with_justifications(model_class)
     return _PreparedLlmModel(
         model_class=model_class,
-        nested_field_map=nested_field_map,
+        nested_fields=nested_fields,
     )
 
 
@@ -818,14 +1059,21 @@ def _load_documents_for_run(
     )
 
 
-def _expected_llm_fields(model_class) -> set[str]:
+def _expected_llm_fields(
+    model_class,
+    nested_fields: tuple[_NestedFieldSpec, ...] = (),
+) -> set[str]:
     expected_llm_fields = set()
     generated_justification_fields = _generated_justification_fields(model_class)
+    sentinel_fields = _nested_sentinel_fields(model_class)
+    optional_nested_fields = {spec.name for spec in nested_fields if not spec.required}
     for name in model_class.model_fields:
-        if name in generated_justification_fields:
+        if name in generated_justification_fields or name in sentinel_fields:
             continue
         if _NESTED_FLATTEN_SEP in name:
-            expected_llm_fields.add(name.split(_NESTED_FLATTEN_SEP, 1)[0])
+            parent_name = name.split(_NESTED_FLATTEN_SEP, 1)[0]
+            if parent_name not in optional_nested_fields:
+                expected_llm_fields.add(parent_name)
         else:
             expected_llm_fields.add(name)
     return expected_llm_fields
@@ -980,7 +1228,7 @@ def _extract_dataframeit_error(row) -> tuple[object, str | None]:
 def _reconstruct_nested_answers(
     answers: dict,
     justifications: dict,
-    nested_field_map: dict,
+    nested_fields: tuple[_NestedFieldSpec, ...],
 ) -> None:
     """Restore the persisted nested shape before evaluating conditions.
 
@@ -989,18 +1237,23 @@ def _reconstruct_nested_answers(
     joined into one string to preserve the frontend's Record<string, string>
     contract.
     """
-    for original_name, subs in nested_field_map.items():
+    for spec in nested_fields:
+        sentinel = answers.pop(spec.sentinel_field_name, None)
         sub_dict: dict = {}
         sub_justs: dict = {}
-        for flat_name, sub_name in subs:
-            if flat_name in answers:
-                sub_dict[sub_name] = answers.pop(flat_name)
-            if flat_name in justifications:
-                sub_justs[sub_name] = justifications.pop(flat_name)
+        for subfield in spec.subfields:
+            if subfield.flat_name in answers:
+                sub_dict[subfield.name] = answers.pop(subfield.flat_name)
+            if subfield.flat_name in justifications:
+                sub_justs[subfield.name] = justifications.pop(subfield.flat_name)
+
+        if sentinel == _NOT_INFORMED_SENTINEL:
+            answers[spec.name] = sentinel
+            continue
         if sub_dict:
-            answers[original_name] = sub_dict
+            answers[spec.name] = sub_dict
         if sub_justs:
-            justifications[original_name] = "\n".join(
+            justifications[spec.name] = "\n".join(
                 f"{key}: {value}" for key, value in sub_justs.items()
             )
 
@@ -1033,7 +1286,7 @@ def _active_expected_fields(
 def _build_processed_llm_row(
     row,
     model_class,
-    nested_field_map: dict,
+    nested_fields: tuple[_NestedFieldSpec, ...],
     field_conditions: dict,
     expected_llm_fields: set[str],
     partial_coverage_threshold: float,
@@ -1041,7 +1294,7 @@ def _build_processed_llm_row(
     doc_id = row["id"]
     dfi_status, dfi_error = _extract_dataframeit_error(row)
     answers, justifications = _extract_answers_from_row(row, model_class)
-    _reconstruct_nested_answers(answers, justifications, nested_field_map)
+    _reconstruct_nested_answers(answers, justifications, nested_fields)
     answers_pre_prune_keys = sorted(answers.keys())
     if field_conditions:
         _prune_inactive_conditionals(answers, justifications, field_conditions)
@@ -1151,13 +1404,16 @@ def _process_and_save_rows(
     partial_warnings: list[str] = []
     dfi_error_samples: dict[str, str] = {}
     field_conditions = extract_field_conditions(prepared_model.model_class)
-    expected_llm_fields = _expected_llm_fields(prepared_model.model_class)
+    expected_llm_fields = _expected_llm_fields(
+        prepared_model.model_class,
+        prepared_model.nested_fields,
+    )
 
     for _, row in result_df.iterrows():
         processed_row = _build_processed_llm_row(
             row,
             prepared_model.model_class,
-            prepared_model.nested_field_map,
+            prepared_model.nested_fields,
             field_conditions,
             expected_llm_fields,
             partial_coverage_threshold,
@@ -1268,6 +1524,7 @@ async def run_llm(
             include_justifications,
         )
         run_config = _normalize_llm_kwargs(llm_kwargs)
+        _ensure_search_mode_compatible(prepared_model, run_config)
         result_df = _run_dataframeit_batches(
             sb=sb,
             job_id=job_id,

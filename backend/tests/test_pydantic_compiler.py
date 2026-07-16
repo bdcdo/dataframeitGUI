@@ -117,6 +117,99 @@ class Analysis(BaseModel):
     assert f["subfield_rule"] == "at_least_one"
 
 
+def test_subfield_required_metadata_overrides_optional_annotation():
+    code = """from pydantic import BaseModel, Field
+from typing import Optional
+
+class _doc_fields(BaseModel):
+    part_a: Optional[str] = Field(
+        default=None,
+        description="Part A",
+        json_schema_extra={"subfield_required": True},
+    )
+    part_b: str = Field(
+        description="Part B",
+        json_schema_extra={"subfield_required": False},
+    )
+
+class Analysis(BaseModel):
+    doc: _doc_fields = Field(
+        description="Doc",
+        json_schema_extra={"subfield_rule": "at_least_one"},
+    )
+"""
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    assert _field(result, "doc")["subfields"] == [
+        {"key": "part_a", "label": "Part A", "required": True},
+        {"key": "part_b", "label": "Part B", "required": False},
+    ]
+
+
+def test_subfield_required_absent_infers_annotation():
+    code = """from pydantic import BaseModel, Field
+from typing import Optional
+
+class _doc_fields(BaseModel):
+    required_part: str = Field(description="Required")
+    optional_part: Optional[str] = Field(default=None, description="Optional")
+
+class Analysis(BaseModel):
+    doc: _doc_fields = Field(description="Doc")
+"""
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    assert _field(result, "doc")["subfields"] == [
+        {"key": "required_part", "label": "Required", "required": True},
+        {"key": "optional_part", "label": "Optional", "required": False},
+    ]
+
+
+def test_subfield_required_rejects_non_boolean_metadata():
+    code = """from pydantic import BaseModel, Field
+from typing import Optional
+
+class _doc_fields(BaseModel):
+    part_a: Optional[str] = Field(
+        default=None,
+        description="Part A",
+        json_schema_extra={"subfield_required": "true"},
+    )
+
+class Analysis(BaseModel):
+    doc: _doc_fields = Field(description="Doc")
+"""
+    result = compile_pydantic(code)
+    assert result["valid"] is False
+    assert result["fields"] == []
+    assert "deve ser booleana" in result["errors"][0]
+
+
+def test_conditional_composite_preserves_subfields():
+    code = """from pydantic import BaseModel, Field
+from typing import Optional
+
+class _doc_fields(BaseModel):
+    part_a: Optional[str] = Field(
+        default=None,
+        description="Part A",
+        json_schema_extra={"subfield_required": True},
+    )
+
+class Analysis(BaseModel):
+    doc: Optional[_doc_fields] = Field(
+        default=None,
+        description="Doc",
+        json_schema_extra={"subfield_rule": "at_least_one"},
+    )
+"""
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    assert _field(result, "doc")["subfields"] == [
+        {"key": "part_a", "label": "Part A", "required": True}
+    ]
+
+
 def test_allow_other_preserved_for_single():
     code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional

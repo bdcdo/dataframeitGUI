@@ -7,6 +7,7 @@ import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { PydanticField } from "@/lib/types";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { assessFieldAnswer } from "@/lib/field-answer";
 
 interface SortableQuestionProps {
   field: PydanticField;
@@ -30,6 +31,7 @@ export function SortableQuestion({
   draggable,
 }: SortableQuestionProps) {
   const sortable = useSortable({ id: field.name, disabled: !draggable });
+  const assessment = assessFieldAnswer(field, answerValue);
   const style = draggable
     ? {
         transform: CSS.Transform.toString(sortable.transform),
@@ -85,6 +87,8 @@ export function SortableQuestion({
             field={field}
             value={answerValue ?? null}
             onChange={onAnswerChange}
+            isInvalid={isHighlighted}
+            missingSubfields={assessment.missingSubfields}
           />
         </div>
       </div>

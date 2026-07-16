@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { QuestionsPanel } from "@/components/coding/QuestionsPanel";
 import type { PydanticField } from "@/lib/types";
 
@@ -243,5 +245,62 @@ describe("QuestionsPanel — pergunta fora do escopo", () => {
         name: /Aguardando revisão do coordenador/,
       }) as HTMLButtonElement).disabled,
     ).toBe(true);
+  });
+});
+
+describe("QuestionsPanel — validação de campo composto", () => {
+  const compositeField: PydanticField = {
+    name: "dados",
+    type: "text",
+    options: null,
+    description: "Dados pessoais",
+    required: true,
+    subfield_rule: "all",
+    subfields: [
+      { key: "nome", label: "Nome", required: true },
+      { key: "cidade", label: "Cidade", required: false },
+    ],
+  };
+
+  function CompositeHarness({ onSubmit }: { onSubmit: () => void }) {
+    const [answers, setAnswers] = useState<Record<string, unknown>>({});
+    return (
+      <QuestionsPanel
+        fields={[compositeField]}
+        answers={answers}
+        onAnswer={(name, value) =>
+          setAnswers((current) => ({ ...current, [name]: value }))
+        }
+        onSubmit={onSubmit}
+      />
+    );
+  }
+
+  it("mantém o destaque até o grupo ficar válido e expõe estado acessível", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<CompositeHarness onSubmit={onSubmit} />);
+
+    await user.click(screen.getByRole("button", { name: "Enviar respostas" }));
+    const group = screen.getByRole("group");
+    const nameInput = screen.getByPlaceholderText("Nome");
+    const cityInput = screen.getByPlaceholderText("Cidade");
+    expect(group.getAttribute("data-invalid")).toBe("true");
+    expect(group.getAttribute("aria-describedby")).toContain(
+      "dados-subfield-validation",
+    );
+    expect(nameInput.getAttribute("aria-required")).toBe("true");
+    expect(nameInput.getAttribute("aria-invalid")).toBe("true");
+    expect(cityInput.getAttribute("aria-required")).toBe("false");
+
+    await user.type(cityInput, "Recife");
+    expect(group.getAttribute("data-invalid")).toBe("true");
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.type(nameInput, "Ana");
+    expect(group.getAttribute("data-invalid")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Enviar respostas" }));
+    expect(onSubmit).toHaveBeenCalledOnce();
   });
 });

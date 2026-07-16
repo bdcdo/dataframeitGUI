@@ -1,5 +1,5 @@
 import { isFieldVisible } from "@/lib/conditional";
-import { isIncompleteOther } from "@/lib/other-option";
+import { assessFieldAnswer } from "@/lib/field-answer";
 import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
@@ -57,14 +57,7 @@ export function isCodingComplete(
   answerFieldHashes?: AnswerFieldHashes,
 ): boolean {
   const required = requiredHumanFields(fields, answers, answerFieldHashes);
-  return required.every((f) => {
-    const v = answers[f.name];
-    if (v === undefined || v === null || v === "") return false;
-    if (f.type === "single" && isIncompleteOther(v)) return false;
-    if (f.type === "multi" && Array.isArray(v)) {
-      if (v.length === 0) return false;
-      if (v.some(isIncompleteOther)) return false;
-    }
-    return true;
-  });
+  return required.every(
+    (field) => assessFieldAnswer(field, answers[field.name]).state === "valid",
+  );
 }

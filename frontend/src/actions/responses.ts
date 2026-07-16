@@ -4,6 +4,8 @@ import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { dropHiddenConditionals } from "@/lib/conditional";
+import { isCodingComplete } from "@/lib/coding-completeness";
+import { normalizeCompositeAnswers } from "@/lib/field-answer";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import type { PydanticField } from "@/lib/types";
 
@@ -219,7 +221,21 @@ export async function saveResponse(
     // prevents orphaned answers from earlier trigger values ending up in the
     // persisted payload. Ponto-fixo compartilhado com o clean de leitura
     // (getDocumentForCoding / code/page.tsx) — ver #252.
-    const sanitizedAnswers = dropHiddenConditionals(fields, answers);
+    const sanitizedAnswers = normalizeCompositeAnswers(
+      fields,
+      dropHiddenConditionals(fields, answers),
+    );
+
+    // Auto-save preserva rascunhos incompletos. No submit explícito, a mesma
+    // avaliação pura usada pela interface precisa rodar antes do primeiro
+    // write, para que uma chamada direta à Server Action não consiga persistir
+    // `is_partial=false` em uma codificação inválida.
+    if (!isAutoSave && !isCodingComplete(fields, sanitizedAnswers)) {
+      return {
+        success: false,
+        error: "Preencha todas as perguntas obrigatórias",
+      };
+    }
 
     const payload = buildResponsePayload({
       fields,

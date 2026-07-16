@@ -119,6 +119,15 @@ describe("diffPydanticField", () => {
     expect(diffs).toHaveLength(0);
   });
 
+  it("não reporta mudança entre required legado ausente e false", () => {
+    const diffs = diffPydanticField(
+      { subfields: [{ key: "a", label: "A" }] },
+      { subfields: [{ key: "a", label: "A", required: false }] },
+    );
+
+    expect(diffs).toEqual([]);
+  });
+
   it("não reporta mudança de condition quando só a ordem das chaves difere (round-trip jsonb)", () => {
     const diffs = diffPydanticField(
       { condition: JSON.parse('{"equals":"a","field":"x"}') },

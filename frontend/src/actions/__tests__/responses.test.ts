@@ -25,6 +25,8 @@ interface State {
     required?: boolean;
     options?: string[];
     target?: string;
+    subfields?: Array<{ key: string; label: string; required?: boolean }>;
+    subfield_rule?: "all" | "at_least_one";
   }>;
   schemaVersion: { major: number; minor: number; patch: number };
   documentExcludedAt: string | null;
@@ -260,6 +262,87 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.responseInsertPayload?.justifications).toEqual({
       _notes: "comentario",
     });
+  });
+
+  it("submit inválido falha antes de persistir ou atualizar assignment", async () => {
+    state.pydanticFields = [
+      {
+        name: "dados",
+        type: "text",
+        required: true,
+        subfield_rule: "all",
+        subfields: [{ key: "nome", label: "Nome", required: true }],
+      },
+    ];
+    const saveResponse = await loadSaveResponse();
+
+    const result = await saveResponse("proj-1", "doc-1", {
+      dados: { nome: "  " },
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: "Preencha todas as perguntas obrigatórias",
+    });
+    expect(state.responseInsertPayload).toBeNull();
+    expect(state.responseUpdatePayload).toBeNull();
+    expect(state.assignmentUpdatePayload).toBeNull();
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateTag).not.toHaveBeenCalled();
+  });
+
+  it("auto-save preserva parcial e normaliza objeto composto na fronteira", async () => {
+    state.pydanticFields = [
+      {
+        name: "dados",
+        type: "text",
+        required: true,
+        subfield_rule: "all",
+        subfields: [
+          { key: "nome", label: "Nome", required: true },
+          { key: "cidade", label: "Cidade", required: false },
+        ],
+      },
+    ];
+    const saveResponse = await loadSaveResponse();
+
+    const result = await saveResponse(
+      "proj-1",
+      "doc-1",
+      {
+        dados: { nome: 123, cidade: "Recife", desconhecida: "remover" },
+      },
+      { isAutoSave: true },
+    );
+
+    expect(result.success).toBe(true);
+    expect(state.responseInsertPayload?.answers).toEqual({
+      dados: { cidade: "Recife" },
+    });
+    expect(state.responseInsertPayload?.is_partial).toBe(true);
+  });
+
+  it("submit aceita o sentinel 'Não informada'", async () => {
+    state.pydanticFields = [
+      {
+        name: "dados",
+        type: "text",
+        required: true,
+        subfield_rule: "at_least_one",
+        subfields: [{ key: "nome", label: "Nome", required: true }],
+      },
+    ];
+    const saveResponse = await loadSaveResponse();
+
+    const result = await saveResponse("proj-1", "doc-1", {
+      dados: "Não informada",
+    });
+
+    expect(result.success).toBe(true);
+    expect(state.responseInsertPayload?.answers).toEqual({
+      dados: "Não informada",
+    });
+    expect(state.assignmentUpdatePayload?.status).toBe("concluido");
   });
 });
 

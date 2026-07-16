@@ -4,6 +4,7 @@ import type {
   PydanticField,
 } from "@/lib/types";
 import {
+  normalizeSubfields,
   resolveAllowOther,
   resolveRequired,
   resolveTarget,
@@ -146,8 +147,12 @@ export function generatePydanticCode(
         const ann = sf.required && field.subfield_rule !== "at_least_one"
           ? "str"
           : "Optional[str]";
+        const subfieldExtra =
+          field.subfield_rule === "at_least_one" && sf.required
+            ? ', json_schema_extra={"subfield_required": True}'
+            : "";
         lines.push(
-          `    ${sf.key}: ${ann} = Field(${ann === "Optional[str]" ? "default=None, " : ""}description="${escapeString(sf.label)}")`
+          `    ${sf.key}: ${ann} = Field(${ann === "Optional[str]" ? "default=None, " : ""}description="${escapeString(sf.label)}"${subfieldExtra})`
         );
       }
     }
@@ -504,7 +509,7 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     options: field.options ?? null,
     target: resolveTarget(field.target),
     required: resolveRequired(field.required),
-    subfields: field.subfields ?? null,
+    subfields: normalizeSubfields(field.subfields),
     subfield_rule: field.subfield_rule ?? null,
     allow_other: resolveAllowOther(field.allow_other),
     condition: field.condition ?? null,
@@ -533,7 +538,18 @@ export function fieldDiffIsStructural(
   }
 
   if (before.subfields !== undefined || after.subfields !== undefined) {
-    if (stableStringify(before.subfields ?? null) !== stableStringify(after.subfields ?? null)) {
+    if (
+      stableStringify(
+        normalizeSubfields(
+          before.subfields as Parameters<typeof normalizeSubfields>[0],
+        ),
+      ) !==
+      stableStringify(
+        normalizeSubfields(
+          after.subfields as Parameters<typeof normalizeSubfields>[0],
+        ),
+      )
+    ) {
       return true;
     }
   }
@@ -682,12 +698,12 @@ export function diffFields(
       before.allow_other = resolveAllowOther(old.allow_other);
       after.allow_other = resolveAllowOther(f.allow_other);
     }
-    const oldSubs = stableStringify(old.subfields ?? null);
-    const newSubs = stableStringify(f.subfields ?? null);
+    const oldSubs = stableStringify(normalizeSubfields(old.subfields));
+    const newSubs = stableStringify(normalizeSubfields(f.subfields));
     if (oldSubs !== newSubs) {
       diffs.push("subcampos");
-      before.subfields = old.subfields ?? null;
-      after.subfields = f.subfields ?? null;
+      before.subfields = normalizeSubfields(old.subfields);
+      after.subfields = normalizeSubfields(f.subfields);
     }
     const oldCond = stableStringify(old.condition ?? null);
     const newCond = stableStringify(f.condition ?? null);

@@ -318,6 +318,55 @@ def test_run_llm_routes_kwargs_without_leaking_internal_options(monkeypatch):
         assert internal_key not in kwargs["model_kwargs"]
 
 
+def test_run_llm_rejects_search_per_field_before_dataframeit_for_nested_group(
+    monkeypatch,
+):
+    docs = _docs(1)
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(
+            pydantic_code=NESTED_PYDANTIC_CODE,
+            llm_kwargs={"use_search": True, "search_per_field": True},
+        ),
+        docs,
+    )
+
+    _run_llm_sync(
+        monkeypatch,
+        sb,
+        {"doc-0": {"q5__doenca": "AME"}},
+        dataframeit_calls=dataframeit_calls,
+    )
+
+    assert dataframeit_calls == []
+    assert _jobs[JOB_ID]["status"] == "error"
+    assert "search_per_field" in _jobs[JOB_ID]["errors"][0]
+
+
+def test_run_llm_allows_normal_search_with_nested_group(monkeypatch):
+    docs = _docs(1)
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(
+            pydantic_code=NESTED_PYDANTIC_CODE,
+            llm_kwargs={"use_search": True, "search_per_field": False},
+        ),
+        docs,
+    )
+
+    _run_llm_sync(
+        monkeypatch,
+        sb,
+        {"doc-0": {"q5__doenca": "AME"}},
+        dataframeit_calls=dataframeit_calls,
+    )
+
+    assert len(dataframeit_calls) == 1
+    assert dataframeit_calls[0]["kwargs"]["use_search"] is True
+    assert dataframeit_calls[0]["kwargs"]["search_per_field"] is False
+    assert _jobs[JOB_ID]["status"] == "completed"
+
+
 def test_run_llm_processes_multiple_batches_and_tracks_progress(monkeypatch):
     docs = _docs(3)
     row_specs = {

@@ -221,6 +221,23 @@ describe("snapshotOf", () => {
     });
     expect(snapshotOf(implicito)).toEqual(snapshotOf(explicito));
   });
+
+  it("normaliza required legado ausente em subcampo para false", () => {
+    const legacy = baseField({
+      name: "q1",
+      type: "text",
+      subfields: [{ key: "parte", label: "Parte" }] as PydanticField["subfields"],
+    });
+    const canonical = baseField({
+      name: "q1",
+      type: "text",
+      subfields: [{ key: "parte", label: "Parte", required: false }],
+    });
+
+    expect(snapshotOf(legacy)).toEqual(snapshotOf(canonical));
+    expect(diffFields([legacy], [canonical])).toEqual([]);
+    expect(classifyChange([legacy], [canonical])).toBeNull();
+  });
 });
 
 // classifyChange é derivado de diffFields + fieldDiffIsStructural. Estes casos
@@ -462,5 +479,53 @@ describe("generatePydanticCode round-trip surface", () => {
     expect(implicito).not.toContain('"required"');
     expect(explicito).not.toContain('"required"');
     expect(explicito).toBe(implicito);
+  });
+
+  it("preserva required no grupo at_least_one por metadata própria", () => {
+    const code = generatePydanticCode([
+      baseField({
+        name: "documento",
+        type: "text",
+        subfield_rule: "at_least_one",
+        subfields: [
+          { key: "numero", label: "Número", required: true },
+          { key: "data", label: "Data", required: false },
+        ],
+      }),
+    ]);
+
+    expect(code).toContain(
+      'numero: Optional[str] = Field(default=None, description="Número", json_schema_extra={"subfield_required": True})',
+    );
+    expect(code).toContain(
+      'data: Optional[str] = Field(default=None, description="Data")',
+    );
+    expect(code).not.toContain('json_schema_extra={"required": True}');
+  });
+
+  it("não altera a representação dos subcampos sob a regra all", () => {
+    const code = generatePydanticCode([
+      baseField({
+        name: "documento",
+        type: "text",
+        subfield_rule: "all",
+        subfields: [
+          { key: "numero", label: "Número", required: true },
+          { key: "data", label: "Data", required: false },
+        ],
+      }),
+    ]);
+
+    expect(code).toBe(`from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+
+class _documento_fields(BaseModel):
+    numero: str = Field(description="Número")
+    data: Optional[str] = Field(default=None, description="Data")
+
+class Analysis(BaseModel):
+    documento: _documento_fields = Field(description="x")
+`);
   });
 });

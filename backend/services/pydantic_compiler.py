@@ -38,10 +38,18 @@ def compile_pydantic(code: str) -> dict:
             "errors": ["Nenhuma classe BaseModel encontrada"],
         }
 
-    fields = [
-        _build_field_dict(field_name, field_info)
-        for field_name, field_info in model_class.model_fields.items()
-    ]
+    try:
+        fields = [
+            _build_field_dict(field_name, field_info)
+            for field_name, field_info in model_class.model_fields.items()
+        ]
+    except SchemaError as e:
+        return {
+            "valid": False,
+            "fields": [],
+            "model_name": None,
+            "errors": [str(e)],
+        }
 
     return {
         "valid": True,
@@ -700,6 +708,12 @@ def _extract_subfields(annotation: type) -> list[dict] | None:
     """Extract subfield definitions from a nested BaseModel annotation."""
     from pydantic import BaseModel
 
+    origin = get_origin(annotation)
+    if origin is typing.Union:
+        non_none = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if len(non_none) == 1:
+            annotation = non_none[0]
+
     if not (
         isinstance(annotation, type)
         and issubclass(annotation, BaseModel)
@@ -709,17 +723,30 @@ def _extract_subfields(annotation: type) -> list[dict] | None:
     subfields = []
     for sf_name, sf_info in annotation.model_fields.items():
         sf_ann = sf_info.annotation
-        # Check if Optional (i.e., not required)
-        is_optional = False
+        # A anotacao continua sendo a representacao legada. Quando a metadata
+        # explicita existe, ela vence: em grupos `at_least_one`, todos os tipos
+        # precisam ser Optional, mas a intencao individual ainda deve sobreviver
+        # ao round-trip.
         sf_origin = get_origin(sf_ann)
-        if sf_origin is typing.Union:
-            sf_args = get_args(sf_ann)
-            is_optional = type(None) in sf_args
+        inferred_required = not (
+            sf_origin is typing.Union and type(None) in get_args(sf_ann)
+        )
+        extra = extract_json_schema_extra(sf_info)
+        if "subfield_required" in extra:
+            explicit_required = extra["subfield_required"]
+            if type(explicit_required) is not bool:
+                raise SchemaError(
+                    f'Metadata "subfield_required" do subcampo "{sf_name}" '
+                    "deve ser booleana"
+                )
+            required = explicit_required
+        else:
+            required = inferred_required
         subfields.append(
             {
                 "key": sf_name,
                 "label": sf_info.description or sf_name,
-                "required": not is_optional,
+                "required": required,
             }
         )
     return subfields if subfields else None

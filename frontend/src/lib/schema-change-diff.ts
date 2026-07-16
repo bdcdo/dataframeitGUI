@@ -1,5 +1,6 @@
 import { stableStringify } from "./schema-utils";
 import {
+  normalizeSubfields,
   resolveAllowOther,
   resolveRequired,
   resolveTarget,
@@ -66,7 +67,10 @@ function subfieldsEqual(
 ): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return stableStringify(a) === stableStringify(b);
+  return (
+    stableStringify(normalizeSubfields(a)) ===
+    stableStringify(normalizeSubfields(b))
+  );
 }
 
 function conditionEqual(
