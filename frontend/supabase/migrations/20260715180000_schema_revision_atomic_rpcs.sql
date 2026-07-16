@@ -578,6 +578,29 @@ GRANT EXECUTE ON FUNCTION public.resolve_schema_suggestion(
 -- frontend; esta fronteira aplica todas as classificações e versões ou nenhuma.
 -- p_log_updates contém linhas por id. p_response_updates contém buckets com
 -- ids[], versão e version_inferred_from.
+--
+-- SECURITY DEFINER, diferente das outras RPCs deste arquivo, porque o backfill é
+-- a única que escreve em `responses` — e ela versiona a resposta do LLM, que não
+-- tem dono humano. `20260716154500_responses_llm_actor_integrity.sql` deu à
+-- policy "Users manage own responses" um WITH CHECK explícito; até então o
+-- Postgres reusava o USING, cujo braço de coordenador autorizava esta escrita.
+-- Com o WITH CHECK, `respondent_type = 'humano'` passou a ser condição AND, e
+-- uma sessão de coordenador deixou de poder tocar a linha do LLM: o UPDATE morre
+-- em "new row violates row-level security policy". Como a cobertura aqui é total
+-- por contrato (v_affected <> v_expected aborta), o backfill inteiro falharia em
+-- qualquer projeto com resposta do LLM. Restringir o UPDATE às respostas humanas
+-- não serve: o vínculo resposta↔schema é o que mantém a resposta do LLM na fila
+-- de Comparação.
+--
+-- A consequência a ter em mente: chamado daqui, `schema_write_gate` roda sob o
+-- owner e perde a RLS que ele próprio nomeia como fonte de autorização (é a
+-- única RPC deste arquivo em que isso acontece). A guarda explícita de
+-- coordenador de `schema_revision_gate` deixa de ser defesa em profundidade e
+-- passa a ser a fronteira real — `clerk_uid()` continua valendo porque lê
+-- `request.jwt.claims` da sessão, não o papel efetivo. O teste por mutação em
+-- schema_revision_rpcs.test.sql fixa isso: remover a guarda deixa um pesquisador
+-- rodar o backfill. O escopo segue contido porque todo UPDATE filtra por
+-- p_project_id, e o gate provou que o chamador é coordenador desse projeto.
 CREATE OR REPLACE FUNCTION public.apply_schema_backfill(
   p_project_id uuid,
   p_expected_revision bigint,
@@ -595,7 +618,7 @@ CREATE OR REPLACE FUNCTION public.apply_schema_backfill(
   schema_version_patch int
 )
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE

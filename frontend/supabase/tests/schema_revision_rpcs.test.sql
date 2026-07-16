@@ -1288,6 +1288,17 @@ FROM public.apply_schema_backfill(
 
 RESET ROLE;
 
+-- O id sai daqui, fora da sessão do pesquisador: lido sob a RLS dele, o log
+-- viria nulo e o payload degeneraria — a chamada morreria na cobertura e não
+-- diria nada sobre autorização.
+CREATE TEMP TABLE backfill_forbidden_payload AS
+SELECT id AS log_id
+FROM public.schema_change_log
+WHERE project_id = '82000000-0000-0000-0000-000000000001'
+  AND field_name = 'new_field';
+
+GRANT SELECT ON backfill_forbidden_payload TO authenticated;
+
 SELECT set_config(
   'request.jwt.claims',
   '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}',
@@ -1295,17 +1306,38 @@ SELECT set_config(
 );
 SET LOCAL ROLE authenticated;
 
-INSERT INTO schema_rpc_results
-SELECT 'backfill-forbidden', result.*
-FROM public.apply_schema_backfill(
-  '82000000-0000-0000-0000-000000000001',
-  2,
-  1,
-  0,
-  0,
-  '[]',
-  '[]'
-) AS result;
+-- Payload deliberadamente VÁLIDO — é o mesmo que o coordenador acabou de aplicar
+-- com sucesso. Um payload vazio também voltaria recusado, mas por falta de
+-- cobertura, e continuaria voltando recusado se a autorização sumisse: a
+-- asserção passaria sem exercer a guarda. Com tudo em ordem menos o autor, o
+-- único motivo possível para não ser 'saved' é a guarda de coordenador. Isso
+-- importa desde que apply_schema_backfill virou SECURITY DEFINER: o gate deixou
+-- de contar com a RLS, e esta asserção é o que sobra para provar a fronteira.
+DO $$
+DECLARE
+  v_log_id uuid;
+BEGIN
+  SELECT log_id INTO v_log_id FROM backfill_forbidden_payload;
+
+  INSERT INTO schema_rpc_results
+  SELECT 'backfill-forbidden', result.*
+  FROM public.apply_schema_backfill(
+    '82000000-0000-0000-0000-000000000001',
+    2,
+    1,
+    0,
+    0,
+    jsonb_build_array(jsonb_build_object(
+      'id', v_log_id,
+      'change_type', 'patch',
+      'version_major', 1,
+      'version_minor', 0,
+      'version_patch', 0
+    )),
+    '[{"ids":["84000000-0000-0000-0000-000000000001"],"version_major":1,"version_minor":0,"version_patch":0,"version_inferred_from":"hashes"}]'
+  ) AS result;
+END;
+$$;
 
 RESET ROLE;
 
