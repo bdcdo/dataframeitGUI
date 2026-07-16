@@ -2,21 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.9.18 /uv /usr/local/bin/uv
 
-COPY pyproject.toml .
-RUN uv pip install --system --no-cache \
-    "fastapi>=0.138.0" \
-    "uvicorn[standard]>=0.49.0" \
-    "pydantic>=2.13.4" \
-    "pydantic-settings>=2.14.2" \
-    "supabase>=2.31.0" \
-    "dataframeit>=0.6.0" \
-    "pandas>=3.0.3" \
-    "langchain-google-genai>=4.2.5" \
-    "langchain-openai>=1.3.3" \
-    "langchain-anthropic>=1.4.7" \
-    "pyjwt[crypto]>=2.9"
+# O Compose preserva .venv em um volume separado do cache do uv; copiar evita
+# fallback de hardlink entre filesystems durante a reconciliacao no startup.
+ENV UV_LINK_MODE=copy
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-cache
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 COPY . .
 

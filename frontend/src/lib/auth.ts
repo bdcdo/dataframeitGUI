@@ -15,7 +15,7 @@ export interface AuthUser {
 // Motivo de conclusão de acesso (data-model: Access Completion State). O caminho
 // crítico só produz os quatro primeiros; `no-project-access` é decidido depois,
 // no dashboard, e `unknown-recoverable` é o fallback da própria tela.
-export type AccessCompletionReason =
+type AccessCompletionReason =
   | "link-pending"
   | "link-divergent"
   | "sync-temporary-failure";
@@ -25,7 +25,7 @@ export type AccessCompletionReason =
 // substitui o antigo `AuthUser | null`, que colapsava "sem sessão", "vínculo
 // pendente" e "falha técnica" num único `null` e escondia a diferença dos
 // layouts protegidos.
-export type AuthResolution =
+type AuthResolution =
   | { status: "signed-out" }
   | { status: "authenticated"; user: AuthUser }
   | { status: "access-completion-required"; reason: AccessCompletionReason }
@@ -149,6 +149,8 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
   return resolution.status === "authenticated" ? resolution.user : null;
 });
 
+const MAX_MEMBER_EMAIL_LINKS_PER_IDENTITY = 100;
+
 // Identidade efetiva do usuário num projeto (spec 002): se a conta atual está
 // vinculada como alias de um membro (member_email_links.linked_user_id), todo
 // o trabalho no projeto acontece como o membro canônico (member_user_id);
@@ -159,17 +161,49 @@ export const getEffectiveMemberId = cache(
     const user = await getAuthUser();
     if (!user) throw new Error("Não autenticado");
 
-    const admin = createSupabaseAdmin();
-    const { data: alias } = await admin
+    const supabase = await createSupabaseServer();
+    const { data: aliases, error: aliasError } = await supabase
       .from("member_email_links")
       .select("member_user_id")
       .eq("project_id", projectId)
       .eq("linked_user_id", user.id)
       .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(MAX_MEMBER_EMAIL_LINKS_PER_IDENTITY);
 
-    return alias?.member_user_id ?? user.id;
+    // Falhar a leitura como "sem alias" devolveria user.id e permitiria que
+    // uma indisponibilidade/RLS incorreta trocasse silenciosamente a identidade
+    // usada nas escritas do projeto. A fronteira de identidade é fail-closed.
+    if (aliasError) {
+      console.error("getEffectiveMemberId: alias query failed", {
+        projectId,
+        userId: user.id,
+        error: aliasError.message,
+      });
+      throw new Error("Não foi possível resolver a identidade no projeto.");
+    }
+
+    const canonicalIds = new Set(
+      (aliases ?? []).map(({ member_user_id }) => member_user_id),
+    );
+
+    // A tabela permite vários e-mails do mesmo usuário vinculado. Todos podem
+    // apontar para o mesmo membro canônico, mas dois destinos distintos tornam
+    // a identidade ambígua. O teto também falha fechado: atingir o limite não
+    // prova que a página contém todos os vínculos existentes.
+    if (
+      canonicalIds.size > 1 ||
+      (aliases?.length ?? 0) === MAX_MEMBER_EMAIL_LINKS_PER_IDENTITY
+    ) {
+      console.error("getEffectiveMemberId: ambiguous alias mapping", {
+        projectId,
+        userId: user.id,
+        canonicalIds: [...canonicalIds],
+        linkCount: aliases?.length ?? 0,
+      });
+      throw new Error("Não foi possível resolver a identidade no projeto.");
+    }
+
+    return canonicalIds.values().next().value ?? user.id;
   },
 );
 
@@ -272,12 +306,12 @@ export async function isProjectCoordinator(
   projectId: string,
   user: AuthUser,
 ): Promise<boolean> {
-  const { isCoordinator } = await getProjectAccessContext(
+  const { isCoordinator, queryFailed } = await getProjectAccessContext(
     projectId,
     user.id,
     user.isMaster,
   );
-  return isCoordinator;
+  return !queryFailed && isCoordinator;
 }
 
 // Gate combinado (auth + coordenador) para Server Actions coordinator-only.

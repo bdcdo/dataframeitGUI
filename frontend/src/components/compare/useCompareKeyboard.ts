@@ -5,6 +5,7 @@ import type { PydanticField } from "@/lib/types";
 import type { FieldResponse, PendingVerdict } from "./compare-types";
 
 interface UseCompareKeyboardParams {
+  readOnly: boolean;
   isFullscreen: boolean;
   isCurrentDocComplete: boolean;
   isCurrentFieldDivergent: boolean;
@@ -31,6 +32,7 @@ interface UseCompareKeyboardParams {
  * teclas `n`/`p` chamam incondicionalmente.
  */
 export function useCompareKeyboard({
+  readOnly,
   isFullscreen,
   isCurrentDocComplete,
   isCurrentFieldDivergent,
@@ -73,7 +75,10 @@ export function useCompareKeyboard({
         return;
       }
 
-      if (!isCurrentFieldDivergent) return;
+      // `n`/`p` e fullscreen são navegação/leitura e continuam ativos. Todos
+      // os atalhos abaixo preparam ou persistem uma decisão e, portanto,
+      // param aqui durante a impersonação master (issue #428).
+      if (readOnly || !isCurrentFieldDivergent) return;
 
       const isMultiField =
         currentField?.type === "multi" && currentField.options?.length;
@@ -113,6 +118,7 @@ export function useCompareKeyboard({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    readOnly,
     answerGroups,
     currentField,
     isCurrentDocComplete,

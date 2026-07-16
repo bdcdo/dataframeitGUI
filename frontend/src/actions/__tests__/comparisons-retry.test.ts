@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   makeFilterAwareSupabaseMock,
+  makeSupabaseAdminModuleMock,
+  makeSupabaseServerModuleMock,
   type RpcCall,
   type RpcResult,
   type WriteCall,
@@ -36,9 +38,8 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => authModuleMock(hoisted.isCoord));
-vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(),
-}));
+vi.mock("@/lib/supabase/server", () => makeSupabaseServerModuleMock(makeClient));
+vi.mock("@/lib/supabase/admin", () => makeSupabaseAdminModuleMock(makeClient));
 
 beforeEach(() => {
   writeCalls = [];

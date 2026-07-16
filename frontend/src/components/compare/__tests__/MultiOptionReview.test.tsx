@@ -13,6 +13,7 @@ describe("MultiOptionReview — atalhos de teclado", () => {
     const onSubmit = vi.fn();
     render(
       <MultiOptionReview
+        readOnly={false}
         options={["A", "B", "C"]}
         responses={[]}
         existingVerdict={null}
@@ -41,6 +42,7 @@ describe("MultiOptionReview — atalhos de teclado", () => {
     const onSubmit = vi.fn();
     render(
       <MultiOptionReview
+        readOnly={false}
         options={["A", "B"]}
         responses={[]}
         existingVerdict={null}
@@ -63,6 +65,7 @@ describe("MultiOptionReview — atalhos de teclado", () => {
     const onSubmit = vi.fn();
     render(
       <MultiOptionReview
+        readOnly={false}
         options={["A", "B"]}
         responses={[]}
         existingVerdict={null}
@@ -85,6 +88,37 @@ describe("MultiOptionReview — atalhos de teclado", () => {
     ).toBe("false");
     expect(onSubmit).not.toHaveBeenCalled();
   });
+
+  it("modo somente leitura bloqueia clique, números e Enter sem alterar o estado exibido", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <MultiOptionReview
+        readOnly={true}
+        options={["A", "B"]}
+        responses={[]}
+        existingVerdict={{
+          verdict: '{"A":true,"B":false}',
+          chosenResponseId: null,
+          comment: null,
+        }}
+        isSubmitting={false}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    const boxes = screen.getAllByRole("checkbox");
+    expect(boxes[0].getAttribute("aria-checked")).toBe("true");
+    expect((boxes[0] as HTMLButtonElement).disabled).toBe(true);
+
+    await user.click(boxes[0]);
+    await user.keyboard("12{Enter}");
+    await user.click(screen.getByRole("button", { name: "Somente leitura" }));
+
+    expect(boxes[0].getAttribute("aria-checked")).toBe("true");
+    expect(boxes[1].getAttribute("aria-checked")).toBe("false");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });
 
 describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", () => {
@@ -94,6 +128,7 @@ describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", ()
     const { rerender } = render(
       <MultiOptionReview
         key="doc1|campoA"
+        readOnly={false}
         options={["A", "B"]}
         responses={[]}
         existingVerdict={null}
@@ -116,6 +151,7 @@ describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", ()
     rerender(
       <MultiOptionReview
         key="doc1|campoB"
+        readOnly={false}
         options={["A", "B"]}
         responses={[]}
         existingVerdict={{

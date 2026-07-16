@@ -447,15 +447,15 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     await user.keyboard("{Enter}");
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
-    expect(submitVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      "Indeferido",
-      "r2",
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "Indeferido",
+      chosenResponseId: "r2",
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
   });
 
   it("teclas 'a' e 's' preparam marcadores especiais; Enter confirma", async () => {
@@ -471,15 +471,15 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     expect(text("pending-verdict")).toBe("Pular");
 
     await user.keyboard("{Enter}");
-    expect(submitVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      "pular",
-      undefined,
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "pular",
+      chosenResponseId: undefined,
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
   });
 
   it("teclas 'a' e 's' em campo multi salvam marcadores especiais diretamente", async () => {
@@ -504,26 +504,24 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     await user.keyboard("a");
     await user.keyboard("s");
 
-    expect(submitVerdict).toHaveBeenNthCalledWith(
-      1,
-      "p1",
-      "d1",
-      "campoA",
-      "ambiguo",
-      undefined,
-      undefined,
-      expect.any(Array),
-    );
-    expect(submitVerdict).toHaveBeenNthCalledWith(
-      2,
-      "p1",
-      "d1",
-      "campoA",
-      "pular",
-      undefined,
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenNthCalledWith(1, {
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "ambiguo",
+      chosenResponseId: undefined,
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
+    expect(submitVerdict).toHaveBeenNthCalledWith(2, {
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "pular",
+      chosenResponseId: undefined,
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
   });
 
   it("campo multi trava a segunda tecla especial enquanto o salvamento está em andamento", async () => {
@@ -553,16 +551,15 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
     await user.keyboard("s");
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
-    expect(submitVerdict).toHaveBeenNthCalledWith(
-      1,
-      "p1",
-      "d1",
-      "campoA",
-      "ambiguo",
-      undefined,
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenNthCalledWith(1, {
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "ambiguo",
+      chosenResponseId: undefined,
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
 
     save.resolve(undefined);
     await waitFor(() => expect(submitVerdict).toHaveBeenCalledTimes(1));
@@ -581,15 +578,15 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
 
     await user.keyboard("{Enter}");
 
-    expect(submitVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      "Deferido",
-      "r1",
-      "minha nota",
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "Deferido",
+      chosenResponseId: "r1",
+      comment: "minha nota",
+      responseSnapshot: expect.any(Array),
+    });
   });
 
   it("documento concluído permite preparar correção por teclado e só salva no Enter", async () => {
@@ -609,15 +606,15 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
 
     await user.keyboard("{Enter}");
 
-    expect(submitVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      "Indeferido",
-      "r2",
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "Indeferido",
+      chosenResponseId: "r2",
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
   });
 
   it("Ctrl+Shift+F entra em tela cheia e Esc sai", async () => {
@@ -652,15 +649,15 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
     await user.click(screen.getByTestId("confirm-verdict"));
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
-    expect(submitVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      "Deferido",
-      "r1",
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "Deferido",
+      chosenResponseId: "r1",
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
     // O avanço automático pós-confirmação usa goNextField cru (não passa pelo
     // gate de navegação do #430) — avança sem disparar o aviso de bloqueio.
     await waitFor(() => expect(text("field-name")).toBe("campoB"));
@@ -830,16 +827,16 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
     await user.click(screen.getByTestId("confirm-equiv"));
 
     expect(confirmEquivalentVerdict).toHaveBeenCalledTimes(1);
-    expect(confirmEquivalentVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      ["r1", "r2"],
-      "r1",
-      "Equivalentes",
-      undefined,
-      expect.any(Array),
-    );
+    expect(confirmEquivalentVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      responseIds: ["r1", "r2"],
+      gabaritoId: "r1",
+      verdictDisplay: "Equivalentes",
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
     await waitFor(() => expect(text("field-name")).toBe("campoB"));
   });
 

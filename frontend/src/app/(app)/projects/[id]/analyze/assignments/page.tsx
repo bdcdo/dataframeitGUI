@@ -1,6 +1,8 @@
 import { unstable_cache } from "next/cache";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { notFound } from "next/navigation";
 import { AssignmentTable } from "@/components/assignments/AssignmentTable";
 import { LotteryDialog } from "@/components/assignments/LotteryDialog";
 import { ClearPendingButton } from "@/components/assignments/ClearPendingButton";
@@ -58,7 +60,21 @@ export default async function AssignmentsPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, supabase] = await Promise.all([params, createSupabaseServer()]);
+  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
+  if (!user) notFound();
+
+  // Os readers cacheados usam service role porque unstable_cache não pode
+  // capturar um JWT individual. O layout pai pode renderizar em paralelo com a
+  // page no App Router, então a autorização precisa existir neste entrypoint e
+  // terminar antes de qualquer factory admin/cache reader ser chamado.
+  const { project, queryFailed } = await getProjectAccessContext(
+    id,
+    user.id,
+    user.isMaster,
+  );
+  if (queryFailed || !project) notFound();
+
+  const supabase = await createSupabaseServer();
 
   const [documents, researchers, { data: assignments }, coordinators] =
     await Promise.all([

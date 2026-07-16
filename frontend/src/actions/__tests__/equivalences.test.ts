@@ -53,14 +53,14 @@ describe.each([
       response_equivalences: { error: { message: "pair upsert boom" } },
     },
     call: (fns: Actions) =>
-      fns.confirmEquivalentVerdict(
-        "p1",
-        "doc1",
-        "q1",
-        ["r1", "r2"],
-        "r1",
-        "resposta fundida",
-      ),
+      fns.confirmEquivalentVerdict({
+        projectId: "p1",
+        documentId: "doc1",
+        fieldName: "q1",
+        responseIds: ["r1", "r2"],
+        gabaritoId: "r1",
+        verdictDisplay: "resposta fundida",
+      }),
     expectedError: "pair upsert boom",
     extraChecks: () => {
       expect(upsertsOn("response_equivalences")).toHaveLength(1);
@@ -109,14 +109,14 @@ describe("confirmEquivalentVerdict", () => {
     };
     const { confirmEquivalentVerdict } = await loadActions();
 
-    const result = await confirmEquivalentVerdict(
-      "p1",
-      "doc1",
-      "q1",
-      ["r1", "r2"],
-      "r1",
-      "resposta fundida",
-    );
+    const result = await confirmEquivalentVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      responseIds: ["r1", "r2"],
+      gabaritoId: "r1",
+      verdictDisplay: "resposta fundida",
+    });
 
     // Documenta o comportamento atual: o par de equivalência já foi
     // persistido quando o upsert de reviews falha (não há rollback), mesmo
@@ -133,14 +133,14 @@ describe("confirmEquivalentVerdict", () => {
     };
     const { confirmEquivalentVerdict } = await loadActions();
 
-    const result = await confirmEquivalentVerdict(
-      "p1",
-      "doc1",
-      "q1",
-      ["r2", "r1"],
-      "r2",
-      "resposta fundida",
-    );
+    const result = await confirmEquivalentVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      responseIds: ["r2", "r1"],
+      gabaritoId: "r2",
+      verdictDisplay: "resposta fundida",
+    });
 
     expect(result).toEqual({});
     expect(upsertsOn("response_equivalences")[0]?.payload).toEqual([

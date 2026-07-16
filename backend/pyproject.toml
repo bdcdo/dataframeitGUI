@@ -4,23 +4,23 @@ version = "0.1.0"
 description = "Backend FastAPI para dataframeit"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.138.0",
-    "uvicorn[standard]>=0.49.0",
+    "fastapi>=0.139.0",
+    "uvicorn[standard]>=0.51.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "supabase>=2.31.0",
     "dataframeit>=0.6.0",
     "pandas>=3.0.3",
-    "langchain-google-genai>=4.2.5",
-    "langchain-openai>=1.3.3",
-    "langchain-anthropic>=1.4.7",
+    "langchain-google-genai>=4.2.7",
+    "langchain-openai>=1.3.4",
+    "langchain-anthropic>=1.4.8",
     "pyjwt[crypto]>=2.13.0",
 ]
 
 # Este projeto é um app FastAPI executado via `uvicorn main:app`, não uma lib
 # instalável — não há diretório de pacote para empacotar. Sem isto, `uv sync` /
-# `uv run` falham tentando buildar um wheel. O deploy (Dockerfile) instala as
-# dependências direto via `uv pip install --system`, sem empacotar o app.
+# `uv run` falham tentando buildar um wheel. O deploy também usa `uv sync`
+# sobre este projeto e o `uv.lock`, sem empacotar o app.
 [tool.uv]
 package = false
 # Cooldown de dependencias: aguarda 7 dias antes de resolver versoes recem
@@ -113,6 +113,6 @@ extend-immutable-calls = [
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
-    "ruff>=0.15.19",
-    "mypy>=1.15",
+    "ruff>=0.15.20",
+    "mypy>=2.2.0",
 ]

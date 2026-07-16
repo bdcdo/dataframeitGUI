@@ -25,6 +25,7 @@ type Resp = Parameters<typeof ComparisonPanel>[0]["responses"][number];
 function renderPanel(responses: Resp[], fieldHelpText?: string) {
   render(
     <ComparisonPanel
+      readOnly={false}
       projectId="p1"
       documentId="d1"
       documentTitle="Nota técnica 1"

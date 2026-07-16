@@ -14,12 +14,14 @@ restringe ao coordenador do projeto, fechando a exposição anônima do boundary
 rede.
 """
 
+import uuid
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from routes.request_models import StrictRequestModel
 from services.auth import (
     AuthUser,
     require_authenticated_user,
@@ -31,8 +33,8 @@ from services.supabase_client import get_supabase
 router = APIRouter()
 
 
-class RecoverRequest(BaseModel):
-    project_id: str
+class RecoverRequest(StrictRequestModel):
+    project_id: uuid.UUID
 
 
 class RecoverResponse(BaseModel):
@@ -47,7 +49,8 @@ async def recover_fields(
     req: RecoverRequest,
     user: AuthUser = Depends(require_authenticated_user),
 ) -> dict:
-    await run_in_threadpool(require_project_coordinator, req.project_id, user)
+    project_id = str(req.project_id)
+    await run_in_threadpool(require_project_coordinator, project_id, user)
     sb = get_supabase()
     # maybe_single (não single): single() lança APIError quando nenhuma linha
     # casa, o que viraria 500 opaco em vez do 404 abaixo. maybe_single retorna
@@ -56,7 +59,7 @@ async def recover_fields(
     result = (
         sb.table("projects")
         .select("pydantic_code")
-        .eq("id", req.project_id)
+        .eq("id", project_id)
         .maybe_single()
         .execute()
     )

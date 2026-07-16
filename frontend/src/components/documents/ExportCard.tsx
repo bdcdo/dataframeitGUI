@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { getExportDataset } from "@/actions/export";
+import { formatDateForFilename } from "@/lib/date-format";
 import type { ExportDataset, ExportSheet } from "@/lib/export/assemble";
 
 // BOM + escaping manual herdados do antigo ExportPanel (comportamento validado
@@ -211,7 +212,7 @@ export function ExportCard({ projectId }: { projectId: string }) {
   };
 
   const doDownload = async (data: ExportDataset) => {
-    const timestamp = new Date().toISOString().slice(0, 10);
+    const timestamp = formatDateForFilename(new Date());
     const base = `${data.projectName}-completo-${timestamp}`;
     if (format === "csv") {
       const blob = new Blob([buildCsv(data.csv)], {

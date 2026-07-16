@@ -98,6 +98,10 @@ export function ComparePage({
   hasAssignedDocs,
   isImpersonating,
 }: ComparePageProps) {
+  // Impersonação master torna a Comparação somente-leitura (issue #428). Mesma
+  // convenção `readOnly: boolean` do Codificar (`code/page.tsx`).
+  const readOnly = isImpersonating;
+
   // Ordem estável de montagem: o re-sort por pendências do servidor (a cada
   // veredito) não remexe a fila nem a sidebar — só mudança de composição
   // (filtro/exclusão) altera a ordem. `showingAllQueue` como resetKey: ao
@@ -171,14 +175,15 @@ export function ComparePage({
   // `no-derived-state` que o effect disparava. O prev-tracker é um `useRef`
   // (não `useState`) para não recair em `rerender-state-only-in-handlers`, e o
   // estado inicia em "" (literal, não prop) para não disparar `no-derived-useState`.
-  // A chave é só (doc, campo): trocar de campo re-semeia do veredito do novo
-  // campo; permanecer no mesmo campo (após emitir um veredito sem avanço)
-  // preserva o comentário recém-digitado/salvo — por isso `useCompareVerdicts`
+  // A chave inclui (doc, campo, readOnly): trocar de campo re-semeia do veredito
+  // do novo campo; entrar/sair de impersonação (readOnly muda) descarta qualquer
+  // rascunho da identidade anterior; permanecer no mesmo campo após emitir um
+  // veredito preserva o comentário recém-salvo — por isso `useCompareVerdicts`
   // não limpa a caixa no sucesso.
   const [comment, setComment] = useState("");
   const verdictCtxKey =
     currentDoc && currentFieldName
-      ? `${currentDoc.id}|${currentFieldName}`
+      ? `${currentDoc.id}|${currentFieldName}|${readOnly}`
       : null;
   const commentCtxKey = verdictCtxKey;
   // Sentinela `undefined` (≠ qualquer chave e ≠ null) força o guard a disparar
@@ -209,6 +214,7 @@ export function ComparePage({
     handleMarkReviewed,
     handleUnmarkPair,
   } = useCompareVerdicts({
+    readOnly,
     projectId,
     currentDoc,
     currentFieldName,
@@ -227,6 +233,9 @@ export function ComparePage({
       // um salvamento em andamento seria descartado silenciosamente pelo
       // `setPendingVerdict(null)` que confirmPendingVerdict roda ao concluir.
       // Ignorar aqui — ponto único — mantém o rascunho que está sendo salvo.
+      // O bloqueio de somente-leitura vive nos controles (`disabled`), no
+      // teclado (`useCompareKeyboard`) e no backstop de escrita
+      // (`useCompareVerdicts`) — aqui não se repete.
       if (verdictSaveInFlightRef.current) return;
       setPendingVerdict(next);
     },
@@ -340,6 +349,7 @@ export function ComparePage({
   );
 
   useCompareKeyboard({
+    readOnly,
     isFullscreen,
     isCurrentDocComplete,
     isCurrentFieldDivergent,
@@ -388,6 +398,16 @@ export function ComparePage({
     </div>
   ) : null;
 
+  const readOnlyNotice = readOnly ? (
+    <output
+      className="block shrink-0 border-b border-violet-200 bg-violet-50 px-4 py-1.5 text-center text-xs text-violet-900 dark:border-violet-800 dark:bg-violet-950/50 dark:text-violet-100"
+    >
+      Visualização como outro membro: a Comparação está somente leitura. Volte
+      para master para registrar vereditos, equivalências, notas ou sugestões e
+      para executar LLM.
+    </output>
+  ) : null;
+
   if (!currentDoc || docFields.length === 0) {
     // documents.length===0 na aba "Meus" pode ter duas causas bem diferentes:
     // (a) o coordenador não tem NENHUM documento atribuído — trocar pra
@@ -417,6 +437,7 @@ export function ComparePage({
     return (
       <div className="flex h-[calc(100vh-96px)] flex-col">
         {queueTabsBar}
+        {readOnlyNotice}
         <div className="flex flex-1 w-full">
           <CompareDocList
             docs={docListEntries}
@@ -451,6 +472,7 @@ export function ComparePage({
       }
     >
       {!isFullscreen && queueTabsBar}
+      {readOnlyNotice}
 
       {isFullscreen ? (
         <FullscreenNav
@@ -462,6 +484,7 @@ export function ComparePage({
         />
       ) : (
         <CompareNav
+          readOnly={readOnly}
           title={docTitle}
           docIndex={docIndex}
           totalDocs={documents.length}
@@ -493,6 +516,7 @@ export function ComparePage({
         onToggleList={toggleList}
         documentText={currentDoc.text}
         comparisonPanel={{
+          readOnly,
           projectId,
           documentId: currentDoc.id,
           documentTitle: docTitle,

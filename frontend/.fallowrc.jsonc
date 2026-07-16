@@ -41,6 +41,84 @@
     { "file": "src/components/ui/textarea.tsx", "exports": ["*"] },
     { "file": "src/components/ui/tooltip.tsx", "exports": ["*"] }
   ],
+  // shadcn e tailwindcss disparam dev-dependencies-in-production como
+  // falso-positivo: nenhum dos dois e importado por codigo de runtime. O
+  // tailwindcss entra so via `@import "tailwindcss"` no globals.css (build-time,
+  // resolvido pelo @tailwindcss/postcss) e o shadcn e o CLI gerador, sem import
+  // algum no src/. Ambos estao corretos em devDependencies. Sao os dois unicos
+  // achados de regra warn no projeto hoje; sem esta supressao a regra em error
+  // (abaixo) barraria todo push, porque achado HERDADO tambem barra quando a
+  // regra e error (ver comentario do bloco "rules").
+  //
+  // Escopo: ignoreDependencies e por pacote, nao por regra — silencia estes
+  // dois em TODAS as regras de dependencia, inclusive unused-dev-dependencies
+  // (que tambem esta em error aqui). Se o tailwindcss um dia sair do
+  // globals.css, o gate nao avisa. E o preco de suprimir por pacote, que e o
+  // unico eixo que a config oferece.
+  "ignoreDependencies": ["shadcn", "tailwindcss"],
+  // Severidade fixada em error.
+  //
+  // O fallow distribui estas regras em warn por design (adocao gradual; a doc
+  // dele recomenda error em CI). Como warn sai com exit 0, o default nao barra
+  // nada nessa faixa — reporta e deixa passar. Este bloco e o que torna o gate
+  // um gate. Nao foi o major 3.2.0 que rebaixou nada: elas ja eram warn antes.
+  //
+  // Por que regra a regra e nao de uma vez: a flag `--fail-on-issues`
+  // ("promotes warn to error") e no-op no `audit` — medido na 3.2.0 com um
+  // misplaced-directive introduzido de proposito: o verdict continuou `warn` e
+  // o exit 0, com e sem a flag. O unico caminho que funciona e este bloco
+  // `rules`; nao ha chave de promocao em massa (as chaves de AuditConfig no
+  // schema sao gate, css, cssDeep, deadCodeBaseline, healthBaseline,
+  // dupesBaseline e cacheMaxAgeDays — nenhuma promove severidade).
+  //
+  // ATENCAO ao fixar uma regra nova em error: o grandfathering do
+  // `--gate new-only` NAO protege contra severidade error. Medido na 3.2.0
+  // (contradiz a doc, que afirma que achado herdado error mantem o verdict em
+  // pass): com `dead_code_introduced: 0` e `dead_code_inherited: 2`, a mesma
+  // regra em warn deu verdict `warn`/exit 0 e em error deu `fail`/exit 1 —
+  // quem decide e o `dead_code_has_errors` do summary, que ignora a atribuicao
+  // new-vs-inherited. Duas consequencias: (1) so fixe em error regra cuja
+  // contagem de achados no projeto seja ZERO hoje (`npm run fallow` para
+  // conferir) — ou zere os achados antes; (2) para as regras deste bloco o
+  // gate e global, nao new-only: um achado que chegue a main (via
+  // SKIP=fallow-audit, p.ex.) barra o push de TODO MUNDO, nao so de quem o
+  // introduziu. Se isso acontecer, a saida e `SKIP=fallow-audit git push` ou
+  // rebaixar a regra aqui — e depois zerar o achado.
+  //
+  // As 5 regras `css-*` (novas na 3.2.0) ficam em warn de proposito: a analise
+  // de CSS nao produz saida neste projeto (verificado com um token drift
+  // deliberado no globals.css — nenhuma secao css no JSON do audit), entao
+  // fixa-las em error nao protegeria nada hoje e, se uma versao futura do
+  // fallow passar a emiti-las, o CSS legado barraria todo push pela regra do
+  // paragrafo acima. As demais warn nao fixadas em error sao inertes neste
+  // stack: Vue/Svelte/Angular (unused-component-
+  // emits/inputs/outputs, unused-svelte-events, unprovided-injects,
+  // unrendered-components, unused-store-members), SvelteKit (unused-load-data-
+  // keys) e catalogos pnpm (unused-catalog-entries, empty-catalog-groups).
+  "rules": {
+    // Diretivas client/server: a classe de bug que quebrou tres deploys
+    // seguidos (#404) e motivou o CI proprio do #452. O Next ignora a diretiva
+    // em silencio, entao nada falha ate o deploy.
+    "invalid-client-export": "error",
+    "misplaced-directive": "error",
+    "mixed-client-server-barrel": "error",
+    "unused-server-actions": "error",
+    // Dependencias: devDependency importada em runtime quebra a imagem de
+    // producao, que instala sem as dev.
+    "dev-dependencies-in-production": "error",
+    "unused-dev-dependencies": "error",
+    "unused-optional-dependencies": "error",
+    "type-only-dependencies": "error",
+    "test-only-dependencies": "error",
+    // O projeto usa `overrides` no package.json (react-is, postcss, dompurify,
+    // uuid) — override apontando para pacote que saiu da arvore vira mentira
+    // silenciosa (ver o drift do react-is no #285).
+    "unused-dependency-overrides": "error",
+    "re-export-cycle": "error",
+    "stale-suppressions": "error",
+    "unused-component-props": "error",
+    "policy-violation": "error"
+  },
   // O `fallow audit --gate new-only` (hook de pre-push) cria um worktree de
   // cache do commit-base em /tmp (fallow-audit-base-cache-<hash>-<base>) para
   // atribuir achados novos vs. herdados sem tocar no working tree. O GC mede a

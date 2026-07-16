@@ -71,11 +71,12 @@ function expectOptimisticWrite(
   expect(goNextField).toHaveBeenCalledTimes(1);
 }
 
-function setup() {
+function setup(readOnly = false) {
   const recordReview = vi.fn();
   const goNextField = vi.fn();
   const { result } = renderHook(() =>
     useCompareVerdicts({
+      readOnly,
       projectId: "p1",
       currentDoc: DOC,
       currentFieldName: "q1",
@@ -90,6 +91,32 @@ function setup() {
   );
   return { result, recordReview, goNextField };
 }
+
+describe("modo somente leitura", () => {
+  it("recusa os quatro handlers antes de chamar qualquer Server Action", async () => {
+    const { result, recordReview, goNextField } = setup(true);
+
+    await act(async () => {
+      await result.current.handleVerdict("concordo", "r1");
+      await result.current.handleConfirmEquivalent(
+        ["r1", "r2"],
+        "r1",
+        "fundida",
+      );
+      await result.current.handleMarkReviewed();
+      await result.current.handleUnmarkPair("pair1");
+    });
+
+    expect(mockSubmitVerdict).not.toHaveBeenCalled();
+    expect(mockConfirmEquivalent).not.toHaveBeenCalled();
+    expect(mockMarkReviewed).not.toHaveBeenCalled();
+    expect(mockUnmarkPair).not.toHaveBeenCalled();
+    expect(recordReview).not.toHaveBeenCalled();
+    expect(goNextField).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+});
 
 describe("handleVerdict", () => {
   it("submitVerdict retorna { error } → não grava otimista, não avança, mostra toast.error", async () => {

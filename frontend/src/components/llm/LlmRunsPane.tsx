@@ -17,6 +17,7 @@ import {
   FileText,
 } from "lucide-react";
 import type { LlmRunRecord } from "@/actions/llm";
+import { formatDateTime } from "@/lib/date-format";
 import { LlmErrorCard, type LlmErrorInfo } from "./LlmErrorCard";
 
 export interface LlmRunStats {
@@ -40,16 +41,6 @@ const FILTER_LABELS: Record<string, string> = {
 function formatFilterMode(mode: string | null): string {
   if (!mode) return "—";
   return FILTER_LABELS[mode] ?? mode;
-}
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function formatDuration(start: string, end: string | null): string {

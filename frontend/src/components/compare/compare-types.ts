@@ -2,6 +2,8 @@
 // `CompareWorkspace`. Extraídos de `ComparePage` para evitar import circular de
 // tipos quando os hooks foram destacados do container.
 
+import type { AnswerFieldHashes } from "@/lib/types";
+
 export interface EquivalencePairWire {
   id: string;
   response_a_id: string;
@@ -18,7 +20,7 @@ export interface CompareResponse {
   justifications: Record<string, string> | null;
   is_latest: boolean;
   pydantic_hash: string | null;
-  answer_field_hashes: Record<string, string> | null;
+  answer_field_hashes: AnswerFieldHashes;
   schema_version_major: number | null;
   schema_version_minor: number | null;
   schema_version_patch: number | null;
@@ -30,6 +32,27 @@ export interface CompareDocument {
   title: string | null;
   external_id: string | null;
   text: string;
+}
+
+/**
+ * Impersonação master (`?viewAsUser=`) torna a Comparação somente-leitura: a
+ * navegação continua, mas nenhum controle prepara ou persiste decisão. Segue a
+ * mesma convenção `readOnly: boolean` já usada no Codificar
+ * (`code/page.tsx` → `SubmitBar`). Texto único de tooltip/aviso para os
+ * controles desabilitados (issue #428). Consumido só via `readOnlyTitle`
+ * abaixo, então fica local ao módulo.
+ */
+const COMPARE_READ_ONLY_REASON = "Indisponível no modo somente leitura";
+
+/**
+ * Tooltip do controle: o motivo padrão de somente-leitura quando `readOnly`,
+ * senão o texto ativo do controle (ou nenhum). Fonte única do texto (issue #428).
+ */
+export function readOnlyTitle(
+  readOnly: boolean,
+  activeTitle?: string,
+): string | undefined {
+  return readOnly ? COMPARE_READ_ONLY_REASON : activeTitle;
 }
 
 export type PendingVerdict =
