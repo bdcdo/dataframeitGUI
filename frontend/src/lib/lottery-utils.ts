@@ -119,7 +119,7 @@ export function filterComparisonEligible(
  * revisores no mesmo documento não seriam dupla checagem, e sim um segundo
  * desempate sem regra de precedência (issue #490).
  */
-export const COMPARISON_REVIEWERS_PER_DOC = 1;
+const COMPARISON_REVIEWERS_PER_DOC = 1;
 
 /**
  * Revisores/pesquisadores por documento EFETIVO do sorteio. Fonte única da
