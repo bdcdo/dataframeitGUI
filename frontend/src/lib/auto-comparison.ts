@@ -102,6 +102,13 @@ function buildEquivByField(
   return map;
 }
 
+type QueryResult = { error?: { message: string } | null };
+
+function throwOnQueryErrors(...results: QueryResult[]): void {
+  const failed = results.find((result) => result.error);
+  if (failed?.error) throw new Error(failed.error.message);
+}
+
 // Sorteia UM revisor de comparação para o documento e cria o assignment
 // (type=comparacao) idempotente. Espelha assignArbitrator (actions/field-reviews.ts):
 //   - Pool = membros can_compare=true MENOS todos os codificadores (coderIds) —
@@ -111,17 +118,20 @@ function buildEquivByField(
 //   - precomputedOpenLoad: quando passado (batch do retry), evita N queries de
 //     carga e é incrementado a cada atribuição para balancear entre docs.
 export async function assignComparisonReviewer(
-  admin: SupabaseDataClient,
+  readClient: SupabaseDataClient,
   projectId: string,
   documentId: string,
   coderIds: Set<string>,
   precomputedOpenLoad?: Map<string, number>,
+  assignmentClient: SupabaseDataClient = readClient,
 ): Promise<{ assigned: boolean; noPool: boolean }> {
-  const { data: eligibleMembers } = await admin
+  const eligibleResult = await readClient
     .from("project_members")
     .select("user_id")
     .eq("project_id", projectId)
     .eq("can_compare", true);
+  throwOnQueryErrors(eligibleResult);
+  const eligibleMembers = eligibleResult.data;
 
   const eligible = (eligibleMembers ?? []).filter(
     (m) => !coderIds.has(m.user_id as string),
@@ -132,12 +142,14 @@ export async function assignComparisonReviewer(
   if (precomputedOpenLoad) {
     loadByUser = precomputedOpenLoad;
   } else {
-    const { data: openCounts } = await admin
+    const loadResult = await readClient
       .from("assignments")
       .select("user_id")
       .eq("project_id", projectId)
       .eq("type", "comparacao")
       .neq("status", "concluido");
+    throwOnQueryErrors(loadResult);
+    const openCounts = loadResult.data;
     loadByUser = buildLoadMap(openCounts ?? []);
   }
 
@@ -158,7 +170,7 @@ export async function assignComparisonReviewer(
   // A seleção acima preserva o balanceamento; a RPC revalida can_compare sob
   // lock e insere na mesma transação. Assim um disable concorrente ou limpa a
   // atribuição já criada, ou vence o lock e impede a gravação posterior.
-  const { data: assigned, error } = await admin.rpc(
+  const { data: assigned, error } = await assignmentClient.rpc(
     "assign_comparison_if_eligible",
     {
       p_project_id: projectId,
@@ -194,14 +206,7 @@ export async function createAutoComparisonIfDiverges(
 ): Promise<{ assigned: boolean; noPool: boolean }> {
   const admin = createSupabaseAdmin();
 
-  const [
-    { data: project },
-    { data: doc },
-    { data: humanResponses },
-    { data: llmResponse },
-    { data: equivalences },
-    { data: activeAssignments },
-  ] = await Promise.all([
+  const results = await Promise.all([
     admin
       .from("projects")
       .select(
@@ -244,6 +249,15 @@ export async function createAutoComparisonIfDiverges(
       .neq("status", "concluido")
       .limit(1),
   ]);
+  throwOnQueryErrors(...results);
+  const [
+    { data: project },
+    { data: doc },
+    { data: humanResponses },
+    { data: llmResponse },
+    { data: equivalences },
+    { data: activeAssignments },
+  ] = results;
 
   if (!project?.pydantic_fields) {
     log("skip_no_data", { projectId, documentId, mode }, "warn");
@@ -368,8 +382,7 @@ export async function scanComparisonBacklog(
   mode: ComparisonMode,
 ): Promise<Array<{ documentId: string; coderIds: Set<string> }>> {
   // Fase 1: metadados leves (sem answers).
-  const [{ data: project }, { data: humanMeta }, { data: activeAsg }] =
-    await Promise.all([
+  const phaseOne = await Promise.all([
       admin
         .from("projects")
         .select(
@@ -395,6 +408,8 @@ export async function scanComparisonBacklog(
         .eq("type", "comparacao")
         .neq("status", "concluido"),
     ]);
+  throwOnQueryErrors(...phaseOne);
+  const [{ data: project }, { data: humanMeta }, { data: activeAsg }] = phaseOne;
 
   if (!project?.pydantic_fields) return [];
   const fields = project.pydantic_fields as PydanticField[];
@@ -442,8 +457,7 @@ export async function scanComparisonBacklog(
   if (candidates.length === 0) return [];
 
   // Fase 2: answers só dos candidatos.
-  const [{ data: humanFull }, { data: llmFull }, { data: equivs }] =
-    await Promise.all([
+  const phaseTwo = await Promise.all([
       admin
         .from("responses")
         .select(`id, document_id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
@@ -464,6 +478,8 @@ export async function scanComparisonBacklog(
         .eq("project_id", projectId)
         .in("document_id", candidates),
     ]);
+  throwOnQueryErrors(...phaseTwo);
+  const [{ data: humanFull }, { data: llmFull }, { data: equivs }] = phaseTwo;
 
   const llmByDoc = new Map(
     (llmFull ?? []).map((r) => [r.document_id as string, r as ResponseRow & { document_id: string }]),

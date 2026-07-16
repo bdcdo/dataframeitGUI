@@ -1,7 +1,12 @@
 "use server";
 
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext, requireCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getEffectiveMemberId,
+  getProjectAccessContext,
+  requireCoordinator,
+} from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
@@ -392,7 +397,10 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
-  const supabase = await createSupabaseServer();
+  const [supabase, actorId] = await Promise.all([
+    createSupabaseServer(),
+    getEffectiveMemberId(projectId),
+  ]);
 
   const [{ data: docs }, { data: responses }, { data: myPending }] =
     await Promise.all([
@@ -412,7 +420,7 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
         .from("project_comments")
         .select("document_id")
         .eq("project_id", projectId)
-        .eq("author_id", user.id)
+        .eq("author_id", actorId)
         .eq("kind", "exclusion_request")
         .is("resolved_at", null)
         .is("rejected_at", null),
@@ -426,7 +434,7 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
   responses?.forEach((r) => {
     if (!countMap.has(r.document_id)) countMap.set(r.document_id, new Set());
     countMap.get(r.document_id)!.add(r.respondent_id);
-    if (r.respondent_id === user.id) userRespondedSet.add(r.document_id);
+    if (r.respondent_id === actorId) userRespondedSet.add(r.document_id);
   });
 
   const minePendingSet = new Set(
@@ -463,7 +471,10 @@ export async function getDocumentForCoding(
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
-  const supabase = await createSupabaseServer();
+  const [supabase, actorId] = await Promise.all([
+    createSupabaseServer(),
+    getEffectiveMemberId(projectId),
+  ]);
 
   // Sem filtro de exclusion_pending_at: quem sinalizou precisa continuar
   // abrindo o doc (bloqueado) para poder desfazer; deep-link de terceiro
@@ -487,7 +498,7 @@ export async function getDocumentForCoding(
         .select("body")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
-        .eq("author_id", user.id)
+        .eq("author_id", actorId)
         .eq("kind", "exclusion_request")
         .is("resolved_at", null)
         .is("rejected_at", null)
@@ -515,7 +526,7 @@ export async function getDocumentForCoding(
     .select("answers, justifications")
     .eq("project_id", projectId)
     .eq("document_id", documentId)
-    .eq("respondent_id", user.id)
+    .eq("respondent_id", actorId)
     .eq("respondent_type", "humano")
     .single();
 
@@ -628,7 +639,7 @@ export async function excludeDocuments(
     .update({
       excluded_at: new Date().toISOString(),
       excluded_reason: reason.trim(),
-      excluded_by: gate.user.id,
+      excluded_by: gate.effectiveUserId,
     })
     .eq("project_id", projectId)
     .in("id", documentIds);

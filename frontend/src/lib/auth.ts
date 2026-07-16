@@ -149,7 +149,31 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
   return resolution.status === "authenticated" ? resolution.user : null;
 });
 
-const MAX_MEMBER_EMAIL_LINKS_PER_IDENTITY = 100;
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
+
+async function resolveCanonicalMemberId(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  userId: string,
+): Promise<string> {
+  const { data: alias, error: aliasError } = await supabase
+    .from("member_email_links")
+    .select("member_user_id")
+    .eq("project_id", projectId)
+    .eq("linked_user_id", userId)
+    .maybeSingle();
+
+  if (aliasError) {
+    console.error("getEffectiveMemberId: alias query failed", {
+      projectId,
+      userId,
+      error: aliasError.message,
+    });
+    throw new Error("Não foi possível resolver a identidade no projeto.");
+  }
+
+  return alias?.member_user_id ?? userId;
+}
 
 // Identidade efetiva do usuário num projeto (spec 002): se a conta atual está
 // vinculada como alias de um membro (member_email_links.linked_user_id), todo
@@ -162,50 +186,34 @@ export const getEffectiveMemberId = cache(
     if (!user) throw new Error("Não autenticado");
 
     const supabase = await createSupabaseServer();
-    const { data: aliases, error: aliasError } = await supabase
-      .from("member_email_links")
-      .select("member_user_id")
-      .eq("project_id", projectId)
-      .eq("linked_user_id", user.id)
-      .order("created_at", { ascending: true })
-      .limit(MAX_MEMBER_EMAIL_LINKS_PER_IDENTITY);
-
-    // Falhar a leitura como "sem alias" devolveria user.id e permitiria que
-    // uma indisponibilidade/RLS incorreta trocasse silenciosamente a identidade
-    // usada nas escritas do projeto. A fronteira de identidade é fail-closed.
-    if (aliasError) {
-      console.error("getEffectiveMemberId: alias query failed", {
-        projectId,
-        userId: user.id,
-        error: aliasError.message,
-      });
-      throw new Error("Não foi possível resolver a identidade no projeto.");
-    }
-
-    const canonicalIds = new Set(
-      (aliases ?? []).map(({ member_user_id }) => member_user_id),
-    );
-
-    // A tabela permite vários e-mails do mesmo usuário vinculado. Todos podem
-    // apontar para o mesmo membro canônico, mas dois destinos distintos tornam
-    // a identidade ambígua. O teto também falha fechado: atingir o limite não
-    // prova que a página contém todos os vínculos existentes.
-    if (
-      canonicalIds.size > 1 ||
-      (aliases?.length ?? 0) === MAX_MEMBER_EMAIL_LINKS_PER_IDENTITY
-    ) {
-      console.error("getEffectiveMemberId: ambiguous alias mapping", {
-        projectId,
-        userId: user.id,
-        canonicalIds: [...canonicalIds],
-        linkCount: aliases?.length ?? 0,
-      });
-      throw new Error("Não foi possível resolver a identidade no projeto.");
-    }
-
-    return canonicalIds.values().next().value ?? user.id;
+    return resolveCanonicalMemberId(supabase, projectId, user.id);
   },
 );
+
+export async function resolveProjectActor(
+  projectId: string,
+): Promise<
+  | { ok: true; user: AuthUser; effectiveUserId: string }
+  | { ok: false; error: string }
+> {
+  const user = await getAuthUser();
+  if (!user) return { ok: false, error: "Não autenticado" };
+  try {
+    return {
+      ok: true,
+      user,
+      effectiveUserId: await getEffectiveMemberId(projectId),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível resolver a identidade no projeto.",
+    };
+  }
+}
 
 // Identidade efetiva das páginas de fila pessoal (Codificar, Comparação,
 // Arbitragem, Meus vereditos): a impersonação master (?viewAsUser=) tem
@@ -232,6 +240,7 @@ interface ProjectAccessContext {
   project: { id: string; name: string; created_by: string } | null;
   membershipRole: string | null;
   isCoordinator: boolean;
+  effectiveUserId: string;
   // true quando alguma das queries falhou (timeout, RLS, etc.). Permite ao
   // chamador distinguir "nao e coordenador" de "nao foi possivel verificar".
   queryFailed: boolean;
@@ -247,6 +256,11 @@ export const getProjectAccessContext = cache(
     isMaster: boolean,
   ): Promise<ProjectAccessContext> => {
     const supabase = await createSupabaseServer();
+    const effectiveUserId = await resolveCanonicalMemberId(
+      supabase,
+      projectId,
+      userId,
+    );
 
     const [
       { data: project, error: projectError },
@@ -261,7 +275,7 @@ export const getProjectAccessContext = cache(
         .from("project_members")
         .select("role")
         .eq("project_id", projectId)
-        .eq("user_id", userId)
+        .eq("user_id", effectiveUserId)
         .maybeSingle(),
     ]);
 
@@ -286,13 +300,14 @@ export const getProjectAccessContext = cache(
 
     const isCoordinator =
       isMaster ||
-      project?.created_by === userId ||
+      project?.created_by === effectiveUserId ||
       membership?.role === "coordenador";
 
     return {
       project: project ?? null,
       membershipRole: membership?.role ?? null,
       isCoordinator,
+      effectiveUserId,
       queryFailed: !!projectError || !!membershipError,
     };
   },
@@ -306,12 +321,16 @@ export async function isProjectCoordinator(
   projectId: string,
   user: AuthUser,
 ): Promise<boolean> {
-  const { isCoordinator, queryFailed } = await getProjectAccessContext(
-    projectId,
-    user.id,
-    user.isMaster,
-  );
-  return !queryFailed && isCoordinator;
+  try {
+    const { isCoordinator, queryFailed } = await getProjectAccessContext(
+      projectId,
+      user.id,
+      user.isMaster,
+    );
+    return !queryFailed && isCoordinator;
+  } catch {
+    return false;
+  }
 }
 
 // Gate combinado (auth + coordenador) para Server Actions coordinator-only.
@@ -322,10 +341,32 @@ export async function isProjectCoordinator(
 export async function requireCoordinator(
   projectId: string,
   deniedMessage: string,
-): Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; user: AuthUser; effectiveUserId: string }
+  | { ok: false; error: string }
+> {
   const user = await getAuthUser();
   if (!user) return { ok: false, error: "Não autenticado" };
-  const isCoord = await isProjectCoordinator(projectId, user);
-  if (!isCoord) return { ok: false, error: deniedMessage };
-  return { ok: true, user };
+  let context: ProjectAccessContext;
+  try {
+    context = await getProjectAccessContext(projectId, user.id, user.isMaster);
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível verificar a permissão no projeto.",
+    };
+  }
+  if (context.queryFailed) {
+    return {
+      ok: false,
+      error: "Não foi possível verificar a permissão no projeto.",
+    };
+  }
+  if (!context.isCoordinator) {
+    return { ok: false, error: deniedMessage };
+  }
+  return { ok: true, user, effectiveUserId: context.effectiveUserId };
 }

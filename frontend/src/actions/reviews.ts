@@ -1,18 +1,10 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+import { resolveProjectActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
-import { syncCompareAssignment } from "@/lib/compare-sync";
+import { finalizeCompareWrite } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
-
-export interface ResponseSnapshotEntry {
-  id: string;
-  respondent_name: string;
-  respondent_type: "humano" | "llm";
-  answer: unknown;
-  justification?: string;
-}
 
 export async function submitVerdict(
   projectId: string,
@@ -21,125 +13,43 @@ export async function submitVerdict(
   verdict: string,
   chosenResponseId?: string,
   comment?: string,
-  responseSnapshot?: ResponseSnapshotEntry[],
+  comparisonResponseIds: string[] = [],
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const actor = await resolveProjectActor(projectId);
+  if (!actor.ok) return { error: actor.error };
 
   // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
   // como o membro canônico — reviewer_id, author_id e o sync do assignment
   // usam o id efetivo, casando com o onConflict do upsert.
-  // `getEffectiveMemberId` (admin client, cache()) e `createSupabaseServer`
-  // são independentes — rodam em paralelo.
-  const [effectiveId, supabase] = await Promise.all([
-    getEffectiveMemberId(projectId),
-    createSupabaseServer(),
-  ]);
+  const effectiveId = actor.effectiveUserId;
+  const supabase = await createSupabaseServer();
 
   try {
-    const { error } = await supabase.from("reviews").upsert(
-      {
-        project_id: projectId,
-        document_id: documentId,
-        field_name: fieldName,
-        reviewer_id: effectiveId,
-        verdict,
-        chosen_response_id: chosenResponseId || null,
-        comment: comment || null,
-        response_snapshot: responseSnapshot ?? null,
-      },
-      {
-        onConflict: "project_id,document_id,field_name,reviewer_id",
-      }
-    );
+    const { error } = await supabase.rpc("submit_compare_review", {
+      p_project_id: projectId,
+      p_document_id: documentId,
+      p_field_name: fieldName,
+      p_reviewer_id: effectiveId,
+      p_verdict: verdict,
+      p_chosen_response_id: chosenResponseId || null,
+      p_comment: comment?.trim() || null,
+      p_comparison_response_ids: comparisonResponseIds,
+      p_equivalent_response_ids: null,
+    });
 
     if (error) throw new Error(error.message);
-
-    // Veredito "ambiguo" vira comentário automático na aba Comentários. O
-    // invariante mantido aqui: existe um project_comments kind='ambiguity' por
-    // (projeto, documento, campo) se e somente se há ao menos um review com
-    // verdict='ambiguo' para esse campo. O upsert acima já gravou o veredito
-    // atual, então as queries abaixo enxergam o estado pós-mudança.
-    if (verdict === "ambiguo") {
-      // Idempotente: um único comentário por (projeto, documento, campo) — o
-      // índice único parcial idx_pc_ambiguity_unique é o backstop contra corrida.
-      const { data: existingAmbiguity } = await supabase
-        .from("project_comments")
-        .select("id")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("field_name", fieldName)
-        .eq("kind", "ambiguity")
-        .maybeSingle();
-
-      if (!existingAmbiguity) {
-        // author_id é a conta autenticada, não o id efetivo: a policy de INSERT
-        // de project_comments exige author_id = clerk_uid() — com effectiveId,
-        // uma conta-alias (spec 002) tomaria 42501 aqui.
-        const { error: commentError } = await supabase
-          .from("project_comments")
-          .insert({
-            project_id: projectId,
-            document_id: documentId,
-            field_name: fieldName,
-            author_id: user.id,
-            body: comment?.trim()
-              ? `Campo marcado como ambíguo na revisão (aba Comparar): ${comment.trim()}`
-              : "Campo marcado como ambíguo na revisão (aba Comparar).",
-            kind: "ambiguity",
-          });
-
-        // Ignora violação do índice único (revisor concorrente marcou o mesmo
-        // campo+doc) — o comentário já existe, que é o estado desejado.
-        if (commentError && commentError.code !== "23505") {
-          throw new Error(commentError.message);
-        }
-      }
-    } else {
-      // Veredito deixou de ser ambíguo. Se nenhum outro revisor ainda marca
-      // este campo como ambíguo, remove o comentário automático para não deixar
-      // pendência órfã na aba Comentários.
-      const { data: stillAmbiguous } = await supabase
-        .from("reviews")
-        .select("id")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("field_name", fieldName)
-        .eq("verdict", "ambiguo")
-        .limit(1);
-
-      if (!stillAmbiguous || stillAmbiguous.length === 0) {
-        const { error: deleteError } = await supabase
-          .from("project_comments")
-          .delete()
-          .eq("project_id", projectId)
-          .eq("document_id", documentId)
-          .eq("field_name", fieldName)
-          .eq("kind", "ambiguity");
-
-        if (deleteError) throw new Error(deleteError.message);
-      }
-    }
-
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao salvar o veredito" };
   }
 
-  // Efeitos pós-commit best-effort: o veredito já foi gravado. Uma falha no
-  // sync do assignment ou na revalidação NÃO deve virar { error } — o revisor
-  // veria "falha ao salvar" e tentaria de novo, reescrevendo o mesmo dado (e o
-  // estado local em ComparePage já reflete o veredito). Loga e segue.
-  try {
-    await syncCompareAssignment(supabase, projectId, documentId, effectiveId);
-  } catch (e) {
-    console.error(
-      `[submitVerdict] falha ao sincronizar o assignment pós-veredito: ${errorMessage(e)}`,
-    );
-  }
-
-  revalidatePath(`/projects/${projectId}/reviews/comments`);
-  revalidatePath(`/projects/${projectId}/analyze/compare`);
-  revalidatePath(`/projects/${projectId}/analyze/assignments`);
+  finalizeCompareWrite({
+    supabase,
+    projectId,
+    documentId,
+    userId: effectiveId,
+    operation: "submitVerdict",
+    revalidateComments: true,
+  });
 
   return {};
 }
@@ -149,15 +59,13 @@ export async function markCompareDocReviewed(
   projectId: string,
   documentId: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const actor = await resolveProjectActor(projectId);
+  if (!actor.ok) return { error: actor.error };
 
   // Conta vinculada fecha o doc como o membro canônico (spec 002).
   // Awaits independentes em paralelo.
-  const [effectiveId, supabase] = await Promise.all([
-    getEffectiveMemberId(projectId),
-    createSupabaseServer(),
-  ]);
+  const effectiveId = actor.effectiveUserId;
+  const supabase = await createSupabaseServer();
 
   const { error } = await supabase
     .from("assignments")

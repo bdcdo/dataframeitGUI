@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeTruncation,
   REVIEW_BASE_DATA_LIMIT,
-  resolveEffectiveUserId,
+  selectVerdictRespondentId,
 } from "@/lib/reviews/queries";
 
 // Array esparso: `.length` e o teto sem alocar 50k elementos.
@@ -65,13 +65,13 @@ describe("computeTruncation — flags do TruncationBanner (issue #105)", () => {
 // outro respondente) só vale para coordenador/criador/master. A policy RLS
 // "Members view responses" não filtra por respondent_id, então esta função é a
 // única barreira — por isso `isCoordinator` aqui é fail-closed.
-describe("resolveEffectiveUserId — viewAsUser só para coordenador/criador/master", () => {
+describe("selectVerdictRespondentId — viewAsUser só para coordenador/criador/master", () => {
   const selfId = "user-self";
   const other = "user-other";
 
   it("não-coordenador/não-master NÃO impersona, mesmo passando viewAsUser", () => {
     expect(
-      resolveEffectiveUserId({
+      selectVerdictRespondentId({
         selfId,
         isMaster: false,
         isCoordinator: false,
@@ -82,7 +82,7 @@ describe("resolveEffectiveUserId — viewAsUser só para coordenador/criador/mas
 
   it("coordenador pode ver as respostas de outro via viewAsUser", () => {
     expect(
-      resolveEffectiveUserId({
+      selectVerdictRespondentId({
         selfId,
         isMaster: false,
         isCoordinator: true,
@@ -93,7 +93,7 @@ describe("resolveEffectiveUserId — viewAsUser só para coordenador/criador/mas
 
   it("master pode ver as respostas de outro mesmo sem ser coordenador", () => {
     expect(
-      resolveEffectiveUserId({
+      selectVerdictRespondentId({
         selfId,
         isMaster: true,
         isCoordinator: false,
@@ -104,7 +104,7 @@ describe("resolveEffectiveUserId — viewAsUser só para coordenador/criador/mas
 
   it("sem viewAsUser, sempre o próprio usuário (mesmo coordenador)", () => {
     expect(
-      resolveEffectiveUserId({
+      selectVerdictRespondentId({
         selfId,
         isMaster: false,
         isCoordinator: true,
@@ -115,7 +115,7 @@ describe("resolveEffectiveUserId — viewAsUser só para coordenador/criador/mas
 
   it("viewAsUser vazio é tratado como ausente (não impersona)", () => {
     expect(
-      resolveEffectiveUserId({
+      selectVerdictRespondentId({
         selfId,
         isMaster: true,
         isCoordinator: true,

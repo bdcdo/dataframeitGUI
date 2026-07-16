@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import {
   AutoReviewPage,
@@ -8,6 +8,7 @@ import {
   type AutoReviewQueueOwner,
 } from "@/components/auto-review/AutoReviewPage";
 import type { PydanticField } from "@/lib/types";
+import { loadActiveReviewDocuments } from "@/lib/review-documents";
 
 export default async function AutoReviewRoute({
   params,
@@ -23,13 +24,15 @@ export default async function AutoReviewRoute({
   ]);
   if (!user) redirect("/auth/login");
 
-  const [supabase, isCoordinator] = await Promise.all([
+  const [supabase, access] = await Promise.all([
     createSupabaseServer(),
-    isProjectCoordinator(id, user),
+    getProjectAccessContext(id, user.id, user.isMaster),
   ]);
+  const isCoordinator = !access.queryFailed && access.isCoordinator;
 
   // viewAs só é honrado para coordenadores; pesquisador sempre vê a própria fila.
-  const targetUserId = isCoordinator && viewAs ? viewAs : user.id;
+  const targetUserId =
+    isCoordinator && viewAs ? viewAs : access.effectiveUserId;
 
   const [{ data: project }, { data: assignments }, { data: memberRows }] =
     await Promise.all([
@@ -84,18 +87,13 @@ export default async function AutoReviewRoute({
         isCoordinator={isCoordinator}
         viewAsUserId={targetUserId}
         reviewers={reviewers}
-        currentUserId={user.id}
+        currentUserId={access.effectiveUserId}
       />
     );
   }
 
   const [{ data: docs }, { data: fieldReviews }] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("id, title, external_id, text")
-      .in("id", docIds)
-      .is("excluded_at", null)
-      .is("exclusion_pending_at", null),
+    loadActiveReviewDocuments(supabase, docIds),
     supabase
       .from("field_reviews")
       .select(
@@ -146,6 +144,7 @@ export default async function AutoReviewRoute({
     const human = responsesById.get(fr.human_response_id);
     const llm = responsesById.get(fr.llm_response_id);
     payload.fields.push({
+      fieldReviewId: fr.id,
       fieldName: fr.field_name,
       fieldDescription: fieldDescById.get(fr.field_name) ?? null,
       fieldHelpText: fieldHelpTextById.get(fr.field_name) ?? null,
@@ -176,7 +175,7 @@ export default async function AutoReviewRoute({
         isCoordinator={isCoordinator}
         viewAsUserId={targetUserId}
         reviewers={reviewers}
-        currentUserId={user.id}
+        currentUserId={access.effectiveUserId}
       />
     </Suspense>
   );

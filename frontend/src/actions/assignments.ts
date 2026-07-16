@@ -1,7 +1,8 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import type { SupabaseServerClient } from "@/lib/supabase/server";
+import { getAuthUser, resolveProjectActor } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import {
   createRng,
@@ -20,6 +21,58 @@ import {
 } from "@/lib/lottery-utils";
 import { MEMBERS_TAG_PROFILE, membersTag } from "@/lib/cache";
 import { errorMessage } from "@/lib/utils";
+
+type PendingAssignment = { id: string; type: string };
+
+function throwOnAssignmentError(error: { message: string } | null): void {
+  if (error) throw new Error(error.message);
+}
+
+async function applyAssignmentCycle(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+  userId: string,
+  pending: PendingAssignment[],
+): Promise<void> {
+  const coding = pending.find((assignment) => assignment.type === "codificacao");
+  const comparison = pending.find((assignment) => assignment.type === "comparacao");
+
+  if (!coding && !comparison) {
+    const { error } = await supabase.from("assignments").insert({
+      project_id: projectId,
+      document_id: documentId,
+      user_id: userId,
+      type: "codificacao",
+    });
+    throwOnAssignmentError(error);
+    return;
+  }
+
+  if (coding && comparison) {
+    const { error } = await supabase
+      .from("assignments")
+      .delete()
+      .in("id", [coding.id, comparison.id]);
+    throwOnAssignmentError(error);
+    return;
+  }
+
+  if (coding) {
+    const { error } = await supabase
+      .from("assignments")
+      .update({ type: "comparacao" })
+      .eq("id", coding.id);
+    throwOnAssignmentError(error);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("assignments")
+    .delete()
+    .eq("id", comparison!.id);
+  throwOnAssignmentError(error);
+}
 
 /**
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
@@ -47,38 +100,8 @@ export async function cycleAssignment(
   const hasNonPending = rows.some((r) => r.status !== "pendente");
   if (hasNonPending) return {};
 
-  const pendingCod = rows.find((r) => r.type === "codificacao");
-  const pendingComp = rows.find((r) => r.type === "comparacao");
-
   try {
-    if (!pendingCod && !pendingComp) {
-      // vazio → codificacao
-      const { error } = await supabase.from("assignments").insert({
-        project_id: projectId,
-        document_id: documentId,
-        user_id: userId,
-        type: "codificacao",
-      });
-      if (error) throw new Error(error.message);
-    } else if (pendingCod && !pendingComp) {
-      // codificacao → comparacao (UPDATE atômico, preserva id e metadados)
-      const { error } = await supabase
-        .from("assignments")
-        .update({ type: "comparacao" })
-        .eq("id", pendingCod.id);
-      if (error) throw new Error(error.message);
-    } else if (pendingComp && !pendingCod) {
-      // comparacao → vazio
-      const { error } = await supabase.from("assignments").delete().eq("id", pendingComp.id);
-      if (error) throw new Error(error.message);
-    } else if (pendingCod && pendingComp) {
-      // "ambos" (vindo de sorteio): remover tudo para voltar ao vazio
-      const { error } = await supabase
-        .from("assignments")
-        .delete()
-        .in("id", [pendingCod.id, pendingComp.id]);
-      if (error) throw new Error(error.message);
-    }
+    await applyAssignmentCycle(supabase, projectId, documentId, userId, rows);
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao alterar a atribuição" };
   }
@@ -484,10 +507,10 @@ export async function previewLottery(
 export async function smartRandomize(
   params: LotteryParams,
 ): Promise<{ count?: number; preserved?: number; error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
+  const actor = await resolveProjectActor(params.projectId);
+  if (!actor.ok) return { error: actor.error };
   const supabase = await createSupabaseServer();
+  const actorId = actor.effectiveUserId;
   const assignmentType = params.type || "codificacao";
 
   let count: number;
@@ -502,7 +525,7 @@ export async function smartRandomize(
     // (ex.: migration ausente), nada foi deletado ainda
     const { data: batch, error: batchError } = await supabase
       .from("assignment_batches")
-      .insert({ ...batchData, created_by: user.id })
+      .insert({ ...batchData, created_by: actorId })
       .select("id")
       .single();
 

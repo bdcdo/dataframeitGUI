@@ -30,14 +30,6 @@ export interface ExistingFieldReviewRow {
   self_verdict: string | null;
 }
 
-export interface AssignmentRow {
-  project_id: string;
-  document_id: string;
-  user_id: string;
-  type: "auto_revisao";
-  status: "pendente";
-}
-
 export interface FieldReviewRow {
   project_id: string;
   document_id: string;
@@ -45,6 +37,16 @@ export interface FieldReviewRow {
   human_response_id: string;
   llm_response_id: string;
   self_reviewer_id: string;
+}
+
+// Respostas de um membro removido permanecem como histórico, mas não podem
+// recriar assignments que o trigger rejeitará por falta de membership.
+export function filterCurrentMemberResponses(
+  responses: HumanResponseRow[],
+  memberIds: string[],
+): HumanResponseRow[] {
+  const currentMemberIds = new Set(memberIds);
+  return responses.filter((response) => currentMemberIds.has(response.respondent_id));
 }
 
 // Varre as respostas humanas completas e calcula quais divergem do LLM —
@@ -55,8 +57,7 @@ export function computeBacklogRows(
   llmByDocId: Map<string, LlmResponseRow>,
   equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
-): { assignmentRows: AssignmentRow[]; fieldReviewRows: FieldReviewRow[]; regenerated: number } {
-  const assignmentRows: AssignmentRow[] = [];
+): { fieldReviewRows: FieldReviewRow[]; regenerated: number } {
   const fieldReviewRows: FieldReviewRow[] = [];
   let regenerated = 0;
 
@@ -98,13 +99,6 @@ export function computeBacklogRows(
     if (divergent.length === 0) continue;
 
     regenerated++;
-    assignmentRows.push({
-      project_id: projectId,
-      document_id: human.document_id,
-      user_id: human.respondent_id,
-      type: "auto_revisao",
-      status: "pendente",
-    });
     for (const fieldName of divergent) {
       fieldReviewRows.push({
         project_id: projectId,
@@ -117,13 +111,13 @@ export function computeBacklogRows(
     }
   }
 
-  return { assignmentRows, fieldReviewRows, regenerated };
+  return { fieldReviewRows, regenerated };
 }
 
 // Compartilhado entre diffReviewsToRemove e removeOrphanAssignments (na
 // action): as duas reconciliam uma coleção recém-computada contra uma
 // existente via chave composta document_id+algo. Puro.
-export function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
+function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
   return new Set(rows.map(keyFn));
 }
 

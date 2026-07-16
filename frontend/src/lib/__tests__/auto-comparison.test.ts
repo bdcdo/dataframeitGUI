@@ -87,6 +87,18 @@ async function loadLib() {
 }
 
 describe("assignComparisonReviewer — pool e balanceamento", () => {
+  it("falha fechada quando o pool não pode ser lido", async () => {
+    const { assignComparisonReviewer } = await loadLib();
+    tableData["__error:project_members:select"] = {
+      message: "timeout pool",
+    } as unknown as unknown[];
+
+    await expect(
+      assignComparisonReviewer(makeClient() as never, "p1", "doc1", new Set()),
+    ).rejects.toThrow("timeout pool");
+    expect(assignmentCalls()).toHaveLength(0);
+  });
+
   it("exclui TODOS os codificadores do pool", async () => {
     const { assignComparisonReviewer } = await loadLib();
     tableData.project_members = [makeProjectMember("userA"), makeProjectMember("userB"), makeProjectMember("userC")];
@@ -371,6 +383,29 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
 });
 
 describe("scanComparisonBacklog — piso de versão latest_major (#247)", () => {
+  it("falha fechada quando assignments ativos não podem ser lidos", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData["__error:assignments:select"] = {
+      message: "timeout assignments",
+    } as unknown as unknown[];
+
+    await expect(
+      scanComparisonBacklog(makeClient() as never, "p1", "compare_humans"),
+    ).rejects.toThrow("timeout assignments");
+  });
+
+  it("falha fechada quando a fase pesada não pode ser lida", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
+    tableData["__error:response_equivalences:select"] = {
+      message: "timeout equivalências",
+    } as unknown as unknown[];
+
+    await expect(
+      scanComparisonBacklog(makeClient() as never, "p1", "compare_humans"),
+    ).rejects.toThrow("timeout equivalências");
+  });
+
   it("doc cuja divergência só existe em versão antiga fica fora do backlog", async () => {
     const { scanComparisonBacklog } = await loadLib();
     tableData.responses = [

@@ -18,22 +18,26 @@ function makeClient(
   tableResults?: TableResults,
   rpcResults?: Record<string, TableResult>,
 ) {
-  return makeSupabaseMock({
-    tableResults,
-    defaultResult: updateError
-      ? { data: null, error: updateError }
-      : { data: { project_id: "p-derived", user_id: "userMemberX" } },
-    writeCalls,
-    filterCalls,
-    rpcCalls,
-    rpcResults,
-  });
+  return {
+    ...makeSupabaseMock({
+      tableResults,
+      defaultResult: updateError
+        ? { data: null, error: updateError }
+        : { data: { project_id: "p-derived", user_id: "userMemberX" } },
+      writeCalls,
+      filterCalls,
+      rpcCalls,
+      rpcResults,
+    }),
+    auth: { admin: { updateUserById: hoisted.updateUserById } },
+  };
 }
 
 let clientError: { message: string } | undefined;
 let serverTableResults: TableResults | undefined;
 let adminTableResults: TableResults | undefined;
 let serverRpcResults: Record<string, TableResult>;
+let adminRpcResults: Record<string, TableResult>;
 let adminCreateCalls: number;
 
 const hoisted = vi.hoisted(() => ({
@@ -52,6 +56,7 @@ const hoisted = vi.hoisted(() => ({
   preregister: vi.fn<(email: string) => Promise<string>>(
     async () => "placeholderUid",
   ),
+  updateUserById: vi.fn(async () => ({ error: null })),
   retryComparisons: vi.fn<(projectId: string) => Promise<{
     success: boolean;
     assigned: number;
@@ -68,10 +73,15 @@ vi.mock("next/cache", () => ({
   revalidatePath: hoisted.revalidatePath,
   revalidateTag: hoisted.revalidateTag,
 }));
+vi.mock("next/server", () => ({ after: (callback: () => void) => callback() }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
   isProjectCoordinator: async () => true,
-  requireCoordinator: async () => ({ ok: true, user: { id: "userCoord" } }),
+  requireCoordinator: async () => ({
+    ok: true,
+    user: { id: "userCoord" },
+    effectiveUserId: "userCoord",
+  }),
 }));
 vi.mock("@/lib/clerk-sync", () => ({
   syncClerkUserToSupabase: async () => "userX",
@@ -84,7 +94,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdmin: () => {
     adminCreateCalls++;
-    return makeClient(clientError, adminTableResults);
+    return makeClient(clientError, adminTableResults, adminRpcResults);
   },
 }));
 vi.mock("@/actions/field-reviews", () => ({
@@ -111,6 +121,7 @@ beforeEach(() => {
       data: { project_id: "p-derived" },
     },
   };
+  adminRpcResults = {};
   adminCreateCalls = 0;
   hoisted.revalidatePath.mockReset();
   hoisted.revalidateTag.mockReset();
@@ -118,6 +129,8 @@ beforeEach(() => {
   hoisted.retry.mockResolvedValue({ success: true, assigned: 0, stillNoPool: 0 });
   hoisted.preregister.mockReset();
   hoisted.preregister.mockResolvedValue("placeholderUid");
+  hoisted.updateUserById.mockReset();
+  hoisted.updateUserById.mockResolvedValue({ error: null });
   hoisted.retryComparisons.mockReset();
   hoisted.retryComparisons.mockResolvedValue({
     success: true,
@@ -149,6 +162,8 @@ describe("removeMember", () => {
     });
     expect(adminCreateCalls).toBe(0);
     expect(writeCalls).toEqual([]);
+    expect(hoisted.retry).toHaveBeenCalledWith("p-canonical");
+    expect(hoisted.retryComparisons).toHaveBeenCalledWith("p-canonical");
     expect(hoisted.revalidatePath).toHaveBeenCalledWith("/projects/p-canonical");
     expect(hoisted.revalidateTag).toHaveBeenCalledWith(
       "project-p-canonical-members",
@@ -175,6 +190,42 @@ describe("removeMember", () => {
     expect(await remove("member-1")).toEqual({
       error: "falha ao revogar alias",
     });
+    expect(hoisted.revalidatePath).not.toHaveBeenCalled();
+    expect(hoisted.retry).not.toHaveBeenCalled();
+    expect(hoisted.retryComparisons).not.toHaveBeenCalled();
+  });
+});
+
+describe("unifyMembers", () => {
+  it("unifica via RPC e reprocessa as duas filas do projeto", async () => {
+    adminRpcResults.unify_project_members = { data: null };
+    const { unifyMembers } = await import("@/actions/members");
+
+    expect(await unifyMembers("p1", "source1", "target1")).toEqual({});
+    expect(rpcArgs("unify_project_members")).toEqual({
+      p_project_id: "p1",
+      p_source_user_id: "source1",
+      p_target_user_id: "target1",
+      p_acting_user_id: "userCoord",
+    });
+    expect(hoisted.retry).toHaveBeenCalledWith("p1");
+    expect(hoisted.retryComparisons).toHaveBeenCalledWith("p1");
+    expect(hoisted.revalidatePath).toHaveBeenCalledWith(
+      "/projects/p1/analyze/assignments",
+    );
+  });
+
+  it("falha da RPC não reprocessa filas nem invalida cache", async () => {
+    adminRpcResults.unify_project_members = {
+      error: { message: "colisão de identidade" },
+    };
+    const { unifyMembers } = await import("@/actions/members");
+
+    expect(await unifyMembers("p1", "source1", "target1")).toEqual({
+      error: "colisão de identidade",
+    });
+    expect(hoisted.retry).not.toHaveBeenCalled();
+    expect(hoisted.retryComparisons).not.toHaveBeenCalled();
     expect(hoisted.revalidatePath).not.toHaveBeenCalled();
   });
 });
@@ -221,7 +272,7 @@ describe("setCanArbitrate", () => {
     expect(adminCreateCalls).toBe(0);
   });
 
-  it("habilita mas retry falha → result.retried undefined, sem propagar erro", async () => {
+  it("habilita mas retry falha → preserva commit e devolve aviso explícito", async () => {
     hoisted.retry.mockResolvedValueOnce({
       success: false,
       error: "kaboom",
@@ -230,11 +281,9 @@ describe("setCanArbitrate", () => {
     });
     const set = await loadSet();
     const r = await set("member1", true);
-    // setCanArbitrate em si não falha — a RPC transacional deu certo.
-    // O retry rodou em best-effort. Coordenador vê "habilitado" mas o banner
-    // continua mostrando pendências se houver.
     expect(r.error).toBeUndefined();
     expect(r.retried).toBeUndefined();
+    expect(r.warning).toContain("arbitragens pendentes");
   });
 
   it("RPC falha → retorna error e não dispara retry", async () => {
@@ -304,7 +353,7 @@ describe("setCanCompare", () => {
     expect(hoisted.retryComparisons).not.toHaveBeenCalled();
   });
 
-  it("retry falha após commit → mantém sucesso sem contagem", async () => {
+  it("retry falha após commit → mantém a permissão e devolve aviso", async () => {
     hoisted.retryComparisons.mockResolvedValueOnce({
       success: false,
       error: "retry indisponível",
@@ -313,7 +362,11 @@ describe("setCanCompare", () => {
     });
     const set = await loadSetCompare();
 
-    expect(await set("member-1", true)).toEqual({ retried: undefined });
+    expect(await set("member-1", true)).toEqual({
+      retried: undefined,
+      warning:
+        "A permissão foi salva, mas as comparações pendentes não puderam ser reprocessadas.",
+    });
     expect(hoisted.retryComparisons).toHaveBeenCalledWith("p-derived");
   });
 
@@ -497,6 +550,42 @@ describe("addMember (pré-registro, spec 002)", () => {
     expect(r.error).toBe("Erro ao pré-registrar: kaboom");
     expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
   });
+
+  it("falha em lookup de identidade → falha fechado sem pré-registro", async () => {
+    adminTableResults = {
+      profiles: { error: { message: "timeout profiles" } },
+      member_email_links: { data: null },
+    };
+    const add = await loadAdd();
+
+    expect(await add("p1", "novo@exemplo.com", "pesquisador")).toEqual({
+      error: "Não foi possível verificar o e-mail: timeout profiles",
+    });
+    expect(hoisted.preregister).not.toHaveBeenCalled();
+    expect(writeCalls).toEqual([]);
+  });
+});
+
+describe("updatePendingMemberEmail", () => {
+  it("falha em qualquer pré-condição → não altera Auth nem profile", async () => {
+    adminTableResults = {
+      project_members: { data: { id: "pm1" } },
+      profiles: [
+        { error: { message: "timeout target" } },
+        { data: null },
+      ],
+      member_email_links: { data: null },
+    };
+    const { updatePendingMemberEmail } = await import("@/actions/members");
+
+    expect(
+      await updatePendingMemberEmail("p1", "pending1", "novo@exemplo.com"),
+    ).toEqual({
+      error: "Não foi possível verificar o membro: timeout target",
+    });
+    expect(hoisted.updateUserById).not.toHaveBeenCalled();
+    expect(writeCalls).toEqual([]);
+  });
 });
 
 async function loadLink() {
@@ -627,5 +716,53 @@ describe("linkMemberEmail (vínculo de e-mails, spec 002 US2)", () => {
     const r = await link("p1", "target1", "eu@x.com");
     expect(r.error).toBe("Este já é o e-mail principal deste membro.");
     expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
+
+  it("falha no lookup inicial → falha fechado sem insert", async () => {
+    adminTableResults = {
+      project_members: { error: { message: "timeout membership" } },
+      member_email_links: { data: null },
+      profiles: { data: null },
+    };
+    const link = await loadLink();
+
+    expect(await link("p1", "target1", "extra@exemplo.com")).toEqual({
+      error: "Não foi possível verificar o vínculo: timeout membership",
+    });
+    expect(writeCalls.filter((call) => call.op === "insert")).toEqual([]);
+  });
+
+  it("falha ao verificar o dono do e-mail → falha fechado", async () => {
+    adminTableResults = {
+      project_members: [
+        { data: { role: "pesquisador" } },
+        { error: { message: "timeout owner" } },
+      ],
+      member_email_links: { data: null },
+      profiles: { data: { id: "source1", first_name: null, email: "source@x.com" } },
+    };
+    const link = await loadLink();
+
+    expect(await link("p1", "target1", "source@x.com")).toEqual({
+      error: "Não foi possível verificar o vínculo: timeout owner",
+    });
+  });
+
+  it("falha ao calcular preview → não oferece unificação parcial", async () => {
+    adminTableResults = {
+      project_members: [
+        { data: { role: "coordenador" } },
+        { data: { id: "pmSource" } },
+      ],
+      member_email_links: { data: null },
+      profiles: { data: { id: "source1", first_name: "Bia", email: "bia@x.com" } },
+      assignments: { error: { message: "timeout preview" } },
+      responses: { data: [] },
+    };
+    const link = await loadLink();
+
+    expect(await link("p1", "target1", "bia@x.com")).toEqual({
+      error: "Não foi possível calcular a unificação: timeout preview",
+    });
   });
 });

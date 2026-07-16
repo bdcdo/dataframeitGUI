@@ -18,6 +18,11 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "user-1", isMaster: false }),
+  resolveProjectActor: async () => ({
+    ok: true,
+    user: { id: "user-1", isMaster: false },
+    effectiveUserId: "member-1",
+  }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => {

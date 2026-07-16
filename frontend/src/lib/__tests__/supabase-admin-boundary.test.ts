@@ -42,6 +42,7 @@ const GENERATED_DIRECTORIES = new Set([
 ]);
 
 const EXPECTED_RUNTIME_IMPORTERS = [
+  "actions/comparisons.ts",
   "actions/field-reviews.ts",
   "actions/members.ts",
   "app/(app)/projects/[id]/analyze/assignments/page.tsx",
@@ -375,11 +376,13 @@ describe("fronteira do Supabase admin client", () => {
       .map(relative)
       .toSorted();
     expect(importers).toEqual(EXPECTED_RUNTIME_IMPORTERS);
-    // 17 após compor com a #433: as RPCs atômicas de permissão
+    // 18 após compor com a #433: as RPCs atômicas de permissão
     // (set_member_arbitration_permission / set_member_comparison_permission)
     // absorveram releaseArbitrationsFromUser e releaseComparisonsFromUser no
-    // banco, eliminando 2 bypasses que existiam no PR standalone (19).
-    expect(countAdminFactoryCalls(files)).toBe(17);
+    // banco; as actions de atribuição criam admin só para RPCs service-only. O
+    // reconcile do backlog usa o factory adicional apenas para sua RPC
+    // service-only, que revalida o ator e executa as mutações atomicamente.
+    expect(countAdminFactoryCalls(files)).toBe(18);
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {

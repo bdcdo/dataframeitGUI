@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeBacklogRows,
   diffReviewsToRemove,
+  filterCurrentMemberResponses,
   type HumanResponseRow,
   type LlmResponseRow,
   type ExistingFieldReviewRow,
@@ -21,6 +22,28 @@ const field: PydanticField = {
   options: null,
   description: "Campo de teste",
 };
+
+it("não recria backlog para respostas históricas de membro removido", () => {
+  const responses: HumanResponseRow[] = [
+    {
+      id: "current-response",
+      document_id: "doc1",
+      respondent_id: "current-member",
+      answers: {},
+      answer_field_hashes: null,
+    },
+    {
+      id: "removed-response",
+      document_id: "doc2",
+      respondent_id: "removed-member",
+      answers: {},
+      answer_field_hashes: null,
+    },
+  ];
+
+  expect(filterCurrentMemberResponses(responses, ["current-member"]))
+    .toEqual([responses[0]]);
+});
 
 describe("computeBacklogRows", () => {
   function human(overrides: Partial<HumanResponseRow>): HumanResponseRow {
@@ -43,9 +66,9 @@ describe("computeBacklogRows", () => {
     };
   }
 
-  it("gera assignment + field_review quando humano e LLM divergem", () => {
+  it("gera o conjunto canônico de field_reviews quando humano e LLM divergem", () => {
     const llmByDocId = new Map([["doc1", llm({})]]);
-    const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
+    const { fieldReviewRows, regenerated } = computeBacklogRows(
       "proj1",
       [human({})],
       llmByDocId,
@@ -54,15 +77,6 @@ describe("computeBacklogRows", () => {
     );
 
     expect(regenerated).toBe(1);
-    expect(assignmentRows).toEqual([
-      {
-        project_id: "proj1",
-        document_id: "doc1",
-        user_id: "user1",
-        type: "auto_revisao",
-        status: "pendente",
-      },
-    ]);
     expect(fieldReviewRows).toEqual([
       {
         project_id: "proj1",

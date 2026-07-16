@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import {
   submitVerdict,
   markCompareDocReviewed,
-  type ResponseSnapshotEntry,
 } from "@/actions/reviews";
 import {
   confirmEquivalentVerdict,
@@ -91,17 +90,11 @@ async function actionSucceeded(
   return true;
 }
 
-/** Snapshot das respostas presentes no momento do veredito (auditoria). */
-function buildSnapshot(fieldResponses: FieldResponse[]): ResponseSnapshotEntry[] {
+/** IDs das respostas visíveis; o banco constrói o snapshot canônico. */
+function comparisonResponseIds(fieldResponses: FieldResponse[]): string[] {
   return fieldResponses
     .filter((r) => r.answer !== undefined)
-    .map((r) => ({
-      id: r.id,
-      respondent_name: r.respondent_name,
-      respondent_type: r.respondent_type,
-      answer: r.answer,
-      ...(r.justification ? { justification: r.justification } : {}),
-    }));
+    .map((r) => r.id);
 }
 
 /**
@@ -148,7 +141,7 @@ export function useCompareVerdicts({
           verdict,
           chosenResponseId,
           verdictComment,
-          buildSnapshot(fieldResponses),
+          comparisonResponseIds(fieldResponses),
         ),
         "Failed to submit compare verdict",
         {
@@ -224,7 +217,7 @@ export function useCompareVerdicts({
           gabaritoId,
           verdictDisplay,
           verdictComment,
-          buildSnapshot(fieldResponses),
+          comparisonResponseIds(fieldResponses),
         ),
         "Failed to confirm equivalent verdict",
         { projectId, documentId: docId, fieldName },

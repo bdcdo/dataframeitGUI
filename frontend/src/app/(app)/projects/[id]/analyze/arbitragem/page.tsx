@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ArbitrationPage } from "@/components/arbitration/ArbitrationPage";
 import { assignOrder } from "@/lib/arbitration-order";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
+import { loadActiveReviewDocuments } from "@/lib/review-documents";
 
 // Server-side A/B embaralhamento da fase cega — o navegador nunca recebe os
 // labels humano/llm enquanto blind_verdict IS NULL. Quando blind ja foi decidido,
@@ -59,12 +60,7 @@ export default async function ArbitrationRoute({
   }
 
   const [{ data: docs }, { data: fieldReviews }] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("id, title, external_id, text")
-      .in("id", docIds)
-      .is("excluded_at", null)
-      .is("exclusion_pending_at", null),
+    loadActiveReviewDocuments(supabase, docIds),
     supabase
       .from("field_reviews")
       .select(

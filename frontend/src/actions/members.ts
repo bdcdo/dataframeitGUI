@@ -2,12 +2,13 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser, requireCoordinator } from "@/lib/auth";
+import { requireCoordinator } from "@/lib/auth";
 import { preregisterSupabaseUser } from "@/lib/clerk-sync";
-import type { MemberEmailLink } from "@/lib/types";
+import type { MemberEmailLink, ProjectMember } from "@/lib/types";
 import { retryPendingArbitrations } from "@/actions/field-reviews";
 import { retryPendingComparisons } from "@/actions/comparisons";
 import { revalidatePath, revalidateTag } from "next/cache";
+import { after } from "next/server";
 import { MEMBERS_TAG_PROFILE as TAG_PROFILE } from "@/lib/cache";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -18,38 +19,71 @@ function normalizeEmail(raw: string): string | null {
   return EMAIL_RE.test(email) ? email : null;
 }
 
+type ReadResult = { error?: { message: string } | null };
+
+function firstReadError(...results: ReadResult[]): string | null {
+  return results.find((result) => result.error)?.error?.message ?? null;
+}
+
+function warnAfterResponse(message: string, details: Record<string, unknown>): void {
+  after(() => console.warn(message, details));
+}
+
+function schedulePendingWork(projectId: string): void {
+  after(async () => {
+    const [arbitrations, comparisons] = await Promise.all([
+      retryPendingArbitrations(projectId),
+      retryPendingComparisons(projectId),
+    ]);
+    if (!arbitrations.success || !comparisons.success) {
+      console.warn("[members] reprocessamento pós-mudança ficou pendente", {
+        projectId,
+        arbitrationError: arbitrations.error,
+        comparisonError: comparisons.error,
+      });
+    }
+  });
+}
+
+async function updateMemberAttribute(
+  memberId: string,
+  patch: Partial<Pick<ProjectMember, "role" | "can_resolve">>,
+): Promise<{ projectId: string } | { error: string }> {
+  const supabase = await createSupabaseServer();
+  const { data: member, error } = await supabase
+    .from("project_members")
+    .update(patch)
+    .eq("id", memberId)
+    .select("project_id")
+    .maybeSingle();
+
+  if (error) return { error: error.message };
+  if (!member) return { error: "Membro não encontrado ou sem permissão." };
+  return { projectId: member.project_id };
+}
+
 export async function addMember(
   projectId: string,
   rawEmail: string,
   role: "coordenador" | "pesquisador"
 ): Promise<{ error?: string; pending?: boolean }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem adicionar membros.",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const email = normalizeEmail(rawEmail);
   if (!email) return { error: "E-mail inválido." };
 
-  const supabase = await createSupabaseServer();
-
-  // Verify caller is coordinator (via normal client, RLS applies)
-  const { data: callerMember } = await supabase
-    .from("project_members")
-    .select("role")
-    .eq("project_id", projectId)
-    .eq("user_id", user.id)
-    .single();
-  if (callerMember?.role !== "coordenador") {
-    return { error: "Apenas coordenadores podem adicionar membros." };
-  }
-
   // Admin client for lookup + insert (bypasses RLS)
   const admin = createSupabaseAdmin();
-  const [{ data: profile }, { data: linkedTo }] = await Promise.all([
+  const [profileResult, linkResult] = await Promise.all([
     admin
       .from("profiles")
       .select("id, activated_at")
       .eq("email", email)
-      .single(),
+      .maybeSingle(),
     admin
       .from("member_email_links")
       .select("member_user_id")
@@ -57,6 +91,12 @@ export async function addMember(
       .eq("email", email)
       .maybeSingle(),
   ]);
+  const lookupError = firstReadError(profileResult, linkResult);
+  if (lookupError) {
+    return { error: `Não foi possível verificar o e-mail: ${lookupError}` };
+  }
+  const profile = profileResult.data;
+  const linkedTo = linkResult.data;
 
   // E-mail já vinculado a um membro deste projeto: adicioná-lo como membro
   // próprio criaria uma identidade inutilizável — getEffectiveMemberId
@@ -121,31 +161,19 @@ export async function updatePendingMemberEmail(
   memberUserId: string,
   rawNewEmail: string
 ): Promise<{ error?: string; otherProjectsCount?: number }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem corrigir e-mails.",
+  );
+  if (!gate.ok) return { error: gate.error };
 
   const newEmail = normalizeEmail(rawNewEmail);
   if (!newEmail) return { error: "E-mail inválido." };
 
-  const supabase = await createSupabaseServer();
-  const { data: callerMember } = await supabase
-    .from("project_members")
-    .select("role")
-    .eq("project_id", projectId)
-    .eq("user_id", user.id)
-    .single();
-  if (callerMember?.role !== "coordenador") {
-    return { error: "Apenas coordenadores podem corrigir e-mails." };
-  }
-
   const admin = createSupabaseAdmin();
 
-  const [
-    { data: membership },
-    { data: targetProfile },
-    { data: emailOwner },
-    { data: emailLink },
-  ] = await Promise.all([
+  const [membershipResult, targetProfileResult, emailOwnerResult, emailLinkResult] =
+    await Promise.all([
     admin
       .from("project_members")
       .select("id")
@@ -168,7 +196,20 @@ export async function updatePendingMemberEmail(
       .eq("project_id", projectId)
       .eq("email", newEmail)
       .maybeSingle(),
-  ]);
+    ]);
+  const lookupError = firstReadError(
+    membershipResult,
+    targetProfileResult,
+    emailOwnerResult,
+    emailLinkResult,
+  );
+  if (lookupError) {
+    return { error: `Não foi possível verificar o membro: ${lookupError}` };
+  }
+  const membership = membershipResult.data;
+  const targetProfile = targetProfileResult.data;
+  const emailOwner = emailOwnerResult.data;
+  const emailLink = emailLinkResult.data;
 
   if (!membership || !targetProfile) {
     return { error: "Membro não encontrado neste projeto." };
@@ -222,6 +263,8 @@ export async function removeMember(memberId: string) {
   if (!removed) return { error: "Membro não encontrado ou sem permissão." };
   const projectId = removed.project_id;
 
+  schedulePendingWork(projectId);
+
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
@@ -230,17 +273,9 @@ export async function changeRole(
   memberId: string,
   role: "coordenador" | "pesquisador",
 ) {
-  const supabase = await createSupabaseServer();
-  const { data: member, error } = await supabase
-    .from("project_members")
-    .update({ role })
-    .eq("id", memberId)
-    .select("project_id")
-    .maybeSingle();
-
-  if (error) return { error: error.message };
-  if (!member) return { error: "Membro não encontrado ou sem permissão." };
-  const projectId = member.project_id;
+  const result = await updateMemberAttribute(memberId, { role });
+  if ("error" in result) return result;
+  const { projectId } = result;
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
@@ -252,22 +287,66 @@ export async function setCanResolve(
   memberId: string,
   canResolve: boolean,
 ): Promise<{ error?: string }> {
-  const supabase = await createSupabaseServer();
-  const { data: member, error } = await supabase
-    .from("project_members")
-    .update({ can_resolve: canResolve })
-    .eq("id", memberId)
-    .select("project_id")
-    .maybeSingle();
-
-  if (error) return { error: error.message };
-  if (!member) return { error: "Membro não encontrado ou sem permissão." };
-  const projectId = member.project_id;
+  const result = await updateMemberAttribute(memberId, {
+    can_resolve: canResolve,
+  });
+  if ("error" in result) return result;
+  const { projectId } = result;
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return {};
+}
+
+type PermissionRetry = {
+  success: boolean;
+  assigned: number;
+  stillNoPool: number;
+  error?: string;
+};
+
+type PoolPermissionResult = {
+  error?: string;
+  warning?: string;
+  retried?: { assigned: number; stillNoPool: number };
+};
+
+async function setMemberPoolPermission(
+  memberId: string,
+  enabled: boolean,
+  options: {
+    rpc: "set_member_arbitration_permission" | "set_member_comparison_permission";
+    retry: (projectId: string) => Promise<PermissionRetry>;
+    warning: string;
+    logMessage: string;
+  },
+): Promise<PoolPermissionResult> {
+  const supabase = await createSupabaseServer();
+  const { data, error } = await supabase
+    .rpc(options.rpc, { p_member_id: memberId, p_enabled: enabled })
+    .maybeSingle();
+
+  if (error) return { error: error.message };
+  const member = data as { project_id: string } | null;
+  if (!member) return { error: "Membro não encontrado ou sem permissão." };
+
+  const result = await options.retry(member.project_id);
+  const retried = result.success
+    ? { assigned: result.assigned, stillNoPool: result.stillNoPool }
+    : undefined;
+  const warning = result.success ? undefined : options.warning;
+  if (!result.success) {
+    warnAfterResponse(options.logMessage, {
+      projectId: member.project_id,
+      error: result.error,
+    });
+  }
+
+  revalidatePath(`/projects/${member.project_id}`);
+  revalidatePath(`/projects/${member.project_id}/config/members`);
+  revalidateTag(`project-${member.project_id}-members`, TAG_PROFILE);
+  return { retried, warning };
 }
 
 // Define se um membro entra no sorteio de árbitros para casos contestados.
@@ -284,30 +363,14 @@ export async function setCanResolve(
 export async function setCanArbitrate(
   memberId: string,
   canArbitrate: boolean,
-): Promise<{ error?: string; retried?: { assigned: number; stillNoPool: number } }> {
-  const supabase = await createSupabaseServer();
-  const { data, error } = await supabase
-    .rpc("set_member_arbitration_permission", {
-      p_member_id: memberId,
-      p_enabled: canArbitrate,
-    })
-    .maybeSingle();
-
-  if (error) return { error: error.message };
-  const member = data as { project_id: string } | null;
-  if (!member) return { error: "Membro não encontrado ou sem permissão." };
-  const projectId = member.project_id;
-
-  let retried: { assigned: number; stillNoPool: number } | undefined;
-  const result = await retryPendingArbitrations(projectId);
-  if (result.success) {
-    retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };
-  }
-
-  revalidatePath(`/projects/${projectId}`);
-  revalidatePath(`/projects/${projectId}/config/members`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
-  return { retried };
+): Promise<PoolPermissionResult> {
+  return setMemberPoolPermission(memberId, canArbitrate, {
+    rpc: "set_member_arbitration_permission",
+    retry: retryPendingArbitrations,
+    warning:
+      "A permissão foi salva, mas as arbitragens pendentes não puderam ser reprocessadas.",
+    logMessage: "[members] retry de arbitragens falhou após salvar permissão",
+  });
 }
 
 // Define se um membro entra no sorteio de revisores de comparação
@@ -321,30 +384,14 @@ export async function setCanArbitrate(
 export async function setCanCompare(
   memberId: string,
   canCompare: boolean,
-): Promise<{ error?: string; retried?: { assigned: number; stillNoPool: number } }> {
-  const supabase = await createSupabaseServer();
-  const { data, error } = await supabase
-    .rpc("set_member_comparison_permission", {
-      p_member_id: memberId,
-      p_enabled: canCompare,
-    })
-    .maybeSingle();
-
-  if (error) return { error: error.message };
-  const member = data as { project_id: string } | null;
-  if (!member) return { error: "Membro não encontrado ou sem permissão." };
-  const projectId = member.project_id;
-
-  let retried: { assigned: number; stillNoPool: number } | undefined;
-  const result = await retryPendingComparisons(projectId);
-  if (result.success) {
-    retried = { assigned: result.assigned, stillNoPool: result.stillNoPool };
-  }
-
-  revalidatePath(`/projects/${projectId}`);
-  revalidatePath(`/projects/${projectId}/config/members`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
-  return { retried };
+): Promise<PoolPermissionResult> {
+  return setMemberPoolPermission(memberId, canCompare, {
+    rpc: "set_member_comparison_permission",
+    retry: retryPendingComparisons,
+    warning:
+      "A permissão foi salva, mas as comparações pendentes não puderam ser reprocessadas.",
+    logMessage: "[members] retry de comparações falhou após salvar permissão",
+  });
 }
 
 // Preview da unificação (FR-009): o coordenador confirma sabendo o impacto —
@@ -378,18 +425,13 @@ export async function linkMemberEmail(
     "Apenas coordenadores podem vincular e-mails.",
   );
   if (!gate.ok) return { error: gate.error };
-  const user = gate.user;
-
   const email = normalizeEmail(rawEmail);
   if (!email) return { error: "E-mail inválido." };
 
   const admin = createSupabaseAdmin();
 
-  const [
-    { data: targetMembership },
-    { data: existingLink },
-    { data: emailProfile },
-  ] = await Promise.all([
+  const [targetMembershipResult, existingLinkResult, emailProfileResult] =
+    await Promise.all([
     admin
       .from("project_members")
       .select("role")
@@ -407,7 +449,18 @@ export async function linkMemberEmail(
       .select("id, first_name, email")
       .eq("email", email)
       .maybeSingle(),
-  ]);
+    ]);
+  const initialLookupError = firstReadError(
+    targetMembershipResult,
+    existingLinkResult,
+    emailProfileResult,
+  );
+  if (initialLookupError) {
+    return { error: `Não foi possível verificar o vínculo: ${initialLookupError}` };
+  }
+  const targetMembership = targetMembershipResult.data;
+  const existingLink = existingLinkResult.data;
+  const emailProfile = emailProfileResult.data;
 
   if (!targetMembership) {
     return { error: "Membro não encontrado neste projeto." };
@@ -418,11 +471,14 @@ export async function linkMemberEmail(
     if (existingLink.member_user_id === memberUserId) {
       return { error: "Este e-mail já está vinculado a este membro." };
     }
-    const { data: linkedTo } = await admin
+    const { data: linkedTo, error: linkedToError } = await admin
       .from("profiles")
       .select("first_name, email")
       .eq("id", existingLink.member_user_id)
       .maybeSingle();
+    if (linkedToError) {
+      return { error: `Não foi possível verificar o vínculo: ${linkedToError.message}` };
+    }
     const name = linkedTo?.first_name || linkedTo?.email || "outro membro";
     return { error: `Este e-mail já está vinculado a ${name} neste projeto.` };
   }
@@ -432,18 +488,20 @@ export async function linkMemberEmail(
       return { error: "Este já é o e-mail principal deste membro." };
     }
 
-    const { data: emailOwnerMembership } = await admin
+    const { data: emailOwnerMembership, error: membershipError } = await admin
       .from("project_members")
       .select("id")
       .eq("project_id", projectId)
       .eq("user_id", emailProfile.id)
       .maybeSingle();
+    if (membershipError) {
+      return { error: `Não foi possível verificar o vínculo: ${membershipError.message}` };
+    }
 
     // Caso 2 — e-mail principal de outro membro: unificação com confirmação
     // explícita (FR-009); nada é executado aqui.
     if (emailOwnerMembership) {
-      const [{ count: assignmentsToMigrate }, { data: latestResponses }] =
-        await Promise.all([
+      const [assignmentsResult, responsesResult] = await Promise.all([
           admin
             .from("assignments")
             .select("id", { count: "exact", head: true })
@@ -456,7 +514,13 @@ export async function linkMemberEmail(
             .eq("respondent_type", "humano")
             .eq("is_latest", true)
             .in("respondent_id", [emailProfile.id, memberUserId]),
-        ]);
+      ]);
+      const previewError = firstReadError(assignmentsResult, responsesResult);
+      if (previewError) {
+        return { error: `Não foi possível calcular a unificação: ${previewError}` };
+      }
+      const assignmentsToMigrate = assignmentsResult.count;
+      const latestResponses = responsesResult.data;
 
       const docsBySource = new Set(
         (latestResponses || [])
@@ -489,7 +553,7 @@ export async function linkMemberEmail(
       member_user_id: memberUserId,
       email,
       linked_user_id: emailProfile?.id ?? null,
-      created_by: user.id,
+      created_by: gate.user.id,
     })
     .select(
       "id, project_id, member_user_id, email, linked_user_id, created_by, created_at",
@@ -521,17 +585,17 @@ export async function unifyMembers(
     "Apenas coordenadores podem unificar membros.",
   );
   if (!gate.ok) return { error: gate.error };
-  const user = gate.user;
-
   const admin = createSupabaseAdmin();
   const { error } = await admin.rpc("unify_project_members", {
     p_project_id: projectId,
     p_source_user_id: sourceUserId,
     p_target_user_id: targetUserId,
-    p_acting_user_id: user.id,
+    p_acting_user_id: gate.user.id,
   });
 
   if (error) return { error: error.message };
+
+  schedulePendingWork(projectId);
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);

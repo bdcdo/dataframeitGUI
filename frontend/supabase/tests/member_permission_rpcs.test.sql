@@ -20,11 +20,14 @@ INSERT INTO auth.users (id, email) VALUES
   ('93000000-0000-0000-0000-000000000017', 'alias-happy-rpc@example.test'),
   ('93000000-0000-0000-0000-000000000018', 'alias-rollback-rpc@example.test');
 
-INSERT INTO public.projects (id, name, created_by) VALUES
+INSERT INTO public.projects (
+  id, name, created_by, pydantic_hash, pydantic_fields,
+  schema_version_major, schema_version_minor, schema_version_patch
+) VALUES
   ('90000000-0000-0000-0000-000000000001', 'member permission RPC test',
-   '93000000-0000-0000-0000-000000000011'),
+   '93000000-0000-0000-0000-000000000011', 'schema', '[]', 1, 0, 0),
   ('90000000-0000-0000-0000-000000000002', 'cross-project IDOR test',
-   '93000000-0000-0000-0000-000000000015');
+   '93000000-0000-0000-0000-000000000015', 'schema', '[]', 1, 0, 0);
 
 INSERT INTO public.project_members
   (id, project_id, user_id, role, can_arbitrate, can_compare)
@@ -53,53 +56,56 @@ INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('94000000-0000-0000-0000-000000000008', '90000000-0000-0000-0000-000000000002', 'IDOR comparação', 'd8');
 
 INSERT INTO public.responses
-  (id, project_id, document_id, respondent_id, respondent_type, answers)
+  (id, project_id, document_id, respondent_id, respondent_type, answers,
+   is_latest, pydantic_hash, schema_version_major, schema_version_minor,
+   schema_version_patch, version_inferred_from, answer_field_hashes)
 VALUES
   ('95000000-0000-0000-0000-000000000001', '90000000-0000-0000-0000-000000000001',
-   '94000000-0000-0000-0000-000000000001', '93000000-0000-0000-0000-000000000012', 'humano', '{}'),
+   '94000000-0000-0000-0000-000000000001', '93000000-0000-0000-0000-000000000012', 'humano', '{}', true, 'schema', 1, 0, 0, 'live_save', '{}'),
   ('95000000-0000-0000-0000-000000000002', '90000000-0000-0000-0000-000000000001',
-   '94000000-0000-0000-0000-000000000001', NULL, 'llm', '{}'),
+   '94000000-0000-0000-0000-000000000001', NULL, 'llm', '{}', true, 'schema', 1, 0, 0, 'created_at', '{}'),
   ('95000000-0000-0000-0000-000000000003', '90000000-0000-0000-0000-000000000001',
-   '94000000-0000-0000-0000-000000000002', '93000000-0000-0000-0000-000000000012', 'humano', '{}'),
+   '94000000-0000-0000-0000-000000000002', '93000000-0000-0000-0000-000000000012', 'humano', '{}', true, 'schema', 1, 0, 0, 'live_save', '{}'),
   ('95000000-0000-0000-0000-000000000004', '90000000-0000-0000-0000-000000000001',
-   '94000000-0000-0000-0000-000000000002', NULL, 'llm', '{}'),
+   '94000000-0000-0000-0000-000000000002', NULL, 'llm', '{}', true, 'schema', 1, 0, 0, 'created_at', '{}'),
   ('95000000-0000-0000-0000-000000000005', '90000000-0000-0000-0000-000000000001',
-   '94000000-0000-0000-0000-000000000005', '93000000-0000-0000-0000-000000000012', 'humano', '{}'),
+   '94000000-0000-0000-0000-000000000005', '93000000-0000-0000-0000-000000000012', 'humano', '{}', true, 'schema', 1, 0, 0, 'live_save', '{}'),
   ('95000000-0000-0000-0000-000000000006', '90000000-0000-0000-0000-000000000001',
-   '94000000-0000-0000-0000-000000000005', NULL, 'llm', '{}'),
+   '94000000-0000-0000-0000-000000000005', NULL, 'llm', '{}', true, 'schema', 1, 0, 0, 'created_at', '{}'),
   ('95000000-0000-0000-0000-000000000007', '90000000-0000-0000-0000-000000000002',
-   '94000000-0000-0000-0000-000000000007', '93000000-0000-0000-0000-000000000015', 'humano', '{}'),
+   '94000000-0000-0000-0000-000000000007', '93000000-0000-0000-0000-000000000015', 'humano', '{}', true, 'schema', 1, 0, 0, 'live_save', '{}'),
   ('95000000-0000-0000-0000-000000000008', '90000000-0000-0000-0000-000000000002',
-   '94000000-0000-0000-0000-000000000007', NULL, 'llm', '{}'),
+   '94000000-0000-0000-0000-000000000007', NULL, 'llm', '{}', true, 'schema', 1, 0, 0, 'created_at', '{}'),
   ('95000000-0000-0000-0000-000000000009', '90000000-0000-0000-0000-000000000002',
-   '94000000-0000-0000-0000-000000000008', '93000000-0000-0000-0000-000000000015', 'humano', '{}'),
+   '94000000-0000-0000-0000-000000000008', '93000000-0000-0000-0000-000000000015', 'humano', '{}', true, 'schema', 1, 0, 0, 'live_save', '{}'),
   ('95000000-0000-0000-0000-000000000010', '90000000-0000-0000-0000-000000000002',
-   '94000000-0000-0000-0000-000000000008', NULL, 'llm', '{}');
+   '94000000-0000-0000-0000-000000000008', NULL, 'llm', '{}', true, 'schema', 1, 0, 0, 'created_at', '{}');
 
 INSERT INTO public.field_reviews
   (id, project_id, document_id, field_name, human_response_id, llm_response_id,
-   self_reviewer_id, self_verdict, arbitrator_id, blind_verdict,
+   self_reviewer_id, self_verdict, self_reviewed_at, self_justification,
+   arbitrator_id, blind_verdict,
    blind_decided_at, final_verdict, final_decided_at)
 VALUES
   ('97000000-0000-0000-0000-000000000001', '90000000-0000-0000-0000-000000000001',
    '94000000-0000-0000-0000-000000000001', 'field_a',
    '95000000-0000-0000-0000-000000000001', '95000000-0000-0000-0000-000000000002',
-   '93000000-0000-0000-0000-000000000012', 'contesta_llm',
+   '93000000-0000-0000-0000-000000000012', 'contesta_llm', now(), 'justificativa',
    '93000000-0000-0000-0000-000000000013', 'humano', now(), NULL, NULL),
   ('97000000-0000-0000-0000-000000000002', '90000000-0000-0000-0000-000000000001',
    '94000000-0000-0000-0000-000000000002', 'field_a',
    '95000000-0000-0000-0000-000000000003', '95000000-0000-0000-0000-000000000004',
-   '93000000-0000-0000-0000-000000000012', 'contesta_llm',
+   '93000000-0000-0000-0000-000000000012', 'contesta_llm', now(), 'justificativa',
    '93000000-0000-0000-0000-000000000013', 'humano', now(), 'humano', now()),
   ('97000000-0000-0000-0000-000000000003', '90000000-0000-0000-0000-000000000001',
    '94000000-0000-0000-0000-000000000005', 'field_a',
    '95000000-0000-0000-0000-000000000005', '95000000-0000-0000-0000-000000000006',
-   '93000000-0000-0000-0000-000000000012', 'contesta_llm',
+   '93000000-0000-0000-0000-000000000012', 'contesta_llm', now(), 'justificativa',
    '93000000-0000-0000-0000-000000000014', 'llm', now(), NULL, NULL),
   ('97000000-0000-0000-0000-000000000004', '90000000-0000-0000-0000-000000000002',
    '94000000-0000-0000-0000-000000000007', 'field_a',
    '95000000-0000-0000-0000-000000000007', '95000000-0000-0000-0000-000000000008',
-   '93000000-0000-0000-0000-000000000015', 'contesta_llm',
+   '93000000-0000-0000-0000-000000000015', 'contesta_llm', now(), 'justificativa',
    '93000000-0000-0000-0000-000000000016', 'humano', now(), NULL, NULL);
 
 INSERT INTO public.assignments
@@ -134,7 +140,7 @@ VALUES
    '93000000-0000-0000-0000-000000000014', 'alias-rollback-rpc@example.test',
    '93000000-0000-0000-0000-000000000018', '93000000-0000-0000-0000-000000000011');
 
-GRANT SELECT, UPDATE, DELETE ON public.project_members TO authenticated;
+GRANT SELECT ON public.project_members TO authenticated;
 GRANT SELECT, UPDATE ON public.field_reviews TO authenticated;
 GRANT SELECT, DELETE ON public.assignments TO authenticated;
 GRANT SELECT, DELETE ON public.member_email_links TO authenticated;
@@ -202,6 +208,23 @@ BEGIN
     'EXECUTE'
   ) THEN
     RAISE EXCEPTION 'FALHOU ACL: commit de assignment fora da service_role';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.project_members', 'UPDATE')
+     OR has_table_privilege('authenticated', 'public.project_members', 'DELETE')
+     OR has_column_privilege(
+       'authenticated', 'public.project_members', 'can_arbitrate', 'UPDATE'
+     )
+     OR has_column_privilege(
+       'authenticated', 'public.project_members', 'can_compare', 'UPDATE'
+     )
+     OR NOT has_column_privilege(
+       'authenticated', 'public.project_members', 'role', 'UPDATE'
+     )
+     OR NOT has_column_privilege(
+       'authenticated', 'public.project_members', 'can_resolve', 'UPDATE'
+     ) THEN
+    RAISE EXCEPTION 'FALHOU ACL: DML genérico contorna RPCs de membro';
   END IF;
   RAISE NOTICE 'OK ACL: RPCs de membro e assignment têm roles mínimas';
 END $$;
@@ -684,12 +707,12 @@ BEGIN
 
   SELECT count(*) INTO v_historical_count
   FROM public.assignments
-  WHERE id IN (
-    '96000000-0000-0000-0000-000000000002',
-    '96000000-0000-0000-0000-000000000004'
-  );
-  IF v_historical_count <> 2 THEN
-    RAISE EXCEPTION 'FALHOU remoção: trabalho iniciado/concluído foi apagado';
+  WHERE id = '96000000-0000-0000-0000-000000000002';
+  IF v_historical_count <> 1 OR EXISTS (
+    SELECT 1 FROM public.assignments
+    WHERE id = '96000000-0000-0000-0000-000000000004'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU remoção: histórico concluído ou trabalho aberto incorreto';
   END IF;
 
   SELECT count(*) INTO v_rollback_assignment_count

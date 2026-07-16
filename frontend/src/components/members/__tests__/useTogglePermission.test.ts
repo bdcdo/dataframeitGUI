@@ -1,5 +1,41 @@
-import { describe, it, expect } from "vitest";
-import { buildRetriableToggleMessage } from "../useTogglePermission";
+// @vitest-environment jsdom
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+
+const toast = vi.hoisted(() => ({
+  error: vi.fn(),
+  success: vi.fn(),
+  warning: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({ toast }));
+
+import {
+  buildRetriableToggleMessage,
+  useTogglePermission,
+} from "../useTogglePermission";
+
+describe("useTogglePermission", () => {
+  it("informa a rejeição da action e limpa o estado pendente", async () => {
+    const startTransition = (callback: () => void) => callback();
+    const { result } = renderHook(() =>
+      useTogglePermission(
+        async () => {
+          throw new Error("rede indisponível");
+        },
+        (value) => ({ can_compare: value }),
+        () => "Atualizado",
+        vi.fn(),
+        startTransition,
+      ),
+    );
+
+    act(() => result.current.toggle("member-1", true));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("rede indisponível"));
+    expect(result.current.pendingId).toBeNull();
+  });
+});
 
 describe("buildRetriableToggleMessage", () => {
   it("sem retried, retorna só o verbo", () => {

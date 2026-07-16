@@ -82,15 +82,15 @@ export function AutoReviewPageContent({
 
   async function handleSubmit() {
     if (readOnly) return;
-    const readyFieldNames = doc.fields
+    const readyFields = doc.fields
       .filter((_, i) => fieldStatus[i].ready)
-      .map((f) => f.fieldName);
-    if (readyFieldNames.length === 0) return;
+    if (readyFields.length === 0) return;
     setSubmitting(true);
-    const payload = readyFieldNames.map((fieldName) => {
-      const key = choiceKey(doc.docId, fieldName);
+    const payload = readyFields.map((field) => {
+      const key = choiceKey(doc.docId, field.fieldName);
       return {
-        fieldName,
+        fieldReviewId: field.fieldReviewId,
+        fieldName: field.fieldName,
         verdict: choices[key],
         justification: justifications[key],
       };
@@ -107,21 +107,21 @@ export function AutoReviewPageContent({
       toast.success(
         result.arbitrated
           ? `Enviado. ${result.arbitrated} campo(s) seguem para arbitragem.`
-          : `Enviado. ${readyFieldNames.length} campo(s) resolvido(s).`,
+          : `Enviado. ${readyFields.length} campo(s) resolvido(s).`,
       );
     }
     // Limpa so os campos enviados — escolhas incompletas (contesta_llm sem
     // justificativa) permanecem para o usuario continuar de onde parou.
     setChoices((c) => {
       const next = { ...c };
-      for (const fieldName of readyFieldNames)
-        delete next[choiceKey(doc.docId, fieldName)];
+      for (const field of readyFields)
+        delete next[choiceKey(doc.docId, field.fieldName)];
       return next;
     });
     setJustifications((j) => {
       const next = { ...j };
-      for (const fieldName of readyFieldNames)
-        delete next[choiceKey(doc.docId, fieldName)];
+      for (const field of readyFields)
+        delete next[choiceKey(doc.docId, field.fieldName)];
       return next;
     });
     // Recarrega o estado do servidor: os campos enviados voltam como

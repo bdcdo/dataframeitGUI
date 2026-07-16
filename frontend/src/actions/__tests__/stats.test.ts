@@ -7,9 +7,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // withResolutionAction é testado uma vez (é idêntico nas 10); as demais 8
 // funções ganham 1 teste de fumaça de caminho feliz cada, o suficiente para
 // pegar regressão na migração pro wrapper.
-import { makeSupabaseMock, type TableResults, type WriteCall } from "./supabase-mock";
+import {
+  makeSupabaseMock,
+  type RpcCall,
+  type TableResults,
+  type WriteCall,
+} from "./supabase-mock";
 
 let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
 let serverTableResults: TableResults | undefined;
 
 const hoisted = vi.hoisted(() => ({
@@ -19,14 +25,16 @@ const hoisted = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
+  getEffectiveMemberId: async () => "member1",
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
+    makeSupabaseMock({ tableResults: serverTableResults, writeCalls, rpcCalls }),
 }));
 
 beforeEach(() => {
   writeCalls = [];
+  rpcCalls = [];
   serverTableResults = undefined;
   hoisted.getUser.mockResolvedValue({ id: "user1" });
 });
@@ -61,7 +69,7 @@ describe("resolveNote / reopenNote", () => {
         payload: {
           project_id: "p1",
           response_id: "resp1",
-          resolved_by: "user1",
+          resolved_by: "member1",
           note: "nota",
         },
       },
@@ -120,6 +128,15 @@ describe("resolveReviewComment / reopenReviewComment — smoke", () => {
     const r = await resolveReviewComment("rv1", "p1");
 
     expect(r).toEqual({ success: true });
+    expect(rpcCalls).toContainEqual({
+      fn: "set_review_resolution",
+      args: {
+        p_project_id: "p1",
+        p_review_id: "rv1",
+        p_resolved: true,
+        p_resolver_id: "member1",
+      },
+    });
   });
 
   it("reopenReviewComment: sucesso", async () => {
@@ -129,6 +146,15 @@ describe("resolveReviewComment / reopenReviewComment — smoke", () => {
     const r = await reopenReviewComment("rv1", "p1");
 
     expect(r).toEqual({ success: true });
+    expect(rpcCalls).toContainEqual({
+      fn: "set_review_resolution",
+      args: {
+        p_project_id: "p1",
+        p_review_id: "rv1",
+        p_resolved: false,
+        p_resolver_id: "member1",
+      },
+    });
   });
 });
 

@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // (supabase-mock.ts), fila de resultados por tabela.
 import {
   makeSupabaseMock,
-  type TableResult,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
@@ -19,9 +18,11 @@ vi.mock("next/cache", () => ({
   revalidateTag: () => {},
 }));
 vi.mock("@/lib/auth", () => ({
-  // Criador do projeto: assertCoordinator dá short-circuit na 1ª query de
-  // projects (created_by === user.id).
-  getAuthUser: async () => ({ id: "userCoord", isMaster: false }),
+  requireCoordinator: async () => ({
+    ok: true,
+    user: { id: "userCoord", isMaster: false },
+    effectiveUserId: "userCoord",
+  }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
@@ -35,9 +36,6 @@ import {
   setRoundStrategy,
 } from "../rounds";
 
-// 1ª query de projects em toda action: o select de created_by do assertCoordinator.
-const ASSERT_COORD: TableResult = { data: { created_by: "userCoord" } };
-
 beforeEach(() => {
   writeCalls = [];
   serverTableResults = undefined;
@@ -45,13 +43,13 @@ beforeEach(() => {
 
 describe("setCurrentRound", () => {
   it("retorna erro quando o UPDATE de projects é filtrado (0 linhas)", async () => {
-    serverTableResults = { projects: [ASSERT_COORD, { data: [] }] };
+    serverTableResults = { projects: { data: [] } };
     const r = await setCurrentRound("p1", null);
     expect(r.error).toMatch(/Sem permissão/);
   });
 
   it("caminho feliz: sem erro quando o UPDATE afeta 1 linha", async () => {
-    serverTableResults = { projects: [ASSERT_COORD, { data: [{ id: "p1" }] }] };
+    serverTableResults = { projects: { data: [{ id: "p1" }] } };
     const r = await setCurrentRound("p1", null);
     expect(r.error).toBeUndefined();
   });
@@ -59,7 +57,7 @@ describe("setCurrentRound", () => {
 
 describe("setRoundStrategy", () => {
   it("retorna erro em 0 linhas", async () => {
-    serverTableResults = { projects: [ASSERT_COORD, { data: [] }] };
+    serverTableResults = { projects: { data: [] } };
     const r = await setRoundStrategy("p1", "manual");
     expect(r.error).toMatch(/Sem permissão/);
   });
@@ -68,7 +66,6 @@ describe("setRoundStrategy", () => {
 describe("renameRound", () => {
   it("retorna erro quando o UPDATE de rounds não casa nenhuma linha", async () => {
     serverTableResults = {
-      projects: [ASSERT_COORD],
       rounds: { data: [] },
     };
     const r = await renameRound("p1", "r1", "Rodada 2");
@@ -79,7 +76,7 @@ describe("renameRound", () => {
 describe("createRound(setAsCurrent=true)", () => {
   it("estado parcial: rodada criada mas current_round_id não setado → devolve id E erro", async () => {
     serverTableResults = {
-      projects: [ASSERT_COORD, { data: [] }],
+      projects: { data: [] },
       rounds: { data: { id: "r1" } },
     };
     const r = await createRound("p1", "Rodada 1", true);
@@ -89,7 +86,7 @@ describe("createRound(setAsCurrent=true)", () => {
 
   it("caminho feliz: devolve id sem erro", async () => {
     serverTableResults = {
-      projects: [ASSERT_COORD, { data: [{ id: "p1" }] }],
+      projects: { data: [{ id: "p1" }] },
       rounds: { data: { id: "r1" } },
     };
     const r = await createRound("p1", "Rodada 1", true);

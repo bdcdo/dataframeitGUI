@@ -21,8 +21,18 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
+  getEffectiveMemberId: async () => "memberCoord",
+  resolveProjectActor: async () => ({
+    ok: true,
+    user: { id: "userCoord" },
+    effectiveUserId: "memberCoord",
+  }),
   isProjectCoordinator: async () => true,
-  requireCoordinator: async () => ({ ok: true, user: { id: "userCoord" } }),
+  requireCoordinator: async () => ({
+    ok: true,
+    user: { id: "userCoord" },
+    effectiveUserId: "memberCoord",
+  }),
 }));
 vi.mock("@/lib/api-server", () => ({
   fetchFastAPIServer: async () => ({ valid: true, fields: [], model_name: null, errors: [] }),
@@ -59,10 +69,26 @@ beforeEach(() => {
   serverTableResults = undefined;
 });
 
+describe("createSchemaSuggestion", () => {
+  it("persiste o autor canônico quando o login é um alias", async () => {
+    const { createSchemaSuggestion } = await import("../suggestions");
+
+    expect(
+      await createSchemaSuggestion("p1", "q1", { description: "Nova" }, "motivo"),
+    ).toEqual({});
+    expect(writeCalls).toContainEqual({
+      table: "schema_suggestions",
+      op: "insert",
+      payload: expect.objectContaining({ suggested_by: "memberCoord" }),
+    });
+  });
+});
+
 describe("approveSchemaSuggestionWithEdits", () => {
   it("schema não aplicado (0 linhas em projects) → erro e sugestão NÃO marcada como aprovada", async () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [] }],
+      schema_suggestions: { data: { id: "s1" } },
     };
 
     const r = await approveSchemaSuggestionWithEdits("s1", "p1", [FIELD]);
@@ -76,7 +102,10 @@ describe("approveSchemaSuggestionWithEdits", () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
       schema_change_log: { data: null, error: null },
-      schema_suggestions: { data: [] },
+      schema_suggestions: [
+        { data: { id: "s1" } },
+        { data: [] },
+      ],
     };
 
     const r = await approveSchemaSuggestionWithEdits("s1", "p1", [FIELD]);
@@ -87,7 +116,10 @@ describe("approveSchemaSuggestionWithEdits", () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
       schema_change_log: { data: null, error: null },
-      schema_suggestions: { data: [{ id: "s1" }] },
+      schema_suggestions: [
+        { data: { id: "s1" } },
+        { data: [{ id: "s1" }] },
+      ],
     };
 
     const r = await approveSchemaSuggestionWithEdits("s1", "p1", [FIELD]);
@@ -96,6 +128,7 @@ describe("approveSchemaSuggestionWithEdits", () => {
       (c) => c.table === "schema_suggestions" && c.op === "update",
     );
     expect(suggestionUpdate?.payload).toMatchObject({ status: "approved" });
+    expect(suggestionUpdate?.payload).toMatchObject({ resolved_by: "memberCoord" });
   });
 });
 
@@ -121,6 +154,7 @@ describe("resolveSchemaSuggestion (rejected)", () => {
     );
     expect(upd?.payload).toMatchObject({
       status: "rejected",
+      resolved_by: "memberCoord",
       rejection_reason: "fora de escopo",
     });
   });

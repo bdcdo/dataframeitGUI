@@ -19,6 +19,7 @@ let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown[]>;
+let adminCreateCalls: number;
 
 const assignmentCalls = () =>
   rpcCalls.filter((call) => call.fn === "assign_comparison_if_eligible");
@@ -39,10 +40,13 @@ const hoisted = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => authModuleMock(hoisted.isCoord));
 vi.mock("@/lib/supabase/server", () => makeSupabaseServerModuleMock(makeClient));
-vi.mock("@/lib/supabase/admin", () => makeSupabaseAdminModuleMock(makeClient));
+vi.mock("@/lib/supabase/admin", () =>
+  makeSupabaseAdminModuleMock(makeClient, () => adminCreateCalls++),
+);
 
 beforeEach(() => {
   writeCalls = [];
+  adminCreateCalls = 0;
   rpcCalls = [];
   rpcResults = {
     assign_comparison_if_eligible: { data: true },
@@ -86,9 +90,40 @@ describe("retryPendingComparisons — guards", () => {
     expect(r.assigned).toBe(0);
     expect(assignmentCalls()).toHaveLength(0);
   });
+
+  it("falha ao ler o modo do projeto não vira no-op bem-sucedido", async () => {
+    tableData["__error:projects:select"] = {
+      message: "timeout projeto",
+    } as unknown as unknown[];
+    const retry = await loadRetry();
+
+    await expect(retry("p1")).resolves.toEqual({
+      success: false,
+      error: "timeout projeto",
+      assigned: 0,
+      stillNoPool: 0,
+    });
+  });
 });
 
 describe("retryPendingComparisons — atribui backlog divergente", () => {
+  it("falha ao ler a carga aberta não atribui com carga inventada", async () => {
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
+    tableData.project_members = [makeProjectMember("userC")];
+    tableData["__error:assignments:select"] = {
+      message: "timeout carga",
+    } as unknown as unknown[];
+    const retry = await loadRetry();
+
+    await expect(retry("p1")).resolves.toEqual({
+      success: false,
+      error: "timeout carga",
+      assigned: 0,
+      stillNoPool: 0,
+    });
+    expect(assignmentCalls()).toHaveLength(0);
+  });
+
   it("doc divergente sem comparacao ativa → atribui 1", async () => {
     tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
     tableData.project_members = [makeProjectMember("userC")];
@@ -97,6 +132,7 @@ describe("retryPendingComparisons — atribui backlog divergente", () => {
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(1);
     expect(r.stillNoPool).toBe(0);
+    expect(adminCreateCalls).toBe(1);
     expect(assignmentCalls()[0].args).toEqual({
       p_project_id: "p1",
       p_document_id: "doc1",

@@ -1,3 +1,21 @@
+import { errorMessage } from "@/lib/utils";
+
+export type PendingRetryFailure = {
+  success: false;
+  error: string;
+  assigned: 0;
+  stillNoPool: 0;
+};
+
+export function pendingRetryFailure(error: unknown): PendingRetryFailure {
+  return {
+    success: false,
+    error: errorMessage(error) || "Erro",
+    assigned: 0,
+    stillNoPool: 0,
+  };
+}
+
 // Conta ocorrências de user_id numa lista de linhas (assignments abertos) para
 // balancear atribuições por menor carga. Usado por retryPendingComparisons,
 // assignArbitrator e assignComparisonReviewer — mesmo loop, 3 sites.

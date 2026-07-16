@@ -7,7 +7,7 @@ type RetryInfo = { assigned: number; stillNoPool: number };
 type ToggleAction<TRetried> = (
   memberId: string,
   value: boolean
-) => Promise<{ error?: string; retried?: TRetried }>;
+) => Promise<{ error?: string; warning?: string; retried?: TRetried }>;
 
 // arbitrate/resolve/compare compartilham a mesma forma (optimistic update →
 // server action → toast condicional em `retried` → cleanup no finally); só
@@ -40,7 +40,15 @@ export function useTogglePermission<TRetried = undefined>(
           toast.error(result.error);
           return;
         }
+        if (result.warning) {
+          toast.warning(result.warning);
+          return;
+        }
         toast.success(buildSuccessMessage(value, result.retried));
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Erro ao atualizar permissão.",
+        );
       } finally {
         setPendingId(null);
       }

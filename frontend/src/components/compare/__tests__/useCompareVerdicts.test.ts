@@ -71,7 +71,7 @@ function expectOptimisticWrite(
   expect(goNextField).toHaveBeenCalledTimes(1);
 }
 
-function setup() {
+function setup(fieldResponses: FieldResponse[] = []) {
   const recordReview = vi.fn();
   const goNextField = vi.fn();
   const { result } = renderHook(() =>
@@ -82,7 +82,7 @@ function setup() {
       isCurrentFieldDivergent: true,
       allDocDivergent: ["q1", "q2"],
       localReviews: {},
-      fieldResponses: [] as FieldResponse[],
+      fieldResponses,
       comment: "",
       recordReview,
       goNextField,
@@ -116,6 +116,49 @@ describe("handleVerdict", () => {
       chosenResponseId: "r1",
       comment: null,
     });
+  });
+
+  it("envia somente os IDs das respostas visíveis, sem snapshot montado no browser", async () => {
+    mockSubmitVerdict.mockResolvedValue({});
+    const visible = [
+      {
+        id: "r1",
+        respondent_type: "humano",
+        respondent_name: "Ana",
+        respondent_id: "u1",
+        answer: "sim",
+        justification: "texto sensível",
+        is_latest: true,
+        isFieldStale: false,
+        schemaVersion: "1.0.0",
+      },
+      {
+        id: "r2",
+        respondent_type: "llm",
+        respondent_name: "Modelo",
+        respondent_id: null,
+        answer: undefined,
+        justification: undefined,
+        is_latest: true,
+        isFieldStale: false,
+        schemaVersion: "1.0.0",
+      },
+    ] satisfies FieldResponse[];
+    const { result } = setup(visible);
+
+    await act(async () => {
+      await result.current.handleVerdict("concordo", "r1");
+    });
+
+    expect(mockSubmitVerdict).toHaveBeenCalledWith(
+      "p1",
+      "doc1",
+      "q1",
+      "concordo",
+      "r1",
+      undefined,
+      ["r1"],
+    );
   });
 });
 

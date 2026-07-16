@@ -9,7 +9,6 @@ let aliasErrorByProject: Record<string, { message: string } | null>;
 let aliasQueryCalls: Array<{
   projectId: string | null;
   linkedUserId: string | null;
-  limit: number | null;
 }>;
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -31,9 +30,8 @@ function makeAliasClient() {
     from: (table: string) => {
       let projectId: string | null = null;
       let linkedUserId: string | null = null;
-      let rowLimit: number | null = null;
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "is", "in", "order", "maybeSingle", "single", "update"]) {
+      for (const m of ["select", "is", "in", "single", "update"]) {
         builder[m] = () => builder;
       }
       builder.eq = (col: string, value: string) => {
@@ -41,22 +39,16 @@ function makeAliasClient() {
         if (col === "linked_user_id") linkedUserId = value;
         return builder;
       };
-      builder.limit = (value: number) => {
-        rowLimit = value;
-        return builder;
-      };
+      builder.maybeSingle = () => builder;
       builder.then = (resolve: (v: unknown) => unknown) => {
         if (table === "member_email_links") {
-          aliasQueryCalls.push({ projectId, linkedUserId, limit: rowLimit });
+          aliasQueryCalls.push({ projectId, linkedUserId });
           const matchingAliases =
             projectId && linkedUserId === "acc1"
               ? (aliasesByProject[projectId] ?? [])
               : [];
           return resolve({
-            data:
-              rowLimit === null
-                ? matchingAliases
-                : matchingAliases.slice(0, rowLimit),
+            data: matchingAliases[0] ?? null,
             error: projectId ? (aliasErrorByProject[projectId] ?? null) : null,
           });
         }
@@ -98,7 +90,7 @@ describe("getEffectiveMemberId", () => {
     const getEffectiveMemberId = await loadGetEffective();
     await expect(getEffectiveMemberId("pA")).resolves.toBe("canonico1");
     expect(aliasQueryCalls).toEqual([
-      { projectId: "pA", linkedUserId: "acc1", limit: 100 },
+      { projectId: "pA", linkedUserId: "acc1" },
     ]);
   });
 
@@ -125,43 +117,13 @@ describe("getEffectiveMemberId", () => {
     );
   });
 
-  it("vários vínculos para o mesmo membro canônico preservam a identidade", async () => {
-    aliasesByProject = {
-      pRepeated: [
-        { member_user_id: "canonico1" },
-        { member_user_id: "canonico1" },
-      ],
-    };
-    const getEffectiveMemberId = await loadGetEffective();
-    await expect(getEffectiveMemberId("pRepeated")).resolves.toBe("canonico1");
-  });
-
-  it("vínculos para membros canônicos distintos falham fechado", async () => {
-    aliasesByProject = {
-      pAmbiguous: [
-        { member_user_id: "canonico1" },
-        { member_user_id: "canonico2" },
-      ],
-    };
-    const getEffectiveMemberId = await loadGetEffective();
-    await expect(getEffectiveMemberId("pAmbiguous")).rejects.toThrow(
-      "Não foi possível resolver a identidade no projeto.",
-    );
-  });
-
-  it("atingir o limite de vínculos falha fechado mesmo com destino único", async () => {
-    aliasesByProject = {
-      pTruncated: Array.from({ length: 100 }, () => ({
-        member_user_id: "canonico1",
-      })),
-    };
-    const getEffectiveMemberId = await loadGetEffective();
-    await expect(getEffectiveMemberId("pTruncated")).rejects.toThrow(
-      "Não foi possível resolver a identidade no projeto.",
-    );
-    expect(aliasQueryCalls).toEqual([
-      { projectId: "pTruncated", linkedUserId: "acc1", limit: 100 },
-    ]);
+  it("helper de action preserva a mensagem quando o lookup falha", async () => {
+    aliasErrorByProject = { pActorError: { message: "RLS indisponível" } };
+    const { resolveProjectActor } = await import("@/lib/auth");
+    await expect(resolveProjectActor("pActorError")).resolves.toEqual({
+      ok: false,
+      error: "Não foi possível resolver a identidade no projeto.",
+    });
   });
 });
 

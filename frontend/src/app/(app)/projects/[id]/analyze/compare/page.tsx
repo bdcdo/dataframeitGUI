@@ -290,7 +290,7 @@ export default async function ComparePageRoute({
         latestMajorLabel={latestMajorLabel}
         currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
         equivalencesByDocField={equivalencesByDocField}
-        currentUserId={user.id}
+        currentUserId={access.effectiveUserId}
         isImpersonating={isImpersonating}
         canManageAnyPair={isCoordinator}
         isCoordinator={isCoordinator}

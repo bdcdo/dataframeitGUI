@@ -5,6 +5,7 @@ import {
   type TableResult,
   type TableResults,
   type WriteCall,
+  type RpcCall,
 } from "./supabase-mock";
 
 // Testes do conserto da #178: o UPDATE de projects filtrado pela RLS retorna
@@ -14,6 +15,8 @@ import {
 // erros lançados em Server Actions em produção.
 
 let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
+let serverRpcResults: Record<string, TableResult> | undefined;
 let serverTableResults: TableResults | undefined;
 
 const fetchMock = vi.hoisted(() => vi.fn());
@@ -24,13 +27,24 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
+  getEffectiveMemberId: async () => "memberCoord",
+  resolveProjectActor: async () => ({
+    ok: true,
+    user: { id: "userCoord" },
+    effectiveUserId: "memberCoord",
+  }),
 }));
 vi.mock("@/lib/api-server", () => ({
   fetchFastAPIServer: fetchMock,
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
+    makeSupabaseMock({
+      tableResults: serverTableResults,
+      writeCalls,
+      rpcCalls,
+      rpcResults: serverRpcResults,
+    }),
 }));
 
 import {
@@ -39,6 +53,7 @@ import {
   publishMajorVersion,
   saveLlmConfig,
   recoverFieldsFromStoredCode,
+  backfillSchemaVersionHistory,
 } from "../schema";
 
 const FIELD: PydanticField = {
@@ -60,6 +75,8 @@ const PROJECT_SELECT: TableResult = {
 
 beforeEach(() => {
   writeCalls = [];
+  rpcCalls = [];
+  serverRpcResults = undefined;
   serverTableResults = undefined;
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({
@@ -70,7 +87,75 @@ beforeEach(() => {
   });
 });
 
+describe("backfillSchemaVersionHistory", () => {
+  it("versiona todas as respostas por uma única RPC atômica", async () => {
+    serverTableResults = {
+      projects: [
+        {
+          data: {
+            pydantic_fields: [FIELD],
+            schema_version_major: 0,
+            schema_version_minor: 1,
+            schema_version_patch: 0,
+          },
+        },
+        { data: [{ id: "p1" }] },
+      ],
+      schema_change_log: { data: [] },
+      responses: [
+        {
+          data: [
+            {
+              id: "r1",
+              created_at: "2026-01-01T00:00:00.000Z",
+              answer_field_hashes: null,
+              version_inferred_from: null,
+            },
+          ],
+        },
+      ],
+    };
+    serverRpcResults = { set_response_schema_versions: { data: 1 } };
+
+    const result = await backfillSchemaVersionHistory("p1");
+
+    expect(result.error).toBeUndefined();
+    expect(result.stats?.responsesProcessed).toBe(1);
+    expect(rpcCalls).toContainEqual({
+      fn: "set_response_schema_versions",
+      args: {
+        p_project_id: "p1",
+        p_updates: [
+          {
+            id: "r1",
+            schema_version_major: 0,
+            schema_version_minor: 1,
+            schema_version_patch: 0,
+            version_inferred_from: "created_at",
+          },
+        ],
+      },
+    });
+    expect(
+      writeCalls.some(
+        (call) => call.table === "responses" && call.op === "update",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("saveSchemaFromGUI", () => {
+  it("falha fechada quando o estado anterior do projeto não pode ser lido", async () => {
+    serverTableResults = {
+      projects: { data: null, error: { message: "timeout projeto" } },
+    };
+
+    await expect(saveSchemaFromGUI("p1", [FIELD])).resolves.toEqual({
+      error: "timeout projeto",
+    });
+    expect(writeCalls).toHaveLength(0);
+  });
+
   it("o caso da #178: UPDATE de projects filtrado (0 linhas) retorna erro e NÃO grava histórico fantasma", async () => {
     serverTableResults = {
       projects: [PROJECT_SELECT, { data: [] }],
@@ -107,7 +192,7 @@ describe("saveSchemaFromGUI", () => {
     // Campo adicionado = mudança estrutural → MINOR (0.1.0 → 0.2.0)
     expect(entries[0]).toMatchObject({
       project_id: "p1",
-      changed_by: "userCoord",
+      changed_by: "memberCoord",
       field_name: "q1",
       change_type: "minor",
       version_major: 0,

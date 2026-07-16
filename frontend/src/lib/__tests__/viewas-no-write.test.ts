@@ -8,9 +8,9 @@ import {
 // devolve o par (effectiveUserId, isImpersonating): master + viewAsUser resolve
 // para a identidade visualizada com isImpersonating=true, e o efeito é restrito
 // a leitura/navegação/fila. O invariante de escrita é que as write surfaces
-// gravam como o ATOR real (user.id), nunca como effectiveUserId quando
-// isImpersonating — este teste trava a distinção que as actions consomem para
-// não conceder escrita em nome do usuário visualizado.
+// gravam como a identidade canônica da conta autenticada, nunca como o
+// effectiveUserId visualizado quando isImpersonating — este teste trava a
+// distinção necessária para não escrever em nome do usuário visualizado.
 
 let aliasByProject: Record<string, { member_user_id: string } | null>;
 
@@ -64,8 +64,8 @@ describe("resolveEffectiveUserId — viewAs é leitura, não escrita", () => {
       effectiveUserId: "membro_visto",
       isImpersonating: true,
     });
-    // O ator real (master_1) permanece distinto do effectiveUserId — as write
-    // surfaces gravam como master_1, nunca como membro_visto.
+    // A conta autenticada (master_1) permanece distinta do effectiveUserId —
+    // as write surfaces nunca gravam como membro_visto.
     expect(r.effectiveUserId).not.toBe("master_1");
   });
 

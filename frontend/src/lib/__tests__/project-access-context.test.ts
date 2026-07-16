@@ -10,18 +10,35 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 interface Scenario {
   project: { id: string; name: string; created_by: string } | null;
   membershipRole: string | null;
+  canonicalMemberId?: string;
+  aliasError?: string;
   projectError?: string;
   membershipError?: string;
 }
 
 let scenario: Scenario;
+let filters: Array<{ table: string; column: string; value: string }>;
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => ({
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "eq"]) builder[m] = () => builder;
+      builder.select = () => builder;
+      builder.eq = (column: string, value: string) => {
+        filters.push({ table, column, value });
+        return builder;
+      };
       builder.maybeSingle = async () => {
+        if (table === "member_email_links") {
+          return {
+            data: scenario.canonicalMemberId
+              ? { member_user_id: scenario.canonicalMemberId }
+              : null,
+            error: scenario.aliasError
+              ? { message: scenario.aliasError }
+              : null,
+          };
+        }
         if (table === "projects") {
           return {
             data: scenario.project,
@@ -48,9 +65,24 @@ vi.mock("@/lib/supabase/server", () => ({
 // getProjectAccessContext não usa admin nem Clerk, mas o módulo auth.ts importa
 // ambos no topo — mocks mínimos para o import não explodir.
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => ({ from: () => ({}) }),
+  createSupabaseAdmin: () => ({
+    from: () => {
+      const builder: Record<string, unknown> = {};
+      for (const method of ["select", "eq"]) builder[method] = () => builder;
+      builder.maybeSingle = async () => ({ data: null, error: null });
+      return builder;
+    },
+  }),
 }));
-vi.mock("@clerk/nextjs/server", () => ({ currentUser: async () => null }));
+vi.mock("@clerk/nextjs/server", () => ({
+  currentUser: async () => ({
+    id: "clerk_alias",
+    publicMetadata: { supabase_uid: "alias_login" },
+    emailAddresses: [{ emailAddress: "alias@example.com" }],
+    firstName: "Alias",
+    lastName: null,
+  }),
+}));
 
 async function loadCtx() {
   return (await import("@/lib/auth")).getProjectAccessContext;
@@ -64,6 +96,7 @@ const projA = { id: "p1", name: "Projeto A", created_by: "owner_1" };
 
 beforeEach(() => {
   vi.resetModules();
+  filters = [];
 });
 
 describe("getProjectAccessContext — autorização preservada", () => {
@@ -78,6 +111,22 @@ describe("getProjectAccessContext — autorização preservada", () => {
     scenario = { project: projA, membershipRole: "coordenador" };
     const ctx = await (await loadCtx())("p1", "outro_user", false);
     expect(ctx.isCoordinator).toBe(true);
+  });
+
+  it("conta alias consulta o membership da identidade canônica", async () => {
+    scenario = {
+      project: projA,
+      membershipRole: "coordenador",
+      canonicalMemberId: "member_canonical",
+    };
+    const ctx = await (await loadCtx())("p1", "login_alias", false);
+    expect(ctx.effectiveUserId).toBe("member_canonical");
+    expect(ctx.isCoordinator).toBe(true);
+    expect(filters).toContainEqual({
+      table: "project_members",
+      column: "user_id",
+      value: "member_canonical",
+    });
   });
 
   it("master → coordenador mesmo sem membership", async () => {
@@ -128,5 +177,42 @@ describe("getProjectAccessContext — autorização preservada", () => {
         isMaster: false,
       }),
     ).resolves.toBe(false);
+  });
+
+  it("requireCoordinator distingue falha técnica de acesso negado", async () => {
+    scenario = {
+      project: projA,
+      membershipRole: null,
+      membershipError: "timeout membership",
+    };
+    const { requireCoordinator } = await import("@/lib/auth");
+
+    await expect(requireCoordinator("p1", "Acesso negado")).resolves.toEqual({
+      ok: false,
+      error: "Não foi possível verificar a permissão no projeto.",
+    });
+  });
+
+  it("gates falham fechado quando a identidade canônica não pode ser resolvida", async () => {
+    scenario = {
+      project: projA,
+      membershipRole: "coordenador",
+      aliasError: "timeout alias",
+    };
+    const { isProjectCoordinator, requireCoordinator } = await import("@/lib/auth");
+    const user = {
+      id: "alias_login",
+      email: "alias@example.com",
+      firstName: "Alias",
+      lastName: null,
+      clerkId: "clerk_alias",
+      isMaster: false,
+    };
+
+    await expect(isProjectCoordinator("p1", user)).resolves.toBe(false);
+    await expect(requireCoordinator("p1", "Acesso negado")).resolves.toEqual({
+      ok: false,
+      error: "Não foi possível resolver a identidade no projeto.",
+    });
   });
 });

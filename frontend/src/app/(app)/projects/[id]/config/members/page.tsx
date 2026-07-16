@@ -1,5 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getEffectiveMemberId } from "@/lib/auth";
 import { scanComparisonBacklog } from "@/lib/auto-comparison";
 import { MemberList } from "@/components/members/MemberList";
 import { AddMemberDialog } from "@/components/members/AddMemberDialog";
@@ -10,18 +10,19 @@ export default async function MembersPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user, supabase] = await Promise.all([
+  const [{ id }, supabase] = await Promise.all([
     params,
-    getAuthUser(),
     createSupabaseServer(),
   ]);
 
   const [
+    effectiveUserId,
     { data: members },
     { count: orphanedReviews },
     { data: emailLinks },
     { data: project },
   ] = await Promise.all([
+    getEffectiveMemberId(id),
     supabase
       .from("project_members")
       .select("id, project_id, user_id, role, can_arbitrate, can_resolve, can_compare, profiles(id, email, first_name, last_name, activated_at)")
@@ -74,7 +75,7 @@ export default async function MembersPage({
         projectId={id}
         members={typedMembers}
         emailLinks={(emailLinks || []) as MemberEmailLink[]}
-        currentUserId={user!.id}
+        currentUserId={effectiveUserId}
       />
     </div>
   );

@@ -1,9 +1,9 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireCoordinator } from "@/lib/auth";
-import { buildLoadMap } from "@/lib/load-balancing";
-import { errorMessage } from "@/lib/utils";
+import { buildLoadMap, pendingRetryFailure } from "@/lib/load-balancing";
 import { revalidatePath } from "next/cache";
 import {
   scanComparisonBacklog,
@@ -34,13 +34,15 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
     const supabase = await createSupabaseServer();
+    const assignmentClient = createSupabaseAdmin();
 
     // Só compare_humans/compare_llm têm backlog de comparação a drenar.
-    const { data: project } = await supabase
+    const { data: project, error: projectError } = await supabase
       .from("projects")
       .select("automation_mode")
       .eq("id", projectId)
       .single();
+    if (projectError) throw new Error(projectError.message);
     const mode = project?.automation_mode;
     if (mode !== "compare_humans" && mode !== "compare_llm") {
       return { success: true, assigned: 0, stillNoPool: 0 };
@@ -56,12 +58,13 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     // Carga aberta pré-computada uma vez; assignComparisonReviewer a incrementa
     // entre docs para preservar o balanceamento sem N queries (sequencial: cada
     // atribuição enxerga a carga atualizada da anterior).
-    const { data: openCounts } = await supabase
+    const { data: openCounts, error: openCountsError } = await supabase
       .from("assignments")
       .select("user_id")
       .eq("project_id", projectId)
       .eq("type", "comparacao")
       .neq("status", "concluido");
+    if (openCountsError) throw new Error(openCountsError.message);
     const loadByUser = buildLoadMap(openCounts ?? []);
 
     let assigned = 0;
@@ -76,6 +79,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
         documentId,
         coderIds,
         loadByUser,
+        assignmentClient,
       );
       if (result.assigned) assigned++;
       if (result.noPool) stillNoPool++;
@@ -85,11 +89,6 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     revalidatePath(`/projects/${projectId}/config/members`);
     return { success: true, assigned, stillNoPool };
   } catch (e) {
-    return {
-      success: false,
-      error: errorMessage(e) || "Erro",
-      assigned: 0,
-      stillNoPool: 0,
-    };
+    return pendingRetryFailure(e);
   }
 }

@@ -1,6 +1,6 @@
 import { AnalyzeNav } from "@/components/analyze/AnalyzeNav";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
+import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { computeAnalyzeTabVisibility } from "@/lib/analyze-tabs";
 import type { AutomationMode } from "@/lib/types";
 
@@ -22,7 +22,11 @@ export default async function AnalyzeLayout({
   let showCompare = false;
 
   if (user) {
-    const supabase = await createSupabaseServer();
+    const [supabase, access] = await Promise.all([
+      createSupabaseServer(),
+      getProjectAccessContext(id, user.id, user.isMaster),
+    ]);
+    const effectiveUserId = access.effectiveUserId;
     // Queries direcionadas com .limit(1) (O(1) com o index (project_id, user_id,
     // type)) em vez de uma genérica com .limit(50), que poderia mascarar um tipo
     // se o usuário tiver muitos assignments de outro.
@@ -37,7 +41,7 @@ export default async function AnalyzeLayout({
         .from("assignments")
         .select("id")
         .eq("project_id", id)
-        .eq("user_id", user.id)
+        .eq("user_id", effectiveUserId)
         .eq("type", "auto_revisao")
         .limit(1)
         .maybeSingle(),
@@ -45,7 +49,7 @@ export default async function AnalyzeLayout({
         .from("assignments")
         .select("id")
         .eq("project_id", id)
-        .eq("user_id", user.id)
+        .eq("user_id", effectiveUserId)
         .eq("type", "arbitragem")
         .limit(1)
         .maybeSingle(),
@@ -53,7 +57,7 @@ export default async function AnalyzeLayout({
         .from("assignments")
         .select("id")
         .eq("project_id", id)
-        .eq("user_id", user.id)
+        .eq("user_id", effectiveUserId)
         .eq("type", "comparacao")
         .limit(1)
         .maybeSingle(),
@@ -62,7 +66,7 @@ export default async function AnalyzeLayout({
         .select("automation_mode")
         .eq("id", id)
         .single(),
-      isProjectCoordinator(id, user),
+      Promise.resolve(!access.queryFailed && access.isCoordinator),
     ]);
 
     ({ showAutoReview, showArbitragem, showCompare } =

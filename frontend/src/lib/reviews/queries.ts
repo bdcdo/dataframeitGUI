@@ -126,7 +126,7 @@ export function formatAnswer(val: unknown): string {
 // todas as responses do projeto (não filtra por respondent_id), então esta
 // checagem é a única barreira — por isso o `isCoordinator` que a alimenta é
 // fail-closed (não incorpora queryFailed). Ver reviews/my-verdicts/page.tsx.
-export function resolveEffectiveUserId(opts: {
+export function selectVerdictRespondentId(opts: {
   selfId: string;
   isMaster: boolean;
   isCoordinator: boolean;

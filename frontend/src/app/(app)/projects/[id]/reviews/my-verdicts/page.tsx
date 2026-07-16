@@ -2,7 +2,10 @@ import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
-import { isAnswerCorrect, resolveEffectiveUserId } from "@/lib/reviews/queries";
+import {
+  isAnswerCorrect,
+  selectVerdictRespondentId,
+} from "@/lib/reviews/queries";
 import { coordinatorGate } from "@/lib/project-access";
 import type { PydanticField } from "@/lib/types";
 
@@ -62,8 +65,8 @@ export default async function MyVerdictsPage({
   ]);
   const isCoordinator = coordinatorGate(access, { failOpen: false });
 
-  const effectiveUserId = resolveEffectiveUserId({
-    selfId: user.id,
+  const effectiveUserId = selectVerdictRespondentId({
+    selfId: access.effectiveUserId,
     isMaster: user.isMaster,
     isCoordinator,
     viewAsUser: sp.viewAsUser,
@@ -130,7 +133,7 @@ export default async function MyVerdictsPage({
   const respondentsList = isCoordinator && allRespondents
     ? [...new Map(
         allRespondents
-          .filter((r) => r.respondent_id && r.respondent_id !== user.id)
+          .filter((r) => r.respondent_id && r.respondent_id !== access.effectiveUserId)
           .map((r) => [r.respondent_id, { id: r.respondent_id as string, name: r.respondent_name || "Anônimo" }]),
       ).values()]
     : [];
@@ -186,7 +189,11 @@ export default async function MyVerdictsPage({
           userName={[user.firstName, user.lastName].filter(Boolean).join(" ") || "Você"}
           isCoordinator={isCoordinator}
           respondents={respondentsList}
-          currentViewUserId={effectiveUserId !== user.id ? effectiveUserId : undefined}
+          currentViewUserId={
+            effectiveUserId !== access.effectiveUserId
+              ? effectiveUserId
+              : undefined
+          }
         />
       </Suspense>
     </div>

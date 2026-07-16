@@ -1,411 +1,362 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveBlindVerdict } from "@/lib/arbitration-order";
+import {
+  makeSupabaseMock,
+  type RpcCall,
+  type TableResults,
+} from "./supabase-mock";
 
-// Mock minimo do supabase: captura os payloads de .update()/.upsert()/.insert()
-// para validar o que submitAutoReview enviaria ao DB sem subir Postgres.
-// Builder chainable e thenable — `await builder` (ou apos .select()) resolve
-// { data, error }.
-type WriteCall = { table: string; op: string; payload: unknown };
-let writeCalls: WriteCall[];
-let tableData: Record<string, unknown>;
-let projectAccessible: boolean;
-let adminFactoryCalls: number;
+let rpcCalls: RpcCall[];
+let rpcResults: Record<string, { data?: unknown; error?: { message: string } | null }>;
+let serverTableResults: TableResults;
+let adminTableResults: TableResults;
+let adminCreateCalls: number;
 
-const updateCallsOf = (table?: string) =>
-  writeCalls.filter((c) => c.op === "update" && (!table || c.table === table));
-
-function makeClient() {
-  return {
-    from: (table: string) => {
-      // `limited` distingue a query de "ainda há campo pendente?" (usa .limit)
-      // do UPDATE de field_reviews (usa .select) — ambos batem na mesma tabela.
-      let limited = false;
-      const builder: Record<string, unknown> = {};
-      let op = "select";
-      for (const m of ["select", "eq", "is", "in", "neq", "not"]) {
-        builder[m] = () => builder;
-      }
-      builder.limit = () => {
-        limited = true;
-        return builder;
-      };
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        op = "update";
-        return builder;
-      };
-      builder.upsert = (payload: unknown) => {
-        writeCalls.push({ table, op: "upsert", payload });
-        op = "upsert";
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        writeCalls.push({ table, op: "insert", payload });
-        op = "insert";
-        return builder;
-      };
-      builder.then = (resolve: (v: unknown) => unknown) => {
-        // A query "ainda ha field_review pendente?" usa .limit em
-        // field_reviews — resolve para a fixture dedicada.
-        if (table === "field_reviews" && limited) {
-          return resolve({
-            data: tableData.field_reviews_pending ?? null,
-            error: null,
-          });
-        }
-        // Resolve por operacao quando ha override `${table}:${op}` — permite um
-        // teste fazer o UPDATE casar 0 linhas mas o SELECT de estado ver a linha
-        // (cenario de retry apos falha parcial). Senao cai no dado generico.
-        return resolve({
-          data: tableData[`${table}:${op}`] ?? tableData[table] ?? null,
-          error: null,
-        });
-      };
-      return builder;
-    },
-  };
-}
+const hoisted = vi.hoisted(() => ({
+  requireCoordinator: vi.fn(),
+}));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "user1", isMaster: false }),
-  // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
-  getEffectiveMemberId: async () => "user1",
-  getProjectAccessContext: async () => ({
-    project: projectAccessible ? { id: "p1" } : null,
-    queryFailed: false,
-  }),
-  isProjectCoordinator: async () => false,
+  getAuthUser: async () => ({ id: "account1" }),
+  getEffectiveMemberId: async () => "member1",
+  requireCoordinator: hoisted.requireCoordinator,
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(),
+  createSupabaseServer: async () =>
+    makeSupabaseMock({ rpcCalls, rpcResults, tableResults: serverTableResults }),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   createSupabaseAdmin: () => {
-    adminFactoryCalls += 1;
-    return makeClient();
+    adminCreateCalls++;
+    return makeSupabaseMock({
+      rpcCalls,
+      rpcResults,
+      tableResults: adminTableResults,
+      defaultResult: { data: [] },
+    });
   },
 }));
 
 beforeEach(() => {
-  writeCalls = [];
-  projectAccessible = true;
-  adminFactoryCalls = 0;
-  tableData = {
-    // UPDATE de field_reviews retorna a linha tocada (via .select). O SELECT de
-    // estado real (efeitos de equivalente/ambiguo) le esta mesma linha — testes
-    // desses vereditos sobrescrevem `self_verdict` conforme o caso.
-    field_reviews: [
-      {
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
-      },
-    ],
-    // por padrão não sobra campo pendente → assignment é concluído
-    field_reviews_pending: [],
-    // respostas para o contexto do comentario de "ambiguo"
-    responses: [
-      { id: "hr1", answers: { q1: "Adalimumabe" } },
-      { id: "lr1", answers: { q1: "adalimumabé" } },
-    ],
-    // sem comentarios pre-existentes → check-before-insert nao suprime nada
-    project_comments: [],
-    // pool de arbitragem vazio → assignArbitrator curto-circuita sem erro
-    project_members: [],
+  rpcCalls = [];
+  rpcResults = {};
+  serverTableResults = {};
+  adminTableResults = {
+    responses: { data: [] },
+    project_members: { data: [] },
+    assignments: { data: [] },
   };
+  adminCreateCalls = 0;
+  hoisted.requireCoordinator.mockReset();
+  hoisted.requireCoordinator.mockResolvedValue({ ok: false, error: "não usado" });
 });
 
-async function loadSubmit() {
-  return (await import("@/actions/field-reviews")).submitAutoReview;
+async function actions() {
+  return import("@/actions/field-reviews");
 }
 
-async function loadSubmitFinal() {
-  return (await import("@/actions/field-reviews")).submitFinalVerdicts;
-}
-
-describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", () => {
-  it("sem acesso atual ao projeto → falha antes de usar o admin client", async () => {
-    projectAccessible = false;
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "admite_erro" },
+describe("submitAutoReview", () => {
+  it("recusa justificativa vazia antes da RPC", async () => {
+    const { submitAutoReview } = await actions();
+    const result = await submitAutoReview("p1", "d1", [
+      { fieldReviewId: "fr1", fieldName: "q1", verdict: "contesta_llm" },
     ]);
-    expect(r).toEqual({
-      success: false,
-      error: "Projeto não encontrado ou inacessível.",
-    });
-    expect(adminFactoryCalls).toBe(0);
-    expect(writeCalls).toHaveLength(0);
+
+    expect(result.error).toContain("justificativa obrigatória");
+    expect(rpcCalls).toEqual([]);
   });
 
-  it("contesta_llm sem justificativa → erro e nenhum UPDATE", async () => {
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "contesta_llm" },
-    ]);
-    expect(r.success).toBe(false);
-    expect(r.error).toContain("justificativa obrigatória");
-    expect(updateCallsOf()).toHaveLength(0);
-  });
-
-  it("contesta_llm com justificativa só de espaços → erro e nenhum UPDATE", async () => {
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "contesta_llm", justification: "   \n\t" },
-    ]);
-    expect(r.success).toBe(false);
-    expect(r.error).toContain("justificativa obrigatória");
-    expect(updateCallsOf()).toHaveLength(0);
-  });
-
-  it("admite_erro → passa na validacao e grava self_justification: null", async () => {
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "admite_erro" },
-    ]);
-    expect(r.success).toBe(true);
-    const frUpdate = updateCallsOf("field_reviews")[0];
-    expect(frUpdate?.payload).toMatchObject({
-      self_verdict: "admite_erro",
-      self_justification: null,
-    });
-  });
-
-  it("contesta_llm com justificativa → grava o texto trimado", async () => {
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "contesta_llm", justification: "  confere  " },
-    ]);
-    expect(r.success).toBe(true);
-    const frUpdate = updateCallsOf("field_reviews")[0];
-    expect(frUpdate?.payload).toMatchObject({
-      self_verdict: "contesta_llm",
-      self_justification: "confere",
-    });
-  });
-});
-
-describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
-  it("equivalente → faz upsert do par canonico em response_equivalences", async () => {
-    const submitAutoReview = await loadSubmit();
-    tableData.field_reviews = [
+  it("envia somente o contrato mínimo, com identidade efetiva e texto trimado", async () => {
+    rpcResults.submit_self_review = {
+      data: { updatedCount: 1, needsArbitrator: [] },
+    };
+    const { submitAutoReview } = await actions();
+    const result = await submitAutoReview("p1", "d1", [
       {
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
-        self_verdict: "equivalente",
-      },
-    ];
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "equivalente" },
-    ]);
-    expect(r.success).toBe(true);
-
-    const frUpdate = updateCallsOf("field_reviews")[0];
-    expect(frUpdate?.payload).toMatchObject({
-      self_verdict: "equivalente",
-      self_justification: null,
-    });
-
-    const equivUpsert = writeCalls.find(
-      (c) => c.op === "upsert" && c.table === "response_equivalences",
-    );
-    expect(equivUpsert).toBeDefined();
-    // canonicalPair("hr1", "lr1") → ["hr1", "lr1"] (hr1 < lr1)
-    expect(equivUpsert?.payload).toMatchObject([
-      {
-        project_id: "p1",
-        document_id: "doc1",
-        field_name: "q1",
-        response_a_id: "hr1",
-        response_b_id: "lr1",
-        reviewer_id: "user1",
-      },
-    ]);
-  });
-
-  it("ambiguo sem justificativa → erro e nenhum UPDATE", async () => {
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "ambiguo" },
-    ]);
-    expect(r.success).toBe(false);
-    expect(r.error).toContain("justificativa obrigatória");
-    expect(r.error).toContain("ambíguo");
-    expect(updateCallsOf()).toHaveLength(0);
-  });
-
-  it("ambiguo com justificativa só de espaços → erro e nenhum UPDATE", async () => {
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "ambiguo", justification: "   \n\t" },
-    ]);
-    expect(r.success).toBe(false);
-    expect(r.error).toContain("justificativa obrigatória");
-    expect(updateCallsOf()).toHaveLength(0);
-  });
-
-  it("ambiguo → grava self_justification trimada e insere project_comments com o contraste e a justificativa", async () => {
-    const submitAutoReview = await loadSubmit();
-    tableData.field_reviews = [
-      {
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
-        self_verdict: "ambiguo",
-      },
-    ];
-    const r = await submitAutoReview("p1", "doc1", [
-      {
+        fieldReviewId: "fr1",
         fieldName: "q1",
         verdict: "ambiguo",
-        justification: "  o enunciado não define a unidade  ",
+        justification: "  enunciado incompleto  ",
       },
     ]);
-    expect(r.success).toBe(true);
 
-    const frUpdate = updateCallsOf("field_reviews")[0];
-    expect(frUpdate?.payload).toMatchObject({
-      self_verdict: "ambiguo",
-      self_justification: "o enunciado não define a unidade",
+    expect(result).toEqual({ success: true, arbitrated: 0, warning: undefined });
+    expect(rpcCalls).toContainEqual({
+      fn: "submit_self_review",
+      args: {
+        p_project_id: "p1",
+        p_document_id: "d1",
+        p_reviewer_id: "member1",
+        p_decisions: [
+          {
+            fieldReviewId: "fr1",
+            verdict: "ambiguo",
+            justification: "enunciado incompleto",
+          },
+        ],
+      },
     });
-
-    const commentInsert = writeCalls.find(
-      (c) => c.op === "insert" && c.table === "project_comments",
-    );
-    expect(commentInsert).toBeDefined();
-    const rows = commentInsert?.payload as Array<Record<string, unknown>>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      project_id: "p1",
-      document_id: "doc1",
-      field_name: "q1",
-      author_id: "user1",
-    });
-    expect(String(rows[0].body)).toContain("ambíguo");
-    expect(String(rows[0].body)).toContain("Adalimumabe");
-    expect(String(rows[0].body)).toContain(
-      "Justificativa do pesquisador: o enunciado não define a unidade",
-    );
   });
 
-  it("equivalente em retry (UPDATE casa 0 linhas) ainda registra a equivalencia", async () => {
-    const submitAutoReview = await loadSubmit();
-    // Cenario de retry: um call anterior gravou self_verdict='equivalente' mas
-    // falhou no upsert de response_equivalences. Agora o UPDATE casa 0 linhas
-    // (self_verdict ja nao e NULL), mas o estado real mostra o campo resolvido.
-    tableData["field_reviews:update"] = [];
-    tableData.field_reviews = [
+  it("avisa quando a RPC devolve contestação e não existe árbitro elegível", async () => {
+    rpcResults.submit_self_review = {
+      data: {
+        updatedCount: 1,
+        needsArbitrator: [{ fieldReviewId: "fr1", fieldName: "q1" }],
+      },
+    };
+    const { submitAutoReview } = await actions();
+    const result = await submitAutoReview("p1", "d1", [
       {
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
-        self_verdict: "equivalente",
+        fieldReviewId: "fr1",
+        fieldName: "q1",
+        verdict: "contesta_llm",
+        justification: "discordo",
       },
-    ];
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "equivalente" },
-    ]);
-    expect(r.success).toBe(true);
-
-    // Apesar do UPDATE nao ter casado, o efeito colateral roda (idempotente).
-    const equivUpsert = writeCalls.find(
-      (c) => c.op === "upsert" && c.table === "response_equivalences",
-    );
-    expect(equivUpsert).toBeDefined();
-    expect(equivUpsert?.payload).toMatchObject([
-      { field_name: "q1", response_a_id: "hr1", response_b_id: "lr1" },
-    ]);
-  });
-});
-
-describe("submitAutoReview — envio parcial e conclusão do assignment", () => {
-  const assignmentConcluido = () =>
-    updateCallsOf("assignments").find(
-      (u) => (u.payload as Record<string, unknown>).status === "concluido",
-    );
-
-  it("ainda há campo pendente → assignment NÃO é concluído", async () => {
-    tableData.field_reviews_pending = [{ id: "fr2" }];
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "admite_erro" },
-    ]);
-    expect(r.success).toBe(true);
-    expect(assignmentConcluido()).toBeUndefined();
-  });
-
-  it("nenhum campo pendente restante → assignment é concluído", async () => {
-    tableData.field_reviews_pending = [];
-    const submitAutoReview = await loadSubmit();
-    const r = await submitAutoReview("p1", "doc1", [
-      { fieldName: "q1", verdict: "admite_erro" },
-    ]);
-    expect(r.success).toBe(true);
-    expect(assignmentConcluido()).toBeDefined();
-  });
-});
-
-describe("submitFinalVerdicts — service role somente após os gates", () => {
-  const finalReview = (overrides: Record<string, unknown> = {}) => ({
-    id: "fr1",
-    field_name: "q1",
-    human_response_id: "hr1",
-    llm_response_id: "lr1",
-    blind_verdict: "humano",
-    final_verdict: null,
-    ...overrides,
-  });
-
-  it("linha ausente/RLS falha antes de criar o admin client", async () => {
-    tableData.field_reviews = [];
-    const submitFinalVerdicts = await loadSubmitFinal();
-    const result = await submitFinalVerdicts("p1", "doc1", [
-      { fieldName: "q1", verdict: "humano" },
-    ]);
-
-    expect(result).toEqual({
-      success: false,
-      error: 'Campo "q1": linha de revisão não encontrada ou sem permissão.',
-    });
-    expect(adminFactoryCalls).toBe(0);
-  });
-
-  it("fase cega pendente falha antes de criar o admin client", async () => {
-    tableData.field_reviews = [finalReview({ blind_verdict: null })];
-    const submitFinalVerdicts = await loadSubmitFinal();
-    const result = await submitFinalVerdicts("p1", "doc1", [
-      { fieldName: "q1", verdict: "humano" },
-    ]);
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("fase cega ainda não decidida");
-    expect(adminFactoryCalls).toBe(0);
-  });
-
-  it("decisão humana válida não precisa de admin client", async () => {
-    tableData.field_reviews = [finalReview()];
-    const submitFinalVerdicts = await loadSubmitFinal();
-    const result = await submitFinalVerdicts("p1", "doc1", [
-      { fieldName: "q1", verdict: "humano" },
     ]);
 
     expect(result.success).toBe(true);
-    expect(adminFactoryCalls).toBe(0);
+    expect(result.arbitrated).toBe(0);
+    expect(result.warning).toContain("Não há árbitros elegíveis");
+    expect(adminCreateCalls).toBe(1);
   });
 
-  it("decisão LLM cria o admin client uma vez, depois dos gates", async () => {
-    tableData.field_reviews = [finalReview()];
-    const submitFinalVerdicts = await loadSubmitFinal();
-    const result = await submitFinalVerdicts("p1", "doc1", [
+  it("usa o cliente privilegiado somente para a RPC de atribuição", async () => {
+    rpcResults.submit_self_review = {
+      data: {
+        needsArbitrator: [{ fieldReviewId: "fr1", fieldName: "q1" }],
+      },
+    };
+    rpcResults.assign_arbitration_if_eligible = { data: 1 };
+    serverTableResults = {
+      responses: { data: [] },
+      project_members: {
+        data: [{ user_id: "arbitrator1", role: "pesquisador" }],
+      },
+      assignments: { data: [] },
+    };
+    const { submitAutoReview } = await actions();
+
+    const result = await submitAutoReview("p1", "d1", [
       {
+        fieldReviewId: "fr1",
+        fieldName: "q1",
+        verdict: "contesta_llm",
+        justification: "discordo",
+      },
+    ]);
+
+    expect(result).toMatchObject({ success: true, arbitrated: 1 });
+    expect(adminCreateCalls).toBe(1);
+    expect(rpcCalls).toContainEqual({
+      fn: "assign_arbitration_if_eligible",
+      args: {
+        p_project_id: "p1",
+        p_document_id: "d1",
+        p_user_id: "arbitrator1",
+        p_field_names: ["q1"],
+      },
+    });
+  });
+});
+
+describe("retryPendingArbitrations", () => {
+  it("cria um único cliente privilegiado para drenar todo o backlog", async () => {
+    hoisted.requireCoordinator.mockResolvedValueOnce({
+      ok: true,
+      user: { id: "coord1" },
+    });
+    rpcResults.assign_arbitration_if_eligible = { data: 1 };
+    serverTableResults = {
+      field_reviews: {
+        data: [
+          {
+            document_id: "d1",
+            field_name: "q1",
+            self_reviewer_id: "member1",
+          },
+          {
+            document_id: "d2",
+            field_name: "q2",
+            self_reviewer_id: "member2",
+          },
+        ],
+      },
+      responses: { data: [] },
+      project_members: {
+        data: [{ user_id: "arbitrator1", role: "pesquisador" }],
+      },
+      assignments: { data: [] },
+    };
+    const { retryPendingArbitrations } = await actions();
+
+    expect(await retryPendingArbitrations("p1")).toEqual({
+      success: true,
+      assigned: 2,
+      stillNoPool: 0,
+    });
+    expect(adminCreateCalls).toBe(1);
+  });
+});
+
+describe("regenerateAutoReviewBacklog", () => {
+  beforeEach(() => {
+    hoisted.requireCoordinator.mockResolvedValue({
+      ok: true,
+      user: { id: "account1" },
+      effectiveUserId: "member1",
+    });
+    serverTableResults = {
+      projects: {
+        data: {
+          pydantic_fields: [
+            {
+              name: "campo1",
+              type: "text",
+              options: null,
+              description: "Campo de teste",
+            },
+          ],
+        },
+      },
+      responses: [
+        {
+          data: [
+            {
+              id: "human1",
+              document_id: "doc1",
+              respondent_id: "member1",
+              answers: { campo1: "sim" },
+              answer_field_hashes: null,
+            },
+          ],
+        },
+        {
+          data: [
+            {
+              id: "llm1",
+              document_id: "doc1",
+              answers: { campo1: "não" },
+              answer_field_hashes: null,
+            },
+          ],
+        },
+      ],
+      response_equivalences: { data: [] },
+      field_reviews: { data: [] },
+      project_members: { data: [{ user_id: "member1" }] },
+    };
+    rpcResults.reconcile_auto_review_backlog = { data: 0 };
+  });
+
+  it("envia o conjunto canônico à RPC service-only", async () => {
+    const { regenerateAutoReviewBacklog } = await actions();
+
+    await expect(regenerateAutoReviewBacklog("p1")).resolves.toEqual({
+      success: true,
+      scanned: 1,
+      regenerated: 1,
+      removed: 0,
+      keptResolved: 0,
+    });
+    expect(rpcCalls).toContainEqual({
+      fn: "reconcile_auto_review_backlog",
+      args: {
+        p_project_id: "p1",
+        p_actor_id: "account1",
+        p_field_review_rows: [
+          {
+            document_id: "doc1",
+            field_name: "campo1",
+            human_response_id: "human1",
+            llm_response_id: "llm1",
+            self_reviewer_id: "member1",
+          },
+        ],
+        p_ids_to_delete: [],
+      },
+    });
+    expect(adminCreateCalls).toBe(1);
+  });
+
+  it("propaga falha da RPC sem anunciar reconciliação parcial", async () => {
+    rpcResults.reconcile_auto_review_backlog = {
+      error: { message: "coordinator, creator, or master required" },
+    };
+    const { regenerateAutoReviewBacklog } = await actions();
+
+    await expect(regenerateAutoReviewBacklog("p1")).resolves.toEqual({
+      success: false,
+      error: "coordinator, creator, or master required",
+    });
+  });
+});
+
+describe("submitBlindVerdicts", () => {
+  it("traduz A/B no servidor e envia uma única RPC", async () => {
+    const { submitBlindVerdicts } = await actions();
+    const result = await submitBlindVerdicts("p1", "d1", [
+      { fieldReviewId: "fr1", choice: "a" },
+    ]);
+
+    expect(result).toEqual({ success: true });
+    expect(rpcCalls).toContainEqual({
+      fn: "submit_blind_arbitration",
+      args: {
+        p_project_id: "p1",
+        p_document_id: "d1",
+        p_arbitrator_id: "member1",
+        p_decisions: [
+          {
+            fieldReviewId: "fr1",
+            verdict: resolveBlindVerdict("fr1", "a"),
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("submitFinalVerdicts", () => {
+  it("exige sugestão quando o LLM vence", async () => {
+    const { submitFinalVerdicts } = await actions();
+    const result = await submitFinalVerdicts("p1", "d1", [
+      { fieldReviewId: "fr1", fieldName: "q1", verdict: "llm" },
+    ]);
+
+    expect(result.error).toContain("sugestão de melhoria obrigatória");
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("identifica a linha por fieldReviewId e normaliza os textos", async () => {
+    const { submitFinalVerdicts } = await actions();
+    const result = await submitFinalVerdicts("p1", "d1", [
+      {
+        fieldReviewId: "fr1",
         fieldName: "q1",
         verdict: "llm",
-        questionImprovementSuggestion: "Clarificar a pergunta",
+        questionImprovementSuggestion: "  esclarecer o período  ",
+        arbitratorComment: "  mantido  ",
       },
     ]);
 
-    expect(result.success).toBe(true);
-    expect(adminFactoryCalls).toBe(1);
+    expect(result).toEqual({ success: true });
+    expect(rpcCalls).toContainEqual({
+      fn: "submit_final_arbitration",
+      args: {
+        p_project_id: "p1",
+        p_document_id: "d1",
+        p_arbitrator_id: "member1",
+        p_decisions: [
+          {
+            fieldReviewId: "fr1",
+            verdict: "llm",
+            questionImprovementSuggestion: "esclarecer o período",
+            arbitratorComment: "mantido",
+          },
+        ],
+      },
+    });
   });
 });

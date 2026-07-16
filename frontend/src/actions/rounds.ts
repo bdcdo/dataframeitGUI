@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { requireCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { RoundStrategy } from "@/lib/types";
 
@@ -18,31 +18,12 @@ function mapRoundsError(err: { code?: string; message: string }): string {
 
 async function assertCoordinator(
   projectId: string,
-): Promise<{ error?: string; userId?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado." };
-
-  // Master users tem acesso global (consistente com impersonacao em /analyze/code).
-  if (user.isMaster) return { userId: user.id };
-
-  const supabase = await createSupabaseServer();
-  const { data: project } = await supabase
-    .from("projects")
-    .select("created_by")
-    .eq("id", projectId)
-    .single();
-  if (project?.created_by === user.id) return { userId: user.id };
-
-  const { data: member } = await supabase
-    .from("project_members")
-    .select("role")
-    .eq("project_id", projectId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (member?.role !== "coordenador") {
-    return { error: "Apenas coordenadores podem alterar rodadas." };
-  }
-  return { userId: user.id };
+): Promise<{ error?: string }> {
+  const gate = await requireCoordinator(
+    projectId,
+    "Apenas coordenadores podem alterar rodadas.",
+  );
+  return gate.ok ? {} : { error: gate.error };
 }
 
 export async function createRound(

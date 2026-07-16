@@ -1,20 +1,20 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { resolveProjectActor } from "@/lib/auth";
 
 export async function getResearcherFieldOrder(
   projectId: string,
 ): Promise<{ order: string[] | null; error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { order: null, error: "Não autenticado" };
-
+  const actor = await resolveProjectActor(projectId);
+  if (!actor.ok) return { order: null, error: actor.error };
   const supabase = await createSupabaseServer();
+  const effectiveUserId = actor.effectiveUserId;
   const { data, error } = await supabase
     .from("researcher_field_orders")
     .select("field_order")
     .eq("project_id", projectId)
-    .eq("user_id", user.id)
+    .eq("user_id", effectiveUserId)
     .maybeSingle();
 
   if (error) {
@@ -33,18 +33,19 @@ export async function saveResearcherFieldOrder(
   projectId: string,
   fieldOrder: string[],
 ): Promise<{ success: boolean; error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { success: false, error: "Não autenticado" };
+  const actor = await resolveProjectActor(projectId);
+  if (!actor.ok) return { success: false, error: actor.error };
 
   if (!Array.isArray(fieldOrder) || !fieldOrder.every((x) => typeof x === "string")) {
     return { success: false, error: "Ordem inválida" };
   }
 
   const supabase = await createSupabaseServer();
+  const effectiveUserId = actor.effectiveUserId;
   const { error } = await supabase.from("researcher_field_orders").upsert(
     {
       project_id: projectId,
-      user_id: user.id,
+      user_id: effectiveUserId,
       field_order: fieldOrder,
       updated_at: new Date().toISOString(),
     },

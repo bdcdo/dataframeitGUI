@@ -7,6 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FolderOpen } from "lucide-react";
 import Link from "next/link";
 import type { Project } from "@/lib/types";
+import {
+  loadAccessibleProjects,
+} from "@/lib/project-roles";
 
 export default async function DashboardPage() {
   const user = await getAuthUser();
@@ -32,17 +35,7 @@ export default async function DashboardPage() {
           })) as (Project & { role: string })[],
           error,
         }))
-    : supabase
-        .from("project_members")
-        .select("project_id, role, projects(id, name, description)")
-        .eq("user_id", user.id)
-        .then(({ data, error }) => ({
-          projects: (data || []).map((m) => ({
-            ...(m.projects as unknown as Project),
-            role: m.role,
-          })) as (Project & { role: string })[],
-          error,
-        }));
+    : loadAccessibleProjects(supabase, user.id);
 
   const [
     { data: profile, error: profileError },

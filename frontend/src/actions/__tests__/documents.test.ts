@@ -43,7 +43,7 @@ vi.mock("@/lib/auth", () => ({
     const user = await hoisted.getUser();
     if (!user) return { ok: false, error: "Não autenticado" };
     if (!(await hoisted.isCoord())) return { ok: false, error: deniedMessage };
-    return { ok: true, user };
+    return { ok: true, user, effectiveUserId: "memberCoord" };
   },
 }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -536,7 +536,7 @@ describe("excludeDocuments", () => {
       op: "update",
       payload: {
         excluded_reason: "motivo",
-        excluded_by: "userCoord",
+        excluded_by: "memberCoord",
       },
     });
   });

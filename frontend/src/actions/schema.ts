@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, resolveProjectActor } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { fetchFastAPIServer } from "@/lib/api-server";
 import type { PydanticField } from "@/lib/types";
@@ -26,6 +26,15 @@ interface RecoverResponse {
   fields: PydanticField[];
   model_name: string | null;
   errors: string[];
+}
+
+async function loadSchemaActor(projectId: string) {
+  const actor = await resolveProjectActor(projectId);
+  if (!actor.ok) return { error: actor.error } as const;
+  return {
+    supabase: await createSupabaseServer(),
+    actorId: actor.effectiveUserId,
+  };
 }
 
 // Repopula os campos a partir do `pydantic_code` ARMAZENADO do projeto (lido no
@@ -139,22 +148,23 @@ export async function saveSchemaFromGUI(
   projectId: string,
   fields: PydanticField[]
 ): Promise<{ error?: string }> {
-  const [supabase, user] = await Promise.all([
-    createSupabaseServer(),
-    getAuthUser(),
-  ]);
+  const context = await loadSchemaActor(projectId);
+  if ("error" in context) return context;
+  const { supabase, actorId } = context;
 
   // Fetch old fields + current version. `pydantic_code` entra no select por
   // causa da guarda anti-wipe abaixo: o caso legado a proteger tem justamente
   // `pydantic_fields` vazio mas `pydantic_code` presente, então a guarda
   // precisa enxergar o código para não deixar passar o wipe.
-  const { data: project } = await supabase
+  const { data: project, error: projectError } = await supabase
     .from("projects")
     .select(
       "pydantic_fields, pydantic_code, schema_version_major, schema_version_minor, schema_version_patch",
     )
     .eq("id", projectId)
     .single();
+  if (projectError) return { error: projectError.message };
+  if (!project) return { error: "Projeto não encontrado." };
 
   const oldFields = (project?.pydantic_fields as PydanticField[]) || [];
 
@@ -198,11 +208,11 @@ export async function saveSchemaFromGUI(
   // que saveSchema confirmou ≥1 linha atualizada (erro em 0-rows) — antes o
   // log era gravado mesmo com o UPDATE de projects filtrado pela RLS, gerando
   // histórico fantasma (#178).
-  if (logEntries.length > 0 && user) {
+  if (logEntries.length > 0) {
     const { error: logErr } = await supabase.from("schema_change_log").insert(
       logEntries.map((e) => ({
         project_id: projectId,
-        changed_by: user.id,
+        changed_by: actorId,
         change_type: changeType ?? "patch",
         version_major: bumped.major,
         version_minor: bumped.minor,
@@ -302,39 +312,47 @@ async function fetchAllResponses(
 
 async function persistResponseVersionUpdates(
   supabase: SupabaseServerClient,
+  projectId: string,
   updates: Map<string, UpdateBucket>,
 ): Promise<void> {
-  const updatePromises = [];
+  const payload: Array<{
+    id: string;
+    schema_version_major: number;
+    schema_version_minor: number;
+    schema_version_patch: number;
+    version_inferred_from: string;
+  }> = [];
   for (const bucket of updates.values()) {
     const { ids, method, version } = bucket;
-    for (let i = 0; i < ids.length; i += 100) {
-      const chunk = ids.slice(i, i + 100);
-      updatePromises.push(
-        supabase
-          .from("responses")
-          .update({
-            schema_version_major: version.major,
-            schema_version_minor: version.minor,
-            schema_version_patch: version.patch,
-            version_inferred_from: method,
-          })
-          .in("id", chunk)
-          .select("id")
-          .then((r) => ({ result: r, expected: chunk.length })),
-      );
+    for (const id of ids) {
+      payload.push({
+        id,
+        schema_version_major: version.major,
+        schema_version_minor: version.minor,
+        schema_version_patch: version.patch,
+        version_inferred_from: method,
+      });
     }
   }
-  const responseUpdateResults = await Promise.all(updatePromises);
-  for (const { result, expected } of responseUpdateResults) {
-    if (result.error) {
-      throw new Error(`Backfill: falha ao versionar respostas (${result.error.message})`);
-    }
-    const affected = result.data?.length ?? 0;
-    if (affected < expected) {
-      throw new Error(
-        `Backfill: ${expected - affected} resposta(s) não puderam ser versionadas (sem permissão de UPDATE em responses).`,
-      );
-    }
+
+  if (payload.length === 0) return;
+
+  // A RPC valida autorização e pertencimento de TODOS os IDs antes de escrever.
+  // Um único call preserva a atomicidade do backfill; updates PostgREST em
+  // chunks permitiam sucesso parcial e davam ao coordenador UPDATE genérico em
+  // responses para alterar quatro colunas de metadados.
+  const { data, error } = await supabase.rpc("set_response_schema_versions", {
+    p_project_id: projectId,
+    p_updates: payload,
+  });
+  if (error) {
+    throw new Error(`Backfill: falha ao versionar respostas (${error.message})`);
+  }
+  const affected = typeof data === "number" ? data : Number(data ?? 0);
+  if (affected !== payload.length) {
+    throw new Error(
+      `Backfill: a operação atômica atualizou ${affected} de ${payload.length} resposta(s).`,
+    );
   }
 }
 
@@ -393,7 +411,7 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
 
   const { updates, byMethod } = matchResponsesToVersions(responses, hashesByVersion, enriched);
 
-  await persistResponseVersionUpdates(supabase, updates);
+  await persistResponseVersionUpdates(supabase, projectId, updates);
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/config/schema`);
@@ -414,19 +432,19 @@ async function runBackfill(projectId: string): Promise<BackfillStats> {
 export async function publishMajorVersion(
   projectId: string,
 ): Promise<{ bumped?: { major: number; minor: number; patch: number }; error?: string }> {
-  const [supabase, user] = await Promise.all([
-    createSupabaseServer(),
-    getAuthUser(),
-  ]);
-  if (!user) return { error: "Não autenticado" };
+  const context = await loadSchemaActor(projectId);
+  if ("error" in context) return context;
+  const { supabase, actorId } = context;
 
-  const { data: project } = await supabase
+  const { data: project, error: projectError } = await supabase
     .from("projects")
     .select(
       "schema_version_major, schema_version_minor, schema_version_patch",
     )
     .eq("id", projectId)
     .single();
+  if (projectError) return { error: projectError.message };
+  if (!project) return { error: "Projeto não encontrado." };
 
   const current = {
     major: project?.schema_version_major ?? 0,
@@ -453,7 +471,7 @@ export async function publishMajorVersion(
 
   const { error: logErr } = await supabase.from("schema_change_log").insert({
     project_id: projectId,
-    changed_by: user.id,
+    changed_by: actorId,
     field_name: "(projeto)",
     change_summary: `Nova versão MAJOR publicada: ${bumped.major}.${bumped.minor}.${bumped.patch}`,
     before_value: current as unknown as Record<string, unknown>,

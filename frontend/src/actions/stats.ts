@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, type AuthUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 
@@ -13,15 +13,18 @@ import { revalidatePath } from "next/cache";
 async function withResolutionAction(
   projectId: string,
   action: (
-    user: AuthUser,
+    actorId: string,
     supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
   ) => Promise<{ success: boolean; error?: string }>,
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const user = await getAuthUser();
     if (!user) return { success: false, error: "Não autenticado" };
-    const supabase = await createSupabaseServer();
-    const result = await action(user, supabase);
+    const [supabase, actorId] = await Promise.all([
+      createSupabaseServer(),
+      getEffectiveMemberId(projectId),
+    ]);
+    const result = await action(actorId, supabase);
     if (result.success) revalidatePath(`/projects/${projectId}/reviews`);
     return result;
   } catch (e) {
@@ -29,46 +32,72 @@ async function withResolutionAction(
   }
 }
 
+async function setReviewResolution(
+  reviewId: string,
+  projectId: string,
+  resolved: boolean,
+): Promise<{ success: boolean; error?: string }> {
+  return withResolutionAction(projectId, async (resolverId, supabase) => {
+    const { error } = await supabase.rpc("set_review_resolution", {
+      p_project_id: projectId,
+      p_review_id: reviewId,
+      p_resolved: resolved,
+      p_resolver_id: resolverId,
+    });
+
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  });
+}
+
+function affectedRowResult(
+  data: unknown[] | null,
+  error: { message: string } | null,
+  emptyMessage: string,
+): { success: boolean; error?: string } {
+  if (error) return { success: false, error: error.message };
+  return data && data.length > 0
+    ? { success: true }
+    : { success: false, error: emptyMessage };
+}
+
+async function setDuvidaResolution(
+  reviewId: string,
+  respondentId: string,
+  resolvedBy: string | null,
+  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+): Promise<{ success: boolean; error?: string }> {
+  const { data, error } = await supabase
+    .from("verdict_acknowledgments")
+    .update({
+      resolved_at: resolvedBy ? new Date().toISOString() : null,
+      resolved_by: resolvedBy,
+    })
+    .eq("review_id", reviewId)
+    .eq("respondent_id", respondentId)
+    .select("review_id");
+
+  return affectedRowResult(
+    data,
+    error,
+    resolvedBy
+      ? "Sem permissão para resolver esta dúvida"
+      : "Sem permissão para reabrir esta dúvida",
+  );
+}
+
 export async function resolveReviewComment(
   reviewId: string,
   projectId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (user, supabase) => {
-    const { data, error } = await supabase
-      .from("reviews")
-      .update({
-        resolved_at: new Date().toISOString(),
-        resolved_by: user.id,
-      })
-      .eq("id", reviewId)
-      .select("id");
-
-    if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Sem permissão para resolver este comentário" };
-    return { success: true };
-  });
+  return setReviewResolution(reviewId, projectId, true);
 }
 
 export async function reopenReviewComment(
   reviewId: string,
   projectId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (_user, supabase) => {
-    const { data, error } = await supabase
-      .from("reviews")
-      .update({
-        resolved_at: null,
-        resolved_by: null,
-      })
-      .eq("id", reviewId)
-      .select("id");
-
-    if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Sem permissão para reabrir este comentário" };
-    return { success: true };
-  });
+  return setReviewResolution(reviewId, projectId, false);
 }
 
 export async function resolveNote(
@@ -76,11 +105,11 @@ export async function resolveNote(
   responseId: string,
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (user, supabase) => {
+  return withResolutionAction(projectId, async (actorId, supabase) => {
     const { error } = await supabase.from("note_resolutions").insert({
       project_id: projectId,
       response_id: responseId,
-      resolved_by: user.id,
+      resolved_by: actorId,
       note: note || null,
     });
 
@@ -101,10 +130,11 @@ export async function reopenNote(
       .eq("response_id", responseId)
       .select("response_id");
 
-    if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Nada reaberto: sem permissão ou anotação já reaberta" };
-    return { success: true };
+    return affectedRowResult(
+      data,
+      error,
+      "Nada reaberto: sem permissão ou anotação já reaberta",
+    );
   });
 }
 
@@ -113,21 +143,8 @@ export async function resolveDuvida(
   reviewId: string,
   respondentId: string,
 ): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (user, supabase) => {
-    const { data, error } = await supabase
-      .from("verdict_acknowledgments")
-      .update({
-        resolved_at: new Date().toISOString(),
-        resolved_by: user.id,
-      })
-      .eq("review_id", reviewId)
-      .eq("respondent_id", respondentId)
-      .select("review_id");
-
-    if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Sem permissão para resolver esta dúvida" };
-    return { success: true };
+  return withResolutionAction(projectId, async (actorId, supabase) => {
+    return setDuvidaResolution(reviewId, respondentId, actorId, supabase);
   });
 }
 
@@ -137,20 +154,7 @@ export async function reopenDuvida(
   respondentId: string,
 ): Promise<{ success: boolean; error?: string }> {
   return withResolutionAction(projectId, async (_user, supabase) => {
-    const { data, error } = await supabase
-      .from("verdict_acknowledgments")
-      .update({
-        resolved_at: null,
-        resolved_by: null,
-      })
-      .eq("review_id", reviewId)
-      .eq("respondent_id", respondentId)
-      .select("review_id");
-
-    if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Sem permissão para reabrir esta dúvida" };
-    return { success: true };
+    return setDuvidaResolution(reviewId, respondentId, null, supabase);
   });
 }
 
@@ -160,12 +164,12 @@ export async function resolveDifficulty(
   documentId: string,
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (user, supabase) => {
+  return withResolutionAction(projectId, async (actorId, supabase) => {
     const { error } = await supabase.from("difficulty_resolutions").insert({
       project_id: projectId,
       response_id: responseId,
       document_id: documentId,
-      resolved_by: user.id,
+      resolved_by: actorId,
       note: note || null,
     });
 
@@ -186,10 +190,11 @@ export async function reopenDifficulty(
       .eq("response_id", responseId)
       .select("response_id");
 
-    if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Nada reaberto: sem permissão ou dificuldade já reaberta" };
-    return { success: true };
+    return affectedRowResult(
+      data,
+      error,
+      "Nada reaberto: sem permissão ou dificuldade já reaberta",
+    );
   });
 }
 
@@ -245,12 +250,12 @@ export async function resolveError(
   fieldName: string,
   note?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (user, supabase) => {
+  return withResolutionAction(projectId, async (actorId, supabase) => {
     const { error } = await supabase.from("error_resolutions").insert({
       project_id: projectId,
       document_id: documentId,
       field_name: fieldName,
-      resolved_by: user.id,
+      resolved_by: actorId,
       note: note || null,
     });
 
@@ -273,9 +278,10 @@ export async function reopenError(
       .eq("field_name", fieldName)
       .select("document_id");
 
-    if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Nada reaberto: sem permissão ou erro já reaberto" };
-    return { success: true };
+    return affectedRowResult(
+      data,
+      error,
+      "Nada reaberto: sem permissão ou erro já reaberto",
+    );
   });
 }
