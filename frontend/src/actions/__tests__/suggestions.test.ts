@@ -8,10 +8,7 @@ import {
 } from "./supabase-mock";
 import { EMPTY_BASELINE, FIELD, PROJECT_SELECT } from "./schema-test-fixtures";
 
-// Cobertura dos dois lados da divergência sugestão × schema (#178):
-// (a) schema não aplicado → sugestão não pode virar "approved";
-// (b) schema aplicado mas UPDATE de schema_suggestions filtrado pela RLS
-//     (0 linhas) → a action não pode retornar sucesso com a sugestão pendente.
+// A RPC atômica torna irrepresentável a divergência sugestão × schema (#178).
 
 const supabaseState = vi.hoisted(() => ({
   writeCalls: [] as WriteCall[],
@@ -49,6 +46,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 import {
   approveSchemaSuggestionWithEdits,
+  createSchemaSuggestion,
   resolveSchemaSuggestion,
 } from "../suggestions";
 
@@ -70,13 +68,27 @@ const savedSchema = {
   },
 };
 
+describe("createSchemaSuggestion", () => {
+  it("rejeita suggested_changes malformado antes do INSERT", async () => {
+    const result = await createSchemaSuggestion(
+      "p1",
+      "q1",
+      { unexpected: true } as never,
+      "Ajuste",
+    );
+
+    expect(result.error).toMatch(/inválid/i);
+    expect(supabaseState.writeCalls).toHaveLength(0);
+  });
+});
+
 describe("approveSchemaSuggestionWithEdits", () => {
-  it("schema não aplicado (0 linhas em projects) → erro e sugestão NÃO marcada como aprovada", async () => {
+  it("falha da RPC atômica não produz update paralelo", async () => {
     supabaseState.tableResults = {
       projects: PROJECT_SELECT,
     };
     supabaseState.rpcResults = {
-      commit_project_schema: { error: { message: "sem permissão" } },
+      approve_schema_suggestion: { error: { message: "sem permissão" } },
     };
 
     const r = await approveSchemaSuggestionWithEdits(
@@ -93,12 +105,15 @@ describe("approveSchemaSuggestionWithEdits", () => {
     ).toBe(false);
   });
 
-  it("schema aplicado mas UPDATE de schema_suggestions filtrado (0 linhas) → erro, não sucesso falso", async () => {
+  it("falha ao resolver a sugestão volta como erro da mesma transação", async () => {
     supabaseState.tableResults = {
       projects: PROJECT_SELECT,
-      schema_suggestions: { data: [] },
     };
-    supabaseState.rpcResults = { commit_project_schema: savedSchema };
+    supabaseState.rpcResults = {
+      approve_schema_suggestion: {
+        error: { message: "sugestão não pôde ser resolvida; transação revertida" },
+      },
+    };
 
     const r = await approveSchemaSuggestionWithEdits(
       "s1",
@@ -106,15 +121,14 @@ describe("approveSchemaSuggestionWithEdits", () => {
       [FIELD],
       EMPTY_BASELINE,
     );
-    expect(r.error).toMatch(/Schema aplicado.*sem permissão/);
+    expect(r.error).toMatch(/transação revertida/);
   });
 
   it("caminho feliz: schema aplicado e sugestão marcada como aprovada", async () => {
     supabaseState.tableResults = {
       projects: PROJECT_SELECT,
-      schema_suggestions: { data: [{ id: "s1" }] },
     };
-    supabaseState.rpcResults = { commit_project_schema: savedSchema };
+    supabaseState.rpcResults = { approve_schema_suggestion: savedSchema };
 
     const r = await approveSchemaSuggestionWithEdits(
       "s1",
@@ -123,10 +137,11 @@ describe("approveSchemaSuggestionWithEdits", () => {
       EMPTY_BASELINE,
     );
     expect(r.error).toBeUndefined();
-    const suggestionUpdate = supabaseState.writeCalls.find(
-      (c) => c.table === "schema_suggestions" && c.op === "update",
-    );
-    expect(suggestionUpdate?.payload).toMatchObject({ status: "approved" });
+    expect(supabaseState.rpcCalls).toContainEqual({
+      fn: "approve_schema_suggestion",
+      args: expect.objectContaining({ p_suggestion_id: "s1", p_project_id: "p1" }),
+    });
+    expect(supabaseState.writeCalls).toHaveLength(0);
   });
 });
 

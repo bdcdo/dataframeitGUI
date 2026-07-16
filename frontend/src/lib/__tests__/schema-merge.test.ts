@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeSchemas } from "@/lib/schema-merge";
+import { mergeSchemas, unresolvedSchemaConflicts } from "@/lib/schema-merge";
 import type { PydanticField } from "@/lib/types";
 
 const q1: PydanticField = {
@@ -19,6 +19,11 @@ const q3: PydanticField = {
   type: "date",
   options: null,
   description: "Pergunta 3",
+};
+const q4: PydanticField = {
+  ...q1,
+  name: "q4",
+  description: "Pergunta 4",
 };
 
 describe("mergeSchemas", () => {
@@ -50,7 +55,9 @@ describe("mergeSchemas", () => {
       resolution: null,
     });
     expect(initial.fields[0].description).toBe("Remota");
-    expect(initial.unresolvedConflictIds).toEqual([conflict.id]);
+    expect(unresolvedSchemaConflicts(initial).map(({ id }) => id)).toEqual([
+      conflict.id,
+    ]);
 
     const resolved = mergeSchemas(
       [q1],
@@ -59,7 +66,7 @@ describe("mergeSchemas", () => {
       { [conflict.id]: "local" },
     );
     expect(resolved.fields[0].description).toBe("Local");
-    expect(resolved.unresolvedConflictIds).toEqual([]);
+    expect(unresolvedSchemaConflicts(resolved)).toEqual([]);
   });
 
   it("mescla adições independentes e mantém as locais na ordem local", () => {
@@ -141,6 +148,17 @@ describe("mergeSchemas", () => {
     const result = mergeSchemas([q1, q2, q3], [q3, q1, q2], [q1, q2, q3]);
     expect(result.conflicts).toEqual([]);
     expect(result.fields.map(({ name }) => name)).toEqual(["q3", "q1", "q2"]);
+  });
+
+  it("combina reorders independentes sem criar falso conflito", () => {
+    const result = mergeSchemas(
+      [q1, q2, q3, q4],
+      [q2, q1, q3, q4],
+      [q1, q2, q4, q3],
+    );
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.fields.map(({ name }) => name)).toEqual(["q2", "q1", "q4", "q3"]);
   });
 
   it("expõe reorder incompatível e permite escolher a ordem local", () => {

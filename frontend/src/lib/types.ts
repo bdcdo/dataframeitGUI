@@ -101,12 +101,13 @@ export type {
 } from "./pydantic-field";
 
 export interface SchemaBaselineIdentity {
-  version: string;
   revision: number;
 }
 
-export interface SchemaSnapshot extends SchemaBaselineIdentity {
+export interface SchemaSnapshot {
   fields: PydanticField[];
+  version: string;
+  revision: number;
 }
 
 export type SchemaSaveResult =

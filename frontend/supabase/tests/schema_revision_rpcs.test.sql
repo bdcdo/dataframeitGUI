@@ -38,6 +38,14 @@ INSERT INTO public.projects (
     '[]',
     'class Analysis: pass',
     'hash-trigger'
+  ),
+  (
+    '82000000-0000-0000-0000-000000000004',
+    'schema suggestion atomic test',
+    '81000000-0000-0000-0000-000000000001',
+    '[{"name":"suggested_field","type":"text","options":null,"description":"Antes"}]',
+    'class Analysis: before',
+    'hash-before'
   );
 
 INSERT INTO public.project_members (project_id, user_id, role) VALUES
@@ -50,7 +58,28 @@ INSERT INTO public.project_members (project_id, user_id, role) VALUES
     '82000000-0000-0000-0000-000000000001',
     '81000000-0000-0000-0000-000000000002',
     'pesquisador'
+  ),
+  (
+    '82000000-0000-0000-0000-000000000004',
+    '81000000-0000-0000-0000-000000000001',
+    'coordenador'
   );
+
+INSERT INTO public.schema_suggestions (
+  id,
+  project_id,
+  field_name,
+  suggested_by,
+  suggested_changes,
+  reason
+) VALUES (
+  '85000000-0000-0000-0000-000000000001',
+  '82000000-0000-0000-0000-000000000004',
+  'suggested_field',
+  '81000000-0000-0000-0000-000000000002',
+  '{"description":"Depois"}',
+  'melhorar descrição'
+);
 
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   (
@@ -68,19 +97,31 @@ INSERT INTO public.responses (
   respondent_type,
   answers,
   version_inferred_from
-) VALUES (
-  '84000000-0000-0000-0000-000000000001',
-  '82000000-0000-0000-0000-000000000001',
-  '83000000-0000-0000-0000-000000000001',
-  '81000000-0000-0000-0000-000000000002',
-  'humano',
-  '{}',
-  'created_at'
-);
+) VALUES
+  (
+    '84000000-0000-0000-0000-000000000001',
+    '82000000-0000-0000-0000-000000000001',
+    '83000000-0000-0000-0000-000000000001',
+    NULL,
+    'llm',
+    '{}',
+    'created_at'
+  ),
+  (
+    '84000000-0000-0000-0000-000000000002',
+    '82000000-0000-0000-0000-000000000001',
+    '83000000-0000-0000-0000-000000000001',
+    NULL,
+    'llm',
+    '{}',
+    'live_save'
+  );
 
 GRANT SELECT, UPDATE ON public.projects TO authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.schema_change_log TO authenticated;
 GRANT SELECT, UPDATE ON public.responses TO authenticated;
+GRANT SELECT, UPDATE ON public.schema_suggestions TO authenticated;
+GRANT SELECT ON public.project_members TO authenticated;
 
 CREATE TEMP TABLE schema_rpc_results (
   name text PRIMARY KEY,
@@ -98,7 +139,11 @@ DO $$
 BEGIN
   IF NOT has_function_privilege(
     'authenticated',
-    'public.commit_project_schema(uuid,bigint,jsonb,text,text,integer,integer,integer,text,jsonb,uuid)',
+    'public.commit_project_schema(uuid,bigint,jsonb,text,integer,integer,integer,text,jsonb,uuid)',
+    'EXECUTE'
+  ) OR NOT has_function_privilege(
+    'authenticated',
+    'public.approve_schema_suggestion(uuid,uuid,bigint,jsonb,text,integer,integer,integer,text,jsonb,uuid)',
     'EXECUTE'
   ) OR NOT has_function_privilege(
     'authenticated',
@@ -110,7 +155,11 @@ BEGIN
 
   IF has_function_privilege(
     'anon',
-    'public.commit_project_schema(uuid,bigint,jsonb,text,text,integer,integer,integer,text,jsonb,uuid)',
+    'public.commit_project_schema(uuid,bigint,jsonb,text,integer,integer,integer,text,jsonb,uuid)',
+    'EXECUTE'
+  ) OR has_function_privilege(
+    'anon',
+    'public.approve_schema_suggestion(uuid,uuid,bigint,jsonb,text,integer,integer,integer,text,jsonb,uuid)',
     'EXECUTE'
   ) OR has_function_privilege(
     'anon',
@@ -139,7 +188,6 @@ FROM public.commit_project_schema(
   0,
   '[{"name":"new_field"}]',
   'class Analysis: new',
-  'hash-new',
   0,
   2,
   0,
@@ -154,6 +202,7 @@ DO $$
 DECLARE
   v_result schema_rpc_results%ROWTYPE;
   v_log record;
+  v_hash text;
 BEGIN
   SELECT * INTO v_result
   FROM schema_rpc_results
@@ -179,6 +228,16 @@ BEGIN
     RAISE EXCEPTION 'FALHOU commit: metadados do histórico não foram preenchidos pela RPC';
   END IF;
 
+  SELECT pydantic_hash INTO v_hash
+  FROM public.projects
+  WHERE id = '82000000-0000-0000-0000-000000000001';
+  IF v_hash <> substring(
+    encode(extensions.digest('class Analysis: new', 'sha256'), 'hex')
+    FROM 1 FOR 16
+  ) THEN
+    RAISE EXCEPTION 'FALHOU commit: hash não foi derivado do código persistido';
+  END IF;
+
   RAISE NOTICE 'OK commit: schema, revisão e histórico foram persistidos atomicamente';
 END;
 $$;
@@ -198,7 +257,6 @@ FROM public.commit_project_schema(
   0,
   '[{"name":"stale_field"}]',
   'class Analysis: stale',
-  'hash-stale',
   0,
   3,
   0,
@@ -259,7 +317,6 @@ BEGIN
     1,
     '{}',
     'class Analysis: malformed',
-    'hash-malformed',
     0,
     3,
     0,
@@ -280,9 +337,30 @@ BEGIN
   FROM public.commit_project_schema(
     '82000000-0000-0000-0000-000000000001',
     1,
+    '[{"name":"invalid_semver"}]',
+    'class Analysis: invalid_semver',
+    9,
+    0,
+    0,
+    'patch',
+    '[{"field_name":"invalid_semver","change_summary":"salto inválido","before_value":{},"after_value":{}}]',
+    '81000000-0000-0000-0000-000000000001'
+  );
+  RAISE EXCEPTION 'TESTE FALHOU: change_type incompatível com semver foi aceito';
+EXCEPTION
+  WHEN invalid_parameter_value THEN
+    RAISE NOTICE 'OK semver: change_type precisa corresponder ao incremento exato';
+END;
+$$;
+
+DO $$
+BEGIN
+  PERFORM *
+  FROM public.commit_project_schema(
+    '82000000-0000-0000-0000-000000000001',
+    1,
     '[{"name":"must_rollback"}]',
     'class Analysis: must_rollback',
-    'hash-must-rollback',
     0,
     3,
     0,
@@ -305,7 +383,6 @@ BEGIN
     1,
     '[{"name":"without_audit"}]',
     'class Analysis: without_audit',
-    'hash-without-audit',
     0,
     3,
     0,
@@ -361,7 +438,6 @@ FROM public.commit_project_schema(
   1,
   '[{"name":"forbidden"}]',
   'forbidden',
-  'forbidden',
   0,
   3,
   0,
@@ -386,7 +462,6 @@ FROM public.commit_project_schema(
   1,
   '[]',
   'not visible',
-  'not-visible',
   0,
   3,
   0,
@@ -418,9 +493,154 @@ BEGIN
 END;
 $$;
 
+-- ----- Aprovação de sugestão: schema, log e status são atômicos -----
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  v_result record;
+BEGIN
+  SELECT * INTO v_result
+  FROM public.approve_schema_suggestion(
+    '85000000-0000-0000-0000-000000000001',
+    '82000000-0000-0000-0000-000000000004',
+    0,
+    '[{"name":"suggested_field","type":"text","options":null,"description":"Depois"}]',
+    'class Analysis: after',
+    0,
+    1,
+    1,
+    'patch',
+    '[{"field_name":"suggested_field","change_summary":"descrição","before_value":{"description":"Antes"},"after_value":{"description":"Depois"}}]',
+    '81000000-0000-0000-0000-000000000001'
+  );
+
+  IF v_result.status <> 'saved' OR v_result.schema_revision <> 1 THEN
+    RAISE EXCEPTION 'FALHOU sugestão atômica: retorno inesperado %', row_to_json(v_result);
+  END IF;
+END;
+$$;
+
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.projects
+    WHERE id = '82000000-0000-0000-0000-000000000004'
+      AND schema_revision = 1
+      AND schema_version_patch = 1
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM public.schema_suggestions
+    WHERE id = '85000000-0000-0000-0000-000000000001'
+      AND project_id = '82000000-0000-0000-0000-000000000004'
+      AND status = 'approved'
+      AND resolved_by = '81000000-0000-0000-0000-000000000001'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU sugestão atômica: projeto e sugestão divergiram';
+  END IF;
+END;
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  v_failed boolean := false;
+BEGIN
+  BEGIN
+    PERFORM *
+    FROM public.approve_schema_suggestion(
+      '85000000-0000-0000-0000-000000000099',
+      '82000000-0000-0000-0000-000000000004',
+      1,
+      '[{"name":"suggested_field","type":"text","options":null,"description":"Não persistir"}]',
+      'class Analysis: rollback',
+      0,
+      1,
+      2,
+      'patch',
+      '[{"field_name":"rollback","change_summary":"não persistir","before_value":{},"after_value":{}}]',
+      '81000000-0000-0000-0000-000000000001'
+    );
+  EXCEPTION
+    WHEN raise_exception THEN
+      v_failed := true;
+  END;
+
+  IF NOT v_failed THEN
+    RAISE EXCEPTION 'TESTE FALHOU: sugestão inexistente deveria abortar';
+  END IF;
+END;
+$$;
+
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.projects
+    WHERE id = '82000000-0000-0000-0000-000000000004'
+      AND schema_revision = 1
+      AND schema_version_patch = 1
+      AND pydantic_fields->0->>'description' = 'Depois'
+  ) OR EXISTS (
+    SELECT 1
+    FROM public.schema_change_log
+    WHERE project_id = '82000000-0000-0000-0000-000000000004'
+      AND field_name = 'rollback'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU sugestão rollback: escrita parcial escapou';
+  END IF;
+
+  RAISE NOTICE 'OK sugestão atômica: falha ao resolver reverteu schema e log';
+END;
+$$;
+
 -- ----- Trigger: revisão e schema só podem avançar juntos -----
 DO $$
 BEGIN
+  BEGIN
+    INSERT INTO public.projects (id, name, created_by, schema_revision)
+    VALUES (
+      '82000000-0000-0000-0000-000000000003',
+      'schema revision negativa',
+      '81000000-0000-0000-0000-000000000001',
+      -1
+    );
+    RAISE EXCEPTION 'TESTE FALHOU: INSERT aceitou revisão negativa';
+  EXCEPTION
+    WHEN check_violation THEN
+      NULL;
+  END;
+
+  BEGIN
+    INSERT INTO public.projects (id, name, created_by, pydantic_fields)
+    VALUES (
+      '82000000-0000-0000-0000-000000000005',
+      'schema fields nulo',
+      '81000000-0000-0000-0000-000000000001',
+      NULL
+    );
+    RAISE EXCEPTION 'TESTE FALHOU: projeto aceitou pydantic_fields nulo';
+  EXCEPTION
+    WHEN not_null_violation THEN
+      NULL;
+  END;
+
   BEGIN
     UPDATE public.projects
     SET pydantic_code = 'mudança sem revisão'
@@ -463,6 +683,35 @@ BEGIN
   RAISE NOTICE 'OK trigger: estado schema/revisão malformado é irrepresentável';
 END;
 $$;
+
+-- ----- Backfill sem histórico não pode alterar a versão -----
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+BEGIN
+  PERFORM *
+  FROM public.apply_schema_backfill(
+    '82000000-0000-0000-0000-000000000001',
+    1,
+    1,
+    0,
+    0,
+    '[]',
+    '[]'
+  );
+  RAISE EXCEPTION 'TESTE FALHOU: backfill sem histórico alterou a versão';
+EXCEPTION
+  WHEN invalid_parameter_value THEN
+    RAISE NOTICE 'OK backfill: mudança de versão exige histórico reconstruído';
+END;
+$$;
+
+RESET ROLE;
 
 -- ----- Backfill feliz: logs, responses e versão do projeto numa transação -----
 SELECT set_config(
@@ -541,7 +790,135 @@ BEGIN
 END;
 $$;
 
--- ----- Backfill inválido: contagem incompleta reverte tudo -----
+-- ----- Backfill stale e sem permissão não tocam nenhuma tabela -----
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+INSERT INTO schema_rpc_results
+SELECT 'backfill-conflict', result.*
+FROM public.apply_schema_backfill(
+  '82000000-0000-0000-0000-000000000001',
+  1,
+  2,
+  0,
+  0,
+  '[]',
+  '[]'
+) AS result;
+
+RESET ROLE;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+INSERT INTO schema_rpc_results
+SELECT 'backfill-forbidden', result.*
+FROM public.apply_schema_backfill(
+  '82000000-0000-0000-0000-000000000001',
+  2,
+  1,
+  0,
+  0,
+  '[]',
+  '[]'
+) AS result;
+
+RESET ROLE;
+
+DO $$
+DECLARE
+  v_project record;
+  v_log record;
+  v_response record;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM schema_rpc_results
+    WHERE name = 'backfill-conflict' AND status = 'conflict' AND revision = 2
+  ) OR NOT EXISTS (
+    SELECT 1 FROM schema_rpc_results
+    WHERE name = 'backfill-forbidden' AND status = 'forbidden'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU backfill: CAS/RLS retornaram status incorreto';
+  END IF;
+
+  SELECT schema_revision, schema_version_major, schema_version_minor,
+         schema_version_patch
+  INTO v_project
+  FROM public.projects
+  WHERE id = '82000000-0000-0000-0000-000000000001';
+  SELECT change_type, version_major, version_minor, version_patch
+  INTO v_log
+  FROM public.schema_change_log
+  WHERE project_id = '82000000-0000-0000-0000-000000000001'
+    AND field_name = 'new_field';
+  SELECT schema_version_major, schema_version_minor, schema_version_patch,
+         version_inferred_from
+  INTO v_response
+  FROM public.responses
+  WHERE id = '84000000-0000-0000-0000-000000000001';
+
+  IF (v_project.schema_revision,
+      v_project.schema_version_major,
+      v_project.schema_version_minor,
+      v_project.schema_version_patch) <> (2, 1, 0, 0)
+     OR (v_log.change_type,
+         v_log.version_major,
+         v_log.version_minor,
+         v_log.version_patch) <> ('patch', 1, 0, 0)
+     OR (v_response.schema_version_major,
+         v_response.schema_version_minor,
+         v_response.schema_version_patch,
+         v_response.version_inferred_from) <> (1, 0, 0, 'hashes') THEN
+    RAISE EXCEPTION 'FALHOU backfill: conflito ou RLS produziu escrita';
+  END IF;
+
+  RAISE NOTICE 'OK backfill CAS/RLS: chamadas recusadas não tocaram as três tabelas';
+END;
+$$;
+
+-- Um payload parcial com IDs válidos não pode finalizar o backfill.
+INSERT INTO public.schema_change_log (
+  project_id,
+  changed_by,
+  field_name,
+  change_summary,
+  before_value,
+  after_value
+) VALUES (
+  '82000000-0000-0000-0000-000000000001',
+  '81000000-0000-0000-0000-000000000001',
+  'second_field',
+  'segundo log para cobertura',
+  '{}',
+  '{"name":"second_field"}'
+);
+
+INSERT INTO public.responses (
+  id,
+  project_id,
+  document_id,
+  respondent_id,
+  respondent_type,
+  answers,
+  version_inferred_from
+) VALUES (
+  '84000000-0000-0000-0000-000000000003',
+  '82000000-0000-0000-0000-000000000001',
+  '83000000-0000-0000-0000-000000000001',
+  NULL,
+  'llm',
+  '{}',
+  'created_at'
+);
+
 SELECT set_config(
   'request.jwt.claims',
   '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
@@ -564,17 +941,17 @@ BEGIN
     FROM public.apply_schema_backfill(
       '82000000-0000-0000-0000-000000000001',
       2,
-      2,
+      1,
       0,
       0,
       jsonb_build_array(jsonb_build_object(
         'id', v_log_id,
-        'change_type', 'major',
-        'version_major', 2,
+        'change_type', 'patch',
+        'version_major', 1,
         'version_minor', 0,
         'version_patch', 0
       )),
-      '[{"ids":["84000000-0000-0000-0000-000000000001","84000000-0000-0000-0000-000000000099"],"version_major":2,"version_minor":0,"version_patch":0,"version_inferred_from":"fallback_created_at"}]'
+      '[{"ids":["84000000-0000-0000-0000-000000000001"],"version_major":1,"version_minor":0,"version_patch":0,"version_inferred_from":"hashes"}]'
     );
   EXCEPTION
     WHEN raise_exception THEN
@@ -582,10 +959,10 @@ BEGIN
   END;
 
   IF NOT v_failed THEN
-    RAISE EXCEPTION 'TESTE FALHOU: response inexistente deveria abortar o backfill';
+    RAISE EXCEPTION 'TESTE FALHOU: payload parcial deveria abortar o backfill';
   END IF;
 
-  RAISE NOTICE 'OK backfill rollback: mismatch de contagem abortou a chamada';
+  RAISE NOTICE 'OK backfill cobertura: payload parcial foi rejeitado';
 END;
 $$;
 

@@ -43,7 +43,12 @@ export type SchemaMergeConflict =
 export interface SchemaMergeResult {
   fields: PydanticField[];
   conflicts: SchemaMergeConflict[];
-  unresolvedConflictIds: string[];
+}
+
+export function unresolvedSchemaConflicts(
+  merge: SchemaMergeResult,
+): SchemaMergeConflict[] {
+  return merge.conflicts.filter((conflict) => conflict.resolution === null);
 }
 
 function equal(left: unknown, right: unknown): boolean {
@@ -224,10 +229,6 @@ function mergeExistingField(
   );
 }
 
-function sameOrder(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((name, index) => name === right[index]);
-}
-
 function projectOrder(order: string[], names: Set<string>): string[] {
   return order.filter((name) => names.has(name));
 }
@@ -244,73 +245,111 @@ function completeOrder(primary: string[], secondary: string[], names: Set<string
   return result;
 }
 
-function mergeOrderByPrecedence({
-  baseOrder,
-  localOrder,
-  remoteOrder,
-  names,
-  localReorderedBase,
-  remoteReorderedBase,
-}: {
-  baseOrder: string[];
-  localOrder: string[];
-  remoteOrder: string[];
-  names: Set<string>;
-  localReorderedBase: boolean;
-  remoteReorderedBase: boolean;
-}): string[] | null {
-  const baseNames = new Set(baseOrder);
-  const edges = new Map<string, Set<string>>(
+type OrderRelation = -1 | 1 | null;
+
+interface OrderGraph {
+  edges: Map<string, Set<string>>;
+  indegree: Map<string, number>;
+}
+
+function orderRelation(
+  order: string[],
+  left: string,
+  right: string,
+): OrderRelation {
+  const leftIndex = order.indexOf(left);
+  const rightIndex = order.indexOf(right);
+  if (leftIndex < 0 || rightIndex < 0) return null;
+  return leftIndex < rightIndex ? -1 : 1;
+}
+
+function selectOrderRelation(
+  base: OrderRelation,
+  local: OrderRelation,
+  remote: OrderRelation,
+): OrderRelation | "conflict" {
+  if (local === remote) return local;
+  if (local === null) return remote;
+  if (remote === null) return local;
+  if (base !== null && local === base) return remote;
+  if (base !== null && remote === base) return local;
+  return "conflict";
+}
+
+function buildOrderGraph(
+  baseOrder: string[],
+  localOrder: string[],
+  remoteOrder: string[],
+  names: Set<string>,
+): OrderGraph | null {
+  const edges = new Map(
     [...names].map((name) => [name, new Set<string>()]),
   );
   const indegree = new Map([...names].map((name) => [name, 0]));
+  const orderedNames = [...names];
 
-  const addConstraints = (order: string[], ignoreBaseOrder: boolean) => {
-    const projected = projectOrder(order, names);
-    for (let index = 1; index < projected.length; index += 1) {
-      const before = projected[index - 1];
-      const after = projected[index];
-      if (ignoreBaseOrder && baseNames.has(before) && baseNames.has(after)) continue;
-      const targets = edges.get(before)!;
-      if (targets.has(after)) continue;
-      targets.add(after);
-      indegree.set(after, indegree.get(after)! + 1);
+  const addEdge = (before: string, after: string) => {
+    const targets = edges.get(before)!;
+    if (targets.has(after)) return;
+    targets.add(after);
+    indegree.set(after, indegree.get(after)! + 1);
+  };
+
+  for (let leftIndex = 0; leftIndex < orderedNames.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < orderedNames.length; rightIndex += 1) {
+      const left = orderedNames[leftIndex];
+      const right = orderedNames[rightIndex];
+      const selected = selectOrderRelation(
+        orderRelation(baseOrder, left, right),
+        orderRelation(localOrder, left, right),
+        orderRelation(remoteOrder, left, right),
+      );
+      if (selected === "conflict") return null;
+      if (selected === -1) addEdge(left, right);
+      if (selected === 1) addEdge(right, left);
     }
-  };
+  }
+  return { edges, indegree };
+}
 
-  // Quando apenas um lado reordena campos existentes, a ordem-base intacta do
-  // outro lado não compete com essa edição. Posições de campos novos continuam
-  // sendo restrições autoradas e entram no merge.
-  addConstraints(localOrder, !localReorderedBase && remoteReorderedBase);
-  addConstraints(remoteOrder, !remoteReorderedBase && localReorderedBase);
+function orderRank(
+  name: string,
+  baseOrder: string[],
+  localOrder: string[],
+  remoteOrder: string[],
+): [number, number, number] {
+  return [remoteOrder, localOrder, baseOrder].map((order) => {
+    const index = order.indexOf(name);
+    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+  }) as [number, number, number];
+}
 
-  const rank = (name: string): [number, number, number] => {
-    const remoteIndex = remoteOrder.indexOf(name);
-    const localIndex = localOrder.indexOf(name);
-    const baseIndex = baseOrder.indexOf(name);
-    return [
-      remoteIndex < 0 ? Number.MAX_SAFE_INTEGER : remoteIndex,
-      localIndex < 0 ? Number.MAX_SAFE_INTEGER : localIndex,
-      baseIndex < 0 ? Number.MAX_SAFE_INTEGER : baseIndex,
-    ];
-  };
+function topologicalOrder(
+  graph: OrderGraph,
+  names: Set<string>,
+  baseOrder: string[],
+  localOrder: string[],
+  remoteOrder: string[],
+): string[] | null {
   const compareRank = (left: string, right: string) => {
-    const leftRank = rank(left);
-    const rightRank = rank(right);
+    const leftRank = orderRank(left, baseOrder, localOrder, remoteOrder);
+    const rightRank = orderRank(right, baseOrder, localOrder, remoteOrder);
     for (let index = 0; index < leftRank.length; index += 1) {
-      if (leftRank[index] !== rightRank[index]) return leftRank[index] - rightRank[index];
+      const difference = leftRank[index] - rightRank[index];
+      if (difference !== 0) return difference;
     }
     return left.localeCompare(right);
   };
-
-  const ready = [...names].filter((name) => indegree.get(name) === 0).sort(compareRank);
+  const ready = [...names]
+    .filter((name) => graph.indegree.get(name) === 0)
+    .sort(compareRank);
   const merged: string[] = [];
   while (ready.length > 0) {
     const name = ready.shift()!;
     merged.push(name);
-    for (const after of edges.get(name)!) {
-      const remaining = indegree.get(after)! - 1;
-      indegree.set(after, remaining);
+    for (const after of graph.edges.get(name)!) {
+      const remaining = graph.indegree.get(after)! - 1;
+      graph.indegree.set(after, remaining);
       if (remaining === 0) {
         ready.push(after);
         ready.sort(compareRank);
@@ -318,6 +357,23 @@ function mergeOrderByPrecedence({
     }
   }
   return merged.length === names.size ? merged : null;
+}
+
+function mergeOrderByPrecedence({
+  baseOrder,
+  localOrder,
+  remoteOrder,
+  names,
+}: {
+  baseOrder: string[];
+  localOrder: string[];
+  remoteOrder: string[];
+  names: Set<string>;
+}): string[] | null {
+  const graph = buildOrderGraph(baseOrder, localOrder, remoteOrder, names);
+  return graph
+    ? topologicalOrder(graph, names, baseOrder, localOrder, remoteOrder)
+    : null;
 }
 
 /**
@@ -364,27 +420,11 @@ export function mergeSchemas(
     local.map((field) => field.name),
     mergedNames,
   );
-  const sharedNames = new Set(
-    [...localByName.keys()].filter((name) => remoteByName.has(name) && mergedNames.has(name)),
-  );
-  const baseSharedOrder = projectOrder(base.map((field) => field.name), sharedNames);
-  const localSharedOrder = projectOrder(local.map((field) => field.name), sharedNames);
-  const remoteSharedOrder = projectOrder(remote.map((field) => field.name), sharedNames);
-  const localReorderedBase = !sameOrder(
-    projectOrder(localSharedOrder, new Set(baseSharedOrder)),
-    baseSharedOrder,
-  );
-  const remoteReorderedBase = !sameOrder(
-    projectOrder(remoteSharedOrder, new Set(baseSharedOrder)),
-    baseSharedOrder,
-  );
   const mergedOrder = mergeOrderByPrecedence({
     baseOrder: base.map((field) => field.name),
     localOrder: local.map((field) => field.name),
     remoteOrder: remote.map((field) => field.name),
     names: mergedNames,
-    localReorderedBase,
-    remoteReorderedBase,
   });
 
   let selectedOrder = mergedOrder ?? remoteOrder;
@@ -405,8 +445,5 @@ export function mergeSchemas(
   return {
     fields: selectedOrder.map((name) => clone(mergedByName.get(name)!)),
     conflicts,
-    unresolvedConflictIds: conflicts
-      .filter((conflict) => conflict.resolution === null)
-      .map((conflict) => conflict.id),
   };
 }

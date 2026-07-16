@@ -21,7 +21,6 @@ function makeConflict(resolution?: "local" | "remote"): SchemaDraftConflict {
     draft: {
       formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,
       writeToken: "draft-1",
-      updatedAt: 1,
       base: { fields: base, version: "0.1.0", revision: 1 },
       fields: local,
     },

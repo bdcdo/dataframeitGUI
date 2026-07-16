@@ -25,6 +25,7 @@ import { DateSentinelEditor } from "./DateSentinelEditor";
 import { useOptionRemovalGuard } from "./useOptionRemovalGuard";
 import { stripOptionFromConditions } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
+import { pydanticFieldNameIssue } from "@/lib/pydantic-field";
 
 interface FieldCardProps {
   id: string;
@@ -49,7 +50,7 @@ function FieldNameInput({
   onChange: (name: string) => void;
 }) {
   const [duplicateName, setDuplicateName] = useState(false);
-  const nameIsValid = /^[a-z_][a-z0-9_]*$/.test(field.name);
+  const nameIssue = pydanticFieldNameIssue(field.name);
   const handleChange = (name: string) => {
     const duplicate = allFields.some(
       (candidate) => candidate !== field && candidate.name === name,
@@ -67,12 +68,17 @@ function FieldNameInput({
         placeholder="nome_do_campo"
         className={cn(
           "font-mono text-sm h-8",
-          !nameIsValid && field.name && "border-destructive",
+          nameIssue && field.name && "border-destructive",
         )}
       />
-      {!nameIsValid && field.name && (
+      {nameIssue === "invalid" && field.name && (
         <p className="text-xs text-destructive">
           Use apenas letras minúsculas, números e _ (ex: tipo_documento)
+        </p>
+      )}
+      {nameIssue === "reserved" && (
+        <p className="text-xs text-destructive">
+          Nomes que começam e terminam com __ são reservados pelo Python.
         </p>
       )}
       {duplicateName && (

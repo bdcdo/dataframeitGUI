@@ -13,10 +13,14 @@ import type {
 import {
   bumpVersion,
   planSchemaPersistence,
+  type SchemaPersistencePlan,
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { errorMessage } from "@/lib/utils";
-import { parsePydanticFields } from "@/lib/pydantic-field";
+import {
+  parsePydanticFields,
+  parseSaveablePydanticFields,
+} from "@/lib/pydantic-field";
 import {
   classifyLogEntries,
   reconstructSnapshotsByVersion,
@@ -26,12 +30,11 @@ import {
   type LogEntryRow,
   type ResponseRow,
 } from "@/lib/schema-backfill";
-import crypto from "crypto";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
 
 interface SchemaProjectRow {
-  pydantic_fields: PydanticField[] | null;
+  pydantic_fields: PydanticField[];
   pydantic_code: string | null;
   pydantic_hash: string | null;
   schema_version_major: number | null;
@@ -59,15 +62,15 @@ function versionString(version: { major: number; minor: number; patch: number })
   return `${version.major}.${version.minor}.${version.patch}`;
 }
 
-function projectSnapshot(project: Partial<SchemaProjectRow>): SchemaSnapshot {
+function projectSnapshot(project: SchemaProjectRow): SchemaSnapshot {
   return {
-    fields: project.pydantic_fields ?? [],
+    fields: project.pydantic_fields,
     version: versionString(projectVersion(project)),
     revision: project.schema_revision ?? 0,
   };
 }
 
-function conflictResult(project: Partial<SchemaProjectRow>): SchemaSaveResult {
+function conflictResult(project: SchemaProjectRow): SchemaSaveResult {
   return {
     status: "conflict",
     current: projectSnapshot(project),
@@ -97,9 +100,8 @@ async function loadSchemaSaveContext(
   projectId: string,
   expectedBaseline: SchemaBaselineIdentity,
 ): Promise<SchemaContextLoad> {
-  // `pydantic_code` precisa participar desta leitura: schemas legados podem
-  // ter código persistido sem `pydantic_fields`, e esse estado não pode ser
-  // sobrescrito por um editor visual vazio.
+  // O snapshot completo também atende a publicação MAJOR, que reapresenta o
+  // mesmo código e os mesmos campos à RPC ao alterar somente a versão.
   const { data } = await supabase
     .from("projects")
     .select(SCHEMA_PROJECT_SELECT)
@@ -115,10 +117,19 @@ async function loadSchemaSaveContext(
   }
 
   const project = data as SchemaProjectRow;
+  const persistedFields = parsePydanticFields(project.pydantic_fields);
+  if (!persistedFields) {
+    return {
+      result: {
+        status: "error",
+        message: "O schema persistido é inválido e precisa ser corrigido antes da edição.",
+      },
+    };
+  }
+  project.pydantic_fields = persistedFields;
   const remoteBaseline = projectSnapshot(project);
   if (
     expectedBaseline.revision !== remoteBaseline.revision ||
-    expectedBaseline.version !== remoteBaseline.version ||
     project.schema_revision == null
   ) {
     return { result: conflictResult(project) };
@@ -127,7 +138,7 @@ async function loadSchemaSaveContext(
   return {
     context: {
       project,
-      oldFields: project.pydantic_fields || [],
+      oldFields: persistedFields,
       current: projectVersion(project),
     },
   };
@@ -148,26 +159,20 @@ async function loadAuthenticatedSchemaContext(
   return { supabase, userId: user.id, context: loaded.context };
 }
 
-function schemaWouldBeWiped(
-  fields: PydanticField[],
-  context: SchemaSaveContext,
-): boolean {
-  if (fields.length > 0) return false;
-  return context.oldFields.length > 0 || Boolean(context.project.pydantic_code);
-}
-
 interface SchemaCommitRow {
   status: string;
   schema_revision: number;
-  pydantic_fields: PydanticField[] | null;
+  pydantic_fields: PydanticField[];
   schema_version_major: number;
   schema_version_minor: number;
   schema_version_patch: number;
 }
 
-function commitSnapshot(row: SchemaCommitRow): SchemaSnapshot {
+function commitSnapshot(row: SchemaCommitRow): SchemaSnapshot | null {
+  const fields = parsePydanticFields(row.pydantic_fields);
+  if (!fields) return null;
   return {
-    fields: row.pydantic_fields ?? [],
+    fields,
     revision: row.schema_revision,
     version: versionString({
       major: row.schema_version_major,
@@ -186,10 +191,16 @@ function mapCommitResult(
     return { status: "error", message: "A operação não retornou o estado do schema." };
   }
   if (data.status === "saved") {
-    return { status: "saved", snapshot: commitSnapshot(data) };
+    const snapshot = commitSnapshot(data);
+    return snapshot
+      ? { status: "saved", snapshot }
+      : { status: "error", message: "A operação retornou um schema inválido." };
   }
   if (data.status === "conflict") {
-    return { status: "conflict", current: commitSnapshot(data) };
+    const current = commitSnapshot(data);
+    return current
+      ? { status: "conflict", current }
+      : { status: "error", message: "O schema remoto em conflito é inválido." };
   }
   if (data.status === "forbidden") {
     return {
@@ -278,6 +289,100 @@ export async function savePrompt(
 // função é usada por apply-decisions.ts (fora do Next runtime) para eliminar
 // drift — ver #63/PR #352.
 
+interface PreparedSchemaCommit {
+  plan: SchemaPersistencePlan;
+  targetVersion: { major: number; minor: number; patch: number };
+}
+
+function prepareSchemaCommit(
+  fields: PydanticField[],
+  context: SchemaSaveContext,
+  suggestionId?: string,
+): PreparedSchemaCommit | { result: SchemaSaveResult } {
+  const parsedFields = parseSaveablePydanticFields(fields);
+  if (!parsedFields) {
+    return { result: {
+      status: "error",
+      message: "O schema enviado é inválido. Revise os campos e tente novamente.",
+    } };
+  }
+  const plan = planSchemaPersistence(
+    context.oldFields,
+    parsedFields,
+    context.current,
+  );
+  if (!plan.changeType && plan.logEntries.length === 0) {
+    if (suggestionId) {
+      return { result: {
+        status: "error",
+        message: "A sugestão não produz nenhuma alteração no schema atual.",
+      } };
+    }
+    return {
+      result: { status: "saved", snapshot: projectSnapshot(context.project) },
+    };
+  }
+  return {
+    plan,
+    targetVersion: plan.changeType ? plan.bumped : context.current,
+  };
+}
+
+function schemaCommitRpc(suggestionId?: string) {
+  return suggestionId ? "approve_schema_suggestion" : "commit_project_schema";
+}
+
+function schemaCommitArgs(
+  projectId: string,
+  expectedRevision: number,
+  userId: string,
+  prepared: PreparedSchemaCommit,
+  suggestionId?: string,
+) {
+  const { plan, targetVersion } = prepared;
+  return {
+    ...(suggestionId && { p_suggestion_id: suggestionId }),
+    p_project_id: projectId,
+    p_expected_revision: expectedRevision,
+    p_pydantic_fields: plan.fieldsWithHash,
+    p_pydantic_code: plan.code,
+    p_version_major: targetVersion.major,
+    p_version_minor: targetVersion.minor,
+    p_version_patch: targetVersion.patch,
+    p_change_type: plan.changeType ?? "patch",
+    p_log_entries: plan.logEntries,
+    p_changed_by: userId,
+  };
+}
+
+async function persistSchema(
+  projectId: string,
+  fields: PydanticField[],
+  expectedBaseline: SchemaBaselineIdentity,
+  loaded: Exclude<AuthenticatedSchemaContextLoad, { result: SchemaSaveResult }>,
+  suggestionId?: string,
+): Promise<SchemaSaveResult> {
+  const { supabase, userId, context } = loaded;
+  const prepared = prepareSchemaCommit(fields, context, suggestionId);
+  if ("result" in prepared) return prepared.result;
+
+  const { data, error } = await supabase
+    .rpc(
+      schemaCommitRpc(suggestionId),
+      schemaCommitArgs(
+        projectId,
+        expectedBaseline.revision,
+        userId,
+        prepared,
+        suggestionId,
+      ),
+    )
+    .single();
+  const result = mapCommitResult(data as SchemaCommitRow | null, error);
+  if (result.status === "saved") revalidateSchemaConsumers(projectId);
+  return result;
+}
+
 export async function saveSchemaFromGUI(
   projectId: string,
   fields: PydanticField[],
@@ -285,65 +390,24 @@ export async function saveSchemaFromGUI(
 ): Promise<SchemaSaveResult> {
   const loaded = await loadAuthenticatedSchemaContext(projectId, expectedBaseline);
   if ("result" in loaded) return loaded.result;
-  const { supabase, userId, context } = loaded;
-  const parsedFields = parsePydanticFields(fields);
-  if (!parsedFields) {
-    return {
-      status: "error",
-      message: "O schema enviado é inválido. Revise os campos e tente novamente.",
-    };
-  }
+  return persistSchema(projectId, fields, expectedBaseline, loaded);
+}
 
-  // Guarda anti-wipe: nunca sobrescrever um schema existente com 0 campos. Sem
-  // isto, abrir um projeto cujo editor visual ficou vazio (ex.: legado com
-  // pydantic_code mas pydantic_fields não carregado) e clicar "Salvar"
-  // regeneraria `class Analysis(BaseModel): pass`, apagando schema + campos em
-  // silêncio. Um schema realmente vazio só é salvável quando já estava vazio.
-  //
-  if (schemaWouldBeWiped(parsedFields, context)) {
-    return {
-      status: "error",
-      message:
-        "Salvar com 0 campos apagaria o schema atual. Adicione ao menos um campo, ou use 'Recuperar do código' se o editor abriu vazio.",
-    };
-  }
-
-  // Classificação, versão, log de auditoria, código Pydantic e hash: cálculo
-  // puro compartilhado com apply-decisions.ts via planSchemaPersistence
-  // (schema-utils.ts) — ver #63/PR #352 (evita drift entre os dois callers).
-  const plan = planSchemaPersistence(
-    context.oldFields,
-    parsedFields,
-    context.current,
+export async function saveSchemaAndApproveSuggestion(
+  projectId: string,
+  suggestionId: string,
+  fields: PydanticField[],
+  expectedBaseline: SchemaBaselineIdentity,
+): Promise<SchemaSaveResult> {
+  const loaded = await loadAuthenticatedSchemaContext(projectId, expectedBaseline);
+  if ("result" in loaded) return loaded.result;
+  return persistSchema(
+    projectId,
+    fields,
+    expectedBaseline,
+    loaded,
+    suggestionId,
   );
-  if (!plan.changeType && plan.logEntries.length === 0) {
-    return { status: "saved", snapshot: projectSnapshot(context.project) };
-  }
-
-  const hash = crypto
-    .createHash("sha256")
-    .update(plan.code)
-    .digest("hex")
-    .slice(0, 16);
-  const targetVersion = plan.changeType ? plan.bumped : context.current;
-  const { data, error } = await supabase
-    .rpc("commit_project_schema", {
-      p_project_id: projectId,
-      p_expected_revision: expectedBaseline.revision,
-      p_pydantic_fields: plan.fieldsWithHash,
-      p_pydantic_code: plan.code,
-      p_pydantic_hash: hash,
-      p_version_major: targetVersion.major,
-      p_version_minor: targetVersion.minor,
-      p_version_patch: targetVersion.patch,
-      p_change_type: plan.changeType ?? "patch",
-      p_log_entries: plan.logEntries,
-      p_changed_by: userId,
-    })
-    .single();
-  const result = mapCommitResult(data as SchemaCommitRow | null, error);
-  if (result.status === "saved") revalidateSchemaConsumers(projectId);
-  return result;
 }
 
 // ---------- Backfill retroativo usando schema_change_log ----------
@@ -377,27 +441,59 @@ export async function backfillSchemaVersionHistory(
   }
 }
 
-async function fetchAllResponses(
+const BACKFILL_PAGE_SIZE = 500;
+
+interface BackfillPage<T> {
+  data: T[] | null;
+  error: { message: string } | null;
+}
+
+async function fetchAllPages<T>(
+  loadPage: (from: number, to: number) => Promise<BackfillPage<T>>,
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += BACKFILL_PAGE_SIZE) {
+    // A próxima página depende de a anterior estar cheia; o total não é
+    // conhecido sem uma consulta adicional que também poderia ficar stale.
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop
+    const { data, error } = await loadPage(from, from + BACKFILL_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) return rows;
+    rows.push(...data);
+    if (data.length < BACKFILL_PAGE_SIZE) return rows;
+  }
+}
+
+function fetchAllResponses(
   supabase: SupabaseServerClient,
   projectId: string,
 ): Promise<ResponseRow[]> {
-  const RESPONSES_PAGE = 500;
-  const responses: ResponseRow[] = [];
-  for (let from = 0; ; from += RESPONSES_PAGE) {
-    // Paginação sequencial: a próxima página depende de a anterior ter retornado
-    // uma página cheia; não há como paralelizar sem saber o total de linhas.
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop
-    const { data: page, error: pageErr } = await supabase
+  return fetchAllPages(async (from, to) => {
+    const { data, error } = await supabase
       .from("responses")
       .select("id, created_at, answer_field_hashes, version_inferred_from")
       .eq("project_id", projectId)
-      .range(from, from + RESPONSES_PAGE - 1);
-    if (pageErr) throw new Error(pageErr.message);
-    if (!page || page.length === 0) break;
-    responses.push(...(page as unknown as ResponseRow[]));
-    if (page.length < RESPONSES_PAGE) break;
-  }
-  return responses;
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: data as unknown as ResponseRow[] | null, error };
+  });
+}
+
+function fetchAllLogEntries(
+  supabase: SupabaseServerClient,
+  projectId: string,
+): Promise<LogEntryRow[]> {
+  return fetchAllPages(async (from, to) => {
+    const { data, error } = await supabase
+      .from("schema_change_log")
+      .select("id, field_name, before_value, after_value, created_at, change_type")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: data as unknown as LogEntryRow[] | null, error };
+  });
 }
 
 function requireSchemaRevision(
@@ -416,7 +512,7 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, { data: log, error: logErr }] = await Promise.all([
+  const [{ data: project }, log, responses] = await Promise.all([
     supabase
       .from("projects")
       .select(
@@ -424,17 +520,13 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
       )
       .eq("id", projectId)
       .single(),
-    supabase
-      .from("schema_change_log")
-      .select("id, field_name, before_value, after_value, created_at, change_type")
-      .eq("project_id", projectId)
-      .order("created_at", { ascending: true }),
+    fetchAllLogEntries(supabase, projectId),
+    fetchAllResponses(supabase, projectId),
   ]);
 
-  if (logErr) throw new Error(logErr.message);
   const expectedRevision = requireSchemaRevision(project);
 
-  const { enriched, finalVersion } = classifyLogEntries((log ?? []) as LogEntryRow[]);
+  const { enriched, finalVersion } = classifyLogEntries(log);
 
   const snapByVersion = reconstructSnapshotsByVersion(
     ((project?.pydantic_fields as PydanticField[]) ?? []),
@@ -446,8 +538,6 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
   for (const [k, snap] of snapByVersion) {
     hashesByVersion.set(k, computeHashesFromSnapshot(snap));
   }
-
-  const responses = await fetchAllResponses(supabase, projectId);
 
   const { updates, byMethod } = matchResponsesToVersions(responses, hashesByVersion, enriched);
   const stats: BackfillStats = {
@@ -499,14 +589,13 @@ export async function publishMajorVersion(
   const typedProject = context.project;
   const current = projectVersion(typedProject);
   const bumped = bumpVersion(current, "major");
-  const fields = typedProject.pydantic_fields ?? [];
+  const fields = typedProject.pydantic_fields;
   const { data, error } = await supabase
     .rpc("commit_project_schema", {
       p_project_id: projectId,
       p_expected_revision: expectedBaseline.revision,
       p_pydantic_fields: fields,
       p_pydantic_code: typedProject.pydantic_code,
-      p_pydantic_hash: typedProject.pydantic_hash,
       p_version_major: bumped.major,
       p_version_minor: bumped.minor,
       p_version_patch: bumped.patch,
@@ -531,26 +620,9 @@ export async function toggleLlmField(
   enabled: boolean,
   expectedBaseline: SchemaBaselineIdentity,
 ): Promise<SchemaSaveResult> {
-  const supabase = await createSupabaseServer();
-  const { data: project } = await supabase
-    .from("projects")
-    .select(
-      "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
-    )
-    .eq("id", projectId)
-    .single();
-
-  if (!project || project.schema_revision == null) {
-    return { status: "error", message: "Projeto não encontrado ou sem permissão" };
-  }
-  const remote = projectSnapshot(project as SchemaProjectRow);
-  if (
-    remote.revision !== expectedBaseline.revision ||
-    remote.version !== expectedBaseline.version
-  ) {
-    return { status: "conflict", current: remote };
-  }
-  let fields = (project.pydantic_fields as PydanticField[]) || [];
+  const loaded = await loadAuthenticatedSchemaContext(projectId, expectedBaseline);
+  if ("result" in loaded) return loaded.result;
+  let fields = loaded.context.oldFields;
 
   if (enabled) {
     if (!fields.some((f) => f.name === fieldDef.name)) {
@@ -560,7 +632,7 @@ export async function toggleLlmField(
     fields = fields.filter((f) => f.name !== fieldDef.name);
   }
 
-  return saveSchemaFromGUI(projectId, fields, expectedBaseline);
+  return persistSchema(projectId, fields, expectedBaseline, loaded);
 }
 
 export async function saveLlmConfig(

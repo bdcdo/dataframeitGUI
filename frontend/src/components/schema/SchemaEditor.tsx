@@ -22,16 +22,20 @@ import { SchemaEditorBanners } from "./SchemaEditorBanners";
 import { SchemaEditorDialogs } from "./SchemaEditorDialogs";
 import { SchemaEditorFooter } from "./SchemaEditorFooter";
 import { useSchemaEditorDialogs } from "./useSchemaEditorDialogs";
-import { useSchemaDraft } from "@/hooks/useSchemaDraft";
-import { schemaEditorStatusMessage } from "@/lib/schema-editor-status";
+import {
+  useSchemaDraft,
+  type SchemaDraftConflict,
+} from "@/hooks/useSchemaDraft";
 import type { PydanticField } from "@/lib/types";
+import { requirePydanticFields } from "@/lib/pydantic-field";
+import { unresolvedSchemaConflicts } from "@/lib/schema-merge";
 
 const MonacoEditor = dynamic(
   () => import("@monaco-editor/react").then((m) => m.default),
   { ssr: false }
 );
 
-interface SchemaEditorProps {
+interface SchemaEditorSessionProps {
   projectId: string;
   initialCode: string | null;
   initialFields: PydanticField[] | null;
@@ -39,14 +43,18 @@ interface SchemaEditorProps {
   currentRevision: number;
 }
 
-// Este boundary transforma a revisão canônica do schema na identidade React
-// da sessão. Navegação entre projetos e refresh com revisão nova remontam todos
-// os estados e refs locais.
-export function SchemaEditorSession(props: SchemaEditorProps) {
+interface SchemaEditorProps extends Omit<SchemaEditorSessionProps, "initialFields"> {
+  initialFields: PydanticField[];
+}
+
+// A identidade da sessão é o projeto. Revisões novas entram no hook como
+// snapshots remotos e passam pelo mesmo merge de três vias dos conflitos de save.
+export function SchemaEditorSession(props: SchemaEditorSessionProps) {
   return (
     <SchemaEditor
-      key={`${props.projectId}:${props.currentRevision}`}
+      key={props.projectId}
       {...props}
+      initialFields={requirePydanticFields(props.initialFields ?? [])}
     />
   );
 }
@@ -68,6 +76,17 @@ function generatedSchemaCode(
   if (mode !== "code") return "";
   if (fields.length > 0) return generatePydanticCode(fields);
   return initialCode ?? "";
+}
+
+function currentValidationErrors(
+  attempted: boolean,
+  fields: PydanticField[],
+): string[] {
+  return attempted ? validateGUIFields(fields) : [];
+}
+
+function pendingConflictCount(conflict: SchemaDraftConflict | null): number | null {
+  return conflict ? unresolvedSchemaConflicts(conflict.merge).length : null;
 }
 
 function SchemaEditor({
@@ -92,6 +111,7 @@ function SchemaEditor({
     baseline,
     conflict,
     storageAvailable,
+    storageBlocked,
     draftPersisted,
     prepareSubmission,
     markSaved,
@@ -102,7 +122,7 @@ function SchemaEditor({
     isHydrated,
   } = useSchemaDraft({
     projectId,
-    initialFields: initialFields || [],
+    initialFields,
     currentVersion,
     currentRevision,
   });
@@ -114,7 +134,7 @@ function SchemaEditor({
   // modo visual cada edição muda `fields`, e regenerar o código a cada keystroke
   // seria trabalho desperdiçado já que o editor de código nem está montado.
   const code = generatedSchemaCode(mode, fields, initialCode);
-  const [guiErrors, setGuiErrors] = useState<string[]>([]);
+  const [validationAttempted, setValidationAttempted] = useState(false);
   const [isPending, startTransition] = useTransition();
   const {
     majorDialogOpen,
@@ -199,7 +219,7 @@ function SchemaEditor({
   const switchToCode = () => setMode("code");
 
   const switchToGUI = () => {
-    setGuiErrors([]);
+    setValidationAttempted(false);
     setMode("gui");
   };
 
@@ -208,7 +228,7 @@ function SchemaEditor({
   // abriria vazio e um "Salvar" apagaria o schema (barrado pela guarda em
   // saveSchemaFromGUI). Recuperar reconstrói os campos a partir do código.
   const canRecover =
-    !initialFields?.length && !!initialCode && fields.length === 0;
+    initialFields.length === 0 && !!initialCode && fields.length === 0;
 
   const handleRecover = () => {
     startTransition(async () => {
@@ -232,12 +252,10 @@ function SchemaEditor({
     startTransition(async () => {
       try {
         const submission = prepareSubmission();
+        setValidationAttempted(true);
         const errs = validateGUIFields(submission.fields);
-        if (errs.length > 0) {
-          setGuiErrors(errs);
-          return;
-        }
-        setGuiErrors([]);
+        if (errs.length > 0) return;
+        setValidationAttempted(false);
         const r = await saveSchemaFromGUI(
           projectId,
           submission.fields,
@@ -264,6 +282,8 @@ function SchemaEditor({
     return <SchemaEditorLoadingState />;
   }
 
+  const guiErrors = currentValidationErrors(validationAttempted, fields);
+
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
       <SchemaEditorHeader
@@ -284,10 +304,7 @@ function SchemaEditor({
         canRecover={canRecover}
         onRecover={handleRecover}
         isPending={isPending}
-        draftConflict={conflict}
-        storageAvailable={storageAvailable}
-        draftPersisted={draftPersisted}
-        onDiscardDraft={discardConflictingDraft}
+        storageBlocked={storageBlocked}
       />
 
       {/* Conteúdo */}
@@ -324,7 +341,7 @@ function SchemaEditor({
         <div className="border-t px-4 py-3">
           <ValidationErrorPanel
             errors={guiErrors}
-            onDismiss={() => setGuiErrors([])}
+            onDismiss={() => setValidationAttempted(false)}
           />
         </div>
       )}
@@ -333,13 +350,12 @@ function SchemaEditor({
         mode={mode}
         onSave={handleSave}
         saveDisabled={isPending || conflict !== null || !isDirty}
-        statusMessage={schemaEditorStatusMessage({
-          isDirty,
-          conflictCount: conflict?.merge.unresolvedConflictIds.length ?? null,
-          storageAvailable,
-          draftPersisted,
-          recoveredDraft,
-        })}
+        isDirty={isDirty}
+        conflictCount={pendingConflictCount(conflict)}
+        storageAvailable={storageAvailable}
+        storageBlocked={storageBlocked}
+        draftPersisted={draftPersisted}
+        recoveredDraft={recoveredDraft}
       />
 
       <SchemaEditorDialogs

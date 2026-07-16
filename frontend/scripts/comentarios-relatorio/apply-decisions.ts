@@ -33,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { planSchemaPersistence } from "../../src/lib/schema-utils";
-import { parsePydanticFields } from "../../src/lib/pydantic-field";
+import { parseSaveablePydanticFields } from "../../src/lib/pydantic-field";
 import type { PydanticField } from "../../src/lib/types";
 import { loadEnv } from "./load-env";
 
@@ -123,7 +123,7 @@ async function applySchemaChanges(
   changedBy: string,
   write: boolean,
 ) {
-  const validatedFields = parsePydanticFields(newFields);
+  const validatedFields = parseSaveablePydanticFields(newFields);
   if (!validatedFields) {
     throw new Error("newFields não corresponde ao contrato canônico de PydanticField");
   }
@@ -191,7 +191,6 @@ async function applySchemaChanges(
       p_expected_revision: project?.schema_revision ?? 0,
       p_pydantic_fields: fieldsWithHash,
       p_pydantic_code: code,
-      p_pydantic_hash: hash,
       p_version_major: bumped.major,
       p_version_minor: bumped.minor,
       p_version_patch: bumped.patch,

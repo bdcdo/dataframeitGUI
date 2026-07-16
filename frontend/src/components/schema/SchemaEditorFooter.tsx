@@ -6,25 +6,62 @@ import { Button } from "@/components/ui/button";
 interface SchemaEditorFooterProps {
   mode: "gui" | "code";
   saveDisabled: boolean;
-  statusMessage: string | null;
+  isDirty: boolean;
+  conflictCount: number | null;
+  storageAvailable: boolean;
+  storageBlocked: boolean;
+  draftPersisted: boolean;
+  recoveredDraft: boolean;
   onSave: () => void;
+}
+
+function statusMessage({
+  isDirty,
+  conflictCount,
+  storageAvailable,
+  storageBlocked,
+  draftPersisted,
+  recoveredDraft,
+}: Omit<SchemaEditorFooterProps, "mode" | "saveDisabled" | "onSave">) {
+  if (conflictCount !== null) {
+    return conflictCount > 0
+      ? `${conflictCount} conflito(s) pendente(s) · resolva antes de salvar`
+      : "Conflitos resolvidos · confirme o merge para continuar";
+  }
+  if (!isDirty) return null;
+  if (storageBlocked) {
+    return "Alterações não salvas · outra aba possui o rascunho local";
+  }
+  if (!storageAvailable) {
+    return "Alterações não salvas · o armazenamento local está indisponível";
+  }
+  if (!draftPersisted) return "Alterações não salvas · salvando rascunho local";
+  return recoveredDraft
+    ? "Rascunho recuperado · alterações não salvas"
+    : "Alterações não salvas · rascunho local";
 }
 
 export function SchemaEditorFooter({
   mode,
   saveDisabled,
-  statusMessage,
+  isDirty,
+  conflictCount,
+  storageAvailable,
+  storageBlocked,
+  draftPersisted,
+  recoveredDraft,
   onSave,
 }: SchemaEditorFooterProps) {
-  if (mode === "code") {
-    return (
-      <div className="flex items-center gap-2 border-t px-4 py-2">
-        <span className="text-xs text-muted-foreground">
-          Visualização somente leitura — para editar, use o modo Visual.
-        </span>
-      </div>
-    );
-  }
+  if (mode === "code") return null;
+
+  const message = statusMessage({
+    isDirty,
+    conflictCount,
+    storageAvailable,
+    storageBlocked,
+    draftPersisted,
+    recoveredDraft,
+  });
 
   return (
     <div className="flex items-center gap-2 border-t px-4 py-2">
@@ -36,10 +73,10 @@ export function SchemaEditorFooter({
       >
         Salvar
       </Button>
-      {statusMessage && (
+      {message && (
         <output className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <CircleAlert className="size-3.5" aria-hidden="true" />
-          {statusMessage}
+          {message}
         </output>
       )}
     </div>
