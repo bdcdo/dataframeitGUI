@@ -301,7 +301,7 @@ describe("createAutoComparisonIfDiverges — compare_llm", () => {
 });
 
 // O gatilho aplica o MESMO piso de versão (`latest_major`) que a fila
-// (compare/page.tsx) e o fecho (compare-sync.ts) — fecha a NOTA de follow-up do
+// (compare/page.tsx) e a lente canônica — fecha a NOTA de follow-up do
 // #286 e restaura o acoplamento gatilho==fila==fecho. Divergência que só existe
 // entre rodadas antigas NÃO materializa assignment (era o "fantasma" da NOTA).
 describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)", () => {

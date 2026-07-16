@@ -400,72 +400,21 @@ SELECT set_config(
   '{"supabase_uid":"a1000000-0000-0000-0000-000000000002"}', true
 );
 SET LOCAL ROLE authenticated;
-DO $$
-BEGIN
-  BEGIN
-    PERFORM public.submit_compare_review(
-      'a2000000-0000-0000-0000-000000000001',
-      'a3000000-0000-0000-0000-000000000001', 'campo',
-      'a1000000-0000-0000-0000-000000000002', 'ambiguo', NULL, NULL,
-      ARRAY[
-        'a4000000-0000-0000-0000-000000000002'::uuid,
-        'a4000000-0000-0000-0000-000000000003'::uuid
-      ],
-      NULL
-    );
-    RAISE EXCEPTION 'compare aceitou a identidade física do alias';
-  EXCEPTION WHEN SQLSTATE '42501' THEN
-    NULL;
-  END;
-
-  BEGIN
-    PERFORM public.submit_self_review(
-      'a2000000-0000-0000-0000-000000000001',
-      'a3000000-0000-0000-0000-000000000001',
-      'a1000000-0000-0000-0000-000000000002',
-      '[{
-        "fieldReviewId":"a5000000-0000-0000-0000-000000000001",
-        "verdict":"ambiguo",
-        "justification":"identidade física inválida"
-      }]'
-    );
-    RAISE EXCEPTION 'auto-revisão aceitou a identidade física do alias';
-  EXCEPTION WHEN SQLSTATE '42501' THEN
-    NULL;
-  END;
-
-  BEGIN
-    PERFORM public.submit_final_arbitration(
-      'a2000000-0000-0000-0000-000000000001',
-      'a3000000-0000-0000-0000-000000000004',
-      'a1000000-0000-0000-0000-000000000002',
-      '[{
-        "fieldReviewId":"a5000000-0000-0000-0000-000000000003",
-        "verdict":"llm"
-      }]'
-    );
-    RAISE EXCEPTION 'arbitragem final aceitou a identidade física do alias';
-  EXCEPTION WHEN SQLSTATE '42501' THEN
-    NULL;
-  END;
-END;
-$$;
-
 SELECT public.submit_compare_review(
   'a2000000-0000-0000-0000-000000000001',
   'a3000000-0000-0000-0000-000000000001', 'campo',
-  'a1000000-0000-0000-0000-000000000003', 'ambiguo', NULL,
+  'ambiguo', NULL,
   'comparação criada pelo alias',
   ARRAY[
     'a4000000-0000-0000-0000-000000000002'::uuid,
     'a4000000-0000-0000-0000-000000000003'::uuid
   ],
-  NULL
+  NULL,
+  false
 );
 SELECT public.submit_self_review(
   'a2000000-0000-0000-0000-000000000001',
   'a3000000-0000-0000-0000-000000000001',
-  'a1000000-0000-0000-0000-000000000003',
   '[{
     "fieldReviewId":"a5000000-0000-0000-0000-000000000001",
     "verdict":"ambiguo",
@@ -475,7 +424,6 @@ SELECT public.submit_self_review(
 SELECT public.submit_final_arbitration(
   'a2000000-0000-0000-0000-000000000001',
   'a3000000-0000-0000-0000-000000000004',
-  'a1000000-0000-0000-0000-000000000003',
   '[{
     "fieldReviewId":"a5000000-0000-0000-0000-000000000003",
     "verdict":"llm",

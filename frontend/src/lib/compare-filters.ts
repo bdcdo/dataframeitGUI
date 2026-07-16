@@ -28,7 +28,7 @@ export const DEFAULT_COMPARE_FILTERS: CompareFiltersValue = {
 // distinto de DEFAULT_COMPARE_FILTERS.version ("all"), a base para callers/testes
 // que NÃO derivam do automation_mode. Re-exportado de compare-version.ts (sua
 // fonte única, ao lado do `versionGate` que o consome) para que os importadores
-// existentes — compare-sync.ts, auto-comparison.ts, testes — não precisem mudar
+// existentes — auto-comparison.ts, fila e testes — não precisem mudar
 // o caminho de import (importado no topo). Ver o comentário em compare-version.ts
 // (#247, #217/#218).
 export { COMPARE_DEFAULT_VERSION };
@@ -81,8 +81,8 @@ export function readCompareFilters(
 // esperado é focar na versão corrente por padrão. "all" continua disponível no
 // seletor para quem precisa revisar rodadas antigas, e DEFAULT_COMPARE_FILTERS.
 // version segue "all" (usado por outros callers/testes que não passam por aqui).
-// O fecho do parecer (compare-sync.ts) usa a MESMA constante, mantendo o
-// acoplamento visão==fecho do #217/#218 (ver COMPARE_DEFAULT_VERSION acima).
+// A lente canônica de conclusão usa a MESMA constante, mantendo o acoplamento
+// visão padrão==conclusão do #217/#218 (ver COMPARE_DEFAULT_VERSION acima).
 export function compareDefaultsForMode(
   mode: string | null | undefined,
   minResponsesForComparison: number,

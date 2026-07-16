@@ -12,9 +12,7 @@ import { errorMessage } from "@/lib/utils";
 import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-queue";
 import {
   computeBacklogRows,
-  diffReviewsToRemove,
   filterCurrentMemberResponses,
-  type ExistingFieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
 } from "@/lib/auto-review-backlog";
@@ -135,7 +133,6 @@ export async function submitAutoReview(
     const { data, error } = await supabase.rpc("submit_self_review", {
       p_project_id: projectId,
       p_document_id: documentId,
-      p_reviewer_id: effectiveId,
       p_decisions: verdicts.map((verdict) => ({
         fieldReviewId: verdict.fieldReviewId,
         verdict: verdict.verdict,
@@ -291,7 +288,6 @@ async function submitArbitrationPhase(
   projectId: string,
   submit: (
     supabase: SupabaseServerClient,
-    effectiveId: string,
   ) => Promise<{ error: { message: string } | null }>,
   validate?: () => string | undefined,
 ): Promise<{ success: boolean; error?: string }> {
@@ -302,9 +298,8 @@ async function submitArbitrationPhase(
     const validationError = validate?.();
     if (validationError) return { success: false, error: validationError };
 
-    const effectiveId = await getEffectiveMemberId(projectId);
     const supabase = await createSupabaseServer();
-    const { error } = await submit(supabase, effectiveId);
+    const { error } = await submit(supabase);
     if (error) return { success: false, error: error.message };
 
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -328,11 +323,10 @@ export async function submitBlindVerdicts(
   documentId: string,
   choices: BlindChoice[],
 ): Promise<{ success: boolean; error?: string }> {
-  return submitArbitrationPhase(projectId, async (supabase, effectiveId) => {
+  return submitArbitrationPhase(projectId, async (supabase) => {
     const { error } = await supabase.rpc("submit_blind_arbitration", {
       p_project_id: projectId,
       p_document_id: documentId,
-      p_arbitrator_id: effectiveId,
       p_decisions: choices.map((choice) => ({
         fieldReviewId: choice.fieldReviewId,
         verdict: resolveBlindVerdict(choice.fieldReviewId, choice.choice),
@@ -369,11 +363,10 @@ export async function submitFinalVerdicts(
 ): Promise<{ success: boolean; error?: string }> {
   return submitArbitrationPhase(
     projectId,
-    async (supabase, arbitratorId) => {
+    async (supabase) => {
       const { error } = await supabase.rpc("submit_final_arbitration", {
         p_project_id: projectId,
         p_document_id: documentId,
-        p_arbitrator_id: arbitratorId,
         p_decisions: choices.map((choice) => ({
           fieldReviewId: choice.fieldReviewId,
           verdict: choice.verdict,
@@ -413,7 +406,6 @@ interface BacklogInputs {
   humanResponses: HumanResponseRow[];
   llmResponses: LlmResponseRow[];
   equivalences: EquivalenceRow[];
-  existingReviews: ExistingFieldReviewRow[];
 }
 
 // Batch de leitura inicial do backlog — lança em qualquer erro de query,
@@ -428,7 +420,6 @@ async function fetchBacklogInputs(
     { data: humanResponses, error: humanErr },
     { data: llmResponses, error: llmErr },
     { data: equivalences, error: equivErr },
-    { data: existingReviews, error: existingErr },
     { data: currentMembers, error: membersErr },
   ] = await Promise.all([
     client
@@ -454,12 +445,6 @@ async function fetchBacklogInputs(
         "id, document_id, field_name, response_a_id, response_b_id, reviewer_id",
       )
       .eq("project_id", projectId),
-    // Estado atual de field_reviews — usado no reconcile abaixo. Independe
-    // do conjunto recem-computado, entao buscamos junto do batch inicial.
-    client
-      .from("field_reviews")
-      .select("id, document_id, field_name, self_verdict")
-      .eq("project_id", projectId),
     client
       .from("project_members")
       .select("user_id")
@@ -470,7 +455,6 @@ async function fetchBacklogInputs(
   if (humanErr) throw new Error(humanErr.message);
   if (llmErr) throw new Error(llmErr.message);
   if (equivErr) throw new Error(equivErr.message);
-  if (existingErr) throw new Error(existingErr.message);
   if (membersErr) throw new Error(membersErr.message);
 
   return {
@@ -481,13 +465,11 @@ async function fetchBacklogInputs(
     ),
     llmResponses: (llmResponses ?? []) as LlmResponseRow[],
     equivalences: (equivalences ?? []) as EquivalenceRow[],
-    existingReviews: (existingReviews ?? []) as ExistingFieldReviewRow[],
   };
 }
 
-// As etapas puras (computeBacklogRows, diffReviewsToRemove)
-// vivem em @/lib/auto-review-backlog — "use server" só pode exportar funções
-// async (regra do Next), então o que é puro e testável fica fora deste arquivo.
+// A etapa pura computeBacklogRows vive em @/lib/auto-review-backlog — arquivos
+// "use server" só podem exportar funções async.
 
 type ComputedBacklog = ReturnType<typeof computeBacklogRows>;
 
@@ -495,9 +477,8 @@ async function reconcileBacklogWrites(
   admin: SupabaseAdminClient,
   projectId: string,
   actorId: string,
-  idsToDelete: string[],
   fieldReviewRows: ComputedBacklog["fieldReviewRows"],
-): Promise<number> {
+): Promise<{ removedCount: number; keptResolved: number }> {
   const { data, error } = await admin.rpc("reconcile_auto_review_backlog", {
     p_project_id: projectId,
     p_actor_id: actorId,
@@ -516,10 +497,16 @@ async function reconcileBacklogWrites(
         self_reviewer_id,
       }),
     ),
-    p_ids_to_delete: idsToDelete,
   });
   if (error) throw new Error(error.message);
-  return typeof data === "number" ? data : 0;
+  const result = data as {
+    removedCount?: number;
+    keptResolved?: number;
+  } | null;
+  return {
+    removedCount: result?.removedCount ?? 0,
+    keptResolved: result?.keptResolved ?? 0,
+  };
 }
 
 export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
@@ -538,12 +525,8 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
     if (!gate.ok) return { success: false, error: gate.error };
 
     const supabase = await createSupabaseServer();
-    const { fields, humanResponses, llmResponses, equivalences, existingReviews } =
+    const { fields, humanResponses, llmResponses, equivalences } =
       await fetchBacklogInputs(supabase, projectId);
-
-    if (fields.length === 0) {
-      return { success: true, scanned: 0, regenerated: 0 };
-    }
 
     // Index LLM por document_id para lookup O(1) no loop in-memory
     const llmByDocId = new Map(llmResponses.map((r) => [r.document_id, r]));
@@ -557,16 +540,10 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       fields,
     );
 
-    const { idsToDelete, keptResolved } = diffReviewsToRemove(
-      existingReviews,
-      fieldReviewRows,
-    );
-
-    const actuallyRemoved = await reconcileBacklogWrites(
+    const { removedCount, keptResolved } = await reconcileBacklogWrites(
       createSupabaseAdmin(),
       projectId,
       gate.user.id,
-      idsToDelete,
       fieldReviewRows,
     );
 
@@ -576,7 +553,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       success: true,
       scanned: humanResponses.length,
       regenerated,
-      removed: actuallyRemoved,
+      removed: removedCount,
       keptResolved,
     };
   } catch (e) {

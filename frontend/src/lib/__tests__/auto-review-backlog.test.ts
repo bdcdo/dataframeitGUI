@@ -1,12 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   computeBacklogRows,
-  diffReviewsToRemove,
   filterCurrentMemberResponses,
   type HumanResponseRow,
   type LlmResponseRow,
-  type ExistingFieldReviewRow,
-  type FieldReviewRow,
 } from "@/lib/auto-review-backlog";
 import type { PydanticField } from "@/lib/types";
 
@@ -131,55 +128,5 @@ describe("computeBacklogRows", () => {
 
     expect(result.regenerated).toBe(0);
     expect(result.fieldReviewRows).toEqual([]);
-  });
-});
-
-describe("diffReviewsToRemove", () => {
-  function review(overrides: Partial<ExistingFieldReviewRow>): ExistingFieldReviewRow {
-    return {
-      id: "fr1",
-      document_id: "doc1",
-      field_name: "campo1",
-      self_verdict: null,
-      ...overrides,
-    };
-  }
-
-  it("marca para deletar reviews pendentes fora do conjunto correto", () => {
-    const correct: FieldReviewRow[] = [];
-    const { idsToDelete, keptResolved } = diffReviewsToRemove(
-      [review({ id: "stale1" })],
-      correct,
-    );
-    expect(idsToDelete).toEqual(["stale1"]);
-    expect(keptResolved).toBe(0);
-  });
-
-  it("preserva reviews já resolvidos (self_verdict != null) mesmo fora do conjunto correto", () => {
-    const { idsToDelete, keptResolved } = diffReviewsToRemove(
-      [review({ id: "resolved1", self_verdict: "admite_erro" })],
-      [],
-    );
-    expect(idsToDelete).toEqual([]);
-    expect(keptResolved).toBe(1);
-  });
-
-  it("não toca reviews que estão no conjunto correto", () => {
-    const correct: FieldReviewRow[] = [
-      {
-        project_id: "proj1",
-        document_id: "doc1",
-        field_name: "campo1",
-        human_response_id: "h1",
-        llm_response_id: "l1",
-        self_reviewer_id: "u1",
-      },
-    ];
-    const { idsToDelete, keptResolved } = diffReviewsToRemove(
-      [review({ id: "current1" })],
-      correct,
-    );
-    expect(idsToDelete).toEqual([]);
-    expect(keptResolved).toBe(0);
   });
 });

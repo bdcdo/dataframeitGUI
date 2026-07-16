@@ -2,10 +2,10 @@
 //
 // Vivem num módulo próprio (sem `server-only`, sem React) para serem
 // compartilhadas entre o Server Component da página (compare/page.tsx) e a
-// Server Action de sincronização (compare-sync.ts), e para serem testáveis por
+// fila, lente canônica de conclusão e gatilho automático, e para serem testáveis por
 // Vitest. Antes, `versionGte`/`parseVersionStr`/`resolveMinVersion` viviam
 // inline e não-exportadas em compare/page.tsx, e o predicado de qualificação
-// por versão estava duplicado de forma divergente em compare-sync.ts — drift
+// por versão já esteve duplicado em consumidores diferentes — drift
 // que era a causa do assignment de comparação não fechar (ver #168 e o
 // princípio anti-drift do CLAUDE.md, mesmo racional do #63 para schema-utils).
 
@@ -24,7 +24,7 @@ export const VERSION_FILTER_LATEST_MAJOR = "latest_major";
 //   1. a página (compareDefaultsForMode, via compare/page.tsx);
 //   2. o filtro do cliente (CompareFilters.effectiveDefaults, via prop
 //      defaultVersion plumbada por page → ComparePage → CompareNav);
-//   3. o fecho do parecer (compare-sync.ts) e o gatilho (auto-comparison.ts),
+//   3. a lente canônica de conclusão e o gatilho (auto-comparison.ts),
 //      ambos via `versionGate` abaixo.
 // É distinto de DEFAULT_COMPARE_FILTERS.version ("all"), a base para
 // callers/testes que NÃO derivam do automation_mode. Vive aqui (e é
@@ -43,7 +43,7 @@ export interface SchemaVersion {
 
 // Campos mínimos de uma resposta necessários para decidir se ela qualifica sob
 // um piso de versão. Tanto `CompareResponse` (página) quanto a linha buscada em
-// compare-sync.ts satisfazem este shape.
+// a fila e o gatilho satisfazem este shape.
 export interface VersionedResponse {
   respondent_type: "humano" | "llm";
   is_latest: boolean;
@@ -131,7 +131,7 @@ export interface ProjectVersionRow {
 // Deriva o `SchemaVersion` corrente do projeto e o `ProjectVersionContext` a
 // partir de uma linha de `projects`, com os fallbacks canônicos
 // {major 0, minor 1, patch 0}. FONTE ÚNICA dessa derivação, consumida por
-// compare/page.tsx, compare-sync.ts e auto-comparison.ts — antes ela vivia
+// compare/page.tsx e auto-comparison.ts — antes ela vivia
 // copiada (verbatim) nos três, e o fallback `minor: 1` é load-bearing
 // (`latestMajorAnchor` ancora em {0,minor,0} para projetos 0.x): uma cópia
 // "corrigida" para `minor: 0` num só lugar dessincronizaria gatilho/fila/fecho,
@@ -156,7 +156,7 @@ export function deriveProjectVersionContext(project: ProjectVersionRow): {
 // Gate de versão do estado DEFAULT da fila: deriva o contexto do projeto e
 // resolve o piso a partir de `COMPARE_DEFAULT_VERSION` ("latest_major"). FONTE
 // ÚNICA do par {minVersion, ctx} aplicado fora da página — o gatilho
-// (auto-comparison.ts) e o fecho (compare-sync.ts) usam ESTE helper, mantendo o
+// (auto-comparison.ts) e a lente canônica usam ESTE helper, mantendo o
 // acoplamento gatilho==fila==fecho do #247. A página NÃO usa `versionGate`: ela
 // resolve `minVersion` a partir da URL (`filters.version`, que pode ser uma
 // lente manual), mas a partir do MESMO `deriveProjectVersionContext`.

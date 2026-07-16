@@ -6,11 +6,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // ganho garantindo que essas tabelas não são mais tocadas nesse path.
 import {
   makeSupabaseMock,
+  type RpcCall,
   type TableResults,
+  type WriteCall,
 } from "./supabase-mock";
 
 let serverTableResults: TableResults | undefined;
 let fromCalls: string[];
+let rpcCalls: RpcCall[];
+let writeCalls: WriteCall[];
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
@@ -26,7 +30,11 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => {
-    const mock = makeSupabaseMock({ tableResults: serverTableResults });
+    const mock = makeSupabaseMock({
+      tableResults: serverTableResults,
+      rpcCalls,
+      writeCalls,
+    });
     return {
       ...mock,
       from: (table: string) => {
@@ -37,11 +45,13 @@ vi.mock("@/lib/supabase/server", () => ({
   },
 }));
 
-import { getLotteryDocStats, previewLottery } from "../assignments";
+import { getLotteryDocStats, previewLottery, smartRandomize } from "../assignments";
 
 beforeEach(() => {
   serverTableResults = undefined;
   fromCalls = [];
+  rpcCalls = [];
+  writeCalls = [];
 });
 
 describe("getLotteryDocStats", () => {
@@ -166,5 +176,65 @@ describe("previewLottery", () => {
     ]);
     expect(fromCalls).toContain("lottery_doc_stats");
     expect(fromCalls).toContain("assignments");
+  });
+});
+
+describe("smartRandomize", () => {
+  it("grava atribuições e configurações dos participantes na mesma RPC", async () => {
+    serverTableResults = {
+      project_members: { data: [{ user_id: "u1" }] },
+      lottery_doc_stats: {
+        data: [
+          {
+            id: "d1",
+            external_id: "EXT-1",
+            title: "Doc 1",
+            human_coding_count: 0,
+            has_llm_response: false,
+            active_codificacao: 0,
+            active_comparacao: 0,
+            has_any_assignment_ever: false,
+            batch_ids: [],
+          },
+        ],
+      },
+      assignment_batches: [
+        { data: [] },
+        { data: { id: "batch1" } },
+      ],
+      projects: {
+        data: { min_responses_for_comparison: 2, automation_mode: null },
+      },
+      assignments: { data: [] },
+    };
+
+    await expect(
+      smartRandomize({
+        projectId: "p1",
+        type: "codificacao",
+        mode: "append",
+        balancing: "round",
+        researchersPerDoc: 1,
+        participantIds: ["u1"],
+        participantSettings: { u1: { weight: 2.5, cap: 3 } },
+      }),
+    ).resolves.toEqual({ count: 1, preserved: 0 });
+
+    expect(rpcCalls).toContainEqual({
+      fn: "apply_lottery_assignments",
+      args: {
+        p_project_id: "p1",
+        p_type: "codificacao",
+        p_batch_id: "batch1",
+        p_assignments: [{ document_id: "d1", user_id: "u1" }],
+        p_replace: false,
+        p_participant_settings: [
+          { user_id: "u1", assignment_weight: 2.5, assignment_cap: 3 },
+        ],
+      },
+    });
+    expect(writeCalls).not.toContainEqual(
+      expect.objectContaining({ table: "project_members" }),
+    );
   });
 });

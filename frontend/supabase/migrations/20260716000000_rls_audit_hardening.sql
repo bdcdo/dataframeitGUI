@@ -1831,122 +1831,15 @@ CREATE TRIGGER enforce_field_review_column_guard_trigger
 
 -- ========== Relações estruturais irrepresentáveis ==========
 
--- Não há correção segura para uma relação cross-project: escolher um
--- project_id automaticamente mudaria acesso RLS e autoria. O preflight reúne
--- todas as violações com contagem e amostra e aborta antes de alterar o schema.
+-- Constraints declarativas abaixo validam nulabilidade, relações estruturais,
+-- estados e unicidade. O preflight fica restrito às duas invariantes sem uma
+-- representação declarativa equivalente.
 CREATE TEMP TABLE rls_contract_violations (
   relation text NOT NULL,
   row_id uuid NOT NULL
 ) ON COMMIT DROP;
 
 INSERT INTO rls_contract_violations (relation, row_id)
-SELECT 'documents.project_id_null', id FROM public.documents WHERE project_id IS NULL
-UNION ALL SELECT 'assignment_batches.project_id_null', id FROM public.assignment_batches WHERE project_id IS NULL
-UNION ALL SELECT 'assignments.scope_null', id FROM public.assignments WHERE project_id IS NULL OR document_id IS NULL
-UNION ALL SELECT 'responses.scope_null', id FROM public.responses WHERE project_id IS NULL OR document_id IS NULL
-UNION ALL SELECT 'reviews.scope_null', id FROM public.reviews WHERE project_id IS NULL OR document_id IS NULL OR reviewer_id IS NULL
-UNION ALL SELECT 'verdict_acknowledgments.status', id
-FROM public.verdict_acknowledgments
-WHERE status NOT IN ('pending', 'accepted', 'questioned')
-UNION ALL
-SELECT 'responses.document', response.id
-FROM public.responses AS response
-LEFT JOIN public.documents AS document
-  ON document.id = response.document_id AND document.project_id = response.project_id
-WHERE document.id IS NULL
-UNION ALL
-SELECT 'responses.round', response.id
-FROM public.responses AS response
-LEFT JOIN public.rounds AS round
-  ON round.id = response.round_id AND round.project_id = response.project_id
-WHERE response.round_id IS NOT NULL AND round.id IS NULL
-UNION ALL
-SELECT 'assignments.document', assignment.id
-FROM public.assignments AS assignment
-LEFT JOIN public.documents AS document
-  ON document.id = assignment.document_id AND document.project_id = assignment.project_id
-WHERE document.id IS NULL
-UNION ALL
-SELECT 'assignments.batch', assignment.id
-FROM public.assignments AS assignment
-LEFT JOIN public.assignment_batches AS batch
-  ON batch.id = assignment.batch_id AND batch.project_id = assignment.project_id
-WHERE assignment.batch_id IS NOT NULL AND batch.id IS NULL
-UNION ALL
-SELECT 'reviews.document', review.id
-FROM public.reviews AS review
-LEFT JOIN public.documents AS document
-  ON document.id = review.document_id AND document.project_id = review.project_id
-WHERE document.id IS NULL
-UNION ALL
-SELECT 'reviews.chosen_response', review.id
-FROM public.reviews AS review
-LEFT JOIN public.responses AS response
-  ON response.id = review.chosen_response_id
- AND response.project_id = review.project_id
- AND response.document_id = review.document_id
-WHERE review.chosen_response_id IS NOT NULL AND response.id IS NULL
-UNION ALL
-SELECT 'project_comments.document', comment.id
-FROM public.project_comments AS comment
-LEFT JOIN public.documents AS document
-  ON document.id = comment.document_id AND document.project_id = comment.project_id
-WHERE comment.document_id IS NOT NULL AND document.id IS NULL
-UNION ALL
-SELECT 'project_comments.parent', comment.id
-FROM public.project_comments AS comment
-LEFT JOIN public.project_comments AS parent
-  ON parent.id = comment.parent_id AND parent.project_id = comment.project_id
-WHERE comment.parent_id IS NOT NULL AND parent.id IS NULL
-UNION ALL
-SELECT 'difficulty_resolutions.response', resolution.id
-FROM public.difficulty_resolutions AS resolution
-LEFT JOIN public.responses AS response
-  ON response.id = resolution.response_id
- AND response.project_id = resolution.project_id
- AND response.document_id = resolution.document_id
-WHERE response.id IS NULL
-UNION ALL
-SELECT 'error_resolutions.document', resolution.id
-FROM public.error_resolutions AS resolution
-LEFT JOIN public.documents AS document
-  ON document.id = resolution.document_id AND document.project_id = resolution.project_id
-WHERE document.id IS NULL
-UNION ALL
-SELECT 'note_resolutions.response', resolution.id
-FROM public.note_resolutions AS resolution
-LEFT JOIN public.responses AS response
-  ON response.id = resolution.response_id AND response.project_id = resolution.project_id
-WHERE response.id IS NULL
-UNION ALL
-SELECT 'response_equivalences.scope', equivalence.id
-FROM public.response_equivalences AS equivalence
-LEFT JOIN public.documents AS document
-  ON document.id = equivalence.document_id AND document.project_id = equivalence.project_id
-LEFT JOIN public.responses AS response_a
-  ON response_a.id = equivalence.response_a_id
- AND response_a.project_id = equivalence.project_id
- AND response_a.document_id = equivalence.document_id
-LEFT JOIN public.responses AS response_b
-  ON response_b.id = equivalence.response_b_id
- AND response_b.project_id = equivalence.project_id
- AND response_b.document_id = equivalence.document_id
-WHERE document.id IS NULL OR response_a.id IS NULL OR response_b.id IS NULL
-UNION ALL
-SELECT 'field_reviews.scope', field_review.id
-FROM public.field_reviews AS field_review
-LEFT JOIN public.documents AS document
-  ON document.id = field_review.document_id AND document.project_id = field_review.project_id
-LEFT JOIN public.responses AS human_response
-  ON human_response.id = field_review.human_response_id
- AND human_response.project_id = field_review.project_id
- AND human_response.document_id = field_review.document_id
-LEFT JOIN public.responses AS llm_response
-  ON llm_response.id = field_review.llm_response_id
- AND llm_response.project_id = field_review.project_id
- AND llm_response.document_id = field_review.document_id
-WHERE document.id IS NULL OR human_response.id IS NULL OR llm_response.id IS NULL
-UNION ALL
 SELECT 'field_reviews.response_semantics', field_review.id
 FROM public.field_reviews AS field_review
 LEFT JOIN public.responses AS human_response
@@ -1972,99 +1865,7 @@ WHERE field_review.arbitrator_id IS NOT NULL
   AND (
     field_review.arbitrator_id = field_review.self_reviewer_id
     OR (field_review.final_verdict IS NULL AND arbitrator.id IS NULL)
-  )
-UNION ALL
-SELECT 'field_reviews.self_state', field_review.id
-FROM public.field_reviews AS field_review
-WHERE NOT (
-  (
-    field_review.self_verdict IS NULL
-    AND field_review.self_reviewed_at IS NULL
-    AND field_review.self_justification IS NULL
-  ) OR (
-    field_review.self_verdict IS NOT NULL
-    AND field_review.self_reviewed_at IS NOT NULL
-    AND (
-      (
-        field_review.self_verdict IN ('contesta_llm', 'ambiguo')
-        AND NULLIF(btrim(field_review.self_justification), '') IS NOT NULL
-      ) OR (
-        field_review.self_verdict IN ('admite_erro', 'equivalente')
-        AND field_review.self_justification IS NULL
-      )
-    )
-  )
-)
-UNION ALL
-SELECT 'field_reviews.arbitration_state', field_review.id
-FROM public.field_reviews AS field_review
-WHERE NOT (
-  (
-    field_review.self_verdict IS DISTINCT FROM 'contesta_llm'
-    AND field_review.arbitrator_id IS NULL
-    AND field_review.blind_verdict IS NULL
-    AND field_review.blind_decided_at IS NULL
-    AND field_review.final_verdict IS NULL
-    AND field_review.final_decided_at IS NULL
-    AND field_review.question_improvement_suggestion IS NULL
-    AND field_review.arbitrator_comment IS NULL
-  ) OR (
-    field_review.self_verdict = 'contesta_llm'
-    AND (
-      field_review.arbitrator_id IS NOT NULL
-      OR (
-        field_review.blind_verdict IS NULL
-        AND field_review.blind_decided_at IS NULL
-        AND field_review.final_verdict IS NULL
-        AND field_review.final_decided_at IS NULL
-        AND field_review.question_improvement_suggestion IS NULL
-        AND field_review.arbitrator_comment IS NULL
-      )
-    )
-    AND ((field_review.blind_verdict IS NULL) = (field_review.blind_decided_at IS NULL))
-    AND ((field_review.final_verdict IS NULL) = (field_review.final_decided_at IS NULL))
-    AND (field_review.final_verdict IS NULL OR field_review.blind_verdict IS NOT NULL)
-    AND (field_review.question_improvement_suggestion IS NULL OR field_review.final_verdict IS NOT NULL)
-    AND (field_review.arbitrator_comment IS NULL OR field_review.final_verdict IS NOT NULL)
-    AND (
-      field_review.final_verdict IS NULL
-      OR (
-        field_review.final_verdict = 'llm'
-        AND NULLIF(btrim(field_review.question_improvement_suggestion), '') IS NOT NULL
-      )
-      OR (
-        field_review.final_verdict = 'humano'
-        AND field_review.question_improvement_suggestion IS NULL
-      )
-    )
-  )
-)
-UNION ALL
-SELECT 'projects.current_round', project.id
-FROM public.projects AS project
-LEFT JOIN public.rounds AS round
-  ON round.id = project.current_round_id AND round.project_id = project.id
-WHERE project.current_round_id IS NOT NULL AND round.id IS NULL
-UNION ALL
-SELECT 'rounds.source_batch', round.id
-FROM public.rounds AS round
-LEFT JOIN public.assignment_batches AS batch
-  ON batch.id = round.source_batch_id AND batch.project_id = round.project_id
-WHERE round.source_batch_id IS NOT NULL AND batch.id IS NULL
-UNION ALL
-SELECT 'project_comments.duplicate_pending_exclusion', duplicate.id
-FROM (
-  SELECT comment.id,
-         row_number() OVER (
-           PARTITION BY comment.document_id ORDER BY comment.created_at, comment.id
-         ) AS position
-  FROM public.project_comments AS comment
-  WHERE comment.kind = 'exclusion_request'
-    AND comment.document_id IS NOT NULL
-    AND comment.resolved_at IS NULL
-    AND comment.rejected_at IS NULL
-) AS duplicate
-WHERE duplicate.position > 1;
+  );
 
 DO $$
 DECLARE
@@ -2370,10 +2171,174 @@ BEGIN
 END;
 $$;
 
--- Estas duas funções são RPCs de usuário autenticado. O grant default para
--- PUBLIC contradizia o contrato explícito das migrations que as introduziram.
 REVOKE ALL ON FUNCTION public.apply_lottery_assignments(uuid, text, uuid, jsonb, boolean) FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.apply_lottery_assignments(uuid, text, uuid, jsonb, boolean) TO authenticated;
+DROP FUNCTION public.apply_lottery_assignments(uuid, text, uuid, jsonb, boolean);
+
+-- Assignments and the balancing settings used to compute them form one lottery
+-- decision. Persist both in the same transaction so a failure cannot leave the
+-- next lottery with settings different from those used by this one.
+CREATE FUNCTION public.apply_lottery_assignments(
+  p_project_id uuid,
+  p_type text,
+  p_batch_id uuid,
+  p_assignments jsonb,
+  p_replace boolean,
+  p_participant_settings jsonb
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  uid uuid := public.clerk_uid();
+  inserted_count integer := 0;
+BEGIN
+  IF uid IS NULL OR p_project_id IS NULL OR (
+    NOT public.is_master()
+    AND p_project_id NOT IN (
+      SELECT public.auth_user_coordinator_or_creator_project_ids()
+    )
+  ) THEN
+    RAISE EXCEPTION 'coordinator, creator, or master required'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_type NOT IN ('codificacao', 'comparacao', 'auto_revisao', 'arbitragem')
+     OR p_replace IS NULL
+     OR jsonb_typeof(COALESCE(p_assignments, 'null'::jsonb)) <> 'array'
+     OR jsonb_typeof(COALESCE(p_participant_settings, 'null'::jsonb)) <> 'array' THEN
+    RAISE EXCEPTION 'lottery inputs are invalid'
+      USING ERRCODE = '22023';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_assignments) AS item(value)
+    WHERE jsonb_typeof(value) IS DISTINCT FROM 'object'
+       OR (value - ARRAY['document_id', 'user_id']::text[]) IS DISTINCT FROM '{}'::jsonb
+       OR NOT (value ?& ARRAY['document_id', 'user_id']::text[])
+  ) OR EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(p_participant_settings) AS item(value)
+    WHERE jsonb_typeof(value) IS DISTINCT FROM 'object'
+       OR (value - ARRAY['user_id', 'assignment_weight', 'assignment_cap']::text[])
+          IS DISTINCT FROM '{}'::jsonb
+       OR NOT (value ?& ARRAY['user_id', 'assignment_weight']::text[])
+  ) THEN
+    RAISE EXCEPTION 'lottery rows must contain only canonical keys'
+      USING ERRCODE = '22023';
+  END IF;
+  IF EXISTS (
+    SELECT document_id, user_id
+    FROM jsonb_to_recordset(p_assignments) AS row(document_id uuid, user_id uuid)
+    GROUP BY document_id, user_id
+    HAVING document_id IS NULL OR user_id IS NULL OR count(*) > 1
+  ) OR EXISTS (
+    SELECT user_id
+    FROM jsonb_to_recordset(p_participant_settings) AS row(
+      user_id uuid,
+      assignment_weight numeric,
+      assignment_cap integer
+    )
+    GROUP BY user_id
+    HAVING user_id IS NULL OR count(*) > 1
+  ) OR EXISTS (
+    SELECT 1
+    FROM jsonb_to_recordset(p_participant_settings) AS row(
+      user_id uuid,
+      assignment_weight numeric,
+      assignment_cap integer
+    )
+    WHERE assignment_weight IS NULL
+       OR assignment_weight <= 0
+       OR (assignment_cap IS NOT NULL AND assignment_cap <= 0)
+  ) THEN
+    RAISE EXCEPTION 'lottery rows are invalid or duplicated'
+      USING ERRCODE = '23514';
+  END IF;
+
+  PERFORM project.id
+  FROM public.projects AS project
+  WHERE project.id = p_project_id
+  FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'project not found' USING ERRCODE = 'P0002';
+  END IF;
+  IF p_batch_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM public.assignment_batches AS batch
+    WHERE batch.id = p_batch_id
+      AND batch.project_id = p_project_id
+  ) THEN
+    RAISE EXCEPTION 'assignment batch is outside p_project_id'
+      USING ERRCODE = '23503';
+  END IF;
+
+  PERFORM member.id
+  FROM public.project_members AS member
+  WHERE member.project_id = p_project_id
+    AND member.user_id IN (
+      SELECT row.user_id
+      FROM jsonb_to_recordset(p_assignments) AS row(user_id uuid)
+      UNION
+      SELECT row.user_id
+      FROM jsonb_to_recordset(p_participant_settings) AS row(user_id uuid)
+    )
+  FOR UPDATE;
+
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_to_recordset(p_assignments) AS row(document_id uuid, user_id uuid)
+    LEFT JOIN public.documents AS document
+      ON document.id = row.document_id
+     AND document.project_id = p_project_id
+    LEFT JOIN public.project_members AS member
+      ON member.project_id = p_project_id
+     AND member.user_id = row.user_id
+    WHERE document.id IS NULL OR member.id IS NULL
+  ) OR EXISTS (
+    SELECT 1
+    FROM jsonb_to_recordset(p_participant_settings) AS row(user_id uuid)
+    LEFT JOIN public.project_members AS member
+      ON member.project_id = p_project_id
+     AND member.user_id = row.user_id
+    WHERE member.id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'lottery references a document or member outside p_project_id'
+      USING ERRCODE = '23503';
+  END IF;
+
+  IF p_replace THEN
+    DELETE FROM public.assignments AS assignment
+    WHERE assignment.project_id = p_project_id
+      AND assignment.status = 'pendente'
+      AND assignment.type = p_type;
+  END IF;
+
+  INSERT INTO public.assignments (
+    project_id, document_id, user_id, batch_id, type
+  )
+  SELECT p_project_id, row.document_id, row.user_id, p_batch_id, p_type
+  FROM jsonb_to_recordset(p_assignments) AS row(document_id uuid, user_id uuid);
+  GET DIAGNOSTICS inserted_count = ROW_COUNT;
+
+  UPDATE public.project_members AS member
+  SET assignment_weight = settings.assignment_weight,
+      assignment_cap = settings.assignment_cap
+  FROM jsonb_to_recordset(p_participant_settings) AS settings(
+    user_id uuid,
+    assignment_weight numeric,
+    assignment_cap integer
+  )
+  WHERE member.project_id = p_project_id
+    AND member.user_id = settings.user_id;
+
+  RETURN inserted_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.apply_lottery_assignments(uuid, text, uuid, jsonb, boolean, jsonb)
+  FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.apply_lottery_assignments(uuid, text, uuid, jsonb, boolean, jsonb)
+  TO authenticated;
 
 REVOKE ALL ON FUNCTION public.replace_and_add_documents(uuid, uuid[], boolean, jsonb, jsonb) FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.replace_and_add_documents(uuid, uuid[], boolean, jsonb, jsonb) TO authenticated;
@@ -2856,16 +2821,64 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.submit_compare_review(
+-- Both review submission and standalone equivalence creation accept the same
+-- response contract. Keeping the validation here prevents the two write paths
+-- from drifting on latest-version and field-presence semantics.
+CREATE FUNCTION public.assert_current_field_responses(
   p_project_id uuid,
   p_document_id uuid,
   p_field_name text,
-  p_reviewer_id uuid,
+  p_response_ids uuid[]
+) RETURNS void
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  IF NULLIF(btrim(p_field_name), '') IS NULL
+     OR cardinality(COALESCE(p_response_ids, ARRAY[]::uuid[])) = 0 THEN
+    RAISE EXCEPTION 'field and responses are required'
+      USING ERRCODE = '22023';
+  END IF;
+
+  PERFORM response.id
+  FROM public.responses AS response
+  WHERE response.id = ANY(p_response_ids)
+    AND response.project_id = p_project_id
+    AND response.document_id = p_document_id
+  ORDER BY response.id
+  FOR UPDATE;
+
+  IF (
+    SELECT count(*)
+    FROM public.responses AS response
+    WHERE response.id = ANY(p_response_ids)
+      AND response.project_id = p_project_id
+      AND response.document_id = p_document_id
+      AND response.is_latest
+      AND response.answers ? p_field_name
+  ) IS DISTINCT FROM cardinality(p_response_ids) THEN
+    RAISE EXCEPTION 'responses must be current rows from the same project, document, and field'
+      USING ERRCODE = '23503';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.assert_current_field_responses(uuid, uuid, text, uuid[])
+  FROM PUBLIC, anon, authenticated, service_role;
+
+DROP FUNCTION IF EXISTS public.submit_compare_review(
+  uuid, uuid, text, uuid, text, uuid, text, uuid[], uuid[]
+);
+CREATE FUNCTION public.submit_compare_review(
+  p_project_id uuid,
+  p_document_id uuid,
+  p_field_name text,
   p_verdict text,
   p_chosen_response_id uuid,
   p_comment text,
   p_comparison_response_ids uuid[],
-  p_equivalent_response_ids uuid[] DEFAULT NULL
+  p_equivalent_response_ids uuid[],
+  p_complete_assignment boolean
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -2873,9 +2886,11 @@ SET search_path = ''
 AS $$
 DECLARE
   uid uuid := public.clerk_uid();
+  actor_id uuid;
   snapshot jsonb;
   review_id uuid;
 BEGIN
+  actor_id := public.auth_user_effective_member_id(p_project_id);
   IF uid IS NULL OR p_project_id IS NULL
      OR (
        NOT public.is_master()
@@ -2883,13 +2898,13 @@ BEGIN
          SELECT public.auth_user_accessible_project_ids()
        )
      )
-     OR p_reviewer_id IS DISTINCT FROM
-        public.auth_user_effective_member_id(p_project_id) THEN
-    RAISE EXCEPTION 'reviewer_id must identify the effective actor'
+     OR actor_id IS NULL THEN
+    RAISE EXCEPTION 'authenticated project actor required'
       USING ERRCODE = '42501';
   END IF;
   IF NULLIF(btrim(p_field_name), '') IS NULL
      OR NULLIF(btrim(p_verdict), '') IS NULL
+     OR p_complete_assignment IS NULL
      OR cardinality(COALESCE(p_comparison_response_ids, ARRAY[]::uuid[])) = 0 THEN
     RAISE EXCEPTION 'field, verdict, and comparison responses are required'
       USING ERRCODE = '22023';
@@ -2925,26 +2940,9 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
-  PERFORM response.id
-  FROM public.responses AS response
-  WHERE response.id = ANY(p_comparison_response_ids)
-    AND response.project_id = p_project_id
-    AND response.document_id = p_document_id
-  ORDER BY response.id
-  FOR UPDATE;
-
-  IF (
-    SELECT count(*)
-    FROM public.responses AS response
-    WHERE response.id = ANY(p_comparison_response_ids)
-      AND response.project_id = p_project_id
-      AND response.document_id = p_document_id
-      AND response.is_latest = true
-      AND response.answers ? p_field_name
-  ) IS DISTINCT FROM cardinality(p_comparison_response_ids) THEN
-    RAISE EXCEPTION 'comparison responses must be current rows from the same project, document, and field'
-      USING ERRCODE = '23503';
-  END IF;
+  PERFORM public.assert_current_field_responses(
+    p_project_id, p_document_id, p_field_name, p_comparison_response_ids
+  );
 
   SELECT jsonb_agg(
            jsonb_strip_nulls(jsonb_build_object(
@@ -2964,7 +2962,7 @@ BEGIN
     project_id, document_id, field_name, reviewer_id, verdict,
     chosen_response_id, comment, response_snapshot
   ) VALUES (
-    p_project_id, p_document_id, p_field_name, p_reviewer_id, p_verdict,
+    p_project_id, p_document_id, p_field_name, actor_id, p_verdict,
     p_chosen_response_id, NULLIF(btrim(p_comment), ''), snapshot
   )
   ON CONFLICT (project_id, document_id, field_name, reviewer_id)
@@ -2985,7 +2983,7 @@ BEGIN
            p_field_name,
            LEAST(left_response.id, right_response.id),
            GREATEST(left_response.id, right_response.id),
-           p_reviewer_id
+           actor_id
     FROM unnest(p_equivalent_response_ids) WITH ORDINALITY AS left_response(id, position)
     JOIN unnest(p_equivalent_response_ids) WITH ORDINALITY AS right_response(id, position)
       ON left_response.position < right_response.position
@@ -3000,7 +2998,7 @@ BEGIN
       p_project_id,
       p_document_id,
       p_field_name,
-      p_reviewer_id,
+      actor_id,
       CASE
         WHEN NULLIF(btrim(p_comment), '') IS NULL
           THEN 'Campo marcado como ambíguo na revisão (aba Comparar).'
@@ -3026,23 +3024,72 @@ BEGIN
       AND comment.kind = 'ambiguity';
   END IF;
 
+  UPDATE public.assignments AS assignment
+  SET status = CASE WHEN p_complete_assignment THEN 'concluido' ELSE 'em_andamento' END,
+      completed_at = CASE WHEN p_complete_assignment THEN transaction_timestamp() ELSE NULL END
+  WHERE assignment.project_id = p_project_id
+    AND assignment.document_id = p_document_id
+    AND assignment.user_id = actor_id
+    AND assignment.type = 'comparacao';
+
   RETURN jsonb_build_object('reviewId', review_id);
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.add_response_equivalence(
+CREATE FUNCTION public.mark_compare_doc_reviewed(
+  p_project_id uuid,
+  p_document_id uuid
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  actor_id uuid := public.auth_user_effective_member_id(p_project_id);
+  updated_count integer := 0;
+BEGIN
+  IF public.clerk_uid() IS NULL OR p_project_id IS NULL OR actor_id IS NULL
+     OR (
+       NOT public.is_master()
+       AND p_project_id NOT IN (
+         SELECT public.auth_user_accessible_project_ids()
+       )
+     ) THEN
+    RAISE EXCEPTION 'authenticated project actor required'
+      USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE public.assignments AS assignment
+  SET status = 'concluido',
+      completed_at = transaction_timestamp()
+  WHERE assignment.project_id = p_project_id
+    AND assignment.document_id = p_document_id
+    AND assignment.user_id = actor_id
+    AND assignment.type = 'comparacao';
+  GET DIAGNOSTICS updated_count = ROW_COUNT;
+
+  IF updated_count = 0 THEN
+    RAISE EXCEPTION 'comparison assignment not found'
+      USING ERRCODE = '23503';
+  END IF;
+  RETURN updated_count;
+END;
+$$;
+
+DROP FUNCTION IF EXISTS public.add_response_equivalence(uuid, uuid, text, uuid, uuid, uuid);
+CREATE FUNCTION public.add_response_equivalence(
   p_project_id uuid,
   p_document_id uuid,
   p_field_name text,
   p_response_a_id uuid,
-  p_response_b_id uuid,
-  p_reviewer_id uuid
+  p_response_b_id uuid
 ) RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
+  actor_id uuid := public.auth_user_effective_member_id(p_project_id);
   equivalence_id uuid;
   v_response_a_id uuid := LEAST(p_response_a_id, p_response_b_id);
   v_response_b_id uuid := GREATEST(p_response_a_id, p_response_b_id);
@@ -3054,9 +3101,8 @@ BEGIN
          SELECT public.auth_user_accessible_project_ids()
        )
      )
-     OR p_reviewer_id IS DISTINCT FROM
-        public.auth_user_effective_member_id(p_project_id) THEN
-    RAISE EXCEPTION 'reviewer_id must identify the effective actor'
+     OR actor_id IS NULL THEN
+    RAISE EXCEPTION 'authenticated project actor required'
       USING ERRCODE = '42501';
   END IF;
   IF p_response_a_id IS NULL
@@ -3066,12 +3112,19 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  PERFORM public.assert_current_field_responses(
+    p_project_id,
+    p_document_id,
+    p_field_name,
+    ARRAY[p_response_a_id, p_response_b_id]
+  );
+
   INSERT INTO public.response_equivalences (
     project_id, document_id, field_name,
     response_a_id, response_b_id, reviewer_id
   ) VALUES (
     p_project_id, p_document_id, p_field_name,
-    v_response_a_id, v_response_b_id, p_reviewer_id
+    v_response_a_id, v_response_b_id, actor_id
   )
   ON CONFLICT (project_id, document_id, field_name, response_a_id, response_b_id)
     DO NOTHING
@@ -3092,16 +3145,17 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.remove_response_equivalence(
+DROP FUNCTION IF EXISTS public.remove_response_equivalence(uuid, uuid, uuid);
+CREATE FUNCTION public.remove_response_equivalence(
   p_project_id uuid,
-  p_equivalence_id uuid,
-  p_reviewer_id uuid
+  p_equivalence_id uuid
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
+  actor_id uuid := public.auth_user_effective_member_id(p_project_id);
   equivalence public.response_equivalences%ROWTYPE;
 BEGIN
   IF public.clerk_uid() IS NULL OR p_project_id IS NULL
@@ -3111,9 +3165,8 @@ BEGIN
          SELECT public.auth_user_accessible_project_ids()
        )
      )
-     OR p_reviewer_id IS DISTINCT FROM
-        public.auth_user_effective_member_id(p_project_id) THEN
-    RAISE EXCEPTION 'reviewer_id must identify the effective actor'
+     OR actor_id IS NULL THEN
+    RAISE EXCEPTION 'authenticated project actor required'
       USING ERRCODE = '42501';
   END IF;
 
@@ -3127,7 +3180,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'equivalence not found' USING ERRCODE = '23503';
   END IF;
-  IF equivalence.reviewer_id IS DISTINCT FROM p_reviewer_id
+  IF equivalence.reviewer_id IS DISTINCT FROM actor_id
      AND NOT public.is_master()
      AND p_project_id NOT IN (
        SELECT public.auth_user_coordinator_or_creator_project_ids()
@@ -3141,7 +3194,32 @@ BEGIN
   WHERE review.project_id = p_project_id
     AND review.document_id = equivalence.document_id
     AND review.field_name = equivalence.field_name
-    AND review.reviewer_id = p_reviewer_id;
+    AND review.reviewer_id = actor_id;
+
+  UPDATE public.assignments AS assignment
+  SET status = CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM public.reviews AS review
+          WHERE review.project_id = p_project_id
+            AND review.document_id = equivalence.document_id
+            AND review.reviewer_id = assignment.user_id
+        ) THEN 'em_andamento'
+        ELSE 'pendente'
+      END,
+      completed_at = NULL
+  WHERE assignment.project_id = p_project_id
+    AND assignment.document_id = equivalence.document_id
+    AND assignment.type = 'comparacao'
+    AND assignment.status = 'concluido'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.reviews AS review
+      WHERE review.project_id = p_project_id
+        AND review.document_id = equivalence.document_id
+        AND review.field_name = equivalence.field_name
+        AND review.reviewer_id = assignment.user_id
+    );
 
   RETURN jsonb_build_object(
     'documentId', equivalence.document_id,
@@ -3151,17 +3229,18 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.set_review_resolution(
+DROP FUNCTION IF EXISTS public.set_review_resolution(uuid, uuid, boolean, uuid);
+CREATE FUNCTION public.set_review_resolution(
   p_project_id uuid,
   p_review_id uuid,
-  p_resolved boolean,
-  p_resolver_id uuid
+  p_resolved boolean
 ) RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
+  actor_id uuid := public.auth_user_effective_member_id(p_project_id);
   review_row public.reviews%ROWTYPE;
 BEGIN
   IF p_resolved IS NULL THEN
@@ -3174,9 +3253,8 @@ BEGIN
          SELECT public.auth_user_accessible_project_ids()
        )
      )
-     OR p_resolver_id IS DISTINCT FROM
-        public.auth_user_effective_member_id(p_project_id) THEN
-    RAISE EXCEPTION 'resolver_id must identify the effective actor'
+     OR actor_id IS NULL THEN
+    RAISE EXCEPTION 'authenticated project actor required'
       USING ERRCODE = '42501';
   END IF;
 
@@ -3189,7 +3267,7 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'review not found' USING ERRCODE = '23503';
   END IF;
-  IF review_row.reviewer_id IS DISTINCT FROM p_resolver_id
+  IF review_row.reviewer_id IS DISTINCT FROM actor_id
      AND NOT public.is_master()
      AND p_project_id NOT IN (
        SELECT public.auth_user_coordinator_or_creator_project_ids()
@@ -3203,16 +3281,16 @@ BEGIN
 
   UPDATE public.reviews
   SET resolved_at = CASE WHEN p_resolved THEN transaction_timestamp() ELSE NULL END,
-      resolved_by = CASE WHEN p_resolved THEN p_resolver_id ELSE NULL END
+      resolved_by = CASE WHEN p_resolved THEN actor_id ELSE NULL END
   WHERE id = p_review_id;
   RETURN 1;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.submit_self_review(
+DROP FUNCTION IF EXISTS public.submit_self_review(uuid, uuid, uuid, jsonb);
+CREATE FUNCTION public.submit_self_review(
   p_project_id uuid,
   p_document_id uuid,
-  p_reviewer_id uuid,
   p_decisions jsonb
 ) RETURNS jsonb
 LANGUAGE plpgsql
@@ -3221,6 +3299,7 @@ SET search_path = ''
 AS $$
 DECLARE
   uid uuid := public.clerk_uid();
+  actor_id uuid := public.auth_user_effective_member_id(p_project_id);
   updated_ids uuid[] := ARRAY[]::uuid[];
   needs_arbitrator jsonb := '[]'::jsonb;
 BEGIN
@@ -3231,9 +3310,8 @@ BEGIN
          SELECT public.auth_user_accessible_project_ids()
        )
      )
-     OR p_reviewer_id IS DISTINCT FROM
-        public.auth_user_effective_member_id(p_project_id) THEN
-    RAISE EXCEPTION 'reviewer_id must identify the effective actor'
+     OR actor_id IS NULL THEN
+    RAISE EXCEPTION 'authenticated project actor required'
       USING ERRCODE = '42501';
   END IF;
   IF jsonb_typeof(p_decisions) IS DISTINCT FROM 'array'
@@ -3291,7 +3369,7 @@ BEGIN
   ) ON decision."fieldReviewId" = field_review.id
   WHERE field_review.project_id = p_project_id
     AND field_review.document_id = p_document_id
-    AND field_review.self_reviewer_id = p_reviewer_id
+    AND field_review.self_reviewer_id = actor_id
   ORDER BY field_review.id
   FOR UPDATE OF field_review;
 
@@ -3303,7 +3381,7 @@ BEGIN
     ) ON decision."fieldReviewId" = field_review.id
     WHERE field_review.project_id = p_project_id
       AND field_review.document_id = p_document_id
-      AND field_review.self_reviewer_id = p_reviewer_id
+      AND field_review.self_reviewer_id = actor_id
   ) IS DISTINCT FROM jsonb_array_length(p_decisions) THEN
     RAISE EXCEPTION 'field review row not found or owned by another reviewer'
       USING ERRCODE = '42501';
@@ -3363,7 +3441,7 @@ BEGIN
          field_review.field_name,
          LEAST(field_review.human_response_id, field_review.llm_response_id),
          GREATEST(field_review.human_response_id, field_review.llm_response_id),
-         p_reviewer_id
+         actor_id
   FROM public.field_reviews AS field_review
   WHERE field_review.id = ANY(updated_ids)
     AND field_review.self_verdict = 'equivalente'
@@ -3376,7 +3454,7 @@ BEGIN
   SELECT field_review.project_id,
          field_review.document_id,
          field_review.field_name,
-         p_reviewer_id,
+         actor_id,
          format(
            'Campo "%s" marcado como ambíguo na auto-revisão.%s%s%s%s',
            field_review.field_name,
@@ -3397,14 +3475,14 @@ BEGIN
   SET status = 'concluido', completed_at = transaction_timestamp()
   WHERE assignment.project_id = p_project_id
     AND assignment.document_id = p_document_id
-    AND assignment.user_id = p_reviewer_id
+    AND assignment.user_id = actor_id
     AND assignment.type = 'auto_revisao'
     AND NOT EXISTS (
       SELECT 1
       FROM public.field_reviews AS pending
       WHERE pending.project_id = p_project_id
         AND pending.document_id = p_document_id
-        AND pending.self_reviewer_id = p_reviewer_id
+        AND pending.self_reviewer_id = actor_id
         AND pending.self_verdict IS NULL
     );
 
@@ -3433,10 +3511,10 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.submit_blind_arbitration(
+DROP FUNCTION IF EXISTS public.submit_blind_arbitration(uuid, uuid, uuid, jsonb);
+CREATE FUNCTION public.submit_blind_arbitration(
   p_project_id uuid,
   p_document_id uuid,
-  p_arbitrator_id uuid,
   p_decisions jsonb
 ) RETURNS jsonb
 LANGUAGE plpgsql
@@ -3444,6 +3522,7 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
+  actor_id uuid := public.auth_user_effective_member_id(p_project_id);
   updated_count integer;
 BEGIN
   IF public.clerk_uid() IS NULL OR p_project_id IS NULL
@@ -3453,16 +3532,15 @@ BEGIN
          SELECT public.auth_user_accessible_project_ids()
        )
      )
-     OR p_arbitrator_id IS DISTINCT FROM
-        public.auth_user_effective_member_id(p_project_id)
+     OR actor_id IS NULL
      OR NOT EXISTS (
        SELECT 1
        FROM public.project_members AS member
        WHERE member.project_id = p_project_id
-         AND member.user_id = p_arbitrator_id
+         AND member.user_id = actor_id
          AND member.can_arbitrate
      ) THEN
-    RAISE EXCEPTION 'arbitrator_id must identify the effective actor'
+    RAISE EXCEPTION 'eligible authenticated arbitrator required'
       USING ERRCODE = '42501';
   END IF;
   IF jsonb_typeof(p_decisions) IS DISTINCT FROM 'array'
@@ -3497,7 +3575,7 @@ BEGIN
     ON decision."fieldReviewId" = field_review.id
   WHERE field_review.project_id = p_project_id
     AND field_review.document_id = p_document_id
-    AND field_review.arbitrator_id = p_arbitrator_id
+    AND field_review.arbitrator_id = actor_id
   ORDER BY field_review.id
   FOR UPDATE OF field_review;
 
@@ -3508,7 +3586,7 @@ BEGIN
       ON decision."fieldReviewId" = field_review.id
     WHERE field_review.project_id = p_project_id
       AND field_review.document_id = p_document_id
-      AND field_review.arbitrator_id = p_arbitrator_id
+      AND field_review.arbitrator_id = actor_id
       AND field_review.self_verdict = 'contesta_llm'
   ) IS DISTINCT FROM jsonb_array_length(p_decisions) THEN
     RAISE EXCEPTION 'blind arbitration row is missing, unassigned, or not contested'
@@ -3544,10 +3622,10 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.submit_final_arbitration(
+DROP FUNCTION IF EXISTS public.submit_final_arbitration(uuid, uuid, uuid, jsonb);
+CREATE FUNCTION public.submit_final_arbitration(
   p_project_id uuid,
   p_document_id uuid,
-  p_arbitrator_id uuid,
   p_decisions jsonb
 ) RETURNS jsonb
 LANGUAGE plpgsql
@@ -3556,6 +3634,7 @@ SET search_path = ''
 AS $$
 DECLARE
   uid uuid := public.clerk_uid();
+  actor_id uuid := public.auth_user_effective_member_id(p_project_id);
   updated_ids uuid[] := ARRAY[]::uuid[];
   assignment_completed boolean := false;
 BEGIN
@@ -3566,16 +3645,15 @@ BEGIN
          SELECT public.auth_user_accessible_project_ids()
        )
      )
-     OR p_arbitrator_id IS DISTINCT FROM
-        public.auth_user_effective_member_id(p_project_id)
+     OR actor_id IS NULL
      OR NOT EXISTS (
        SELECT 1
        FROM public.project_members AS member
        WHERE member.project_id = p_project_id
-         AND member.user_id = p_arbitrator_id
+         AND member.user_id = actor_id
          AND member.can_arbitrate
      ) THEN
-    RAISE EXCEPTION 'arbitrator_id must identify the effective actor'
+    RAISE EXCEPTION 'eligible authenticated arbitrator required'
       USING ERRCODE = '42501';
   END IF;
   IF jsonb_typeof(p_decisions) IS DISTINCT FROM 'array'
@@ -3634,7 +3712,7 @@ BEGIN
   ) ON decision."fieldReviewId" = field_review.id
   WHERE field_review.project_id = p_project_id
     AND field_review.document_id = p_document_id
-    AND field_review.arbitrator_id = p_arbitrator_id
+    AND field_review.arbitrator_id = actor_id
   ORDER BY field_review.id
   FOR UPDATE OF field_review;
 
@@ -3649,7 +3727,7 @@ BEGIN
     ) ON decision."fieldReviewId" = field_review.id
     WHERE field_review.project_id = p_project_id
       AND field_review.document_id = p_document_id
-      AND field_review.arbitrator_id = p_arbitrator_id
+      AND field_review.arbitrator_id = actor_id
       AND field_review.self_verdict = 'contesta_llm'
       AND field_review.blind_verdict IS NOT NULL
   ) IS DISTINCT FROM jsonb_array_length(p_decisions) THEN
@@ -3718,7 +3796,7 @@ BEGIN
   SELECT field_review.project_id,
          field_review.document_id,
          field_review.field_name,
-         p_arbitrator_id,
+         actor_id,
          format(
            'Discordância em "%s".%s%s%s%s%s%s',
            field_review.field_name,
@@ -3745,7 +3823,7 @@ BEGIN
     FROM public.field_reviews AS pending
     WHERE pending.project_id = p_project_id
       AND pending.document_id = p_document_id
-      AND pending.arbitrator_id = p_arbitrator_id
+      AND pending.arbitrator_id = actor_id
       AND pending.self_verdict = 'contesta_llm'
       AND pending.final_verdict IS NULL
   ) THEN
@@ -3753,7 +3831,7 @@ BEGIN
     SET status = 'concluido', completed_at = transaction_timestamp()
     WHERE assignment.project_id = p_project_id
       AND assignment.document_id = p_document_id
-      AND assignment.user_id = p_arbitrator_id
+      AND assignment.user_id = actor_id
       AND assignment.type = 'arbitragem';
     assignment_completed := FOUND;
   END IF;
@@ -4366,9 +4444,8 @@ $$;
 CREATE OR REPLACE FUNCTION public.reconcile_auto_review_backlog(
   p_project_id uuid,
   p_actor_id uuid,
-  p_field_review_rows jsonb,
-  p_ids_to_delete uuid[]
-) RETURNS integer
+  p_field_review_rows jsonb
+) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
@@ -4378,14 +4455,14 @@ DECLARE
   creator_id uuid;
   authorized boolean := false;
   removed_count integer := 0;
+  kept_resolved integer := 0;
 BEGIN
   IF p_actor_id IS NULL OR p_project_id IS NULL THEN
     RAISE EXCEPTION 'project actor required'
       USING ERRCODE = '42501';
   END IF;
-  IF jsonb_typeof(COALESCE(p_field_review_rows, 'null'::jsonb)) <> 'array'
-     OR p_ids_to_delete IS NULL THEN
-    RAISE EXCEPTION 'backlog inputs must be arrays'
+  IF jsonb_typeof(COALESCE(p_field_review_rows, 'null'::jsonb)) <> 'array' THEN
+    RAISE EXCEPTION 'field review rows must be an array'
       USING ERRCODE = '22023';
   END IF;
 
@@ -4540,10 +4617,33 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
+  SELECT count(*)::integer
+  INTO kept_resolved
+  FROM public.field_reviews AS field_review
+  WHERE field_review.project_id = p_project_id
+    AND field_review.self_verdict IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM jsonb_to_recordset(p_field_review_rows) AS row(
+        document_id uuid,
+        field_name text
+      )
+      WHERE row.document_id = field_review.document_id
+        AND row.field_name = field_review.field_name
+    );
+
   DELETE FROM public.field_reviews AS field_review
   WHERE field_review.project_id = p_project_id
-    AND field_review.id = ANY(p_ids_to_delete)
-    AND field_review.self_verdict IS NULL;
+    AND field_review.self_verdict IS NULL
+    AND NOT EXISTS (
+      SELECT 1
+      FROM jsonb_to_recordset(p_field_review_rows) AS row(
+        document_id uuid,
+        field_name text
+      )
+      WHERE row.document_id = field_review.document_id
+        AND row.field_name = field_review.field_name
+    );
   GET DIAGNOSTICS removed_count = ROW_COUNT;
 
   INSERT INTO public.assignments (
@@ -4602,7 +4702,10 @@ BEGIN
         AND field_review.self_reviewer_id = assignment.user_id
     );
 
-  RETURN removed_count;
+  RETURN jsonb_build_object(
+    'removedCount', removed_count,
+    'keptResolved', kept_resolved
+  );
 END;
 $$;
 
@@ -4617,19 +4720,21 @@ REVOKE ALL ON FUNCTION public.decide_exclusion_request(uuid, uuid, public.exclus
   FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.set_response_schema_versions(uuid, jsonb)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.submit_compare_review(uuid, uuid, text, uuid, text, uuid, text, uuid[], uuid[])
+REVOKE ALL ON FUNCTION public.submit_compare_review(uuid, uuid, text, text, uuid, text, uuid[], uuid[], boolean)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.add_response_equivalence(uuid, uuid, text, uuid, uuid, uuid)
+REVOKE ALL ON FUNCTION public.mark_compare_doc_reviewed(uuid, uuid)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.remove_response_equivalence(uuid, uuid, uuid)
+REVOKE ALL ON FUNCTION public.add_response_equivalence(uuid, uuid, text, uuid, uuid)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.set_review_resolution(uuid, uuid, boolean, uuid)
+REVOKE ALL ON FUNCTION public.remove_response_equivalence(uuid, uuid)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.submit_self_review(uuid, uuid, uuid, jsonb)
+REVOKE ALL ON FUNCTION public.set_review_resolution(uuid, uuid, boolean)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.submit_blind_arbitration(uuid, uuid, uuid, jsonb)
+REVOKE ALL ON FUNCTION public.submit_self_review(uuid, uuid, jsonb)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.submit_final_arbitration(uuid, uuid, uuid, jsonb)
+REVOKE ALL ON FUNCTION public.submit_blind_arbitration(uuid, uuid, jsonb)
+  FROM PUBLIC, anon, service_role;
+REVOKE ALL ON FUNCTION public.submit_final_arbitration(uuid, uuid, jsonb)
   FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.set_member_arbitration_permission(uuid, boolean)
   FROM PUBLIC, anon, service_role;
@@ -4637,24 +4742,25 @@ REVOKE ALL ON FUNCTION public.set_member_comparison_permission(uuid, boolean)
   FROM PUBLIC, anon, service_role;
 REVOKE ALL ON FUNCTION public.remove_project_member(uuid)
   FROM PUBLIC, anon, service_role;
-REVOKE ALL ON FUNCTION public.reconcile_auto_review_backlog(uuid, uuid, jsonb, uuid[])
+REVOKE ALL ON FUNCTION public.reconcile_auto_review_backlog(uuid, uuid, jsonb)
   FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.replace_and_add_documents(uuid, uuid[], boolean, jsonb, jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.request_document_exclusion(uuid, uuid, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.decide_exclusion_request(uuid, uuid, public.exclusion_request_decision, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_response_schema_versions(uuid, jsonb) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.submit_compare_review(uuid, uuid, text, uuid, text, uuid, text, uuid[], uuid[]) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.add_response_equivalence(uuid, uuid, text, uuid, uuid, uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.remove_response_equivalence(uuid, uuid, uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.set_review_resolution(uuid, uuid, boolean, uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.submit_self_review(uuid, uuid, uuid, jsonb) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.submit_blind_arbitration(uuid, uuid, uuid, jsonb) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.submit_final_arbitration(uuid, uuid, uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_compare_review(uuid, uuid, text, text, uuid, text, uuid[], uuid[], boolean) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.mark_compare_doc_reviewed(uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.add_response_equivalence(uuid, uuid, text, uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.remove_response_equivalence(uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_review_resolution(uuid, uuid, boolean) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_self_review(uuid, uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_blind_arbitration(uuid, uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_final_arbitration(uuid, uuid, jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_member_arbitration_permission(uuid, boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_member_comparison_permission(uuid, boolean) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.remove_project_member(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.reconcile_auto_review_backlog(uuid, uuid, jsonb, uuid[])
+GRANT EXECUTE ON FUNCTION public.reconcile_auto_review_backlog(uuid, uuid, jsonb)
   TO service_role;
 
 -- A policy administrativa ainda seleciona as linhas permitidas, mas os

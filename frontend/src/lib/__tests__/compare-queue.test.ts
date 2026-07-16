@@ -6,6 +6,7 @@ import {
   buildAvailableVersions,
   buildCodingAssignedByDoc,
   buildCompareAssignmentStatusByDoc,
+  buildCanonicalDivergentFields,
   qualifyDocumentsForCompare,
   buildDocumentsForCompare,
   buildReviewsAndReviewedCounts,
@@ -246,6 +247,42 @@ describe("qualifyDocumentsForCompare", () => {
     expect(result.qualifiedDocIds).toEqual([]);
   });
 
+  it("mantém atribuição aberta sem divergências para conclusão explícita", () => {
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u2", answers: { a: "alpha" } }),
+    );
+    const result = qualifyDocumentsForCompare(
+      responsesByDoc,
+      doc1Meta(),
+      baseCtx({
+        compareAssignedDocIds: new Set(["doc1"]),
+        compareAssignmentStatusByDoc: new Map([["doc1", "em_andamento"]]),
+      }),
+    );
+
+    expect(result.qualifiedDocIds).toEqual(["doc1"]);
+    expect(result.divergentFields.doc1).toEqual([]);
+    expect(result.coverageByDoc.doc1.assignmentStatus).toBe("em_andamento");
+  });
+
+  it("remove da fila a atribuição concluída sem divergências", () => {
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u2", answers: { a: "alpha" } }),
+    );
+    const result = qualifyDocumentsForCompare(
+      responsesByDoc,
+      doc1Meta(),
+      baseCtx({
+        compareAssignedDocIds: new Set(["doc1"]),
+        compareAssignmentStatusByDoc: new Map([["doc1", "concluido"]]),
+      }),
+    );
+
+    expect(result.qualifiedDocIds).toEqual([]);
+  });
+
   it("compare_llm (piso minHumans=1): não exige % de atribuídos mesmo com assignedCodingCount>0", () => {
     // Só 1 humano respondeu de 2 atribuídos (50% < minAssignedPct padrão), mas
     // como minHumans < 2 o gate de % atribuídos não se aplica (regra espelhada
@@ -322,6 +359,46 @@ describe("qualifyDocumentsForCompare", () => {
     );
     // só Ana qualifica — cai abaixo de minTotal=2
     expect(result.qualifiedDocIds).toEqual([]);
+  });
+});
+
+describe("buildCanonicalDivergentFields", () => {
+  it("usa latest major e ignora respostas de majors anteriores", () => {
+    const responsesByDoc = doc1Responses(
+      response({
+        id: "current-1",
+        answers: { a: "alpha" },
+        schema_version_major: 2,
+        schema_version_minor: 0,
+        schema_version_patch: 0,
+      }),
+      response({
+        id: "current-2",
+        respondent_id: "u2",
+        answers: { a: "alpha" },
+        schema_version_major: 2,
+        schema_version_minor: 1,
+        schema_version_patch: 0,
+      }),
+      response({
+        id: "old-major",
+        respondent_id: "u3",
+        answers: { a: "beta" },
+        schema_version_major: 1,
+        schema_version_minor: 9,
+        schema_version_patch: 0,
+      }),
+    );
+
+    expect(
+      buildCanonicalDivergentFields(
+        responsesByDoc,
+        [field({ name: "a" })],
+        { major: 2, minor: 0, patch: 0 },
+        { pydanticHash: null, version: { major: 2, minor: 1, patch: 0 } },
+        new Map(),
+      ),
+    ).toEqual({ doc1: [] });
   });
 });
 

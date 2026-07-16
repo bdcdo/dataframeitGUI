@@ -201,18 +201,27 @@ BEGIN
     RAISE EXCEPTION 'índice de assignment_batches ausente';
   END IF;
 
-  IF has_function_privilege(
-       'anon', 'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean)',
+  IF to_regprocedure(
+       'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean)'
+     ) IS NOT NULL THEN
+    RAISE EXCEPTION 'assinatura legada de apply_lottery_assignments ainda existe';
+  END IF;
+
+  IF to_regprocedure(
+       'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean,jsonb)'
+     ) IS NULL
+     OR has_function_privilege(
+       'anon', 'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean,jsonb)',
        'EXECUTE'
      )
      OR has_function_privilege(
        'service_role',
-       'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean)',
+       'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean,jsonb)',
        'EXECUTE'
      )
      OR NOT has_function_privilege(
        'authenticated',
-       'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean)',
+       'public.apply_lottery_assignments(uuid,text,uuid,jsonb,boolean,jsonb)',
        'EXECUTE'
      ) THEN
     RAISE EXCEPTION 'grants de apply_lottery_assignments incorretos';

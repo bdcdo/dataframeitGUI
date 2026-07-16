@@ -98,6 +98,25 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION pg_temp.assert_jsonb_result(
+  statement text,
+  expected jsonb,
+  label text
+) RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  actual jsonb;
+BEGIN
+  EXECUTE statement INTO actual;
+  IF actual IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION
+      'resultado incorreto em %: esperado %, recebido %',
+      label, expected, actual;
+  END IF;
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION pg_temp.assert_rejected(text, text, text, text)
   TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION pg_temp.assert_succeeds(text, text)
@@ -105,6 +124,8 @@ GRANT EXECUTE ON FUNCTION pg_temp.assert_succeeds(text, text)
 GRANT EXECUTE ON FUNCTION pg_temp.assert_affected_rows(text, bigint, text)
   TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION pg_temp.assert_integer_result(text, integer, text)
+  TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pg_temp.assert_jsonb_result(text, jsonb, text)
   TO authenticated, service_role;
 
 -- ========== Superfície pública ==========
@@ -117,13 +138,14 @@ BEGIN
     'public.request_document_exclusion(uuid,uuid,text)',
     'public.decide_exclusion_request(uuid,uuid,public.exclusion_request_decision,text)',
     'public.set_response_schema_versions(uuid,jsonb)',
-    'public.submit_compare_review(uuid,uuid,text,uuid,text,uuid,text,uuid[],uuid[])',
-    'public.add_response_equivalence(uuid,uuid,text,uuid,uuid,uuid)',
-    'public.remove_response_equivalence(uuid,uuid,uuid)',
-    'public.set_review_resolution(uuid,uuid,boolean,uuid)',
-    'public.submit_self_review(uuid,uuid,uuid,jsonb)',
-    'public.submit_blind_arbitration(uuid,uuid,uuid,jsonb)',
-    'public.submit_final_arbitration(uuid,uuid,uuid,jsonb)'
+    'public.submit_compare_review(uuid,uuid,text,text,uuid,text,uuid[],uuid[],boolean)',
+    'public.mark_compare_doc_reviewed(uuid,uuid)',
+    'public.add_response_equivalence(uuid,uuid,text,uuid,uuid)',
+    'public.remove_response_equivalence(uuid,uuid)',
+    'public.set_review_resolution(uuid,uuid,boolean)',
+    'public.submit_self_review(uuid,uuid,jsonb)',
+    'public.submit_blind_arbitration(uuid,uuid,jsonb)',
+    'public.submit_final_arbitration(uuid,uuid,jsonb)'
   ]
   LOOP
     IF to_regprocedure(signature) IS NULL THEN
@@ -140,8 +162,38 @@ $$;
 
 DO $$
 DECLARE
+  signature text;
+BEGIN
+  FOREACH signature IN ARRAY ARRAY[
+    'public.submit_compare_review(uuid,uuid,text,uuid,text,uuid,text,uuid[],uuid[])',
+    'public.add_response_equivalence(uuid,uuid,text,uuid,uuid,uuid)',
+    'public.remove_response_equivalence(uuid,uuid,uuid)',
+    'public.set_review_resolution(uuid,uuid,boolean,uuid)',
+    'public.submit_self_review(uuid,uuid,uuid,jsonb)',
+    'public.submit_blind_arbitration(uuid,uuid,uuid,jsonb)',
+    'public.submit_final_arbitration(uuid,uuid,uuid,jsonb)',
+    'public.reconcile_auto_review_backlog(uuid,uuid,jsonb,uuid[])'
+  ]
+  LOOP
+    IF to_regprocedure(signature) IS NOT NULL THEN
+      RAISE EXCEPTION 'assinatura legada ainda exposta: %', signature;
+    END IF;
+  END LOOP;
+
+  IF has_function_privilege(
+    'authenticated',
+    'public.assert_current_field_responses(uuid,uuid,text,uuid[])',
+    'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'validador privado exposto como RPC';
+  END IF;
+END;
+$$;
+
+DO $$
+DECLARE
   signature text :=
-    'public.reconcile_auto_review_backlog(uuid,uuid,jsonb,uuid[])';
+    'public.reconcile_auto_review_backlog(uuid,uuid,jsonb)';
 BEGIN
   IF to_regprocedure(signature) IS NULL
      OR has_function_privilege('anon', signature, 'EXECUTE')
@@ -357,7 +409,8 @@ INSERT INTO public.assignments (
   ('82000000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000001', '81000000-0000-0000-0000-000000000003', 'em_andamento', 'arbitragem'),
   ('82000000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000004', '81000000-0000-0000-0000-000000000002', 'em_andamento', 'auto_revisao'),
   ('82000000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000005', '81000000-0000-0000-0000-000000000002', 'em_andamento', 'auto_revisao'),
-  ('82000000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000006', '81000000-0000-0000-0000-000000000002', 'em_andamento', 'auto_revisao');
+  ('82000000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000006', '81000000-0000-0000-0000-000000000002', 'em_andamento', 'auto_revisao'),
+  ('82000000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000001', '81000000-0000-0000-0000-000000000002', 'pendente', 'comparacao');
 
 -- Grants temporários servem apenas para provar que DML genérico continua
 -- bloqueado por RLS/triggers. As escritas normais usam exclusivamente RPC.
@@ -371,6 +424,32 @@ GRANT SELECT, UPDATE ON public.field_reviews TO service_role;
 
 -- ========== Reconciliação atômica do backlog ==========
 
+CREATE OR REPLACE FUNCTION pg_temp.auto_review_payload(include_new boolean)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(jsonb_agg(to_jsonb(payload) ORDER BY document_id), '[]'::jsonb)
+  FROM (
+    SELECT field_review.document_id,
+           field_review.field_name,
+           field_review.human_response_id,
+           field_review.llm_response_id,
+           field_review.self_reviewer_id
+    FROM public.field_reviews AS field_review
+    WHERE field_review.project_id = '82000000-0000-0000-0000-000000000001'
+      AND field_review.document_id <> '83000000-0000-0000-0000-000000000010'
+    UNION ALL
+    SELECT '83000000-0000-0000-0000-000000000010'::uuid,
+           'campo'::text,
+           '84000000-0000-0000-0000-000000000051'::uuid,
+           '84000000-0000-0000-0000-000000000052'::uuid,
+           '81000000-0000-0000-0000-000000000002'::uuid
+    WHERE include_new
+  ) AS payload;
+$$;
+GRANT EXECUTE ON FUNCTION pg_temp.auto_review_payload(boolean) TO service_role;
+
 SELECT set_config(
   'request.jwt.claims',
   '{}', true
@@ -381,7 +460,7 @@ SELECT pg_temp.assert_rejected(
     SELECT public.reconcile_auto_review_backlog(
       '82000000-0000-0000-0000-000000000001',
       '81000000-0000-0000-0000-000000000004',
-      '[]', ARRAY[]::uuid[]
+      '[]'
     )
   $sql$,
   'outsider tentou reconciliar backlog',
@@ -395,16 +474,15 @@ SELECT set_config(
   '{}', true
 );
 SET LOCAL ROLE service_role;
-SELECT pg_temp.assert_integer_result(
+SELECT pg_temp.assert_jsonb_result(
   $sql$
     SELECT public.reconcile_auto_review_backlog(
       '82000000-0000-0000-0000-000000000001',
       '81000000-0000-0000-0000-000000000001',
-      '[{"document_id":"83000000-0000-0000-0000-000000000010","field_name":"campo","human_response_id":"84000000-0000-0000-0000-000000000051","llm_response_id":"84000000-0000-0000-0000-000000000052","self_reviewer_id":"81000000-0000-0000-0000-000000000002"}]',
-      ARRAY[]::uuid[]
+      pg_temp.auto_review_payload(true)
     )
   $sql$,
-  0,
+  '{"removedCount":0,"keptResolved":0}',
   'coordenador cria backlog'
 );
 RESET ROLE;
@@ -416,8 +494,7 @@ SELECT pg_temp.assert_rejected(
     SELECT public.reconcile_auto_review_backlog(
       '82000000-0000-0000-0000-000000000001',
       '81000000-0000-0000-0000-000000000001',
-      '[{"document_id":"83000000-0000-0000-0000-000000000010"}]',
-      ARRAY[]::uuid[]
+      '[{"document_id":"83000000-0000-0000-0000-000000000010"}]'
     )
   $sql$,
   'reconcile recebeu linha incompleta',
@@ -452,21 +529,15 @@ SELECT set_config(
   '{}', true
 );
 SET LOCAL ROLE service_role;
-SELECT pg_temp.assert_integer_result(
+SELECT pg_temp.assert_jsonb_result(
   $sql$
     SELECT public.reconcile_auto_review_backlog(
       '82000000-0000-0000-0000-000000000001',
       '81000000-0000-0000-0000-000000000001',
-      '[]',
-      ARRAY[(
-        SELECT id FROM public.field_reviews
-        WHERE project_id = '82000000-0000-0000-0000-000000000001'
-          AND document_id = '83000000-0000-0000-0000-000000000010'
-          AND field_name = 'campo'
-      )]::uuid[]
+      pg_temp.auto_review_payload(false)
     )
   $sql$,
-  1,
+  '{"removedCount":1,"keptResolved":0}',
   'coordenador remove backlog pendente'
 );
 RESET ROLE;
@@ -490,6 +561,59 @@ BEGIN
 END;
 $$;
 
+SELECT set_config('request.jwt.claims', '{}', true);
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_jsonb_result(
+  $sql$
+    SELECT public.reconcile_auto_review_backlog(
+      '82000000-0000-0000-0000-000000000001',
+      '81000000-0000-0000-0000-000000000001',
+      pg_temp.auto_review_payload(true)
+    )
+  $sql$,
+  '{"removedCount":0,"keptResolved":0}',
+  'coordenador recria backlog para testar preservação'
+);
+RESET ROLE;
+
+UPDATE public.field_reviews
+SET self_verdict = 'admite_erro',
+    self_reviewed_at = transaction_timestamp()
+WHERE project_id = '82000000-0000-0000-0000-000000000001'
+  AND document_id = '83000000-0000-0000-0000-000000000010'
+  AND field_name = 'campo';
+
+SELECT set_config('request.jwt.claims', '{}', true);
+SET LOCAL ROLE service_role;
+SELECT pg_temp.assert_jsonb_result(
+  $sql$
+    SELECT public.reconcile_auto_review_backlog(
+      '82000000-0000-0000-0000-000000000001',
+      '81000000-0000-0000-0000-000000000001',
+      pg_temp.auto_review_payload(false)
+    )
+  $sql$,
+  '{"removedCount":0,"keptResolved":1}',
+  'reconcile preserva review resolvido fora do backlog canônico'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.field_reviews
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000010'
+      AND field_name = 'campo'
+      AND self_verdict = 'admite_erro'
+  ) THEN
+    RAISE EXCEPTION 'reconcile removeu review resolvido';
+  END IF;
+  RAISE NOTICE 'OK reconcile: contagens canônicas e preservação de resolvidos';
+END;
+$$;
+
 -- ========== Acesso atual nas RPCs definer ==========
 
 -- A identidade própria continua sendo retornada por
@@ -510,15 +634,15 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_compare_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001', 'campo',
-      '81000000-0000-0000-0000-000000000002', 'humano',
+      'humano',
       '84000000-0000-0000-0000-000000000001', NULL,
       ARRAY[
         '84000000-0000-0000-0000-000000000001',
         '84000000-0000-0000-0000-000000000002'
-      ]::uuid[], NULL
+      ]::uuid[], NULL, false
     )
   $sql$,
-  'ex-membro tentou comparar', '42501', '%effective actor%'
+  'ex-membro tentou comparar', '42501', '%authenticated project actor%'
 );
 
 SELECT pg_temp.assert_rejected(
@@ -527,31 +651,28 @@ SELECT pg_temp.assert_rejected(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001', 'campo',
       '84000000-0000-0000-0000-000000000001',
-      '84000000-0000-0000-0000-000000000002',
-      '81000000-0000-0000-0000-000000000002'
+      '84000000-0000-0000-0000-000000000002'
     )
   $sql$,
-  'ex-membro tentou criar equivalência', '42501', '%effective actor%'
+  'ex-membro tentou criar equivalência', '42501', '%authenticated project actor%'
 );
 
 SELECT pg_temp.assert_rejected(
   $sql$
     SELECT public.remove_response_equivalence(
-      '82000000-0000-0000-0000-000000000001', gen_random_uuid(),
-      '81000000-0000-0000-0000-000000000002'
+      '82000000-0000-0000-0000-000000000001', gen_random_uuid()
     )
   $sql$,
-  'ex-membro tentou remover equivalência', '42501', '%effective actor%'
+  'ex-membro tentou remover equivalência', '42501', '%authenticated project actor%'
 );
 
 SELECT pg_temp.assert_rejected(
   $sql$
     SELECT public.set_review_resolution(
-      '82000000-0000-0000-0000-000000000001', gen_random_uuid(), true,
-      '81000000-0000-0000-0000-000000000002'
+      '82000000-0000-0000-0000-000000000001', gen_random_uuid(), true
     )
   $sql$,
-  'ex-membro tentou resolver review', '42501', '%effective actor%'
+  'ex-membro tentou resolver review', '42501', '%authenticated project actor%'
 );
 
 SELECT pg_temp.assert_rejected(
@@ -559,11 +680,10 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[{"fieldReviewId":"85000000-0000-0000-0000-000000000001","verdict":"admite_erro","justification":null}]'
     )
   $sql$,
-  'ex-membro tentou auto-revisar', '42501', '%effective actor%'
+  'ex-membro tentou auto-revisar', '42501', '%authenticated project actor%'
 );
 
 SELECT pg_temp.assert_rejected(
@@ -571,11 +691,10 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_blind_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[{"fieldReviewId":"85000000-0000-0000-0000-000000000001","verdict":"humano"}]'
     )
   $sql$,
-  'ex-membro tentou arbitragem cega', '42501', '%effective actor%'
+  'ex-membro tentou arbitragem cega', '42501', '%eligible authenticated arbitrator%'
 );
 
 SELECT pg_temp.assert_rejected(
@@ -583,11 +702,10 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_final_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[{"fieldReviewId":"85000000-0000-0000-0000-000000000001","verdict":"humano","questionImprovementSuggestion":null,"arbitratorComment":null}]'
     )
   $sql$,
-  'ex-membro tentou arbitragem final', '42501', '%effective actor%'
+  'ex-membro tentou arbitragem final', '42501', '%eligible authenticated arbitrator%'
 );
 RESET ROLE;
 
@@ -616,18 +734,7 @@ SET LOCAL ROLE authenticated;
 SELECT pg_temp.assert_rejected(
   $sql$
     SELECT public.set_review_resolution(
-      '82000000-0000-0000-0000-000000000001', gen_random_uuid(), true,
-      '81000000-0000-0000-0000-000000000004'
-    )
-  $sql$,
-  'alias tentou escolher a identidade da conta real',
-  '42501', '%effective actor%'
-);
-SELECT pg_temp.assert_rejected(
-  $sql$
-    SELECT public.set_review_resolution(
-      '82000000-0000-0000-0000-000000000001', gen_random_uuid(), true,
-      '81000000-0000-0000-0000-000000000002'
+      '82000000-0000-0000-0000-000000000001', gen_random_uuid(), true
     )
   $sql$,
   'alias canônico passou pelo contrato de identidade única',
@@ -1067,13 +1174,32 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_compare_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001', 'campo',
-      '81000000-0000-0000-0000-000000000002', 'concordo',
+      'concordo',
       '84000000-0000-0000-0000-000000000001', NULL,
-      ARRAY['84000000-0000-0000-0000-000000000001'::uuid], NULL
+      ARRAY['84000000-0000-0000-0000-000000000001'::uuid], NULL, false
     )
   $sql$,
   'comparação com uma única resposta que contém o campo'
 );
+
+-- O papel autenticado executa a RPC, mas não recebe SELECT direto na tabela
+-- de assignments. A asserção do estado persistido roda como owner do teste.
+RESET ROLE;
+SELECT pg_temp.assert_integer_result(
+  $sql$
+    SELECT count(*)::integer
+    FROM public.assignments
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND user_id = '81000000-0000-0000-0000-000000000002'
+      AND type = 'comparacao'
+      AND status = 'em_andamento'
+      AND completed_at IS NULL
+  $sql$,
+  1,
+  'submit_compare_review mantém atribuição aberta explicitamente'
+);
+SET LOCAL ROLE authenticated;
 
 -- A terceira response do documento é histórica (is_latest=false). O caller
 -- envia o subconjunto qualificado pela UI; a RPC não deve exigir todas as
@@ -1084,7 +1210,6 @@ SELECT pg_temp.assert_succeeds(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
       'campo',
-      '81000000-0000-0000-0000-000000000002',
       'concordo',
       '84000000-0000-0000-0000-000000000001',
       'decisão de teste',
@@ -1095,7 +1220,8 @@ SELECT pg_temp.assert_succeeds(
       ARRAY[
         '84000000-0000-0000-0000-000000000001'::uuid,
         '84000000-0000-0000-0000-000000000002'::uuid
-      ]
+      ],
+      true
     )
   $sql$,
   'review de subconjunto qualificado'
@@ -1107,13 +1233,13 @@ SELECT pg_temp.assert_rejected(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
       'campo',
-      '81000000-0000-0000-0000-000000000002',
       'concordo', NULL, NULL,
       ARRAY[
         '84000000-0000-0000-0000-000000000001'::uuid,
         '84000000-0000-0000-0000-000000000001'::uuid
       ],
-      NULL
+      NULL,
+      false
     )
   $sql$,
   'IDs de comparação duplicados',
@@ -1127,14 +1253,14 @@ SELECT pg_temp.assert_rejected(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
       'campo',
-      '81000000-0000-0000-0000-000000000002',
       'concordo',
       '84000000-0000-0000-0000-000000000003', NULL,
       ARRAY[
         '84000000-0000-0000-0000-000000000001'::uuid,
         '84000000-0000-0000-0000-000000000002'::uuid
       ],
-      NULL
+      NULL,
+      false
     )
   $sql$,
   'chosen response fora do subconjunto',
@@ -1148,10 +1274,10 @@ SELECT pg_temp.assert_rejected(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
       'campo',
-      '81000000-0000-0000-0000-000000000002',
       'concordo', NULL, NULL,
       ARRAY['84000000-0000-0000-0000-000000000003'::uuid],
-      NULL
+      NULL,
+      false
     )
   $sql$,
   'response histórica não é comparável',
@@ -1165,13 +1291,41 @@ SELECT pg_temp.assert_rejected(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
       'campo',
-      '81000000-0000-0000-0000-000000000002',
       'concordo', NULL, NULL,
       ARRAY['84000000-0000-0000-0000-000000000009'::uuid],
-      NULL
+      NULL,
+      false
     )
   $sql$,
   'response cross-project não é comparável',
+  '23503',
+  '%must be current rows%'
+);
+
+SELECT pg_temp.assert_rejected(
+  $sql$
+    SELECT public.add_response_equivalence(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000001', 'campo',
+      '84000000-0000-0000-0000-000000000001',
+      '84000000-0000-0000-0000-000000000003'
+    )
+  $sql$,
+  'equivalência rejeita response histórica',
+  '23503',
+  '%must be current rows%'
+);
+
+SELECT pg_temp.assert_rejected(
+  $sql$
+    SELECT public.add_response_equivalence(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000001', 'campo_ausente',
+      '84000000-0000-0000-0000-000000000001',
+      '84000000-0000-0000-0000-000000000002'
+    )
+  $sql$,
+  'equivalência rejeita campo ausente',
   '23503',
   '%must be current rows%'
 );
@@ -1203,6 +1357,18 @@ BEGIN
   ) <> 1 THEN
     RAISE EXCEPTION 'submit_compare_review não criou uma equivalência canônica';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.assignments
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND user_id = '81000000-0000-0000-0000-000000000002'
+      AND type = 'comparacao'
+      AND status = 'concluido'
+      AND completed_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'submit_compare_review não concluiu a atribuição explicitamente';
+  END IF;
 END;
 $$;
 
@@ -1218,8 +1384,7 @@ SELECT pg_temp.assert_succeeds(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001', 'campo',
       '84000000-0000-0000-0000-000000000002',
-      '84000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002'
+      '84000000-0000-0000-0000-000000000001'
     )
   $sql$,
   'replay idempotente da equivalência'
@@ -1241,8 +1406,7 @@ SELECT pg_temp.assert_rejected(
           AND document_id = '83000000-0000-0000-0000-000000000001'
           AND field_name = 'campo'
       ),
-      NULL,
-      '81000000-0000-0000-0000-000000000001'
+      NULL
     )
   $sql$,
   'resolução nula',
@@ -1258,8 +1422,7 @@ SELECT pg_temp.assert_integer_result(
           AND document_id = '83000000-0000-0000-0000-000000000001'
           AND field_name = 'campo'
       ),
-      true,
-      '81000000-0000-0000-0000-000000000001'
+      true
     )
   $sql$,
   1,
@@ -1297,8 +1460,7 @@ SELECT pg_temp.assert_integer_result(
           AND document_id = '83000000-0000-0000-0000-000000000001'
           AND field_name = 'campo'
       ),
-      false,
-      '81000000-0000-0000-0000-000000000002'
+      false
     )
   $sql$,
   1,
@@ -1334,8 +1496,7 @@ SELECT pg_temp.assert_rejected(
         SELECT id FROM public.response_equivalences
         WHERE project_id = '82000000-0000-0000-0000-000000000001'
           AND document_id = '83000000-0000-0000-0000-000000000001'
-      ),
-      '81000000-0000-0000-0000-000000000003'
+      )
     )
   $sql$,
   'outro membro não remove equivalência alheia',
@@ -1357,8 +1518,7 @@ SELECT pg_temp.assert_succeeds(
         SELECT id FROM public.response_equivalences
         WHERE project_id = '82000000-0000-0000-0000-000000000001'
           AND document_id = '83000000-0000-0000-0000-000000000001'
-      ),
-      '81000000-0000-0000-0000-000000000002'
+      )
     )
   $sql$,
   'autor remove equivalência e review relacionado'
@@ -1377,10 +1537,63 @@ BEGIN
        WHERE project_id = '82000000-0000-0000-0000-000000000001'
          AND document_id = '83000000-0000-0000-0000-000000000001'
          AND reviewer_id = '81000000-0000-0000-0000-000000000002'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.assignments
+       WHERE project_id = '82000000-0000-0000-0000-000000000001'
+         AND document_id = '83000000-0000-0000-0000-000000000001'
+         AND user_id = '81000000-0000-0000-0000-000000000002'
+         AND type = 'comparacao'
+         AND status = 'pendente'
+         AND completed_at IS NULL
      ) THEN
     RAISE EXCEPTION 'remoção de equivalência não limpou o estado relacionado';
   END IF;
-  RAISE NOTICE 'OK comparação: subconjunto, snapshot, equivalência e resolução';
+END;
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}', true
+);
+SET LOCAL ROLE authenticated;
+SELECT pg_temp.assert_integer_result(
+  $sql$
+    SELECT public.mark_compare_doc_reviewed(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000001'
+    )
+  $sql$,
+  1,
+  'conclusão explícita sem divergências restantes'
+);
+SELECT pg_temp.assert_rejected(
+  $sql$
+    SELECT public.mark_compare_doc_reviewed(
+      '82000000-0000-0000-0000-000000000001',
+      '83000000-0000-0000-0000-000000000002'
+    )
+  $sql$,
+  'conclusão explícita sem atribuição',
+  '23503',
+  '%assignment not found%'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.assignments
+    WHERE project_id = '82000000-0000-0000-0000-000000000001'
+      AND document_id = '83000000-0000-0000-0000-000000000001'
+      AND user_id = '81000000-0000-0000-0000-000000000002'
+      AND type = 'comparacao'
+      AND status = 'concluido'
+      AND completed_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'mark_compare_doc_reviewed não concluiu a atribuição';
+  END IF;
+  RAISE NOTICE 'OK comparação: estado explícito, equivalência e reabertura seletiva';
 END;
 $$;
 
@@ -1411,7 +1624,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000004',
-      '81000000-0000-0000-0000-000000000002',
       '[{"fieldReviewId":"85000000-0000-0000-0000-000000000011","verdict":"equivalente","justification":null}]'
     )
   $sql$,
@@ -1423,7 +1635,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000005',
-      '81000000-0000-0000-0000-000000000002',
       '[{"fieldReviewId":"85000000-0000-0000-0000-000000000021","verdict":"ambiguo","justification":"o enunciado admite duas leituras"}]'
     )
   $sql$,
@@ -1435,7 +1646,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000006',
-      '81000000-0000-0000-0000-000000000002',
       '[{"fieldReviewId":"85000000-0000-0000-0000-000000000031","verdict":"admite_erro","justification":null}]'
     )
   $sql$,
@@ -1509,7 +1719,6 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[
         {
           "fieldReviewId":"85000000-0000-0000-0000-000000000001",
@@ -1534,7 +1743,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"contesta_llm",
@@ -1550,7 +1758,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"contesta_llm",
@@ -1566,7 +1773,6 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_self_review(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"admite_erro",
@@ -1611,7 +1817,6 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_final_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"humano",
@@ -1636,7 +1841,6 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_blind_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000002',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"humano"
@@ -1645,7 +1849,7 @@ SELECT pg_temp.assert_rejected(
   $sql$,
   'revisor original não é o árbitro atribuído',
   '42501',
-  '%effective actor%'
+  '%eligible authenticated arbitrator%'
 );
 RESET ROLE;
 
@@ -1660,7 +1864,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_blind_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"humano"
@@ -1675,7 +1878,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_blind_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"humano"
@@ -1690,7 +1892,6 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_blind_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"llm"
@@ -1707,7 +1908,6 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_final_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"llm",
@@ -1726,7 +1926,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_final_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"llm",
@@ -1743,7 +1942,6 @@ SELECT pg_temp.assert_succeeds(
     SELECT public.submit_final_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"llm",
@@ -1760,7 +1958,6 @@ SELECT pg_temp.assert_rejected(
     SELECT public.submit_final_arbitration(
       '82000000-0000-0000-0000-000000000001',
       '83000000-0000-0000-0000-000000000001',
-      '81000000-0000-0000-0000-000000000003',
       '[{
         "fieldReviewId":"85000000-0000-0000-0000-000000000001",
         "verdict":"humano",

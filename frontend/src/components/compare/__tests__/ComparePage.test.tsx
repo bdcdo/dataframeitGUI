@@ -252,6 +252,7 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
     documents,
     responses,
     divergentFields,
+    canonicalDivergentFields: divergentFields,
     fields,
     existingReviews,
     projectPydanticHash: null,
@@ -455,6 +456,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       "r2",
       undefined,
       expect.any(Array),
+      false,
     );
   });
 
@@ -479,6 +481,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       undefined,
       undefined,
       expect.any(Array),
+      false,
     );
   });
 
@@ -513,6 +516,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       undefined,
       undefined,
       expect.any(Array),
+      false,
     );
     expect(submitVerdict).toHaveBeenNthCalledWith(
       2,
@@ -523,6 +527,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       undefined,
       undefined,
       expect.any(Array),
+      false,
     );
   });
 
@@ -562,6 +567,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       undefined,
       undefined,
       expect.any(Array),
+      false,
     );
 
     save.resolve(undefined);
@@ -589,6 +595,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       "r1",
       "minha nota",
       expect.any(Array),
+      false,
     );
   });
 
@@ -617,6 +624,7 @@ describe("ComparePage — atalhos de teclado (fix no-cascading-set-state)", () =
       "r2",
       undefined,
       expect.any(Array),
+      true,
     );
   });
 
@@ -660,6 +668,7 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
       "r1",
       undefined,
       expect.any(Array),
+      false,
     );
     // O avanço automático pós-confirmação usa goNextField cru (não passa pelo
     // gate de navegação do #430) — avança sem disparar o aviso de bloqueio.
@@ -839,6 +848,7 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
       "Equivalentes",
       undefined,
       expect.any(Array),
+      false,
     );
     await waitFor(() => expect(text("field-name")).toBe("campoB"));
   });
@@ -849,6 +859,29 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
 
     await user.click(screen.getByTestId("mark-reviewed"));
 
+    expect(markCompareDocReviewed).toHaveBeenCalledWith("p1", "d1");
+  });
+
+  it("atribuição aberta sem divergências continua oferecendo conclusão explícita", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(
+      <ComparePage
+        {...props}
+        documents={[documents[0]]}
+        divergentFields={{ d1: [] }}
+        canonicalDivergentFields={{ d1: [] }}
+        coverageByDoc={{
+          d1: {
+            ...props.coverageByDoc.d1,
+            divergentCount: 0,
+            assignmentStatus: "em_andamento",
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Marcar como revisado" }));
     expect(markCompareDocReviewed).toHaveBeenCalledWith("p1", "d1");
   });
 });

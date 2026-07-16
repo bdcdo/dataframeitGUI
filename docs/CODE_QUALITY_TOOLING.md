@@ -14,6 +14,7 @@ A regra de ouro é que tudo roda sozinho, via git hook ou automação de servido
 |---|---|---|---|
 | `pre-commit` | todo commit (leve, file-scoped) | gitleaks · ruff (lint+format) · actionlint · deploy notifier · react-doctor | só o arquivo/linha tocado é checado; o notifier roda quando seu workflow ou teste muda |
 | `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · e2e-smoke (Playwright) · lint:types · fallow audit · semgrep · backend-pytest · mypy | new-only / file-scoped (ver cada um); pytest roda a suíte inteira; e2e-smoke falha fechado no pre-push se envs E2E/Clerk obrigatórias faltarem |
+| GitHub (servidor) | pull requests que alteram o contrato do banco | testes de contrato PostgreSQL | suíte completa, com banco local reconstruído pelas migrations |
 | GitHub (servidor) | automático | Dependabot | n/a — abre PRs de vuln sozinho |
 | on-demand | ao investigar performance | React Scan | n/a — ferramenta de diagnóstico, não gate |
 
@@ -25,7 +26,7 @@ A única peça manual é o React Scan, e por natureza: ele é um overlay visual 
 
 `fallow` 2.102.0 (devDependency pinada). É a peça que preenche a lacuna estrutural que o react-doctor deixou: constrói o grafo de módulos do projeto inteiro para achar o que ferramentas arquivo-a-arquivo não veem — export que ninguém importa, arquivo que ninguém importa, dependência circular, bloco duplicado entre arquivos, dependência no `package.json` nunca importada. É, na prática, um `knip` + `jscpd` em Rust, sub-segundo. A camada estática é MIT; a camada de runtime (paga) não foi adotada.
 
-O gate usa `fallow audit` (script `npm run fallow:audit`, hook de pre-push). O `audit` é purpose-built para PR quality gates: roda dead-code + complexidade + duplicação escopados aos arquivos alterados e retorna um verdict (pass/warn/fail), com exit 1 em fail. O modo default `--gate new-only` faz o grandfathering por design — só achados *introduzidos* pelo changeset afetam o verdict; os herdados são reportados com atribuição new-vs-inherited mas não barram. O `audit` não recebe `--base`: sem ele, o fallow usa a merge-base com `origin/main`, o que evita o falso-positivo de comparar contra um `main` local defasado. O scan completo (`npm run fallow`, dead-code + dupes + health juntos) fica para inspeção manual.
+O gate usa `fallow audit --base origin/main` (script `npm run fallow:audit`, hook de pre-push). O `audit` é purpose-built para PR quality gates: roda dead-code + complexidade + duplicação escopados aos arquivos alterados e retorna um verdict (pass/warn/fail), com exit 1 em fail. O modo default `--gate new-only` faz o grandfathering por design — só achados *introduzidos* pelo changeset afetam o verdict; os herdados são reportados com atribuição new-vs-inherited mas não barram. A base é explícita porque uma branch publicada costuma ter a própria branch como upstream; deixar o Fallow inferir esse upstream pode produzir um changeset vazio. O scan completo (`npm run fallow`, dead-code + dupes + health juntos) fica para inspeção manual.
 
 Para atribuir new-vs-inherited, o `--gate new-only` cria um worktree do commit-base em `/tmp` (`fallow-audit-base-cache-<hash-config>-<base>`, detached HEAD) e o mantém como cache reutilizável entre pushes — evita refazer o `git worktree add` da árvore-base contra a mesma base. O `node_modules` do cache é um symlink para o `node_modules` vivo (não há cópia nem reinstalação), então cada cache tem ~8,5 MB e um miss custa só o checkout da fonte-base. O GC mede a idade **desde a criação** do cache (um cache-hit *não* atualiza o `.last-used`, então mesmo uma base em uso ativo contínuo é varrida ao vencer o TTL), com limiar default de 30 dias — por isso uma entrada por commit-base se acumula em `/tmp` e polui o `git worktree list`. Fixamos `audit.cacheMaxAgeDays: 1` no `.fallowrc.jsonc` para varrer, no próximo run, os caches criados há mais de 1 dia; o reuso dentro do mesmo dia contra a mesma base é preservado e o custo de um miss é baixo (`0` desligaria o sweep — não usar).
 
@@ -63,6 +64,10 @@ Ao remover a isenção de arquivo inteiro de `pydantic_compiler.py`, o gate reve
 ### backend-pytest — a suíte do backend como gate
 
 Enquanto o `ruff` cobre o eixo estático do Python, ele não roda os testes — a suíte de auth que o #195 adicionou (`backend/tests/`) não gateava nada, então uma regressão que enfraquecesse o gate JWT ou quebrasse as fronteiras 401/403/404/503 mergearia com o gate verde e o deploy do Fly shipparia direto para produção (issue #337). O hook local `backend-pytest` fecha essa lacuna: roda `uv run pytest -q` (working-dir `backend/`) no estágio de pre-push sempre que o push toca código Python ou os arquivos que definem o grafo e a imagem do backend (`pyproject.toml`, `uv.lock`, `Dockerfile`, `.dockerignore` e `docker-compose.yml`). Diferente dos hooks file-scoped, roda a suíte inteira — testes não têm noção de "linha grandfathered". Diferente do semgrep (fail-open em erro de infra), é **fail-closed**: se o `uv` não estiver no PATH o push é barrado com mensagem, porque é um gate de verdade, não um sinal informativo. `[tool.uv] package = false` no `backend/pyproject.toml` faz o `uv run` não tentar empacotar o app (que é um FastAPI flat, não uma lib instalável), evitando a regressão histórica de build. Coerente com a decisão de manter o gate pré-merge nos hooks locais e não em GitHub Actions (sem branch protection no free tier, um job de Actions não bloqueia merge).
+
+### testes de contrato PostgreSQL — evidência no servidor
+
+`npm run test:db` usa a Supabase CLI pinada no `package-lock.json`, inicia a stack local de forma idempotente, reconstrói o banco sem seed e executa os 7 arquivos SQL com um cliente PostgreSQL 15 e `ON_ERROR_STOP=1`. O workflow `database-tests.yml` roda esse mesmo comando quando o PR altera migrations, testes SQL ou o próprio gate. A ausência de branch protection no plano gratuito significa que o check não torna o merge tecnicamente impossível, mas deixa a evidência de segurança visível e reproduzível no próprio PR; os demais gates pesados continuam no pre-push até a adoção de uma CI geral.
 
 ### e2e-smoke (Playwright) — o gate de fluxos autenticados, e por que MCP/browser não substitui
 
@@ -110,6 +115,7 @@ A partir daí os gates rodam sozinhos. Comandos manuais (para debug ou inspeçã
 cd frontend
 npm run typecheck        # tsc --noEmit
 npm run lint:types       # typescript-eslint type-checked (projeto inteiro)
+npm run test:db          # recria o Supabase local e executa os 7 testes SQL
 npm run fallow           # scan completo (dead-code + dupes + health)
 npm run fallow:audit     # gate incremental (new-only vs origin/main)
 npm run scan             # React Scan (precisa de `npm run dev` rodando)
@@ -130,4 +136,4 @@ uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy ac
 - **Biome** (lint+format all-in-one) — sobreporia o investimento já feito em ESLint + react-doctor.
 - **type-coverage** — o projeto já é `strict`; ganho marginal fora de migração/caça a `any`.
 - **Analisadores de bundle** (vite-bundle-visualizer, source-map-explorer) — só se performance de bundle pesar; a dívida de performance atual não é de bundle.
-- **CI bloqueante no GitHub Actions** (Vitest + pytest + lint + typecheck) — é o TODO da constituição (Princípio V), de escopo maior, fora desta rodada. Quando existir, os hooks mais pesados (semgrep, fallow full) podem migrar do pre-push para o CI.
+- **CI geral no GitHub Actions** (Vitest + pytest + lint + typecheck) — continua sendo o TODO da constituição (Princípio V). Os testes de contrato PostgreSQL já rodam no servidor por serem a evidência executável das migrations; quando a CI geral existir, os demais hooks pesados poderão migrar do pre-push.

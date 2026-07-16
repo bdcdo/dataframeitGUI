@@ -87,7 +87,6 @@ describe("submitAutoReview", () => {
       args: {
         p_project_id: "p1",
         p_document_id: "d1",
-        p_reviewer_id: "member1",
         p_decisions: [
           {
             fieldReviewId: "fr1",
@@ -247,7 +246,9 @@ describe("regenerateAutoReviewBacklog", () => {
       field_reviews: { data: [] },
       project_members: { data: [{ user_id: "member1" }] },
     };
-    rpcResults.reconcile_auto_review_backlog = { data: 0 };
+    rpcResults.reconcile_auto_review_backlog = {
+      data: { removedCount: 0, keptResolved: 0 },
+    };
   });
 
   it("envia o conjunto canônico à RPC service-only", async () => {
@@ -274,7 +275,6 @@ describe("regenerateAutoReviewBacklog", () => {
             self_reviewer_id: "member1",
           },
         ],
-        p_ids_to_delete: [],
       },
     });
     expect(adminCreateCalls).toBe(1);
@@ -289,6 +289,31 @@ describe("regenerateAutoReviewBacklog", () => {
     await expect(regenerateAutoReviewBacklog("p1")).resolves.toEqual({
       success: false,
       error: "coordinator, creator, or master required",
+    });
+  });
+
+  it("reconcilia conjunto vazio para remover pendências antigas", async () => {
+    serverTableResults.projects = { data: { pydantic_fields: [] } };
+    serverTableResults.responses = [{ data: [] }, { data: [] }];
+    rpcResults.reconcile_auto_review_backlog = {
+      data: { removedCount: 2, keptResolved: 1 },
+    };
+    const { regenerateAutoReviewBacklog } = await actions();
+
+    await expect(regenerateAutoReviewBacklog("p1")).resolves.toEqual({
+      success: true,
+      scanned: 0,
+      regenerated: 0,
+      removed: 2,
+      keptResolved: 1,
+    });
+    expect(rpcCalls).toContainEqual({
+      fn: "reconcile_auto_review_backlog",
+      args: {
+        p_project_id: "p1",
+        p_actor_id: "account1",
+        p_field_review_rows: [],
+      },
     });
   });
 });
@@ -306,7 +331,6 @@ describe("submitBlindVerdicts", () => {
       args: {
         p_project_id: "p1",
         p_document_id: "d1",
-        p_arbitrator_id: "member1",
         p_decisions: [
           {
             fieldReviewId: "fr1",
@@ -347,7 +371,6 @@ describe("submitFinalVerdicts", () => {
       args: {
         p_project_id: "p1",
         p_document_id: "d1",
-        p_arbitrator_id: "member1",
         p_decisions: [
           {
             fieldReviewId: "fr1",

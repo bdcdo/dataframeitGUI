@@ -543,12 +543,20 @@ export async function smartRandomize(
       document_id: a.document_id,
       user_id: a.user_id,
     }));
+    const participantSettings = Object.entries(
+      params.participantSettings ?? {},
+    ).map(([userId, cfg]) => ({
+      user_id: userId,
+      assignment_weight: resolveWeight(cfg.weight),
+      assignment_cap: resolveCap(cfg.cap),
+    }));
     const { error: rpcError } = await supabase.rpc("apply_lottery_assignments", {
       p_project_id: params.projectId,
       p_type: assignmentType,
       p_batch_id: batch.id,
       p_assignments: assignmentRows,
       p_replace: params.mode === "replace",
+      p_participant_settings: participantSettings,
     });
     if (rpcError) {
       throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
@@ -560,33 +568,11 @@ export async function smartRandomize(
     return { error: errorMessage(e) || "Erro ao sortear" };
   }
 
-  // Pós-commit best-effort: as atribuições já foram gravadas pelo RPC. Uma falha
-  // daqui pra baixo NÃO pode virar { error } — reportar levaria o coordenador a
-  // re-sortear em modo "replace" e reescrever o que já foi gravado com sucesso.
+  // Pós-commit best-effort: atribuições e preferências dos participantes já
+  // foram gravadas atomicamente pela RPC. Uma falha de revalidação não pode
+  // virar { error }, pois a operação de banco já foi concluída.
   try {
-    // Persiste o peso/limite usado por participante (decisão: editar no diálogo,
-    // mas assumir continuidade no próximo sorteio). Uma falha aqui só afeta o
-    // default da próxima vez.
-    const settingsEntries = Object.entries(params.participantSettings ?? {});
-    if (settingsEntries.length > 0) {
-      const results = await Promise.all(
-        settingsEntries.map(([userId, cfg]) =>
-          supabase
-            .from("project_members")
-            .update({
-              assignment_weight: resolveWeight(cfg.weight),
-              assignment_cap: resolveCap(cfg.cap),
-            })
-            .eq("project_id", params.projectId)
-            .eq("user_id", userId),
-        ),
-      );
-      const failed = results.find((r) => r.error);
-      if (failed?.error) {
-        console.error(
-          `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
-        );
-      }
+    if (Object.keys(params.participantSettings ?? {}).length > 0) {
       revalidateTag(membersTag(params.projectId), MEMBERS_TAG_PROFILE);
     }
 

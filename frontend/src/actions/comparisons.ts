@@ -34,7 +34,6 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
     const supabase = await createSupabaseServer();
-    const assignmentClient = createSupabaseAdmin();
 
     // Só compare_humans/compare_llm têm backlog de comparação a drenar.
     const { data: project, error: projectError } = await supabase
@@ -66,6 +65,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       .neq("status", "concluido");
     if (openCountsError) throw new Error(openCountsError.message);
     const loadByUser = buildLoadMap(openCounts ?? []);
+    const assignmentClient = createSupabaseAdmin();
 
     let assigned = 0;
     let stillNoPool = 0;

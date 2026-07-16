@@ -182,6 +182,12 @@ INSERT INTO public.assignments (
     '11111111-1111-1111-1111-111111111111',
     '22222222-2222-2222-2222-222222222223',
     '77777777-7777-7777-7777-777777777772', 'pendente', 'comparacao'
+  ),
+  (
+    '66666666-6666-6666-6666-666666666663',
+    '11111111-1111-1111-1111-111111111111',
+    '22222222-2222-2222-2222-222222222221',
+    '77777777-7777-7777-7777-777777777772', 'concluido', 'comparacao'
   );
 
 -- O teste concede apenas o acesso de tabela necessário ao caminho invoker da
@@ -294,6 +300,56 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'OK replace: outsider, cross-project e rollback preservam estado';
+END;
+$$;
+
+-- ========== rollback da loteria ==========
+
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"77777777-7777-7777-7777-777777777771"}', true
+);
+SET LOCAL ROLE authenticated;
+
+SELECT pg_temp.assert_rejected(
+  $sql$
+    SELECT public.apply_lottery_assignments(
+      '11111111-1111-1111-1111-111111111111',
+      'comparacao', NULL,
+      '[{
+        "document_id":"22222222-2222-2222-2222-222222222221",
+        "user_id":"77777777-7777-7777-7777-777777777772"
+      }]',
+      true,
+      '[{
+        "user_id":"77777777-7777-7777-7777-777777777772",
+        "assignment_weight":2,
+        "assignment_cap":3
+      }]'
+    )
+  $sql$,
+  'rollback da loteria após delete de pendências',
+  '23505',
+  '%duplicate key%'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+       SELECT 1 FROM public.assignments
+       WHERE id = '66666666-6666-6666-6666-666666666662'
+         AND status = 'pendente'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.project_members
+       WHERE project_id = '11111111-1111-1111-1111-111111111111'
+         AND user_id = '77777777-7777-7777-7777-777777777772'
+         AND assignment_weight = 1
+         AND assignment_cap IS NULL
+     ) THEN
+    RAISE EXCEPTION 'falha da loteria deixou mutação parcial';
+  END IF;
 END;
 $$;
 
@@ -491,7 +547,12 @@ SELECT pg_temp.assert_integer_result(
         "document_id":"22222222-2222-2222-2222-222222222224",
         "user_id":"77777777-7777-7777-7777-777777777772"
       }]',
-      true
+      true,
+      '[{
+        "user_id":"77777777-7777-7777-7777-777777777772",
+        "assignment_weight":2.5,
+        "assignment_cap":3
+      }]'
     )
   $sql$,
   1,
@@ -506,7 +567,14 @@ BEGIN
     WHERE project_id = '11111111-1111-1111-1111-111111111111'
       AND type = 'comparacao'
       AND status = 'pendente'
-  ) <> 1 THEN
+  ) <> 1
+     OR NOT EXISTS (
+       SELECT 1 FROM public.project_members
+       WHERE project_id = '11111111-1111-1111-1111-111111111111'
+         AND user_id = '77777777-7777-7777-7777-777777777772'
+         AND assignment_weight = 2.5
+         AND assignment_cap = 3
+     ) THEN
     RAISE EXCEPTION 'loteria replace não deixou exatamente a nova pendência';
   END IF;
   RAISE NOTICE 'OK loteria: replace manteve o contrato atômico preexistente';

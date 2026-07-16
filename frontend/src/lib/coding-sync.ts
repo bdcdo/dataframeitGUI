@@ -59,7 +59,7 @@ export interface SyncCodingAssignmentParams {
 // is answered and this isn't an autosave; otherwise regresses it back to
 // em_andamento — but never out of concluido, so autosave never undoes
 // progress. Mirrors the "recompute + update assignment" shape already
-// established by syncCompareAssignment (compare-sync.ts) for the
+// established by the explicit comparison-assignment workflow for the
 // "comparacao" assignment type.
 export async function syncCodingAssignmentStatus(
   supabase: SupabaseServerClient,

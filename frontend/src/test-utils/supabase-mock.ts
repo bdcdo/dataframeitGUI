@@ -1,6 +1,6 @@
 // Mocks chainable do client Supabase compartilhados entre os testes do
 // cluster retry/comparison (arbitration-retry, comparisons-retry,
-// auto-comparison, compare-sync). Extraído dos mocks duplicados desses 4
+// auto-comparison e compare-revalidation). Extraído dos mocks duplicados
 // arquivos (#387). Não é coletado pelo vitest (include cobre apenas
 // *.test.ts). Não confundir com `actions/__tests__/supabase-mock.ts`
 // (`makeSupabaseMock`), que serve outro conjunto de testes e não é
@@ -46,14 +46,6 @@ export function makeSupabaseAdminModuleMock<T>(
   };
 }
 
-export function callsOf(
-  writeCalls: WriteCall[],
-  op: string,
-  table?: string,
-): WriteCall[] {
-  return writeCalls.filter((c) => c.op === op && (!table || c.table === table));
-}
-
 // Rastreia a última operação de escrita (update/upsert/insert/delete) por
 // referência mutável, para que os dois mocks abaixo possam expor o `op`
 // corrente ao restante do builder (chave de erro, fallback de leitura) sem
@@ -90,7 +82,7 @@ function attachWriteOps(
 
 // Mock filter-aware: aplica eq/neq/is/in/limit às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Usado por comparisons-retry.test.ts,
-// auto-comparison.test.ts e compare-sync.test.ts. `state` deve ser passado como
+// auto-comparison.test.ts. `state` deve ser passado como
 // objeto fresco a cada chamada de makeClient() local (não memoizar), para
 // sempre refletir os valores atuais de `let tableData`/`let writeCalls` do
 // arquivo de teste — que são reatribuídos por inteiro no beforeEach.

@@ -37,17 +37,23 @@ async function setReviewResolution(
   projectId: string,
   resolved: boolean,
 ): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (resolverId, supabase) => {
+  try {
+    if (!(await getAuthUser())) {
+      return { success: false, error: "Não autenticado" };
+    }
+    const supabase = await createSupabaseServer();
     const { error } = await supabase.rpc("set_review_resolution", {
       p_project_id: projectId,
       p_review_id: reviewId,
       p_resolved: resolved,
-      p_resolver_id: resolverId,
     });
 
     if (error) return { success: false, error: error.message };
+    revalidatePath(`/projects/${projectId}/reviews`);
     return { success: true };
-  });
+  } catch (e) {
+    return { success: false, error: errorMessage(e) || "Erro desconhecido" };
+  }
 }
 
 function affectedRowResult(

@@ -17,7 +17,9 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeSupabaseMock({ rpcCalls, rpcResults }),
 }));
-vi.mock("@/lib/compare-sync", () => ({ finalizeCompareWrite: async () => {} }));
+vi.mock("@/lib/compare-revalidation", () => ({
+  scheduleCompareRevalidation: () => {},
+}));
 
 beforeEach(() => {
   rpcCalls = [];
@@ -44,14 +46,21 @@ describe("submitVerdict", () => {
         p_project_id: "p1",
         p_document_id: "d1",
         p_field_name: "q1",
-        p_reviewer_id: "member1",
         p_verdict: "ambiguo",
         p_chosen_response_id: null,
         p_comment: "depende do contexto",
         p_comparison_response_ids: ["r1", "r2"],
         p_equivalent_response_ids: null,
+        p_complete_assignment: false,
       },
     });
+  });
+
+  it("envia a declaração explícita de conclusão para a mesma transação", async () => {
+    const { submitVerdict } = await import("@/actions/reviews");
+    await submitVerdict("p1", "d1", "q1", "concordo", undefined, undefined, [], true);
+
+    expect(rpcCalls[0]?.args).toMatchObject({ p_complete_assignment: true });
   });
 
   it("retorna o erro da RPC sem lançar", async () => {
@@ -59,6 +68,17 @@ describe("submitVerdict", () => {
     const { submitVerdict } = await import("@/actions/reviews");
     expect(await submitVerdict("p1", "d1", "q1", "concordo")).toEqual({
       error: "snapshot inválido",
+    });
+  });
+});
+
+describe("markCompareDocReviewed", () => {
+  it("declara a conclusão pela RPC autenticada", async () => {
+    const { markCompareDocReviewed } = await import("@/actions/reviews");
+    expect(await markCompareDocReviewed("p1", "d1")).toEqual({});
+    expect(rpcCalls).toContainEqual({
+      fn: "mark_compare_doc_reviewed",
+      args: { p_project_id: "p1", p_document_id: "d1" },
     });
   });
 });

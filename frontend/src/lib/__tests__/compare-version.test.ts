@@ -187,7 +187,7 @@ describe("responseQualifiesForVersion", () => {
   });
 });
 
-// O fecho do parecer (compare-sync.ts) deriva seu piso de versão do MESMO
+// A lente canônica de conclusão deriva seu piso de versão do MESMO
 // default VIVO da UI que compare/page.tsx usa — `COMPARE_DEFAULT_VERSION`
 // ("latest_major"), o mesmo valor que `compareDefaultsForMode` retorna —, via
 // `resolveMinVersion`. Estes testes travam esse contrato e reproduzem o

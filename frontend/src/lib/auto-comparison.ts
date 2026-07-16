@@ -39,7 +39,7 @@ interface ResponseRow {
   answers: Record<string, unknown> | null;
   answer_field_hashes: AnswerFieldHashes | null;
   // Campos de versão: necessários para aplicar o piso `latest_major` (#247),
-  // o MESMO que a fila (compare/page.tsx) e o fecho (compare-sync.ts) usam.
+  // o MESMO que a fila e a lente canônica de conclusão usam.
   is_latest?: boolean;
   pydantic_hash?: string | null;
   schema_version_major?: number | null;
@@ -280,7 +280,7 @@ export async function createAutoComparisonIfDiverges(
 
   // So codificacoes humanas completas contam para o gatilho (#174), E que
   // qualificam sob o piso `latest_major` (#247) — o MESMO que a fila
-  // (compare/page.tsx) e o fecho (compare-sync.ts) aplicam, restaurando o
+  // (compare/page.tsx) e a lente canônica aplicam, restaurando o
   // acoplamento gatilho==fila==fecho. Sem este filtro, uma divergencia que so
   // existe entre rodadas antigas materializaria um assignment que a fila nao
   // mostra e que o fecho ja considera concluivel — o "fantasma" da NOTA antiga.

@@ -97,6 +97,7 @@ const props = {
     ],
   },
   divergentFields: { d1: ["campoA", "campoB"] },
+  canonicalDivergentFields: { d1: ["campoA", "campoB"] },
   fields,
   existingReviews: {},
   projectPydanticHash: null,
@@ -241,6 +242,7 @@ describe("ComparePage — árvore real (smoke)", () => {
       undefined,
       undefined,
       expect.any(Array),
+      false,
     );
   });
 

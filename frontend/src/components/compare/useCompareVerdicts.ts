@@ -18,7 +18,7 @@ interface UseCompareVerdictsParams {
   currentDoc: CompareDocument | undefined;
   currentFieldName: string;
   isCurrentFieldDivergent: boolean;
-  allDocDivergent: string[];
+  canonicalDocDivergent: string[];
   localReviews: ReviewsByDoc;
   fieldResponses: FieldResponse[];
   comment: string;
@@ -114,7 +114,7 @@ export function useCompareVerdicts({
   currentDoc,
   currentFieldName,
   isCurrentFieldDivergent,
-  allDocDivergent,
+  canonicalDocDivergent,
   localReviews,
   fieldResponses,
   comment,
@@ -133,6 +133,13 @@ export function useCompareVerdicts({
         chosenResponseId: chosenResponseId ?? null,
         comment: verdictComment ?? null,
       };
+      const nextDocReviews = {
+        ...localReviews[currentDoc.id],
+        [currentFieldName]: info,
+      };
+      const completeAssignment = canonicalDocDivergent.every(
+        (fieldName) => !!nextDocReviews[fieldName],
+      );
       const saved = await actionSucceeded(
         submitVerdict(
           projectId,
@@ -142,6 +149,7 @@ export function useCompareVerdicts({
           chosenResponseId,
           verdictComment,
           comparisonResponseIds(fieldResponses),
+          completeAssignment,
         ),
         "Failed to submit compare verdict",
         {
@@ -164,14 +172,7 @@ export function useCompareVerdicts({
 
       // Usa `info` recém-emitido sobre o estado atual (que o setState ainda não
       // refletiu neste closure) para decidir se o documento fechou.
-      const nextDocReviews = {
-        ...localReviews[currentDoc.id],
-        [currentFieldName]: info,
-      };
-      const allFieldsReviewed = allDocDivergent.every(
-        (fn) => !!nextDocReviews[fn],
-      );
-      if (allFieldsReviewed) {
+      if (completeAssignment) {
         toast.success("Revisão do documento concluída!");
       } else {
         goNextField();
@@ -183,7 +184,7 @@ export function useCompareVerdicts({
       currentDoc,
       currentFieldName,
       isCurrentFieldDivergent,
-      allDocDivergent,
+      canonicalDocDivergent,
       localReviews,
       comment,
       fieldResponses,
@@ -208,6 +209,10 @@ export function useCompareVerdicts({
         chosenResponseId: gabaritoId,
         comment: verdictComment ?? null,
       };
+      const nextDocReviews = { ...localReviews[docId], [fieldName]: info };
+      const completeAssignment = canonicalDocDivergent.every(
+        (canonicalFieldName) => !!nextDocReviews[canonicalFieldName],
+      );
       const saved = await actionSucceeded(
         confirmEquivalentVerdict(
           projectId,
@@ -218,6 +223,7 @@ export function useCompareVerdicts({
           verdictDisplay,
           verdictComment,
           comparisonResponseIds(fieldResponses),
+          completeAssignment,
         ),
         "Failed to confirm equivalent verdict",
         { projectId, documentId: docId, fieldName },
@@ -233,11 +239,7 @@ export function useCompareVerdicts({
         `${responseIds.length} respostas marcadas como equivalentes.`,
       );
 
-      const nextDocReviews = { ...localReviews[docId], [fieldName]: info };
-      const allFieldsReviewed = allDocDivergent.every(
-        (fn) => !!nextDocReviews[fn],
-      );
-      if (allFieldsReviewed) {
+      if (completeAssignment) {
         toast.success("Revisão do documento concluída!");
       } else {
         goNextField();
@@ -248,7 +250,7 @@ export function useCompareVerdicts({
       currentDoc,
       currentFieldName,
       isCurrentFieldDivergent,
-      allDocDivergent,
+      canonicalDocDivergent,
       localReviews,
       comment,
       fieldResponses,

@@ -1,11 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { resolveProjectActor } from "@/lib/auth";
-import {
-  finalizeCompareWrite,
-  scheduleCompareRevalidation,
-} from "@/lib/compare-sync";
+import { scheduleCompareRevalidation } from "@/lib/compare-revalidation";
 import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
 
@@ -22,6 +18,7 @@ export async function confirmEquivalentVerdict(
   verdictDisplay: string,
   comment?: string,
   comparisonResponseIds: string[] = [],
+  completeAssignment = false,
 ): Promise<{ error?: string }> {
   if (responseIds.length < 2) {
     return { error: "Marcar como equivalentes exige 2+ respostas." };
@@ -30,35 +27,26 @@ export async function confirmEquivalentVerdict(
     return { error: "Gabarito precisa estar na lista de respostas selecionadas." };
   }
 
-  const actor = await resolveProjectActor(projectId);
-  if (!actor.ok) return { error: actor.error };
   const supabase = await createSupabaseServer();
-  const effectiveId = actor.effectiveUserId;
 
   try {
     const { error } = await supabase.rpc("submit_compare_review", {
       p_project_id: projectId,
       p_document_id: documentId,
       p_field_name: fieldName,
-      p_reviewer_id: effectiveId,
       p_verdict: verdictDisplay,
       p_chosen_response_id: gabaritoId,
       p_comment: comment?.trim() || null,
       p_comparison_response_ids: comparisonResponseIds,
       p_equivalent_response_ids: responseIds,
+      p_complete_assignment: completeAssignment,
     });
     if (error) throw new Error(error.message);
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
   }
 
-  finalizeCompareWrite({
-    supabase,
-    projectId,
-    documentId,
-    userId: effectiveId,
-    operation: "confirmEquivalentVerdict",
-  });
+  scheduleCompareRevalidation(projectId, "confirmEquivalentVerdict");
   return {};
 }
 
@@ -78,10 +66,7 @@ export async function markLlmEquivalent(
     return { error: "Respostas já são as mesmas." };
   }
 
-  const actor = await resolveProjectActor(projectId);
-  if (!actor.ok) return { error: actor.error };
   const supabase = await createSupabaseServer();
-  const effectiveId = actor.effectiveUserId;
   const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
 
   try {
@@ -91,7 +76,6 @@ export async function markLlmEquivalent(
       p_field_name: fieldName,
       p_response_a_id: a,
       p_response_b_id: b,
-      p_reviewer_id: effectiveId,
     });
     if (error) throw new Error(error.message);
   } catch (e) {
@@ -111,35 +95,18 @@ export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
 ): Promise<{ error?: string }> {
-  const actor = await resolveProjectActor(projectId);
-  if (!actor.ok) return { error: actor.error };
   const supabase = await createSupabaseServer();
-  const effectiveId = actor.effectiveUserId;
 
-  let documentId: string | undefined;
   try {
-    const { data, error } = await supabase.rpc("remove_response_equivalence", {
+    const { error } = await supabase.rpc("remove_response_equivalence", {
       p_project_id: projectId,
       p_equivalence_id: equivalenceId,
-      p_reviewer_id: effectiveId,
     });
     if (error) throw new Error(error.message);
-    const result = data as { documentId?: string } | null;
-    documentId = result?.documentId;
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
   }
 
-  if (documentId) {
-    finalizeCompareWrite({
-      supabase,
-      projectId,
-      documentId,
-      userId: effectiveId,
-      operation: "unmarkEquivalencePair",
-    });
-  } else {
-    scheduleCompareRevalidation(projectId, "unmarkEquivalencePair");
-  }
+  scheduleCompareRevalidation(projectId, "unmarkEquivalencePair");
   return {};
 }

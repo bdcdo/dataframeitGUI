@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FolderOpen } from "lucide-react";
 import Link from "next/link";
-import type { Project } from "@/lib/types";
 import {
   loadAccessibleProjects,
+  type DashboardProject,
 } from "@/lib/project-roles";
 
 export default async function DashboardPage() {
@@ -30,9 +30,11 @@ export default async function DashboardPage() {
         .order("created_at", { ascending: false })
         .then(({ data, error }) => ({
           projects: (data || []).map((p) => ({
-            ...(p as unknown as Project),
+            id: p.id,
+            name: p.name,
+            description: p.description,
             role: "master",
-          })) as (Project & { role: string })[],
+          })) satisfies DashboardProject[],
           error,
         }))
     : loadAccessibleProjects(supabase, user.id);

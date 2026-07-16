@@ -261,8 +261,8 @@ export interface QualifiedDocumentsResult {
 }
 
 // Apply version + since + respondent filters per response. A regra de versão
-// (is_latest/humano, pré-versionamento, piso) é compartilhada com
-// compare-sync.ts via responseQualifiesForVersion; aqui adicionamos só os
+// (is_latest/humano, pré-versionamento, piso) é compartilhada com a lente
+// canônica via responseQualifiesForVersion; aqui adicionamos só os
 // filtros efêmeros de UI (since/respondent).
 interface ResponseFilterParams {
   minVersion: SchemaVersion | null;
@@ -283,6 +283,36 @@ function filterQualifiedResponses(
     }
     return true;
   });
+}
+
+/**
+ * Divergências usadas exclusivamente para decidir a transição explícita da
+ * atribuição. A lente canônica considera a versão principal atual, sem os
+ * filtros efêmeros de data e respondente da tela.
+ */
+export function buildCanonicalDivergentFields(
+  responsesByDoc: ReadonlyMap<string, CompareResponse[]>,
+  fields: PydanticField[],
+  minVersion: SchemaVersion,
+  projectVersionCtx: ProjectVersionContext,
+  equivByDocField: EquivalenceByDocField,
+): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const [docId, responses] of responsesByDoc) {
+    const qualified = responses.filter((response) =>
+      responseQualifiesForVersion(response, minVersion, projectVersionCtx),
+    );
+    result[docId] = computeDivergentFieldNames(
+      fields,
+      qualified.map((response) => ({
+        id: response.id,
+        answers: response.answers,
+        answerFieldHashes: response.answer_field_hashes,
+      })),
+      equivByDocField.get(docId),
+    );
+  }
+  return result;
 }
 
 interface CoverageMetrics {
@@ -369,7 +399,10 @@ function qualifyDocument(
     })),
     ctx.equivByDocField.get(docId),
   );
-  if (divergent.length === 0) return null;
+  const assignmentStatus = ctx.compareAssignmentStatusByDoc.get(docId) ?? null;
+  const isOpenAssignedDocument =
+    assignmentStatus === "pendente" || assignmentStatus === "em_andamento";
+  if (divergent.length === 0 && !isOpenAssignedDocument) return null;
 
   return {
     qualifiedResponses,
@@ -382,7 +415,7 @@ function qualifyDocument(
       humansFromAssigned: metrics.humansFromAssigned,
       divergentCount: divergent.length,
       reviewedCount: 0, // preenchido depois, por buildReviewsAndReviewedCounts
-      assignmentStatus: ctx.compareAssignmentStatusByDoc.get(docId) ?? null,
+      assignmentStatus,
     },
   };
 }
@@ -438,8 +471,8 @@ export function buildReviewsAndReviewedCounts(
   const existingReviews: ReviewsByDoc = {};
 
   // A revisão da Comparação é POR REVISOR (UNIQUE inclui reviewer_id, e
-  // syncCompareAssignment fecha o assignment contando só os reviews do
-  // usuário). Por isso `existingReviews` — que semeia `localReviews` e decide
+  // status explícito do assignment considera só os reviews do usuário). Por
+  // isso `existingReviews` — que semeia `localReviews` e decide
   // "campo/doc já revisado" na UI — considera SÓ a identidade efetiva, igual
   // ao reviewedCount. Semear com vereditos de terceiros (comportamento antigo)
   // marcava docs revisados por outro revisor como "Revisão concluída" na tela

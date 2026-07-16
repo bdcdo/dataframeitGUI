@@ -16,7 +16,7 @@ import {
 } from "@/actions/equivalences";
 import { useCompareVerdicts } from "../useCompareVerdicts";
 import type { FieldResponse } from "../compare-types";
-import type { VerdictInfo } from "@/lib/compare-reviews";
+import type { ReviewsByDoc, VerdictInfo } from "@/lib/compare-reviews";
 import { doc } from "./compare-test-helpers";
 
 const { toastError, toastSuccess } = vi.hoisted(() => ({
@@ -71,7 +71,11 @@ function expectOptimisticWrite(
   expect(goNextField).toHaveBeenCalledTimes(1);
 }
 
-function setup(fieldResponses: FieldResponse[] = []) {
+function setup(
+  fieldResponses: FieldResponse[] = [],
+  canonicalDocDivergent = ["q1", "q2"],
+  localReviews: ReviewsByDoc = {},
+) {
   const recordReview = vi.fn();
   const goNextField = vi.fn();
   const { result } = renderHook(() =>
@@ -80,8 +84,8 @@ function setup(fieldResponses: FieldResponse[] = []) {
       currentDoc: DOC,
       currentFieldName: "q1",
       isCurrentFieldDivergent: true,
-      allDocDivergent: ["q1", "q2"],
-      localReviews: {},
+      canonicalDocDivergent,
+      localReviews,
       fieldResponses,
       comment: "",
       recordReview,
@@ -116,6 +120,32 @@ describe("handleVerdict", () => {
       chosenResponseId: "r1",
       comment: null,
     });
+  });
+
+  it("conclui na mesma RPC quando todos os campos da lente canônica ficarão revisados", async () => {
+    mockSubmitVerdict.mockResolvedValue({});
+    const { result, goNextField } = setup([], ["q1", "q2"], {
+      doc1: {
+        q2: { verdict: "anterior", chosenResponseId: null, comment: null },
+      },
+    });
+
+    await act(async () => {
+      await result.current.handleVerdict("concordo", "r1");
+    });
+
+    expect(mockSubmitVerdict).toHaveBeenCalledWith(
+      "p1",
+      "doc1",
+      "q1",
+      "concordo",
+      "r1",
+      undefined,
+      [],
+      true,
+    );
+    expect(goNextField).not.toHaveBeenCalled();
+    expect(toastSuccess).toHaveBeenCalledWith("Revisão do documento concluída!");
   });
 
   it("envia somente os IDs das respostas visíveis, sem snapshot montado no browser", async () => {
@@ -158,6 +188,7 @@ describe("handleVerdict", () => {
       "r1",
       undefined,
       ["r1"],
+      false,
     );
   });
 });

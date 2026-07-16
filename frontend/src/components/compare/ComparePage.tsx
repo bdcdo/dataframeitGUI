@@ -7,6 +7,7 @@ import { CompareNav } from "./CompareNav";
 import { CompareQueueTabs, type CompareQueueScope } from "./CompareQueueTabs";
 import { CompareDocList, type DocListEntry } from "./CompareDocList";
 import { CompareWorkspace } from "./CompareWorkspace";
+import { Button } from "@/components/ui/button";
 import { useCompareReviews } from "./useCompareReviews";
 import { useCompareNavigation } from "./useCompareNavigation";
 import { useStableDocOrder } from "./useStableDocOrder";
@@ -29,6 +30,7 @@ interface ComparePageProps {
   documents: CompareDocument[];
   responses: Record<string, CompareResponse[]>;
   divergentFields: Record<string, string[]>;
+  canonicalDivergentFields: Record<string, string[]>;
   fields: PydanticField[];
   existingReviews: ReviewsByDoc;
   projectPydanticHash: string | null;
@@ -78,6 +80,7 @@ export function ComparePage({
   documents: serverDocuments,
   responses,
   divergentFields,
+  canonicalDivergentFields,
   fields,
   existingReviews,
   projectPydanticHash,
@@ -122,7 +125,6 @@ export function ComparePage({
   const {
     docIndex,
     currentDoc,
-    allDocDivergent,
     docFields,
     fieldIndex,
     setFieldIndex,
@@ -213,7 +215,8 @@ export function ComparePage({
     currentDoc,
     currentFieldName,
     isCurrentFieldDivergent,
-    allDocDivergent,
+    canonicalDocDivergent:
+      canonicalDivergentFields[currentDoc?.id ?? ""] ?? [],
     localReviews,
     fieldResponses,
     comment,
@@ -425,8 +428,13 @@ export function ComparePage({
             collapsed={listCollapsed}
             onToggle={toggleList}
           />
-          <div className="flex flex-1 items-center justify-center text-muted-foreground">
-            {emptyMessage}
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+            <p>{emptyMessage}</p>
+            {currentDoc && docFields.length === 0 ? (
+              <Button onClick={() => void handleMarkReviewed()}>
+                Marcar como revisado
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>

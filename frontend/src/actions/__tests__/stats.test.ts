@@ -134,7 +134,6 @@ describe("resolveReviewComment / reopenReviewComment — smoke", () => {
         p_project_id: "p1",
         p_review_id: "rv1",
         p_resolved: true,
-        p_resolver_id: "member1",
       },
     });
   });
@@ -152,7 +151,6 @@ describe("resolveReviewComment / reopenReviewComment — smoke", () => {
         p_project_id: "p1",
         p_review_id: "rv1",
         p_resolved: false,
-        p_resolver_id: "member1",
       },
     });
   });

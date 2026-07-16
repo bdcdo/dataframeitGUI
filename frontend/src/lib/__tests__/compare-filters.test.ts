@@ -41,7 +41,7 @@ describe("compareDefaultsForMode", () => {
   it("default vivo de versão é COMPARE_DEFAULT_VERSION (latest_major), não o 'all' da base (#247)", () => {
     // A página foca na versão corrente por padrão; o seletor ainda oferece
     // "all" para revisar rodadas antigas. O default vivo é a constante única
-    // COMPARE_DEFAULT_VERSION, consumida também pelo fecho (compare-sync.ts) e
+    // COMPARE_DEFAULT_VERSION, consumida também pela lente canônica e
     // plumbada ao filtro do cliente (CompareFilters.effectiveDefaults).
     // DEFAULT_COMPARE_FILTERS.version segue "all" para os callers/testes que não
     // passam por compareDefaultsForMode.

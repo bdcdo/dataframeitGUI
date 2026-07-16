@@ -1,3 +1,10 @@
+import type { SupabaseServerClient } from "@/lib/supabase/server";
+import type { Project } from "@/lib/types";
+
+export type DashboardProject = Pick<Project, "id" | "name" | "description"> & {
+  role: string;
+};
+
 export interface ProjectAlias {
   project_id: string;
   member_user_id: string;
@@ -36,7 +43,7 @@ export async function loadAccessibleProjects(
   supabase: SupabaseServerClient,
   userId: string,
 ): Promise<{
-  projects: (Project & { role: string })[];
+  projects: DashboardProject[];
   error: { message: string } | null;
 }> {
   const { data: projectRows, error: projectError } = await supabase
@@ -69,7 +76,7 @@ export async function loadAccessibleProjects(
     identityByProject,
     memberships ?? [],
   );
-  const projects: (Project & { role: string })[] = [];
+  const projects: DashboardProject[] = [];
   for (const project of projectRows) {
     const effectiveId = identityByProject.get(project.id) ?? userId;
     const role = roleByProject.get(project.id);
@@ -80,7 +87,9 @@ export async function loadAccessibleProjects(
       };
     }
     projects.push({
-      ...(project as unknown as Project),
+      id: project.id,
+      name: project.name,
+      description: project.description,
       role: role ?? "coordenador",
     });
   }
@@ -89,5 +98,3 @@ export async function loadAccessibleProjects(
     error: null,
   };
 }
-import type { SupabaseServerClient } from "@/lib/supabase/server";
-import type { Project } from "@/lib/types";

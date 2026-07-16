@@ -2,13 +2,13 @@
 
 ## Resultado
 
-O baseline de `origin/main` tinha 11 módulos de produção com import runtime de `createSupabaseAdmin`, 1 módulo com import apenas de tipo e 27 chamadas ao factory. Esta proposta standalone reduz o runtime para 8 módulos e 19 chamadas: 8 bypasses de RLS foram substituídos pelo cliente autenticado, sem criar um segundo factory ou um caminho alternativo para a mesma operação. Na composição com a #450, a remoção transacional de membro elimina mais 1 chamada e deixa 18.
+O baseline de `origin/main` tinha 11 módulos de produção com import runtime de `createSupabaseAdmin`, 1 módulo com import apenas de tipo e 27 chamadas ao factory. A árvore atual reduz o runtime para 9 módulos e 18 chamadas: 9 chamadas foram eliminadas, sem criar um segundo factory ou um caminho alternativo para a mesma operação.
 
-Das 19 chamadas restantes no runtime Next standalone, 15 são necessárias para um contrato que o usuário autenticado não pode cumprir — bootstrap de identidade, Supabase Auth Admin, escrita automática iniciada por pesquisador, reconcile exclusivo do service role, webhook assinado ou dados de cache sem request — e 4 são débitos delimitados. A #450 elimina 1 desses débitos. Não encontrei import direto em componente `"use client"`, nem caminho runtime comum que leve um Client Component ao módulo admin. O módulo agora importa `server-only`, de modo que o compilador Next também rejeita regressões transitivas.
+Das 18 chamadas restantes no runtime Next, 15 são necessárias para um contrato que o usuário autenticado não pode cumprir — bootstrap de identidade, Supabase Auth Admin, escrita automática iniciada por pesquisador, reconcile exclusivo do service role, webhook assinado ou dados de cache sem request — e 3 são débitos delimitados. Não encontrei import direto em componente `"use client"`, nem caminho runtime comum que leve um Client Component ao módulo admin. O módulo importa `server-only`, de modo que o compilador Next também rejeita regressões transitivas.
 
 ## Método
 
-Inventariei os imports e call sites em 357 módulos de produção de `frontend/src`, excluindo testes e test utilities, e analisei os chamadores, os gates de autenticação, as policies RLS correspondentes e o tipo de superfície Next: Server Action, React Server Component, route handler ou biblioteca interna. O teste `supabase-admin-boundary.test.ts` usa a AST do TypeScript para distinguir imports runtime de `import type`, reconhecer diretivas apenas no directive prologue, resolver imports relativos e `@/` e incluir import/export estático, `import = require`, `require()` e `import()` no grafo. Especificadores compostos apenas por texto constante são resolvidos; qualquer carga dinâmica que não possa ser determinada estaticamente falha fechado. A travessia parte dos 173 módulos `"use client"` e trata os 19 módulos `"use server"` como a fronteira de proxy remoto definida pelo Next.
+Inventariei todos os imports e call sites dos módulos de produção de `frontend/src`, excluindo testes e test utilities, e analisei os chamadores, os gates de autenticação, as policies RLS correspondentes e o tipo de superfície Next: Server Action, React Server Component, route handler ou biblioteca interna. O teste `supabase-admin-boundary.test.ts` é a fonte executável dessas contagens: usa a AST do TypeScript para distinguir imports runtime de `import type`, reconhecer diretivas apenas no directive prologue, resolver imports relativos e `@/` e incluir import/export estático, `import = require`, `require()` e `import()` no grafo. Especificadores compostos apenas por texto constante são resolvidos; qualquer carga dinâmica que não possa ser determinada estaticamente falha fechado.
 
 Também procurei nomes de secret nos fontes, scripts, backend, documentação e arquivos versionados de configuração. A varredura recursiva exclui diretórios gerados e nunca lê arquivos locais `.env*`, mas cobre exemplos versionáveis. Há 0 variável com prefixo `NEXT_PUBLIC_` cujo restante do nome contenha um dos quatro marcadores sensíveis cobertos pelo teste. O frontend e os scripts usam `SUPABASE_SERVICE_ROLE_KEY`, enquanto o backend Fly usa `SUPABASE_SERVICE_KEY`; nenhum deles tem prefixo público.
 
@@ -16,14 +16,12 @@ Também procurei nomes de secret nos fontes, scripts, backend, documentação e 
 
 | Métrica no runtime Next | Baseline | Proposta | Variação |
 |---|---:|---:|---:|
-| Módulos com import runtime do admin factory | 11 | 8 | -3 |
+| Módulos com import runtime do admin factory | 11 | 9 | -2 |
 | Módulos com import apenas de tipo | 1 | 1 | 0 |
-| Chamadas estáticas a `createSupabaseAdmin()` | 27 | 19 | -8 |
+| Chamadas estáticas a `createSupabaseAdmin()` | 27 | 18 | -9 |
 | Módulos `"use client"` com import direto | 0 | 0 | 0 |
 | Caminhos comuns Client Component → admin no grafo | 0 | 0 | 0 |
 | Marcador compilável `server-only` no módulo do secret | 0 | 1 | +1 |
-
-Depois da #450, a terceira linha passa a 18 chamadas e variação de -9; as demais métricas permanecem iguais.
 
 ## Usos substituídos por RLS
 
@@ -31,19 +29,19 @@ Depois da #450, a terceira linha passa a 18 chamadas e variação de -9; as dema
 |---|---:|---|
 | `app/(app)/dashboard/page.tsx` | 1 | Master lista `projects` com o cliente autenticado; a policy `is_master()` já cobre o papel |
 | `app/(app)/projects/[id]/config/members/page.tsx` | 1 | O scan read-only do backlog reutiliza o cliente autenticado da página protegida |
-| `actions/comparisons.ts` | 1 | Retry coordinator-only consulta e cria assignments pelas policies de coordenador |
 | `actions/members.ts` | 2 | `setCanCompare` e `unlinkMemberEmail` reutilizam o cliente autenticado depois do gate/RLS |
 | `actions/field-reviews.ts` | 2 | Retry coordinator-only usa RLS; `assignArbitrator` recebe o cliente do caller, admin para pesquisador e autenticado para coordenador. O reconcile mantém somente o INSERT de `field_reviews` no service role porque a #134 proíbe esse INSERT para qualquer sessão autenticada |
 | `lib/auth.ts` | 1 | Resolução de alias consulta `member_email_links` com o JWT do próprio usuário |
 
-As 8 substituições preservam a fonte de autorização na policy. Em particular, o helper `assignArbitrator` deixou de criar um admin client internamente: o caller agora torna explícito qual papel executa o fluxo. Isso evita que um retry já autorizado como coordenador volte a ganhar service role dentro de uma função privada. A resolução de identidade também deixou de usar admin: consulta todos os vínculos visíveis ao usuário autenticado, aceita repetições do mesmo membro canônico e falha fechado quando a query falha, quando aparecem 2 destinos canônicos ou quando a leitura atinge o teto de 100 linhas e pode estar truncada.
+As substituições preservam a fonte de autorização na policy. Em particular, o helper `assignArbitrator` deixou de criar um admin client internamente: o caller torna explícito qual papel executa o fluxo. Isso evita que um retry já autorizado como coordenador volte a ganhar service role dentro de uma função privada. A resolução de identidade também deixou de usar admin: consulta os vínculos visíveis ao usuário autenticado e falha fechado quando a query ou o contrato de identidade falha.
 
 ## Inventário restante no runtime Next
 
 | Arquivo | Chamadas | Superfície | Classificação e justificativa |
 |---|---:|---|---|
-| `actions/members.ts` | 5 standalone; 4 com #450 | Server Actions | 4 obrigatórias: busca global/pré-registro, Auth Admin, vínculo por e-mail e RPC `unify_project_members`; a #450 elimina o débito de `removeMember` ao concentrar a mutação numa RPC transacional autenticada |
-| `actions/field-reviews.ts` | 4 | Server Actions | 3 obrigatórias: efeitos automáticos iniciados por pesquisador, comentário canônico de arbitragem e INSERT do reconcile em `field_reviews`, reservado ao service role pela #134; 1 débito: `releaseArbitrationsFromUser`, tratado no PR #433 |
+| `actions/members.ts` | 4 | Server Actions | Obrigatórias: busca global/pré-registro, Auth Admin, vínculo por e-mail e RPC `unify_project_members` |
+| `actions/field-reviews.ts` | 3 | Server Actions | Obrigatórias: efeitos automáticos iniciados por pesquisador, comentário canônico de arbitragem e reconcile de `field_reviews`, reservado ao service role |
+| `actions/comparisons.ts` | 1 | Server Action | Débito delimitado: o retry cria assignments pelo helper privilegiado; o factory só é instanciado depois do gate, do modo, do backlog e da leitura de carga, imediatamente antes do primeiro write |
 | `app/(app)/projects/[id]/analyze/assignments/page.tsx` | 2 | RSC com `unstable_cache` | Débito justificado no desenho atual: funções privadas fazem leituras cacheadas sem request/JWT, depois de gate próprio de sessão e acesso atual na page |
 | `app/api/webhooks/clerk/route.ts` | 1 | Route handler | Obrigatória: depois de verificar a assinatura Svix, ativa profiles e resolve vínculos pendentes |
 | `lib/auth.ts` | 2 | Biblioteca server-side | Obrigatórias: `clerk_user_mapping` e `master_users` são tabelas RLS deny-by-default usadas no bootstrap da identidade antes de existir um cliente autenticado confiável |
@@ -73,22 +71,20 @@ Os 2 usos da página de assignments são privados ao módulo RSC, não são expo
 | `scripts/comentarios-relatorio/apply-decisions.ts` | 1 | Fora do grafo Next | CLI manual de aplicação de decisões, precisa alterar schema e resolver comentários em lote |
 | `backend/services/supabase_client.py` | 1 singleton lazy | Processo FastAPI no Fly | Serviço LLM escreve `llm_runs`, responses LLM e resultados para múltiplos usuários; service key é o contrato do backend |
 
-Os dois scripts estão sob `frontend/scripts`, não são importados por `frontend/src` e só executam quando chamados explicitamente no terminal. O backend lê `SUPABASE_SERVICE_KEY` pelo Pydantic Settings e nunca participa do build Next. Essas 3 superfícies não foram contadas nas 19 chamadas do runtime frontend porque têm processos e fronteiras de deploy distintos.
+Os dois scripts estão sob `frontend/scripts`, não são importados por `frontend/src` e só executam quando chamados explicitamente no terminal. O backend lê `SUPABASE_SERVICE_KEY` pelo Pydantic Settings e nunca participa do build Next. Essas 3 superfícies não foram contadas nas 18 chamadas do runtime frontend porque têm processos e fronteiras de deploy distintos.
 
 ## Proteções adicionadas
 
 `frontend/src/lib/supabase/admin.ts` agora começa com `import "server-only"`. Além disso, o factory substitui as duas non-null assertions por validação runtime: ausência de URL ou service role key lança um erro explícito antes de construir um cliente malformado. A chave continua lida somente dentro da função, sem exportar valor, singleton ou objeto serializável.
 
-O teste estrutural fixa o inventário dos 8 importadores runtime e das 19 chamadas standalone, aceitando exatamente 18 quando detecta a RPC transacional da #450. Uma nova importação ou chamada exige atualizar conscientemente o inventário. O mesmo teste falha se surgir um caminho comum de import a partir de Client Component, se o marcador `server-only` for removido, se outro módulo de produção passar a ler o secret, se `require` ou import dinâmico introduzir um caminho oculto ou não-estático, ou se alguém criar qualquer nome público com marcador sensível. A varredura inclui `.env.example`/templates e scripts shell versionáveis e compara nomes sem depender de caixa alta.
+O teste estrutural fixa o inventário dos 9 importadores runtime e das 18 chamadas. Uma nova importação ou chamada exige atualizar conscientemente o inventário. O mesmo teste falha se surgir um caminho comum de import a partir de Client Component, se o marcador `server-only` for removido, se outro módulo de produção passar a ler o secret, se `require` ou import dinâmico introduzir um caminho oculto ou não-estático, ou se alguém criar qualquer nome público com marcador sensível. A varredura inclui `.env.example`/templates e scripts shell versionáveis e compara nomes sem depender de caixa alta.
 
 ## Verificação
 
-Os testes focados standalone cobrem acesso revogado, fronteira AST, resolução fail-closed de identidade e instanciação tardia do admin client. A suíte completa standalone passou com 130 arquivos e 1.246 testes; `tsc --noEmit`, `next build`, lint comum e lint tipado também passaram. React Doctor marcou 100/100 e o Semgrep executou 210 regras sobre os 9 arquivos de produção alterados, com 0 achados. Permanece 1 warning preexistente e fora do diff em `src/hooks/__tests__/useCachedResource.test.ts:77`; o Fallow completo também reproduz passivos globais preexistentes, enquanto `fallow audit` não introduz bloqueio incremental.
+Os testes focados cobrem acesso revogado, fronteira AST, resolução fail-closed de identidade e instanciação tardia do admin client. A suíte completa passou em 134 arquivos, com 1.269 testes; `tsc --noEmit`, `next build`, lint comum e lint tipado também passaram. React Doctor encontrou 0 problemas e marcou 91/100; Fallow encontrou 0 achados novos contra `origin/main`; Gitleaks e Semgrep passaram. Permanece 1 warning herdado e fora do diff em `src/hooks/__tests__/useCachedResource.test.ts:77`.
 
-Também montei uma árvore descartável na ordem #433 → #446 → #450 → esta proposta. Nela, preservei os filtros IDOR da #433, a identidade efetiva da #446 e a RPC/paginação da #450; os helpers paginados de backlog passaram a receber o mesmo `SupabaseDataClient` autenticado usado por esta auditoria. O inventário estrutural confirmou 18 chamadas ao factory nessa composição.
-
-A composição automática que também inclui a #134 não é livre de conflitos. O merge #433/#450 em `members.ts` precisa escolher a RPC `remove_project_member` da #450 e remover a guarda residual `if (!removed)` da implementação antiga; o teste de membros precisa combinar os mocks sem duplicar `loadRemove`. A #450 e a #134 também alteram `supabase/tests/atomic_replace_rpcs.test.sql`, cuja resolução deve preservar tanto os casos da remoção transacional quanto as fixtures endurecidas pela #134. Portanto, a árvore integrada completa precisa de resolução manual desses 3 pontos e repetição dos gates — aceitar automaticamente um dos lados produz código inválido.
+Esta árvore não pode ser composta automaticamente com as propostas adjacentes. A #440 define a identidade canônica, a #446 altera o contrato de equivalências e a #450 altera a remoção transacional de membros; todas sobrepõem arquivos e migrations deste PR. A ordem registrada no PR é #440 → #446 → #450 → rebase desta árvore sobre `main`, com remoção dos trechos absorvidos e repetição dos gates.
 
 ## Dependências entre propostas
 
-Esta auditoria foi cruzada com a #134. A proposta de RLS padroniza o acesso de alias/criador/master e exige membership atual nas policies own-row; esta proposta reduz os bypasses que mascaravam essas policies e mantém gates explícitos onde a service role ainda é necessária. A ordem recomendada é #433 → #446 → #450 → #134 → #137: as migrations da #446 e da #450 antecedem a migration da #134, e a #137 entra por último para resolver os conflitos de aplicação sem voltar aos bypasses. O PR #433 continua sendo a correção canônica do entrypoint administrativo residual; esta proposta não deve ser considerada como resolução daquele débito.
+Esta auditoria integra o endurecimento de RLS da issue #134, mas permanece bloqueada por #440, #446 e #450. O rebase posterior deve preservar os contratos canônicos dessas três propostas e eliminar qualquer implementação duplicada, em vez de escolher um lado do conflito sem revalidar o conjunto.

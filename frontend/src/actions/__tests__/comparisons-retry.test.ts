@@ -78,6 +78,7 @@ describe("retryPendingComparisons — guards", () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain("coordenadores");
     expect(writeCalls).toHaveLength(0);
+    expect(adminCreateCalls).toBe(0);
   });
 
   it("modo não-comparação → no-op", async () => {
@@ -89,6 +90,7 @@ describe("retryPendingComparisons — guards", () => {
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(0);
     expect(assignmentCalls()).toHaveLength(0);
+    expect(adminCreateCalls).toBe(0);
   });
 
   it("falha ao ler o modo do projeto não vira no-op bem-sucedido", async () => {
@@ -103,6 +105,17 @@ describe("retryPendingComparisons — guards", () => {
       assigned: 0,
       stillNoPool: 0,
     });
+    expect(adminCreateCalls).toBe(0);
+  });
+
+  it("backlog vazio não cria cliente administrativo", async () => {
+    const retry = await loadRetry();
+    await expect(retry("p1")).resolves.toEqual({
+      success: true,
+      assigned: 0,
+      stillNoPool: 0,
+    });
+    expect(adminCreateCalls).toBe(0);
   });
 });
 
@@ -122,6 +135,7 @@ describe("retryPendingComparisons — atribui backlog divergente", () => {
       stillNoPool: 0,
     });
     expect(assignmentCalls()).toHaveLength(0);
+    expect(adminCreateCalls).toBe(0);
   });
 
   it("doc divergente sem comparacao ativa → atribui 1", async () => {

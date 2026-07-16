@@ -23,6 +23,7 @@ import {
   buildAvailableVersions,
   buildCodingAssignedByDoc,
   buildCompareAssignmentStatusByDoc,
+  buildCanonicalDivergentFields,
   qualifyDocumentsForCompare,
   buildDocumentsForCompare,
   buildReviewsAndReviewedCounts,
@@ -147,8 +148,8 @@ export default async function ComparePageRoute({
   const filters = readCompareFilters(sp, compareDefaults);
 
   // Contexto de versão do helper compartilhado (compare-version.ts) — a MESMA
-  // fonte e fallback {0,1,0} do fecho (compare-sync.ts) e do gatilho
-  // (auto-comparison.ts). A página resolve seu `minVersion` a partir da URL
+  // fonte e fallback {0,1,0} do gatilho (auto-comparison.ts) e da lente
+  // canônica de conclusão. A página resolve seu `minVersion` a partir da URL
   // (`filters.version`, que pode ser uma lente manual), não da constante.
   const { version: projectVersion, ctx: projectVersionCtx } =
     deriveProjectVersionContext(project ?? {});
@@ -186,6 +187,13 @@ export default async function ComparePageRoute({
   );
 
   const { responsesByDoc, docsMetaMap } = indexResponsesByDoc(allResponses);
+  const canonicalDivergentFields = buildCanonicalDivergentFields(
+    responsesByDoc,
+    fields,
+    latestMajorAnchor(projectVersion),
+    projectVersionCtx,
+    equivByDocField,
+  );
 
   // Respondent names list (do conjunto todo, antes de filtrar)
   const respondentNames = extractRespondentNames(allResponses);
@@ -277,6 +285,7 @@ export default async function ComparePageRoute({
         documents={documentsForCompare}
         responses={responsesMap}
         divergentFields={divergentFields}
+        canonicalDivergentFields={canonicalDivergentFields}
         fields={fields}
         existingReviews={existingReviews}
         projectPydanticHash={project?.pydantic_hash ?? null}

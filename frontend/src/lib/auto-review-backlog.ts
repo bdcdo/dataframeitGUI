@@ -23,13 +23,6 @@ export interface LlmResponseRow {
   answer_field_hashes: AnswerFieldHashes;
 }
 
-export interface ExistingFieldReviewRow {
-  id: string;
-  document_id: string;
-  field_name: string;
-  self_verdict: string | null;
-}
-
 export interface FieldReviewRow {
   project_id: string;
   document_id: string;
@@ -112,38 +105,4 @@ export function computeBacklogRows(
   }
 
   return { fieldReviewRows, regenerated };
-}
-
-// Compartilhado entre diffReviewsToRemove e removeOrphanAssignments (na
-// action): as duas reconciliam uma coleção recém-computada contra uma
-// existente via chave composta document_id+algo. Puro.
-function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
-  return new Set(rows.map(keyFn));
-}
-
-// --- Reconcile: quais field_reviews não deveriam mais existir ---
-// O conjunto correto é o que acabou de ser computado em fieldReviewRows.
-// Linhas pendentes (self_verdict IS NULL) fora desse conjunto sao espurias
-// — tipicamente campos que ficaram "stale" apos edicao de schema — e podem
-// ser apagadas. Linhas ja resolvidas pelo pesquisador sao preservadas. Puro.
-export function diffReviewsToRemove(
-  existingReviews: ExistingFieldReviewRow[],
-  fieldReviewRows: FieldReviewRow[],
-): { idsToDelete: string[]; keptResolved: number } {
-  const correctKeys = compositeKeySet(
-    fieldReviewRows,
-    (r) => `${r.document_id}|${r.field_name}`,
-  );
-
-  const idsToDelete: string[] = [];
-  let keptResolved = 0;
-  for (const fr of existingReviews) {
-    if (correctKeys.has(`${fr.document_id}|${fr.field_name}`)) continue;
-    if (fr.self_verdict == null) {
-      idsToDelete.push(fr.id);
-    } else {
-      keptResolved++;
-    }
-  }
-  return { idsToDelete, keptResolved };
 }
