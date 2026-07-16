@@ -24,10 +24,15 @@ async def lifespan(app: "FastAPI"):
             "Auth fail-closed: nem SUPABASE_JWT_SECRET nem CLERK_JWKS_URL "
             "configurados — toda rota autenticada retornará 503."
         )
-    elif not settings.clerk_jwt_audience and not settings.clerk_jwt_issuer:
-        logger.warning(
-            "JWT sem validação de aud/iss (CLERK_JWT_AUDIENCE e CLERK_JWT_ISSUER "
-            "vazios) — recomendado setá-las em produção."
+    # JWKS sem issuer derruba o boot em vez de avisar: o processo morre, /health
+    # nunca fica verde e o Fly não transfere tráfego para a máquina nova. É o que
+    # transforma "CLERK_JWT_ISSUER esquecido num cutover de instância" de um 503
+    # difuso em produção num deploy que simplesmente não sobe.
+    if settings.clerk_jwks_url and not settings.clerk_jwt_issuer:
+        raise RuntimeError(
+            "CLERK_JWKS_URL setado sem CLERK_JWT_ISSUER: o issuer é o que "
+            "distingue a instância Clerk de produção da de desenvolvimento. "
+            "Setar CLERK_JWT_ISSUER (ver backend/fly.toml)."
         )
     yield
 

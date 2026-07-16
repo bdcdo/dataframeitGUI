@@ -78,9 +78,10 @@ Config em `backend/fly.toml`. Secrets de runtime via `fly secrets set` (nunca no
 cd backend
 fly secrets set SUPABASE_URL=https://xxx.supabase.co \
   SUPABASE_SERVICE_KEY=your-key \
-  CLERK_JWKS_URL='https://<slug>.clerk.accounts.dev/.well-known/jwks.json' \
   -a gui-analise-sistematica-api
-# CORS_ORIGINS fica em [env] no fly.toml (origens permitidas, JSON array).
+# CORS_ORIGINS, CLERK_JWKS_URL e CLERK_JWT_ISSUER ficam em [env] no fly.toml:
+# nenhum é secret (o JWKS é endpoint público, o issuer é a URL da Frontend API),
+# e mantê-los no toml faz da troca de instância Clerk um diff revisável.
 fly deploy -c fly.toml -a gui-analise-sistematica-api   # fallback; o normal é via CI
 ```
 
@@ -105,7 +106,8 @@ fly deploy -c fly.toml -a gui-analise-sistematica-frontend   # fallback; o norma
 |----------|------|-----------|
 | `SUPABASE_URL` | Backend (Fly.io) | URL do projeto Supabase |
 | `SUPABASE_SERVICE_KEY` | Backend (Fly.io) | Service role key |
-| `CLERK_JWKS_URL` | Backend (Fly.io) | URL do JWKS do Clerk (verificação RS256 do JWT) |
+| `CLERK_JWKS_URL` | Backend (`fly.toml [env]`) | URL do JWKS do Clerk (verificação RS256 do JWT) |
+| `CLERK_JWT_ISSUER` | Backend (`fly.toml [env]`) | Frontend API URL da instância Clerk; identifica o tenant. Obrigatório com `CLERK_JWKS_URL` — sem ele o backend não sobe |
 | `CORS_ORIGINS` | Backend (`fly.toml [env]`) | JSON array de origens permitidas |
 | `NEXT_PUBLIC_SUPABASE_URL` | Frontend (`fly.toml [build.args]`) | URL do projeto Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Frontend (`fly.toml [build.args]`) | Anon/publishable key |

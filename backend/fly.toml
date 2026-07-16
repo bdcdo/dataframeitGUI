@@ -41,5 +41,13 @@ kill_timeout = "5m"
   CORS_ORIGINS = '["https://dataframeit.com.br", "https://gui-analise-sistematica-frontend.fly.dev", "https://ac.brunodcdo.com.br", "http://localhost:3000"]'
   LLM_RATE_LIMIT_REQUESTS = "5"
   LLM_RATE_LIMIT_WINDOW_SECONDS = "60"
+  # Identidade da instância Clerk. Nao sao secrets: o JWKS e um endpoint publico
+  # e o issuer e a URL da Frontend API. Ficam aqui, e nao em `fly secrets`, para
+  # que a troca de instancia (dev -> producao) seja um diff revisavel num PR em
+  # vez de dois `fly secrets set` fora de banda que podem divergir entre si.
+  # Os dois andam juntos: o boot falha se o JWKS estiver setado sem o issuer
+  # (main.py), porque e o issuer que distingue as instancias.
+  CLERK_JWKS_URL = "https://innocent-foxhound-88.clerk.accounts.dev/.well-known/jwks.json"
+  CLERK_JWT_ISSUER = "https://innocent-foxhound-88.clerk.accounts.dev"
   # ENABLE_DOCS ausente de propósito: o default fail-safe (config.py) mantém
   # /docs, /redoc e /openapi.json fechados em produção. NÃO adicionar aqui.
