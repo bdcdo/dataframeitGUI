@@ -136,22 +136,28 @@ describe("bootstrap de ambiente para worktrees", () => {
     expectNoDestinations();
   });
 
-  it("distingue erro de permissão de uma fonte ausente", () => {
-    writeCompleteSource();
-    chmodSync(sourceFrontend, 0o000);
+  // Root ignora o chmod 000 abaixo: a leitura da fonte teria sucesso e o caso
+  // afirmaria um EACCES que nunca acontece. Pular é honesto — o caso não é
+  // observável para esse usuário.
+  it.skipIf(process.getuid?.() === 0)(
+    "distingue erro de permissão de uma fonte ausente",
+    () => {
+      writeCompleteSource();
+      chmodSync(sourceFrontend, 0o000);
 
-    let result: ReturnType<typeof runBootstrap>;
-    try {
-      result = runBootstrap();
-    } finally {
-      chmodSync(sourceFrontend, 0o700);
-    }
+      let result: ReturnType<typeof runBootstrap>;
+      try {
+        result = runBootstrap();
+      } finally {
+        chmodSync(sourceFrontend, 0o700);
+      }
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("EACCES");
-    expect(result.stderr).not.toContain("fonte sem");
-    expectNoDestinations();
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("EACCES");
+      expect(result.stderr).not.toContain("fonte sem");
+      expectNoDestinations();
+    },
+  );
 
   it("falha antes de criar o segundo destino quando um destino já existe", () => {
     writeCompleteSource();

@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+// parseEnv deixou de ser experimental exatamente em v24.10.0 ("This API is no
+// longer experimental", historico de node:util) — e por isso, e nao por
+// alinhamento com o Docker, que engines fixa >=24.10.0. Relaxar aquele piso
+// reintroduz uma API instavel no gate de pre-push.
 import { parseEnv } from "node:util";
 
 export const environmentFiles = Object.freeze([".env.local", ".env.e2e"]);

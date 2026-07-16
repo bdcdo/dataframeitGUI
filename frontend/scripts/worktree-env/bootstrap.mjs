@@ -19,6 +19,14 @@ import {
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const frontendDirectory = resolve(scriptDirectory, "../..");
 
+/**
+ * Encerra o processo; nunca retorna. O @returns {never} e o que garante que
+ * readContract/readSource nao tenham caminho de retorno `undefined`.
+ *
+ * @param {string} message
+ * @param {number} [status]
+ * @returns {never}
+ */
 function fail(message, status = 1) {
   console.error(`Erro: ${message}`);
   process.exit(status);
