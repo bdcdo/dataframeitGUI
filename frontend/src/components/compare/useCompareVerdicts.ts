@@ -172,7 +172,6 @@ export function useCompareVerdicts({
           chosenResponseId,
           verdictComment,
           buildSnapshot(fieldResponses),
-          readOnly,
         ),
         "Failed to submit compare verdict",
         {
@@ -259,7 +258,6 @@ export function useCompareVerdicts({
           verdictDisplay,
           verdictComment,
           buildSnapshot(fieldResponses),
-          readOnly,
         ),
         "Failed to confirm equivalent verdict",
         { projectId, documentId: docId, fieldName },
@@ -303,7 +301,7 @@ export function useCompareVerdicts({
   const handleMarkReviewed = useCallback(async () => {
     if (readOnly || !currentDoc) return;
     const saved = await actionSucceeded(
-      markCompareDocReviewed(projectId, currentDoc.id, readOnly),
+      markCompareDocReviewed(projectId, currentDoc.id),
       "Failed to mark compare doc reviewed",
       { projectId, documentId: currentDoc.id },
       "Não foi possível marcar o documento como revisado. Tente novamente.",
@@ -316,7 +314,7 @@ export function useCompareVerdicts({
     async (pairId: string) => {
       if (readOnly) return;
       const saved = await actionSucceeded(
-        unmarkEquivalencePair(projectId, pairId, readOnly),
+        unmarkEquivalencePair(projectId, pairId),
         "Failed to unmark equivalence pair",
         { projectId, pairId },
         "Não foi possível remover a equivalência. Tente novamente.",

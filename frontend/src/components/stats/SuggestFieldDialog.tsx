@@ -27,10 +27,6 @@ interface SuggestFieldDialogProps {
   allFields: PydanticField[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Repassa o modo somente-leitura da impersonação master ao Server Action
-  // (backstop de escrita, issue #428). Default false: a aba Comentários segue
-  // sugerindo normalmente.
-  impersonating?: boolean;
 }
 
 export function SuggestFieldDialog({
@@ -39,7 +35,6 @@ export function SuggestFieldDialog({
   allFields,
   open,
   onOpenChange,
-  impersonating = false,
 }: SuggestFieldDialogProps) {
   const { refresh } = useRouter();
   const field = allFields.find((f) => f.name === fieldName);
@@ -81,7 +76,6 @@ export function SuggestFieldDialog({
         fieldName,
         changes,
         reason.trim(),
-        impersonating,
       );
       if (result.error) {
         toast.error(result.error);

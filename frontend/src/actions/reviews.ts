@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getEffectiveMemberId, requireWritableUser } from "@/lib/auth";
+import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
@@ -22,11 +22,9 @@ export async function submitVerdict(
   chosenResponseId?: string,
   comment?: string,
   responseSnapshot?: ResponseSnapshotEntry[],
-  impersonating?: boolean,
 ): Promise<{ error?: string }> {
-  // Interlock de somente-leitura: master impersonando não grava (issue #428).
-  const writable = await requireWritableUser({ impersonating });
-  if (!writable.ok) return { error: writable.error };
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
 
   // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
   // como o membro canônico — reviewer_id, author_id e o sync do assignment
@@ -84,7 +82,7 @@ export async function submitVerdict(
             project_id: projectId,
             document_id: documentId,
             field_name: fieldName,
-            author_id: writable.user.id,
+            author_id: user.id,
             body: comment?.trim()
               ? `Campo marcado como ambíguo na revisão (aba Comparar): ${comment.trim()}`
               : "Campo marcado como ambíguo na revisão (aba Comparar).",
@@ -150,11 +148,9 @@ export async function submitVerdict(
 export async function markCompareDocReviewed(
   projectId: string,
   documentId: string,
-  impersonating?: boolean,
 ): Promise<{ error?: string }> {
-  // Interlock de somente-leitura: master impersonando não fecha doc (issue #428).
-  const writable = await requireWritableUser({ impersonating });
-  if (!writable.ok) return { error: writable.error };
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
 
   // Conta vinculada fecha o doc como o membro canônico (spec 002).
   // Awaits independentes em paralelo.

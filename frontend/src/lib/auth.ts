@@ -329,30 +329,3 @@ export async function requireCoordinator(
   if (!isCoord) return { ok: false, error: deniedMessage };
   return { ok: true, user };
 }
-
-// Gate de escrita para telas que ficam somente-leitura durante a impersonação
-// master (`?viewAsUser=`). O servidor não recebe o searchParam per-tab, então o
-// caller retransmite o mesmo `impersonating` que a página já derivou no render
-// (via `resolveEffectiveUserId`) — a política de bloqueio (`isMaster &&
-// impersonating`) fica declarada UMA vez aqui, espelhando aquela predicação.
-//
-// Escopo/limite: como o sinal vem do client, isto é um interlock de defesa
-// contra escrita ACIDENTAL do master enquanto observa a fila de outro membro —
-// não uma fronteira contra master adversarial, que pode simplesmente sair do
-// modo view-as e gravar como ele mesmo (direito legítimo por RLS). O padrão de
-// retorno segue `requireCoordinator` (união discriminada, não throw) para os
-// callers adaptarem ao próprio shape. `impersonating` default false → actions
-// compartilhadas com outras telas seguem graváveis (issue #428).
-export async function requireWritableUser(
-  opts: { impersonating?: boolean } = {},
-): Promise<{ ok: true; user: AuthUser } | { ok: false; error: string }> {
-  const user = await getAuthUser();
-  if (!user) return { ok: false, error: "Não autenticado" };
-  if (user.isMaster && opts.impersonating) {
-    return {
-      ok: false,
-      error: "Ação indisponível ao visualizar como outro membro.",
-    };
-  }
-  return { ok: true, user };
-}

@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, requireWritableUser, requireCoordinator } from "@/lib/auth";
+import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import {
   excludeDocuments,
   revalidateProjectDocumentsCache,
@@ -14,12 +14,9 @@ export async function createProjectComment(
   documentId?: string | null,
   fieldName?: string | null,
   parentId?: string | null,
-  impersonating?: boolean,
 ) {
-  // Interlock de somente-leitura: master impersonando não anota (issue #428). O
-  // sinal é opcional (default false) — telas fora da Comparação seguem gravando.
-  const writable = await requireWritableUser({ impersonating });
-  if (!writable.ok) return { error: writable.error };
+  const user = await getAuthUser();
+  if (!user) return { error: "Não autenticado" };
 
   const supabase = await createSupabaseServer();
 
@@ -27,7 +24,7 @@ export async function createProjectComment(
     project_id: projectId,
     document_id: documentId || null,
     field_name: fieldName || null,
-    author_id: writable.user.id,
+    author_id: user.id,
     body: body.trim(),
     parent_id: parentId || null,
     kind: "note",

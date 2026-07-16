@@ -15,21 +15,8 @@ let writeCalls: WriteCall[];
 let serverTableResults: TableResults | undefined;
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-// requireWritableUser espelha o contrato real: bloqueia só quando o caller
-// sinaliza impersonação (issue #428). Assim os casos de caminho feliz (sem o
-// sinal) seguem gravando e os de somente-leitura exercitam o ramo de bloqueio
-// da action sem depender da lógica interna de isMaster.
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "reviewer1" }),
-  requireWritableUser: async ({
-    impersonating,
-  }: { impersonating?: boolean } = {}) =>
-    impersonating
-      ? {
-          ok: false as const,
-          error: "Ação indisponível ao visualizar como outro membro.",
-        }
-      : { ok: true as const, user: { id: "reviewer1" } },
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
@@ -206,39 +193,5 @@ describe("unmarkEquivalencePair", () => {
     expect(
       writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
     ).toBe(true);
-  });
-});
-
-// Interlock server-side (issue #428): master impersonando (impersonating=true)
-// é bloqueado ANTES de tocar o Supabase — a barreira não é só client-side.
-describe("interlock de somente-leitura", () => {
-  const readOnlyError = "Ação indisponível ao visualizar como outro membro.";
-
-  it("confirmEquivalentVerdict com impersonating=true → { error }, nenhuma escrita", async () => {
-    const { confirmEquivalentVerdict } = await loadActions();
-
-    const result = await confirmEquivalentVerdict(
-      "p1",
-      "doc1",
-      "q1",
-      ["r1", "r2"],
-      "r1",
-      "resposta fundida",
-      undefined,
-      undefined,
-      true,
-    );
-
-    expect(result).toEqual({ error: readOnlyError });
-    expect(writeCalls).toHaveLength(0);
-  });
-
-  it("unmarkEquivalencePair com impersonating=true → { error }, nenhuma escrita", async () => {
-    const { unmarkEquivalencePair } = await loadActions();
-
-    const result = await unmarkEquivalencePair("p1", "eq1", true);
-
-    expect(result).toEqual({ error: readOnlyError });
-    expect(writeCalls).toHaveLength(0);
   });
 });

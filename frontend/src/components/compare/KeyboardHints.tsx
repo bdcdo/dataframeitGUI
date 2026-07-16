@@ -33,48 +33,47 @@ export function KeyboardHints({
       </Button>
       {open && (
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          {!readOnly &&
-            (isMulti ? (
-              <>
+          {!readOnly && (
+            <>
+              {isMulti ? (
+                <>
+                  <span>
+                    <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                      1
+                    </kbd>
+                    {(optionCount ?? 0) > 1 && (
+                      <>
+                        –
+                        <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                          {optionCount}
+                        </kbd>
+                      </>
+                    )}{" "}
+                    Marcar/desmarcar
+                  </span>
+                  <span>
+                    <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                      Enter
+                    </kbd>{" "}
+                    Confirmar
+                  </span>
+                </>
+              ) : (
                 <span>
                   <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
                     1
                   </kbd>
-                  {(optionCount ?? 0) > 1 && (
+                  {groupCount > 1 && (
                     <>
                       –
                       <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                        {optionCount}
+                        {groupCount}
                       </kbd>
                     </>
                   )}{" "}
-                  Marcar/desmarcar
+                  Escolher resposta
                 </span>
-                <span>
-                  <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                    Enter
-                  </kbd>{" "}
-                  Confirmar
-                </span>
-              </>
-            ) : (
-              <span>
-                <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                  1
-                </kbd>
-                {groupCount > 1 && (
-                  <>
-                    –
-                    <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                      {groupCount}
-                    </kbd>
-                  </>
-                )}{" "}
-                Escolher resposta
-              </span>
-            ))}
-          {!readOnly && (
-            <>
+              )}
               <span>
                 <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
                   A

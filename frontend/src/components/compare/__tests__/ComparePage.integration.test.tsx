@@ -279,7 +279,6 @@ describe("ComparePage — árvore real (smoke)", () => {
       undefined,
       undefined,
       expect.any(Array),
-      false,
     );
   });
 
@@ -360,7 +359,6 @@ describe("ComparePage — árvore real (smoke)", () => {
       "r1",
       undefined,
       expect.any(Array),
-      false,
     );
   });
 

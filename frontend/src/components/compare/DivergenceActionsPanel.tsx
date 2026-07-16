@@ -107,7 +107,7 @@ export function DivergenceActionsPanel({
             input ao revisitar o campo — paridade com Ambíguo/Pular.
           */}
           <CustomAnswerInput
-            key={`${documentId}|${fieldName}|${readOnly}`}
+            key={`${documentId}|${fieldName}`}
             readOnly={readOnly}
             currentValue={
               existingVerdict &&
@@ -154,7 +154,7 @@ export function DivergenceActionsPanel({
           className="flex-1 min-w-[180px] text-sm"
         />
         <AddNoteButton
-          key={`${documentId}|${readOnly}`}
+          key={documentId}
           projectId={projectId}
           documentId={documentId}
           documentTitle={documentTitle}
@@ -165,7 +165,6 @@ export function DivergenceActionsPanel({
           label="Anotar"
           disabled={readOnly}
           disabledReason={writeTitle}
-          impersonating={readOnly}
         />
         <Button
           variant="outline"
@@ -189,7 +188,6 @@ export function DivergenceActionsPanel({
         allFields={fields}
         open={suggestOpen}
         onOpenChange={setSuggestOpen}
-        impersonating={readOnly}
       />
     </>
   );

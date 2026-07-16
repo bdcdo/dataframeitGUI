@@ -36,10 +36,6 @@ interface AddNoteButtonProps {
   label?: string;
   disabled?: boolean;
   disabledReason?: string;
-  // Repassa o modo somente-leitura da impersonação master ao Server Action, que
-  // é o backstop de escrita (issue #428). Default false: telas fora da
-  // Comparação seguem gravando normalmente.
-  impersonating?: boolean;
 }
 
 export function AddNoteButton({
@@ -54,7 +50,6 @@ export function AddNoteButton({
   label,
   disabled = false,
   disabledReason,
-  impersonating = false,
 }: AddNoteButtonProps) {
   const { refresh } = useRouter();
   const [open, setOpen] = useState(false);
@@ -92,8 +87,6 @@ export function AddNoteButton({
         body,
         documentId,
         fieldValue,
-        null,
-        impersonating,
       );
       if (result.error) {
         toast.error(result.error);

@@ -71,8 +71,6 @@ describe("AddNoteButton — fixed field", () => {
         "minha nota",
         "d1",
         "tipo_decisao",
-        null,
-        false,
       ),
     );
   });
