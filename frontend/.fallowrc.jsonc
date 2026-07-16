@@ -38,6 +38,65 @@
     { "file": "src/components/ui/textarea.tsx", "exports": ["*"] },
     { "file": "src/components/ui/tooltip.tsx", "exports": ["*"] }
   ],
+  // shadcn e tailwindcss disparam dev-dependencies-in-production como
+  // falso-positivo: nenhum dos dois e importado por codigo de runtime. O
+  // tailwindcss entra so via `@import "tailwindcss"` no globals.css (build-time,
+  // resolvido pelo @tailwindcss/postcss) e o shadcn e o CLI gerador, sem import
+  // algum no src/. Ambos estao corretos em devDependencies. Sao os dois unicos
+  // achados de regra warn no projeto hoje; sem esta supressao a promocao da
+  // regra a error (abaixo) barraria todo push, porque achado HERDADO tambem
+  // barra quando a regra e error (ver comentario do bloco "rules").
+  "ignoreDependencies": ["shadcn", "tailwindcss"],
+  // Promocao de severidade warn -> error.
+  //
+  // Por que regra a regra e nao de uma vez: a flag `--fail-on-issues` (que a
+  // doc do fallow descreve como "promotes warn to error") e no-op no `audit` —
+  // medido na 3.2.0 com um misplaced-directive introduzido de proposito: o
+  // verdict continuou `warn` e o exit 0, com e sem a flag. O unico caminho que
+  // funciona e este bloco `rules`. Nao ha chave de promocao em massa: o
+  // AuditConfig do schema e `additionalProperties: false`.
+  //
+  // ATENCAO ao promover uma regra nova: o grandfathering do `--gate new-only`
+  // NAO protege contra severidade error. Medido na 3.2.0 (contradiz a doc, que
+  // afirma que achado herdado error mantem o verdict em pass): com a arvore
+  // limpa, `dead_code_introduced: 0` e `dead_code_inherited: 2`, promover
+  // dev-dependencies-in-production a error deu verdict `fail` e exit 1. Ou
+  // seja, so promova regra cuja contagem de achados no projeto seja ZERO hoje
+  // (`npm run fallow` para conferir) — ou zere os achados antes.
+  //
+  // As 5 regras `css-*` ficam em warn de proposito: a analise de CSS nao produz
+  // saida neste projeto (verificado com um token drift deliberado no globals.css
+  // — nenhuma secao css no JSON do audit), entao promove-las nao protegeria
+  // nada hoje e, se uma versao futura do fallow passar a emiti-las, o CSS legado
+  // barraria todo push pela regra do paragrafo acima. As demais warn nao
+  // promovidas sao inertes neste stack: Vue/Svelte/Angular (unused-component-
+  // emits/inputs/outputs, unused-svelte-events, unprovided-injects,
+  // unrendered-components, unused-store-members), SvelteKit (unused-load-data-
+  // keys) e catalogos pnpm (unused-catalog-entries, empty-catalog-groups).
+  "rules": {
+    // Diretivas client/server: a classe de bug que quebrou tres deploys
+    // seguidos (#404) e motivou o CI proprio do #452. O Next ignora a diretiva
+    // em silencio, entao nada falha ate o deploy.
+    "invalid-client-export": "error",
+    "misplaced-directive": "error",
+    "mixed-client-server-barrel": "error",
+    "unused-server-actions": "error",
+    // Dependencias: devDependency importada em runtime quebra a imagem de
+    // producao, que instala sem as dev.
+    "dev-dependencies-in-production": "error",
+    "unused-dev-dependencies": "error",
+    "unused-optional-dependencies": "error",
+    "type-only-dependencies": "error",
+    "test-only-dependencies": "error",
+    // O projeto usa `overrides` no package.json (react-is, postcss, dompurify,
+    // uuid) — override apontando para pacote que saiu da arvore vira mentira
+    // silenciosa (ver o drift do react-is no #285).
+    "unused-dependency-overrides": "error",
+    "re-export-cycle": "error",
+    "stale-suppressions": "error",
+    "unused-component-props": "error",
+    "policy-violation": "error"
+  },
   // O `fallow audit --gate new-only` (hook de pre-push) cria um worktree de
   // cache do commit-base em /tmp (fallow-audit-base-cache-<hash>-<base>) para
   // atribuir achados novos vs. herdados sem tocar no working tree. O GC mede a
