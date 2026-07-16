@@ -33,9 +33,15 @@ updates:
       # bump 6->7 (#471) o npm aninhou a arvore do typescript-eslint SEM aninhar
       # um TS 6 junto, entao o parser resolvia o TS 7 da raiz com o peer violado
       # — `lint:types` rodaria sobre versao que a upstream declara nao suportar.
+      # O teto do peer e 6.1, nao 7 — fronteira minor. Por isso a trava e dupla e
+      # simetrica: o `package.json` declara `~6.0` (barra o `npm install`) e este
+      # ignore cobre minor+major (barra o Dependabot, que sob o `versioning-strategy`
+      # default `auto` elevaria a faixa para `~6.1` num PR do grupo minor-patch —
+      # 6.0.3->6.1.0 e semver-minor, entao um ignore so de major nao pegaria).
+      # A 6.0.x segue livre. Ao destravar, mexer nos dois: faixa e ignore.
       # Remover quando sair o typescript-eslint 9 com suporte a TS 7.
       - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     labels:
       - "dependencies"
       - "frontend"

@@ -39,13 +39,13 @@ Sobre a 3.2.0 (#472) em si: ao contrário do que a leitura apressada do major su
 
 ### typescript-eslint type-checked — os tipos
 
-`typescript-eslint` 8.62.0 (devDependency pinada), via a config dedicada `frontend/eslint.config.typed.mjs` e o script `npm run lint:types`. É separada da config base (`eslint.config.mjs`) e do `npm run lint` rápido porque regras type-checked precisam do `projectService` (carregam o programa de tipos inteiro) e são lentas demais para o lint do dia a dia. O subset é curado de propósito — `no-floating-promises` e `no-misused-promises`, não o `recommendedTypeChecked` inteiro — para mirar o footgun que mais aparece nesta base: promessa async não-tratada em Server Action, hook ou handler de evento.
+`typescript-eslint` 8.63.0 (devDependency pinada), via a config dedicada `frontend/eslint.config.typed.mjs` e o script `npm run lint:types`. É separada da config base (`eslint.config.mjs`) e do `npm run lint` rápido porque regras type-checked precisam do `projectService` (carregam o programa de tipos inteiro) e são lentas demais para o lint do dia a dia. O subset é curado de propósito — `no-floating-promises` e `no-misused-promises`, não o `recommendedTypeChecked` inteiro — para mirar o footgun que mais aparece nesta base: promessa async não-tratada em Server Action, hook ou handler de evento.
 
 A escolha se justificou empiricamente: o primeiro scan encontrou 59 errors em cerca de 11 arquivos — promessas não-aguardadas em hooks como `useLlmRunProgress`, `useFieldOrder`, `usePromptPreview`, em componentes como `UserMenu`, `RunLlmButton`, `CopyLinkButton`, `ExportPanel`, e em Server Actions. Eram bugs latentes que o lint sintático não via (ex.: falha de rede silenciosa ao salvar, sem toast nem log). A issue [#378](https://github.com/bdcdo/dataframeitGUI/issues/378) (onda `lint:types` da epic [#376](https://github.com/bdcdo/dataframeitGUI/issues/376)) zerou o débito real (46 errors, 25 arquivos no scan atual): hoje `npm run lint:types` passa com **0 errors** de `no-floating-promises`/`no-misused-promises` no projeto inteiro — o gate de pre-push segue file-scoped por velocidade, mas não há mais débito legado escondido atrás dele.
 
 ### typecheck (tsc) — o prerequisito que faltava
 
-O projeto não tinha sequer um script `tsc --noEmit`. O `npm run typecheck` preenche isso e roda no pre-push (projeto inteiro, sem grandfathering — hoje passa com **0 erros**, então qualquer erro de tipo novo barra o push). O compilador nativo em Go (tsgo / TypeScript 7) está em RC mas ainda não foi adotado (ver "Monitorar"); quando o GA sair, basta trocar `tsc` por `tsgo` nesse script.
+O projeto não tinha sequer um script `tsc --noEmit`. O `npm run typecheck` preenche isso e roda no pre-push (projeto inteiro, sem grandfathering — hoje passa com **0 erros**, então qualquer erro de tipo novo barra o push). O compilador nativo em Go (tsgo / TypeScript 7) já está em GA mas ainda não foi adotado, porque o peer do `typescript-eslint` 8 exclui o TS 7 (ver "Monitorar"); ao destravar, basta trocar `tsc` por `tsgo` nesse script.
 
 ### Exports de Server Actions — contrato do projeto
 
@@ -132,7 +132,9 @@ uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy ac
 
 ## Monitorar
 
-- **tsgo / TypeScript 7 (Project Corsa)** — compilador nativo em Go, ~10× mais rápido, em RC desde 18/06/2026, GA estimado ~1 mês depois. Não adotado agora: a API programática só entra na 7.1, então `typescript-eslint`/`ts-morph` ainda não rodam sobre o nativo. Quando o GA sair, trocar `tsc` por `tsgo` no script `typecheck` é um drop-in. O agente também pode chamar o MCP/skill do fallow e os findings do semgrep guardian sob demanda.
+- **tsgo / TypeScript 7 (Project Corsa)** — compilador nativo em Go, ~10× mais rápido, **já em GA** (a `latest` no npm é a 7.0.2). Ainda assim não adotado, por dois motivos que se somam: a API programática só entra na 7.1, que ainda não saiu como estável (só builds `dev`), então `typescript-eslint`/`ts-morph` não rodam sobre o nativo; e o `typescript-eslint` 8 declara peer que exclui o TS 7, de modo que instalar a 7 é exatamente o que o pin abaixo impede. Trocar `tsc` por `tsgo` no script `typecheck` segue sendo um drop-in em si, mas está **bloqueado pela mesma condição de destrave do pin** — não pelo calendário do GA, que já passou. O agente também pode chamar o MCP/skill do fallow e os findings do semgrep guardian sob demanda.
+
+  Por isso o TypeScript fica pinado em `~6.0` no `frontend/package.json`: o `typescript-eslint` 8.63.0 declara peer `typescript: >=4.8.4 <6.1.0` — o teto é **6.1, não 7**, fronteira minor (hoje a última 6.x publicada é a 6.0.3). A trava é dupla e simétrica, porque os caminhos de violação são dois e independentes. Primeiro, o `~6.0` barra o `npm install`: uma faixa `^6` deixaria a 6.1 entrar sozinha em qualquer refresh de lockfile, sem diff no `package.json`. Segundo, o `ignore` de **minor+major** no `.github/dependabot.yml` barra o Dependabot, que sob o `versioning-strategy` default `auto` elevaria a faixa para `~6.1` num PR do grupo `frontend-minor-patch` — 6.0.3→6.1.0 é `semver-minor`, então um ignore só de major não pegaria. A 6.0.x segue fluindo normalmente. A condição de destrave é o `typescript-eslint` 9 com suporte a TS 7 — aí saem juntos a faixa, o ignore e o bloqueio do tsgo.
 
 ## Avaliadas e diferidas
 
