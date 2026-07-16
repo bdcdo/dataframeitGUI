@@ -1,5 +1,5 @@
 import { buildFieldHashMap } from "@/lib/answer-staleness";
-import { dropHiddenConditionals } from "@/lib/conditional";
+import { dropHiddenConditionals, isFieldVisible } from "@/lib/conditional";
 import { isOtherValue } from "@/lib/other-option";
 import { stableStringify } from "@/lib/schema-utils";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
@@ -99,6 +99,57 @@ function reconcileAnswers(
   return { persistedAnswers, changedFieldNames };
 }
 
+function indexConditionalsByTrigger(fields: PydanticField[]): Map<string, PydanticField[]> {
+  const conditionalsByTrigger = new Map<string, PydanticField[]>();
+  for (const field of fields) {
+    if (!field.condition) continue;
+    const triggerName = field.condition.field.split(".", 1)[0];
+    const siblings = conditionalsByTrigger.get(triggerName) ?? [];
+    siblings.push(field);
+    conditionalsByTrigger.set(triggerName, siblings);
+  }
+  return conditionalsByTrigger;
+}
+
+function becameHidden(
+  field: PydanticField,
+  previousAnswers: Record<string, unknown>,
+  currentAnswers: Record<string, unknown>,
+): boolean {
+  return isFieldVisible(field, previousAnswers) && !isFieldVisible(field, currentAnswers);
+}
+
+function dropConditionalsAffectedByChanges(
+  fields: PydanticField[],
+  storedAnswers: Record<string, unknown> | null | undefined,
+  answers: Record<string, unknown>,
+  changedFieldNames: Set<string>,
+): Record<string, unknown> {
+  // A projeção pode ter omitido um filho stale antes da comparação. Derivar
+  // a invalidação pelo grafo das conditions mantém esse filho ligado à
+  // alteração deliberada do gatilho. A cascata só avança quando a visibilidade
+  // canônica passa de visível para oculta; um intermediário ainda visível não
+  // autoriza apagar descendentes que já estavam ocultos por outro motivo.
+  const previousAnswers = storedAnswers ?? {};
+  const conditionalsByTrigger = indexConditionalsByTrigger(fields);
+  const pendingTriggerNames = [...changedFieldNames];
+  const queuedTriggerNames = new Set(pendingTriggerNames);
+  let persistedAnswers = answers;
+
+  for (let index = 0; index < pendingTriggerNames.length; index += 1) {
+    const changedTriggerName = pendingTriggerNames[index];
+    for (const field of conditionalsByTrigger.get(changedTriggerName) ?? []) {
+      if (!becameHidden(field, previousAnswers, persistedAnswers)) continue;
+      persistedAnswers = dropHiddenConditionals([field], persistedAnswers);
+      if (queuedTriggerNames.has(field.name)) continue;
+      pendingTriggerNames.push(field.name);
+      queuedTriggerNames.add(field.name);
+    }
+  }
+
+  return persistedAnswers;
+}
+
 function buildReconciledFieldHashes(
   fields: PydanticField[],
   storedAnswers: Record<string, unknown> | null | undefined,
@@ -131,17 +182,23 @@ export function buildPersistedResponseSnapshot({
   // um submit vazio não pode ser interpretado como pedido para apagá-las.
   const presentedAnswers = fields.length === 0 ? {} : sanitizeStoredAnswers(fields, storedAnswers);
   const submittedAnswers = dropHiddenConditionals(fields, rawSubmittedAnswers);
-  const { persistedAnswers, changedFieldNames } = reconcileAnswers(
+  const reconciled = reconcileAnswers(
     storedAnswers,
     presentedAnswers,
     submittedAnswers,
+  );
+  const persistedAnswers = dropConditionalsAffectedByChanges(
+    fields,
+    storedAnswers,
+    reconciled.persistedAnswers,
+    reconciled.changedFieldNames,
   );
   const answerFieldHashes = buildReconciledFieldHashes(
     fields,
     storedAnswers,
     storedHashes,
     persistedAnswers,
-    changedFieldNames,
+    reconciled.changedFieldNames,
   );
 
   return { submittedAnswers, persistedAnswers, answerFieldHashes };

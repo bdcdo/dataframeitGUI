@@ -214,17 +214,34 @@ describe("matchResponsesToVersions", () => {
     expect(byMethod.fallback_created_at).toBe(1);
   });
 
-  it("ignora proveniência null e usa os hashes conhecidos na pontuação", () => {
+  it("sem versão estruturalmente compatível usa o fallback temporal global", () => {
+    const { updates, byMethod } = matchResponsesToVersions(
+      [
+        responseRow({
+          id: "r-sem-candidato",
+          created_at: "1970-01-01T00:00:03.000Z",
+          answer_field_hashes: { campoInexistente: null },
+        }),
+      ],
+      hashesByVersion,
+      enriched,
+    );
+
+    expect(updates.get("0.2.0|fallback_created_at")?.ids).toEqual(["r-sem-candidato"]);
+    expect(byMethod.fallback_created_at).toBe(1);
+  });
+
+  it("usa chave null como evidência estrutural e hash conhecido na pontuação", () => {
     const versions = new Map<string, Record<string, string>>([
-      ["0.1.0", {}],
-      ["0.2.0", { conhecido: "hashB" }],
+      ["0.1.0", { conhecido: "hashB" }],
+      ["0.2.0", { conhecido: "hashB", posterior: "hashC" }],
     ]);
     const { updates, byMethod } = matchResponsesToVersions(
       [
         responseRow({
           id: "r4",
           created_at: "1970-01-01T00:00:02.000Z",
-          answer_field_hashes: { desconhecido: null, conhecido: "hashB" },
+          answer_field_hashes: { posterior: null, conhecido: "hashB" },
         }),
       ],
       versions,
@@ -235,7 +252,7 @@ describe("matchResponsesToVersions", () => {
     expect(byMethod.hashes).toBe(1);
   });
 
-  it("mapa apenas com null é legacy e usa created_at", () => {
+  it("mapa apenas com null restringe a versões em que o campo existia", () => {
     const { updates, byMethod } = matchResponsesToVersions(
       [
         responseRow({
@@ -248,7 +265,25 @@ describe("matchResponsesToVersions", () => {
       enriched,
     );
 
-    expect(updates.get("0.1.0|created_at")?.ids).toEqual(["r5"]);
+    expect(updates.get("0.2.0|fallback_created_at")?.ids).toEqual(["r5"]);
+    expect(byMethod.created_at).toBe(0);
+    expect(byMethod.fallback_created_at).toBe(1);
+  });
+
+  it("mapa vazio continua legacy e usa created_at sem restrição estrutural", () => {
+    const { updates, byMethod } = matchResponsesToVersions(
+      [
+        responseRow({
+          id: "r6",
+          created_at: "1970-01-01T00:00:00.500Z",
+          answer_field_hashes: {},
+        }),
+      ],
+      hashesByVersion,
+      enriched,
+    );
+
+    expect(updates.get("0.1.0|created_at")?.ids).toEqual(["r6"]);
     expect(byMethod.created_at).toBe(1);
     expect(byMethod.fallback_created_at).toBe(0);
   });

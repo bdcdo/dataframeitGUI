@@ -175,6 +175,102 @@ describe("buildPersistedResponseSnapshot", () => {
     expect(result.answerFieldHashes).toEqual({ gatilho: "g-new", detalhe: "d-new" });
   });
 
+  it("remove filho stale oculto da projeção quando o gatilho muda", () => {
+    const fields = [
+      field({ name: "gatilho", type: "single", options: ["sim", "nao"], hash: "g-new" }),
+      field({
+        name: "detalhe",
+        type: "single",
+        options: ["atual"],
+        hash: "d-new",
+        condition: { field: "gatilho", equals: "sim" },
+      }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      storedAnswers: { gatilho: "sim", detalhe: "antigo" },
+      storedHashes: { gatilho: "g-old", detalhe: "d-old" },
+      rawSubmittedAnswers: { gatilho: "nao" },
+    });
+
+    expect(result.submittedAnswers).toEqual({ gatilho: "nao" });
+    expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
+    expect(result.answerFieldHashes).toEqual({ gatilho: "g-new", detalhe: "d-new" });
+  });
+
+  it("remove em cascata condicionais ocultadas pela mudança deliberada", () => {
+    const fields = [
+      field({ name: "gatilho", type: "single", options: ["sim", "nao"], hash: "g-new" }),
+      field({
+        name: "filho",
+        type: "single",
+        options: ["atual"],
+        hash: "f-new",
+        condition: { field: "gatilho", equals: "sim" },
+      }),
+      field({
+        name: "neto",
+        hash: "n-new",
+        condition: { field: "filho", exists: true },
+      }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      storedAnswers: { gatilho: "sim", filho: "antigo", neto: "texto" },
+      storedHashes: { gatilho: "g-old", filho: "f-old", neto: "n-old" },
+      rawSubmittedAnswers: { gatilho: "nao" },
+    });
+
+    expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
+    expect(result.answerFieldHashes).toEqual({
+      gatilho: "g-new",
+      filho: "f-new",
+      neto: "n-new",
+    });
+  });
+
+  it("preserva descendente já oculto quando o intermediário continua visível", () => {
+    const fields = [
+      field({ name: "gatilho", type: "single", options: ["A", "B"], hash: "g-new" }),
+      field({
+        name: "intermediario",
+        type: "single",
+        options: ["mostrar", "ocultar"],
+        hash: "i-new",
+        condition: { field: "gatilho", exists: true },
+      }),
+      field({
+        name: "descendente",
+        hash: "d-new",
+        condition: { field: "intermediario", equals: "mostrar" },
+      }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      storedAnswers: {
+        gatilho: "A",
+        intermediario: "ocultar",
+        descendente: "preservado",
+      },
+      storedHashes: { gatilho: "g-old", intermediario: "i-old", descendente: "d-old" },
+      rawSubmittedAnswers: { gatilho: "B", intermediario: "ocultar" },
+    });
+
+    expect(result.persistedAnswers).toEqual({
+      gatilho: "B",
+      intermediario: "ocultar",
+      descendente: "preservado",
+    });
+    expect(result.answerFieldHashes).toEqual({
+      gatilho: "g-new",
+      intermediario: "i-old",
+      descendente: "d-old",
+    });
+  });
+
   it("preserva pai e filho ocultados por uma mudança do schema", () => {
     const fields = [
       field({ name: "gatilho", type: "single", options: ["X"], hash: "g-new" }),
