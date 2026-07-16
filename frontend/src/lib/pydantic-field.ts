@@ -261,14 +261,6 @@ export function parsePydanticFields(value: unknown): PydanticField[] | null {
   return result.success ? result.data : null;
 }
 
-export function requirePydanticFields(value: unknown): PydanticField[] {
-  const fields = parsePydanticFields(value);
-  if (!fields) {
-    throw new Error("O schema persistido é inválido e precisa ser corrigido antes da edição.");
-  }
-  return fields;
-}
-
 export function parseSaveablePydanticFields(
   value: unknown,
 ): PydanticField[] | null {

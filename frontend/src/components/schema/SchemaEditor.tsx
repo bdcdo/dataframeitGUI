@@ -27,7 +27,7 @@ import {
   type SchemaDraftConflict,
 } from "@/hooks/useSchemaDraft";
 import type { PydanticField } from "@/lib/types";
-import { requirePydanticFields } from "@/lib/pydantic-field";
+import { parsePydanticFields } from "@/lib/pydantic-field";
 import { unresolvedSchemaConflicts } from "@/lib/schema-merge";
 
 const MonacoEditor = dynamic(
@@ -51,15 +51,42 @@ interface SchemaEditorProps extends Omit<SchemaEditorSessionProps, "initialField
   initialFields: PydanticField[];
 }
 
+// Estado terminal: o schema gravado não corresponde ao contrato canônico. Não há
+// ação na UI que resolva — `loadSchemaSaveContext` recusa salvar pelo mesmo
+// motivo, porque precisa dos campos antigos para calcular o diff da auditoria —,
+// então a tela informa em vez de oferecer uma saída que o servidor rejeitaria.
+function SchemaEditorInvalidState() {
+  return (
+    <div className="flex h-[calc(100vh-148px)] items-center justify-center p-6">
+      <div className="max-w-md space-y-2 text-center">
+        <p className="text-sm font-medium">
+          O schema gravado deste projeto está inválido.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Ele precisa ser corrigido no banco antes que a edição seja liberada.
+          Nenhuma alteração é possível enquanto isso — inclusive salvar, que
+          depende de ler o schema atual para registrar o histórico.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // A identidade da sessão é o par projeto+usuário. Revisões novas entram no hook
 // como snapshots remotos e passam pelo mesmo merge de três vias dos conflitos de
 // save; já uma troca de usuário não tem merge possível — é outro rascunho.
 export function SchemaEditorSession(props: SchemaEditorSessionProps) {
+  // Lançar aqui derrubaria a rota inteira: este segmento não tem `error.tsx`, e
+  // o usuário veria a tela genérica de erro do Next em vez de saber o que houve.
+  // O servidor já trata a mesma condição devolvendo copy — a UI acompanha.
+  const fields = parsePydanticFields(props.initialFields ?? []);
+  if (!fields) return <SchemaEditorInvalidState />;
+
   return (
     <SchemaEditor
       key={`${props.userId}:${props.projectId}`}
       {...props}
-      initialFields={requirePydanticFields(props.initialFields ?? [])}
+      initialFields={fields}
     />
   );
 }
