@@ -180,6 +180,7 @@ export async function unmarkEquivalencePair(
   const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
+  let syncDocumentId: string | null = null;
 
   try {
     const { data: row } = await supabase
@@ -210,15 +211,29 @@ export async function unmarkEquivalencePair(
         .eq("field_name", row.field_name)
         .eq("reviewer_id", reviewerId);
 
-      await syncCompareAssignment(
-        supabase,
-        projectId,
-        row.document_id,
-        reviewerId,
-      );
+      syncDocumentId = row.document_id;
     }
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
+  }
+
+  // Pós-commit best-effort: a equivalência e o review já foram apagados. Uma
+  // falha do sync não deve virar { error } — a revisora veria "falha ao
+  // desfazer" para uma operação já persistida e tentaria de novo, sobre uma
+  // linha que não existe mais. Loga e segue para a revalidação.
+  if (syncDocumentId) {
+    try {
+      await syncCompareAssignment(
+        supabase,
+        projectId,
+        syncDocumentId,
+        reviewerId,
+      );
+    } catch (e) {
+      console.error(
+        `[unmarkEquivalencePair] falha ao sincronizar o assignment: ${errorMessage(e)}`,
+      );
+    }
   }
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
