@@ -37,10 +37,10 @@ export interface CompareDocument {
  * navegação continua, mas nenhum controle prepara ou persiste decisão. Segue a
  * mesma convenção `readOnly: boolean` já usada no Codificar
  * (`code/page.tsx` → `SubmitBar`). Texto único de tooltip/aviso para os
- * controles desabilitados (issue #428).
+ * controles desabilitados (issue #428). Consumido só via `readOnlyTitle`
+ * abaixo, então fica local ao módulo.
  */
-export const COMPARE_READ_ONLY_REASON =
-  "Indisponível no modo somente leitura";
+const COMPARE_READ_ONLY_REASON = "Indisponível no modo somente leitura";
 
 /**
  * Tooltip do controle: o motivo padrão de somente-leitura quando `readOnly`,
