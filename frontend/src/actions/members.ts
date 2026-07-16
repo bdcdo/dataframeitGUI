@@ -553,8 +553,8 @@ export async function unlinkMemberEmail(
   );
   if (!gate.ok) return { error: gate.error };
 
-  const admin = createSupabaseAdmin();
-  const { error } = await admin
+  const supabase = await createSupabaseServer();
+  const { error } = await supabase
     .from("member_email_links")
     .delete()
     .eq("id", linkId)

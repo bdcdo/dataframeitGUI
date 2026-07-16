@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
+  makeSupabaseAdminModuleMock,
+  makeSupabaseServerModuleMock,
   makeSimpleSupabaseMock,
   type RpcCall,
   type RpcResult,
@@ -30,16 +32,15 @@ function makeClient() {
 // isProjectCoordinator: hoisted para permitir override por teste.
 const hoisted = vi.hoisted(() => ({
   isCoord: vi.fn<() => Promise<boolean>>(async () => true),
+  adminFactory: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => authModuleMock(hoisted.isCoord));
-vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(),
-}));
-vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(),
-}));
+vi.mock("@/lib/supabase/server", () => makeSupabaseServerModuleMock(makeClient));
+vi.mock("@/lib/supabase/admin", () =>
+  makeSupabaseAdminModuleMock(makeClient, hoisted.adminFactory),
+);
 
 beforeEach(() => {
   writeCalls = [];
@@ -54,6 +55,7 @@ beforeEach(() => {
     responses: [],
   };
   hoisted.isCoord.mockResolvedValue(true);
+  hoisted.adminFactory.mockClear();
 });
 
 async function loadRetry() {
@@ -275,5 +277,6 @@ describe("regenerateAutoReviewBacklog — guard", () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain("coordenadores");
     expect(writeCalls).toHaveLength(0);
+    expect(hoisted.adminFactory).not.toHaveBeenCalled();
   });
 });
