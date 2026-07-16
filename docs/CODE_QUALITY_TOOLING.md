@@ -35,7 +35,7 @@ Baseline (full scan, 3388 símbolos analisados, manutenibilidade global 90,7): *
 
 ### typescript-eslint type-checked — os tipos
 
-`typescript-eslint` 8.62.0 (devDependency pinada), via a config dedicada `frontend/eslint.config.typed.mjs` e o script `npm run lint:types`. É separada da config base (`eslint.config.mjs`) e do `npm run lint` rápido porque regras type-checked precisam do `projectService` (carregam o programa de tipos inteiro) e são lentas demais para o lint do dia a dia. O subset é curado de propósito — `no-floating-promises` e `no-misused-promises`, não o `recommendedTypeChecked` inteiro — para mirar o footgun que mais aparece nesta base: promessa async não-tratada em Server Action, hook ou handler de evento.
+`typescript-eslint` 8.63.0 (devDependency pinada), via a config dedicada `frontend/eslint.config.typed.mjs` e o script `npm run lint:types`. É separada da config base (`eslint.config.mjs`) e do `npm run lint` rápido porque regras type-checked precisam do `projectService` (carregam o programa de tipos inteiro) e são lentas demais para o lint do dia a dia. O subset é curado de propósito — `no-floating-promises` e `no-misused-promises`, não o `recommendedTypeChecked` inteiro — para mirar o footgun que mais aparece nesta base: promessa async não-tratada em Server Action, hook ou handler de evento.
 
 A escolha se justificou empiricamente: o primeiro scan encontrou 59 errors em cerca de 11 arquivos — promessas não-aguardadas em hooks como `useLlmRunProgress`, `useFieldOrder`, `usePromptPreview`, em componentes como `UserMenu`, `RunLlmButton`, `CopyLinkButton`, `ExportPanel`, e em Server Actions. Eram bugs latentes que o lint sintático não via (ex.: falha de rede silenciosa ao salvar, sem toast nem log). A issue [#378](https://github.com/bdcdo/dataframeitGUI/issues/378) (onda `lint:types` da epic [#376](https://github.com/bdcdo/dataframeitGUI/issues/376)) zerou o débito real (46 errors, 25 arquivos no scan atual): hoje `npm run lint:types` passa com **0 errors** de `no-floating-promises`/`no-misused-promises` no projeto inteiro — o gate de pre-push segue file-scoped por velocidade, mas não há mais débito legado escondido atrás dele.
 
@@ -129,6 +129,8 @@ uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy ac
 ## Monitorar
 
 - **tsgo / TypeScript 7 (Project Corsa)** — compilador nativo em Go, ~10× mais rápido, em RC desde 18/06/2026, GA estimado ~1 mês depois. Não adotado agora: a API programática só entra na 7.1, então `typescript-eslint`/`ts-morph` ainda não rodam sobre o nativo. Quando o GA sair, trocar `tsc` por `tsgo` no script `typecheck` é um drop-in. O agente também pode chamar o MCP/skill do fallow e os findings do semgrep guardian sob demanda.
+
+  Enquanto isso o TypeScript fica pinado em `~6.0` no `frontend/package.json`, porque o `typescript-eslint` 8.63.0 declara peer `typescript: >=4.8.4 <6.1.0` — o teto é 6.1, não 7, então uma faixa `^6` já bastaria para violá-lo assim que a 6.1 for publicada (hoje a última 6.x é a 6.0.3). O `.github/dependabot.yml` complementa ignorando o major, mas quem barra o 6.1 é o `~6.0`. A condição de destrave é o `typescript-eslint` 9 com suporte a TS 7 — aí os dois saem juntos.
 
 ## Avaliadas e diferidas
 
