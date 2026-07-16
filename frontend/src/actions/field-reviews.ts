@@ -11,7 +11,9 @@ import {
   computeBacklogRows,
   compositeKeySet,
   diffReviewsToRemove,
+  type AssignmentRow,
   type ExistingFieldReviewRow,
+  type FieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
 } from "@/lib/auto-review-backlog";
@@ -1132,6 +1134,84 @@ async function removeOrphanAssignments(
   }
 }
 
+function deferredAdminClient(): () => SupabaseDataClient {
+  let client: SupabaseDataClient | null = null;
+  return () => {
+    client ??= createSupabaseAdmin();
+    return client;
+  };
+}
+
+async function deletePendingFieldReviews(
+  getAdmin: () => SupabaseDataClient,
+  idsToDelete: string[],
+): Promise<number> {
+  if (idsToDelete.length === 0) return 0;
+
+  // The persisted predicate closes the TOCTOU window with a self-review that
+  // completes after the initial snapshot and must no longer be deleted.
+  const { data: deleted, error } = await getAdmin()
+    .from("field_reviews")
+    .delete()
+    .in("id", idsToDelete)
+    .is("self_verdict", null)
+    .select("id");
+  if (error) throw new Error(error.message);
+  return deleted?.length ?? 0;
+}
+
+async function upsertBacklogAssignments(
+  supabase: SupabaseDataClient,
+  assignmentRows: AssignmentRow[],
+): Promise<void> {
+  if (assignmentRows.length === 0) return;
+
+  const { error } = await supabase.from("assignments").upsert(assignmentRows, {
+    onConflict: "document_id,user_id,type",
+    ignoreDuplicates: true,
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function upsertBacklogFieldReviews(
+  getAdmin: () => SupabaseDataClient,
+  fieldReviewRows: FieldReviewRow[],
+): Promise<void> {
+  if (fieldReviewRows.length === 0) return;
+
+  // This reconciles the row set by document and field. Existing rows keep
+  // their response pointers after an LLM rerun; refreshing those pointers is
+  // a separate operation with different replacement semantics.
+  const { error } = await getAdmin()
+    .from("field_reviews")
+    .upsert(fieldReviewRows, {
+      onConflict: "document_id,field_name",
+      ignoreDuplicates: true,
+    });
+  if (error) throw new Error(error.message);
+}
+
+async function persistBacklogReconciliation(
+  supabase: SupabaseDataClient,
+  projectId: string,
+  idsToDelete: string[],
+  assignmentRows: AssignmentRow[],
+  fieldReviewRows: FieldReviewRow[],
+): Promise<number> {
+  // Structural field-review writes are service-only. Create that capability
+  // only after the authenticated reads and pure reconciliation have passed.
+  const getAdmin = deferredAdminClient();
+  const actuallyRemoved = await deletePendingFieldReviews(
+    getAdmin,
+    idsToDelete,
+  );
+  await upsertBacklogAssignments(supabase, assignmentRows);
+  await upsertBacklogFieldReviews(getAdmin, fieldReviewRows);
+
+  await removeOrphanAssignments(supabase, projectId);
+  return actuallyRemoved;
+}
+
 export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
   success: boolean;
   error?: string;
@@ -1177,54 +1257,13 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       fieldReviewRows,
     );
 
-    // Structural field-review writes are service-only. Create that capability
-    // only after the authenticated reads and pure reconciliation have passed.
-    const admin =
-      idsToDelete.length > 0 || fieldReviewRows.length > 0
-        ? createSupabaseAdmin()
-        : null;
-
-    // Defesa em profundidade: `.is("self_verdict", null)` fecha a janela TOCTOU
-    // entre a leitura de `existingReviews` (fetchBacklogInputs) e este DELETE.
-    // Se um pesquisador resolver um campo nesse intervalo, o DB recusa a linha
-    // mesmo que o id esteja em `idsToDelete`. `.select("id")` devolve as linhas
-    // efetivamente apagadas, fonte da contagem `removed` retornada.
-    let actuallyRemoved = 0;
-    if (idsToDelete.length > 0) {
-      const { data: deleted, error } = await admin!
-        .from("field_reviews")
-        .delete()
-        .in("id", idsToDelete)
-        .is("self_verdict", null)
-        .select("id");
-      if (error) return { success: false, error: error.message };
-      actuallyRemoved = deleted?.length ?? 0;
-    }
-
-    if (assignmentRows.length > 0) {
-      const { error } = await supabase
-        .from("assignments")
-        .upsert(assignmentRows, {
-          onConflict: "document_id,user_id,type",
-          ignoreDuplicates: true,
-        });
-      if (error) return { success: false, error: error.message };
-    }
-    if (fieldReviewRows.length > 0) {
-      // NB: ignoreDuplicates reconcilia o *conjunto* de field_reviews
-      // (doc+field), nao os ponteiros. Uma linha ja existente mantem seus
-      // human_response_id/llm_response_id antigos mesmo que o LLM tenha
-      // re-rodado desde entao — atualizar FKs stale fica fora deste reconcile.
-      const { error } = await admin!
-        .from("field_reviews")
-        .upsert(fieldReviewRows, {
-          onConflict: "document_id,field_name",
-          ignoreDuplicates: true,
-        });
-      if (error) return { success: false, error: error.message };
-    }
-
-    await removeOrphanAssignments(supabase, projectId);
+    const actuallyRemoved = await persistBacklogReconciliation(
+      supabase,
+      projectId,
+      idsToDelete,
+      assignmentRows,
+      fieldReviewRows,
+    );
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);

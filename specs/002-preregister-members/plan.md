@@ -68,7 +68,7 @@ frontend/
 │   │   ├── 20260611130000_member_email_links.sql
 │   │   ├── 20260611140000_unify_project_members.sql
 │   │   ├── 20260611150000_review_fixes_alias_unify.sql
-│   │   └── 20260715170000_canonical_project_identity_rls.sql
+│   │   └── 20260715173000_canonical_project_identity_rls.sql
 │   └── tests/             # identidade canônica, mapping/snapshot, RLS e RPCs
 └── src/
     ├── actions/

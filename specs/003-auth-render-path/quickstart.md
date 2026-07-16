@@ -28,7 +28,7 @@
    - retry idempotente de conclusão de acesso;
    - `viewAs` sem concessão de escrita como identidade visualizada.
 
-3. Validar as migrations e regressões no banco local. A aplicação ao ambiente remoto ocorre somente pelo procedimento manual separado do projeto; este quickstart não publica schema. No rollout aprovado, `20260715170000` e `20260715180000` precisam ser aplicadas antes do frontend: o código novo exige os markers e RPCs novos e deve falhar fechado diante do schema anterior.
+3. Validar as migrations e regressões no banco local. A aplicação ao ambiente remoto ocorre somente pelo procedimento manual separado do projeto; este quickstart não publica schema. No rollout aprovado, `20260715173000` e `20260715180000` precisam ser aplicadas antes do frontend: o código novo exige os markers e RPCs novos e deve falhar fechado diante do schema anterior.
 
    ```bash
    cd frontend

@@ -11,7 +11,7 @@ npx supabase db reset
 npm run dev
 ```
 
-O quickstart valida somente o banco local. Aplicar migrations ao ambiente remoto é uma operação manual separada, feita depois da aprovação pelo procedimento operacional do projeto; nenhum comando de publicação remota faz parte deste roteiro. No rollout, as migrations `20260715170000` e `20260715180000` precisam chegar antes do frontend que consulta `access_sync_version` e chama as novas RPCs; publicar a aplicação primeiro fecha o acesso com erro técnico por contrato, em vez de operar contra um schema antigo.
+O quickstart valida somente o banco local. Aplicar migrations ao ambiente remoto é uma operação manual separada, feita depois da aprovação pelo procedimento operacional do projeto; nenhum comando de publicação remota faz parte deste roteiro. No rollout, as migrations `20260715173000` e `20260715180000` precisam chegar antes do frontend que consulta `access_sync_version` e chama as novas RPCs; publicar a aplicação primeiro fecha o acesso com erro técnico por contrato, em vez de operar contra um schema antigo.
 
 São necessárias 2+ contas de e-mail de teste (aliases Gmail `+sufixo` funcionam no Clerk dev).
 
