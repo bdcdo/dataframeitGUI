@@ -14,7 +14,7 @@ import base from "./eslint.config.mjs";
 const typedConfig = defineConfig([
   ...base,
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: ["src/**/*.{mts,ts,tsx}"],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {

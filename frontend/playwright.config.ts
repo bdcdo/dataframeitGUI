@@ -1,12 +1,29 @@
+import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
-import { config as loadEnv } from "dotenv";
 import { assertRequiredPrePushEnv } from "./playwright-pre-push-env";
+import {
+  applyEnvironment,
+  readOptionalEnvironmentFile,
+} from "./scripts/worktree-env/env-contract.mjs";
 
 // E2E lê as mesmas credenciais Clerk/Supabase de .env.local; .env.e2e (não
 // versionado) sobrescreve com as credenciais dos usuários de teste. Ver
 // .env.e2e.example e issue #107.
-loadEnv({ path: ".env.local" });
-loadEnv({ path: ".env.e2e", override: true });
+//
+// Ancorar em __dirname, e não no cwd: o contrato (playwright-pre-push-env) já
+// resolve os .example por __dirname, então ler os valores por cwd faria um
+// `playwright test -c frontend/playwright.config.ts` rodado da raiz do repo
+// achar o contrato mas nenhum valor — e o erro resultante acusaria credencial
+// ausente em vez do diretório errado.
+applyEnvironment(
+  process.env,
+  readOptionalEnvironmentFile(join(__dirname, ".env.local")),
+);
+applyEnvironment(
+  process.env,
+  readOptionalEnvironmentFile(join(__dirname, ".env.e2e")),
+  { override: true },
+);
 
 // Setado só pelo hook e2e-smoke do pre-push (nao pelo `npm run test:e2e`
 // manual): forca servidor novo, porta dedicada e execucao serial, porque o

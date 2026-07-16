@@ -11,9 +11,10 @@ import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
-import type { PendingVerdict } from "./compare-types";
+import { readOnlyTitle, type PendingVerdict } from "./compare-types";
 
 interface DivergenceActionsPanelProps {
+  readOnly: boolean;
   projectId: string;
   documentId: string;
   documentTitle: string;
@@ -32,6 +33,7 @@ interface DivergenceActionsPanelProps {
 // anterior e a linha de feedback (comentário, nota, sugestão de schema). O
 // dialog de sugestão mora aqui junto do seu único gatilho (o botão Sugerir).
 export function DivergenceActionsPanel({
+  readOnly,
   projectId,
   documentId,
   documentTitle,
@@ -46,6 +48,11 @@ export function DivergenceActionsPanel({
   onCommentChange,
 }: DivergenceActionsPanelProps) {
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const writeTitle = readOnlyTitle(readOnly);
+  const suggestionTitle = readOnlyTitle(
+    readOnly,
+    "Sugerir alteração ao codebook neste campo",
+  );
 
   return (
     <>
@@ -61,11 +68,10 @@ export function DivergenceActionsPanel({
                 "border-brand bg-brand/10 text-brand",
             )}
             onClick={() =>
-              onPrepareVerdict({
-                kind: "ambiguous",
-                verdict: "ambiguo",
-              })
+              onPrepareVerdict({ kind: "ambiguous", verdict: "ambiguo" })
             }
+            disabled={readOnly}
+            title={writeTitle}
           >
             [A] Ambíguo
           </Button>
@@ -79,11 +85,10 @@ export function DivergenceActionsPanel({
                 "border-brand bg-brand/10 text-brand",
             )}
             onClick={() =>
-              onPrepareVerdict({
-                kind: "skip",
-                verdict: "pular",
-              })
+              onPrepareVerdict({ kind: "skip", verdict: "pular" })
             }
+            disabled={readOnly}
+            title={writeTitle}
           >
             [S] Pular
           </Button>
@@ -101,6 +106,7 @@ export function DivergenceActionsPanel({
           */}
           <CustomAnswerInput
             key={`${documentId}|${fieldName}`}
+            readOnly={readOnly}
             currentValue={
               existingVerdict &&
               existingVerdict.verdict !== "ambiguo" &&
@@ -141,6 +147,8 @@ export function DivergenceActionsPanel({
           placeholder="Comentário (opcional)"
           value={comment}
           onChange={(e) => onCommentChange(e.target.value)}
+          disabled={readOnly}
+          title={writeTitle}
           className="flex-1 min-w-[180px] text-sm"
         />
         <AddNoteButton
@@ -153,13 +161,16 @@ export function DivergenceActionsPanel({
           variant="outline"
           size="sm"
           label="Anotar"
+          disabled={readOnly}
+          disabledReason={writeTitle}
         />
         <Button
           variant="outline"
           size="sm"
           className="gap-1"
           onClick={() => setSuggestOpen(true)}
-          title="Sugerir alteração ao codebook neste campo"
+          title={suggestionTitle}
+          disabled={readOnly}
         >
           <Lightbulb className="size-3.5" />
           Sugerir

@@ -12,7 +12,7 @@ import {
   buildCountsByKey,
   sortDocumentsByPendingDivergence,
   serializeEquivalencesForClient,
-  type CompareResponse,
+  type CompareQueueResponse,
   type DocCoverage,
   type QualifyDocumentsContext,
 } from "@/lib/compare-queue";
@@ -31,7 +31,7 @@ function field(overrides: Partial<PydanticField>): PydanticField {
   };
 }
 
-function response(overrides: Partial<CompareResponse> = {}): CompareResponse {
+function response(overrides: Partial<CompareQueueResponse> = {}): CompareQueueResponse {
   return {
     id: "r1",
     document_id: "doc1",
@@ -182,7 +182,7 @@ describe("buildCodingAssignedByDoc / buildCompareAssignmentStatusByDoc", () => {
 
 // Fixtures do único doc "doc1" usado pela maioria dos casos abaixo — reduz a
 // repetição do par (responsesByDoc, docsMetaMap) presente em quase todo teste.
-function doc1Responses(...responses: CompareResponse[]): Map<string, CompareResponse[]> {
+function doc1Responses(...responses: CompareQueueResponse[]): Map<string, CompareQueueResponse[]> {
   return new Map([["doc1", responses]]);
 }
 

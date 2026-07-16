@@ -15,7 +15,11 @@ import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react
 import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
-import { pendingVerdictLabel, type PendingVerdict } from "./compare-types";
+import {
+  readOnlyTitle,
+  pendingVerdictLabel,
+  type PendingVerdict,
+} from "./compare-types";
 
 interface ComparisonResponse {
   id: string;
@@ -48,6 +52,7 @@ interface EquivalenceConfig {
 }
 
 interface ComparisonPanelProps {
+  readOnly: boolean;
   projectId: string;
   documentId: string;
   documentTitle: string;
@@ -88,6 +93,7 @@ interface ComparisonPanelProps {
 }
 
 export function ComparisonPanel({
+  readOnly,
   projectId,
   documentId,
   documentTitle,
@@ -122,7 +128,7 @@ export function ComparisonPanel({
   onUnmarkEquivalencePair,
   currentUserId,
 }: ComparisonPanelProps) {
-  // Primitivos derivados da union para deps estáveis do effect (o objeto
+  // Primitivos derivados para deps estáveis do effect (o objeto
   // `docStatus` é recriado a cada render).
   const docComplete = docStatus.complete;
   const docHasNext = docStatus.complete && docStatus.hasNextDoc;
@@ -190,7 +196,8 @@ export function ComparisonPanel({
       <div className="flex-1 overflow-y-auto px-4 py-2">
         {isMulti ? (
           <MultiOptionReview
-            key={`${documentId}|${fieldName}`}
+            key={`${documentId}|${fieldName}|${readOnly}`}
+            readOnly={readOnly}
             options={fieldOptions}
             responses={responses}
             existingVerdict={existingVerdict}
@@ -199,7 +206,8 @@ export function ComparisonPanel({
           />
         ) : (
           <AgreementGroup
-            key={`${documentId}|${fieldName}`}
+            key={`${documentId}|${fieldName}|${readOnly}`}
+            readOnly={readOnly}
             responses={responses.map((r) => ({
               id: r.id,
               respondent_type: r.respondent_type,
@@ -232,6 +240,8 @@ export function ComparisonPanel({
 
         {isDivergent ? (
           <DivergenceActionsPanel
+            key={`${documentId}|${fieldName}|${readOnly}`}
+            readOnly={readOnly}
             projectId={projectId}
             documentId={documentId}
             documentTitle={documentTitle}
@@ -251,7 +261,14 @@ export function ComparisonPanel({
               <CheckCircle2 className="size-3.5 text-green-600" />
               Concordante: todos os respondentes concordam.
             </div>
-            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={onMarkReviewed}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-xs"
+              onClick={onMarkReviewed}
+              disabled={readOnly}
+              title={readOnlyTitle(readOnly)}
+            >
               Marcar doc como revisado
             </Button>
           </div>
@@ -261,7 +278,9 @@ export function ComparisonPanel({
       {isDivergent && !isMulti && (!docStatus.complete || pendingVerdict) && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-t bg-muted/20 px-4 py-2">
           <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {pendingVerdict ? (
+            {readOnly ? (
+              "Decisões desabilitadas no modo somente leitura."
+            ) : pendingVerdict ? (
               <>
                 Selecionado:{" "}
                 <span className="font-medium text-foreground">
@@ -277,7 +296,7 @@ export function ComparisonPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                disabled={isSavingVerdict}
+                disabled={readOnly || isSavingVerdict}
                 onClick={onDiscardPendingVerdict}
               >
                 Descartar
@@ -285,10 +304,14 @@ export function ComparisonPanel({
             )}
             <Button
               size="sm"
-              disabled={!pendingVerdict || isSavingVerdict}
+              disabled={readOnly || !pendingVerdict || isSavingVerdict}
               onClick={onConfirmPendingVerdict}
             >
-              {isSavingVerdict ? "Salvando..." : "Confirmar"}
+              {readOnly
+                ? "Somente leitura"
+                : isSavingVerdict
+                  ? "Salvando..."
+                  : "Confirmar"}
             </Button>
           </div>
         </div>
@@ -321,6 +344,7 @@ export function ComparisonPanel({
 
       {isDivergent && (
         <KeyboardHints
+          readOnly={readOnly}
           groupCount={groupCount}
           isMulti={isMulti}
           optionCount={isMulti ? fieldOptions.length : undefined}

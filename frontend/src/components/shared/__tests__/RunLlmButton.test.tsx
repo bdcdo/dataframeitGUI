@@ -53,6 +53,22 @@ describe("RunLlmButton", () => {
     expect(path).toBe("/api/llm/run");
     expect(opts).toMatchObject({ method: "POST" });
     expect(token).toBe("tok-123");
+    // Sem o prop, o body carrega impersonating:false — o backend não bloqueia.
+    expect(JSON.parse(opts.body)).toMatchObject({ impersonating: false });
+  });
+
+  it("com impersonating=true, o body carrega o sinal para o interlock server-side", async () => {
+    // O botão normalmente fica disabled na Comparação em somente-leitura; este
+    // teste cobre o backstop: se a execução partir, o sinal viaja ao backend,
+    // que recusa um master impersonando (issue #428).
+    fetchFastAPI.mockResolvedValue({ job_id: "j1" });
+    render(<RunLlmButton projectId="p1" documentId="d1" canRunLlm impersonating />);
+
+    await userEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => expect(fetchFastAPI).toHaveBeenCalled());
+    const [, opts] = fetchFastAPI.mock.calls[0];
+    expect(JSON.parse(opts.body)).toMatchObject({ impersonating: true });
   });
 
   it("mostra erro acionável quando o token vem nulo (template/sessão)", async () => {

@@ -6,11 +6,17 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // ganho garantindo que essas tabelas não são mais tocadas nesse path.
 import {
   makeSupabaseMock,
+  type RpcCall,
+  type TableResult,
   type TableResults,
+  type WriteCall,
 } from "./supabase-mock";
 
 let serverTableResults: TableResults | undefined;
 let fromCalls: string[];
+let writeCalls: WriteCall[];
+let rpcCalls: RpcCall[];
+let rpcResults: Record<string, TableResult> | undefined;
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
@@ -21,7 +27,12 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => {
-    const mock = makeSupabaseMock({ tableResults: serverTableResults });
+    const mock = makeSupabaseMock({
+      tableResults: serverTableResults,
+      writeCalls,
+      rpcCalls,
+      rpcResults,
+    });
     return {
       ...mock,
       from: (table: string) => {
@@ -32,11 +43,19 @@ vi.mock("@/lib/supabase/server", () => ({
   },
 }));
 
-import { getLotteryDocStats, previewLottery } from "../assignments";
+import {
+  getLotteryDocStats,
+  previewLottery,
+  smartRandomize,
+  type LotteryParams,
+} from "../assignments";
 
 beforeEach(() => {
   serverTableResults = undefined;
   fromCalls = [];
+  writeCalls = [];
+  rpcCalls = [];
+  rpcResults = undefined;
 });
 
 describe("getLotteryDocStats", () => {
@@ -161,5 +180,150 @@ describe("previewLottery", () => {
     ]);
     expect(fromCalls).toContain("lottery_doc_stats");
     expect(fromCalls).toContain("assignments");
+  });
+});
+
+// Regressão da issue #490: o sorteio de Comparação herdava o default 2 do
+// sorteio de Codificação. A regra é um revisor por documento — o veredito é ato
+// de desempate único.
+describe("sorteio de comparação: um revisor por documento (#490)", () => {
+  // Um doc apto à comparação (2 humanos) e três participantes disponíveis: se o
+  // número de revisores fosse honrado, sobrariam candidatos para uma 2ª vaga.
+  function comparisonFixture(assignments: unknown[] = []): TableResults {
+    return {
+      project_members: { data: [{ user_id: "u1" }, { user_id: "u2" }, { user_id: "u3" }] },
+      lottery_doc_stats: {
+        data: [
+          {
+            id: "d1",
+            external_id: "EXT-1",
+            title: "Doc 1",
+            human_coding_count: 2,
+            has_llm_response: false,
+            active_codificacao: 0,
+            active_comparacao: 0,
+            has_any_assignment_ever: true,
+            batch_ids: [],
+          },
+        ],
+      },
+      assignment_batches: { data: [] },
+      projects: { data: { min_responses_for_comparison: 2, automation_mode: null } },
+      assignments: { data: assignments },
+    };
+  }
+
+  it("ignora researchersPerDoc forjado no payload e atribui um único revisor", async () => {
+    serverTableResults = comparisonFixture();
+
+    const result = await previewLottery({
+      projectId: "p1",
+      type: "comparacao",
+      mode: "append",
+      balancing: "round",
+      // A união discriminada proíbe este campo no braço "comparacao": o cast é o
+      // teste. Server Action é endpoint HTTP público e o projeto não valida com
+      // zod — o contrato sob prova é o server IGNORAR o que o client pediu, e
+      // não confiar no type-check que só existe em tempo de compilação.
+      researchersPerDoc: 2,
+      participantIds: ["u1", "u2", "u3"],
+    } as unknown as LotteryParams);
+
+    expect(result.error).toBeUndefined();
+    expect(result.preview?.totalNew).toBe(1);
+    expect(
+      result.preview?.participants.filter((p) => p.newDocs > 0),
+    ).toHaveLength(1);
+  });
+
+  it("codificação continua honrando dois pesquisadores por documento", async () => {
+    serverTableResults = comparisonFixture();
+
+    const result = await previewLottery({
+      projectId: "p1",
+      type: "codificacao",
+      mode: "append",
+      balancing: "round",
+      researchersPerDoc: 2,
+      participantIds: ["u1", "u2", "u3"],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.preview?.totalNew).toBe(2);
+  });
+
+  it("documento com comparação CONCLUÍDA volta a ser sorteável, mas não para quem já comparou", async () => {
+    // Concluída não ocupa a vaga (é o que permite a re-rodada por versão de
+    // schema); o par continua bloqueado pelo preservedSet.
+    serverTableResults = comparisonFixture([
+      { document_id: "d1", user_id: "u1", status: "concluido", type: "comparacao" },
+    ]);
+
+    const result = await previewLottery({
+      projectId: "p1",
+      type: "comparacao",
+      mode: "append",
+      balancing: "round",
+      participantIds: ["u1", "u2", "u3"],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.preview?.totalNew).toBe(1);
+    const sorteado = result.preview?.participants.find((p) => p.newDocs > 0);
+    expect(sorteado?.userId).not.toBe("u1");
+  });
+
+  it("documento com comparação PENDENTE não recebe um segundo revisor", async () => {
+    serverTableResults = comparisonFixture([
+      { document_id: "d1", user_id: "u1", status: "pendente", type: "comparacao" },
+    ]);
+
+    const result = await previewLottery({
+      projectId: "p1",
+      type: "comparacao",
+      mode: "append",
+      balancing: "round",
+      // Forjado: é este pedido que, honrado, abriria a 2ª vaga do documento.
+      researchersPerDoc: 2,
+      participantIds: ["u1", "u2", "u3"],
+    } as unknown as LotteryParams);
+
+    // O documento passa nos filtros (o coordenador não filtrou nada), mas a vaga
+    // está ocupada pela comparação ativa: a prévia mostra zero elegíveis em vez
+    // de arranjar um segundo revisor.
+    expect(result.error).toBeUndefined();
+    expect(result.preview?.eligibleDocs).toBe(0);
+    expect(result.preview?.totalNew).toBe(0);
+  });
+
+  it("smartRandomize grava um assignment e registra researchers_per_doc 1 no lote", async () => {
+    serverTableResults = {
+      ...comparisonFixture(),
+      // Fila: a 1ª leitura é a do computeLottery (lista de lotes); a 2ª é o
+      // insert...select("id").single() do lote deste sorteio.
+      assignment_batches: [{ data: [] }, { data: { id: "b1" } }],
+    };
+    rpcResults = { apply_lottery_assignments: { data: 1 } };
+
+    const result = await smartRandomize({
+      projectId: "p1",
+      type: "comparacao",
+      mode: "append",
+      balancing: "round",
+      researchersPerDoc: 2, // forjado — a gravação tem de refletir o efetivo (1)
+      participantIds: ["u1", "u2", "u3"],
+    } as unknown as LotteryParams);
+
+    expect(result.error).toBeUndefined();
+    expect(result.count).toBe(1);
+
+    const rpc = rpcCalls.find((c) => c.fn === "apply_lottery_assignments");
+    expect(rpc?.args).toMatchObject({ p_type: "comparacao" });
+    expect((rpc?.args as { p_assignments: unknown[] }).p_assignments).toHaveLength(1);
+
+    const lote = writeCalls.find(
+      (c) => c.table === "assignment_batches" && c.op === "insert",
+    );
+    expect(lote?.payload).toMatchObject({ researchers_per_doc: 1 });
   });
 });

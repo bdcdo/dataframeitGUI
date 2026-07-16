@@ -1,0 +1,46 @@
+-- Invariante do produto: UM revisor de comparação por documento (issue #490).
+-- O veredito da comparação é ato de desempate único — dois revisores no mesmo
+-- documento não são dupla checagem, e sim um segundo desempate sem regra de
+-- precedência. A dupla independente é da CODIFICAÇÃO, e é lá que dois
+-- pesquisadores por documento é o método correto.
+--
+-- Até aqui nada impedia N: a única unicidade era
+-- assignments_document_id_user_id_type_key (20260402100000_assignment_type.sql),
+-- que tem user_id na chave — ela barra o MESMO revisor duas vezes, não dois
+-- revisores distintos no mesmo documento.
+--
+-- ATIVA, não qualquer: comparações CONCLUÍDAS ficam fora do predicado de
+-- propósito e podem acumular. É o que permite re-sortear a comparação de um
+-- documento numa nova rodada (ex.: bump de MAJOR do schema) sem apagar o parecer
+-- anterior. Mesma noção de "ativa" que o guard de idempotência do gatilho
+-- automático (lib/auto-comparison.ts) e a coluna active_comparacao da view
+-- lottery_doc_stats já usam, e que o sorteio manual passou a usar para decidir
+-- ocupação de vaga (computeLottery, `occupying`).
+--
+-- IS DISTINCT FROM e não <>: a coluna status é NULLABLE (001_initial_schema.sql
+-- só define DEFAULT 'pendente', sem NOT NULL). Com `status <> 'concluido'` o
+-- predicado seria NULL para uma linha de status nulo, deixando-a FORA do índice
+-- — um furo silencioso na restrição.
+--
+-- Este índice é CONSTRAINT, não caminho de acesso: o planner praticamente não
+-- consegue provar que uma query implica um predicado com IS DISTINCT FROM, então
+-- ele não vai ser usado em leitura. Isso é esperado — não trocar por <> "para o
+-- índice ser aproveitado".
+--
+-- Pré-requisito de criação (CREATE UNIQUE INDEX falha se o dado violar): a
+-- auditoria de 2026-07-16 encontrou 340 assignments de comparação em 339
+-- documentos, com UM documento em violação (4947230d, projeto 500ea889) — duas
+-- comparações pendentes, nenhuma com veredito. A linha excedente foi removida
+-- por script local antes desta migration; a auditoria repetida devolveu zero
+-- documentos com mais de uma comparação ativa (e zero com mais de uma
+-- concluída, e zero linhas de status nulo).
+--
+-- O que essa violação ensina, e que a #490 não previa: as duas linhas tinham
+-- ORIGENS DIFERENTES — uma do sorteio manual (batch_id do lote "Duda", que já
+-- rodara com researchers_per_doc = 1) e outra do gatilho automático (batch_id
+-- nulo). O default 2 do sorteio não a produziu; ela nasceu da falta de
+-- serialização entre os dois caminhos, que só o banco pode arbitrar. É a razão
+-- de este índice existir, e não apenas o guard no client e no server.
+CREATE UNIQUE INDEX IF NOT EXISTS assignments_one_active_comparacao_per_doc
+  ON assignments (document_id)
+  WHERE type = 'comparacao' AND status IS DISTINCT FROM 'concluido';

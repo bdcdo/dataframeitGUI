@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronRight, ExternalLink } from "lucide-react";
 import type { LlmResponseRecord } from "@/actions/llm";
 import { formatModelLabel } from "@/lib/model-registry";
+import { formatDateTime } from "@/lib/date-format";
 import { classifyResponse, type ResponseStatus } from "./classify";
 
 function StatusBadge({ status }: { status: ResponseStatus }) {
@@ -36,16 +37,6 @@ function formatValue(v: unknown): string {
     return v.length === 0 ? "—" : v.map((x) => formatValue(x)).join(", ");
   if (typeof v === "object") return JSON.stringify(v, null, 2);
   return String(v);
-}
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 interface LlmResponseRowProps {

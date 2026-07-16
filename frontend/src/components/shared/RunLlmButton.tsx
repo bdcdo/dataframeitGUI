@@ -1,16 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
-import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
-import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
-import { toast } from "sonner";
 import { Bot, Loader2 } from "lucide-react";
-
-// Tolera N falhas consecutivas de poll (token transitório, blip de rede) antes
-// de declarar a execução terminal: o job segue rodando no backend e um erro
-// isolado não deve derrubar o acompanhamento e mostrar erro falso.
-const MAX_POLL_FAILURES = 3;
+import { useLlmRun } from "./useLlmRun";
 
 interface RunLlmButtonProps {
   projectId: string;
@@ -23,6 +15,41 @@ interface RunLlmButtonProps {
    * sempre retornaria 403. Default true para não exigir o prop de callers que
    * já só renderizam em contexto de coordenador. */
   canRunLlm?: boolean;
+  /** Bloqueio contextual adicional para telas em modo somente leitura. Quando
+   * `disabled`, `disabledReason` é o tooltip exibido (o botão não tem fallback
+   * próprio — `RunLlmButton` vive em `shared/` e não conhece o texto da tela). */
+  disabled?: boolean;
+  disabledReason?: string;
+  /** Repassa o modo somente-leitura da impersonação master ao backend, que é o
+   * interlock de execução (issue #428). Default false: telas fora da Comparação
+   * seguem executando. O botão já fica `disabled` no client; o sinal é o
+   * backstop server-side caso a chamada chegue mesmo assim. */
+  impersonating?: boolean;
+}
+
+const RUN_LLM_ACTIVE_LABEL = "Rodar LLM neste documento";
+
+// Título/aria-label do botão, extraídos para manter o componente achatado. A
+// variante `icon` não tem texto visível, então carrega o rótulo no aria-label;
+// a de texto o dispensa. Sob `disabled` (somente leitura) o motivo
+// (disabledReason) vira o tooltip e é anexado ao aria-label do ícone.
+function runLlmLabels(
+  disabled: boolean,
+  disabledReason: string | undefined,
+  isIcon: boolean,
+): { title: string | undefined; ariaLabel: string | undefined } {
+  if (disabled) {
+    return {
+      title: disabledReason,
+      ariaLabel: isIcon
+        ? `Rodar LLM indisponível${disabledReason ? `: ${disabledReason}` : ""}`
+        : undefined,
+    };
+  }
+  return {
+    title: isIcon ? RUN_LLM_ACTIVE_LABEL : undefined,
+    ariaLabel: isIcon ? RUN_LLM_ACTIVE_LABEL : undefined,
+  };
 }
 
 export function RunLlmButton({
@@ -32,143 +59,39 @@ export function RunLlmButton({
   size = "icon",
   variant = "ghost",
   canRunLlm = true,
+  disabled = false,
+  disabledReason,
+  impersonating = false,
 }: RunLlmButtonProps) {
-  const { getToken } = useAuth();
-  const [running, setRunning] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelledRef = useRef(false);
-  const failuresRef = useRef(0);
-
-  const cleanup = useCallback(() => {
-    cancelledRef.current = true;
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => cleanup, [cleanup]);
-
-  const pollStatus = useCallback(
-    (jobId: string) => {
-      cancelledRef.current = false;
-      failuresRef.current = 0;
-
-      const poll = async () => {
-        if (cancelledRef.current) return;
-        try {
-          // Token fresco a cada poll: o do template expira em ~60s e o
-          // polling pode durar minutos. O await roda antes do guard de
-          // cancelamento de propósito (mesma razão da supressão no fetchFastAPI
-          // abaixo): o token precisa estar fresco quando a request de status
-          // parte, e mover o await para baixo do guard atrasaria a renovação.
-          // react-doctor-disable-next-line react-doctor/async-defer-await
-          const token = await requireSupabaseToken(getToken);
-          // O guard de cancelamento abaixo roda DEPOIS do await de propósito: o
-          // usuário pode cancelar enquanto a request de status está em voo, então
-          // re-checamos `cancelledRef` após a rede retornar. Mover o await para
-          // baixo do guard anularia essa semântica de cancelamento.
-          // react-doctor-disable-next-line react-doctor/async-defer-await
-          const status = await fetchFastAPI<{
-            status: string;
-            errors: string[];
-          }>(`/api/llm/status/${jobId}`, undefined, token);
-
-          if (cancelledRef.current) return;
-          failuresRef.current = 0;
-
-          if (status.status !== "running") {
-            setRunning(false);
-            if (status.status === "completed") {
-              toast.success("LLM concluído para este documento!");
-              onComplete?.();
-            } else {
-              toast.error(status.errors[0] || "Erro na execução");
-            }
-          } else {
-            timeoutRef.current = setTimeout(() => void poll(), 2000);
-          }
-        } catch {
-          if (cancelledRef.current) return;
-          // Falha isolada não é terminal: o job segue no backend. Só desiste
-          // após MAX_POLL_FAILURES consecutivas (token transitório/blip de rede).
-          failuresRef.current += 1;
-          if (failuresRef.current >= MAX_POLL_FAILURES) {
-            setRunning(false);
-            toast.error("Erro ao verificar progresso");
-          } else {
-            timeoutRef.current = setTimeout(() => void poll(), 2000);
-          }
-        }
-      };
-
-      timeoutRef.current = setTimeout(() => void poll(), 2000);
-    },
-    [onComplete, getToken]
-  );
-
-  const handleRun = async () => {
-    if (running) return;
-    setRunning(true);
-
-    try {
-      const token = await requireSupabaseToken(getToken);
-      const res = await fetchFastAPI<{ job_id: string }>(
-        "/api/llm/run",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            project_id: projectId,
-            document_ids: [documentId],
-            filter_mode: "all",
-          }),
-        },
-        token
-      );
-
-      pollStatus(res.job_id);
-    } catch (e: unknown) {
-      setRunning(false);
-      toast.error(e instanceof Error ? e.message : "Erro ao iniciar execução");
-    }
-  };
+  const { running, run } = useLlmRun({
+    projectId,
+    documentId,
+    impersonating,
+    onComplete,
+  });
 
   // Gate de coordenador: não renderiza para quem receberia 403 (#195).
   if (!canRunLlm) return null;
 
-  if (size === "icon") {
-    return (
-      <Button
-        variant={variant}
-        size="icon"
-        className="size-6"
-        onClick={() => void handleRun()}
-        disabled={running}
-        title="Rodar LLM neste documento"
-      >
-        {running ? (
-          <Loader2 className="size-3.5 animate-spin" />
-        ) : (
-          <Bot className="size-3.5" />
-        )}
-      </Button>
-    );
-  }
+  const isIcon = size === "icon";
+  const { title, ariaLabel } = runLlmLabels(disabled, disabledReason, isIcon);
 
   return (
     <Button
       variant={variant}
       size={size}
-      onClick={() => void handleRun()}
-      disabled={running}
-      className="gap-1.5"
+      className={isIcon ? "size-6" : "gap-1.5"}
+      onClick={() => void run()}
+      disabled={disabled || running}
+      title={title}
+      aria-label={ariaLabel}
     >
       {running ? (
         <Loader2 className="size-3.5 animate-spin" />
       ) : (
         <Bot className="size-3.5" />
       )}
-      Rodar LLM
+      {!isIcon && "Rodar LLM"}
     </Button>
   );
 }

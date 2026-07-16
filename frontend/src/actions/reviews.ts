@@ -14,15 +14,25 @@ export interface ResponseSnapshotEntry {
   justification?: string;
 }
 
-export async function submitVerdict(
-  projectId: string,
-  documentId: string,
-  fieldName: string,
-  verdict: string,
-  chosenResponseId?: string,
-  comment?: string,
-  responseSnapshot?: ResponseSnapshotEntry[],
-): Promise<{ error?: string }> {
+export interface SubmitVerdictInput {
+  projectId: string;
+  documentId: string;
+  fieldName: string;
+  verdict: string;
+  chosenResponseId?: string;
+  comment?: string;
+  responseSnapshot?: ResponseSnapshotEntry[];
+}
+
+export async function submitVerdict({
+  projectId,
+  documentId,
+  fieldName,
+  verdict,
+  chosenResponseId,
+  comment,
+  responseSnapshot,
+}: SubmitVerdictInput): Promise<{ error?: string }> {
   // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
   // como o membro canônico em reviewer_id e no sync do assignment. Autoria de
   // comentários permanece ligada à conta autenticada.

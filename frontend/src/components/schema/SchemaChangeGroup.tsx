@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { FieldChangeDiff } from "./FieldChangeDiff";
 import { formatRelativeDate, formatVersion } from "@/lib/schema-change-format";
+import { formatDateTime } from "@/lib/date-format";
 import type { ChangeGroup } from "@/lib/schema-change-grouping";
 import type { SchemaChangeType } from "@/lib/types";
 
@@ -79,10 +80,7 @@ export function SchemaChangeGroup({ group }: SchemaChangeGroupProps) {
         <span className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{group.changedBy}</span>
           <span className="mx-1.5">·</span>
-          <span
-            suppressHydrationWarning
-            title={new Date(group.createdAt).toLocaleString("pt-BR")}
-          >
+          <span title={formatDateTime(group.createdAt)}>
             {formatRelativeDate(group.createdAt)}
           </span>
         </span>

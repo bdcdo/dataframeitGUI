@@ -10,6 +10,7 @@ import { GabaritoSection } from "./GabaritoSection";
 import { SuggestionActions } from "./SuggestionActions";
 import { ExclusionActions } from "./ExclusionActions";
 import type { ReviewComment } from "./comment-card-utils";
+import { formatDate } from "@/lib/date-format";
 
 // Tipo vive em comment-card-utils.ts (evita ciclo pai↔filho com os
 // componentes extraídos); re-export mantém os consumidores externos intactos.
@@ -95,13 +96,11 @@ export function CommentCard({
           )}
 
         <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground" suppressHydrationWarning>
-            {comment.reviewerName} &middot;{" "}
-            {new Date(comment.createdAt).toLocaleDateString("pt-BR")}
+          <p className="text-xs text-muted-foreground">
+            {comment.reviewerName} &middot; {formatDate(comment.createdAt)}
             {isResolved && (
               <span className="ml-2 text-green-600">
-                (resolvido em{" "}
-                {new Date(comment.resolvedAt!).toLocaleDateString("pt-BR")})
+                (resolvido em {formatDate(comment.resolvedAt!)})
               </span>
             )}
           </p>
