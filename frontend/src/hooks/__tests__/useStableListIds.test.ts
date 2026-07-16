@@ -30,7 +30,11 @@ describe("useStableListIds", () => {
     });
     const before = [...result.current.ids];
     // Simula o fluxo do caller: appendId() junto do onChange que aumenta o length.
-    act(() => result.current.appendId());
+    // As chaves mantêm o callback como `void`: `appendId` devolve o id novo, e
+    // deixá-lo vazar escolhe a sobrecarga de `act` que devolve um Thenable.
+    act(() => {
+      result.current.appendId();
+    });
     rerender({ n: 3 });
     expect(result.current.ids).toHaveLength(3);
     expect(result.current.ids.slice(0, 2)).toEqual(before);
