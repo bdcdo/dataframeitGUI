@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { PydanticField } from "@/lib/types";
 import {
   callsOf,
   makeFilterAwareSupabaseMock,
+  type QueryError,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 import { CURRENT_HASH } from "@/test-utils/comparison-fixtures";
@@ -13,11 +14,12 @@ vi.mock("server-only", () => ({}));
 
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError | null>;
 
 const updateCallsOf = (table?: string) => callsOf(writeCalls, "update", table);
 
 function makeClient() {
-  return makeFilterAwareSupabaseMock({ tableData, writeCalls });
+  return makeFilterAwareSupabaseMock({ tableData, writeCalls, queryErrors });
 }
 
 const FIELDS: PydanticField[] = [
@@ -72,6 +74,7 @@ const assignment = (status: string) => ({
 
 beforeEach(() => {
   writeCalls = [];
+  queryErrors = {};
   tableData = {
     projects: [projectRow()],
     assignments: [assignment("pendente")],
@@ -79,6 +82,10 @@ beforeEach(() => {
     reviews: [],
     response_equivalences: [],
   };
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 async function loadLib() {
@@ -160,5 +167,138 @@ describe("syncCompareAssignment — guarda de <2 respostas qualificadas (#286)",
     const client = makeClient();
     await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
     expect(updateCallsOf("assignments")).toHaveLength(0);
+  });
+});
+
+describe("syncCompareAssignment — regressão de comparação histórica (#497)", () => {
+  it("mantém a concluída e loga o 23505 quando outra comparação está ativa", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.assignments = [
+      assignment("concluido"),
+      {
+        ...assignment("pendente"),
+        id: "a2",
+        user_id: "rev2",
+      },
+    ];
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    queryErrors["assignments:update"] = {
+      message:
+        'duplicate key value violates unique constraint "assignments_one_active_comparacao_per_doc"',
+      code: "23505",
+    };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).resolves.toBeUndefined();
+
+    expect(updateCallsOf("assignments")).toHaveLength(1);
+    expect(updateCallsOf("assignments")[0].payload).toEqual({
+      status: "pendente",
+      completed_at: null,
+    });
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const line = warnSpy.mock.calls[0][0] as string;
+    expect(line.startsWith("[compare-sync] ")).toBe(true);
+    expect(JSON.parse(line.slice("[compare-sync] ".length))).toEqual({
+      event: "regression_blocked_by_active_assignment",
+      projectId: "p1",
+      documentId: "doc1",
+      assignmentId: "a1",
+      userId: "rev1",
+      previousStatus: "concluido",
+      intendedStatus: "pendente",
+      errorCode: "23505",
+    });
+  });
+
+  it("também preserva a concluída quando a regressão pretendida é em_andamento", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.projects = [
+      projectRow({
+        pydantic_fields: [
+          ...FIELDS,
+          {
+            name: "fundamento",
+            type: "text",
+            description: "",
+            target: "all",
+          },
+        ],
+      }),
+    ];
+    tableData.assignments = [
+      assignment("concluido"),
+      {
+        ...assignment("pendente"),
+        id: "a2",
+        user_id: "rev2",
+      },
+    ];
+    tableData.responses = [
+      resp("a", "proc", { answers: { decisao: "proc", fundamento: "A" } }),
+      resp("b", "improc", {
+        answers: { decisao: "improc", fundamento: "B" },
+      }),
+    ];
+    tableData.reviews = [
+      {
+        project_id: "p1",
+        document_id: "doc1",
+        reviewer_id: "rev1",
+        field_name: "decisao",
+      },
+    ];
+    queryErrors["assignments:update"] = {
+      message:
+        'duplicate key value violates unique constraint "assignments_one_active_comparacao_per_doc"',
+      code: "23505",
+    };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).resolves.toBeUndefined();
+
+    expect(updateCallsOf("assignments")[0].payload).toEqual({
+      status: "em_andamento",
+      completed_at: null,
+    });
+    expect(warnSpy.mock.calls[0][0]).toContain(
+      '"intendedStatus":"em_andamento"',
+    );
+  });
+
+  it("propaga erro de UPDATE diferente de violação única", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.assignments = [assignment("concluido")];
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    queryErrors["assignments:update"] = {
+      message: "permission denied for table assignments",
+      code: "42501",
+    };
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).rejects.toThrow("permission denied for table assignments");
+  });
+
+  it("não trata 23505 como skip fora da regressão de uma concluída", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.assignments = [assignment("pendente")];
+    tableData.responses = [resp("a", "proc"), resp("b", "proc")];
+    queryErrors["assignments:update"] = {
+      message: "unexpected unique violation",
+      code: "23505",
+    };
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).rejects.toThrow("unexpected unique violation");
   });
 });
