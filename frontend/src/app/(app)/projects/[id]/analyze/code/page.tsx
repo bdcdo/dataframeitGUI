@@ -118,7 +118,7 @@ export default async function CodePage({
     );
 
   // Responses incluem agora round_id e schema_version para classificacao por rodada.
-  // Filtra respondent_type=humano: respostas LLM têm respondent_id distinto, mas o
+  // Filtra respondent_type=humano: respostas LLM usam respondent_id NULL, mas o
   // filtro explícito alinha com saveResponse e protege contra colisões futuras.
   const docIds = allDocuments.map((d) => d.id);
   const { data: responses } = await supabase

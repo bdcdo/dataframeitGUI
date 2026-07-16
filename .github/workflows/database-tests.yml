@@ -1,0 +1,38 @@
+name: Database contract tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/database-tests.yml"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/supabase/migrations/**"
+      - "frontend/supabase/tests/responses_llm_actor_integrity.test.sql"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  responses-llm-actor-integrity:
+    name: Responses LLM actor integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: 24.10.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx supabase start
+      - run: npx supabase db reset --local --no-seed
+      - run: npm run test:db:responses-actor
