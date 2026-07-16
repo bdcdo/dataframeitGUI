@@ -14,15 +14,25 @@ export interface ResponseSnapshotEntry {
   justification?: string;
 }
 
-export async function submitVerdict(
-  projectId: string,
-  documentId: string,
-  fieldName: string,
-  verdict: string,
-  chosenResponseId?: string,
-  comment?: string,
-  responseSnapshot?: ResponseSnapshotEntry[],
-): Promise<{ error?: string }> {
+export interface SubmitVerdictInput {
+  projectId: string;
+  documentId: string;
+  fieldName: string;
+  verdict: string;
+  chosenResponseId?: string;
+  comment?: string;
+  responseSnapshot?: ResponseSnapshotEntry[];
+}
+
+export async function submitVerdict({
+  projectId,
+  documentId,
+  fieldName,
+  verdict,
+  chosenResponseId,
+  comment,
+  responseSnapshot,
+}: SubmitVerdictInput): Promise<{ error?: string }> {
   const user = await getAuthUser();
   if (!user) return { error: "Não autenticado" };
 

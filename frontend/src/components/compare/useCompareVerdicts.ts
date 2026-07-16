@@ -164,15 +164,15 @@ export function useCompareVerdicts({
         comment: verdictComment ?? null,
       };
       const saved = await actionSucceeded(
-        submitVerdict(
+        submitVerdict({
           projectId,
-          currentDoc.id,
-          currentFieldName,
+          documentId: currentDoc.id,
+          fieldName: currentFieldName,
           verdict,
           chosenResponseId,
-          verdictComment,
-          buildSnapshot(fieldResponses),
-        ),
+          comment: verdictComment,
+          responseSnapshot: buildSnapshot(fieldResponses),
+        }),
         "Failed to submit compare verdict",
         {
           projectId,
@@ -249,16 +249,16 @@ export function useCompareVerdicts({
         comment: verdictComment ?? null,
       };
       const saved = await actionSucceeded(
-        confirmEquivalentVerdict(
+        confirmEquivalentVerdict({
           projectId,
-          docId,
+          documentId: docId,
           fieldName,
           responseIds,
           gabaritoId,
           verdictDisplay,
-          verdictComment,
-          buildSnapshot(fieldResponses),
-        ),
+          comment: verdictComment,
+          responseSnapshot: buildSnapshot(fieldResponses),
+        }),
         "Failed to confirm equivalent verdict",
         { projectId, documentId: docId, fieldName },
         "Não foi possível salvar a equivalência. Tente novamente antes de avançar.",

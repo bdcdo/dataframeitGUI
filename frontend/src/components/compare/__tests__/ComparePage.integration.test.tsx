@@ -271,15 +271,15 @@ describe("ComparePage — árvore real (smoke)", () => {
     await user.click(screen.getByRole("button", { name: "Confirmar" }));
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
-    expect(submitVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      "ambiguo",
-      undefined,
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "ambiguo",
+      chosenResponseId: undefined,
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
   });
 
   it("confirmação de rascunho mantém click/Enter em single-flight no mesmo batch", async () => {
@@ -351,15 +351,15 @@ describe("ComparePage — árvore real (smoke)", () => {
     await user.keyboard("1{Enter}");
 
     expect(submitVerdict).toHaveBeenCalledTimes(1);
-    expect(submitVerdict).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      "campoA",
-      "Deferido",
-      "r1",
-      undefined,
-      expect.any(Array),
-    );
+    expect(submitVerdict).toHaveBeenCalledWith({
+      projectId: "p1",
+      documentId: "d1",
+      fieldName: "campoA",
+      verdict: "Deferido",
+      chosenResponseId: "r1",
+      comment: undefined,
+      responseSnapshot: expect.any(Array),
+    });
   });
 
   it("impersonação mantém navegação, mas bloqueia controles e atalhos de escrita", async () => {

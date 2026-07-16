@@ -67,7 +67,12 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
   it("ambiguo sem comentario existente → insere project_comments kind='ambiguity'", async () => {
     tableData = { project_comments: null };
     const submitVerdict = await loadSubmit();
-    await submitVerdict("p1", "doc1", "q1", "ambiguo");
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "ambiguo",
+    });
 
     const insert = opCalls.find(
       (c) => c.op === "insert" && c.table === "project_comments",
@@ -84,7 +89,13 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
   it("ambiguo com comentario do revisor → preserva o texto trimado no corpo", async () => {
     tableData = { project_comments: null };
     const submitVerdict = await loadSubmit();
-    await submitVerdict("p1", "doc1", "q1", "ambiguo", undefined, "  depende do contexto  ");
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "ambiguo",
+      comment: "  depende do contexto  ",
+    });
 
     const insert = opCalls.find(
       (c) => c.op === "insert" && c.table === "project_comments",
@@ -97,7 +108,12 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
   it("ambiguo com comentario ja existente → nao insere de novo (idempotente)", async () => {
     tableData = { project_comments: { id: "pc1" } };
     const submitVerdict = await loadSubmit();
-    await submitVerdict("p1", "doc1", "q1", "ambiguo");
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "ambiguo",
+    });
 
     expect(opCalls.some((c) => c.op === "insert")).toBe(false);
   });
@@ -106,7 +122,12 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
     // reviews query (stillAmbiguous) retorna vazio
     tableData = { reviews: [] };
     const submitVerdict = await loadSubmit();
-    await submitVerdict("p1", "doc1", "q1", "concordo");
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "concordo",
+    });
 
     expect(
       opCalls.some((c) => c.op === "delete" && c.table === "project_comments"),
@@ -116,7 +137,12 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
   it("verdict nao-ambiguo mas outro revisor ainda marca ambiguo → nao deleta", async () => {
     tableData = { reviews: [{ id: "r2" }] };
     const submitVerdict = await loadSubmit();
-    await submitVerdict("p1", "doc1", "q1", "concordo");
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "concordo",
+    });
 
     expect(opCalls.some((c) => c.op === "delete")).toBe(false);
   });
