@@ -318,7 +318,7 @@ describe("useSchemaDraft", () => {
   it("não apaga envelope com token mais novo ao concluir save", () => {
     const view = renderDraft();
     act(() => view.result.current.setFields(EDITED_FIELDS));
-    const submission = view.result.current.prepareSubmission();
+    view.result.current.prepareSubmission();
     const submitted = storedDraft()!;
     const newer: SchemaDraftEnvelope = {
       ...submitted,
@@ -330,8 +330,39 @@ describe("useSchemaDraft", () => {
       JSON.stringify(newer),
     );
 
-    act(() => view.result.current.markSaved(snapshot(EDITED_FIELDS), submission.writeToken));
+    act(() => view.result.current.markSaved(snapshot(EDITED_FIELDS)));
     expect(storedDraft()).toEqual(newer);
+  });
+
+  // O editor segue editável durante o save (`SchemaBuilderGUI` não recebe
+  // `isPending`) e o debounce rotaciona o token a cada 300ms. Apagar pelo token
+  // SUBMETIDO deixava o envelope órfão sempre que uma escrita caísse entre a
+  // submissão e a resposta — e, como o estado limpo zera `persistedToken`, a aba
+  // passava a colidir com o próprio lixo em toda escrita seguinte: rascunho nunca
+  // mais gravado, e o banner acusando outra aba. O irmão acima cobre o caso
+  // oposto (envelope alheio, que deve sobreviver); este cobre o próprio.
+  it("apaga o próprio envelope quando o debounce rotacionou o token durante o save", () => {
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    view.result.current.prepareSubmission();
+
+    const during = [{ ...EDITED_FIELDS[0], help_text: "Durante o save" }];
+    act(() => view.result.current.setFields(during));
+    flushDebounce();
+    // Desfaz: os campos voltam a ser exatamente os submetidos, mas o token não.
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+
+    act(() => view.result.current.markSaved(snapshot(EDITED_FIELDS)));
+
+    expect(view.result.current.isDirty).toBe(false);
+    expect(storedDraft()).toBeNull();
+
+    // O dano real não era o envelope órfão, era a aba perder o slot para sempre.
+    act(() => view.result.current.setFields(during));
+    flushDebounce();
+    expect(view.result.current.storageBlocked).toBe(false);
+    expect(view.result.current.draftPersisted).toBe(true);
   });
 
   it("preserva e rebasa edição feita durante o save", () => {
@@ -342,10 +373,7 @@ describe("useSchemaDraft", () => {
     act(() => view.result.current.setFields(later));
 
     act(() =>
-      view.result.current.markSaved(
-        snapshot(submission.fields, "0.1.1", 2),
-        submission.writeToken,
-      ),
+      view.result.current.markSaved(snapshot(submission.fields, "0.1.1", 2)),
     );
 
     expect(view.result.current.fields).toEqual(later);
@@ -582,10 +610,8 @@ describe("useSchemaDraft", () => {
   it("beforeunload fica inativo após save limpo", () => {
     const view = renderDraft();
     act(() => view.result.current.setFields(EDITED_FIELDS));
-    const submission = view.result.current.prepareSubmission();
-    act(() =>
-      view.result.current.markSaved(snapshot(EDITED_FIELDS), submission.writeToken),
-    );
+    view.result.current.prepareSubmission();
+    act(() => view.result.current.markSaved(snapshot(EDITED_FIELDS)));
 
     const event = new Event("beforeunload", { cancelable: true });
     void act(() => window.dispatchEvent(event));

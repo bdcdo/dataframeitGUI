@@ -217,7 +217,7 @@ function SchemaEditor({
           toast.error("O schema mudou em outra sessão. Revise o conflito antes de publicar.");
           return;
         }
-        markSaved(r.snapshot, null);
+        markSaved(r.snapshot);
         toast.success(`Nova versão MAJOR publicada: ${r.snapshot.version}`);
         setMajorDialogOpen(false);
         refresh();
@@ -251,7 +251,7 @@ function SchemaEditor({
           `v${v.major}.${v.minor}.${v.patch} · ${r.stats.logEntriesUpdated} entradas, ${r.stats.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
           { duration: 10000 },
         );
-        markSaved(r.snapshot, null);
+        markSaved(r.snapshot);
         setBackfillDialogOpen(false);
         refresh();
       } catch (e: unknown) {
@@ -319,7 +319,7 @@ function SchemaEditor({
           toast.warning("O schema mudou em outra sessão. Revise as diferenças para continuar.");
           return;
         }
-        markSaved(r.snapshot, submission.writeToken);
+        markSaved(r.snapshot);
         toast.success("Schema salvo!");
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");

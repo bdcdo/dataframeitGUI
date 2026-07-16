@@ -43,7 +43,6 @@ interface UseSchemaDraftParams {
 interface SchemaDraftSubmission {
   fields: PydanticField[];
   expectedBaseline: SchemaBaselineIdentity;
-  writeToken: string | null;
 }
 
 export interface SchemaDraftConflict {
@@ -356,15 +355,25 @@ function stateAfterFieldsChange(
   };
 }
 
+// O token do slot é sempre `storage.persistedToken` — "o que esta aba gravou por
+// último e ainda acredita ser dela" —, nunca o que foi submetido. O debounce
+// rotaciona o token a cada tecla, e o editor continua editável durante o save
+// (`SchemaBuilderGUI` não recebe `isPending`): qualquer escrita de rascunho entre
+// `prepareSubmission()` e aqui deixa o token submetido obsoleto. Apagar por ele
+// falhava o compare-and-swap, o envelope ficava órfão, e como este ramo zera
+// `persistedToken` toda escrita seguinte passava a colidir com o próprio lixo —
+// o rascunho nunca mais era gravado na sessão e o banner culpava outra aba.
 function stateAfterSave(
   current: SchemaDraftState,
   saved: SchemaSnapshot,
-  submittedWriteToken: string | null,
   scope: SchemaDraftScope,
 ): SchemaDraftState {
   const fields = stateFields(current);
   if (sameFields(fields, saved.fields)) {
-    const deleted = deleteDraftIfTokenMatches(scope, submittedWriteToken);
+    const deleted = deleteDraftIfTokenMatches(
+      scope,
+      current.storage.persistedToken,
+    );
     return cleanState(saved, deleted.available);
   }
   const draft = createDraft(fields, saved);
@@ -561,7 +570,6 @@ function submissionFromState(state: SchemaDraftState): SchemaDraftSubmission {
   return {
     fields: stateFields(state),
     expectedBaseline: { revision: stateBaseline(state).revision },
-    writeToken: state.kind === "dirty" ? state.draft.writeToken : null,
   };
 }
 
@@ -665,13 +673,8 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
     return submissionFromState(stateRef.current);
   };
 
-  const markSaved = (
-    saved: SchemaSnapshot,
-    submittedWriteToken: string | null,
-  ) => {
-    setState(
-      stateAfterSave(stateRef.current, saved, submittedWriteToken, scope),
-    );
+  const markSaved = (saved: SchemaSnapshot) => {
+    setState(stateAfterSave(stateRef.current, saved, scope));
   };
 
   const registerRemoteConflict = (remote: SchemaSnapshot) => {
