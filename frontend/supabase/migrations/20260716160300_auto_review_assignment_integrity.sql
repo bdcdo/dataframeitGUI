@@ -112,7 +112,12 @@ BEGIN
       AND llm_response.id = v_llm_response_id
       AND llm_response.respondent_type = 'llm'
       AND llm_response.respondent_id IS NULL
-      AND llm_response.is_latest = true;
+      AND llm_response.is_latest = true
+      -- Documento fora de escopo não gera fila. O mesmo predicado vale na
+      -- revalidação, na reconciliação e na pós-condição: filtrar só aqui faria
+      -- o deploy abortar ao cobrar uma pendência que a reconciliação ignora.
+      AND document.excluded_at IS NULL
+      AND document.exclusion_pending_at IS NULL;
 
     IF NOT FOUND THEN
       RAISE EXCEPTION
@@ -200,6 +205,13 @@ BEGIN
   LOOP
     -- Revalida e protege a tupla depois do lock da membership. Isso fecha a
     -- janela entre a validação inicial e um update concorrente das respostas.
+    --
+    -- FOR UPDATE, não FOR KEY SHARE: quem supera uma resposta faz
+    -- `UPDATE responses SET is_latest = false`, que não toca coluna de chave e
+    -- por isso adquire FOR NO KEY UPDATE — modo que NÃO conflita com
+    -- FOR KEY SHARE. Com o lock fraco, o UPDATE concorrente não esperava e a
+    -- fila era materializada contra uma resposta já superada, que é exatamente
+    -- a janela que este bloco existe para fechar.
     PERFORM 1
     FROM public.responses AS human_response
     JOIN public.responses AS llm_response
@@ -219,7 +231,13 @@ BEGIN
       AND llm_response.respondent_type = 'llm'
       AND llm_response.respondent_id IS NULL
       AND llm_response.is_latest = true
-    FOR KEY SHARE OF human_response, llm_response, document;
+      AND document.excluded_at IS NULL
+      AND document.exclusion_pending_at IS NULL
+    -- `document` permanece em KEY SHARE: a exclusão é soft (UPDATE de
+    -- excluded_at), então travá-lo para escrita bloquearia o coordenador sem
+    -- necessidade — as duas respostas é que precisam do lock forte.
+    FOR UPDATE OF human_response, llm_response
+    FOR KEY SHARE OF document;
 
     IF NOT FOUND THEN
       RAISE EXCEPTION 'a tupla de auto-revisão mudou durante a atribuição'
@@ -331,8 +349,14 @@ BEGIN
     JOIN public.project_members AS member
       ON member.project_id = review.project_id
      AND member.user_id = review.self_reviewer_id
+    JOIN public.documents AS document
+      ON document.id = review.document_id
+     AND document.project_id = review.project_id
     WHERE review.project_id = p_project_id
       AND review.self_verdict IS NULL
+      -- Mesmo escopo da atribuição: documento fora de escopo não reabre fila.
+      AND document.excluded_at IS NULL
+      AND document.exclusion_pending_at IS NULL
     ORDER BY review.self_reviewer_id, review.document_id
   LOOP
     PERFORM 1
@@ -417,19 +441,32 @@ BEGIN
     JOIN public.project_members AS member
       ON member.project_id = review.project_id
      AND member.user_id = review.self_reviewer_id
+    JOIN public.documents AS document
+      ON document.id = review.document_id
+     AND document.project_id = review.project_id
     WHERE review.self_verdict IS NULL
+      AND document.excluded_at IS NULL
+      AND document.exclusion_pending_at IS NULL
     ORDER BY review.project_id
   LOOP
     PERFORM public.reconcile_auto_review_assignments_with_pending(v_project_id);
   END LOOP;
 
+  -- A pós-condição usa o mesmo escopo da reconciliação. Cobrar aqui um
+  -- documento que a reconciliação ignora por estar fora de escopo abortaria o
+  -- deploy por um drift que, por contrato, não deve ser reparado.
   IF EXISTS (
     SELECT 1
     FROM public.field_reviews AS review
     JOIN public.project_members AS member
       ON member.project_id = review.project_id
      AND member.user_id = review.self_reviewer_id
+    JOIN public.documents AS document
+      ON document.id = review.document_id
+     AND document.project_id = review.project_id
     WHERE review.self_verdict IS NULL
+      AND document.excluded_at IS NULL
+      AND document.exclusion_pending_at IS NULL
       AND NOT EXISTS (
         SELECT 1
         FROM public.assignments AS assignment

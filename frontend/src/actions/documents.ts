@@ -515,14 +515,27 @@ export async function getDocumentForCoding(
     exclusionPending,
   };
 
-  const { data: response } = await supabase
+  // O filtro is_latest e o maybeSingle espelham fetchSaveContext em
+  // actions/responses.ts: depois de uma unificação de membros, o conjunto
+  // fundido pode ter respostas antigas (is_latest=false) do mesmo respondente
+  // no mesmo documento. Sem o filtro, .single() erra com múltiplas linhas e o
+  // formulário abriria em branco — e o save seguinte gravaria o branco por
+  // cima da resposta vigente.
+  const { data: response, error: responseError } = await supabase
     .from("responses")
     .select("answers, justifications")
     .eq("project_id", projectId)
     .eq("document_id", documentId)
     .eq("respondent_id", memberUserId)
     .eq("respondent_type", "humano")
-    .single();
+    .eq("is_latest", true)
+    .maybeSingle();
+
+  // Uma leitura falha não pode virar "ainda não respondeu": o formulário em
+  // branco que ela produziria é indistinguível de um documento novo.
+  if (responseError) {
+    throw new Error(responseError.message);
+  }
 
   // Fronteira de leitura do modo Explorar — mesma primitiva do modo Atribuídos
   // (analyze/code/page.tsx), que lê o mesmo dado por outro caminho.

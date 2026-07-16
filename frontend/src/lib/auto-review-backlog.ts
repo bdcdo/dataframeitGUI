@@ -56,6 +56,7 @@ export function computeBacklogRows(
   llmByDocId: Map<string, LlmResponseRow>,
   equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
+  memberIds: ReadonlySet<string>,
 ): {
   candidates: AutoReviewCandidate[];
   fieldReviewRows: FieldReviewRow[];
@@ -68,6 +69,16 @@ export function computeBacklogRows(
   for (const human of humanResponses) {
     const llm = llmByDocId.get(human.document_id);
     if (!llm) continue;
+
+    // A remoção de um membro apaga a membership e os assignments pendentes, mas
+    // preserva as respostas — por design. Sem este filtro, elas continuavam
+    // virando candidatas e a RPC rejeitava o LOTE INTEIRO com 23514 ("a
+    // resposta humana não pertence a um membro atual do projeto"), de forma
+    // determinística e permanente: bastava um pesquisador removido para a
+    // regeneração do backlog nunca mais funcionar no projeto, inclusive para
+    // quem continua membro. Restringir o produtor ao mesmo universo que a RPC
+    // exige torna esse estado inconstruível, em vez de tratar a exceção.
+    if (!memberIds.has(human.respondent_id)) continue;
 
     // #174: só arbitrar codificações completas. is_partial é sinal inútil de
     // completude para o humano (quase sempre false), então o filtro de query

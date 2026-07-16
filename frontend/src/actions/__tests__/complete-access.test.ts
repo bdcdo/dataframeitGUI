@@ -14,12 +14,17 @@ vi.mock("@clerk/nextjs/server", () => ({
 const reconcileClerkUserAccess = vi.fn<
   (clerkUserId: string) => Promise<string | null>
 >(async () => "sb_user_1");
-vi.mock("@/lib/clerk-sync", () => ({
+// importOriginal preserva a classe REAL de ClerkIdentityConflictError: a action
+// discrimina o motivo terminal por `instanceof`, e uma classe dublê tornaria a
+// asserção vácua — passaria por construção do teste, não pelo código.
+vi.mock("@/lib/clerk-sync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/clerk-sync")>()),
   reconcileClerkUserAccess: (clerkUserId: string) =>
     reconcileClerkUserAccess(clerkUserId),
 }));
 
 import { completeAccess } from "@/actions/complete-access";
+import { ClerkIdentityConflictError } from "@/lib/clerk-sync";
 
 beforeEach(() => {
   reconcileClerkUserAccess.mockReset();
@@ -72,6 +77,19 @@ describe("completeAccess — idempotência e falha segura", () => {
     const result = await completeAccess();
 
     expect(result).toEqual({ ok: false, reason: "unknown-recoverable" });
+  });
+
+  // O conflito estrutural é o único motivo terminal: insistir nele nunca
+  // conclui. Rotulá-lo como recuperável devolvia ao usuário um botão "Tentar
+  // novamente" que repetia o mesmo erro para sempre.
+  it("conflito de identidade é terminal, não recuperável", async () => {
+    reconcileClerkUserAccess.mockRejectedValueOnce(
+      new ClerkIdentityConflictError("Este e-mail já pertence a uma conta ativa"),
+    );
+
+    const result = await completeAccess();
+
+    expect(result).toEqual({ ok: false, reason: "identity-conflict" });
   });
 
   it("erro ao ler a sessão fica contido como falha recuperável", async () => {

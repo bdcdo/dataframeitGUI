@@ -1,13 +1,27 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
-import { reconcileClerkUserAccess } from "@/lib/clerk-sync";
+import {
+  ClerkIdentityConflictError,
+  reconcileClerkUserAccess,
+} from "@/lib/clerk-sync";
 
 // Resultado da conclusão de acesso. `type` é apagado na compilação, então não
 // vira export síncrono proibido em arquivo "use server" (lição do #412).
+//
+// `identity-conflict` é o único motivo terminal: os demais convidam a retry,
+// este convida a procurar o coordenador. Sem a distinção, um conflito
+// estrutural — que por definição não muda com insistência — era servido como
+// "Tentar novamente" e prendia o usuário num loop sem saída.
 export type CompleteAccessResult =
   | { ok: true }
-  | { ok: false; reason: "sync-temporary-failure" | "unknown-recoverable" };
+  | {
+      ok: false;
+      reason:
+        | "sync-temporary-failure"
+        | "unknown-recoverable"
+        | "identity-conflict";
+    };
 
 /**
  * Conclui/repara o vínculo Clerk↔Supabase de forma idempotente e explícita —
@@ -36,6 +50,12 @@ export async function completeAccess(): Promise<CompleteAccessResult> {
       clerkUserId,
       error,
     });
+    // Conflito estrutural não melhora com insistência — mesma leitura que
+    // addMember já aplica ao mesmo erro. Devolvê-lo como recuperável ofereceria
+    // um botão que nunca conclui.
+    if (error instanceof ClerkIdentityConflictError) {
+      return { ok: false, reason: "identity-conflict" };
+    }
     return { ok: false, reason: "unknown-recoverable" };
   }
 }

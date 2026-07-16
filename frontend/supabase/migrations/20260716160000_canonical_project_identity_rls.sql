@@ -830,6 +830,7 @@ AS $$
 DECLARE
   v_current_snapshot_version BIGINT;
   v_clerk_deleted BOOLEAN;
+  v_access_sync_version INTEGER;
 BEGIN
   IF p_snapshot_version < 0 THEN
     RAISE EXCEPTION 'snapshot Clerk inválido' USING ERRCODE = '22023';
@@ -839,8 +840,14 @@ BEGIN
     pg_catalog.hashtextextended('canonical-project-identity', 0)
   );
 
-  SELECT mapping.access_snapshot_version, mapping.clerk_deleted
-  INTO v_current_snapshot_version, v_clerk_deleted
+  SELECT
+    mapping.access_snapshot_version,
+    mapping.clerk_deleted,
+    mapping.access_sync_version
+  INTO
+    v_current_snapshot_version,
+    v_clerk_deleted,
+    v_access_sync_version
   FROM public.clerk_user_mapping mapping
   WHERE mapping.clerk_user_id = p_clerk_user_id
     AND mapping.supabase_user_id = p_supabase_user_id
@@ -852,6 +859,18 @@ BEGIN
   END IF;
 
   IF v_clerk_deleted OR v_current_snapshot_version > p_snapshot_version THEN
+    RETURN false;
+  END IF;
+
+  -- Replay da geração já concluída é no-op, não recomeço. A versão vem do
+  -- `updatedAt` do Clerk e o Svix entrega at-least-once, então a mesma versão
+  -- chega mais de uma vez; sem este corte, a reentrega passava pelo `>` acima
+  -- (V > V é falso) e derrubava para 0 o marker de uma conta já sincronizada —
+  -- revogando o acesso até um retry concluir a segunda fase, ou para sempre se
+  -- ela falhasse.
+  IF v_current_snapshot_version = p_snapshot_version
+     AND v_access_sync_version >= 1
+  THEN
     RETURN false;
   END IF;
 
@@ -2316,6 +2335,36 @@ BEGIN
   END IF;
 
   -- ===== assignments (colisão: target prevalece) =====
+  -- Precedência do target vale para a identidade e para o progresso: uma
+  -- codificação concluída do target supera uma em andamento do source, e o
+  -- DELETE abaixo descarta a do source sem dó.
+  --
+  -- A auto-revisão é a exceção, porque o trabalho dela não vive no assignment e
+  -- sim nos field_reviews, que a fusão transfere logo adiante: field_reviews é
+  -- UNIQUE(document_id, field_name), então source e target podem deter campos
+  -- distintos do MESMO documento. Se o target já concluiu a fila daquele
+  -- documento e o source deixou campos sem veredito, descartar o assignment do
+  -- source faria os field_reviews pendentes migrarem para uma fila fechada —
+  -- estado que a pós-condição de 20260716160300 trata como erro de deploy, e
+  -- que sumiria o documento da fila do target sem volta. Reabrir só quando há
+  -- pendência real migrando mantém a regra estreita: nenhum outro tipo é
+  -- tocado, e nada é reaberto sem trabalho a fazer.
+  UPDATE public.assignments t
+  SET status = 'pendente',
+      completed_at = NULL
+  WHERE t.project_id = p_project_id
+    AND t.user_id = p_target_user_id
+    AND t.type = 'auto_revisao'
+    AND t.status = 'concluido'
+    AND EXISTS (
+      SELECT 1
+      FROM public.field_reviews fr
+      WHERE fr.project_id = p_project_id
+        AND fr.document_id = t.document_id
+        AND fr.self_reviewer_id = p_source_user_id
+        AND fr.self_verdict IS NULL
+    );
+
   DELETE FROM public.assignments s
   WHERE s.project_id = p_project_id
     AND s.user_id = p_source_user_id

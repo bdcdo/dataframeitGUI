@@ -6,7 +6,11 @@ const hoisted = vi.hoisted(() => ({
   verify: vi.fn(),
 }));
 
-vi.mock("@/lib/clerk-sync", () => ({
+// importOriginal preserva a classe REAL de ClerkIdentityConflictError: a rota
+// decide o status por `instanceof`, então uma classe dublê faria a checagem
+// passar por construção do teste, sem provar nada sobre o código.
+vi.mock("@/lib/clerk-sync", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/clerk-sync")>()),
   reconcileClerkUserAccess: (...args: unknown[]) => hoisted.reconcile(...args),
   revokeClerkUserAccess: (...args: unknown[]) => hoisted.revoke(...args),
 }));
@@ -29,6 +33,7 @@ vi.mock("svix", () => ({
 }));
 
 import { POST } from "@/app/api/webhooks/clerk/route";
+import { ClerkIdentityConflictError } from "@/lib/clerk-sync";
 
 function userEvent(
   type: "user.created" | "user.updated" | "user.deleted" = "user.created",
@@ -152,5 +157,34 @@ describe("webhook Clerk — reconciliação de acesso", () => {
 
     expect(response.status).toBe(500);
     await expect(response.text()).resolves.toBe("Access reconciliation failed");
+  });
+
+  // O par do teste acima: o Svix trata todo não-2xx como falha e reentrega em
+  // escada. Para um conflito estrutural — que por definição não muda com
+  // insistência — isso queimaria as tentativas e marcaria o endpoint como
+  // falhando, afogando o sinal de uma indisponibilidade real.
+  it("conflito estrutural de identidade responde 200: retry não resolveria", async () => {
+    hoisted.reconcile.mockRejectedValueOnce(
+      new ClerkIdentityConflictError("Este e-mail já pertence a uma conta ativa"),
+    );
+
+    const response = await POST(webhookRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe(
+      "Access conflict: retry will not resolve",
+    );
+  });
+
+  it("user.deleted sem id é no-op 200, não retry de um evento sem ação possível", async () => {
+    hoisted.verify.mockReturnValueOnce({
+      type: "user.deleted",
+      data: {},
+    });
+
+    const response = await POST(webhookRequest());
+
+    expect(response.status).toBe(200);
+    expect(hoisted.revoke).not.toHaveBeenCalled();
   });
 });

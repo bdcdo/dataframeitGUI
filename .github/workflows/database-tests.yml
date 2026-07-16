@@ -6,8 +6,11 @@ on:
       - ".github/workflows/database-tests.yml"
       - "frontend/package.json"
       - "frontend/package-lock.json"
+      - "frontend/scripts/run-sql-test.sh"
       - "frontend/supabase/migrations/**"
-      - "frontend/supabase/tests/responses_llm_actor_integrity.test.sql"
+      # Glob, não a lista nominal: enquanto o filtro citava um arquivo só, as
+      # suítes novas entravam no repo sem gate nenhum e ninguém percebia.
+      - "frontend/supabase/tests/**"
   workflow_dispatch:
 
 permissions:
@@ -18,8 +21,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  responses-llm-actor-integrity:
-    name: Responses LLM actor integrity
+  database-contracts:
+    name: Database contracts
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -35,4 +38,19 @@ jobs:
       - run: npm ci
       - run: npx supabase start
       - run: npx supabase db reset --local --no-seed
-      - run: npm run test:db:responses-actor
+
+      # Cada suíte roda em passo próprio: um `npm run test:db` só diria que
+      # "o banco falhou", e a suíte que quebrou é a informação útil.
+      - name: Responses LLM actor integrity
+        run: npm run test:db:responses-actor
+      - name: Identidade canônica por projeto e RLS
+        run: npm run test:db:identity
+      - name: Mapping Clerk e snapshot em duas fases
+        run: npm run test:db:clerk-mapping
+      - name: Fechamento da fila de auto-revisão
+        run: npm run test:db:auto-review-sync
+
+      # As fixtures deste precisam estar commitadas (duas conexões dblink veem
+      # o mesmo estado), então ele suja o banco e fica por último.
+      - name: Concorrência da auto-revisão
+        run: npm run test:db:auto-review-concurrency

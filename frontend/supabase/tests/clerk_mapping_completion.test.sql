@@ -526,6 +526,56 @@ $$;
 
 DROP TRIGGER fail_snapshot_profile_update_trigger ON public.profiles;
 
+-- Replay da MESMA geração já concluída. O Svix entrega at-least-once e a versão
+-- é o `updatedAt` do Clerk, então a reentrega é rotina — e o begin só comparava
+-- `>`, deixando `V > V` falso: a reentrega seguia para o UPDATE incondicional e
+-- zerava o marker de uma conta sincronizada, revogando o acesso dela até um
+-- retry concluir a segunda fase (ou para sempre, se ela falhasse).
+DO $$
+DECLARE
+  v_sync_version integer;
+BEGIN
+  -- Conta saudável: geração 300 concluída, marker 1.
+  IF NOT public.begin_clerk_access_snapshot(
+    'clerk_snapshot_test',
+    '91000000-0000-0000-0000-000000000001',
+    300
+  ) OR NOT public.complete_clerk_access_snapshot(
+    'clerk_snapshot_test',
+    '91000000-0000-0000-0000-000000000001',
+    300,
+    ARRAY['snapshot-v300@example.test'],
+    'Nome 300',
+    'Snapshot',
+    true
+  ) THEN
+    RAISE EXCEPTION 'FALHOU replay: não consegui sincronizar a geração 300';
+  END IF;
+
+  IF public.begin_clerk_access_snapshot(
+    'clerk_snapshot_test',
+    '91000000-0000-0000-0000-000000000001',
+    300
+  ) THEN
+    RAISE EXCEPTION
+      'FALHOU replay: begin aceitou reentrega de uma geração já concluída';
+  END IF;
+
+  SELECT access_sync_version
+  INTO v_sync_version
+  FROM public.clerk_user_mapping
+  WHERE clerk_user_id = 'clerk_snapshot_test';
+
+  IF v_sync_version <> 1 THEN
+    RAISE EXCEPTION
+      'FALHOU replay: reentrega derrubou o marker para %, revogando o acesso',
+      v_sync_version;
+  END IF;
+
+  RAISE NOTICE 'OK: replay da geração concluída é no-op e preserva o acesso';
+END;
+$$;
+
 DO $$
 DECLARE
   v_uid uuid;

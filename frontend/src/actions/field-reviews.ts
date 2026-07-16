@@ -1024,6 +1024,10 @@ interface BacklogInputs {
   llmResponses: LlmResponseRow[];
   equivalences: EquivalenceRow[];
   existingReviews: ExistingFieldReviewRow[];
+  // Membros atuais: a RPC de atribuição exige membership viva para cada
+  // respondente, então o produtor precisa do mesmo universo para não emitir
+  // candidato que ela vai recusar.
+  memberIds: Set<string>;
 }
 
 // Batch de leitura inicial do backlog — lança em qualquer erro de query,
@@ -1039,6 +1043,7 @@ async function fetchBacklogInputs(
     { data: llmResponses, error: llmErr },
     { data: equivalences, error: equivErr },
     { data: existingReviews, error: existingErr },
+    { data: members, error: membersErr },
   ] = await Promise.all([
     admin
       .from("projects")
@@ -1070,6 +1075,7 @@ async function fetchBacklogInputs(
       .from("field_reviews")
       .select("id, document_id, field_name, self_verdict")
       .eq("project_id", projectId),
+    admin.from("project_members").select("user_id").eq("project_id", projectId),
   ]);
 
   if (projErr) throw new Error(projErr.message);
@@ -1077,6 +1083,7 @@ async function fetchBacklogInputs(
   if (llmErr) throw new Error(llmErr.message);
   if (equivErr) throw new Error(equivErr.message);
   if (existingErr) throw new Error(existingErr.message);
+  if (membersErr) throw new Error(membersErr.message);
 
   return {
     fields: (project?.pydantic_fields as PydanticField[]) ?? [],
@@ -1084,6 +1091,9 @@ async function fetchBacklogInputs(
     llmResponses: (llmResponses ?? []) as LlmResponseRow[],
     equivalences: (equivalences ?? []) as EquivalenceRow[],
     existingReviews: (existingReviews ?? []) as ExistingFieldReviewRow[],
+    memberIds: new Set(
+      ((members ?? []) as Array<{ user_id: string }>).map((m) => m.user_id),
+    ),
   };
 }
 
@@ -1219,6 +1229,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       llmResponses,
       equivalences,
       existingReviews,
+      memberIds,
     } = await fetchBacklogInputs(supabase, projectId);
 
     if (fields.length === 0) {
@@ -1235,6 +1246,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       llmByDocId,
       equivByDoc,
       fields,
+      memberIds,
     );
 
     const { idsToDelete, keptResolved } = diffReviewsToRemove(

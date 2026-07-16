@@ -38,6 +38,19 @@ $$;
 ALTER TABLE public.assignments
   ALTER COLUMN status SET NOT NULL;
 
+-- Pelo mesmo motivo de `assignments.status`: as guardas abaixo avaliam
+-- `is_latest` em contexto booleano, e um NULL faria `NOT NEW.is_latest`
+-- devolver NULL — a guarda não dispararia e o trigger passaria a tratar como
+-- corrente uma resposta que não é. A coluna nasceu `BOOLEAN DEFAULT true` sem
+-- NOT NULL (001_initial_schema, então `is_current`) e nunca foi endurecida.
+-- Fechar por tipo evita repetir a comparação null-safe em cada leitor novo.
+UPDATE public.responses
+  SET is_latest = false
+  WHERE is_latest IS NULL;
+
+ALTER TABLE public.responses
+  ALTER COLUMN is_latest SET NOT NULL;
+
 -- Toda criação dos dois lados da relação toma a mesma trava. Depois dela, o
 -- trigger verifica o lado oposto; assim response e assignment concorrentes
 -- não conseguem construir um estado em que revisor e codificador coincidem.

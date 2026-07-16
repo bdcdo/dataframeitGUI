@@ -23,9 +23,10 @@ export type CompletionReason =
   | Extract<AuthResolution, { reason: string }>["reason"]
   | Extract<CompleteAccessResult, { ok: false }>["reason"];
 
+// `action` ausente = estado terminal, sem botão de retry.
 const REASON_COPY: Record<
   CompletionReason,
-  { title: string; description: string; action: string; supportHint?: string }
+  { title: string; description: string; action?: string; supportHint?: string }
 > = {
   "link-pending": {
     title: "Estamos preparando seu acesso",
@@ -52,6 +53,15 @@ const REASON_COPY: Record<
     action: "Tentar novamente",
     supportHint:
       "Se o problema persistir após algumas tentativas, procure o coordenador responsável pelo seu projeto.",
+  },
+  // Único motivo sem `action`: o conflito não muda por insistência, então
+  // oferecer um botão aqui seria prometer uma saída que não existe.
+  "identity-conflict": {
+    title: "Seu e-mail já está em uso por outra conta",
+    description:
+      "O e-mail desta conta já pertence a um cadastro ativo na plataforma. Por segurança, não é possível concluir o acesso automaticamente.",
+    supportHint:
+      "Procure o coordenador responsável pelo seu projeto para unificar os cadastros.",
   },
 };
 
@@ -84,39 +94,28 @@ export function AccessCompletionCard({
     startTransition(async () => {
       const result = await completeAccess();
       if (result.ok) {
-        // A action atualiza a metadata no backend do Clerk, mas o JWT template
-        // em cache ainda pode carregar o supabase_uid anterior por até um ciclo
-        // de renovação. O token novo precisa existir antes da navegação porque
-        // as consultas Supabase da página de destino já dependem desse claim.
+        // A action atualiza a metadata no backend do Clerk e o vínculo JÁ está
+        // gravado neste ponto. A renovação abaixo é best-effort, não um portão:
+        // a página de destino é renderizada no servidor e minta o próprio token
+        // por request (lib/supabase/server.ts), então quem depende deste cache
+        // é só o cliente ao chamar o FastAPI (lib/api.ts). Bloquear a navegação
+        // por um blip aqui anunciaria falha sobre um acesso concluído.
         try {
-          const token = await getToken({
-            template: "supabase",
-            skipCache: true,
-          });
-          if (!token) {
-            throw new Error("Clerk não devolveu o token Supabase renovado");
-          }
+          await getToken({ template: "supabase", skipCache: true });
         } catch (error) {
           console.error(
             "AccessCompletionCard: falha ao renovar token após concluir acesso",
             { error },
           );
-          setCurrentReason("unknown-recoverable");
-          return;
         }
 
-        // Vínculo e JWT confirmados: segue para o destino pretendido.
         router.replace(nextUrl);
         router.refresh();
         return;
       }
       // Retry não resolveu: atualiza a mensagem para o motivo devolvido, sem
       // enviar o usuário de volta ao login como se estivesse sem sessão.
-      setCurrentReason(
-        result.reason === "sync-temporary-failure"
-          ? "sync-temporary-failure"
-          : "unknown-recoverable",
-      );
+      setCurrentReason(result.reason);
     });
   }
 
@@ -155,15 +154,17 @@ export function AccessCompletionCard({
           {copy.supportHint ? (
             <p className="text-sm text-muted-foreground">{copy.supportHint}</p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={handleRetry}
-              disabled={isPending}
-              aria-busy={isPending}
-            >
-              {isPending ? "Concluindo acesso…" : copy.action}
-            </Button>
-          </div>
+          {copy.action ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={handleRetry}
+                disabled={isPending}
+                aria-busy={isPending}
+              >
+                {isPending ? "Concluindo acesso…" : copy.action}
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>

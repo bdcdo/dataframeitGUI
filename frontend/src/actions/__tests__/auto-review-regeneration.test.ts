@@ -74,6 +74,9 @@ beforeEach(() => {
     response_equivalences: [],
     field_reviews: [],
     assignments: [],
+    // A RPC exige membership viva para cada respondente do lote; o produtor lê
+    // a mesma lista para não emitir candidato que ela recusaria.
+    project_members: [{ project_id: "p1", user_id: "member-1" }],
   };
 });
 
@@ -109,5 +112,57 @@ describe("regenerateAutoReviewBacklog — escrita transacional em lote", () => {
     ]);
     expect(writeCalls.filter((call) => call.op === "upsert")).toEqual([]);
     expect(adminFactory).toHaveBeenCalledTimes(1);
+  });
+
+  // Remover um membro apaga a membership e os assignments pendentes, mas
+  // preserva as respostas. Enquanto elas viravam candidatas, a RPC recusava o
+  // LOTE INTEIRO ('a resposta humana não pertence a um membro atual do
+  // projeto'), e a regeneração ficava quebrada para sempre no projeto —
+  // inclusive para quem continua membro.
+  it("resposta de ex-membro não entra no lote nem bloqueia os membros atuais", async () => {
+    tableData.responses.push(
+      {
+        id: "human-2",
+        project_id: "p1",
+        document_id: "doc-2",
+        respondent_id: "ex-membro",
+        respondent_type: "humano",
+        is_latest: true,
+        is_partial: false,
+        answers: { q1: "sim" },
+        answer_field_hashes: null,
+      },
+      {
+        id: "llm-2",
+        project_id: "p1",
+        document_id: "doc-2",
+        respondent_type: "llm",
+        is_latest: true,
+        answers: { q1: "não" },
+        answer_field_hashes: null,
+      },
+    );
+
+    const { regenerateAutoReviewBacklog } = await import(
+      "@/actions/field-reviews"
+    );
+
+    await expect(regenerateAutoReviewBacklog("p1")).resolves.toMatchObject({
+      success: true,
+      regenerated: 1,
+    });
+
+    const assignCall = rpcCalls.find(
+      (call) => call.fn === "assign_auto_reviews_if_eligible",
+    );
+    expect(assignCall?.args).toEqual({
+      p_candidates: [
+        {
+          human_response_id: "human-1",
+          llm_response_id: "llm-1",
+          field_names: ["q1"],
+        },
+      ],
+    });
   });
 });
