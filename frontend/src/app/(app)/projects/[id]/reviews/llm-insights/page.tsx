@@ -58,7 +58,7 @@ export default async function LlmInsightsPage({
     supabase
       .from("projects")
       .select(
-        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
+        "pydantic_fields, schema_revision",
       )
       .eq("id", id)
       .single(),
@@ -106,9 +106,7 @@ export default async function LlmInsightsPage({
   const isCoordinator = coordinatorGate(accessContext, { failOpen: true });
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
-  const schemaVersion = `${project?.schema_version_major ?? 0}.${project?.schema_version_minor ?? 1}.${project?.schema_version_patch ?? 0}`;
   const schemaBaseline = {
-    version: schemaVersion,
     revision: project?.schema_revision ?? 0,
   };
 

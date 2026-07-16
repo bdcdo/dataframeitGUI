@@ -26,6 +26,7 @@ import type {
   SchemaMergeChoice,
   SchemaMergeConflict,
 } from "@/lib/schema-merge";
+import { unresolvedSchemaConflicts } from "@/lib/schema-merge";
 
 interface SchemaEditorDialogsProps {
   backfillOpen: boolean;
@@ -212,7 +213,7 @@ export function SchemaEditorDialogs({
             </Button>
             <Button
               onClick={onApplyResolvedDraft}
-              disabled={(conflict?.merge.unresolvedConflictIds.length ?? 1) > 0}
+              disabled={!conflict || unresolvedSchemaConflicts(conflict.merge).length > 0}
               className="bg-brand text-brand-foreground hover:bg-brand/90"
             >
               Aplicar merge para revisar

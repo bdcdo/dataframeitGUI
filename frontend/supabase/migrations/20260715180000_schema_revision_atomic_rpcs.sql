@@ -4,13 +4,23 @@
 -- mudança correspondente. pydantic_hash fica fora da identidade: o runner
 -- pode atualizá-lo isoladamente sem criar uma revisão fictícia.
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+
+UPDATE public.projects
+SET pydantic_fields = '[]'::jsonb
+WHERE pydantic_fields IS NULL;
+
 ALTER TABLE public.projects
-  ADD COLUMN schema_revision bigint NOT NULL DEFAULT 0;
+  ALTER COLUMN pydantic_fields SET DEFAULT '[]'::jsonb,
+  ALTER COLUMN pydantic_fields SET NOT NULL;
+
+ALTER TABLE public.projects
+  ADD COLUMN schema_revision bigint NOT NULL DEFAULT 0
+  CONSTRAINT projects_schema_revision_nonnegative CHECK (schema_revision >= 0);
 
 CREATE OR REPLACE FUNCTION public.enforce_project_schema_revision()
 RETURNS trigger
 LANGUAGE plpgsql
-SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
@@ -56,7 +66,6 @@ CREATE OR REPLACE FUNCTION public.commit_project_schema(
   p_expected_revision bigint,
   p_pydantic_fields jsonb,
   p_pydantic_code text,
-  p_pydantic_hash text,
   p_version_major int,
   p_version_minor int,
   p_version_patch int,
@@ -96,7 +105,7 @@ BEGIN
   END IF;
 
   IF p_change_type IS NULL
-     OR p_change_type NOT IN ('major', 'minor', 'patch', 'initial') THEN
+     OR p_change_type NOT IN ('major', 'minor', 'patch') THEN
     RAISE EXCEPTION 'Invalid schema change_type: %', p_change_type
       USING ERRCODE = '22023';
   END IF;
@@ -174,10 +183,32 @@ BEGIN
     RETURN;
   END IF;
 
+  IF (p_change_type = 'major' AND
+      (p_version_major, p_version_minor, p_version_patch)
+        IS DISTINCT FROM (v_major + 1, 0, 0))
+     OR (p_change_type = 'minor' AND
+         (p_version_major, p_version_minor, p_version_patch)
+           IS DISTINCT FROM (v_major, v_minor + 1, 0))
+     OR (p_change_type = 'patch' AND
+         (p_version_major, p_version_minor, p_version_patch)
+           IS DISTINCT FROM (v_major, v_minor, v_patch + 1)) THEN
+    RAISE EXCEPTION
+      'Schema change_type % does not match version transition %.%.% -> %.%.%',
+      p_change_type, v_major, v_minor, v_patch,
+      p_version_major, p_version_minor, p_version_patch
+      USING ERRCODE = '22023';
+  END IF;
+
   UPDATE public.projects AS p
   SET pydantic_fields = p_pydantic_fields,
       pydantic_code = p_pydantic_code,
-      pydantic_hash = p_pydantic_hash,
+      pydantic_hash = CASE
+        WHEN p_pydantic_code IS NULL THEN NULL
+        ELSE substring(
+          encode(extensions.digest(p_pydantic_code, 'sha256'), 'hex')
+          FROM 1 FOR 16
+        )
+      END,
       schema_version_major = p_version_major,
       schema_version_minor = p_version_minor,
       schema_version_patch = p_version_patch,
@@ -232,10 +263,97 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.commit_project_schema(
-  uuid, bigint, jsonb, text, text, int, int, int, text, jsonb, uuid
+  uuid, bigint, jsonb, text, int, int, int, text, jsonb, uuid
 ) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.commit_project_schema(
-  uuid, bigint, jsonb, text, text, int, int, int, text, jsonb, uuid
+  uuid, bigint, jsonb, text, int, int, int, text, jsonb, uuid
+) TO authenticated, service_role;
+
+-- Aprovar uma sugestão e aplicar seu schema é uma única transação. A função
+-- reutiliza o commit canônico; se a sugestão não puder ser resolvida, a exceção
+-- reverte também projeto e histórico.
+CREATE OR REPLACE FUNCTION public.approve_schema_suggestion(
+  p_suggestion_id uuid,
+  p_project_id uuid,
+  p_expected_revision bigint,
+  p_pydantic_fields jsonb,
+  p_pydantic_code text,
+  p_version_major int,
+  p_version_minor int,
+  p_version_patch int,
+  p_change_type text,
+  p_log_entries jsonb,
+  p_changed_by uuid
+) RETURNS TABLE(
+  status text,
+  schema_revision bigint,
+  pydantic_fields jsonb,
+  schema_version_major int,
+  schema_version_minor int,
+  schema_version_patch int
+)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+  v_commit record;
+  v_suggestion_id uuid;
+BEGIN
+  SELECT * INTO v_commit
+  FROM public.commit_project_schema(
+    p_project_id,
+    p_expected_revision,
+    p_pydantic_fields,
+    p_pydantic_code,
+    p_version_major,
+    p_version_minor,
+    p_version_patch,
+    p_change_type,
+    p_log_entries,
+    p_changed_by
+  );
+
+  IF v_commit.status <> 'saved' THEN
+    RETURN QUERY
+      SELECT v_commit.status,
+             v_commit.schema_revision,
+             v_commit.pydantic_fields,
+             v_commit.schema_version_major,
+             v_commit.schema_version_minor,
+             v_commit.schema_version_patch;
+    RETURN;
+  END IF;
+
+  UPDATE public.schema_suggestions AS suggestion
+  SET status = 'approved',
+      resolved_by = p_changed_by,
+      resolved_at = now()
+  WHERE suggestion.id = p_suggestion_id
+    AND suggestion.project_id = p_project_id
+    AND suggestion.status = 'pending'
+  RETURNING suggestion.id INTO v_suggestion_id;
+
+  IF v_suggestion_id IS NULL THEN
+    RAISE EXCEPTION 'Suggestion is missing, belongs to another project, or is not pending'
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  RETURN QUERY
+    SELECT v_commit.status,
+           v_commit.schema_revision,
+           v_commit.pydantic_fields,
+           v_commit.schema_version_major,
+           v_commit.schema_version_minor,
+           v_commit.schema_version_patch;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.approve_schema_suggestion(
+  uuid, uuid, bigint, jsonb, text, int, int, int, text, jsonb, uuid
+) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.approve_schema_suggestion(
+  uuid, uuid, bigint, jsonb, text, int, int, int, text, jsonb, uuid
 ) TO authenticated, service_role;
 
 -- Backfill transacional: o cálculo e o agrupamento permanecem puros no
@@ -272,6 +390,7 @@ DECLARE
   v_expected int;
   v_affected int;
   v_distinct int;
+  v_total int;
 BEGIN
   IF p_expected_revision IS NULL
      OR p_final_major IS NULL
@@ -389,6 +508,13 @@ BEGIN
     RETURN;
   END IF;
 
+  IF (v_major, v_minor, v_patch)
+       IS DISTINCT FROM (p_final_major, p_final_minor, p_final_patch)
+     AND jsonb_array_length(COALESCE(p_log_updates, '[]'::jsonb)) = 0 THEN
+    RAISE EXCEPTION 'Backfill cannot change schema version without log updates'
+      USING ERRCODE = '22023';
+  END IF;
+
   WITH requested AS MATERIALIZED (
     SELECT update_row.id,
            update_row.change_type,
@@ -414,13 +540,30 @@ BEGIN
     RETURNING log.id
   )
   SELECT (SELECT count(*) FROM requested),
+         (SELECT count(DISTINCT id) FROM requested),
          (SELECT count(*) FROM updated)
-  INTO v_expected, v_affected;
+  INTO v_expected, v_distinct, v_affected;
+
+  IF v_distinct <> v_expected THEN
+    RAISE EXCEPTION 'Backfill log ids must be unique'
+      USING ERRCODE = '22023';
+  END IF;
 
   IF v_affected <> v_expected THEN
     RAISE EXCEPTION
       'Backfill log count mismatch: expected %, updated %',
       v_expected, v_affected
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT count(*) INTO v_total
+  FROM public.schema_change_log AS log
+  WHERE log.project_id = p_project_id;
+
+  IF v_expected <> v_total THEN
+    RAISE EXCEPTION
+      'Backfill log coverage mismatch: expected %, received %',
+      v_total, v_expected
       USING ERRCODE = 'P0001';
   END IF;
 
@@ -456,6 +599,7 @@ BEGIN
     FROM requested
     WHERE response.id = requested.id
       AND response.project_id = p_project_id
+      AND response.version_inferred_from IS DISTINCT FROM 'live_save'
     RETURNING response.id
   )
   SELECT (SELECT count(*) FROM requested),
@@ -472,6 +616,18 @@ BEGIN
     RAISE EXCEPTION
       'Backfill response count mismatch: expected %, updated %',
       v_expected, v_affected
+      USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT count(*) INTO v_total
+  FROM public.responses AS response
+  WHERE response.project_id = p_project_id
+    AND response.version_inferred_from IS DISTINCT FROM 'live_save';
+
+  IF v_expected <> v_total THEN
+    RAISE EXCEPTION
+      'Backfill response coverage mismatch: expected %, received %',
+      v_total, v_expected
       USING ERRCODE = 'P0001';
   END IF;
 

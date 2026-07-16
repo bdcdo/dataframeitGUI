@@ -26,7 +26,7 @@ const baseProps = {
   },
   setConfig: vi.fn(),
   pydanticFields: [] as { name: string }[],
-  schemaBaseline: { version: "0.1.0", revision: 0 },
+  schemaBaseline: { revision: 0 },
 };
 
 afterEach(() => {
@@ -55,7 +55,7 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
         "p1",
         LLM_AMBIGUITIES_FIELD,
         true,
-        { version: "0.1.0", revision: 0 },
+        { revision: 0 },
       ),
     );
     expect(toastSuccess).toHaveBeenCalledWith("Campo de ambiguidades adicionado");

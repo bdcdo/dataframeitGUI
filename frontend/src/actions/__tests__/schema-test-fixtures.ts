@@ -21,6 +21,5 @@ export const PROJECT_SELECT: TableResult = {
 };
 
 export const EMPTY_BASELINE: SchemaBaselineIdentity = {
-  version: "0.1.0",
   revision: 0,
 };

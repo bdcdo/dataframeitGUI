@@ -34,7 +34,6 @@ function rawDraft(fields: PydanticField[] = [trigger, complete]) {
   return JSON.stringify({
     formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,
     writeToken: "write-1",
-    updatedAt: 1,
     base: { fields: [trigger], version: "0.1.0", revision: 4 },
     fields,
   });
@@ -47,11 +46,10 @@ describe("parseSchemaDraft", () => {
     );
   });
 
-  it("aceita envelope v3 com baseline completo e todas as propriedades", () => {
+  it("aceita envelope v4 com baseline completo e todas as propriedades", () => {
     expect(parseSchemaDraft(rawDraft())).toEqual({
-      formatVersion: 3,
+      formatVersion: 4,
       writeToken: "write-1",
-      updatedAt: 1,
       base: { fields: [trigger], version: "0.1.0", revision: 4 },
       fields: [trigger, complete],
     });
@@ -106,6 +104,14 @@ describe("parseSchemaDraft", () => {
   it("preserva estado intermediário estruturalmente válido", () => {
     const intermediate = [{ ...trigger, description: "" }];
     expect(parseSchemaDraft(rawDraft(intermediate))?.fields).toEqual(intermediate);
+  });
+
+  it("rejeita nomes de campo duplicados no rascunho", () => {
+    expect(
+      parseSchemaDraft(
+        rawDraft([trigger, { ...trigger, description: "Duplicado" }]),
+      ),
+    ).toBeNull();
   });
 
   it("rejeita JSON corrompido, formato antigo, token vazio e revisão inválida", () => {

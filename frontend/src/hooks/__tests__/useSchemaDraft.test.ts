@@ -6,6 +6,7 @@ import {
   useSchemaDraft,
 } from "../useSchemaDraft";
 import { parseSchemaDraft, type SchemaDraftEnvelope } from "@/lib/schema-draft";
+import { unresolvedSchemaConflicts } from "@/lib/schema-merge";
 import type { PydanticField, SchemaSnapshot } from "@/lib/types";
 
 const BASE_FIELDS: PydanticField[] = [
@@ -64,7 +65,6 @@ describe("useSchemaDraft", () => {
     const first = renderDraft();
     act(() => first.result.current.setFields(EDITED_FIELDS));
 
-    expect(first.result.current.draftState).toBe("dirty-memory");
     expect(first.result.current.draftPersisted).toBe(false);
     expect(storedDraft()).toBeNull();
     flushDebounce();
@@ -73,11 +73,11 @@ describe("useSchemaDraft", () => {
       schemaDraftStorageKey("project-1"),
     ]);
     expect(storedDraft()).toMatchObject({
-      formatVersion: 3,
+      formatVersion: 4,
       base: { fields: BASE_FIELDS, version: "0.1.0", revision: 1 },
       fields: EDITED_FIELDS,
     });
-    expect(first.result.current.draftState).toBe("dirty-persisted");
+    expect(first.result.current.draftPersisted).toBe(true);
 
     first.unmount();
     const second = renderDraft();
@@ -111,7 +111,7 @@ describe("useSchemaDraft", () => {
         { ...EDITED_FIELDS[0], help_text: "ainda em memória" },
       ]),
     );
-    expect(view.result.current.draftState).toBe("dirty-memory");
+    expect(view.result.current.draftPersisted).toBe(false);
     expect(storedDraft()?.writeToken).toBe(persistedToken);
 
     act(() => view.result.current.setFields(BASE_FIELDS));
@@ -150,6 +150,36 @@ describe("useSchemaDraft", () => {
     expect(storedDraft()?.fields).toEqual(EDITED_FIELDS);
   });
 
+  it("faz flush ao desmontar antes do fim do debounce", () => {
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+
+    view.unmount();
+
+    expect(storedDraft()?.fields).toEqual(EDITED_FIELDS);
+  });
+
+  it("não sobrescreve o rascunho que outra aba gravou", () => {
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    const otherTab: SchemaDraftEnvelope = {
+      formatVersion: 4,
+      writeToken: "outra-aba",
+      base: snapshot(BASE_FIELDS, "0.1.0", 1),
+      fields: [{ ...BASE_FIELDS[0], help_text: "Outra aba" }],
+    };
+    window.localStorage.setItem(
+      schemaDraftStorageKey("project-1"),
+      JSON.stringify(otherTab),
+    );
+
+    flushDebounce();
+
+    expect(storedDraft()).toEqual(otherTab);
+    expect(view.result.current.draftPersisted).toBe(false);
+    expect(view.result.current.storageBlocked).toBe(true);
+  });
+
   it("não avança persistência após falha transitória e tenta novamente na edição seguinte", () => {
     const originalSetItem = Storage.prototype.setItem;
     let fail = true;
@@ -168,14 +198,14 @@ describe("useSchemaDraft", () => {
     act(() => view.result.current.setFields(EDITED_FIELDS));
     flushDebounce();
 
-    expect(view.result.current.draftState).toBe("dirty-memory");
+    expect(view.result.current.draftPersisted).toBe(false);
     expect(view.result.current.storageAvailable).toBe(false);
     expect(storedDraft()).toBeNull();
 
     const later = [{ ...EDITED_FIELDS[0], help_text: "Segunda edição" }];
     act(() => view.result.current.setFields(later));
     flushDebounce();
-    expect(view.result.current.draftState).toBe("dirty-persisted");
+    expect(view.result.current.draftPersisted).toBe(true);
     expect(view.result.current.storageAvailable).toBe(true);
     expect(storedDraft()?.fields).toEqual(later);
   });
@@ -187,7 +217,7 @@ describe("useSchemaDraft", () => {
     act(() => view.result.current.setFields(BASE_FIELDS));
 
     expect(view.result.current.isDirty).toBe(false);
-    expect(view.result.current.draftState).toBe("clean");
+    expect(view.result.current.draftPersisted).toBe(false);
     expect(storedDraft()).toBeNull();
   });
 
@@ -199,7 +229,6 @@ describe("useSchemaDraft", () => {
     const newer: SchemaDraftEnvelope = {
       ...submitted,
       writeToken: "outra-aba",
-      updatedAt: submitted.updatedAt + 1,
       fields: [{ ...EDITED_FIELDS[0], help_text: "Outra aba" }],
     };
     window.localStorage.setItem(
@@ -261,21 +290,74 @@ describe("useSchemaDraft", () => {
       ),
     );
 
-    const conflictId = view.result.current.conflict!.merge.unresolvedConflictIds[0];
+    const conflictId = unresolvedSchemaConflicts(
+      view.result.current.conflict!.merge,
+    )[0].id;
     expect(view.result.current.fields).toEqual(remoteFields);
     expect(view.result.current.applyResolvedDraft()).toBe(false);
 
     act(() => view.result.current.resolveConflict(conflictId, "local"));
-    expect(view.result.current.conflict?.merge.unresolvedConflictIds).toEqual([]);
+    expect(unresolvedSchemaConflicts(view.result.current.conflict!.merge)).toEqual([]);
     expect(view.result.current.fields).toEqual(EDITED_FIELDS);
     act(() => expect(view.result.current.applyResolvedDraft()).toBe(true));
 
     expect(view.result.current.conflict).toBeNull();
-    expect(view.result.current.baseline).toEqual({ version: "0.1.1", revision: 2 });
+    expect(view.result.current.baseline).toEqual({ revision: 2 });
     expect(storedDraft()).toMatchObject({
       base: { fields: remoteFields, version: "0.1.1", revision: 2 },
       fields: EDITED_FIELDS,
     });
+  });
+
+  it("preserva a intenção local quando chega outra revisão durante o conflito", () => {
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    const remoteRevision2 = [{
+      ...BASE_FIELDS[0],
+      description: "Pergunta remota",
+    }];
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot(remoteRevision2, "0.1.1", 2),
+      ),
+    );
+
+    const remoteRevision3 = [{
+      ...remoteRevision2[0],
+      help_text: "Ajuda remota posterior",
+    }];
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot(remoteRevision3, "0.1.2", 3),
+      ),
+    );
+
+    const [conflict] = unresolvedSchemaConflicts(
+      view.result.current.conflict!.merge,
+    );
+    act(() => view.result.current.resolveConflict(conflict.id, "local"));
+    expect(view.result.current.fields).toEqual([{
+      ...EDITED_FIELDS[0],
+      help_text: "Ajuda remota posterior",
+    }]);
+  });
+
+  it("ignora snapshot atrasado com revisão menor", () => {
+    const view = renderDraft();
+    const revision3 = [{ ...BASE_FIELDS[0], help_text: "Revisão 3" }];
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot(revision3, "0.1.2", 3),
+      ),
+    );
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot([{ ...BASE_FIELDS[0], help_text: "Revisão 2" }], "0.1.1", 2),
+      ),
+    );
+
+    expect(view.result.current.baseline).toEqual({ revision: 3 });
+    expect(view.result.current.fields).toEqual(revision3);
   });
 
   it("recupera como conflito quando o baseline persistido ficou antigo", () => {
@@ -286,8 +368,8 @@ describe("useSchemaDraft", () => {
 
     const remoteFields = [{ ...BASE_FIELDS[0], description: "Remota" }];
     const reloaded = renderDraft("0.1.1", 2, remoteFields);
-    expect(reloaded.result.current.draftState).toBe("conflict");
-    expect(reloaded.result.current.conflict?.merge.unresolvedConflictIds).toHaveLength(1);
+    expect(reloaded.result.current.conflict).not.toBeNull();
+    expect(unresolvedSchemaConflicts(reloaded.result.current.conflict!.merge)).toHaveLength(1);
 
     act(() => reloaded.result.current.discardConflictingDraft());
     expect(reloaded.result.current.fields).toEqual(remoteFields);

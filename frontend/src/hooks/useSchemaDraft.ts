@@ -10,7 +10,6 @@ import {
 import {
   SCHEMA_DRAFT_FORMAT_VERSION,
   parseSchemaDraft,
-  schemaDraftTokenMatches,
   type SchemaDraftEnvelope,
 } from "@/lib/schema-draft";
 import {
@@ -18,6 +17,7 @@ import {
   type SchemaMergeChoice,
   type SchemaMergeResolutions,
   type SchemaMergeResult,
+  unresolvedSchemaConflicts,
 } from "@/lib/schema-merge";
 import { serializeSchemaFields } from "@/lib/schema-utils";
 import type {
@@ -49,69 +49,75 @@ export interface SchemaDraftConflict {
   merge: SchemaMergeResult;
 }
 
-interface StateBase {
-  fields: PydanticField[];
-  baseline: SchemaSnapshot;
-  recoveredDraft: boolean;
-  storageAvailable: boolean;
+interface DraftStorageState {
+  available: boolean;
+  persistedToken: string | null;
+  blocked: boolean;
 }
 
-interface CleanState extends StateBase {
+interface CleanState {
   kind: "clean";
+  snapshot: SchemaSnapshot;
+  recoveredDraft: boolean;
+  storage: DraftStorageState;
 }
 
-interface DirtyPersistedState extends StateBase {
-  kind: "dirty-persisted";
+interface DirtyState {
+  kind: "dirty";
   draft: SchemaDraftEnvelope;
+  recoveredDraft: boolean;
+  storage: DraftStorageState;
 }
 
-interface DirtyMemoryState extends StateBase {
-  kind: "dirty-memory";
-  draft: SchemaDraftEnvelope;
-  persistedWriteToken: string | null;
-}
-
-interface ConflictState extends StateBase {
+interface ConflictState {
   kind: "conflict";
   conflict: SchemaDraftConflict;
-  resolutions: SchemaMergeResolutions;
-  draftPersisted: boolean;
-  persistedWriteToken: string | null;
+  recoveredDraft: boolean;
+  storage: DraftStorageState;
 }
 
-type SchemaDraftState =
-  | CleanState
-  | DirtyPersistedState
-  | DirtyMemoryState
-  | ConflictState;
+type SchemaDraftState = CleanState | DirtyState | ConflictState;
 
 interface StorageRead {
   available: boolean;
   draft: SchemaDraftEnvelope | null;
 }
 
-interface StorageMutation {
+type StorageWrite =
+  | { status: "written" }
+  | { status: "blocked" }
+  | { status: "unavailable" };
+
+interface StorageDelete {
   available: boolean;
-  changed: boolean;
+  deleted: boolean;
 }
 
 export function schemaDraftStorageKey(projectId: string): string {
   return `${DRAFT_KEY_PREFIX}${projectId}`;
 }
 
-function baselineIdentity(snapshot: SchemaSnapshot): SchemaBaselineIdentity {
-  return { version: snapshot.version, revision: snapshot.revision };
-}
-
-function sameBaseline(
+function sameRevision(
   left: SchemaBaselineIdentity,
   right: SchemaBaselineIdentity,
 ): boolean {
-  return left.version === right.version && left.revision === right.revision;
+  return left.revision === right.revision;
 }
 
 function sameFields(left: PydanticField[], right: PydanticField[]): boolean {
   return serializeSchemaFields(left) === serializeSchemaFields(right);
+}
+
+function stateFields(state: SchemaDraftState): PydanticField[] {
+  if (state.kind === "clean") return state.snapshot.fields;
+  if (state.kind === "dirty") return state.draft.fields;
+  return state.conflict.merge.fields;
+}
+
+function stateBaseline(state: SchemaDraftState): SchemaSnapshot {
+  if (state.kind === "clean") return state.snapshot;
+  if (state.kind === "dirty") return state.draft.base;
+  return state.conflict.remote;
 }
 
 function readStoredDraft(projectId: string): StorageRead {
@@ -128,36 +134,46 @@ function readStoredDraft(projectId: string): StorageRead {
   }
 }
 
-function writeDraft(
+function writeDraftIfTokenMatches(
   projectId: string,
   draft: SchemaDraftEnvelope,
-): StorageMutation {
-  if (typeof window === "undefined") return { available: false, changed: false };
+  expectedToken: string | null,
+): StorageWrite {
+  if (typeof window === "undefined") return { status: "unavailable" };
   try {
-    window.localStorage.setItem(schemaDraftStorageKey(projectId), JSON.stringify(draft));
-    return { available: true, changed: true };
+    const stored = parseSchemaDraft(
+      window.localStorage.getItem(schemaDraftStorageKey(projectId)),
+    );
+    if ((stored?.writeToken ?? null) !== expectedToken) {
+      return { status: "blocked" };
+    }
+    window.localStorage.setItem(
+      schemaDraftStorageKey(projectId),
+      JSON.stringify(draft),
+    );
+    return { status: "written" };
   } catch {
-    return { available: false, changed: false };
+    return { status: "unavailable" };
   }
 }
 
 function deleteDraftIfTokenMatches(
   projectId: string,
   writeToken: string | null,
-): StorageMutation {
-  if (!writeToken) return { available: true, changed: false };
-  if (typeof window === "undefined") return { available: false, changed: false };
+): StorageDelete {
+  if (!writeToken) return { available: true, deleted: false };
+  if (typeof window === "undefined") return { available: false, deleted: false };
   try {
     const stored = parseSchemaDraft(
       window.localStorage.getItem(schemaDraftStorageKey(projectId)),
     );
-    if (!stored || !schemaDraftTokenMatches(stored, writeToken)) {
-      return { available: true, changed: false };
+    if (stored?.writeToken !== writeToken) {
+      return { available: true, deleted: false };
     }
     window.localStorage.removeItem(schemaDraftStorageKey(projectId));
-    return { available: true, changed: true };
+    return { available: true, deleted: true };
   } catch {
-    return { available: false, changed: false };
+    return { available: false, deleted: false };
   }
 }
 
@@ -168,41 +184,57 @@ function createDraft(
   return {
     formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,
     writeToken: globalThis.crypto.randomUUID(),
-    updatedAt: Date.now(),
     base,
     fields,
   };
 }
 
-function dirtyState(
+function dirtyAfterWrite(
   draft: SchemaDraftEnvelope,
-  baseline: SchemaSnapshot,
   recoveredDraft: boolean,
-  persistence: StorageMutation,
-  replacedWriteToken: string | null = null,
-): DirtyPersistedState | DirtyMemoryState {
-  const shared = {
-    fields: draft.fields,
-    baseline,
-    recoveredDraft,
-    storageAvailable: persistence.available,
+  previousStorage: DraftStorageState,
+  write: StorageWrite,
+): DirtyState {
+  if (write.status === "written") {
+    return {
+      kind: "dirty",
+      draft,
+      recoveredDraft,
+      storage: {
+        available: true,
+        persistedToken: draft.writeToken,
+        blocked: false,
+      },
+    };
+  }
+  return {
+    kind: "dirty",
     draft,
+    recoveredDraft,
+    storage: {
+      available: write.status !== "unavailable",
+      persistedToken: write.status === "blocked"
+        ? null
+        : previousStorage.persistedToken,
+      blocked: write.status === "blocked",
+    },
   };
-  return persistence.changed
-    ? { ...shared, kind: "dirty-persisted" }
-    : {
-        ...shared,
-        kind: "dirty-memory",
-        persistedWriteToken: replacedWriteToken,
-      };
 }
 
-function persistedWriteToken(state: SchemaDraftState): string | null {
-  if (state.kind === "dirty-persisted") return state.draft.writeToken;
-  if (state.kind === "dirty-memory" || state.kind === "conflict") {
-    return state.persistedWriteToken;
-  }
-  return null;
+function cleanState(
+  snapshot: SchemaSnapshot,
+  storageAvailable: boolean,
+): CleanState {
+  return {
+    kind: "clean",
+    snapshot,
+    recoveredDraft: false,
+    storage: {
+      available: storageAvailable,
+      persistedToken: null,
+      blocked: false,
+    },
+  };
 }
 
 function initialState({
@@ -211,101 +243,74 @@ function initialState({
   currentVersion,
   currentRevision,
 }: UseSchemaDraftParams): SchemaDraftState {
-  const baseline: SchemaSnapshot = {
+  const remote: SchemaSnapshot = {
     fields: initialFields,
     version: currentVersion,
     revision: currentRevision,
   };
   const stored = readStoredDraft(projectId);
-  if (!stored.draft) {
-    return {
-      kind: "clean",
-      fields: initialFields,
-      baseline,
-      recoveredDraft: false,
-      storageAvailable: stored.available,
-    };
-  }
+  if (!stored.draft) return cleanState(remote, stored.available);
 
   const draft = stored.draft;
-  if (sameBaseline(draft.base, baseline)) {
-    if (sameFields(draft.fields, baseline.fields)) {
+  const storage: DraftStorageState = {
+    available: stored.available,
+    persistedToken: draft.writeToken,
+    blocked: false,
+  };
+  if (sameRevision(draft.base, remote)) {
+    if (sameFields(draft.fields, remote.fields)) {
       const deleted = deleteDraftIfTokenMatches(projectId, draft.writeToken);
-      return {
-        kind: "clean",
-        fields: baseline.fields,
-        baseline,
-        recoveredDraft: false,
-        storageAvailable: deleted.available,
-      };
+      return cleanState(remote, deleted.available);
     }
     return {
-      kind: "dirty-persisted",
-      fields: draft.fields,
-      baseline,
-      recoveredDraft: true,
-      storageAvailable: stored.available,
+      kind: "dirty",
       draft,
+      recoveredDraft: true,
+      storage,
     };
   }
 
-  const merge = mergeSchemas(draft.base.fields, draft.fields, baseline.fields);
-  if (merge.unresolvedConflictIds.length > 0) {
+  const merge = mergeSchemas(draft.base.fields, draft.fields, remote.fields);
+  if (unresolvedSchemaConflicts(merge).length > 0) {
     return {
       kind: "conflict",
-      fields: merge.fields,
-      baseline,
+      conflict: { draft, remote, merge },
       recoveredDraft: true,
-      storageAvailable: stored.available,
-      conflict: { draft, remote: baseline, merge },
-      resolutions: {},
-      draftPersisted: true,
-      persistedWriteToken: draft.writeToken,
+      storage,
     };
   }
-  if (sameFields(merge.fields, baseline.fields)) {
+  if (sameFields(merge.fields, remote.fields)) {
     const deleted = deleteDraftIfTokenMatches(projectId, draft.writeToken);
-    return {
-      kind: "clean",
-      fields: baseline.fields,
-      baseline,
-      recoveredDraft: false,
-      storageAvailable: deleted.available,
-    };
+    return cleanState(remote, deleted.available);
   }
-  const rebased = createDraft(merge.fields, baseline);
-  return dirtyState(
+  const rebased = createDraft(merge.fields, remote);
+  return dirtyAfterWrite(
     rebased,
-    baseline,
     true,
-    writeDraft(projectId, rebased),
-    draft.writeToken,
+    storage,
+    writeDraftIfTokenMatches(projectId, rebased, draft.writeToken),
   );
 }
 
 function stateAfterFieldsChange(
-  current: Exclude<SchemaDraftState, ConflictState>,
+  current: SchemaDraftState,
   fields: PydanticField[],
   projectId: string,
 ): SchemaDraftState {
-  if (sameFields(fields, current.baseline.fields)) {
-    const deleted = deleteDraftIfTokenMatches(projectId, persistedWriteToken(current));
-    return {
-      kind: "clean",
-      fields,
-      baseline: current.baseline,
-      recoveredDraft: false,
-      storageAvailable: deleted.available,
-    };
+  if (current.kind === "conflict") return current;
+  const baseline = stateBaseline(current);
+  if (sameFields(fields, baseline.fields)) {
+    const deleted = deleteDraftIfTokenMatches(
+      projectId,
+      current.storage.persistedToken,
+    );
+    return cleanState(baseline, deleted.available);
   }
   return {
-    kind: "dirty-memory",
-    fields,
-    baseline: current.baseline,
+    kind: "dirty",
+    draft: createDraft(fields, baseline),
     recoveredDraft: current.recoveredDraft,
-    storageAvailable: current.storageAvailable,
-    draft: createDraft(fields, current.baseline),
-    persistedWriteToken: persistedWriteToken(current),
+    storage: current.storage,
   };
 }
 
@@ -315,30 +320,39 @@ function stateAfterSave(
   submittedWriteToken: string | null,
   projectId: string,
 ): SchemaDraftState {
-  if (sameFields(current.fields, saved.fields)) {
-    const submittedDraftStillCurrent =
-      current.kind === "dirty-memory" &&
-      current.draft.writeToken === submittedWriteToken;
-    const deleteToken = submittedDraftStillCurrent
-      ? current.persistedWriteToken ?? submittedWriteToken
-      : submittedWriteToken;
-    const deleted = deleteDraftIfTokenMatches(projectId, deleteToken);
+  const fields = stateFields(current);
+  if (sameFields(fields, saved.fields)) {
+    const deleted = deleteDraftIfTokenMatches(projectId, submittedWriteToken);
+    return cleanState(saved, deleted.available);
+  }
+  const draft = createDraft(fields, saved);
+  return dirtyAfterWrite(
+    draft,
+    false,
+    current.storage,
+    writeDraftIfTokenMatches(
+      projectId,
+      draft,
+      current.storage.persistedToken,
+    ),
+  );
+}
+
+function localChangeForRemoteMerge(state: SchemaDraftState): {
+  draft: SchemaDraftEnvelope;
+  resolutions: SchemaMergeResolutions;
+} {
+  if (state.kind === "dirty") return { draft: state.draft, resolutions: {} };
+  if (state.kind === "conflict") {
     return {
-      kind: "clean",
-      fields: current.fields,
-      baseline: saved,
-      recoveredDraft: false,
-      storageAvailable: deleted.available,
+      draft: state.conflict.draft,
+      resolutions: resolutionsFromMerge(state.conflict.merge),
     };
   }
-  const draft = createDraft(current.fields, saved);
-  return dirtyState(
-    draft,
-    saved,
-    false,
-    writeDraft(projectId, draft),
-    persistedWriteToken(current),
-  );
+  return {
+    draft: createDraft(state.snapshot.fields, state.snapshot),
+    resolutions: {},
+  };
 }
 
 function stateAfterRemoteChange(
@@ -346,47 +360,170 @@ function stateAfterRemoteChange(
   remote: SchemaSnapshot,
   projectId: string,
 ): SchemaDraftState {
-  const draft =
-    current.kind === "dirty-memory" || current.kind === "dirty-persisted"
-      ? current.draft
-      : createDraft(current.fields, current.baseline);
-  const merge = mergeSchemas(draft.base.fields, draft.fields, remote.fields);
-  if (merge.unresolvedConflictIds.length === 0) {
+  if (remote.revision <= stateBaseline(current).revision) return current;
+  const { draft, resolutions } = localChangeForRemoteMerge(current);
+  const merge = mergeSchemas(
+    draft.base.fields,
+    draft.fields,
+    remote.fields,
+    resolutions,
+  );
+  if (unresolvedSchemaConflicts(merge).length === 0) {
     if (sameFields(merge.fields, remote.fields)) {
       const deleted = deleteDraftIfTokenMatches(
         projectId,
-        persistedWriteToken(current) ?? draft.writeToken,
+        current.storage.persistedToken,
       );
-      return {
-        kind: "clean",
-        fields: remote.fields,
-        baseline: remote,
-        recoveredDraft: false,
-        storageAvailable: deleted.available,
-      };
+      return cleanState(remote, deleted.available);
     }
     const rebased = createDraft(merge.fields, remote);
-    return dirtyState(
+    return dirtyAfterWrite(
       rebased,
-      remote,
       true,
-      writeDraft(projectId, rebased),
-      persistedWriteToken(current),
+      current.storage,
+      writeDraftIfTokenMatches(
+        projectId,
+        rebased,
+        current.storage.persistedToken,
+      ),
     );
   }
   const stored = readStoredDraft(projectId);
+  const expectedToken = current.storage.persistedToken;
+  const storedToken = stored.draft?.writeToken ?? null;
+  const expectedDraftStillStored = storedToken === expectedToken;
   return {
     kind: "conflict",
-    fields: merge.fields,
-    baseline: remote,
-    recoveredDraft: true,
-    storageAvailable: stored.available,
     conflict: { draft, remote, merge },
-    resolutions: {},
-    draftPersisted:
-      stored.draft?.writeToken === draft.writeToken ||
-      current.kind === "dirty-persisted",
-    persistedWriteToken: persistedWriteToken(current),
+    recoveredDraft: true,
+    storage: {
+      available: stored.available,
+      persistedToken: expectedDraftStillStored ? expectedToken : null,
+      blocked:
+        stored.available &&
+        stored.draft !== null &&
+        !expectedDraftStillStored,
+    },
+  };
+}
+
+function resolutionsFromMerge(merge: SchemaMergeResult): SchemaMergeResolutions {
+  return Object.fromEntries(
+    merge.conflicts.flatMap((conflict) =>
+      conflict.resolution ? [[conflict.id, conflict.resolution]] : [],
+    ),
+  );
+}
+
+function stateAfterConflictResolution(
+  current: SchemaDraftState,
+  conflictId: string,
+  choice: SchemaMergeChoice,
+): SchemaDraftState {
+  if (current.kind !== "conflict") return current;
+  if (!current.conflict.merge.conflicts.some(({ id }) => id === conflictId)) {
+    return current;
+  }
+  const resolutions = {
+    ...resolutionsFromMerge(current.conflict.merge),
+    [conflictId]: choice,
+  };
+  const merge = mergeSchemas(
+    current.conflict.draft.base.fields,
+    current.conflict.draft.fields,
+    current.conflict.remote.fields,
+    resolutions,
+  );
+  return {
+    ...current,
+    conflict: { ...current.conflict, merge },
+  };
+}
+
+function stateAfterResolvedDraftApplication(
+  current: SchemaDraftState,
+  projectId: string,
+): { state: SchemaDraftState; applied: boolean } {
+  if (
+    current.kind !== "conflict" ||
+    unresolvedSchemaConflicts(current.conflict.merge).length > 0
+  ) {
+    return { state: current, applied: false };
+  }
+  const { remote, merge } = current.conflict;
+  if (sameFields(merge.fields, remote.fields)) {
+    const deleted = deleteDraftIfTokenMatches(
+      projectId,
+      current.storage.persistedToken,
+    );
+    return { state: cleanState(remote, deleted.available), applied: true };
+  }
+  const draft = createDraft(merge.fields, remote);
+  return {
+    state: dirtyAfterWrite(
+      draft,
+      true,
+      current.storage,
+      writeDraftIfTokenMatches(
+        projectId,
+        draft,
+        current.storage.persistedToken,
+      ),
+    ),
+    applied: true,
+  };
+}
+
+function stateAfterConflictDiscard(
+  current: SchemaDraftState,
+  projectId: string,
+): SchemaDraftState {
+  if (current.kind !== "conflict") return current;
+  const deleted = deleteDraftIfTokenMatches(
+    projectId,
+    current.storage.persistedToken,
+  );
+  return cleanState(current.conflict.remote, deleted.available);
+}
+
+function persistedDraft(state: SchemaDraftState): SchemaDraftEnvelope | null {
+  if (state.kind === "clean") return null;
+  const draft = state.kind === "dirty" ? state.draft : state.conflict.draft;
+  return state.storage.persistedToken === draft.writeToken ? draft : null;
+}
+
+function pendingDraftWriteToken(state: SchemaDraftState): string | null {
+  if (state.kind !== "dirty" || persistedDraft(state)) return null;
+  return state.draft.writeToken;
+}
+
+function persistDirtyState(
+  current: SchemaDraftState,
+  projectId: string,
+  writeToken?: string,
+): SchemaDraftState {
+  if (current.kind !== "dirty" || persistedDraft(current)) return current;
+  if (writeToken && current.draft.writeToken !== writeToken) return current;
+  return dirtyAfterWrite(
+    current.draft,
+    current.recoveredDraft,
+    current.storage,
+    writeDraftIfTokenMatches(
+      projectId,
+      current.draft,
+      current.storage.persistedToken,
+    ),
+  );
+}
+
+function submissionFromState(state: SchemaDraftState): SchemaDraftSubmission {
+  if (state.kind === "conflict") {
+    throw new Error("Resolva todos os conflitos antes de salvar o schema.");
+  }
+  return {
+    fields: stateFields(state),
+    expectedBaseline: { revision: stateBaseline(state).revision },
+    writeToken: state.kind === "dirty" ? state.draft.writeToken : null,
   };
 }
 
@@ -427,7 +564,7 @@ function useDraftPersistenceLifecycle(
 }
 
 export function useSchemaDraft(params: UseSchemaDraftParams) {
-  const { projectId } = params;
+  const { projectId, initialFields, currentVersion, currentRevision } = params;
   const isHydrated = useSyncExternalStore(
     subscribeToNothing,
     () => true,
@@ -435,6 +572,7 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
   );
   const [state, setReactState] = useState<SchemaDraftState>(() => initialState(params));
   const stateRef = useRef(state);
+  const renderedRevisionRef = useRef(currentRevision);
 
   const setState = useCallback((next: SchemaDraftState) => {
     stateRef.current = next;
@@ -443,42 +581,40 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
 
   const persistDraft = useCallback(
     (writeToken?: string) => {
-      const current = stateRef.current;
-      if (current.kind !== "dirty-memory") return;
-      if (writeToken && current.draft.writeToken !== writeToken) return;
-      const persistence = writeDraft(projectId, current.draft);
-      if (persistence.changed) {
-        setState({ ...current, kind: "dirty-persisted", storageAvailable: true });
-      } else if (current.storageAvailable !== persistence.available) {
-        setState({ ...current, storageAvailable: persistence.available });
-      }
+      setState(persistDirtyState(stateRef.current, projectId, writeToken));
     },
     [projectId, setState],
   );
 
-  const pendingWriteToken =
-    state.kind === "dirty-memory" ? state.draft.writeToken : null;
+  useEffect(() => {
+    if (renderedRevisionRef.current === currentRevision) return;
+    renderedRevisionRef.current = currentRevision;
+    persistDraft();
+    setState(
+      stateAfterRemoteChange(
+        stateRef.current,
+        { fields: initialFields, version: currentVersion, revision: currentRevision },
+        projectId,
+      ),
+    );
+  }, [currentRevision, currentVersion, initialFields, persistDraft, projectId, setState]);
+
+  useEffect(
+    () => () => {
+      persistDirtyState(stateRef.current, projectId);
+    },
+    [projectId],
+  );
+
+  const pendingWriteToken = pendingDraftWriteToken(state);
 
   const setFields = (fields: PydanticField[]) => {
-    const current = stateRef.current;
-    if (current.kind === "conflict") return;
-    setState(stateAfterFieldsChange(current, fields, projectId));
+    setState(stateAfterFieldsChange(stateRef.current, fields, projectId));
   };
 
   const prepareSubmission = (): SchemaDraftSubmission => {
-    if (stateRef.current.kind === "conflict") {
-      throw new Error("Resolva todos os conflitos antes de salvar o schema.");
-    }
     persistDraft();
-    const current = stateRef.current;
-    return {
-      fields: current.fields,
-      expectedBaseline: baselineIdentity(current.baseline),
-      writeToken:
-        current.kind === "dirty-memory" || current.kind === "dirty-persisted"
-          ? current.draft.writeToken
-          : null,
-    };
+    return submissionFromState(stateRef.current);
   };
 
   const markSaved = (
@@ -496,96 +632,40 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
   };
 
   const resolveConflict = (conflictId: string, choice: SchemaMergeChoice) => {
-    const current = stateRef.current;
-    if (current.kind !== "conflict") return;
-    if (!current.conflict.merge.conflicts.some(({ id }) => id === conflictId)) return;
-    const resolutions = { ...current.resolutions, [conflictId]: choice };
-    const merge = mergeSchemas(
-      current.conflict.draft.base.fields,
-      current.conflict.draft.fields,
-      current.conflict.remote.fields,
-      resolutions,
-    );
-    setState({
-      ...current,
-      fields: merge.fields,
-      conflict: { ...current.conflict, merge },
-      resolutions,
-    });
+    setState(stateAfterConflictResolution(stateRef.current, conflictId, choice));
   };
 
   const applyResolvedDraft = (): boolean => {
-    const current = stateRef.current;
-    if (
-      current.kind !== "conflict" ||
-      current.conflict.merge.unresolvedConflictIds.length > 0
-    ) {
-      return false;
-    }
-    const { remote, merge, draft: previousDraft } = current.conflict;
-    if (sameFields(merge.fields, remote.fields)) {
-      const deleted = deleteDraftIfTokenMatches(
-        projectId,
-        current.persistedWriteToken ?? previousDraft.writeToken,
-      );
-      setState({
-        kind: "clean",
-        fields: remote.fields,
-        baseline: remote,
-        recoveredDraft: false,
-        storageAvailable: deleted.available,
-      });
-      return true;
-    }
-    const draft = createDraft(merge.fields, remote);
-    setState(
-      dirtyState(
-        draft,
-        remote,
-        true,
-        writeDraft(projectId, draft),
-        current.persistedWriteToken,
-      ),
+    const result = stateAfterResolvedDraftApplication(
+      stateRef.current,
+      projectId,
     );
-    return true;
+    setState(result.state);
+    return result.applied;
   };
 
   const discardConflictingDraft = () => {
-    const current = stateRef.current;
-    if (current.kind !== "conflict") return;
-    const deleted = deleteDraftIfTokenMatches(
-      projectId,
-      current.persistedWriteToken ?? current.conflict.draft.writeToken,
-    );
-    setState({
-      kind: "clean",
-      fields: current.conflict.remote.fields,
-      baseline: current.conflict.remote,
-      recoveredDraft: false,
-      storageAvailable: deleted.available,
-    });
+    setState(stateAfterConflictDiscard(stateRef.current, projectId));
   };
 
-  const isDirty =
-    state.kind === "dirty-memory" ||
-    state.kind === "dirty-persisted" ||
-    (state.kind === "conflict" && !sameFields(state.fields, state.baseline.fields));
+  const fields = stateFields(state);
+  const baseline = stateBaseline(state);
+  const isDirty = state.kind !== "clean" && !sameFields(fields, baseline.fields);
   const hasUnsavedWork = isDirty || state.kind === "conflict";
+  const draftPersisted = persistedDraft(state) !== null;
   useDraftPersistenceLifecycle(pendingWriteToken, hasUnsavedWork, persistDraft);
 
   return {
-    fields: state.fields,
+    fields,
     setFields,
     isDirty,
     recoveredDraft: state.recoveredDraft,
-    savedVersion: state.baseline.version,
-    baseline: baselineIdentity(state.baseline),
+    savedVersion: baseline.version,
+    baseline: { revision: baseline.revision },
     conflict: state.kind === "conflict" ? state.conflict : null,
-    storageAvailable: state.storageAvailable,
-    draftPersisted:
-      state.kind === "dirty-persisted" ||
-      (state.kind === "conflict" && state.draftPersisted),
-    draftState: state.kind,
+    storageAvailable: state.storage.available,
+    storageBlocked: state.storage.blocked,
+    draftPersisted,
     prepareSubmission,
     markSaved,
     registerRemoteConflict,

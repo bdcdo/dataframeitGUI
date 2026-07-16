@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Info, X } from "lucide-react";
-import type { SchemaDraftConflict } from "@/hooks/useSchemaDraft";
 
 interface SchemaEditorBannersProps {
   helpDismissed: boolean;
@@ -10,10 +9,7 @@ interface SchemaEditorBannersProps {
   canRecover: boolean;
   onRecover: () => void;
   isPending: boolean;
-  draftConflict: SchemaDraftConflict | null;
-  storageAvailable: boolean;
-  draftPersisted: boolean;
-  onDiscardDraft: () => void;
+  storageBlocked: boolean;
 }
 
 /**
@@ -26,10 +22,7 @@ export function SchemaEditorBanners({
   canRecover,
   onRecover,
   isPending,
-  draftConflict,
-  storageAvailable,
-  draftPersisted,
-  onDiscardDraft,
+  storageBlocked,
 }: SchemaEditorBannersProps) {
   return (
     <>
@@ -80,28 +73,15 @@ export function SchemaEditorBanners({
         </div>
       )}
 
-      {draftConflict && (
+      {storageBlocked && (
         <div className="flex items-start gap-2 border-b bg-amber-500/10 px-4 py-2 text-xs">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-700" />
           <div className="flex-1 text-muted-foreground" role="alert">
             <strong className="text-foreground">
-              Rascunho em conflito com o schema salvo.
+              Este projeto está aberto em outra aba.
             </strong>{" "}
-            Ele foi criado sobre a v{draftConflict.draft.base.version}, revisão {draftConflict.draft.base.revision}, mas o projeto está na v{draftConflict.remote.version}, revisão {draftConflict.remote.revision}. As mudanças independentes foram mescladas; escolha o resultado das {draftConflict.merge.unresolvedConflictIds.length} colisões antes de salvar. {" "}
-            {draftPersisted
-              ? "O rascunho continua salvo neste navegador."
-              : storageAvailable
-                ? "Não foi possível confirmar a gravação local; fechar, recarregar ou navegar pode perdê-lo."
-                : "O armazenamento local está indisponível; fechar, recarregar ou navegar pode perdê-lo."}
+            O rascunho local da outra aba foi preservado. Estas alterações continuam em memória e devem ser salvas antes de fechar esta aba.
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 shrink-0 text-xs"
-            onClick={onDiscardDraft}
-          >
-            Descartar
-          </Button>
         </div>
       )}
     </>

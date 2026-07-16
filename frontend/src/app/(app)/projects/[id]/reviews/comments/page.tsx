@@ -44,7 +44,7 @@ export default async function CommentsPage({
     supabase
       .from("projects")
       .select(
-        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
+        "pydantic_fields, schema_revision",
       )
       .eq("id", id)
       .single(),
@@ -111,7 +111,6 @@ export default async function CommentsPage({
   );
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
-  const schemaVersion = `${project?.schema_version_major ?? 0}.${project?.schema_version_minor ?? 1}.${project?.schema_version_patch ?? 0}`;
 
   const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
 
@@ -127,7 +126,6 @@ export default async function CommentsPage({
     ]),
   ];
   const schemaBaseline = {
-    version: schemaVersion,
     revision: project?.schema_revision ?? 0,
   };
 

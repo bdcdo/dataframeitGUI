@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { pydanticFieldsSchema } from "@/lib/pydantic-field";
 
-export const SCHEMA_DRAFT_FORMAT_VERSION = 3;
+export const SCHEMA_DRAFT_FORMAT_VERSION = 4;
 
 const schemaSnapshotSchema = z.strictObject({
   fields: pydanticFieldsSchema,
@@ -12,7 +12,6 @@ const schemaSnapshotSchema = z.strictObject({
 const schemaDraftEnvelopeSchema = z.strictObject({
   formatVersion: z.literal(SCHEMA_DRAFT_FORMAT_VERSION),
   writeToken: z.string().min(1),
-  updatedAt: z.number().positive().finite(),
   base: schemaSnapshotSchema,
   fields: pydanticFieldsSchema,
 });
@@ -27,11 +26,4 @@ export function parseSchemaDraft(raw: string | null): SchemaDraftEnvelope | null
   } catch {
     return null;
   }
-}
-
-export function schemaDraftTokenMatches(
-  draft: SchemaDraftEnvelope,
-  writeToken: string,
-): boolean {
-  return draft.writeToken === writeToken;
 }

@@ -6,7 +6,10 @@ import { SchemaEditorSession } from "../SchemaEditor";
 import { schemaDraftStorageKey } from "@/hooks/useSchemaDraft";
 import type { PydanticField } from "@/lib/types";
 import type { SchemaDraftConflict } from "@/hooks/useSchemaDraft";
-import type { SchemaMergeChoice } from "@/lib/schema-merge";
+import {
+  unresolvedSchemaConflicts,
+  type SchemaMergeChoice,
+} from "@/lib/schema-merge";
 
 const hoisted = vi.hoisted(() => ({
   saveSchemaFromGUI: vi.fn(),
@@ -48,19 +51,19 @@ vi.mock("../SchemaEditorDialogs", () => ({
     onApplyResolvedDraft: () => boolean;
   }) =>
     conflict ? (
-      <div role="dialog" aria-label="Resolver alterações concorrentes">
+      <dialog open aria-label="Resolver alterações concorrentes">
         <button
           onClick={() => onResolveConflict(conflict.merge.conflicts[0].id, "local")}
         >
           Minha alteração
         </button>
         <button
-          disabled={conflict.merge.unresolvedConflictIds.length > 0}
+          disabled={unresolvedSchemaConflicts(conflict.merge).length > 0}
           onClick={onApplyResolvedDraft}
         >
           Aplicar merge para revisar
         </button>
-      </div>
+      </dialog>
     ) : null,
 }));
 vi.mock("../SchemaBuilderGUI", () => ({
@@ -134,7 +137,7 @@ describe("SchemaEditor — ciclo do draft", () => {
     expect(hoisted.saveSchemaFromGUI).toHaveBeenCalledWith(
       "project-1",
       [{ ...BASE_FIELDS[0], description: "Editada" }],
-      { version: "0.1.0", revision: 0 },
+      { revision: 0 },
     );
     expect(window.localStorage.getItem(schemaDraftStorageKey("project-1"))).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
@@ -161,7 +164,7 @@ describe("SchemaEditor — ciclo do draft", () => {
     expect((screen.getByRole("button", { name: "Salvar" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("o boundary remonta a sessão por projeto e revisão, sem fingerprint", async () => {
+  it("uma revisão nova passa pelo merge sem descartar a edição em memória", async () => {
     const view = await renderEditor();
     await userEvent.click(screen.getByRole("button", { name: "Editar campo" }));
 
@@ -175,7 +178,9 @@ describe("SchemaEditor — ciclo do draft", () => {
       />,
     );
 
-    expect(await screen.findByText("Campo: Remota")).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Resolver alterações concorrentes" })).toBeTruthy();
+    expect(screen.getByText("Campo: Remota")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Minha alteração" })).toBeTruthy();
     expect(screen.getByText("Versão 0.2.0")).toBeTruthy();
   });
 });

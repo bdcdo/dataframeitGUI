@@ -91,6 +91,20 @@ describe("saveSchemaFromGUI", () => {
     expect(state.writes).toHaveLength(0);
   });
 
+  it("permite o primeiro save quando o projeto parte do schema vazio canônico", async () => {
+    state.tables = {
+      projects: {
+        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [] },
+      },
+    };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(state.rpcs).toHaveLength(1);
+  });
+
   it("baseline antigo retorna conflito antes de calcular ou escrever", async () => {
     state.tables = {
       projects: {
@@ -146,17 +160,16 @@ describe("saveSchemaFromGUI", () => {
     expect("snapshot" in result).toBe(false);
   });
 
-  it("recusa apagar um schema não vazio", async () => {
+  it("recusa schema vazio na fronteira canônica", async () => {
     state.tables = {
       projects: {
         data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [FIELD] },
       },
     };
     const result = await saveSchemaFromGUI("p1", [], {
-      version: "0.1.0",
       revision: 0,
     });
-    expect(result).toMatchObject({ status: "error", message: expect.stringMatching(/0 campos|apagaria/i) });
+    expect(result).toMatchObject({ status: "error", message: expect.stringMatching(/inválido/i) });
     expect(state.rpcs).toHaveLength(0);
   });
 
@@ -179,6 +192,25 @@ describe("saveSchemaFromGUI", () => {
     const malformed = [{ ...FIELD, unexpected: "client input" }] as unknown as PydanticField[];
     const result = await saveSchemaFromGUI("p1", malformed, EMPTY_BASELINE);
     expect(result).toMatchObject({ status: "error", message: expect.stringMatching(/inválido/i) });
+    expect(state.rpcs).toHaveLength(0);
+  });
+
+  it("não tenta salvar quando o schema persistido viola o contrato", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          pydantic_fields: [FIELD, { ...FIELD, description: "Duplicado" }],
+        },
+      },
+    };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/persistido.*inválido/i),
+    });
     expect(state.rpcs).toHaveLength(0);
   });
 });
@@ -207,7 +239,6 @@ describe("publishMajorVersion", () => {
     };
 
     const result = await publishMajorVersion("p1", {
-      version: "0.18.0",
       revision: 7,
     });
 
@@ -240,7 +271,6 @@ describe("publishMajorVersion", () => {
       },
     };
     const result = await publishMajorVersion("p1", {
-      version: "0.18.0",
       revision: 7,
     });
     expect(result).toMatchObject({
