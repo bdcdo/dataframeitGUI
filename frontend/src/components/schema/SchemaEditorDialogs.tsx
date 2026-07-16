@@ -38,8 +38,10 @@ interface SchemaEditorDialogsProps {
   isPending: boolean;
   currentVersion: string;
   conflict: SchemaDraftConflict | null;
+  /** Conflitos ainda sem escolha; `null` quando não há conflito algum. */
+  conflictCount: number | null;
   onResolveConflict: (id: string, choice: SchemaMergeChoice) => void;
-  onApplyResolvedDraft: () => boolean;
+  onApplyResolvedDraft: () => void;
   onDiscardConflictingDraft: () => void;
 }
 
@@ -103,6 +105,7 @@ export function SchemaEditorDialogs({
   isPending,
   currentVersion,
   conflict,
+  conflictCount,
   onResolveConflict,
   onApplyResolvedDraft,
   onDiscardConflictingDraft,
@@ -213,7 +216,7 @@ export function SchemaEditorDialogs({
             </Button>
             <Button
               onClick={onApplyResolvedDraft}
-              disabled={!conflict || unresolvedSchemaConflicts(conflict.merge).length > 0}
+              disabled={conflictCount !== 0}
               className="bg-brand text-brand-foreground hover:bg-brand/90"
             >
               Aplicar merge para revisar

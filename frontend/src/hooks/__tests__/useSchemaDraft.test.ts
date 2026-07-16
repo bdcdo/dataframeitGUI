@@ -399,12 +399,16 @@ describe("useSchemaDraft", () => {
       view.result.current.conflict!.merge,
     )[0].id;
     expect(view.result.current.fields).toEqual(remoteFields);
-    expect(view.result.current.applyResolvedDraft()).toBe(false);
+
+    // Aplicar com o conflito ainda pendente não faz nada: o estado continua em
+    // conflito, e é isso que o botão observa.
+    act(() => view.result.current.applyResolvedDraft());
+    expect(view.result.current.conflict).not.toBeNull();
 
     act(() => view.result.current.resolveConflict(conflictId, "local"));
     expect(unresolvedSchemaConflicts(view.result.current.conflict!.merge)).toEqual([]);
     expect(view.result.current.fields).toEqual(EDITED_FIELDS);
-    act(() => expect(view.result.current.applyResolvedDraft()).toBe(true));
+    act(() => view.result.current.applyResolvedDraft());
 
     expect(view.result.current.conflict).toBeNull();
     expect(view.result.current.baseline).toEqual({ revision: 2 });
@@ -432,7 +436,7 @@ describe("useSchemaDraft", () => {
       view.result.current.conflict!.merge,
     )[0].id;
     act(() => view.result.current.resolveConflict(conflictId, "remote"));
-    act(() => expect(view.result.current.applyResolvedDraft()).toBe(true));
+    act(() => view.result.current.applyResolvedDraft());
 
     expect(view.result.current.conflict).toBeNull();
     expect(view.result.current.isDirty).toBe(false);

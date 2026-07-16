@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SchemaEditorDialogs } from "../SchemaEditorDialogs";
-import { mergeSchemas } from "@/lib/schema-merge";
+import { mergeSchemas, unresolvedSchemaConflicts } from "@/lib/schema-merge";
 import { SCHEMA_DRAFT_FORMAT_VERSION } from "@/lib/schema-draft";
 import type { SchemaDraftConflict } from "@/hooks/useSchemaDraft";
 import type { PydanticField } from "@/lib/types";
@@ -33,7 +33,7 @@ function makeConflict(resolution?: "local" | "remote"): SchemaDraftConflict {
 
 function renderDialogs(conflict: SchemaDraftConflict) {
   const onResolveConflict = vi.fn();
-  const onApplyResolvedDraft = vi.fn(() => true);
+  const onApplyResolvedDraft = vi.fn();
   const view = render(
     <SchemaEditorDialogs
       backfillOpen={false}
@@ -45,6 +45,7 @@ function renderDialogs(conflict: SchemaDraftConflict) {
       isPending={false}
       currentVersion="0.2.0"
       conflict={conflict}
+      conflictCount={unresolvedSchemaConflicts(conflict.merge).length}
       onResolveConflict={onResolveConflict}
       onApplyResolvedDraft={onApplyResolvedDraft}
       onDiscardConflictingDraft={() => {}}

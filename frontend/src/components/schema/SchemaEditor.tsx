@@ -110,17 +110,6 @@ function generatedSchemaCode(
   return initialCode ?? "";
 }
 
-function currentValidationErrors(
-  attempted: boolean,
-  fields: PydanticField[],
-): string[] {
-  return attempted ? validateGUIFields(fields) : [];
-}
-
-function pendingConflictCount(conflict: SchemaDraftConflict | null): number | null {
-  return conflict ? unresolvedSchemaConflicts(conflict.merge).length : null;
-}
-
 function SchemaEditor({
   projectId,
   userId,
@@ -326,7 +315,13 @@ function SchemaEditor({
     return <SchemaEditorLoadingState />;
   }
 
-  const guiErrors = currentValidationErrors(validationAttempted, fields);
+  const guiErrors = validationAttempted ? validateGUIFields(fields) : [];
+  // Conflitos sem escolha; `null` quando não há conflito. O rodapé e o diálogo
+  // precisam do mesmo número, e recomputá-lo em cada um deixaria os dois livres
+  // para discordar.
+  const conflictCount = conflict
+    ? unresolvedSchemaConflicts(conflict.merge).length
+    : null;
 
   return (
     <div className="flex h-[calc(100vh-148px)] flex-col">
@@ -395,7 +390,7 @@ function SchemaEditor({
         onSave={handleSave}
         saveDisabled={isPending || conflict !== null || !isDirty}
         isDirty={isDirty}
-        conflictCount={pendingConflictCount(conflict)}
+        conflictCount={conflictCount}
         storageAvailable={storageAvailable}
         storageBlocked={storageBlocked}
         draftPersisted={draftPersisted}
@@ -412,6 +407,7 @@ function SchemaEditor({
         isPending={isPending}
         currentVersion={savedVersion}
         conflict={conflict}
+        conflictCount={conflictCount}
         onResolveConflict={resolveConflict}
         onApplyResolvedDraft={applyResolvedDraft}
         onDiscardConflictingDraft={discardConflictingDraft}

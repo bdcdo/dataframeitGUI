@@ -75,13 +75,6 @@ function projectSnapshot(project: SchemaProjectRow): SchemaSnapshot {
   };
 }
 
-function conflictResult(project: SchemaProjectRow): SchemaSaveResult {
-  return {
-    status: "conflict",
-    current: projectSnapshot(project),
-  };
-}
-
 interface SchemaSaveContext {
   project: SchemaProjectRow;
   oldFields: PydanticField[];
@@ -134,7 +127,7 @@ async function loadSchemaSaveContext(
   project.pydantic_fields = persistedFields;
   const remoteBaseline = projectSnapshot(project);
   if (expectedBaseline.revision !== remoteBaseline.revision) {
-    return { result: conflictResult(project) };
+    return { result: { status: "conflict", current: remoteBaseline } };
   }
 
   return {
@@ -387,10 +380,6 @@ function prepareSchemaCommit(
   };
 }
 
-function schemaCommitRpc(suggestionId?: string): SchemaCommitRpc {
-  return suggestionId ? "approve_schema_suggestion" : "commit_project_schema";
-}
-
 function schemaCommitArgs(
   projectId: string,
   expectedRevision: number,
@@ -425,7 +414,9 @@ async function persistSchema(
   const prepared = prepareSchemaCommit(fields, context, suggestionId);
   if ("result" in prepared) return prepared.result;
 
-  const rpc = schemaCommitRpc(suggestionId);
+  const rpc: SchemaCommitRpc = suggestionId
+    ? "approve_schema_suggestion"
+    : "commit_project_schema";
   const { data, error } = await supabase
     .rpc(
       rpc,
@@ -558,13 +549,6 @@ function fetchAllLogEntries(
 
 // Só a ausência da linha é um estado real: a coluna é NOT NULL, então uma linha
 // visível sempre traz revisão.
-function requireSchemaRevision(
-  project: { schema_revision: number } | null,
-): number {
-  if (!project) throw new Error("Projeto não encontrado ou sem permissão");
-  return project.schema_revision;
-}
-
 async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
@@ -583,7 +567,8 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
     fetchAllResponses(supabase, projectId),
   ]);
 
-  const expectedRevision = requireSchemaRevision(project);
+  if (!project) throw new Error("Projeto não encontrado ou sem permissão");
+  const expectedRevision = project.schema_revision;
 
   const { enriched, finalVersion } = classifyLogEntries(log);
 

@@ -124,13 +124,6 @@ export function schemaDraftStorageKey(scope: SchemaDraftScope): string {
   return `${DRAFT_KEY_PREFIX}${scope.userId}:${scope.projectId}`;
 }
 
-function sameRevision(
-  left: SchemaBaselineIdentity,
-  right: SchemaBaselineIdentity,
-): boolean {
-  return left.revision === right.revision;
-}
-
 function sameFields(left: PydanticField[], right: PydanticField[]): boolean {
   return serializeSchemaFields(left) === serializeSchemaFields(right);
 }
@@ -290,7 +283,7 @@ function initialState({
     persistedToken: draft.writeToken,
     blocked: false,
   };
-  if (sameRevision(draft.base, remote)) {
+  if (draft.base.revision === remote.revision) {
     if (sameFields(draft.fields, remote.fields)) {
       const deleted = deleteDraftIfTokenMatches(scope, draft.writeToken);
       return cleanState(remote, deleted.available);
@@ -473,15 +466,18 @@ function stateAfterConflictResolution(
   };
 }
 
+// Aplicar um conflito ainda não resolvido devolve o estado intocado: o botão que
+// chama isto só existe enquanto há conflito, e é o próprio estado — não um sinal
+// de retorno — que diz se algo mudou.
 function stateAfterResolvedDraftApplication(
   current: SchemaDraftState,
   scope: SchemaDraftScope,
-): { state: SchemaDraftState; applied: boolean } {
+): SchemaDraftState {
   if (
     current.kind !== "conflict" ||
     unresolvedSchemaConflicts(current.conflict.merge).length > 0
   ) {
-    return { state: current, applied: false };
+    return current;
   }
   const { remote, merge } = current.conflict;
   if (sameFields(merge.fields, remote.fields)) {
@@ -489,22 +485,15 @@ function stateAfterResolvedDraftApplication(
       scope,
       current.storage.persistedToken,
     );
-    return { state: cleanState(remote, deleted.available), applied: true };
+    return cleanState(remote, deleted.available);
   }
   const draft = createDraft(merge.fields, remote);
-  return {
-    state: dirtyAfterWrite(
-      draft,
-      "rebased",
-      current.storage,
-      writeDraftIfTokenMatches(
-        scope,
-        draft,
-        current.storage.persistedToken,
-      ),
-    ),
-    applied: true,
-  };
+  return dirtyAfterWrite(
+    draft,
+    "rebased",
+    current.storage,
+    writeDraftIfTokenMatches(scope, draft, current.storage.persistedToken),
+  );
 }
 
 function stateAfterConflictDiscard(
@@ -675,13 +664,8 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
     setState(stateAfterConflictResolution(stateRef.current, conflictId, choice));
   };
 
-  const applyResolvedDraft = (): boolean => {
-    const result = stateAfterResolvedDraftApplication(
-      stateRef.current,
-      scope,
-    );
-    setState(result.state);
-    return result.applied;
+  const applyResolvedDraft = () => {
+    setState(stateAfterResolvedDraftApplication(stateRef.current, scope));
   };
 
   const discardConflictingDraft = () => {
@@ -690,7 +674,17 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
 
   const fields = stateFields(state);
   const baseline = stateBaseline(state);
-  const isDirty = state.kind !== "clean" && !sameFields(fields, baseline.fields);
+  // `dirty` já significa "difere da baseline": todo ponto que constrói o estado
+  // volta `clean` antes quando os campos coincidem — os cinco que passam por
+  // `dirtyAfterWrite` por uma guarda `sameFields` direta, e o de rascunho
+  // recuperado na mesma revisão porque revisão igual é schema igual (o trigger
+  // do banco exige +1 a cada mudança). Recomparar aqui não protegeria de nada:
+  // se algum construtor violasse a invariante, isto mascararia o estado
+  // inconsistente em vez de deixá-lo aparecer. Só `conflict` precisa do teste,
+  // porque a ordem mesclada pode coincidir com a remota.
+  const isDirty =
+    state.kind === "dirty" ||
+    (state.kind === "conflict" && !sameFields(fields, baseline.fields));
   const hasUnsavedWork = isDirty || state.kind === "conflict";
   const draftPersisted = persistedDraft(state) !== null;
   useDraftPersistenceLifecycle(pendingWriteToken, hasUnsavedWork, persistDraft);
