@@ -19,6 +19,9 @@ vi.mock("@/lib/auth", () =>
     authMocks.getProjectAccessContext,
   ),
 );
+vi.mock("@/lib/page-auth", () => ({
+  requirePageAuthUser: authMocks.getAuthUser,
+}));
 
 vi.mock("@/components/auto-review/AutoReviewPage", () => ({
   AutoReviewPage: () => null,

@@ -1,17 +1,10 @@
 import { Webhook } from "svix";
 import { headers } from "next/headers";
-import { syncClerkUserToSupabase } from "@/lib/clerk-sync";
-import { createSupabaseAdmin } from "@/lib/supabase/admin";
-
-interface ClerkWebhookEvent {
-  type: string;
-  data: {
-    id: string;
-    email_addresses: { email_address: string }[];
-    first_name: string | null;
-    last_name: string | null;
-  };
-}
+import type { WebhookEvent } from "@clerk/nextjs/server";
+import {
+  reconcileClerkUserAccess,
+  revokeClerkUserAccess,
+} from "@/lib/clerk-sync";
 
 export async function POST(request: Request) {
   const secret = process.env.CLERK_WEBHOOK_SECRET;
@@ -31,62 +24,46 @@ export async function POST(request: Request) {
   const body = await request.text();
 
   const wh = new Webhook(secret);
-  let event: ClerkWebhookEvent;
+  let event: WebhookEvent;
 
   try {
     event = wh.verify(body, {
       "svix-id": svixId,
       "svix-timestamp": svixTimestamp,
       "svix-signature": svixSignature,
-    }) as ClerkWebhookEvent;
+    }) as WebhookEvent;
   } catch {
     return new Response("Invalid signature", { status: 400 });
   }
 
-  if (event.type === "user.created") {
-    const { id, email_addresses, first_name, last_name } = event.data;
-    const email = email_addresses[0]?.email_address;
-    if (email) {
-      const supabaseUid = await syncClerkUserToSupabase(
-        id,
-        email,
-        first_name,
-        last_name
-      );
+  if (
+    event.type !== "user.created" &&
+    event.type !== "user.updated" &&
+    event.type !== "user.deleted"
+  ) {
+    return new Response("OK", { status: 200 });
+  }
 
-      // Pré-registro (spec 002): primeiro acesso autenticado transiciona o
-      // membro de pendente para ativo (FR-004/SC-005). Transição única — o
-      // filtro IS NULL evita sobrescrever ativações anteriores.
-      const admin = createSupabaseAdmin();
-      await admin
-        .from("profiles")
-        .update({ activated_at: new Date().toISOString() })
-        .eq("id", supabaseUid)
-        .is("activated_at", null);
-
-      // Vínculos pendentes (spec 002, US2): a conta recém-criada passa a ser
-      // o alias dos vínculos que aguardavam este e-mail.
-      const { data: resolvedLinks } = await admin
-        .from("member_email_links")
-        .update({ linked_user_id: supabaseUid })
-        .eq("email", email.toLowerCase())
-        .is("linked_user_id", null)
-        .select("member_user_id");
-
-      // SC-005, caminho via alias: o membro canônico de um vínculo resolvido
-      // também ativa — sem isso, um pendente cuja pessoa entra pelo e-mail
-      // vinculado ficaria "pendente" para sempre.
-      if (resolvedLinks && resolvedLinks.length > 0) {
-        await admin
-          .from("profiles")
-          .update({ activated_at: new Date().toISOString() })
-          .in(
-            "id",
-            resolvedLinks.map((l) => l.member_user_id),
-          )
-          .is("activated_at", null);
-      }
+  const clerkUserId = event.data.id;
+  if (!clerkUserId) {
+    return new Response("Missing user id", { status: 400 });
+  }
+  try {
+    if (event.type === "user.deleted") {
+      await revokeClerkUserAccess(clerkUserId);
+    } else {
+      // O evento assinado autoriza apenas o ID. O estado de e-mails e metadata
+      // é relido do Clerk para que um webhook atrasado não recupere um alias que
+      // a conta já removeu.
+      await reconcileClerkUserAccess(clerkUserId);
     }
+  } catch (error) {
+    console.error("[clerk-webhook] access reconciliation failed", {
+      clerkUserId,
+      eventType: event.type,
+      error,
+    });
+    return new Response("Access reconciliation failed", { status: 500 });
   }
 
   return new Response("OK", { status: 200 });

@@ -2,145 +2,132 @@
 
 ## Authenticated Actor
 
-A conta real autenticada no provedor de identidade.
+A conta real autenticada no Clerk. O estado atual relido do provedor é a autoridade para identidade de e-mail; payloads antigos de webhook, metadata e coincidências em `profiles.email` não provam posse por si.
 
-**Fields**
+**Fields observed at runtime**
 
 - `clerkUserId`: identificador da conta no Clerk.
-- `primaryEmail`: e-mail principal observado na sessão.
-- `firstName`, `lastName`: nomes exibíveis quando disponíveis.
-- `isSignedIn`: indica se há sessão válida.
-- `isMaster`: indica se o ator real tem privilégio master registrado em `master_users`.
-
-**Relationships**
-
-- Pode ter exatamente um vínculo ativo com um `Internal User Profile` por meio de `Account Link`.
-- Pode visualizar outro usuário em contexto master, mas continua sendo o ator real para auditoria e permissões próprias de escrita.
+- `primaryEmailAddressId`: ID do endereço primário escolhido no Clerk.
+- `verifiedPrimaryEmail`: e-mail normalizado correspondente ao ID primário, somente quando sua verificação está `verified`.
+- `verifiedEmails`: conjunto normalizado de todos os endereços verificados da conta; serve para reconciliar aliases.
+- `firstName`, `lastName`: nomes atuais do Clerk, inclusive `null` quando removidos.
+- `publicMetadata.supabase_uid`: UUID publicado por último para alimentar o JWT/RLS; não é autoridade isolada.
 
 **Validation rules**
 
-- Sem `clerkUserId`, o estado é signed out e deve redirecionar para login.
-- Sem e-mail observável, a conta não pode concluir vínculo automaticamente e deve cair em falha técnica recuperável.
+- Sem conta Clerk, o resultado é `signed-out`.
+- Sem `primaryEmailAddressId`, com primário não verificado ou com ID que não aparece na lista, a resolução falha fechada; nenhum endereço secundário ocupa silenciosamente o lugar do primário.
+- A reconciliação sem primário verificado revoga aliases de mapping existente e não cria identidade quando o mapping ainda não existe.
+- `user.deleted`, ou uma releitura que retorna 404, inicia revogação terminal daquele `clerkUserId`.
 
 ## Internal User Profile
 
-A identidade interna usada por projetos, membros, atribuições, respostas, revisões e RLS.
+A identidade Supabase usada por projetos, memberships, atribuições, respostas, revisões e RLS.
 
-**Fields**
+**Persisted fields relevant to this feature**
 
-- `id`: UUID do usuário Supabase usado por `profiles`, `project_members` e políticas RLS.
-- `email`: e-mail canônico do perfil.
-- `firstName`, `lastName`: nomes exibíveis salvos em `profiles`.
-- `activatedAt`: marca se o perfil pré-registrado já foi ativado por login real.
+- `id`: UUID referenciado por `clerk_user_mapping.supabase_user_id`, `project_members.user_id` e dados de trabalho.
+- `email`: e-mail administrativo/canônico do profile; não prova a posse Clerk atual.
+- `first_name`, `last_name`: nomes sincronizados na conclusão do snapshot atual.
+- `activated_at`: `null` enquanto o profile ainda não concluiu acesso autenticado; preenchido uma única vez quando uma conta válida é ativada. Um valor `null` não basta para autorizar reutilização: a presença de `clerk_user_mapping`, inclusive com marker `0`, significa que a identidade já foi reclamada.
 
-**Relationships**
+**Relationships and rules**
 
-- Recebe um `Account Link` quando uma conta Clerk é associada ao perfil.
-- Pode ser membro direto de projetos em `project_members`.
-- Pode ser membro canônico de um usuário que entrou por e-mail alternativo em `member_email_links`.
+- Um profile pode ser membership direta em `project_members` ou conta-alias em `member_email_links.linked_user_id`, mas não pode ocupar os dois papéis no mesmo projeto.
+- `clerk_user_mapping.supabase_user_id` referencia `profiles(id) ON DELETE CASCADE`; mapping órfão é irrepresentável no schema final.
+- As chaves do mapping são imutáveis; `clerk_deleted = true` é terminal e só pode coexistir com marker `0`. `claim_clerk_supabase_identity` só cria mapping para profile sem ativação e sem dono anterior.
+- Na lista de um projeto, o membro é ativo quando o profile canônico ou ao menos um profile vinculado naquele projeto tem `activated_at` preenchido. Isso não ativa globalmente o profile canônico.
 
-**Validation rules**
+## Account Link — `clerk_user_mapping`
 
-- `id` é a identidade que deve aparecer no JWT Supabase como claim consumida por RLS.
-- `activatedAt = null` indica vínculo preparado, mas ainda pendente de ativação real.
+Associação durável entre a conta Clerk e o profile Supabase. O estado não usa colunas lógicas inventadas; ele é representado pelos campos persistidos abaixo e pela concordância com a metadata.
 
-## Account Link
+**Persisted fields**
 
-Associação durável entre `Authenticated Actor` e `Internal User Profile`.
+- `clerk_user_id`: origem Clerk.
+- `supabase_user_id`: profile interno, com FK para `profiles(id) ON DELETE CASCADE`.
+- `access_sync_version`: marker de conclusão; `0` fecha o acesso durante criação, reparo, snapshot incompleto ou revogação, e valor `>= 1` indica efeitos locais concluídos.
+- `access_snapshot_version`: geração monotônica observada em `User.updatedAt`.
+- `clerk_deleted`: `true` torna a remoção daquele Clerk ID terminal e impede conclusão posterior de snapshot antigo.
 
-**Fields**
+**Derived states**
 
-- `clerkUserId`: origem da conta autenticada.
-- `supabaseUserId`: destino interno usado por Supabase/RLS.
-- `linkStatus`: `prepared`, `active`, `pending-repair`, `divergent` ou `failed`.
-- `lastCheckedAt`: instante da última verificação ou reparo.
-- `failureReason`: categoria interna para suporte, sem expor detalhe técnico ao usuário final.
+- `absent`: não há mapping; uma sessão válida segue para conclusão de acesso.
+- `pending`: mapping existe com `access_sync_version = 0`; metadata não basta para autenticar.
+- `active`: mapping não revogado, marker concluído e `publicMetadata.supabase_uid` igual a `supabase_user_id`.
+- `divergent`: marker está concluído, mas metadata e mapping apontam para UUIDs diferentes; é um estado derivado da leitura, não uma coluna persistida.
+- `revoked`: `clerk_deleted = true` e marker `0`; aliases derivados foram ou serão removidos idempotentemente.
 
-**Relationships**
+`clerk_uid()` repete essa validação no banco: exige que o `sub` do JWT encontre o mapping, que o claim `supabase_uid` concorde com `supabase_user_id` e que `access_sync_version >= 1`. Um token antigo não preserva acesso depois que o marker volta a `0`.
 
-- Liga exatamente um ator Clerk a um perfil interno ativo para o caminho ordinário.
-- Pode apontar para perfil pré-registrado que será ativado no primeiro login.
+## Clerk Access Snapshot
 
-**Validation rules**
+A reconciliação usa duas transações para que falhas parciais fechem acesso em vez de conservar o snapshot anterior.
 
-- Retry de criação/reparo deve ser idempotente para o par `(clerkUserId, supabaseUserId)` e para o e-mail canônico observado.
-- Se o vínculo estiver ausente ou divergente em página protegida, o render deve falhar fechado e redirecionar para `Access Completion State`.
+1. `begin_clerk_access_snapshot(clerkUserId, supabaseUserId, snapshotVersion)` toma a trava global de identidade, rejeita mapping inexistente, revogado ou geração mais antiga, grava `access_sync_version = 0` e escolhe `access_snapshot_version = snapshotVersion`.
+2. `complete_clerk_access_snapshot(...)` toma a mesma trava e só aceita a geração ainda escolhida. Profile, nomes, `activated_at`, lista completa de aliases verificados e marker `1` são aplicados atomicamente.
+3. `publicMetadata.supabase_uid` é publicado somente depois da segunda fase. Se já contém o mesmo UUID, a escrita é omitida para encerrar o ciclo de `user.updated`.
 
-**State transitions**
+Se a primeira fase retorna `false`, `reconcileClerkUserAccess()` relê o Clerk uma vez e tenta somente a geração atual. Se a segunda fase falha, o marker `0` da primeira transação permanece commitado e o retry pode repetir a conclusão. Sem primário verificado, a segunda fase recebe aliases vazios e `p_activate = false`, portanto remove acesso derivado e não volta o marker a `1`.
 
-- `prepared` → `active`: login real confirma o vínculo e ativa o perfil.
-- `prepared` → `pending-repair`: sessão existe, mas a claim ou mapping ainda não reflete o perfil esperado.
-- `active` → `divergent`: mapping e metadata/claim apontam para identidades incompatíveis.
-- `pending-repair` → `active`: reparo idempotente confirma mapping e metadata.
-- qualquer estado → `failed`: falha técnica persistente; usuário recebe mensagem recuperável e suporte recebe diagnóstico.
+`user.deleted` usa protocolo equivalente: `begin_clerk_user_revocation` grava marker `0` e `clerk_deleted = true`; `complete_clerk_user_revocation` reconcilia aliases com lista vazia. Um 404 durante releitura percorre o mesmo caminho.
+
+## Administrative Email Identity
+
+Actions de membros distinguem duas projeções que podem coexistir e apontar para UUIDs diferentes:
+
+- `profileByEmail`: profile encontrado por `profiles.email`; representa pré-registro ou dado administrativo e nunca prova posse atual.
+- `ownerProfile`: profile cujo UUID vem da conta localizada por endereço verificado no Clerk e concluída por `reconcileClerkUserAccess()`; somente ele torna o resultado de vínculo `access: "ready"`.
+
+Quando as projeções divergem, elas são candidatas separadas para preview/unificação ou produzem erro fechado; a action não escolhe uma por conveniência. A reconciliação pode alterar aliases, portanto o contexto administrativo é relido antes da decisão final.
 
 ## Effective Project Member
 
 Identidade interna usada para escopo de trabalho em um projeto específico.
 
-**Fields**
+**Derived fields**
 
-- `projectId`: projeto em avaliação.
-- `memberUserId`: usuário canônico do projeto.
-- `linkedUserId`: usuário autenticado que acessa via e-mail alternativo, quando aplicável.
-- `source`: `direct-member`, `linked-email` ou `self`.
-
-**Relationships**
-
-- Deriva de `project_members` e, quando aplicável, de `member_email_links`.
-- É exposto como `memberUserId` por `getProjectAccessContext(projectId, user)`.
-- É projetado para a fila por `resolveProjectQueueIdentity(access, viewAsUser)`, que aplica `viewAs` somente para master.
+- `projectId`: projeto solicitado.
+- `accountUserId`: UUID da conta Supabase autenticada.
+- `memberUserId`: `member_email_links.member_user_id` quando existe alias terminal para `accountUserId`; caso contrário, o próprio `accountUserId`.
 
 **Validation rules**
 
-- Em filas pessoais, aliases devem resolver para o membro canônico.
-- A identidade efetiva não substitui o ator real para decisões de escrita proibidas pela spec.
+- Uma conta pode ter várias linhas de e-mail no mesmo projeto, mas todas precisam apontar para o mesmo membro canônico.
+- Se a consulta de alias falha ou rejeita, o resultado é `unavailable`; não há fallback para a identidade bruta.
+- Membership, papel, flags e dados de trabalho vêm exclusivamente do `memberUserId`; ownership e auditoria continuam usando `accountUserId` quando o contrato pede o ator real.
+- Mutations pessoais usam `resolveProjectMemberActor(projectId)`, que devolve `{ ok: true, user, memberUserId }` ou uma falha discriminada; nenhum helper paralelo devolve apenas um UUID e perde o estado de autenticação.
 
 ## Project Access Context
 
-Resultado consolidado da autorização do usuário em um projeto.
+`getProjectAccessContext(projectId, user)` retorna uma união discriminada e request-scoped.
 
-**Fields**
+**Resolved fields**
 
-- `status`: `resolved` quando identidade, projeto e membership foram lidos sem erro; `unavailable` quando qualquer leitura necessária falhou tecnicamente.
-- `accountUserId`: identidade da conta autenticada; preservada para ownership e auditoria.
-- `memberUserId`: identidade canônica do membro no projeto; usada para membership e filas de trabalho.
-- `project`: projeto encontrado dentro da RLS, ou `null` quando não há visibilidade autorizada.
-- `membershipRole`: papel em `project_members`, quando existe.
-- `isCoordinator`: true para master, criador do projeto ou membro coordenador.
-- `isMaster`: privilégio confirmado do ator real.
+- `status: "resolved"`.
+- `accountUserId`, `memberUserId`.
+- `project`: projeto visível pela RLS, ou `null` quando não há acesso.
+- `membershipRole`: papel da membership canônica, ou `null`.
+- `isMaster`: privilégio confirmado da conta real.
+- `isCoordinator`: `true` para master, criador do projeto ou membership canônica coordenadora.
 
-**Relationships**
+**Unavailable state**
 
-- Usa o `accountUserId` para o ator real e resolve `memberUserId` por projeto antes de consultar o papel.
-- É request-scoped por `getProjectAccessContext(projectId, user)`.
+- `status: "unavailable"` não carrega autorização parcial. Consumidores chamam `requireResolvedProjectAccess()` ou tratam explicitamente o discriminante antes de usar projeto/papel.
 
-**Validation rules**
-
-- Falha de query não pode ser convertida silenciosamente em “sem acesso”.
-- Todo consumidor deve chamar `requireResolvedProjectAccess` antes de ler `isCoordinator`; `unavailable` sempre falha fechado.
-- Usuário sem permissão recebe negação fechada sem dados do projeto.
-- Usuário sem projetos deve receber estado distinto de falha técnica.
+Usuário autenticado sem memberships é um estado ordinário do dashboard, não um motivo da tela de conclusão de acesso. Indisponibilidade técnica de identidade, alias, projeto, membership ou `master_users` falha fechada.
 
 ## Access Completion State
 
-Estado transitório mostrado quando há sessão, mas a plataforma ainda não consegue confirmar o vínculo interno necessário para acessar páginas protegidas.
+Estado transitório da rota `frontend/src/app/auth/post-login/page.tsx`, mostrado quando há conta Clerk, mas a resolução read-only ainda não produz `AuthUser`.
 
-**Fields**
+**Reasons actually rendered**
 
-- `actorEmail`: e-mail mostrado ao usuário para reconhecimento da conta.
-- `reason`: `link-pending`, `link-divergent`, `sync-temporary-failure`, `no-project-access` ou `unknown-recoverable`.
-- `retryAvailable`: indica se o usuário pode tentar novamente sem suporte.
-- `supportHint`: orientação curta e não técnica quando retry não resolve.
-- `nextUrl`: destino protegido pretendido após sucesso.
+- `link-pending`: metadata, mapping ou marker concluído ainda está ausente.
+- `link-divergent`: metadata e mapping concluído apontam para identidades incompatíveis.
+- `sync-temporary-failure`: não há primário verificado ou alguma leitura técnica falhou.
+- `unknown-recoverable`: a action de retry capturou falha não classificada e devolveu orientação genérica.
 
-**Relationships**
+`actorEmail` é opcional porque falhas podem ocorrer antes de obter um primário verificado. `nextUrl` passa por `safeNextPath()` antes de chegar ao componente. A action `completeAccess()` relê a conta Clerk por ID e chama a reconciliação idempotente; sucesso redireciona ao destino interno seguro, e falha permanece na tela sem expor token, claim, UUID ou nome de tabela.
 
-- Deriva de `Authenticated Actor` + `Account Link`.
-- Encaminha para dashboard ou página protegida original quando o vínculo passa a `active`.
-
-**Validation rules**
-
-- Mensagens são em pt-BR e não expõem tokens, claims, debug links ou instruções internas.
-- A ação de retry é segura para repetição e não cria registros duplicados.
-- O estado deve ser navegável por teclado, com foco visível e labels acessíveis.
+`no-project-access` não pertence a este union: uma conta autenticada e ativa sem projeto vê o estado vazio do dashboard.

@@ -15,7 +15,7 @@
 //
 // Um mock GLOBAL via `vitest.config.ts` (setupFiles) foi cogitado e
 // descartado: `src/lib/__tests__/auth-effective-member.test.ts` testa a
-// implementação REAL de `getEffectiveMemberId`/`getAuthUser` (só mocka as
+// implementação REAL de `resolveProjectMemberActor`/`getAuthUser` (só mocka as
 // dependências transitivas — Clerk, supabase/admin — não `@/lib/auth` em
 // si); um `vi.mock("@/lib/auth", ...)` em setupFiles substituiria esse
 // módulo incondicionalmente para TODOS os arquivos, quebrando esse teste.
@@ -39,12 +39,27 @@ export function authModuleMock(
 }
 
 export function projectIdentityAuthModuleMock(
-  getEffectiveMemberId: (projectId: string) => Promise<string>,
+  resolveMemberUserId: (projectId: string) => Promise<string>,
   accountUserId = "linked-account",
 ) {
+  const user = { id: accountUserId };
   return {
-    getAuthUser: async () => ({ id: accountUserId }),
-    getEffectiveMemberId,
+    getAuthUser: async () => user,
+    resolveProjectMemberActor: async (projectId: string) => {
+      try {
+        return {
+          ok: true,
+          user,
+          memberUserId: await resolveMemberUserId(projectId),
+        };
+      } catch {
+        return {
+          ok: false,
+          code: "identity_unavailable",
+          error: "Não foi possível verificar sua identidade no projeto.",
+        };
+      }
+    },
   };
 }
 

@@ -1,7 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { Header } from "@/components/shell/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,10 +9,10 @@ import Link from "next/link";
 import type { Project } from "@/lib/types";
 
 export default async function DashboardPage() {
-  const user = await getAuthUser();
-  if (!user) redirect("/auth/login");
-
-  const supabase = await createSupabaseServer();
+  const [user, supabase] = await Promise.all([
+    requirePageAuthUser(),
+    createSupabaseServer(),
+  ]);
 
   const profilePromise = supabase
     .from("profiles")

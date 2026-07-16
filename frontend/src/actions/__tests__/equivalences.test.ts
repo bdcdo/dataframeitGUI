@@ -17,8 +17,11 @@ const syncCompareAssignment = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "linked-account" }),
-  getEffectiveMemberId: async () => "canonical-reviewer",
+  resolveProjectMemberActor: async () => ({
+    ok: true,
+    user: { id: "linked-account" },
+    memberUserId: "canonical-reviewer",
+  }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>

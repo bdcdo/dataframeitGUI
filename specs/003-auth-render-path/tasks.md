@@ -20,7 +20,7 @@ description: "Task list for feature: Caminho de autenticação rápido e recuper
 
 ## Path Conventions
 
-Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, App Router routes in `frontend/src/app/`, Server Actions in `frontend/src/actions/`, components in `frontend/src/components/`, tests co-located under `frontend/src/lib/__tests__/` and `frontend/src/app/**/__tests__/` per existing Vitest convention.
+Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, App Router/webhook routes in `frontend/src/app/`, Server Actions in `frontend/src/actions/` and components in `frontend/src/components/`. Os testes atuais vivem em `lib/__tests__/`, `actions/__tests__/`, `app/**/__tests__/`, ao lado da rota Clerk (`route.test.ts`) e em `frontend/supabase/tests/` para o contrato SQL.
 
 ---
 
@@ -41,10 +41,10 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [X] T003 Define the auth-resolution outcome type — `signed-out` | `authenticated` | `access-completion-required` | `technical-sync-failure` — per `specs/003-auth-render-path/contracts/auth-resolution.md`, exported from `frontend/src/lib/auth.ts` (or a new `frontend/src/lib/auth-resolution.ts` re-exported by `auth.ts`)
-- [X] T004 Split "resolve session / prepared link" from "complete / repair link": remove the `syncClerkUserToSupabase(...)` call from the `getAuthUser` render path (`frontend/src/lib/auth.ts:36`) so a protected render never silently repairs the link (decision D3), while keeping `getAuthUser` wrapped in `cache()`
-- [X] T005 Preserve first-login behavior by relocating the link preparation/repair logic (formerly inline in `getAuthUser`) into an idempotent, explicitly-invoked routine reused by the access-completion action, keeping the idempotence guarantees of `frontend/src/lib/clerk-sync.ts` (`syncClerkUserToSupabase`, `preregisterSupabaseUser`)
-- [X] T006 Make `getAuthUser` return/signal `access-completion-required` (vs `technical-sync-failure` when no usable email) instead of attempting repair, so protected pages can fail closed, in `frontend/src/lib/auth.ts`
+- [X] T003 Define the internal auth-resolution union — `signed-out` | `authenticated` | `access-completion-required` | `technical-sync-failure` — in `frontend/src/lib/auth.ts`; export `resolveAuth()` and keep `getAuthUser()` as the thin authenticated/null projection for callers that already fail closed
+- [X] T004 Split read and repair: `resolveAuth()`/`getAuthUser()` stay read-only and `cache()`d; they never call `reconcileClerkUserAccess()` from the protected render path
+- [X] T005 Preserve first-login and recovery with `reconcileClerkUserAccess(clerkUserId)` in `frontend/src/lib/clerk-sync.ts`, invoked explicitly by Clerk webhooks and `frontend/src/actions/complete-access.ts`; keep `preregisterSupabaseUser()` idempotent
+- [X] T006 Classify mapping/metadata absent or marker `0` as `access-completion-required`; classify ausência de primário verificado e falhas técnicas as `technical-sync-failure`, all fail-closed in `frontend/src/lib/auth.ts`
 
 **Checkpoint**: Identity resolution is render-safe and repair is out of the critical path. User stories can now proceed.
 
@@ -52,20 +52,20 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 ## Phase 3: User Story 1 - Acessar projeto sem espera perceptível de autenticação (Priority: P1) 🎯 MVP
 
-**Goal**: An authenticated user with a prepared account link opens the dashboard or a project page and starts working without a remote identity-provider lookup on the critical render path, and identity is resolved once per request.
+**Goal**: An authenticated user with a prepared account link opens the dashboard or a project page without repeating remote identity work per consumer; identity is resolved once per request.
 
 **Independent Test**: With an authenticated account whose link is already prepared, open a project page with no browser cache and confirm the page is usable within the budget with a single identity resolution per request (no per-read re-resolution).
 
 ### Tests for User Story 1 ⚠️ (write first, ensure they FAIL before implementation)
 
-- [X] T007 [P] [US1] Regression RC-001 (identity resolved once per request): assert `getAuthUser` de-duplicates across a parent layout + project layout + multiple reads in the same request, in `frontend/src/lib/__tests__/auth-request-dedup.test.ts`
-- [X] T008 [P] [US1] Regression RC-002 (no full remote lookup on prepared path): **first fix M1 — define the measured target explicitly**: "full remote identity-provider lookup" = the count of Clerk `currentUser()`/`auth()` remote round-trips plus any Supabase `profiles`/`clerk_user_mapping` lookups per protected request. The test asserts that, for a prepared-link user, this count is exactly one per request (from the single cached `getAuthUser`), not once per protected read, in `frontend/src/lib/__tests__/auth-no-remote-lookup.test.ts`
+- [X] T007 [P] [US1] Regression RC-001 in `frontend/src/lib/__tests__/auth-request-dedup.test.ts`: uma resolução preparada faz exatamente `currentUser` + mapping + `master_users` uma vez cada; deduplicação entre consumidores RSC é garantia de runtime do `cache()` e recebe instrumentação estrutural separada
+- [X] T008 [P] [US1] Regression RC-002 in `frontend/src/lib/__tests__/auth-no-remote-lookup.test.ts`: caminho preparado tem teto fixo de 3 lookups (`currentUser`, mapping, master), enquanto pendente termina após 2 e não consulta master; o custo não cresce por leitura protegida
 
 ### Implementation for User Story 1
 
-- [X] T009 [US1] Confirm/ensure `cache()` de-duplication is honored end-to-end between `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx` (no direct `currentUser()`/`auth()` calls bypassing `getAuthUser`). NOTE (I1): these two layout files are also edited by T018 [US2] — do T009 before T018 to avoid a same-file conflict; they are not parallel
+- [X] T009 [US1] Confirm `cache()` de-duplication between `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx`: ambos chamam somente `resolveAuth()`, sem `currentUser()`/`auth()` direto. NOTE (I1): executar antes de T018 porque os arquivos são compartilhados
 - [X] T010 [US1] Add observability/counter evidence for SC-002 (number of identity resolutions per representative request) via a request-scoped debug counter or test instrumentation in `frontend/src/lib/auth.ts`, without leaking to the client
-- [X] T011 [US1] Sweep protected pages/actions that read project data for repeated identity resolution and route them through `getAuthUser`/`getProjectAccessContext` (`frontend/src/app/(app)/**`, `frontend/src/actions/**`)
+- [X] T011 [US1] Sweep protected pages/actions: layouts/pages usam `resolveAuth`/`getProjectAccessContext`; mutations pessoais usam exclusivamente `resolveProjectMemberActor`; mutations de coordenação usam `requireCoordinator`
 
 **Checkpoint**: US1 fully functional and independently testable — MVP candidate.
 
@@ -80,16 +80,16 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 ### Tests for User Story 2 ⚠️ (write first, ensure they FAIL before implementation)
 
 - [X] T012 [P] [US2] Regression RC-005 (fail-closed on missing/divergent link): assert a valid Clerk session with absent/divergent link redirects protected renders to access completion and shows no project data, in `frontend/src/lib/__tests__/auth-fail-closed.test.ts`
-- [X] T013 [P] [US2] Reason-classification tests covering `link-pending`, `link-divergent`, `sync-temporary-failure`, `no-project-access`, `unknown-recoverable` per `contracts/access-completion.md` and `data-model.md`, in `frontend/src/app/auth/__tests__/access-completion-reason.test.tsx`
-- [X] T014 [P] [US2] Idempotent-retry test (SC-007): repeating access completion for the same account produces at most one profile link and no duplicate `profiles` / `clerk_user_mapping` / memberships, in `frontend/src/actions/__tests__/complete-access.test.ts`
+- [X] T013 [P] [US2] Test the four rendered reasons (`link-pending`, `link-divergent`, `sync-temporary-failure`, `unknown-recoverable`) in `frontend/src/app/auth/__tests__/access-completion-reason.test.tsx`; cover active account without projects separately in `frontend/src/app/(app)/dashboard/__tests__/page.test.tsx`
+- [X] T014 [P] [US2] Test the action result/delegation in `frontend/src/actions/__tests__/complete-access.test.ts` and retry idempotence without duplicate mapping/profile/aliases in `frontend/src/lib/__tests__/clerk-sync.test.ts`
 - [X] T015 [P] [US2] Accessibility test (C3, Constitution §VI / FR-009 / contracts/access-completion.md): assert the access-completion screen is keyboard-navigable, sets initial focus, exposes associated labels and an accessible retry button, and renders no token/claims/debug text, in `frontend/src/app/auth/__tests__/access-completion-a11y.test.tsx`
 
 ### Implementation for User Story 2
 
-- [X] T016 [US2] Add the access-completion route/page under `frontend/src/app/auth/post-login/page.tsx` (pt-BR, shadcn/ui, keyboard-navigable, visible focus, WCAG 2.1 AA, no token/claims/debug/table-name exposure), rendering the five `reason` states from `contracts/access-completion.md`
-- [X] T017 [US2] Implement the idempotent access-completion Server Action (retry of link preparation/repair) in `frontend/src/actions/complete-access.ts`, reusing the relocated idempotent routine (T005) and `frontend/src/lib/clerk-sync.ts`
+- [X] T016 [US2] Add `frontend/src/app/auth/post-login/page.tsx` + `frontend/src/components/auth/AccessCompletionCard.tsx`, rendering the four reason states with pt-BR, shadcn/ui, foco inicial, região viva e nenhum token/claim/debug/table name
+- [X] T017 [US2] Implement `completeAccess()` in `frontend/src/actions/complete-access.ts`: reler a conta por `clerkUserId` via `reconcileClerkUserAccess`, retornar `sync-temporary-failure | unknown-recoverable` sem propagar detalhe e permitir retry idempotente
 - [X] T018 [US2] Wire fail-closed redirects in `frontend/src/app/(app)/layout.tsx` and `frontend/src/app/(app)/projects/[id]/layout.tsx`: `access-completion-required`/`technical-sync-failure` → access-completion route; do NOT convert an identity-sync failure into project `notFound()` and do NOT send a link-pending user back to login as if signed out. (I1: depends on T009 — same files)
-- [X] T019 [US2] Distinguish `no-project-access` (active account, no memberships) from `technical-sync-failure` on the dashboard, per `data-model.md` Project Access Context rules, in `frontend/src/app/(app)/**` dashboard entry
+- [X] T019 [US2] Distinguish active account without projects from `technical-sync-failure` in `frontend/src/app/(app)/dashboard/page.tsx`, covered by `frontend/src/app/(app)/dashboard/__tests__/page.test.tsx`; `no-project-access` is not an access-completion reason
 - [X] T020 [US2] Success transitions: on confirmed active link, redirect to safe `nextUrl` or dashboard; on persistent failure, show a short non-technical support hint, in `frontend/src/app/auth/post-login/page.tsx` + `frontend/src/actions/complete-access.ts`
 
 **Checkpoint**: US1 and US2 both work independently.
@@ -112,8 +112,8 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 
 ### Implementation for User Story 3
 
-- [X] T026 [US3] Keep `getProjectAccessContext(projectId, user)` as the source of canonical project identity + role and `resolveProjectQueueIdentity(access, viewAsUser)` as the source of queue/viewAs precedence, in `frontend/src/lib/auth.ts`
-- [X] T027 [US3] Ensure `viewAs` never changes the authenticated actor in `frontend/src/actions/**` and personal-queue call sites; UI somente leitura para Comparação é rastreada separadamente pelo PR #445
+- [X] T026 [US3] Keep three explicit doors in `frontend/src/lib/auth.ts`: `getProjectAccessContext(projectId, user)` for page/layout access, `resolveProjectMemberActor(projectId)` for personal mutations, and `resolveProjectQueueIdentity(access, viewAsUser)` for viewed queues
+- [X] T027 [US3] Ensure `viewAs` never reaches `resolveProjectMemberActor` or changes the authenticated actor in `frontend/src/actions/**`; UI somente leitura para Comparação é rastreada separadamente pelo PR #445
 
 **Checkpoint**: All three stories independently functional.
 
@@ -126,9 +126,10 @@ Web app — frontend at `frontend/src/`. Server helpers in `frontend/src/lib/`, 
 - [X] T028 [P] Regression RC-003/RC-004: a check that fails if the legacy custom-token path or a general service-key data-access path is reintroduced into ordinary protected rendering (e.g. lint/grep gate or Vitest), documented in `specs/003-auth-render-path/contracts/regression-checks.md` evidence, added under `frontend/src/lib/__tests__/no-legacy-token-path.test.ts`
 - [ ] T029 RC-006 / SC-001 performance evidence (M2 — define the metric): measure **first-usable latency of a representative protected page under no-browser-cache** with an explicit metric (TTFB→first-contentful/interactive of the protected content, chosen and stated in the PR), target 150–250 ms, ceiling 300 ms p95; note that this measures the auth contribution isolated from the Constitution §II page budgets (LCP < 2.5s), not a replacement for them. Record command/scenario/metric per `quickstart.md`
   - **Status (pendente de deploy):** métrica definida (`regression-checks.md`), instrumentação `AUTH_RESOLVE_DEBUG` pronta e `next build` de produção validado. O número p95 **representativo** exige medição num deploy sem cache de navegador (hardware/região de produção) — não reproduzível localmente de forma fiel. Fica para colher após o deploy.
-- [X] T030 [P] Map each regression check (RC-001…RC-006) to its covering test/instrumentation and record the evidence table in the PR description
+- [X] T030 [P] Map each regression check (RC-001…RC-007) to current tests/instrumentation in `contracts/regression-checks.md`
 - [X] T031 Run `quickstart.md` validation end-to-end (`cd frontend && npm run typecheck && npm run test -- --run`), plus the manual role/completion/no-project passes; **include a sign-out assertion (C2 / FR-016)** confirming existing login and sign-out behavior stays recognizable, changed only by the clearer completion/error states
 - [X] T032 Document the FR-013 measured-contingency gate (C1): record in `specs/003-auth-render-path/contracts/regression-checks.md` (and the PR) that any non-default local token path is out of scope by default and may only be considered after the official Clerk/Supabase path is measured to fail the SC-001 target AND passes an explicit security review; T028 (RC-004) enforces the inverse guard against silent reintroduction
+- [X] T033 RC-007 / FR-017–FR-018: persistir o protocolo em `frontend/supabase/migrations/20260715170000_canonical_project_identity_rls.sql`, validá-lo localmente e cobrir seleção do primário em `clerk-primary-email.test.ts`, geração/retry/revogação em `clerk-sync.test.ts`, roteamento do webhook em `app/api/webhooks/clerk/route.test.ts`, leitura fail-closed em `auth-fail-closed.test.ts` e contrato SQL em `supabase/tests/clerk_mapping_completion.test.sql`; aplicação remota permanece operação manual separada
 
 ---
 
@@ -183,7 +184,7 @@ Task: "unavailable access closed denial in project-access.test.ts"
 
 1. Phase 1: Setup.
 2. Phase 2: Foundational (CRITICAL — render-safe identity resolution).
-3. Phase 3: US1 — request-scoped dedup + no remote lookup on prepared path.
+3. Phase 3: US1 — request-scoped dedup + teto fixo de lookups no caminho preparado.
 4. **STOP and VALIDATE**: measure a representative protected page and confirm single resolution per request.
 
 ### Incremental Delivery

@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createProjectIdentityActionHarness } from "./project-identity-harness";
 
-const getEffectiveMemberId = vi.hoisted(() =>
+const resolveMemberUserId = vi.hoisted(() =>
   vi.fn(async () => "canonical-member"),
 );
-const harness = createProjectIdentityActionHarness(getEffectiveMemberId);
+const harness = createProjectIdentityActionHarness(resolveMemberUserId);
 
 vi.mock("@/lib/auth", () => harness.authModule);
 vi.mock("@/lib/supabase/server", () => harness.supabaseServerModule);
@@ -13,8 +13,8 @@ beforeEach(() => {
   harness.reset({
     researcher_field_orders: { data: { field_order: ["field_a"] } },
   });
-  getEffectiveMemberId.mockReset();
-  getEffectiveMemberId.mockResolvedValue("canonical-member");
+  resolveMemberUserId.mockReset();
+  resolveMemberUserId.mockResolvedValue("canonical-member");
 });
 
 describe("researcher field order — identidade canônica", () => {
@@ -24,7 +24,7 @@ describe("researcher field order — identidade canônica", () => {
     const result = await getResearcherFieldOrder("project-1");
 
     expect(result).toEqual({ order: ["field_a"] });
-    expect(getEffectiveMemberId).toHaveBeenCalledWith("project-1");
+    expect(resolveMemberUserId).toHaveBeenCalledWith("project-1");
   });
 
   it("grava a preferência em nome do membro canônico", async () => {
@@ -47,7 +47,7 @@ describe("researcher field order — identidade canônica", () => {
   });
 
   it("não lê nem grava quando a identidade canônica está indisponível", async () => {
-    getEffectiveMemberId.mockRejectedValueOnce(
+    resolveMemberUserId.mockRejectedValueOnce(
       new Error("identity unavailable"),
     );
     const { saveResearcherFieldOrder } = await import("@/actions/field-order");

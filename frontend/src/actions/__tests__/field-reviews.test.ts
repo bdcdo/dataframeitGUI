@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Builder chainable e thenable — `await builder` (ou apos .select()) resolve
 // { data, error }.
 type WriteCall = { table: string; op: string; payload: unknown };
+type RpcCall = { fn: string; args: unknown };
 type FilterCall = {
   table: string;
   method: "eq" | "is" | "in" | "neq" | "not";
@@ -13,6 +14,7 @@ type FilterCall = {
 };
 let writeCalls: WriteCall[];
 let filterCalls: FilterCall[];
+let rpcCalls: RpcCall[];
 let tableData: Record<string, unknown>;
 let adminClientCreations: number;
 
@@ -28,6 +30,9 @@ function fieldReview(overrides: Record<string, unknown> = {}) {
     field_name: "q1",
     human_response_id: "hr1",
     llm_response_id: "lr1",
+    self_verdict: null,
+    self_justification: null,
+    arbitrator_id: null,
     blind_verdict: "humano",
     final_verdict: null,
     ...overrides,
@@ -38,14 +43,69 @@ function setFieldReview(overrides: Record<string, unknown> = {}) {
   tableData.field_reviews = [fieldReview(overrides)];
 }
 
+function applyFieldReviewUpdate(
+  table: string,
+  operation: string,
+  updatePayload: Record<string, unknown> | null,
+) {
+  if (table !== "field_reviews" || operation !== "update") return;
+
+  const explicitUpdateResult = tableData["field_reviews:update"];
+  if (
+    explicitUpdateResult === undefined &&
+    Array.isArray(tableData.field_reviews) &&
+    updatePayload
+  ) {
+    tableData.field_reviews = tableData.field_reviews.map((row) => ({
+      ...(row as Record<string, unknown>),
+      ...updatePayload,
+    }));
+    return;
+  }
+
+  const stateAfterEmptyUpdate = tableData["field_reviews:after-empty-update"];
+  if (
+    explicitUpdateResult !== undefined &&
+    stateAfterEmptyUpdate !== undefined
+  ) {
+    tableData.field_reviews = stateAfterEmptyUpdate;
+  }
+}
+
+function queryResult(table: string, operation: string, limited: boolean) {
+  // A query "ainda ha field_review pendente?" usa .limit em
+  // field_reviews — resolve para a fixture dedicada.
+  if (table === "field_reviews" && limited) {
+    return {
+      data: tableData.field_reviews_pending ?? null,
+      error: tableData["__error:field_reviews:select"] ?? null,
+    };
+  }
+
+  // Resolve por operacao quando ha override `${table}:${operation}` — permite
+  // um teste fazer o UPDATE casar 0 linhas mas o SELECT de estado ver a linha
+  // (cenario de retry apos falha parcial). Senao cai no dado generico.
+  return {
+    data: tableData[`${table}:${operation}`] ?? tableData[table] ?? null,
+    error: tableData[`__error:${table}:${operation}`] ?? null,
+  };
+}
+
 function makeClient() {
   return {
+    rpc: async (fn: string, args: unknown) => {
+      rpcCalls.push({ fn, args });
+      const result = tableData[`__rpc:${fn}`] as
+        { data?: unknown; error?: unknown } | undefined;
+      return { data: result?.data ?? 1, error: result?.error ?? null };
+    },
     from: (table: string) => {
       // `limited` distingue a query de "ainda há campo pendente?" (usa .limit)
       // do UPDATE de field_reviews (usa .select) — ambos batem na mesma tabela.
       let limited = false;
       const builder: Record<string, unknown> = {};
       let op = "select";
+      let updatePayload: Record<string, unknown> | null = null;
       builder.select = () => builder;
       for (const method of ["eq", "is", "in", "neq", "not"] as const) {
         builder[method] = (column: string, ...values: unknown[]) => {
@@ -64,6 +124,7 @@ function makeClient() {
       };
       builder.update = (payload: unknown) => {
         writeCalls.push({ table, op: "update", payload });
+        updatePayload = payload as Record<string, unknown>;
         op = "update";
         return builder;
       };
@@ -78,31 +139,47 @@ function makeClient() {
         return builder;
       };
       builder.then = (resolve: (v: unknown) => unknown) => {
-        // A query "ainda ha field_review pendente?" usa .limit em
-        // field_reviews — resolve para a fixture dedicada.
-        if (table === "field_reviews" && limited) {
-          return resolve({
-            data: tableData.field_reviews_pending ?? null,
-            error: tableData["__error:field_reviews:select"] ?? null,
-          });
-        }
-        // Resolve por operacao quando ha override `${table}:${op}` — permite um
-        // teste fazer o UPDATE casar 0 linhas mas o SELECT de estado ver a linha
-        // (cenario de retry apos falha parcial). Senao cai no dado generico.
-        return resolve({
-          data: tableData[`${table}:${op}`] ?? tableData[table] ?? null,
-          error: tableData[`__error:${table}:${op}`] ?? null,
-        });
+        applyFieldReviewUpdate(table, op, updatePayload);
+        return resolve(queryResult(table, op, limited));
       };
       return builder;
     },
   };
 }
 
-const auth = vi.hoisted(() => ({
-  getAuthUser: vi.fn(async () => ({ id: "user1" })),
-  getEffectiveMemberId: vi.fn(async () => "user1"),
-}));
+const auth = vi.hoisted(() => {
+  const getAuthUser = vi.fn(async () => ({ id: "user1" }));
+  const resolveMemberUserId = vi.fn<(projectId: string) => Promise<string>>(
+    async () => "user1",
+  );
+  return {
+    getAuthUser,
+    resolveMemberUserId,
+    resolveProjectMemberActor: vi.fn(async (projectId: string) => {
+      const user = await getAuthUser();
+      if (!user) {
+        return {
+          ok: false,
+          code: "unauthenticated",
+          error: "Não autenticado",
+        };
+      }
+      try {
+        return {
+          ok: true,
+          user,
+          memberUserId: await resolveMemberUserId(projectId),
+        };
+      } catch {
+        return {
+          ok: false,
+          code: "identity_unavailable",
+          error: "Não foi possível verificar sua identidade no projeto.",
+        };
+      }
+    }),
+  };
+});
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => auth);
@@ -119,9 +196,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 beforeEach(() => {
   writeCalls = [];
   filterCalls = [];
+  rpcCalls = [];
   adminClientCreations = 0;
   auth.getAuthUser.mockResolvedValue({ id: "user1" });
-  auth.getEffectiveMemberId.mockResolvedValue("user1");
+  auth.resolveMemberUserId.mockResolvedValue("user1");
   tableData = {
     // UPDATE de field_reviews retorna a linha tocada (via .select). O SELECT de
     // estado real (efeitos de equivalente/ambiguo) le esta mesma linha — testes
@@ -204,6 +282,24 @@ describe("submitAutoReview — validação da justificativa", () => {
     expect(updateCallsOf()).toHaveLength(0);
   });
 
+  it("rejeita o mesmo campo duas vezes antes de qualquer escrita", async () => {
+    const action = (await import("@/actions/field-reviews")).submitAutoReview;
+    const result = await action("p1", "doc1", [
+      { fieldName: "q1", verdict: "admite_erro" },
+      {
+        fieldName: "q1",
+        verdict: "contesta_llm",
+        justification: "resposta correta",
+      },
+    ]);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Campo "q1" enviado mais de uma vez.',
+    });
+    expect(updateCallsOf()).toHaveLength(0);
+  });
+
   it("admite_erro grava self_justification nula", async () => {
     const result = await submitAutoReview({
       fieldName: "q1",
@@ -266,7 +362,10 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
   });
 
   it("ambiguo → grava self_justification trimada e insere project_comments com o contraste e a justificativa", async () => {
-    setFieldReview({ self_verdict: "ambiguo" });
+    setFieldReview({
+      self_verdict: "ambiguo",
+      self_justification: "o enunciado não define a unidade",
+    });
     const result = await submitAutoReview({
       fieldName: "q1",
       verdict: "ambiguo",
@@ -281,7 +380,7 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
       self_justification: "o enunciado não define a unidade",
     });
 
-    const commentInsert = writeCallOf("insert", "project_comments");
+    const commentInsert = writeCallOf("upsert", "project_comments");
     const rows = commentInsert?.payload as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -289,19 +388,23 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
       document_id: "doc1",
       field_name: "q1",
       author_id: "user1",
+      source_field_review_id: "fr1",
     });
     expect(String(rows[0].body)).toContain("ambíguo");
     expect(String(rows[0].body)).toContain("Adalimumabe");
     expect(String(rows[0].body)).toContain(
       "Justificativa do pesquisador: o enunciado não define a unidade",
     );
-    expect(adminClientCreations).toBe(0);
+    expect(adminClientCreations).toBe(1);
   });
 
   it("mantém a conta autenticada como autora quando a fila pertence a um membro canônico", async () => {
     auth.getAuthUser.mockResolvedValue({ id: "linked-account" });
-    auth.getEffectiveMemberId.mockResolvedValue("canonical-member");
-    setFieldReview({ self_verdict: "ambiguo" });
+    auth.resolveMemberUserId.mockResolvedValue("canonical-member");
+    setFieldReview({
+      self_verdict: "ambiguo",
+      self_justification: "duas leituras possíveis",
+    });
 
     const result = await submitAutoReview({
       fieldName: "q1",
@@ -310,7 +413,7 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
     });
 
     expect(result.success).toBe(true);
-    const commentInsert = writeCallOf("insert", "project_comments");
+    const commentInsert = writeCallOf("upsert", "project_comments");
     expect(commentInsert?.payload).toMatchObject([
       { author_id: "linked-account" },
     ]);
@@ -320,10 +423,49 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
       column: "self_reviewer_id",
       value: "canonical-member",
     });
+    expect(adminClientCreations).toBe(1);
+  });
+
+  it("retry ambíguo rejeita justificativa diferente da persistida", async () => {
+    setFieldReview({
+      self_verdict: "ambiguo",
+      self_justification: "justificativa original",
+    });
+    tableData["field_reviews:update"] = [];
+
+    const result = await submitAutoReview({
+      fieldName: "q1",
+      verdict: "ambiguo",
+      justification: "texto divergente do retry",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("justificativa enviada difere");
+    expect(writeCallOf("upsert", "project_comments")).toBeUndefined();
+  });
+
+  it("retry ambíguo idêntico recompõe o comentário ausente", async () => {
+    setFieldReview({
+      self_verdict: "ambiguo",
+      self_justification: "justificativa original",
+    });
+    tableData["field_reviews:update"] = [];
+
+    const result = await submitAutoReview({
+      fieldName: "q1",
+      verdict: "ambiguo",
+      justification: "  justificativa original  ",
+    });
+
+    expect(result.success).toBe(true);
+    expect(writeCallOf("upsert", "project_comments")).toBeDefined();
   });
 
   it("expõe falha ao carregar respostas antes do comentário de ambiguidade", async () => {
-    setFieldReview({ self_verdict: "ambiguo" });
+    setFieldReview({
+      self_verdict: "ambiguo",
+      self_justification: "duas leituras possíveis",
+    });
     tableData["__error:responses:select"] = {
       message: "respostas indisponíveis",
     };
@@ -338,7 +480,7 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
       success: false,
       error: "respostas indisponíveis",
     });
-    expect(writeCallOf("insert", "project_comments")).toBeUndefined();
+    expect(writeCallOf("upsert", "project_comments")).toBeUndefined();
   });
 
   it("equivalente em retry (UPDATE casa 0 linhas) ainda registra a equivalencia", async () => {
@@ -394,6 +536,145 @@ describe("submitAutoReview — envio parcial e conclusão do assignment", () => 
   });
 });
 
+describe("submitAutoReview — retry e conflito do estado persistido", () => {
+  it("retry de contestação sem árbitro repete o sorteio", async () => {
+    setFieldReview({
+      self_verdict: "contesta_llm",
+      self_justification: "resposta correta",
+      arbitrator_id: null,
+    });
+    tableData["field_reviews:update"] = [];
+    tableData.project_members = [
+      { user_id: "arbitrator1", role: "pesquisador" },
+    ];
+
+    const result = await submitAutoReview({
+      fieldName: "q1",
+      verdict: "contesta_llm",
+      justification: "resposta correta",
+    });
+
+    expect(result).toMatchObject({ success: true, arbitrated: 1 });
+    expect(rpcCalls).toContainEqual({
+      fn: "assign_arbitration_if_eligible",
+      args: {
+        p_project_id: "p1",
+        p_document_id: "doc1",
+        p_user_id: "arbitrator1",
+        p_field_names: ["q1"],
+      },
+    });
+  });
+
+  it("rejeita retry com veredito diferente do persistido", async () => {
+    setFieldReview({ self_verdict: "admite_erro" });
+    tableData["field_reviews:update"] = [];
+
+    const result = await submitAutoReview({
+      fieldName: "q1",
+      verdict: "contesta_llm",
+      justification: "resposta correta",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("já registrada com valor diferente");
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it("rejeita campo inexistente em vez de concluir silenciosamente", async () => {
+    tableData["field_reviews:update"] = [];
+    tableData.field_reviews = [];
+
+    const result = await submitAutoReview({
+      fieldName: "inexistente",
+      verdict: "admite_erro",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("não encontrada ou sem permissão");
+    expect(updateCallsOf("assignments")).toHaveLength(0);
+  });
+
+  it("não conclui o assignment quando o comentário automático falha", async () => {
+    setFieldReview({
+      self_verdict: "ambiguo",
+      self_justification: "duas leituras",
+    });
+    tableData["__error:project_comments:upsert"] = {
+      message: "comentários indisponíveis",
+    };
+
+    const result = await submitAutoReview({
+      fieldName: "q1",
+      verdict: "ambiguo",
+      justification: "duas leituras",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: "comentários indisponíveis",
+    });
+    expect(updateCallsOf("assignments")).toHaveLength(0);
+  });
+});
+
+describe("submitBlindVerdicts — validação de entrada", () => {
+  it.each([
+    {
+      label: "ID vazio",
+      choice: { fieldReviewId: "   ", choice: "a" as const },
+      error: "ID da revisão cega é obrigatório.",
+    },
+    {
+      label: "escolha fora do contrato runtime",
+      choice: { fieldReviewId: "fr1", choice: "x" as never },
+      error: 'Escolha inválida para a revisão "fr1".',
+    },
+  ])("rejeita $label antes de qualquer escrita", async ({ choice, error }) => {
+    const action = (await import("@/actions/field-reviews"))
+      .submitBlindVerdicts;
+
+    const result = await action("p1", "doc1", [choice]);
+
+    expect(result).toEqual({ success: false, error });
+    expect(updateCallsOf()).toHaveLength(0);
+  });
+
+  it("rejeita a mesma revisão duas vezes antes de qualquer escrita", async () => {
+    const action = (await import("@/actions/field-reviews"))
+      .submitBlindVerdicts;
+
+    const result = await action("p1", "doc1", [
+      { fieldReviewId: "fr1", choice: "a" },
+      { fieldReviewId: "fr1", choice: "b" },
+    ]);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Revisão "fr1" enviada mais de uma vez.',
+    });
+    expect(updateCallsOf()).toHaveLength(0);
+  });
+
+  it("expõe erro da releitura usada para validar retry", async () => {
+    tableData["field_reviews:update"] = [];
+    tableData["__error:field_reviews:select"] = {
+      message: "releitura indisponível",
+    };
+    const action = (await import("@/actions/field-reviews"))
+      .submitBlindVerdicts;
+
+    const result = await action("p1", "doc1", [
+      { fieldReviewId: "fr1", choice: "a" },
+    ]);
+
+    expect(result).toEqual({
+      success: false,
+      error: "releitura indisponível",
+    });
+  });
+});
+
 describe("submitFinalVerdicts — validação de entrada", () => {
   it.each([undefined, "   \n\t"])(
     "exige sugestão quando o árbitro decide pelo LLM (%j)",
@@ -409,12 +690,27 @@ describe("submitFinalVerdicts — validação de entrada", () => {
       expect(updateCallsOf()).toHaveLength(0);
     },
   );
+
+  it("rejeita o mesmo campo duas vezes antes de qualquer escrita", async () => {
+    const action = (await import("@/actions/field-reviews"))
+      .submitFinalVerdicts;
+    const result = await action("p1", "doc1", [
+      { fieldName: "q1", verdict: "humano" },
+      { fieldName: "q1", verdict: "humano" },
+    ]);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Campo "q1" enviado mais de uma vez.',
+    });
+    expect(updateCallsOf()).toHaveLength(0);
+  });
 });
 
 describe("submitFinalVerdicts — persistência e identidade", () => {
   it("grava na fila canônica e atribui o comentário à conta autenticada", async () => {
     auth.getAuthUser.mockResolvedValue({ id: "linked-account" });
-    auth.getEffectiveMemberId.mockResolvedValue("canonical-member");
+    auth.resolveMemberUserId.mockResolvedValue("canonical-member");
 
     const result = await submitFinalVerdict({
       fieldName: "q1",
@@ -436,11 +732,12 @@ describe("submitFinalVerdicts — persistência e identidade", () => {
       value: "canonical-member",
     });
 
-    const comment = writeCallOf("insert", "project_comments");
+    const comment = writeCallOf("upsert", "project_comments");
     expect(comment?.payload).toMatchObject([
       {
         author_id: "linked-account",
         field_name: "q1",
+        source_field_review_id: "fr1",
       },
     ]);
     const commentBody = String(
@@ -449,14 +746,22 @@ describe("submitFinalVerdicts — persistência e identidade", () => {
     expect(commentBody).toContain("Adalimumabe");
     expect(commentBody).toContain("Definir a unidade esperada");
     expect(commentBody).toContain("A resposta humana usou outra escala");
-    expect(updateCallsOf("assignments")[0]?.payload).toMatchObject({
-      status: "concluido",
+    expect(rpcCalls).toContainEqual({
+      fn: "sync_arbitration_assignment_status",
+      args: {
+        p_project_id: "p1",
+        p_document_id: "doc1",
+        p_user_id: "canonical-member",
+      },
     });
-    expect(adminClientCreations).toBe(0);
+    expect(adminClientCreations).toBe(1);
   });
 
   it("retry com o mesmo veredito pula o UPDATE e recompõe o comentário", async () => {
-    setFieldReview({ final_verdict: "llm" });
+    setFieldReview({
+      final_verdict: "llm",
+      question_improvement_suggestion: "Definir a unidade esperada",
+    });
 
     const result = await submitFinalVerdict({
       fieldName: "q1",
@@ -466,7 +771,7 @@ describe("submitFinalVerdicts — persistência e identidade", () => {
 
     expect(result.success).toBe(true);
     expect(updateCallsOf("field_reviews")).toHaveLength(0);
-    expect(writeCallOf("insert", "project_comments")).toBeDefined();
+    expect(writeCallOf("upsert", "project_comments")).toBeDefined();
   });
 
   it("nota manual no campo não suprime o comentário automático", async () => {
@@ -481,23 +786,10 @@ describe("submitFinalVerdicts — persistência e identidade", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(writeCallOf("insert", "project_comments")).toBeDefined();
+    expect(writeCallOf("upsert", "project_comments")).toBeDefined();
   });
 
-  it("retry não repete comentário com field e body idênticos", async () => {
-    tableData.project_comments = [
-      {
-        field_name: "q1",
-        body: [
-          'Discordância em "q1".',
-          'Humano respondeu: "Adalimumabe"',
-          'LLM respondeu: "adalimumabé"',
-          "Árbitro manteve LLM.",
-          "Sugestão de melhoria: Definir a unidade esperada",
-        ].join("\n\n"),
-      },
-    ];
-
+  it("retry usa a mesma revisão de origem idempotente do comentário", async () => {
     const result = await submitFinalVerdict({
       fieldName: "q1",
       verdict: "llm",
@@ -505,7 +797,9 @@ describe("submitFinalVerdicts — persistência e identidade", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(writeCallOf("insert", "project_comments")).toBeUndefined();
+    expect(writeCallOf("upsert", "project_comments")?.payload).toMatchObject([
+      { source_field_review_id: "fr1" },
+    ]);
   });
 });
 
@@ -524,6 +818,24 @@ describe("submitFinalVerdicts — estado anterior", () => {
     expect(updateCallsOf()).toHaveLength(0);
   });
 
+  it("rejeita retry com detalhes diferentes do veredito persistido", async () => {
+    setFieldReview({
+      final_verdict: "llm",
+      question_improvement_suggestion: "Definir a unidade esperada",
+    });
+
+    const result = await submitFinalVerdict({
+      fieldName: "q1",
+      verdict: "llm",
+      questionImprovementSuggestion: "Trocar a escala da pergunta",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("detalhes enviados diferem");
+    expect(updateCallsOf()).toHaveLength(0);
+    expect(writeCallOf("upsert", "project_comments")).toBeUndefined();
+  });
+
   it("impede veredito final antes da fase cega", async () => {
     setFieldReview({ blind_verdict: null });
 
@@ -539,6 +851,44 @@ describe("submitFinalVerdicts — estado anterior", () => {
 });
 
 describe("submitFinalVerdicts — falhas de persistência", () => {
+  it("aceita vencedor concorrente com o mesmo payload completo", async () => {
+    tableData["field_reviews:update"] = [];
+    tableData["field_reviews:after-empty-update"] = [
+      fieldReview({
+        final_verdict: "llm",
+        question_improvement_suggestion: "Definir a unidade esperada",
+        arbitrator_comment: "Comparação confirmada",
+      }),
+    ];
+
+    const result = await submitFinalVerdict({
+      fieldName: "q1",
+      verdict: "llm",
+      questionImprovementSuggestion: " Definir a unidade esperada ",
+      arbitratorComment: "Comparação confirmada",
+    });
+
+    expect(result.success).toBe(true);
+    expect(writeCallOf("upsert", "project_comments")?.payload).toMatchObject([
+      { source_field_review_id: "fr1" },
+    ]);
+  });
+
+  it("rejeita vencedor concorrente com payload divergente", async () => {
+    tableData["field_reviews:update"] = [];
+    tableData["field_reviews:after-empty-update"] = [
+      fieldReview({ final_verdict: "llm" }),
+    ];
+
+    const result = await submitFinalVerdict({
+      fieldName: "q1",
+      verdict: "humano",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('já registrado como "llm"');
+  });
+
   it("expõe rejeição concorrente do UPDATE", async () => {
     tableData["field_reviews:update"] = [];
 
@@ -552,7 +902,7 @@ describe("submitFinalVerdicts — falhas de persistência", () => {
   });
 
   it("expõe falha do comentário depois de salvar o veredito", async () => {
-    tableData["__error:project_comments:insert"] = {
+    tableData["__error:project_comments:upsert"] = {
       message: "insert indisponível",
     };
 

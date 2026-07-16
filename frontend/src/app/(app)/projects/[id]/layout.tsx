@@ -1,12 +1,11 @@
 import { Suspense } from "react";
-import { headers } from "next/headers";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getProjectAccessContext, resolveAuth } from "@/lib/auth";
-import { completionRedirectPath } from "@/lib/safe-next-path";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { getRunningLlmCount } from "@/actions/llm";
 import { Header } from "@/components/shell/Header";
 import { ProjectTabs } from "@/components/shell/ProjectTabs";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
 export default async function ProjectLayout({
   children,
@@ -15,21 +14,11 @@ export default async function ProjectLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, resolution, supabase] = await Promise.all([
+  const [{ id }, user, supabase] = await Promise.all([
     params,
-    resolveAuth(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-
-  // Fail-closed (FR-008): distinguir "sem sessão" de "vínculo pendente" — este
-  // último não pode virar login nem, mais abaixo, `notFound()` de projeto
-  // (contracts/access-completion "Rejected behavior").
-  if (resolution.status === "signed-out") redirect("/auth/login");
-  if (resolution.status !== "authenticated") {
-    const pathname = (await headers()).get("x-pathname");
-    redirect(completionRedirectPath(pathname));
-  }
-  const user = resolution.user;
 
   // project + membership vem de getProjectAccessContext (request-scoped via
   // cache()) — mesma leitura reaproveitada pelos layouts filhos config/llm.

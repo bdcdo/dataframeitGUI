@@ -1,5 +1,7 @@
 import { currentUser } from "@clerk/nextjs/server";
+import { unstable_rethrow } from "next/navigation";
 import { cache } from "react";
+import { getVerifiedPrimaryEmail } from "@/lib/clerk-primary-email";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import type { Project, ProjectMember } from "@/lib/types";
@@ -13,11 +15,6 @@ export interface AuthUser {
   isMaster: boolean;
 }
 
-// Motivo de conclusão de acesso (data-model: Access Completion State). Os
-// demais estados de apresentação são decididos pelas telas consumidoras.
-type AccessCompletionReason =
-  "link-pending" | "link-divergent" | "sync-temporary-failure";
-
 // Resultado observável da resolução de identidade (contracts/auth-resolution).
 // É a fonte única que distingue os estados que a feature precisa separar —
 // substitui o antigo `AuthUser | null`, que colapsava "sem sessão", "vínculo
@@ -26,15 +23,31 @@ type AccessCompletionReason =
 type AuthResolution =
   | { status: "signed-out" }
   | { status: "authenticated"; user: AuthUser }
-  | { status: "access-completion-required"; reason: AccessCompletionReason }
-  | { status: "technical-sync-failure"; reason: AccessCompletionReason };
+  | {
+      status: "access-completion-required";
+      reason: "link-pending" | "link-divergent";
+      actorEmail: string;
+    }
+  | {
+      status: "technical-sync-failure";
+      reason: "sync-temporary-failure";
+      actorEmail?: string;
+    };
 
-// Resolve o UUID Supabase da sessão SEM escrever nada (decisão D3): metadata do
-// Clerk primeiro; senão, leitura read-only de `clerk_user_mapping`. Nunca chama
-// `syncClerkUserToSupabase` — a criação/reparo do vínculo é responsabilidade
+function technicalSyncFailure(actorEmail?: string): AuthResolution {
+  return {
+    status: "technical-sync-failure",
+    reason: "sync-temporary-failure",
+    ...(actorEmail ? { actorEmail } : {}),
+  };
+}
+
+// Resolve o UUID Supabase da sessão SEM escrever nada (decisão D3): exige que
+// metadata do Clerk e `clerk_user_mapping` existam simultaneamente. Nunca chama
+// `reconcileClerkUserAccess` — a criação/reparo do vínculo é responsabilidade
 // explícita da ação de conclusão de acesso, fora do render protegido.
 type SupabaseIdentityRead =
-  | { status: "resolved"; uid: string; mappingUid: string | null }
+  | { status: "resolved"; uid: string; mappingUid: string }
   | { status: "pending" }
   | { status: "unavailable" };
 
@@ -45,24 +58,31 @@ async function readSupabaseUid(
   const admin = createSupabaseAdmin();
   const { data: mapping, error: mappingError } = await admin
     .from("clerk_user_mapping")
-    .select("supabase_user_id")
+    .select("supabase_user_id, access_sync_version")
     .eq("clerk_user_id", clerkUserId)
     .maybeSingle();
-  // A metadata do Clerk basta para autenticar quando já existe. Sem metadata,
-  // porém, uma falha desta query não pode ser confundida com vínculo pendente:
-  // não temos evidência de ausência, apenas uma leitura indisponível.
+  // A leitura também valida que metadata e mapping continuam coerentes. Se ela
+  // falha, autenticar apenas pela metadata esconderia uma divergência possível.
   if (mappingError) {
     console.error("[auth] leitura de clerk_user_mapping falhou", {
       clerkUserId,
       error: mappingError,
     });
-    if (!metadataUid) return { status: "unavailable" };
+    return { status: "unavailable" };
   }
   const mappingUid = mapping?.supabase_user_id ?? null;
-  const uid = metadataUid ?? mappingUid;
-  return uid
-    ? { status: "resolved", uid, mappingUid }
-    : { status: "pending" };
+  // Os dois lados são necessários: a metadata alimenta o JWT/RLS e o mapping
+  // confirma o vínculo interno. Aceitar apenas um produziria duas identidades
+  // observáveis diferentes na mesma request.
+  if (
+    !metadataUid ||
+    !mapping ||
+    !mappingUid ||
+    mapping.access_sync_version < 1
+  ) {
+    return { status: "pending" };
+  }
+  return { status: "resolved", uid: metadataUid, mappingUid };
 }
 
 /**
@@ -75,49 +95,45 @@ async function readSupabaseUid(
  * `access-completion-required` para que a página protegida falhe fechada e
  * redirecione à conclusão de acesso (FR-008), em vez de reparar no render.
  */
-export const resolveAuth = cache(async (): Promise<AuthResolution> => {
-  // Observabilidade de SC-002 (T010): como o corpo do `cache()` roda uma vez por
-  // request, cada execução aqui é uma resolução real. Com o flag ligado, o log
-  // por request confirma que a identidade é resolvida uma vez, não por leitura.
-  // Server-only e opt-in — nunca vaza para o cliente nem polui logs por padrão.
-  if (process.env.AUTH_RESOLVE_DEBUG === "1") {
-    console.info("[auth] resolveAuth: nova resolução de identidade na request");
-  }
-
+async function resolveAuthUncached(): Promise<AuthResolution> {
   const user = await currentUser();
   if (!user) return { status: "signed-out" };
 
   const metadataUid = user.publicMetadata.supabase_uid as string | undefined;
-  const email = user.emailAddresses[0]?.emailAddress;
+  const email = getVerifiedPrimaryEmail(user);
+
+  // AuthUser exige o e-mail primário verificado em qualquer estado do vínculo.
+  // Um secundário não pode substituir silenciosamente a identidade canônica.
+  if (!email) {
+    return technicalSyncFailure();
+  }
 
   const identity = await readSupabaseUid(user.id, metadataUid);
 
   if (identity.status === "unavailable") {
-    return {
-      status: "technical-sync-failure",
-      reason: "sync-temporary-failure",
-    };
+    return technicalSyncFailure(email);
   }
 
-  // Vínculo ainda não existe. Com e-mail utilizável, é pendente e recuperável
-  // por retry; sem e-mail, não há como concluir o vínculo automaticamente —
-  // falha técnica recuperável (data-model: validação de Authenticated Actor).
+  // Vínculo ainda não existe, mas o e-mail necessário para repará-lo já foi
+  // validado acima.
   if (identity.status === "pending") {
-    if (!email) {
-      return {
-        status: "technical-sync-failure",
-        reason: "sync-temporary-failure",
-      };
-    }
-    return { status: "access-completion-required", reason: "link-pending" };
+    return {
+      status: "access-completion-required",
+      reason: "link-pending",
+      actorEmail: email,
+    };
   }
 
   const { uid, mappingUid } = identity;
 
   // Metadata e mapping apontam para identidades incompatíveis: não adivinhar
   // qual vale — encaminhar para reparo (data-model: active → divergent).
-  if (metadataUid && mappingUid && metadataUid !== mappingUid) {
-    return { status: "access-completion-required", reason: "link-divergent" };
+  if (uid !== mappingUid) {
+    return {
+      status: "access-completion-required",
+      reason: "link-divergent",
+      actorEmail: email,
+    };
   }
 
   const admin = createSupabaseAdmin();
@@ -133,10 +149,7 @@ export const resolveAuth = cache(async (): Promise<AuthResolution> => {
       supabaseUid: uid,
       error: masterError,
     });
-    return {
-      status: "technical-sync-failure",
-      reason: "sync-temporary-failure",
-    };
+    return technicalSyncFailure(email);
   }
 
   // Nota (decisão D3): a ativação de perfil (`activated_at`) NÃO acontece aqui.
@@ -149,13 +162,33 @@ export const resolveAuth = cache(async (): Promise<AuthResolution> => {
     status: "authenticated",
     user: {
       id: uid,
-      email: email ?? "",
+      email,
       firstName: user.firstName,
       lastName: user.lastName,
       clerkId: user.id,
       isMaster: !!masterRow,
     },
   };
+}
+
+export const resolveAuth = cache(async (): Promise<AuthResolution> => {
+  // Observabilidade de SC-002 (T010): como o corpo do `cache()` roda uma vez por
+  // request, cada execução aqui é uma resolução real. Com o flag ligado, o log
+  // por request confirma que a identidade é resolvida uma vez, não por leitura.
+  // Server-only e opt-in — nunca vaza para o cliente nem polui logs por padrão.
+  if (process.env.AUTH_RESOLVE_DEBUG === "1") {
+    console.info("[auth] resolveAuth: nova resolução de identidade na request");
+  }
+
+  try {
+    return await resolveAuthUncached();
+  } catch (error) {
+    // APIs dinâmicas e navegação do Next usam exceções como controle de fluxo.
+    // Preservá-las evita classificar prerender/redirect como falha do Clerk.
+    unstable_rethrow(error);
+    console.error("[auth] resolução de identidade falhou", { error });
+    return technicalSyncFailure();
+  }
 });
 
 /**
@@ -211,6 +244,9 @@ const resolveProjectMemberIdentity = cache(
         .select("member_user_id")
         .eq("project_id", projectId)
         .eq("linked_user_id", accountUserId)
+        // Uma conta pode ter vários e-mails no projeto, mas o schema obriga
+        // todos a apontarem para o mesmo membro canônico.
+        .limit(1)
         .maybeSingle();
 
       if (error) {
@@ -347,18 +383,53 @@ export function getProjectAccessContext(
   return getProjectAccessContextCached(projectId, user.id, user.isMaster);
 }
 
-// Projeção temporária para actions pessoais. Não possui cache próprio: toda a
-// deduplicação e toda a semântica de falha pertencem à resolução canônica.
-export async function getEffectiveMemberId(projectId: string): Promise<string> {
-  const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
+type ProjectMemberActorResult =
+  | { ok: true; user: AuthUser; memberUserId: string }
+  | {
+      ok: false;
+      code: "unauthenticated" | "identity_unavailable";
+      error: string;
+    };
 
-  const identity = await resolveProjectMemberIdentity(projectId, user.id);
-  if (identity.status === "unavailable") {
-    throw new Error("Não foi possível resolver a identidade do projeto");
-  }
-  return identity.memberUserId;
-}
+const PROJECT_IDENTITY_UNAVAILABLE_MESSAGE =
+  "Não foi possível verificar sua identidade no projeto.";
+
+// Porta única para mutations pessoais: resolve a conta autenticada e sua
+// identidade canônica no projeto como um único contrato, sem transformar
+// falhas técnicas em "não autenticado".
+export const resolveProjectMemberActor = cache(
+  async (projectId: string): Promise<ProjectMemberActorResult> => {
+    const resolution = await resolveAuth();
+    if (resolution.status === "signed-out") {
+      return { ok: false, code: "unauthenticated", error: "Não autenticado" };
+    }
+    if (resolution.status !== "authenticated") {
+      return {
+        ok: false,
+        code: "identity_unavailable",
+        error: PROJECT_IDENTITY_UNAVAILABLE_MESSAGE,
+      };
+    }
+
+    const identity = await resolveProjectMemberIdentity(
+      projectId,
+      resolution.user.id,
+    );
+    if (identity.status === "unavailable") {
+      return {
+        ok: false,
+        code: "identity_unavailable",
+        error: PROJECT_IDENTITY_UNAVAILABLE_MESSAGE,
+      };
+    }
+
+    return {
+      ok: true,
+      user: resolution.user,
+      memberUserId: identity.memberUserId,
+    };
+  },
+);
 
 // Resolve apenas a identidade exibida pela fila. O ?viewAsUser= global só tem
 // efeito para master e não altera o ator autenticado usado pelas mutations.
@@ -402,20 +473,7 @@ export async function requireCoordinator(
   projectId: string,
   deniedMessage: string,
 ): Promise<RequireCoordinatorResult> {
-  let resolution: AuthResolution;
-  try {
-    resolution = await resolveAuth();
-  } catch (error) {
-    console.error("requireCoordinator: auth resolution failed", {
-      projectId,
-      error,
-    });
-    return {
-      ok: false,
-      code: "authorization_unavailable",
-      error: AUTHORIZATION_UNAVAILABLE_MESSAGE,
-    };
-  }
+  const resolution = await resolveAuth();
 
   if (resolution.status === "signed-out") {
     return { ok: false, code: "unauthenticated", error: "Não autenticado" };

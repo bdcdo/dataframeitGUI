@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { dropHiddenConditionals } from "@/lib/conditional";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
@@ -181,13 +181,9 @@ export async function saveResponse(
 ): Promise<{ success: boolean; error?: string }> {
   const { notes, isAutoSave = false } = opts;
   try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
-
-    // Identidade de trabalho no projeto (spec 002): conta vinculada codifica
-    // como o membro canônico — respondent_id, assignments e auto-review usam
-    // sempre o id efetivo.
-    const effectiveId = await getEffectiveMemberId(projectId);
+    const actor = await resolveProjectMemberActor(projectId);
+    if (!actor.ok) return { success: false, error: actor.error };
+    const { user, memberUserId: effectiveId } = actor;
 
     const supabase = await createSupabaseServer();
 

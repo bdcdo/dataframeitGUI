@@ -1,11 +1,10 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
-  getAuthUser,
   getProjectAccessContext,
   resolveProjectQueueIdentity,
 } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { ComparePage } from "@/components/compare/ComparePage";
 import {
   readCompareFilters,
@@ -47,10 +46,9 @@ export default async function ComparePageRoute({
   const [{ id }, sp, user, supabase] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
 
   const [
     { data: project },

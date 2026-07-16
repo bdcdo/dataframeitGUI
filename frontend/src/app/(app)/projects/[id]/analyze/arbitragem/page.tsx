@@ -1,10 +1,9 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
-  getAuthUser,
   getProjectAccessContext,
   resolveProjectQueueIdentity,
 } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { ArbitrationPage } from "@/components/arbitration/ArbitrationPage";
 import { assignOrder } from "@/lib/arbitration-order";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
@@ -26,10 +25,9 @@ export default async function ArbitrationRoute({
   const [{ id }, sp, user, supabase] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
 
   // Fila 100% pessoal: pertence à identidade EFETIVA (impersonação master via
   // ?viewAsUser= ou conta-alias da spec 002), como no Codificar/Comparação.

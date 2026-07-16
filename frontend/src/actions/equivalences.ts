@@ -1,25 +1,12 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
-
-async function resolveReviewerId(
-  projectId: string,
-): Promise<{ reviewerId: string } | { error: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  try {
-    return { reviewerId: await getEffectiveMemberId(projectId) };
-  } catch {
-    return { error: "Não foi possível verificar sua identidade no projeto." };
-  }
-}
 
 // Marks two or more responses as equivalent for a (document, field) and at the
 // same time records the verdict pointing to `gabaritoId` — the response that
@@ -42,9 +29,9 @@ export async function confirmEquivalentVerdict(
     return { error: "Gabarito precisa estar na lista de respostas selecionadas." };
   }
 
-  const identity = await resolveReviewerId(projectId);
-  if ("error" in identity) return identity;
-  const { reviewerId } = identity;
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
 
@@ -136,9 +123,9 @@ export async function markLlmEquivalent(
     return { error: "Respostas já são as mesmas." };
   }
 
-  const identity = await resolveReviewerId(projectId);
-  if ("error" in identity) return identity;
-  const { reviewerId } = identity;
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
   const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
@@ -177,9 +164,9 @@ export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
 ): Promise<{ error?: string }> {
-  const identity = await resolveReviewerId(projectId);
-  if ("error" in identity) return identity;
-  const { reviewerId } = identity;
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
 

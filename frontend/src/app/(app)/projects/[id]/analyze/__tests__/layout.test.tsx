@@ -16,6 +16,9 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/auth", () =>
   projectAccessAuthModuleMock(mocks.getAuthUser, mocks.getProjectAccessContext),
 );
+vi.mock("@/lib/page-auth", () => ({
+  requirePageAuthUser: mocks.getAuthUser,
+}));
 
 vi.mock("@/components/analyze/AnalyzeNav", () => ({
   AnalyzeNav: () => null,

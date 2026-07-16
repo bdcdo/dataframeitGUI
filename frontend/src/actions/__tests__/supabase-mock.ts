@@ -67,7 +67,7 @@ export function makeSupabaseMock(opts?: {
   writeCalls?: WriteCall[];
   filterCalls?: FilterCall[];
   rpcCalls?: RpcCall[];
-  rpcResults?: Record<string, TableResult>;
+  rpcResults?: Record<string, TableResult | TableResult[]>;
 }) {
   const {
     tableResults,
@@ -82,7 +82,8 @@ export function makeSupabaseMock(opts?: {
     // queries. Resultado por função em `rpcResults`; sem entrada, sucesso vazio.
     rpc: (fn: string, args: unknown) => {
       rpcCalls?.push({ fn, args });
-      const result = rpcResults?.[fn];
+      const entry = rpcResults?.[fn];
+      const result = Array.isArray(entry) ? entry.shift() : entry;
       const response = {
         data: result?.data ?? null,
         error: result?.error ?? null,

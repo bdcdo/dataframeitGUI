@@ -59,3 +59,45 @@ export function makeHumanResponse(
 export function makeProjectMember(userId: string) {
   return { user_id: userId, project_id: "p1", can_compare: true };
 }
+
+function makeActiveComparisonDocument(id: string) {
+  return {
+    id,
+    project_id: "p1",
+    excluded_at: null,
+    exclusion_pending_at: null,
+  };
+}
+
+export function makeEmptyComparisonTableData(
+  documentIds: readonly string[] = ["doc1"],
+): Record<string, unknown[]> {
+  return {
+    projects: [makeProjectRow()],
+    project_members: [],
+    assignments: [],
+    responses: [],
+    response_equivalences: [],
+    documents: documentIds.map(makeActiveComparisonDocument),
+  };
+}
+
+export function makeIncompleteCoderComparisonScenario() {
+  return {
+    responses: [
+      makeHumanResponse("userA", "A"),
+      makeHumanResponse("userB", "B"),
+      { ...makeHumanResponse("userC", "C"), answers: {} },
+    ],
+    members: [makeProjectMember("userC"), makeProjectMember("userD")],
+    openAssignments: [
+      {
+        document_id: "doc2",
+        user_id: "userD",
+        project_id: "p1",
+        type: "comparacao",
+        status: "pendente",
+      },
+    ],
+  };
+}

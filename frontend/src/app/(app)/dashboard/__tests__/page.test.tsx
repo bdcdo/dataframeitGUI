@@ -48,8 +48,8 @@ function makeSupabaseMock() {
   };
 }
 
-vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({
+vi.mock("@/lib/page-auth", () => ({
+  requirePageAuthUser: async () => ({
     id: "linked-account",
     email: "alias@example.com",
     firstName: "Conta",

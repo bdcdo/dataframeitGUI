@@ -1,6 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { RoundsConfig } from "@/components/config/RoundsConfig";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import type { Round, RoundStrategy } from "@/lib/types";
@@ -13,10 +13,9 @@ export default async function RoundsConfigPage({
 }) {
   const [{ id }, user, supabase] = await Promise.all([
     params,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
 
   const [{ data: project }, { data: rounds }, accessResult] = await Promise.all([
     supabase

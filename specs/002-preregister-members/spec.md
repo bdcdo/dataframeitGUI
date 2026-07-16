@@ -30,10 +30,10 @@ O coordenador está montando a equipe de um projeto de análise e parte dos pesq
 
 1. **Given** um e-mail que não pertence a nenhuma conta da plataforma, **When** o coordenador o adiciona como membro do projeto, **Then** o membro aparece na lista de membros com status "pendente" e papel escolhido (pesquisador ou coordenador).
 2. **Given** um membro pendente no projeto, **When** o coordenador executa o sorteio de atribuições ou atribui documentos manualmente, **Then** o membro pendente é elegível e recebe atribuições como qualquer membro ativo.
-3. **Given** um membro pendente com atribuições, **When** a pessoa cria conta na plataforma com o e-mail pré-registrado, **Then** no primeiro acesso ela vê o projeto, suas atribuições e seu papel, sem qualquer intervenção do coordenador, e seu status na lista passa de "pendente" para ativo.
+3. **Given** um membro pendente com atribuições, **When** a pessoa cria conta na plataforma e o Clerk confirma aquele endereço como e-mail primário verificado, **Then** no primeiro acesso ela vê o projeto, suas atribuições e seu papel, sem qualquer intervenção do coordenador, e seu status na lista passa de "pendente" para ativo.
 4. **Given** um membro pendente, **When** o coordenador percebe que digitou o e-mail errado, **Then** ele consegue corrigir o e-mail ou remover o membro pendente antes do primeiro acesso.
 5. **Given** o mesmo e-mail pré-registrado em mais de um projeto, **When** a pessoa cria conta com aquele e-mail, **Then** ela entra em todos os projetos em que foi pré-registrada.
-6. **Given** um e-mail que já pertence a uma conta existente, **When** o coordenador o adiciona como membro, **Then** o comportamento atual se mantém: o usuário existente entra no projeto como membro ativo.
+6. **Given** um e-mail cuja posse atual pertence a uma conta Clerk verificada, **When** o coordenador o adiciona como membro, **Then** o UUID mapeado dessa conta entra no projeto como membro ativo; um profile local ativo sem dono atual confirmado não é aceito como substituto.
 
 ---
 
@@ -48,8 +48,8 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 **Acceptance Scenarios**:
 
 1. **Given** um membro do projeto (ativo ou pendente), **When** o coordenador vincula um e-mail adicional a ele, **Then** o e-mail adicional aparece associado ao membro na lista de membros.
-2. **Given** um membro com dois e-mails vinculados, **When** a pessoa entra na plataforma com qualquer um dos dois, **Then** ela acessa o projeto como o mesmo membro e vê exatamente o mesmo conjunto de atribuições, respostas e progresso.
-3. **Given** um e-mail adicional vinculado que ainda não pertence a nenhuma conta, **When** a pessoa cria conta com esse e-mail, **Then** ela entra no projeto como o membro ao qual o e-mail foi vinculado — o vínculo de e-mail sem conta vale como pré-registro para o mesmo membro — e, se o membro estava pendente, ele passa a ativo nesse primeiro acesso.
+2. **Given** um membro com dois e-mails vinculados, **When** a conta Clerk atual comprova a posse verificada de qualquer um deles, **Then** ela acessa o projeto como o mesmo membro e vê exatamente o mesmo conjunto de atribuições, respostas e progresso.
+3. **Given** um e-mail adicional vinculado que ainda não pertence a nenhuma conta, **When** a pessoa cria conta com esse e-mail e o Clerk confirma seu primário, **Then** ela entra no projeto como o membro ao qual o e-mail foi vinculado — o vínculo de e-mail sem conta vale como pré-registro para o mesmo membro — e, se o membro estava pendente, a lista passa a mostrá-lo como ativo naquele projeto sem ativar globalmente o profile canônico.
 4. **Given** um e-mail adicional que já corresponde a outro membro do mesmo projeto, **When** o coordenador solicita o vínculo, **Then** o sistema explica que os dois membros serão unificados naquele projeto (atribuições somadas, sem perda nem duplicação de respostas) e só executa após confirmação explícita do coordenador.
 5. **Given** um e-mail já vinculado a um membro do projeto, **When** o coordenador tenta vinculá-lo a outro membro do mesmo projeto, **Then** o sistema impede e informa a qual membro o e-mail já está vinculado.
 6. **Given** um membro com e-mail adicional vinculado, **When** o coordenador desfaz o vínculo, **Then** o e-mail deixa de dar acesso ao projeto como aquele membro, mas todo o histórico já produzido (respostas, revisões) permanece intacto e atribuído ao membro.
@@ -67,6 +67,9 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 - Unificação de dois membros que já têm respostas para o mesmo documento: as respostas são preservadas; para fins de contagem de respostas independentes por documento (comparações), passam a contar como de um único pesquisador, e o sistema sinaliza ao coordenador os documentos afetados na confirmação da unificação.
 - Diferenciação de papéis na unificação: se os dois membros unificados tinham papéis ou permissões diferentes (por exemplo, um coordenador e um pesquisador), prevalecem o papel e as permissões do membro-alvo do vínculo, informados na confirmação.
 - Pré-registro de e-mail já pré-registrado no mesmo projeto: o sistema impede duplicidade e informa que o membro já existe.
+- Conta Clerk sem e-mail primário verificado: a sessão não recebe acesso por endereço secundário; aliases já resolvidos são revogados e o usuário permanece no fluxo recuperável de conclusão de acesso.
+- Conta Clerk removida: `user.deleted`, ou uma releitura do Clerk que responda 404, revoga o marker autenticável e os aliases atuais antes que um token antigo possa manter acesso.
+- Webhooks fora de ordem: um snapshot antigo do Clerk não pode restaurar aliases ou metadata depois que uma geração mais nova foi iniciada.
 
 ## Requirements *(mandatory)*
 
@@ -75,11 +78,11 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 - **FR-001**: O coordenador MUST poder adicionar ao projeto um e-mail que ainda não pertence a nenhuma conta da plataforma, escolhendo o papel (pesquisador ou coordenador), sem que nenhum e-mail seja enviado pelo sistema.
 - **FR-002**: O sistema MUST exibir membros pré-registrados na lista de membros com status visível de "pendente" (ainda sem primeiro acesso), distinguindo-os dos membros ativos.
 - **FR-003**: Membros pendentes MUST ser elegíveis para atribuição de documentos — tanto pelo sorteio quanto por atribuição manual — em igualdade com membros ativos.
-- **FR-004**: Quando uma pessoa cria conta com um e-mail pré-registrado, o sistema MUST conceder-lhe acesso automático a todos os projetos em que aquele e-mail foi pré-registrado, com o papel, as permissões e as atribuições já definidos, sem ação do coordenador.
+- **FR-004**: Quando uma pessoa cria conta e o Clerk confirma o e-mail primário pré-registrado como verificado, o sistema MUST conceder-lhe acesso automático a todos os projetos em que aquele e-mail foi pré-registrado, com o papel, as permissões e as atribuições já definidos, sem ação do coordenador.
 - **FR-005**: O coordenador MUST poder corrigir o e-mail ou remover um membro pendente; na remoção, as atribuições do membro retornam ao conjunto de documentos não atribuídos. A correção de e-mail vale para todos os projetos em que aquele e-mail está pré-registrado (trata-se da mesma pessoa); quando o pendente pertence a mais de um projeto, o sistema informa isso ao coordenador antes de confirmar.
 - **FR-006**: O sistema MUST validar o formato do e-mail na entrada e impedir pré-registro duplicado do mesmo e-mail no mesmo projeto.
 - **FR-007**: O coordenador MUST poder vincular um ou mais e-mails adicionais a um membro do projeto (ativo ou pendente); o pesquisador não gerencia os próprios vínculos nesta versão.
-- **FR-008**: O sistema MUST garantir que o acesso ao projeto por qualquer e-mail vinculado se dê como o mesmo membro, com conjunto unificado de atribuições, respostas e progresso.
+- **FR-008**: O sistema MUST garantir que o acesso ao projeto por qualquer e-mail vinculado cuja posse atual esteja verificada no Clerk se dê como o mesmo membro, com conjunto unificado de atribuições, respostas e progresso.
 - **FR-009**: Quando o e-mail a vincular corresponde a outro membro do mesmo projeto, o sistema MUST exigir confirmação explícita do coordenador antes de unificar os dois membros, explicando as consequências (atribuições somadas, papel resultante, documentos com respostas de ambos).
 - **FR-010**: A unificação de membros MUST preservar todas as respostas e revisões existentes, sem perda nem duplicação, e MUST passar a tratá-las como de um único pesquisador para fins de comparações e contagens por documento.
 - **FR-011**: O sistema MUST impedir que um mesmo e-mail fique vinculado a mais de um membro do mesmo projeto, informando o conflito ao coordenador.
@@ -87,6 +90,8 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 - **FR-013**: O vínculo de e-mails MUST ter efeito restrito ao projeto em que foi criado: perfis, dados pessoais e participação em outros projetos das contas envolvidas permanecem independentes.
 - **FR-014**: Apenas coordenadores do projeto MUST poder pré-registrar membros, corrigir e-mails pendentes, vincular e desvincular e-mails.
 - **FR-015**: Os e-mails vinculados de cada membro MUST ser visíveis a todos os membros do projeto na lista de membros, no mesmo regime de visibilidade do e-mail principal.
+- **FR-016**: O estado atual do Clerk MUST ser a autoridade sobre posse do e-mail: ausência de primário verificado, remoção de um endereço verificado ou exclusão da conta MUST falhar fechada e revogar o acesso derivado correspondente.
+- **FR-017**: A reconciliação MUST impedir que evento ou retry de uma geração antiga restaure acesso depois de um snapshot Clerk mais novo ou de `user.deleted`.
 
 ### Key Entities
 
@@ -99,16 +104,17 @@ Um pesquisador foi pré-registrado (ou já participa do projeto) com um e-mail, 
 ### Measurable Outcomes
 
 - **SC-001**: O coordenador consegue pré-registrar uma pessoa sem conta e atribuir-lhe documentos em menos de 1 minuto, sem sair da área de gestão do projeto.
-- **SC-002**: 100% das pessoas que criam conta com um e-mail pré-registrado veem seus projetos e atribuições no primeiro acesso, sem qualquer intervenção do coordenador.
-- **SC-003**: Após o vínculo de e-mails, a pessoa acessa o projeto com qualquer um dos e-mails vinculados e vê exatamente o mesmo conjunto de atribuições — zero atribuições perdidas, zero duplicadas.
+- **SC-002**: 100% das pessoas cujo e-mail primário pré-registrado foi verificado pelo Clerk veem seus projetos e atribuições no primeiro acesso, sem qualquer intervenção do coordenador.
+- **SC-003**: Após o vínculo de e-mails, a conta cuja posse atual de um endereço vinculado foi verificada pelo Clerk acessa o projeto e vê exatamente o mesmo conjunto de atribuições — zero atribuições perdidas, zero duplicadas.
 - **SC-004**: Em toda unificação de membros, 100% das respostas e revisões pré-existentes permanecem acessíveis e corretamente atribuídas após a operação.
 - **SC-005**: A lista de membros distingue pendentes de ativos em 100% dos casos, e o status muda para ativo no primeiro acesso da pessoa — inclusive quando o primeiro acesso acontece por um e-mail vinculado, e não pelo e-mail de pré-registro.
+- **SC-006**: Em 100% dos testes de ausência de primário verificado, remoção de e-mail e `user.deleted`, tokens ou eventos antigos não preservam nem restauram o acesso derivado.
 
 ## Assumptions
 
 - O pré-registro não expira: um membro pendente permanece válido até a pessoa criar conta ou o coordenador removê-lo.
 - Nenhum e-mail transacional (convite, lembrete, notificação) faz parte desta feature; a comunicação com a pessoa convidada acontece fora da plataforma, por decisão explícita do solicitante.
 - O vínculo de múltiplos e-mails é gerido exclusivamente pelo coordenador e tem escopo de projeto; autosserviço pelo pesquisador e mesclagem global de contas ficam fora do escopo desta versão.
-- A validação de e-mail se limita ao formato; não há verificação de existência ou posse do endereço (coerente com a ausência de envio de e-mail).
-- O fluxo atual de adição de membros com conta existente permanece inalterado; esta feature estende o fluxo para e-mails sem conta e adiciona o vínculo de e-mails.
+- A entrada administrativa valida apenas formato e pode criar um pré-registro sem provar existência ou posse. Antes de conceder acesso, porém, a posse atual verificada no Clerk é obrigatória e prevalece sobre coincidências em `profiles.email` ou estados locais anteriores.
+- A experiência de adicionar uma conta existente permanece, mas a identidade vem do dono atual verificado no Clerk; estado local legado ou coincidência em `profiles.email` pode exigir vínculo/unificação ou falhar fechado.
 - A plataforma continua sendo de uso desktop, e as novas interações vivem na área de gestão de membros já existente.

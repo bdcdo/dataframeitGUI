@@ -1,70 +1,88 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // T014 (SC-007): concluir acesso é idempotente — repetir a ação para a mesma
-// conta não cria vínculo/profile/membership duplicado. A idempotência mora nas
-// rotinas relocadas (syncClerkUserToSupabase, activateProfileIfPending); este
-// teste trava que a ação (a) as chama uma vez por tentativa e não faz nada
-// não-idempotente por conta própria, (b) repetir a ação converge para o mesmo
-// UUID, e (c) falha sem vazar detalhe técnico.
+// conta não cria vínculo/profile/membership duplicado. A idempotência mora na
+// rotina única de reconciliação; este teste trava que a ação (a) a chama uma
+// vez por tentativa e não faz nada não-idempotente por conta própria, (b)
+// repetir a ação continua seguro e (c) qualquer falha fica recuperável.
 
-let currentUserImpl: () => Promise<unknown>;
+let authImpl: () => Promise<{ userId: string | null }>;
 vi.mock("@clerk/nextjs/server", () => ({
-  currentUser: () => currentUserImpl(),
+  auth: () => authImpl(),
 }));
 
-const syncClerkUserToSupabase = vi.fn(async () => "sb_user_1");
-const activateProfileIfPending = vi.fn(async () => {});
+const reconcileClerkUserAccess = vi.fn<
+  (clerkUserId: string) => Promise<string | null>
+>(async () => "sb_user_1");
 vi.mock("@/lib/clerk-sync", () => ({
-  syncClerkUserToSupabase: (...args: unknown[]) =>
-    syncClerkUserToSupabase(...(args as [])),
-  activateProfileIfPending: (...args: unknown[]) =>
-    activateProfileIfPending(...(args as [])),
+  reconcileClerkUserAccess: (clerkUserId: string) =>
+    reconcileClerkUserAccess(clerkUserId),
 }));
 
 import { completeAccess } from "@/actions/complete-access";
 
-const signedInUser = {
-  id: "clerk_1",
-  emailAddresses: [{ emailAddress: "ana@exemplo.com" }],
-  firstName: "Ana",
-  lastName: "Silva",
-};
-
 beforeEach(() => {
-  syncClerkUserToSupabase.mockClear();
-  activateProfileIfPending.mockClear();
-  currentUserImpl = async () => signedInUser;
+  reconcileClerkUserAccess.mockReset();
+  reconcileClerkUserAccess.mockResolvedValue("sb_user_1");
+  authImpl = async () => ({ userId: "clerk_1" });
 });
 
 describe("completeAccess — idempotência e falha segura", () => {
-  it("sincroniza e ativa uma vez por tentativa e retorna ok", async () => {
+  it("reconcilia todo o acesso uma vez por tentativa e retorna ok", async () => {
     const result = await completeAccess();
     expect(result).toEqual({ ok: true });
-    expect(syncClerkUserToSupabase).toHaveBeenCalledTimes(1);
-    expect(activateProfileIfPending).toHaveBeenCalledTimes(1);
-    expect(activateProfileIfPending).toHaveBeenCalledWith("sb_user_1");
+    expect(reconcileClerkUserAccess).toHaveBeenCalledWith("clerk_1");
   });
 
   it("repetir a ação converge para o mesmo UUID (retry seguro)", async () => {
     await completeAccess();
     await completeAccess();
-    // Cada tentativa chama o sync idempotente uma vez; ambas resolvem o mesmo
-    // UUID — nenhuma duplicação é introduzida pela própria ação.
-    const uids = syncClerkUserToSupabase.mock.results.map((r) => r.value);
+    const uids = reconcileClerkUserAccess.mock.results.map((r) => r.value);
     const resolved = await Promise.all(uids);
     expect(new Set(resolved)).toEqual(new Set(["sb_user_1"]));
   });
 
-  it("sem e-mail utilizável → falha recuperável sem detalhe técnico", async () => {
-    currentUserImpl = async () => ({ id: "clerk_1", emailAddresses: [] });
+  it("sem sessão → falha recuperável sem chamar reconciliação", async () => {
+    authImpl = async () => ({ userId: null });
     const result = await completeAccess();
     expect(result).toEqual({ ok: false, reason: "sync-temporary-failure" });
-    expect(syncClerkUserToSupabase).not.toHaveBeenCalled();
+    expect(reconcileClerkUserAccess).not.toHaveBeenCalled();
+  });
+
+  it("estado Clerk sem identidade utilizável → falha temporária", async () => {
+    reconcileClerkUserAccess.mockResolvedValueOnce(null);
+
+    const result = await completeAccess();
+
+    expect(result).toEqual({ ok: false, reason: "sync-temporary-failure" });
+    expect(reconcileClerkUserAccess).toHaveBeenCalledWith("clerk_1");
   });
 
   it("erro no sync → unknown-recoverable, sem lançar", async () => {
-    syncClerkUserToSupabase.mockRejectedValueOnce(new Error("boom interno"));
+    reconcileClerkUserAccess.mockRejectedValueOnce(new Error("boom interno"));
     const result = await completeAccess();
     expect(result).toEqual({ ok: false, reason: "unknown-recoverable" });
+  });
+
+  it("erro ao resolver alias ou ativar membro canônico não declara sucesso", async () => {
+    reconcileClerkUserAccess.mockRejectedValueOnce(
+      new Error("falha ao resolver alias"),
+    );
+
+    const result = await completeAccess();
+
+    expect(result).toEqual({ ok: false, reason: "unknown-recoverable" });
+  });
+
+  it("erro ao ler a sessão fica contido como falha recuperável", async () => {
+    authImpl = async () => {
+      throw new Error("Clerk unavailable");
+    };
+
+    await expect(completeAccess()).resolves.toEqual({
+      ok: false,
+      reason: "unknown-recoverable",
+    });
+    expect(reconcileClerkUserAccess).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,12 @@ INSERT INTO auth.users (id, email) VALUES
   ('24310000-0000-0000-0000-000000000005', 'issue243-creator@example.test'),
   ('24310000-0000-0000-0000-000000000006', 'issue243-alias@example.test');
 
+INSERT INTO public.clerk_user_mapping
+  (clerk_user_id, supabase_user_id, access_sync_version)
+SELECT id::text, id, 1
+FROM auth.users
+WHERE id::text LIKE '24310000-0000-0000-0000-%';
+
 INSERT INTO public.projects (id, name, created_by) VALUES
   ('24300000-0000-0000-0000-000000000001', 'Issue 243 - guard',
    '24310000-0000-0000-0000-000000000001'),
@@ -62,7 +68,7 @@ GRANT SELECT, UPDATE ON public.project_members TO service_role;
 -- ----- Pesquisador comum não escala o próprio papel (RLS: zero linhas) -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"24310000-0000-0000-0000-000000000003"}',
+  '{"sub":"24310000-0000-0000-0000-000000000003","supabase_uid":"24310000-0000-0000-0000-000000000003"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -98,7 +104,7 @@ $$;
 -- ----- Coordenador continua gerenciando outro membro -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"24310000-0000-0000-0000-000000000001"}',
+  '{"sub":"24310000-0000-0000-0000-000000000001","supabase_uid":"24310000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -199,7 +205,7 @@ RESET ROLE;
 -- helper canônico precisa reconhecer a linha 001 como própria.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"24310000-0000-0000-0000-000000000006"}',
+  '{"sub":"24310000-0000-0000-0000-000000000006","supabase_uid":"24310000-0000-0000-0000-000000000006"}',
   true
 );
 SET LOCAL ROLE service_role;
@@ -251,7 +257,7 @@ RESET ROLE;
 -- ----- Master pode mudar o próprio papel -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"24310000-0000-0000-0000-000000000004"}',
+  '{"sub":"24310000-0000-0000-0000-000000000004","supabase_uid":"24310000-0000-0000-0000-000000000004"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -276,7 +282,7 @@ RESET ROLE;
 -- ----- Criador sem membership faz bootstrap criador -> coordenador -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"24310000-0000-0000-0000-000000000005"}',
+  '{"sub":"24310000-0000-0000-0000-000000000005","supabase_uid":"24310000-0000-0000-0000-000000000005"}',
   true
 );
 SET LOCAL ROLE authenticated;

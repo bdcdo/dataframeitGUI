@@ -15,6 +15,7 @@ let aliasErrorByIdentity: Record<string, { message: string } | null>;
 let accessByProject: Record<string, AccessScenario>;
 let memberEmailLinkQueries: number;
 let membershipUserIds: string[];
+let queryLimits: number[];
 let serverQueries: number;
 
 function aliasKey(projectId: string, accountUserId: string) {
@@ -28,6 +29,7 @@ type QueryResolver = (table: string, filters: QueryFilters) => QueryResult;
 interface QueryBuilder {
   select(): QueryBuilder;
   eq(column: string, value: string): QueryBuilder;
+  limit(value: number): QueryBuilder;
   maybeSingle(): Promise<QueryResult>;
 }
 
@@ -37,6 +39,10 @@ function makeQueryBuilder(table: string, resolve: QueryResolver): QueryBuilder {
     select: () => builder,
     eq: (column, value) => {
       filters.set(column, value);
+      return builder;
+    },
+    limit: (value) => {
+      queryLimits.push(value);
       return builder;
     },
     maybeSingle: () => Promise.resolve(resolve(table, filters)),
@@ -60,7 +66,10 @@ function queryError(message: string | undefined) {
 
 function resolveAdminQuery(table: string, filters: QueryFilters): QueryResult {
   if (table === "clerk_user_mapping") {
-    return { data: null, error: null };
+    return {
+      data: { supabase_user_id: "acc1", access_sync_version: 1 },
+      error: null,
+    };
   }
   if (table === "master_users") {
     return {
@@ -122,7 +131,14 @@ vi.mock("@clerk/nextjs/server", () => ({
     return {
       id: "clerk_acc1",
       publicMetadata: { supabase_uid: "acc1" },
-      emailAddresses: [{ emailAddress: "acc1@exemplo.com" }],
+      primaryEmailAddressId: "email_primary",
+      emailAddresses: [
+        {
+          id: "email_primary",
+          emailAddress: "acc1@exemplo.com",
+          verification: { status: "verified" },
+        },
+      ],
       firstName: "Conta",
       lastName: "Vinculada",
     };
@@ -147,25 +163,34 @@ beforeEach(() => {
   accessByProject = {};
   memberEmailLinkQueries = 0;
   membershipUserIds = [];
+  queryLimits = [];
   serverQueries = 0;
 });
 
-describe("getEffectiveMemberId", () => {
+describe("resolveProjectMemberActor — membro canônico", () => {
   it("retorna o membro canônico sem consultar projeto ou membership", async () => {
     aliasByIdentity[aliasKey("p-alias", "acc1")] = {
       member_user_id: "canonical-1",
     };
 
-    const { getEffectiveMemberId } = await import("@/lib/auth");
+    const { resolveProjectMemberActor } = await import("@/lib/auth");
 
-    await expect(getEffectiveMemberId("p-alias")).resolves.toBe("canonical-1");
+    await expect(resolveProjectMemberActor("p-alias")).resolves.toMatchObject({
+      ok: true,
+      user: { id: "acc1" },
+      memberUserId: "canonical-1",
+    });
     expect(membershipUserIds).toEqual([]);
+    expect(queryLimits).toEqual([1]);
   });
 
   it("sem alias retorna a própria conta", async () => {
-    const { getEffectiveMemberId } = await import("@/lib/auth");
+    const { resolveProjectMemberActor } = await import("@/lib/auth");
 
-    await expect(getEffectiveMemberId("p-direct")).resolves.toBe("acc1");
+    await expect(resolveProjectMemberActor("p-direct")).resolves.toMatchObject({
+      ok: true,
+      memberUserId: "acc1",
+    });
     expect(membershipUserIds).toEqual([]);
   });
 
@@ -174,9 +199,12 @@ describe("getEffectiveMemberId", () => {
       member_user_id: "canonical-other",
     };
 
-    const { getEffectiveMemberId } = await import("@/lib/auth");
+    const { resolveProjectMemberActor } = await import("@/lib/auth");
 
-    await expect(getEffectiveMemberId("p-current")).resolves.toBe("acc1");
+    await expect(resolveProjectMemberActor("p-current")).resolves.toMatchObject({
+      ok: true,
+      memberUserId: "acc1",
+    });
   });
 
   it("falha técnica não degrada para o id bruto", async () => {
@@ -184,13 +212,42 @@ describe("getEffectiveMemberId", () => {
       message: "timeout",
     };
 
-    const { getEffectiveMemberId } = await import("@/lib/auth");
+    const { resolveProjectMemberActor } = await import("@/lib/auth");
 
-    await expect(getEffectiveMemberId("p-error")).rejects.toThrow(
-      "Não foi possível resolver a identidade do projeto",
-    );
+    await expect(resolveProjectMemberActor("p-error")).resolves.toEqual({
+      ok: false,
+      code: "identity_unavailable",
+      error: "Não foi possível verificar sua identidade no projeto.",
+    });
     expect(membershipUserIds).toEqual([]);
   });
+});
+
+describe("resolveProjectMemberActor", () => {
+  it("distingue ausência de sessão de indisponibilidade técnica", async () => {
+    authenticated = false;
+    const { resolveProjectMemberActor } = await import("@/lib/auth");
+
+    await expect(resolveProjectMemberActor("p-signed-out")).resolves.toEqual({
+      ok: false,
+      code: "unauthenticated",
+      error: "Não autenticado",
+    });
+
+    vi.resetModules();
+    authenticated = true;
+    authThrows = true;
+    const { resolveProjectMemberActor: resolveAfterFailure } = await import(
+      "@/lib/auth"
+    );
+
+    await expect(resolveAfterFailure("p-failure")).resolves.toEqual({
+      ok: false,
+      code: "identity_unavailable",
+      error: "Não foi possível verificar sua identidade no projeto.",
+    });
+  });
+
 });
 
 const projectUser = { id: "account-1", isMaster: false };

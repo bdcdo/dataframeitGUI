@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import {
   AutoReviewPage,
   type AutoReviewDoc,
@@ -21,9 +21,8 @@ export default async function AutoReviewRoute({
   const [{ id }, { viewAs }, user] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
   ]);
-  if (!user) redirect("/auth/login");
 
   const [supabase, accessResult] = await Promise.all([
     createSupabaseServer(),

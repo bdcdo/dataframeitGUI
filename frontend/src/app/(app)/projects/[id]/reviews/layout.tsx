@@ -1,6 +1,5 @@
-import { getAuthUser } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { ReviewsNav } from "@/components/reviews/ReviewsNav";
-import { redirect } from "next/navigation";
 
 export default async function ReviewsLayout({
   children,
@@ -9,8 +8,7 @@ export default async function ReviewsLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
-  if (!user) redirect("/auth/login");
+  const [{ id }] = await Promise.all([params, requirePageAuthUser()]);
 
   return (
     <div className="flex flex-col">

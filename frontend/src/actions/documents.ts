@@ -3,9 +3,9 @@
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import {
   getAuthUser,
-  getEffectiveMemberId,
   getProjectAccessContext,
   requireCoordinator,
+  resolveProjectMemberActor,
 } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
@@ -390,13 +390,12 @@ export interface BrowseDocument {
 }
 
 export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDocument[]> {
-  const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
-
-  const [supabase, memberUserId] = await Promise.all([
+  const [supabase, actor] = await Promise.all([
     createSupabaseServer(),
-    getEffectiveMemberId(projectId),
+    resolveProjectMemberActor(projectId),
   ]);
+  if (!actor.ok) throw new Error(actor.error);
+  const { user, memberUserId } = actor;
 
   const [{ data: docs }, { data: responses }, { data: myPending }] =
     await Promise.all([
@@ -464,13 +463,12 @@ export async function getDocumentForCoding(
   projectId: string,
   documentId: string
 ): Promise<{ document: { id: string; external_id: string | null; title: string | null; text: string; exclusionPending: DocumentExclusionPending | null }; existingAnswers: Record<string, unknown> | null; existingJustifications: Record<string, unknown> | null }> {
-  const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
-
-  const [supabase, memberUserId] = await Promise.all([
+  const [supabase, actor] = await Promise.all([
     createSupabaseServer(),
-    getEffectiveMemberId(projectId),
+    resolveProjectMemberActor(projectId),
   ]);
+  if (!actor.ok) throw new Error(actor.error);
+  const { user, memberUserId } = actor;
 
   // Sem filtro de exclusion_pending_at: quem sinalizou precisa continuar
   // abrindo o doc (bloqueado) para poder desfazer; deep-link de terceiro

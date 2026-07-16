@@ -1,5 +1,4 @@
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { requireProjectPageAccess } from "@/lib/page-auth";
 import { notFound } from "next/navigation";
 import LlmNav from "@/components/llm/LlmNav";
 
@@ -10,12 +9,7 @@ export default async function LlmLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
-  if (!user) notFound();
-
-  const access = requireResolvedProjectAccess(
-    await getProjectAccessContext(id, user),
-  );
+  const { access } = await requireProjectPageAccess(params);
   if (!access.isCoordinator) notFound();
 
   return (

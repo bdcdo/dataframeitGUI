@@ -5,12 +5,23 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import {
   responseQualifiesForVersion,
   versionGate,
+  type ProjectVersionRow,
   type VersionedResponse,
 } from "@/lib/compare-version";
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 type Admin = ReturnType<typeof createSupabaseAdmin>;
+
+interface QueryResult<T> {
+  data: T;
+  error: { message: string } | null;
+}
+
+function queryData<T>(result: QueryResult<T>): T {
+  if (result.error) throw new Error(result.error.message);
+  return result.data;
+}
 
 // Modos de automação que materializam uma comparação (assignment type=comparacao)
 // para um revisor terceiro. auto_review_llm e none não passam por aqui.
@@ -88,15 +99,101 @@ function toVersioned(
 }
 
 function buildEquivByField(
-  rows: Array<{ field_name: string; response_a_id: string; response_b_id: string }> | null,
+  rows: Array<{
+    field_name: string;
+    response_a_id: string;
+    response_b_id: string;
+  }> | null,
 ): Map<string, EquivalencePair[]> {
   const map = new Map<string, EquivalencePair[]>();
   for (const eq of rows ?? []) {
     const list = map.get(eq.field_name) ?? [];
-    list.push({ response_a_id: eq.response_a_id, response_b_id: eq.response_b_id });
+    list.push({
+      response_a_id: eq.response_a_id,
+      response_b_id: eq.response_b_id,
+    });
     map.set(eq.field_name, list);
   }
   return map;
+}
+
+export async function loadOpenComparisonLoad(
+  admin: Admin,
+  projectId: string,
+): Promise<Map<string, number>> {
+  const result = await admin
+    .from("assignments")
+    .select("user_id")
+    .eq("project_id", projectId)
+    .eq("type", "comparacao")
+    .neq("status", "concluido");
+  return buildLoadMap(queryData(result) ?? []);
+}
+
+async function loadEligibleReviewerIds(
+  admin: Admin,
+  projectId: string,
+  documentId: string,
+  coderIds: Set<string>,
+): Promise<string[]> {
+  const [membersResult, previousAssignmentsResult] = await Promise.all([
+    admin
+      .from("project_members")
+      .select("user_id")
+      .eq("project_id", projectId)
+      .eq("can_compare", true),
+    admin
+      .from("assignments")
+      .select("user_id")
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .eq("type", "comparacao"),
+  ]);
+  const members = queryData(membersResult) ?? [];
+  const previousReviewerIds = new Set(
+    (queryData(previousAssignmentsResult) ?? []).map(
+      (assignment) => assignment.user_id,
+    ),
+  );
+
+  // A UNIQUE de assignments não permite reutilizar a mesma pessoa no mesmo
+  // documento. Excluí-la antes do sorteio evita que uma comparação concluída
+  // transforme divergências posteriores num retry impossível e silencioso.
+  return members
+    .map((member) => member.user_id)
+    .filter(
+      (userId) => !coderIds.has(userId) && !previousReviewerIds.has(userId),
+    );
+}
+
+function chooseLeastLoadedReviewer(
+  eligibleReviewerIds: string[],
+  loadByUser: Map<string, number>,
+): string {
+  const minLoad = Math.min(
+    ...eligibleReviewerIds.map((userId) => loadByUser.get(userId) ?? 0),
+  );
+  const candidates = eligibleReviewerIds.filter(
+    (userId) => (loadByUser.get(userId) ?? 0) === minLoad,
+  );
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+async function commitComparisonAssignment(
+  admin: Admin,
+  projectId: string,
+  documentId: string,
+  reviewerId: string,
+): Promise<boolean> {
+  // A RPC revalida can_compare sob lock e insere na mesma transação. Assim um
+  // disable concorrente ou limpa a atribuição já criada, ou vence o lock e
+  // impede a gravação posterior.
+  const result = await admin.rpc("assign_comparison_if_eligible", {
+    p_project_id: projectId,
+    p_document_id: documentId,
+    p_user_id: reviewerId,
+  });
+  return queryData(result) === true;
 }
 
 // Sorteia UM revisor de comparação para o documento e cria o assignment
@@ -114,90 +211,189 @@ export async function assignComparisonReviewer(
   coderIds: Set<string>,
   precomputedOpenLoad?: Map<string, number>,
 ): Promise<{ assigned: boolean; noPool: boolean }> {
-  const { data: eligibleMembers } = await admin
-    .from("project_members")
-    .select("user_id")
-    .eq("project_id", projectId)
-    .eq("can_compare", true);
-
-  const eligible = (eligibleMembers ?? []).filter(
-    (m) => !coderIds.has(m.user_id as string),
+  const eligibleReviewerIds = await loadEligibleReviewerIds(
+    admin,
+    projectId,
+    documentId,
+    coderIds,
   );
-  if (eligible.length === 0) return { assigned: false, noPool: true };
-
-  let loadByUser: Map<string, number>;
-  if (precomputedOpenLoad) {
-    loadByUser = precomputedOpenLoad;
-  } else {
-    const { data: openCounts } = await admin
-      .from("assignments")
-      .select("user_id")
-      .eq("project_id", projectId)
-      .eq("type", "comparacao")
-      .neq("status", "concluido");
-    loadByUser = buildLoadMap(openCounts ?? []);
+  if (eligibleReviewerIds.length === 0) {
+    return { assigned: false, noPool: true };
   }
 
-  let minLoad = Infinity;
-  for (const m of eligible) {
-    const l = loadByUser.get(m.user_id) ?? 0;
-    if (l < minLoad) minLoad = l;
-  }
-  const candidatesAtMin = eligible.filter(
-    (m) => (loadByUser.get(m.user_id) ?? 0) === minLoad,
-  );
-
+  const loadByUser =
+    precomputedOpenLoad ?? (await loadOpenComparisonLoad(admin, projectId));
   // Desempate aleatorio entre os de menor carga (sem preferencia de role).
-  const reviewerId = candidatesAtMin[
-    Math.floor(Math.random() * candidatesAtMin.length)
-  ].user_id as string;
-
-  // A seleção acima preserva o balanceamento; a RPC revalida can_compare sob
-  // lock e insere na mesma transação. Assim um disable concorrente ou limpa a
-  // atribuição já criada, ou vence o lock e impede a gravação posterior.
-  const { data: assigned, error } = await admin.rpc(
-    "assign_comparison_if_eligible",
-    {
-      p_project_id: projectId,
-      p_document_id: documentId,
-      p_user_id: reviewerId,
-    },
+  const reviewerId = chooseLeastLoadedReviewer(eligibleReviewerIds, loadByUser);
+  const assigned = await commitComparisonAssignment(
+    admin,
+    projectId,
+    documentId,
+    reviewerId,
   );
-  if (error) throw new Error(error.message);
-  if (assigned !== true) return { assigned: false, noPool: false };
+  if (!assigned) return { assigned: false, noPool: false };
 
   // Mantem a carga in-memory coerente para o proximo doc do batch (retry).
   if (precomputedOpenLoad) {
-    precomputedOpenLoad.set(reviewerId, (precomputedOpenLoad.get(reviewerId) ?? 0) + 1);
+    precomputedOpenLoad.set(reviewerId, (loadByUser.get(reviewerId) ?? 0) + 1);
   }
 
   return { assigned: true, noPool: false };
 }
 
-// Detecta divergencia segundo o modo e, se houver, materializa um assignment
-// comparacao para um revisor terceiro. Chamado de saveResponse() apos a
-// codificacao virar "concluido". Usa admin client porque a policy de assignments
-// restringe INSERT a coordenadores; aqui o pesquisador precisa criar a fila.
-//
-// "o minimo necessario para liberar a revisao":
-//   compare_humans → >= min_responses_for_comparison humanos completos
-//   compare_llm    → >= 1 humano completo + resposta LLM
-// comparison_includes_llm (so compare_humans) decide se o LLM entra no calculo
-// de divergencia que dispara.
-export async function createAutoComparisonIfDiverges(
+interface ComparisonProjectSettings extends ProjectVersionRow {
+  min_responses_for_comparison: number | null;
+  comparison_includes_llm: boolean | null;
+}
+
+interface ComparisonAnalysisInput {
+  fields: PydanticField[];
+  project: ComparisonProjectSettings;
+  humanResponses: ResponseRow[];
+  llmResponse: ResponseRow | null | undefined;
+  equivalencesByField?: Map<string, EquivalencePair[]>;
+  mode: ComparisonMode;
+}
+
+type ComparisonAnalysis =
+  | {
+      kind: "insufficient";
+      logFields: Record<string, unknown>;
+    }
+  | {
+      kind: "consensus";
+    }
+  | {
+      kind: "divergent";
+      divergentFields: string[];
+      coderIds: Set<string>;
+    };
+
+function collectRespondentIds(responses: ResponseRow[]): Set<string> {
+  const ids = responses
+    .map((response) => response.respondent_id)
+    .filter((id): id is string => Boolean(id));
+  return new Set(ids);
+}
+
+type ComparisonVersionGate = ReturnType<typeof versionGate>;
+
+function completeQualifyingHumans(
+  fields: PydanticField[],
+  responses: ResponseRow[],
+  gate: ComparisonVersionGate,
+): ResponseRow[] {
+  return responses
+    .filter((response) => isCodingComplete(fields, response.answers ?? {}))
+    .filter((response) =>
+      responseQualifiesForVersion(
+        toVersioned(response, "humano"),
+        gate.minVersion,
+        gate.ctx,
+      ),
+    );
+}
+
+function qualifyingLlmResponse(
+  response: ResponseRow | null | undefined,
+  gate: ComparisonVersionGate,
+): ResponseRow | null {
+  if (!response) return null;
+  return responseQualifiesForVersion(
+    toVersioned(response, "llm"),
+    gate.minVersion,
+    gate.ctx,
+  )
+    ? response
+    : null;
+}
+
+function minimumHumanResponses(
+  mode: ComparisonMode,
+  configuredMinimum: number | null | undefined,
+): number {
+  return mode === "compare_humans" ? (configuredMinimum ?? 2) : 1;
+}
+
+function divergenceResponses(
+  completeHumans: ResponseRow[],
+  llmResponse: ResponseRow | null,
+  includeLlm: boolean,
+) {
+  const responses = completeHumans.map(toResponseLike);
+  if (includeLlm && llmResponse) responses.push(toResponseLike(llmResponse));
+  return responses;
+}
+
+function analyzeComparison({
+  fields,
+  project,
+  humanResponses,
+  llmResponse,
+  equivalencesByField,
+  mode,
+}: ComparisonAnalysisInput): ComparisonAnalysis {
+  const gate = versionGate(project);
+
+  // Só codificações humanas completas e no piso `latest_major` contam para o
+  // mínimo e para a divergência. Todos os respondentes continuam excluídos do
+  // pool, inclusive quando a resposta está incompleta ou abaixo desse piso.
+  const completeHumans = completeQualifyingHumans(fields, humanResponses, gate);
+  const minHumans = minimumHumanResponses(
+    mode,
+    project.min_responses_for_comparison,
+  );
+  if (completeHumans.length < minHumans) {
+    return {
+      kind: "insufficient",
+      logFields: { completeHumans: completeHumans.length, minHumans },
+    };
+  }
+
+  // LLM também passa pelo piso de versão: uma resposta de schema antigo não
+  // conta para comparação nem para o mínimo do modo compare_llm.
+  const qualifyingLlm = qualifyingLlmResponse(llmResponse, gate);
+  if (mode === "compare_llm" && !qualifyingLlm) {
+    return { kind: "insufficient", logFields: { reason: "no_llm" } };
+  }
+
+  const responsesForDivergence = divergenceResponses(
+    completeHumans,
+    qualifyingLlm,
+    mode === "compare_llm" || project.comparison_includes_llm === true,
+  );
+  if (responsesForDivergence.length < 2) {
+    return {
+      kind: "insufficient",
+      logFields: { reason: "needs_two_responses" },
+    };
+  }
+
+  const divergentFields = computeDivergentFieldNames(
+    fields,
+    responsesForDivergence,
+    equivalencesByField,
+  );
+  if (divergentFields.length === 0) return { kind: "consensus" };
+  return {
+    kind: "divergent",
+    divergentFields,
+    coderIds: collectRespondentIds(humanResponses),
+  };
+}
+
+async function loadAutoComparisonContext(
+  admin: Admin,
   projectId: string,
   documentId: string,
-  mode: ComparisonMode,
-): Promise<{ assigned: boolean; noPool: boolean }> {
-  const admin = createSupabaseAdmin();
-
+) {
   const [
-    { data: project },
-    { data: doc },
-    { data: humanResponses },
-    { data: llmResponse },
-    { data: equivalences },
-    { data: activeAssignments },
+    projectResult,
+    documentResult,
+    humanResponsesResult,
+    llmResponseResult,
+    equivalencesResult,
+    activeAssignmentsResult,
   ] = await Promise.all([
     admin
       .from("projects")
@@ -214,7 +410,9 @@ export async function createAutoComparisonIfDiverges(
       .maybeSingle(),
     admin
       .from("responses")
-      .select(`id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
+      .select(
+        `id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`,
+      )
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("respondent_type", "humano")
@@ -242,130 +440,173 @@ export async function createAutoComparisonIfDiverges(
       .limit(1),
   ]);
 
-  if (!project?.pydantic_fields) {
+  return {
+    project: queryData(projectResult),
+    document: queryData(documentResult),
+    humanResponses: (queryData(humanResponsesResult) ?? []) as ResponseRow[],
+    llmResponse: queryData(llmResponseResult) as ResponseRow | null,
+    equivalences: queryData(equivalencesResult),
+    activeAssignments: queryData(activeAssignmentsResult) ?? [],
+  };
+}
+
+// Detecta divergencia segundo o modo e, se houver, materializa um assignment
+// comparacao para um revisor terceiro. Chamado de saveResponse() apos a
+// codificacao virar "concluido". Usa admin client porque a policy de assignments
+// restringe INSERT a coordenadores; aqui o pesquisador precisa criar a fila.
+//
+// "o minimo necessario para liberar a revisao":
+//   compare_humans → >= min_responses_for_comparison humanos completos
+//   compare_llm    → >= 1 humano completo + resposta LLM
+// comparison_includes_llm (so compare_humans) decide se o LLM entra no calculo
+// de divergencia que dispara.
+export async function createAutoComparisonIfDiverges(
+  projectId: string,
+  documentId: string,
+  mode: ComparisonMode,
+): Promise<{ assigned: boolean; noPool: boolean }> {
+  const admin = createSupabaseAdmin();
+  const context = await loadAutoComparisonContext(admin, projectId, documentId);
+
+  if (!context.project?.pydantic_fields) {
     log("skip_no_data", { projectId, documentId, mode }, "warn");
     return { assigned: false, noPool: false };
   }
-  const fields = project.pydantic_fields as PydanticField[];
+  const fields = context.project.pydantic_fields as PydanticField[];
 
   // Doc arquivado ou em revisão de escopo não dispara comparação — alinha o
   // gatilho automático com a fila (compare/page.tsx), que filtra ambos.
-  if (!doc || doc.excluded_at || doc.exclusion_pending_at) {
+  if (
+    !context.document ||
+    context.document.excluded_at ||
+    context.document.exclusion_pending_at
+  ) {
     log("skip_doc_out_of_scope", { projectId, documentId, mode });
     return { assigned: false, noPool: false };
   }
 
   // Idempotencia: ja existe comparacao ativa para este doc → nao re-sorteia.
-  if (activeAssignments && activeAssignments.length > 0) {
+  if (context.activeAssignments.length > 0) {
     log("skip_active_assignment", { projectId, documentId, mode });
     return { assigned: false, noPool: false };
   }
 
-  // So codificacoes humanas completas contam para o gatilho (#174), E que
-  // qualificam sob o piso `latest_major` (#247) — o MESMO que a fila
-  // (compare/page.tsx) e o fecho (compare-sync.ts) aplicam, restaurando o
-  // acoplamento gatilho==fila==fecho. Sem este filtro, uma divergencia que so
-  // existe entre rodadas antigas materializaria um assignment que a fila nao
-  // mostra e que o fecho ja considera concluivel — o "fantasma" da NOTA antiga.
-  const { minVersion, ctx: projectVersionCtx } = versionGate(project);
-  const completeHumans = (humanResponses ?? [])
-    .filter((r) =>
-      isCodingComplete(fields, (r.answers as Record<string, unknown>) ?? {}),
-    )
-    .filter((r) =>
-      responseQualifiesForVersion(
-        toVersioned(r as ResponseRow, "humano"),
-        minVersion,
-        projectVersionCtx,
-      ),
-    );
-
-  const minHumans =
-    mode === "compare_humans" ? (project.min_responses_for_comparison ?? 2) : 1;
-  if (completeHumans.length < minHumans) {
-    log("skip_insufficient", {
-      projectId,
-      documentId,
-      mode,
-      completeHumans: completeHumans.length,
-      minHumans,
-    });
-    return { assigned: false, noPool: false };
-  }
-
-  // LLM tambem passa pelo piso de versao: um LLM de schema antigo nao conta.
-  const qualifyingLlm =
-    llmResponse &&
-    responseQualifiesForVersion(
-      toVersioned(llmResponse as ResponseRow, "llm"),
-      minVersion,
-      projectVersionCtx,
-    )
-      ? llmResponse
-      : null;
-  if (mode === "compare_llm" && !qualifyingLlm) {
-    log("skip_insufficient", { projectId, documentId, mode, reason: "no_llm" });
-    return { assigned: false, noPool: false };
-  }
-
-  const includeLlm =
-    mode === "compare_llm" ||
-    (mode === "compare_humans" && project.comparison_includes_llm === true);
-
-  const responsesForDivergence = completeHumans.map((r) =>
-    toResponseLike(r as ResponseRow),
-  );
-  if (includeLlm && qualifyingLlm) {
-    responsesForDivergence.push(toResponseLike(qualifyingLlm as ResponseRow));
-  }
-  if (responsesForDivergence.length < 2) {
-    log("skip_insufficient", {
-      projectId,
-      documentId,
-      mode,
-      reason: "needs_two_responses",
-    });
-    return { assigned: false, noPool: false };
-  }
-
-  const divergent = computeDivergentFieldNames(
+  const analysis = analyzeComparison({
     fields,
-    responsesForDivergence,
-    buildEquivByField(equivalences),
-  );
-  if (divergent.length === 0) {
-    log("consensus", { projectId, documentId, mode, totalFields: fields.length });
+    project: context.project,
+    humanResponses: context.humanResponses,
+    llmResponse: context.llmResponse,
+    equivalencesByField: buildEquivByField(context.equivalences),
+    mode,
+  });
+  if (analysis.kind === "insufficient") {
+    log("skip_insufficient", {
+      projectId,
+      documentId,
+      mode,
+      ...analysis.logFields,
+    });
+    return { assigned: false, noPool: false };
+  }
+  if (analysis.kind === "consensus") {
+    log("consensus", {
+      projectId,
+      documentId,
+      mode,
+      totalFields: fields.length,
+    });
     return { assigned: false, noPool: false };
   }
 
-  const coderIds = new Set<string>();
-  for (const r of completeHumans) {
-    if (r.respondent_id) coderIds.add(r.respondent_id as string);
-  }
-
-  const result = await assignComparisonReviewer(admin, projectId, documentId, coderIds);
+  const result = await assignComparisonReviewer(
+    admin,
+    projectId,
+    documentId,
+    analysis.coderIds,
+  );
   log(result.assigned ? "created" : "no_pool", {
     projectId,
     documentId,
     mode,
-    divergentCount: divergent.length,
-    divergentFields: divergent,
+    divergentCount: analysis.divergentFields.length,
+    divergentFields: analysis.divergentFields,
   });
   return result;
 }
 
-// Varre o projeto e devolve os documentos que DIVERGEM (segundo o modo) e ainda
-// nao tem comparacao ativa — o "backlog" sem revisor. Usado pelo retry
-// (atribui) e pelo banner de pendencia (conta). Varredura em 2 fases para nao
-// puxar `answers` de todo doc: fase 1 acha candidatos por metadado leve, fase 2
-// busca answers so deles e recomputa divergencia.
-export async function scanComparisonBacklog(
+interface ComparisonProjectRow extends ComparisonProjectSettings {
+  pydantic_fields: PydanticField[];
+}
+
+interface HumanResponseMeta extends Pick<
+  ResponseRow,
+  | "is_latest"
+  | "pydantic_hash"
+  | "schema_version_major"
+  | "schema_version_minor"
+  | "schema_version_patch"
+> {
+  document_id: string;
+  respondent_id: string | null;
+}
+
+interface DocumentResponseRow extends ResponseRow {
+  document_id: string;
+}
+
+interface DocumentEquivalenceRow {
+  document_id: string;
+  field_name: string;
+  response_a_id: string;
+  response_b_id: string;
+}
+
+function candidateDocumentIds(
+  project: ComparisonProjectRow,
+  humanMeta: HumanResponseMeta[],
+  activeDocumentIds: Set<string>,
+  mode: ComparisonMode,
+): string[] {
+  const gate = versionGate(project);
+  const humansByDoc = new Map<string, Set<string>>();
+  for (const response of humanMeta) {
+    if (!response.respondent_id) continue;
+    if (
+      !responseQualifiesForVersion(
+        toVersioned(response, "humano"),
+        gate.minVersion,
+        gate.ctx,
+      )
+    ) {
+      continue;
+    }
+    const respondents =
+      humansByDoc.get(response.document_id) ?? new Set<string>();
+    respondents.add(response.respondent_id);
+    humansByDoc.set(response.document_id, respondents);
+  }
+
+  const minHumans = minimumHumanResponses(
+    mode,
+    project.min_responses_for_comparison,
+  );
+  return [...humansByDoc.entries()]
+    .filter(
+      ([documentId, respondents]) =>
+        respondents.size >= minHumans && !activeDocumentIds.has(documentId),
+    )
+    .map(([documentId]) => documentId);
+}
+
+async function loadBacklogCandidates(
   admin: Admin,
   projectId: string,
   mode: ComparisonMode,
-): Promise<Array<{ documentId: string; coderIds: Set<string> }>> {
-  // Fase 1: metadados leves (sem answers).
-  const [{ data: project }, { data: humanMeta }, { data: activeAsg }] =
+): Promise<{
+  project: ComparisonProjectRow;
+  documentIds: string[];
+} | null> {
+  const [projectResult, humanMetaResult, activeAssignmentsResult] =
     await Promise.all([
       admin
         .from("projects")
@@ -374,12 +615,13 @@ export async function scanComparisonBacklog(
         )
         .eq("id", projectId)
         .single(),
-      // `documents!inner` + filtros: docs arquivados ou em revisão de escopo
-      // não entram no backlog (gap pré-existente: este scan não filtrava nem
-      // excluded_at, re-atribuindo comparações de docs arquivados).
+      // O inner join exclui documentos arquivados ou em revisão de escopo já
+      // na fase leve, antes de buscar answers e equivalências.
       admin
         .from("responses")
-        .select(`document_id, respondent_id, ${RESPONSE_VERSION_COLS}, documents!inner(id)`)
+        .select(
+          `document_id, respondent_id, ${RESPONSE_VERSION_COLS}, documents!inner(id)`,
+        )
         .eq("project_id", projectId)
         .eq("respondent_type", "humano")
         .eq("is_latest", true)
@@ -393,143 +635,132 @@ export async function scanComparisonBacklog(
         .neq("status", "concluido"),
     ]);
 
-  if (!project?.pydantic_fields) return [];
-  const fields = project.pydantic_fields as PydanticField[];
-  if (fields.length === 0) return [];
+  const rawProject = queryData(projectResult);
+  const humanMeta = (queryData(humanMetaResult) ?? []) as HumanResponseMeta[];
+  const activeAssignments = queryData(activeAssignmentsResult) ?? [];
+  if (!rawProject?.pydantic_fields) return null;
 
-  const docsWithActive = new Set(
-    (activeAsg ?? []).map((a) => a.document_id as string),
+  const project = rawProject as unknown as ComparisonProjectRow;
+  if (project.pydantic_fields.length === 0) return null;
+  const activeDocumentIds = new Set(
+    activeAssignments.map((assignment) => assignment.document_id),
   );
+  const documentIds = candidateDocumentIds(
+    project,
+    humanMeta,
+    activeDocumentIds,
+    mode,
+  );
+  return documentIds.length > 0 ? { project, documentIds } : null;
+}
 
-  // Piso `latest_major` (#247), aplicado já na fase 1 com as colunas LEVES de
-  // versão (RESPONSE_VERSION_COLS, sem `answers`): docs cujos humanos estão
-  // todos abaixo do piso são podados ANTES da fase 2, evitando o fetch pesado de
-  // `answers`/equivalências para docs que nunca entrariam no backlog (regra
-  // "fetch em 2 fases para dados pesados", CLAUDE.md). O contexto é único; só as
-  // respostas variam. A completude (`isCodingComplete`) segue conferida na fase
-  // 2, que precisa de `answers`.
-  const { minVersion, ctx: projectVersionCtx } = versionGate(project);
-
-  const humansByDoc = new Map<string, Set<string>>();
-  for (const r of humanMeta ?? []) {
-    const docId = r.document_id as string;
-    const respId = r.respondent_id as string | null;
-    if (!respId) continue;
-    if (
-      !responseQualifiesForVersion(
-        toVersioned(r, "humano"),
-        minVersion,
-        projectVersionCtx,
-      )
-    )
-      continue;
-    const set = humansByDoc.get(docId) ?? new Set<string>();
-    set.add(respId);
-    humansByDoc.set(docId, set);
+function groupHumanResponsesByDocument(
+  responses: DocumentResponseRow[],
+): Map<string, DocumentResponseRow[]> {
+  const byDocument = new Map<string, DocumentResponseRow[]>();
+  for (const response of responses) {
+    const documentResponses = byDocument.get(response.document_id) ?? [];
+    documentResponses.push(response);
+    byDocument.set(response.document_id, documentResponses);
   }
+  return byDocument;
+}
 
-  const minHumans =
-    mode === "compare_humans" ? (project.min_responses_for_comparison ?? 2) : 1;
+function groupEquivalencesByDocument(
+  equivalences: DocumentEquivalenceRow[],
+): Map<string, Map<string, EquivalencePair[]>> {
+  const byDocument = new Map<string, Map<string, EquivalencePair[]>>();
+  for (const equivalence of equivalences) {
+    const byField =
+      byDocument.get(equivalence.document_id) ??
+      new Map<string, EquivalencePair[]>();
+    const fieldEquivalences = byField.get(equivalence.field_name) ?? [];
+    fieldEquivalences.push({
+      response_a_id: equivalence.response_a_id,
+      response_b_id: equivalence.response_b_id,
+    });
+    byField.set(equivalence.field_name, fieldEquivalences);
+    byDocument.set(equivalence.document_id, byField);
+  }
+  return byDocument;
+}
 
-  // Candidatos: humanos suficientes (por respondente; completude conferida na
-  // fase 2) e sem comparacao ativa.
-  const candidates = [...humansByDoc.entries()]
-    .filter(([docId, humans]) => humans.size >= minHumans && !docsWithActive.has(docId))
-    .map(([docId]) => docId);
-  if (candidates.length === 0) return [];
-
-  // Fase 2: answers só dos candidatos.
-  const [{ data: humanFull }, { data: llmFull }, { data: equivs }] =
+async function loadBacklogComparisonData(
+  admin: Admin,
+  projectId: string,
+  documentIds: string[],
+) {
+  const [humanResponsesResult, llmResponsesResult, equivalencesResult] =
     await Promise.all([
       admin
         .from("responses")
-        .select(`id, document_id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
+        .select(
+          `id, document_id, respondent_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`,
+        )
         .eq("project_id", projectId)
         .eq("respondent_type", "humano")
         .eq("is_latest", true)
-        .in("document_id", candidates),
+        .in("document_id", documentIds),
       admin
         .from("responses")
-        .select(`id, document_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`)
+        .select(
+          `id, document_id, answers, answer_field_hashes, ${RESPONSE_VERSION_COLS}`,
+        )
         .eq("project_id", projectId)
         .eq("respondent_type", "llm")
         .eq("is_latest", true)
-        .in("document_id", candidates),
+        .in("document_id", documentIds),
       admin
         .from("response_equivalences")
         .select("document_id, field_name, response_a_id, response_b_id")
         .eq("project_id", projectId)
-        .in("document_id", candidates),
+        .in("document_id", documentIds),
     ]);
 
-  const llmByDoc = new Map(
-    (llmFull ?? []).map((r) => [r.document_id as string, r as ResponseRow & { document_id: string }]),
+  const humans = (queryData(humanResponsesResult) ??
+    []) as DocumentResponseRow[];
+  const llms = (queryData(llmResponsesResult) ?? []) as DocumentResponseRow[];
+  const equivalences = (queryData(equivalencesResult) ??
+    []) as DocumentEquivalenceRow[];
+  return {
+    humansByDocument: groupHumanResponsesByDocument(humans),
+    llmByDocument: new Map(
+      llms.map((response) => [response.document_id, response]),
+    ),
+    equivalencesByDocument: groupEquivalencesByDocument(equivalences),
+  };
+}
+
+// Varre o projeto e devolve os documentos que DIVERGEM (segundo o modo) e ainda
+// nao tem comparacao ativa — o "backlog" sem revisor. Usado pelo retry
+// (atribui) e pelo banner de pendencia (conta). Varredura em 2 fases para nao
+// puxar `answers` de todo doc: fase 1 acha candidatos por metadado leve, fase 2
+// busca answers so deles e recomputa divergencia.
+export async function scanComparisonBacklog(
+  admin: Admin,
+  projectId: string,
+  mode: ComparisonMode,
+): Promise<Array<{ documentId: string; coderIds: Set<string> }>> {
+  const candidates = await loadBacklogCandidates(admin, projectId, mode);
+  if (!candidates) return [];
+  const comparisonData = await loadBacklogComparisonData(
+    admin,
+    projectId,
+    candidates.documentIds,
   );
-
-  const humansFullByDoc = new Map<string, Array<ResponseRow & { document_id: string }>>();
-  for (const r of humanFull ?? []) {
-    const docId = r.document_id as string;
-    const list = humansFullByDoc.get(docId) ?? [];
-    list.push(r as ResponseRow & { document_id: string });
-    humansFullByDoc.set(docId, list);
-  }
-
-  const equivByDoc = new Map<string, Map<string, EquivalencePair[]>>();
-  for (const eq of equivs ?? []) {
-    const docId = eq.document_id as string;
-    const byField = equivByDoc.get(docId) ?? new Map<string, EquivalencePair[]>();
-    const list = byField.get(eq.field_name) ?? [];
-    list.push({ response_a_id: eq.response_a_id, response_b_id: eq.response_b_id });
-    byField.set(eq.field_name, list);
-    equivByDoc.set(docId, byField);
-  }
-
   const result: Array<{ documentId: string; coderIds: Set<string> }> = [];
-  for (const docId of candidates) {
-    const completeHumans = (humansFullByDoc.get(docId) ?? [])
-      .filter((r) =>
-        isCodingComplete(fields, (r.answers as Record<string, unknown>) ?? {}),
-      )
-      .filter((r) =>
-        responseQualifiesForVersion(
-          toVersioned(r, "humano"),
-          minVersion,
-          projectVersionCtx,
-        ),
-      );
-    if (completeHumans.length < minHumans) continue;
-    const rawLlm = llmByDoc.get(docId);
-    const llm =
-      rawLlm &&
-      responseQualifiesForVersion(
-        toVersioned(rawLlm, "llm"),
-        minVersion,
-        projectVersionCtx,
-      )
-        ? rawLlm
-        : undefined;
-    if (mode === "compare_llm" && !llm) continue;
-
-    const includeLlm =
-      mode === "compare_llm" ||
-      (mode === "compare_humans" && project.comparison_includes_llm === true);
-
-    const responses = completeHumans.map((r) => toResponseLike(r));
-    if (includeLlm && llm) responses.push(toResponseLike(llm));
-    if (responses.length < 2) continue;
-
-    const divergent = computeDivergentFieldNames(
-      fields,
-      responses,
-      equivByDoc.get(docId),
-    );
-    if (divergent.length === 0) continue;
-
-    const coderIds = new Set<string>();
-    for (const r of completeHumans) {
-      if (r.respondent_id) coderIds.add(r.respondent_id as string);
-    }
-    result.push({ documentId: docId, coderIds });
+  for (const documentId of candidates.documentIds) {
+    const analysis = analyzeComparison({
+      fields: candidates.project.pydantic_fields,
+      project: candidates.project,
+      humanResponses: comparisonData.humansByDocument.get(documentId) ?? [],
+      llmResponse: comparisonData.llmByDocument.get(documentId),
+      equivalencesByField:
+        comparisonData.equivalencesByDocument.get(documentId),
+      mode,
+    });
+    if (analysis.kind !== "divergent") continue;
+    result.push({ documentId, coderIds: analysis.coderIds });
   }
 
   return result;

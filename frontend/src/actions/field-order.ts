@@ -1,33 +1,20 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
-
-async function resolveFieldOrderUserId(
-  projectId: string,
-): Promise<{ userId: string } | { error: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  try {
-    return { userId: await getEffectiveMemberId(projectId) };
-  } catch {
-    return { error: "Não foi possível verificar sua identidade no projeto." };
-  }
-}
+import { resolveProjectMemberActor } from "@/lib/auth";
 
 export async function getResearcherFieldOrder(
   projectId: string,
 ): Promise<{ order: string[] | null; error?: string }> {
-  const identity = await resolveFieldOrderUserId(projectId);
-  if ("error" in identity) return { order: null, error: identity.error };
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { order: null, error: actor.error };
 
   const supabase = await createSupabaseServer();
   const { data, error } = await supabase
     .from("researcher_field_orders")
     .select("field_order")
     .eq("project_id", projectId)
-    .eq("user_id", identity.userId)
+    .eq("user_id", actor.memberUserId)
     .maybeSingle();
 
   if (error) {
@@ -46,8 +33,8 @@ export async function saveResearcherFieldOrder(
   projectId: string,
   fieldOrder: string[],
 ): Promise<{ success: boolean; error?: string }> {
-  const identity = await resolveFieldOrderUserId(projectId);
-  if ("error" in identity) return { success: false, error: identity.error };
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { success: false, error: actor.error };
 
   if (!Array.isArray(fieldOrder) || !fieldOrder.every((x) => typeof x === "string")) {
     return { success: false, error: "Ordem inválida" };
@@ -57,7 +44,7 @@ export async function saveResearcherFieldOrder(
   const { error } = await supabase.from("researcher_field_orders").upsert(
     {
       project_id: projectId,
-      user_id: identity.userId,
+      user_id: actor.memberUserId,
       field_order: fieldOrder,
       updated_at: new Date().toISOString(),
     },

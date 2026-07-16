@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // T013: classificação de motivo na tela de conclusão. Cobre os motivos que a
@@ -17,6 +17,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, refresh }),
 }));
 
+const getToken = vi.fn();
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken }),
+}));
+
 const completeAccess = vi.fn();
 vi.mock("@/actions/complete-access", () => ({
   completeAccess: () => completeAccess(),
@@ -28,6 +33,8 @@ afterEach(cleanup);
 beforeEach(() => {
   replace.mockClear();
   refresh.mockClear();
+  getToken.mockReset();
+  getToken.mockResolvedValue("fresh-supabase-token");
   completeAccess.mockReset();
 });
 
@@ -50,7 +57,7 @@ describe("AccessCompletionCard — motivos apresentados", () => {
     expect(screen.getAllByText(matcher).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("retry bem-sucedido redireciona ao destino pretendido", async () => {
+  it("renova o JWT Supabase antes de redirecionar ao destino pretendido", async () => {
     completeAccess.mockResolvedValue({ ok: true });
     render(
       <AccessCompletionCard
@@ -60,7 +67,46 @@ describe("AccessCompletionCard — motivos apresentados", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(getToken).toHaveBeenCalledWith({
+      template: "supabase",
+      skipCache: true,
+    });
     expect(replace).toHaveBeenCalledWith("/projects/abc");
+    expect(completeAccess.mock.invocationCallOrder[0]).toBeLessThan(
+      getToken.mock.invocationCallOrder[0],
+    );
+    expect(getToken.mock.invocationCallOrder[0]).toBeLessThan(
+      replace.mock.invocationCallOrder[0],
+    );
+    expect(replace.mock.invocationCallOrder[0]).toBeLessThan(
+      refresh.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("mantém estado recuperável e não navega quando a renovação falha", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    completeAccess.mockResolvedValue({ ok: true });
+    getToken.mockRejectedValue(new Error("Clerk indisponível"));
+    render(
+      <AccessCompletionCard
+        reason="link-pending"
+        actorEmail="ana@exemplo.com"
+        nextUrl="/projects/abc"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button"));
+
+    expect(await screen.findByText(/não foi possível concluir/i)).toBeTruthy();
+    expect(getToken).toHaveBeenCalledWith({
+      template: "supabase",
+      skipCache: true,
+    });
+    expect(replace).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("retry que falha atualiza o motivo, sem voltar ao login", async () => {

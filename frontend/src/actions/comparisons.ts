@@ -2,12 +2,12 @@
 
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { requireCoordinator } from "@/lib/auth";
-import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import {
   scanComparisonBacklog,
   assignComparisonReviewer,
+  loadOpenComparisonLoad,
   type ComparisonMode,
 } from "@/lib/auto-comparison";
 
@@ -36,29 +36,29 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     const admin = createSupabaseAdmin();
 
     // Só compare_humans/compare_llm têm backlog de comparação a drenar.
-    const { data: project } = await admin
+    const { data: project, error: projectError } = await admin
       .from("projects")
       .select("automation_mode")
       .eq("id", projectId)
       .single();
+    if (projectError) throw new Error(projectError.message);
     const mode = project?.automation_mode;
     if (mode !== "compare_humans" && mode !== "compare_llm") {
       return { success: true, assigned: 0, stillNoPool: 0 };
     }
 
-    const backlog = await scanComparisonBacklog(admin, projectId, mode as ComparisonMode);
-    if (backlog.length === 0) return { success: true, assigned: 0, stillNoPool: 0 };
+    const backlog = await scanComparisonBacklog(
+      admin,
+      projectId,
+      mode as ComparisonMode,
+    );
+    if (backlog.length === 0)
+      return { success: true, assigned: 0, stillNoPool: 0 };
 
     // Carga aberta pré-computada uma vez; assignComparisonReviewer a incrementa
     // entre docs para preservar o balanceamento sem N queries (sequencial: cada
     // atribuição enxerga a carga atualizada da anterior).
-    const { data: openCounts } = await admin
-      .from("assignments")
-      .select("user_id")
-      .eq("project_id", projectId)
-      .eq("type", "comparacao")
-      .neq("status", "concluido");
-    const loadByUser = buildLoadMap(openCounts ?? []);
+    const loadByUser = await loadOpenComparisonLoad(admin, projectId);
 
     let assigned = 0;
     let stillNoPool = 0;

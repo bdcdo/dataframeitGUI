@@ -1,11 +1,10 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
-  getAuthUser,
   getProjectAccessContext,
   resolveProjectQueueIdentity,
 } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { CodingPage } from "@/components/coding/CodingPage";
 import { dropHiddenConditionals } from "@/lib/conditional";
 import type {
@@ -37,9 +36,8 @@ export default async function CodePage({
   const [{ id }, sp, user] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
   ]);
-  if (!user) redirect("/auth/login");
 
   // Impersonação master (viewAsUser) tem precedência; sem ela, contas
   // vinculadas trabalham como o membro canônico do projeto (spec 002).

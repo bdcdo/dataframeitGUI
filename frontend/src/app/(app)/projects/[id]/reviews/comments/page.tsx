@@ -1,7 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
-import { redirect } from "next/navigation";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { PydanticField } from "@/lib/types";
 import {
@@ -24,10 +24,9 @@ export default async function CommentsPage({
 }) {
   const [{ id }, user, supabase] = await Promise.all([
     params,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
 
   const [
     { data: project },

@@ -15,7 +15,10 @@ export interface FakeSessionOptions {
   clerkUserId?: string;
   supabaseUid?: string;
   mappingUid?: string | null;
+  mappingSyncVersion?: number;
   email?: string | null;
+  primaryEmailAddressId?: string | null;
+  emailVerified?: boolean;
   isMaster?: boolean;
   mappingError?: string;
   masterError?: string;
@@ -65,6 +68,12 @@ export function makeFakeSession(opts: FakeSessionOptions = {}): FakeSession {
   const mappingUid =
     opts.mappingUid !== undefined ? opts.mappingUid : base.mappingUid;
   const email = opts.email !== undefined ? opts.email : base.email;
+  const primaryEmailAddressId =
+    opts.primaryEmailAddressId !== undefined
+      ? opts.primaryEmailAddressId
+      : email
+        ? "email_primary"
+        : null;
 
   let lookups = 0;
 
@@ -73,7 +82,18 @@ export function makeFakeSession(opts: FakeSessionOptions = {}): FakeSession {
     return {
       id: clerkUserId,
       publicMetadata: metadataUid ? { supabase_uid: metadataUid } : {},
-      emailAddresses: email ? [{ emailAddress: email }] : [],
+      primaryEmailAddressId,
+      emailAddresses: email
+        ? [
+            {
+              id: "email_primary",
+              emailAddress: email,
+              verification: {
+                status: opts.emailVerified === false ? "unverified" : "verified",
+              },
+            },
+          ]
+        : [],
       firstName: "Nome",
       lastName: "Sobrenome",
     };
@@ -97,7 +117,12 @@ export function makeFakeSession(opts: FakeSessionOptions = {}): FakeSession {
         lookups++;
         if (table === "clerk_user_mapping") {
           return {
-            data: mappingUid ? { supabase_user_id: mappingUid } : null,
+            data: mappingUid
+              ? {
+                  supabase_user_id: mappingUid,
+                  access_sync_version: opts.mappingSyncVersion ?? 1,
+                }
+              : null,
             error: opts.mappingError ? { message: opts.mappingError } : null,
           };
         }

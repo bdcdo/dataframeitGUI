@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
 export async function acknowledgeVerdict(
@@ -10,15 +10,9 @@ export async function acknowledgeVerdict(
   status: "accepted" | "questioned",
   comment?: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
-  let respondentId: string;
-  try {
-    respondentId = await getEffectiveMemberId(projectId);
-  } catch {
-    return { error: "Não foi possível verificar sua identidade no projeto." };
-  }
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const respondentId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
 

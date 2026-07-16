@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
 import {
   isAnswerCorrect,
@@ -37,14 +38,12 @@ export default async function MyVerdictsPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ viewAsUser?: string }>;
 }) {
-  const [{ id }, sp, user] = await Promise.all([
+  const [{ id }, sp, user, supabase] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
+    createSupabaseServer(),
   ]);
-  if (!user) return <p className="p-6 text-sm text-muted-foreground">Não autenticado</p>;
-
-  const supabase = await createSupabaseServer();
 
   // Project fields + papel do usuario. isCoordinator vem de
   // getProjectAccessContext (request-scoped via cache()) — reaproveita a

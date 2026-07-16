@@ -32,7 +32,7 @@ function subscribe(callback: () => void): () => void {
  * `setState` no effect → sem disable; o valor reativo se atualiza pelo evento
  * disparado.
  */
-export function usePinnedDoc(
+function usePinnedDoc(
   storageKey: string,
   options?: { validIds?: readonly string[] },
 ): [string | null, (id: string | null) => void] {

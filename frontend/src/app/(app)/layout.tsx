@@ -1,29 +1,13 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { resolveAuth } from "@/lib/auth";
-import { completionRedirectPath } from "@/lib/safe-next-path";
+import { requirePageAuthUser } from "@/lib/page-auth";
 
 export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Fail-closed via a resolução única read-only (FR-008): sessão ausente vai ao
-  // login; sessão válida com vínculo pendente/divergente ou falha técnica vai à
-  // conclusão de acesso — nunca de volta ao login como se estivesse sem sessão,
-  // nem tratada como acesso liberado. `resolveAuth` é cache()d, então esta
-  // chamada e as dos layouts/pages filhos resolvem a identidade uma vez por
-  // request (RC-001).
-  const resolution = await resolveAuth();
-
-  if (resolution.status === "signed-out") {
-    redirect("/auth/login");
-  }
-  if (resolution.status !== "authenticated") {
-    // Preserva o deep-link pretendido para voltar a ele após concluir o acesso.
-    const pathname = (await headers()).get("x-pathname");
-    redirect(completionRedirectPath(pathname));
-  }
+  // O helper preserva os estados recuperáveis e `resolveAuth` é cache()d, então
+  // layouts e pages filhos compartilham uma única resolução por request.
+  await requirePageAuthUser();
 
   return <>{children}</>;
 }

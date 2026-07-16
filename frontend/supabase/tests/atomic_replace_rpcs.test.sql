@@ -37,8 +37,8 @@ INSERT INTO public.assignments (id, project_id, document_id, status, type) VALUE
 
 -- ----- RLS: authenticated não-coordenador não apaga dados via a RPC -----
 -- A decisão central do PR é SECURITY INVOKER justamente para manter a RLS valendo
--- dentro da transação. Aqui forjamos um JWT com um supabase_uid que não é membro
--- de projeto algum (logo não é coordenador/criador/master) e trocamos para o role
+-- dentro da transação. Aqui forjamos um JWT cujo subject não possui mapping
+-- concluído (logo clerk_uid() é NULL) e trocamos para o role
 -- `authenticated`. Os braços das policies de responses/reviews (respondent_id /
 -- reviewer_id IN member_identity OR coordinator_or_creator OR is_master) não
 -- batem -> o DELETE da RPC enxerga 0 linhas e não apaga nada. Sem inserts no
@@ -51,7 +51,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE
   ON public.responses, public.reviews, public.assignments, public.documents
   TO authenticated;
 SELECT set_config('request.jwt.claims',
-  '{"supabase_uid":"99999999-9999-9999-9999-999999999999"}', true);
+  '{"sub":"clerk-sem-mapping","supabase_uid":"99999999-9999-9999-9999-999999999999"}', true);
 SET LOCAL ROLE authenticated;
 SELECT public.replace_and_add_documents(
   '11111111-1111-1111-1111-111111111111'::uuid,

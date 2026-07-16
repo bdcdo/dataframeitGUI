@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { completeAccess } from "@/actions/complete-access";
 import { Button } from "@/components/ui/button";
@@ -54,10 +55,11 @@ export function AccessCompletionCard({
   nextUrl,
 }: {
   reason: CompletionReason;
-  actorEmail: string;
+  actorEmail?: string;
   nextUrl: string;
 }) {
   const router = useRouter();
+  const { getToken } = useAuth();
   const [currentReason, setCurrentReason] = useState<CompletionReason>(reason);
   const [isPending, startTransition] = useTransition();
   const copy = REASON_COPY[currentReason];
@@ -76,7 +78,28 @@ export function AccessCompletionCard({
     startTransition(async () => {
       const result = await completeAccess();
       if (result.ok) {
-        // Vínculo confirmado: segue para o destino pretendido ou dashboard.
+        // A action atualiza a metadata no backend do Clerk, mas o JWT template
+        // em cache ainda pode carregar o supabase_uid anterior por até um ciclo
+        // de renovação. O token novo precisa existir antes da navegação porque
+        // as consultas Supabase da página de destino já dependem desse claim.
+        try {
+          const token = await getToken({
+            template: "supabase",
+            skipCache: true,
+          });
+          if (!token) {
+            throw new Error("Clerk não devolveu o token Supabase renovado");
+          }
+        } catch (error) {
+          console.error(
+            "AccessCompletionCard: falha ao renovar token após concluir acesso",
+            { error },
+          );
+          setCurrentReason("unknown-recoverable");
+          return;
+        }
+
+        // Vínculo e JWT confirmados: segue para o destino pretendido.
         router.replace(nextUrl);
         router.refresh();
         return;
@@ -118,9 +141,11 @@ export function AccessCompletionCard({
           >
             {copy.description}
           </p>
-          <p className="text-sm text-muted-foreground">
-            Conta conectada: <span className="font-medium">{actorEmail}</span>
-          </p>
+          {actorEmail ? (
+            <p className="text-sm text-muted-foreground">
+              Conta conectada: <span className="font-medium">{actorEmail}</span>
+            </p>
+          ) : null}
           {copy.supportHint ? (
             <p className="text-sm text-muted-foreground">{copy.supportHint}</p>
           ) : null}

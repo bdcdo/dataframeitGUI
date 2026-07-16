@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { requireProjectPageAccess } from "@/lib/page-auth";
 import { ConfigNav } from "./ConfigNav";
 
 // Guard server-side centralizado para todas as rotas `config/*`. As abas
@@ -14,12 +13,7 @@ export default async function ConfigLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
-  if (!user) redirect("/auth/login");
-
-  const access = requireResolvedProjectAccess(
-    await getProjectAccessContext(id, user),
-  );
+  const { id, access } = await requireProjectPageAccess(params);
   if (!access.isCoordinator) {
     redirect(`/projects/${id}/analyze/code`);
   }

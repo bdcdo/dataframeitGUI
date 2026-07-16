@@ -1,7 +1,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
-import { redirect } from "next/navigation";
 import { normalizeForComparison } from "@/lib/utils";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import { formatAnswer } from "@/lib/reviews/queries";
@@ -43,10 +43,9 @@ export default async function LlmInsightsPage({
 }) {
   const [{ id }, user, supabase] = await Promise.all([
     params,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
 
   const [
     { data: project },

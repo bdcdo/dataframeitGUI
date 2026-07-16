@@ -27,7 +27,7 @@ const hoisted = vi.hoisted(() => ({
     id: "userCoord",
   })),
   isCoord: vi.fn<() => Promise<boolean>>(async () => true),
-  getEffectiveMemberId: vi.fn<(projectId: string) => Promise<string>>(
+  resolveMemberUserId: vi.fn<(projectId: string) => Promise<string>>(
     async () => "canonical-member",
   ),
 }));
@@ -38,7 +38,25 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
-  getEffectiveMemberId: hoisted.getEffectiveMemberId,
+  resolveProjectMemberActor: async (projectId: string) => {
+    const user = await hoisted.getUser();
+    if (!user) {
+      return { ok: false, code: "unauthenticated", error: "Não autenticado" };
+    }
+    try {
+      return {
+        ok: true,
+        user,
+        memberUserId: await hoisted.resolveMemberUserId(projectId),
+      };
+    } catch {
+      return {
+        ok: false,
+        code: "identity_unavailable",
+        error: "Não foi possível verificar sua identidade no projeto.",
+      };
+    }
+  },
   // Reimplementa a lógica real de requireCoordinator sobre os mesmos mocks
   // hoisted, para excludeDocuments/restoreDocuments/hardDeleteDocuments
   // e mantém os mesmos estados discriminados do helper real.
@@ -70,8 +88,8 @@ beforeEach(() => {
   serverRpcResults = undefined;
   hoisted.getUser.mockResolvedValue({ id: "userCoord" });
   hoisted.isCoord.mockResolvedValue(true);
-  hoisted.getEffectiveMemberId.mockReset();
-  hoisted.getEffectiveMemberId.mockResolvedValue("canonical-member");
+  hoisted.resolveMemberUserId.mockReset();
+  hoisted.resolveMemberUserId.mockResolvedValue("canonical-member");
 });
 
 async function loadUpload() {
@@ -135,7 +153,7 @@ describe("getDocumentsForBrowse — identidade canônica", () => {
     const result = await browse("project-1");
 
     expect(result[0]?.userAlreadyResponded).toBe(true);
-    expect(hoisted.getEffectiveMemberId).toHaveBeenCalledWith("project-1");
+    expect(hoisted.resolveMemberUserId).toHaveBeenCalledWith("project-1");
   });
 });
 
