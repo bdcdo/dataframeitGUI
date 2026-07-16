@@ -453,6 +453,23 @@ describe("recoverFieldsFromStoredCode", () => {
       expect.objectContaining({ body: JSON.stringify({ project_id: "p1" }) }),
     );
   });
+
+  // O backend diz `valid: true` sobre o PYTHON que compilou, não sobre o
+  // contrato de `PydanticField`. Era o único ponto do fluxo que entregava campos
+  // ao editor sem passar pelo Zod: o campo malformado entrava no estado, o
+  // rascunho local o gravava por cima do trabalho anterior, e o erro só aparecia
+  // no save seguinte, com a copy genérica de "schema enviado é inválido".
+  it("recusa campos que o backend reconstruiu fora do contrato", async () => {
+    fetchMock.mockResolvedValueOnce({
+      valid: true,
+      fields: [{ name: "q1", type: "tipo-que-nao-existe", options: null, description: "x" }],
+      model_name: "Analysis",
+      errors: [],
+    });
+    const result = await recoverFieldsFromStoredCode("p1");
+    expect(result.fields).toBeUndefined();
+    expect(result.error).toMatch(/não são válidos/i);
+  });
 });
 
 describe("savePrompt / saveLlmConfig", () => {
