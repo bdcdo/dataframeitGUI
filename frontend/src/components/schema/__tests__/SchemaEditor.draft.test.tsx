@@ -188,3 +188,44 @@ describe("SchemaEditor — ciclo do draft", () => {
     expect(screen.getByText("Versão 0.2.0")).toBeTruthy();
   });
 });
+
+// O segmento /config não tem `error.tsx`, então lançar aqui trocava uma condição
+// diagnosticável pela tela genérica de erro do Next. O servidor trata a mesma
+// condição devolvendo copy em `loadSchemaSaveContext`; a UI acompanha.
+describe("SchemaEditorSession — schema persistido inválido", () => {
+  const invalido = [
+    { ...BASE_FIELDS[0], propriedadeDesconhecida: "veio do banco" },
+  ] as unknown as PydanticField[];
+
+  it("informa em vez de derrubar a página", () => {
+    expect(() =>
+      render(
+        <SchemaEditorSession
+          projectId="project-1"
+          userId="user-1"
+          initialCode={null}
+          initialFields={invalido}
+          currentVersion="0.1.0"
+          currentRevision={0}
+        />,
+      ),
+    ).not.toThrow();
+
+    expect(screen.getByText(/schema gravado deste projeto está inválido/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Salvar" })).toBeNull();
+  });
+
+  it("um schema válido segue montando o editor", () => {
+    render(
+      <SchemaEditorSession
+        projectId="project-1"
+        userId="user-1"
+        initialCode={null}
+        initialFields={BASE_FIELDS}
+        currentVersion="0.1.0"
+        currentRevision={0}
+      />,
+    );
+    expect(screen.queryByText(/schema gravado deste projeto está inválido/i)).toBeNull();
+  });
+});
