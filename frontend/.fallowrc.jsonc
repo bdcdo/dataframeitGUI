@@ -1,5 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  // CLI chamado pelo wrapper shell; declarar o entry point mantém o grafo
+  // correto sem ignorar o arquivo nem fingir um import JavaScript inexistente.
+  "entry": ["scripts/worktree-env/bootstrap.mjs"],
   // scripts/comentarios-relatorio/* rodam manualmente via `tsx` (skill local,
   // ver #352), nunca sao importados por um entry point do Next -
   // falso-positivo de unused-files.

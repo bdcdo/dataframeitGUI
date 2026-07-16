@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
+import { withClerkCleanup } from "./clerk-cleanup";
 
-// Valida o guard server-side de #27: um pesquisador (role "membro") que conheça
+// Valida o guard server-side de #27: um usuário com role "pesquisador" que conheça
 // a URL de uma rota `config/*` é redirecionado para `analyze/code`.
-// Requer, além do e-mail do usuário membro, E2E_PROJECT_ID — um projeto
+// Requer, além do e-mail do pesquisador, E2E_PROJECT_ID — um projeto
 // onde esse usuário é pesquisador (NÃO coordenador). Pulado se faltar qualquer
 // um, para não quebrar CI sem o tenant de teste configurado.
 // Login por ticket — ver nota em dashboard.smoke.spec.ts.
@@ -25,12 +26,14 @@ test("pesquisador é redirecionado de config/* para analyze/code", async ({
   await page.goto("/auth/login");
   await clerk.signIn({ page, emailAddress: identifier! });
 
-  try {
-    await page.goto(`/projects/${projectId}/config/schema`);
-    await expect(page).toHaveURL(
-      new RegExp(`/projects/${projectId}/analyze/code`),
-    );
-  } finally {
-    await clerk.signOut({ page });
-  }
+  await withClerkCleanup({
+    page,
+    context: "config-guard",
+    run: async () => {
+      await page.goto(`/projects/${projectId}/config/schema`);
+      await expect(page).toHaveURL(
+        new RegExp(`/projects/${projectId}/analyze/code`),
+      );
+    },
+  });
 });

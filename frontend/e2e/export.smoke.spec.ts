@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
+import { withClerkCleanup } from "./clerk-cleanup";
 
 // Smoke da feature 004 (exportação no topo de Documentos). Autentica como
 // coordenador via login-por-ticket do Clerk (mesmo mecanismo do dashboard.smoke:
@@ -25,52 +26,40 @@ test("exportação: card em Documentos, prévia, aba removida e rota 404", async
   await setupClerkTestingToken({ page });
   await page.goto("/auth/login");
   await clerk.signIn({ page, emailAddress: email! });
-  await page.waitForFunction(
-    () =>
-      (window as unknown as { Clerk?: { session?: { status?: string } } }).Clerk
-        ?.session?.status === "active",
-    { timeout: 15_000 },
-  );
+  await withClerkCleanup({
+    page,
+    context: "export",
+    run: async () => {
+      await page.waitForFunction(
+        () =>
+          (window as unknown as { Clerk?: { session?: { status?: string } } })
+            .Clerk?.session?.status === "active",
+        { timeout: 15_000 },
+      );
 
-  try {
-    // (a) Card de exportação presente na página Documentos.
-    await page.goto(`/projects/${projectId}/config/documents`);
-    await expect(page.getByText("Exportar documentos")).toBeVisible({
-      timeout: 15_000,
-    });
+      // (a) Card de exportação presente na página Documentos.
+      await page.goto(`/projects/${projectId}/config/documents`);
+      await expect(page.getByText("Exportar documentos")).toBeVisible({
+        timeout: 15_000,
+      });
 
-    // (b)+(d) Prévia sob demanda: cronometra do clique até a prévia (ou estado
-    // vazio) aparecer; alvo SC-007 ≤ 10s.
-    const start = Date.now();
-    await page.getByRole("button", { name: "Gerar prévia" }).click();
-    await expect(
-      page.getByText(/Prévia \(|Nenhum documento para exportar/),
-    ).toBeVisible({ timeout: 10_000 });
-    const elapsedMs = Date.now() - start;
-    expect(elapsedMs).toBeLessThan(10_000);
+      // (b)+(d) Prévia sob demanda: cronometra do clique até a prévia (ou estado
+      // vazio) aparecer; alvo SC-007 ≤ 10s.
+      const start = Date.now();
+      await page.getByRole("button", { name: "Gerar prévia" }).click();
+      await expect(
+        page.getByText(/Prévia \(|Nenhum documento para exportar/),
+      ).toBeVisible({ timeout: 10_000 });
+      const elapsedMs = Date.now() - start;
+      expect(elapsedMs).toBeLessThan(10_000);
 
-    // (e) A aba "Exportar" não existe mais na navegação de Revisões.
-    await page.goto(`/projects/${projectId}/reviews/gabarito`);
-    await expect(
-      page.locator('a[href$="/reviews/export"]'),
-    ).toHaveCount(0);
+      // (e) A aba "Exportar" não existe mais na navegação de Revisões.
+      await page.goto(`/projects/${projectId}/reviews/gabarito`);
+      await expect(page.locator('a[href$="/reviews/export"]')).toHaveCount(0);
 
-    // (f) Acesso direto à rota antiga retorna not-found (404).
-    const resp = await page.goto(`/projects/${projectId}/reviews/export`);
-    expect(resp?.status()).toBe(404);
-  } finally {
-    const signOutError = await Promise.race([
-      clerk
-        .signOut({ page })
-        .then(() => null)
-        .catch((error: unknown) => error),
-      page
-        .waitForTimeout(5_000)
-        .then(
-          () =>
-            new Error("clerk.signOut não concluiu em 5s no cleanup do smoke de export"),
-        ),
-    ]);
-    if (signOutError) console.warn("signOut cleanup:", signOutError);
-  }
+      // (f) Acesso direto à rota antiga retorna not-found (404).
+      const resp = await page.goto(`/projects/${projectId}/reviews/export`);
+      expect(resp?.status()).toBe(404);
+    },
+  });
 });
