@@ -314,3 +314,49 @@ describe("unmarkEquivalencePair", () => {
     expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
   });
 });
+
+// O #499 fez `syncCompareAssignment` lançar (antes o erro do UPDATE caía no
+// chão), então o sync só pode ser chamado DEPOIS do commit e fora do try que
+// devolve `{ error }`. Se voltar para dentro, uma falha de sync vira um erro
+// sobre uma escrita já persistida: a revisora tenta de novo e o retry cai numa
+// linha que não existe mais, e a revalidação nem roda.
+describe.each([
+  {
+    action: "confirmEquivalentVerdict",
+    arrange: undefined,
+    call: (fns: Actions) =>
+      fns.confirmEquivalentVerdict(
+        "p1",
+        "doc1",
+        "q1",
+        ["r1", "r2"],
+        "r1",
+        "resposta fundida",
+      ),
+  },
+  {
+    action: "unmarkEquivalencePair",
+    arrange: () => {
+      rpcResults.unmark_response_equivalence = {
+        data: [{ document_id: "doc1", field_name: "q1" }],
+        error: null,
+      };
+    },
+    call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
+  },
+])("$action — falha do sync pós-commit", ({ arrange, call }) => {
+  it("retorna {} e só loga: a escrita já foi persistida", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSyncCompareAssignment.mockRejectedValueOnce(new Error("sync boom"));
+    arrange?.();
+    const fns = await loadActions();
+
+    const result = await call(fns);
+
+    expect(result).toEqual({});
+    expect(mockSyncCompareAssignment).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy.mock.calls[0][0]).toContain("sync boom");
+    errorSpy.mockRestore();
+  });
+});

@@ -200,29 +200,38 @@ export async function unmarkEquivalencePair(
   if (!context.ok) return { error: context.error };
   const { effectiveId, supabase } = context;
 
+  let deletedPair: { document_id: string; field_name: string };
+
   try {
-    const { data, error } = await supabase.rpc(
-      "unmark_response_equivalence",
-      {
-        p_project_id: projectId,
-        p_equivalence_id: equivalenceId,
-        p_reviewer_id: effectiveId,
-      },
-    );
+    const { data, error } = await supabase.rpc("unmark_response_equivalence", {
+      p_project_id: projectId,
+      p_equivalence_id: equivalenceId,
+      p_reviewer_id: effectiveId,
+    });
     if (error) throw new Error(error.message);
 
-    const [deletedPair] = (data ?? []) as Array<{
+    const [pair] = (data ?? []) as Array<{
       document_id: string;
       field_name: string;
     }>;
-    if (!deletedPair) {
+    if (!pair) {
       throw new ZeroRowsError(
         "response_equivalences",
         "delete",
         "Equivalência não encontrada ou sem permissão para removê-la.",
       );
     }
+    deletedPair = pair;
+  } catch (e) {
+    return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
+  }
 
+  // Pós-commit best-effort: a RPC já removeu equivalência e review numa
+  // transação. `syncCompareAssignment` lança desde o #499, então mantê-lo
+  // dentro do try acima faria uma falha de sync virar "falha ao desfazer" sobre
+  // uma escrita já persistida — a revisora tentaria de novo sobre uma linha que
+  // não existe mais, e a revalidação nem rodaria. Loga e segue.
+  try {
     await syncCompareAssignment(
       supabase,
       projectId,
@@ -230,7 +239,9 @@ export async function unmarkEquivalencePair(
       effectiveId,
     );
   } catch (e) {
-    return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
+    console.error(
+      `[unmarkEquivalencePair] falha ao sincronizar o assignment: ${errorMessage(e)}`,
+    );
   }
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
