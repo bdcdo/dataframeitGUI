@@ -58,20 +58,25 @@ CREATE TRIGGER enforce_project_schema_revision_trigger
   FOR EACH ROW
   EXECUTE FUNCTION public.enforce_project_schema_revision();
 
--- Commit único de projects + schema_change_log. SECURITY INVOKER mantém as
--- policies como fonte de autorização; a checagem explícita só converte os dois
--- resultados filtrados pela RLS em estados estáveis para a action.
-CREATE OR REPLACE FUNCTION public.commit_project_schema(
+-- Porta de entrada comum de toda escrita de schema: valida o payload de
+-- identidade, resolve visibilidade e autorização, trava a linha e confere o
+-- compare-and-swap da revisão. `commit_project_schema` e `apply_schema_backfill`
+-- exigem exatamente esta sequência, e mantê-la em duplicata deixava as duas
+-- livres para divergirem numa correção futura.
+--
+-- Devolve 'ok' com o estado travado, ou o estado terminal ('not_found',
+-- 'forbidden', 'conflict') que o chamador repassa. O `FOR UPDATE` vale para a
+-- transação inteira, não só para esta função — é o mesmo lock que serializa o
+-- chamador contra outra escrita concorrente.
+--
+-- SECURITY INVOKER: as policies seguem sendo a fonte de autorização, e a checagem
+-- explícita só converte os resultados filtrados pela RLS em estados estáveis.
+CREATE OR REPLACE FUNCTION public.schema_write_gate(
   p_project_id uuid,
   p_expected_revision bigint,
-  p_pydantic_fields jsonb,
-  p_pydantic_code text,
   p_version_major int,
   p_version_minor int,
-  p_version_patch int,
-  p_change_type text,
-  p_log_entries jsonb,
-  p_changed_by uuid
+  p_version_patch int
 ) RETURNS TABLE(
   status text,
   schema_revision bigint,
@@ -104,39 +109,6 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  IF p_change_type IS NULL
-     OR p_change_type NOT IN ('major', 'minor', 'patch') THEN
-    RAISE EXCEPTION 'Invalid schema change_type: %', p_change_type
-      USING ERRCODE = '22023';
-  END IF;
-
-  IF p_pydantic_fields IS NULL
-     OR jsonb_typeof(p_pydantic_fields) <> 'array' THEN
-    RAISE EXCEPTION 'p_pydantic_fields must be a JSON array'
-      USING ERRCODE = '22023';
-  END IF;
-
-  -- `pydantic_hash` é derivado do código e de nada mais, então aceitar código
-  -- nulo gravaria hash nulo — que `compare-version.ts` lê como "projeto anterior
-  -- ao versionamento". Todo caller gera o código a partir dos campos; só
-  -- `publishMajorVersion` reapresenta o código armazenado, e ele recusa antes de
-  -- chegar aqui quando o projeto não tem schema. O nulo não descreve estado
-  -- legítimo nenhum.
-  IF p_pydantic_code IS NULL THEN
-    RAISE EXCEPTION 'p_pydantic_code must not be null'
-      USING ERRCODE = '22023';
-  END IF;
-
-  IF p_log_entries IS NULL OR jsonb_typeof(p_log_entries) <> 'array' THEN
-    RAISE EXCEPTION 'p_log_entries must be a non-empty JSON array'
-      USING ERRCODE = '22023';
-  END IF;
-
-  IF jsonb_array_length(p_log_entries) = 0 THEN
-    RAISE EXCEPTION 'p_log_entries must be a non-empty JSON array'
-      USING ERRCODE = '22023';
-  END IF;
-
   -- Uma linha invisível pela policy SELECT é indistinguível de uma linha
   -- inexistente. Um membro pesquisador enxerga o projeto, mas não pertence ao
   -- conjunto de escritores, e por isso recebe forbidden.
@@ -151,13 +123,6 @@ BEGIN
   END IF;
 
   v_uid := public.clerk_uid();
-  IF v_uid IS NOT NULL AND p_changed_by IS DISTINCT FROM v_uid THEN
-    RETURN QUERY
-      SELECT 'forbidden', NULL::bigint, NULL::jsonb,
-             NULL::int, NULL::int, NULL::int;
-    RETURN;
-  END IF;
-
   IF v_uid IS NOT NULL
      AND NOT public.is_master()
      AND NOT EXISTS (
@@ -191,6 +156,115 @@ BEGIN
   IF v_revision <> p_expected_revision THEN
     RETURN QUERY
       SELECT 'conflict', v_revision, v_fields, v_major, v_minor, v_patch;
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+    SELECT 'ok', v_revision, v_fields, v_major, v_minor, v_patch;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.schema_write_gate(
+  uuid, bigint, int, int, int
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.schema_write_gate(
+  uuid, bigint, int, int, int
+) TO authenticated;
+
+-- Commit único de projects + schema_change_log.
+CREATE OR REPLACE FUNCTION public.commit_project_schema(
+  p_project_id uuid,
+  p_expected_revision bigint,
+  p_pydantic_fields jsonb,
+  p_pydantic_code text,
+  p_version_major int,
+  p_version_minor int,
+  p_version_patch int,
+  p_change_type text,
+  p_log_entries jsonb,
+  p_changed_by uuid
+) RETURNS TABLE(
+  status text,
+  schema_revision bigint,
+  pydantic_fields jsonb,
+  schema_version_major int,
+  schema_version_minor int,
+  schema_version_patch int
+)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+  v_uid uuid;
+  v_status text;
+  v_revision bigint;
+  v_fields jsonb;
+  v_major int;
+  v_minor int;
+  v_patch int;
+BEGIN
+  IF p_change_type IS NULL
+     OR p_change_type NOT IN ('major', 'minor', 'patch') THEN
+    RAISE EXCEPTION 'Invalid schema change_type: %', p_change_type
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_pydantic_fields IS NULL
+     OR jsonb_typeof(p_pydantic_fields) <> 'array' THEN
+    RAISE EXCEPTION 'p_pydantic_fields must be a JSON array'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- `pydantic_hash` é derivado do código e de nada mais, então aceitar código
+  -- nulo gravaria hash nulo — que `compare-version.ts` lê como "projeto anterior
+  -- ao versionamento". Todo caller gera o código a partir dos campos; só
+  -- `publishMajorVersion` reapresenta o código armazenado, e ele recusa antes de
+  -- chegar aqui quando o projeto não tem schema. O nulo não descreve estado
+  -- legítimo nenhum.
+  IF p_pydantic_code IS NULL THEN
+    RAISE EXCEPTION 'p_pydantic_code must not be null'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_log_entries IS NULL
+     OR jsonb_typeof(p_log_entries) <> 'array'
+     OR jsonb_array_length(p_log_entries) = 0 THEN
+    RAISE EXCEPTION 'p_log_entries must be a non-empty JSON array'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Antes do gate: a autoria é do payload, não do projeto, e recusá-la aqui
+  -- evita travar a linha por uma chamada que nunca poderia escrever. A RPC tem
+  -- GRANT para `authenticated`, ou seja, é chamável direto via PostgREST — sem
+  -- isto, quem tem JWT poderia assinar no schema_change_log uma mudança em nome
+  -- de outra pessoa.
+  v_uid := public.clerk_uid();
+  IF v_uid IS NOT NULL AND p_changed_by IS DISTINCT FROM v_uid THEN
+    RETURN QUERY
+      SELECT 'forbidden', NULL::bigint, NULL::jsonb,
+             NULL::int, NULL::int, NULL::int;
+    RETURN;
+  END IF;
+
+  SELECT g.status,
+         g.schema_revision,
+         g.pydantic_fields,
+         g.schema_version_major,
+         g.schema_version_minor,
+         g.schema_version_patch
+  INTO v_status, v_revision, v_fields, v_major, v_minor, v_patch
+  FROM public.schema_write_gate(
+    p_project_id,
+    p_expected_revision,
+    p_version_major,
+    p_version_minor,
+    p_version_patch
+  ) AS g;
+
+  IF v_status <> 'ok' THEN
+    RETURN QUERY
+      SELECT v_status, v_revision, v_fields, v_major, v_minor, v_patch;
     RETURN;
   END IF;
 
@@ -389,7 +463,7 @@ SECURITY INVOKER
 SET search_path = ''
 AS $$
 DECLARE
-  v_uid uuid;
+  v_status text;
   v_revision bigint;
   v_fields jsonb;
   v_major int;
@@ -400,18 +474,6 @@ DECLARE
   v_distinct int;
   v_total int;
 BEGIN
-  IF p_expected_revision IS NULL
-     OR p_final_major IS NULL
-     OR p_final_minor IS NULL
-     OR p_final_patch IS NULL
-     OR p_expected_revision < 0
-     OR p_final_major < 0
-     OR p_final_minor < 0
-     OR p_final_patch < 0 THEN
-    RAISE EXCEPTION 'Schema revisions and versions must be non-negative'
-      USING ERRCODE = '22023';
-  END IF;
-
   IF (p_log_updates IS NOT NULL AND jsonb_typeof(p_log_updates) <> 'array')
      OR (p_response_updates IS NOT NULL
          AND jsonb_typeof(p_response_updates) <> 'array') THEN
@@ -469,50 +531,24 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  PERFORM 1
-  FROM public.projects AS p
-  WHERE p.id = p_project_id;
-  IF NOT FOUND THEN
-    RETURN QUERY
-      SELECT 'not_found', NULL::bigint, NULL::jsonb,
-             NULL::int, NULL::int, NULL::int;
-    RETURN;
-  END IF;
+  SELECT g.status,
+         g.schema_revision,
+         g.pydantic_fields,
+         g.schema_version_major,
+         g.schema_version_minor,
+         g.schema_version_patch
+  INTO v_status, v_revision, v_fields, v_major, v_minor, v_patch
+  FROM public.schema_write_gate(
+    p_project_id,
+    p_expected_revision,
+    p_final_major,
+    p_final_minor,
+    p_final_patch
+  ) AS g;
 
-  v_uid := public.clerk_uid();
-  IF v_uid IS NOT NULL
-     AND NOT public.is_master()
-     AND NOT EXISTS (
-       SELECT 1
-       FROM public.auth_user_coordinator_or_creator_project_ids() AS allowed(id)
-       WHERE allowed.id = p_project_id
-     ) THEN
+  IF v_status <> 'ok' THEN
     RETURN QUERY
-      SELECT 'forbidden', NULL::bigint, NULL::jsonb,
-             NULL::int, NULL::int, NULL::int;
-    RETURN;
-  END IF;
-
-  SELECT p.schema_revision,
-         p.pydantic_fields,
-         p.schema_version_major,
-         p.schema_version_minor,
-         p.schema_version_patch
-  INTO v_revision, v_fields, v_major, v_minor, v_patch
-  FROM public.projects AS p
-  WHERE p.id = p_project_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RETURN QUERY
-      SELECT 'forbidden', NULL::bigint, NULL::jsonb,
-             NULL::int, NULL::int, NULL::int;
-    RETURN;
-  END IF;
-
-  IF v_revision <> p_expected_revision THEN
-    RETURN QUERY
-      SELECT 'conflict', v_revision, v_fields, v_major, v_minor, v_patch;
+      SELECT v_status, v_revision, v_fields, v_major, v_minor, v_patch;
     RETURN;
   END IF;
 
