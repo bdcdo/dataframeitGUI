@@ -5,6 +5,7 @@ import { getVerifiedPrimaryEmail } from "@/lib/clerk-primary-email";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import type { Project, ProjectMember } from "@/lib/types";
+import { PROJECT_IDENTITY_UNAVAILABLE_MESSAGE } from "@/lib/project-access";
 
 export interface AuthUser {
   id: string; // Supabase UUID
@@ -20,7 +21,7 @@ export interface AuthUser {
 // substitui o antigo `AuthUser | null`, que colapsava "sem sessão", "vínculo
 // pendente" e "falha técnica" num único `null` e escondia a diferença dos
 // layouts protegidos.
-type AuthResolution =
+export type AuthResolution =
   | { status: "signed-out" }
   | { status: "authenticated"; user: AuthUser }
   | {
@@ -391,9 +392,6 @@ type ProjectMemberActorResult =
       code: "unauthenticated" | "identity_unavailable";
       error: string;
     };
-
-const PROJECT_IDENTITY_UNAVAILABLE_MESSAGE =
-  "Não foi possível verificar sua identidade no projeto.";
 
 // Porta única para mutations pessoais: resolve a conta autenticada e sua
 // identidade canônica no projeto como um único contrato, sem transformar

@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
 import {
   isAnswerCorrect,
@@ -53,7 +54,7 @@ export default async function MyVerdictsPage({
   // "Members view responses" deixa qualquer membro ler todas as responses (nao
   // filtra por respondent_id), entao o recorte por viewedRespondentId e so
   // aplicacional — fail-open exporia gabarito de terceiros em erro transitorio.
-  const [{ data: project }, access] = await Promise.all([
+  const [{ data: project }, rawAccess] = await Promise.all([
     supabase
       .from("projects")
       .select("pydantic_fields")
@@ -61,9 +62,7 @@ export default async function MyVerdictsPage({
       .single(),
     getProjectAccessContext(id, user),
   ]);
-  if (access.status === "unavailable") {
-    throw new Error("Não foi possível verificar sua identidade no projeto.");
-  }
+  const access = requireResolvedProjectAccess(rawAccess);
   const { isCoordinator, memberUserId } = access;
 
   const viewedRespondentId = resolveViewedRespondentId({

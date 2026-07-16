@@ -76,8 +76,10 @@ const RESPONSE_VERSION_COLS =
   "is_latest, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch";
 
 // Monta o shape `VersionedResponse` a partir de uma linha de `responses`.
-// `is_latest` agora vem do SELECT (ver RESPONSE_VERSION_COLS); o `?? true` é só
-// um guarda de tipo para o campo opcional. `respondent_type` é fixado pela query
+// `is_latest` vem do SELECT (ver RESPONSE_VERSION_COLS), mas a coluna é
+// nullable com DEFAULT true: o `?? true` decide que linha antiga sem o flag
+// conta como corrente, e não é um mero guarda de tipo — mudá-lo desqualifica
+// respostas legadas da comparação. `respondent_type` é fixado pela query
 // (humano/llm), irrelevante para a decisão de versão, entra só para o tipo.
 function toVersioned(
   r: Pick<

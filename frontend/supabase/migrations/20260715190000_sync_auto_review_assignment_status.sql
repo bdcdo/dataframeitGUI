@@ -30,10 +30,14 @@ AS $$
   )
 $$;
 
+-- Ambos os chamadores (sync_auto_review_assignment_status e
+-- assign_auto_review_if_eligible) são SECURITY DEFINER e rodam como owner, então
+-- nenhum role precisa deste EXECUTE — concedê-lo só abriria a trava da fila
+-- alheia a qualquer sessão.
 REVOKE ALL ON FUNCTION public.lock_auto_review_assignment(UUID, UUID, UUID)
-  FROM PUBLIC, anon;
+  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.lock_auto_review_assignment(UUID, UUID, UUID)
-  TO authenticated, service_role;
+  TO service_role;
 
 CREATE OR REPLACE FUNCTION public.sync_auto_review_assignment_status(
   p_project_id UUID,

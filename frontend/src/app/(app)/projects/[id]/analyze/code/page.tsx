@@ -5,6 +5,7 @@ import {
   resolveProjectQueueIdentity,
 } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { CodingPage } from "@/components/coding/CodingPage";
 import { dropHiddenConditionals } from "@/lib/conditional";
 import type {
@@ -43,10 +44,9 @@ export default async function CodePage({
   // vinculadas trabalham como o membro canônico do projeto (spec 002).
   // resolveProjectQueueIdentity é a fonte única dessa precedência, compartilhada
   // com Comparação e Arbitragem.
-  const access = await getProjectAccessContext(id, user);
-  if (access.status === "unavailable") {
-    throw new Error("Não foi possível verificar sua identidade no projeto.");
-  }
+  const access = requireResolvedProjectAccess(
+    await getProjectAccessContext(id, user),
+  );
   const { queueUserId, isImpersonating } = resolveProjectQueueIdentity(
     access,
     sp.viewAsUser,

@@ -2,6 +2,7 @@ import { AnalyzeNav } from "@/components/analyze/AnalyzeNav";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { computeAnalyzeTabVisibility } from "@/lib/analyze-tabs";
 import type { AutomationMode } from "@/lib/types";
 
@@ -18,13 +19,11 @@ export default async function AnalyzeLayout({
   // em_andamento OU concluido) — preserva acesso ao histórico mesmo se o modo
   // mudou depois. Ver computeAnalyzeTabVisibility.
   const [{ id }, user] = await Promise.all([params, requirePageAuthUser()]);
-  const [supabase, access] = await Promise.all([
+  const [supabase, rawAccess] = await Promise.all([
     createSupabaseServer(),
     getProjectAccessContext(id, user),
   ]);
-  if (access.status === "unavailable") {
-    throw new Error("Não foi possível verificar sua identidade no projeto.");
-  }
+  const access = requireResolvedProjectAccess(rawAccess);
   const { memberUserId, isCoordinator } = access;
   // Queries direcionadas com .limit(1) (O(1) com o index (project_id, user_id,
   // type)) em vez de uma genérica com .limit(50), que poderia mascarar um tipo

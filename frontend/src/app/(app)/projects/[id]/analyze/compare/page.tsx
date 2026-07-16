@@ -5,6 +5,7 @@ import {
   resolveProjectQueueIdentity,
 } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { ComparePage } from "@/components/compare/ComparePage";
 import {
   readCompareFilters,
@@ -56,7 +57,7 @@ export default async function ComparePageRoute({
     { data: versionLog },
     { data: allAssignments },
     { data: allEquivalences },
-    access,
+    rawAccess,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -96,13 +97,11 @@ export default async function ComparePageRoute({
       .eq("project_id", id),
     getProjectAccessContext(id, user),
   ]);
+  const access = requireResolvedProjectAccess(rawAccess);
 
   // Fila pessoal pertence à identidade canônica; a impersonação master
   // (?viewAsUser=, mesmo param do Codificar) tem precedência. Uma falha na
   // resolução interrompe a rota em vez de parecer uma fila vazia.
-  if (access.status === "unavailable") {
-    throw new Error("Não foi possível verificar sua identidade no projeto.");
-  }
   const { ownMemberUserId, queueUserId, isImpersonating } =
     resolveProjectQueueIdentity(access, sp.viewAsUser);
 

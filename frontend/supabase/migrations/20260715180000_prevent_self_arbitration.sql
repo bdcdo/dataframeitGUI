@@ -179,10 +179,14 @@ AS $$
   )
 $$;
 
+-- Só chamada de dentro das RPCs de arbitragem: os sync_* são SECURITY DEFINER
+-- (rodam como owner) e assign_arbitration_if_eligible, embora INVOKER, é
+-- concedida apenas a service_role. Conceder a authenticated deixaria qualquer
+-- sessão segurar o advisory lock da fila alheia sem passar por gate nenhum.
 REVOKE ALL ON FUNCTION public.lock_arbitration_assignment(UUID, UUID, UUID)
-  FROM PUBLIC, anon;
+  FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.lock_arbitration_assignment(UUID, UUID, UUID)
-  TO authenticated, service_role;
+  TO service_role;
 
 CREATE OR REPLACE FUNCTION public.sync_arbitration_assignment_status(
   p_project_id UUID,

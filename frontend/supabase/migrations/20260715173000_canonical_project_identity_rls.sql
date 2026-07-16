@@ -1448,29 +1448,9 @@ CREATE POLICY "Coordinators release field_reviews"
 -- A RLS autoriza coordenadores a gerenciar memberships de terceiros. Este
 -- guard separa essa autorização da autoalteração: cada conta tem uma única
 -- identidade de membership por projeto, devolvida pelo helper canônico.
-CREATE OR REPLACE FUNCTION public.enforce_project_members_column_guard()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = ''
-AS $$
-BEGIN
-  IF public.clerk_uid() IS NULL OR public.is_master() THEN
-    RETURN NEW;
-  END IF;
-
-  IF OLD.user_id IN (
-    SELECT public.auth_user_member_identity_ids(OLD.project_id)
-  )
-  THEN
-    RAISE EXCEPTION 'Members cannot change their own role on project_members'
-      USING ERRCODE = '42501';
-  END IF;
-
-  RETURN NEW;
-END;
-$$;
-
+-- A função em si vem de 20260715095741_project_members_column_guard.sql e não
+-- muda aqui; redefini-la só criaria uma segunda cópia da mesma regra para sair
+-- do lugar sozinha. O que falta lá é fechar o EXECUTE.
 REVOKE ALL ON FUNCTION public.enforce_project_members_column_guard()
   FROM PUBLIC, anon, authenticated, service_role;
 

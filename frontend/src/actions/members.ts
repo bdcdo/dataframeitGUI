@@ -941,6 +941,12 @@ const MEMBER_EMAIL_LINK_WRITE_ERRORS: Readonly<Record<string, string>> = {
   "40001": "A posse verificada do e-mail mudou. Tente novamente.",
   "23514":
     "A identidade do vínculo mudou. Tente novamente para revisar a unificação.",
+  // As RPCs de vínculo sinalizam com 22023 os argumentos que não descrevem uma
+  // identidade utilizável (e-mail vazio, prova de snapshot sem conta ligada).
+  // Sem esta entrada o fallback abaixo mostra a mensagem interna da função, que
+  // fala de snapshot e Clerk — vocabulário que a tela não deve expor.
+  "22023":
+    "Não foi possível confirmar a conta deste e-mail. Verifique o endereço e tente de novo.",
 };
 
 function memberEmailLinkWriteError(

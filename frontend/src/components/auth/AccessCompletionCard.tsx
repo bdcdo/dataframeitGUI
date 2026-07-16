@@ -3,7 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { completeAccess } from "@/actions/complete-access";
+import {
+  completeAccess,
+  type CompleteAccessResult,
+} from "@/actions/complete-access";
+import type { AuthResolution } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
@@ -11,11 +15,13 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 // pt-BR e sem termo técnico, token, claim ou nome de tabela (FR-010). O motivo
 // vem da resolução read-only (link-pending/divergent, sync-temporary-failure) e
 // pode evoluir para unknown-recoverable após um retry que não resolveu.
+//
+// Derivado de quem produz o motivo, não relistado à mão: um estado novo em
+// AuthResolution ou em CompleteAccessResult passa a quebrar o REASON_COPY
+// abaixo em tempo de compilação, em vez de renderizar undefined em runtime.
 export type CompletionReason =
-  | "link-pending"
-  | "link-divergent"
-  | "sync-temporary-failure"
-  | "unknown-recoverable";
+  | Extract<AuthResolution, { reason: string }>["reason"]
+  | Extract<CompleteAccessResult, { ok: false }>["reason"];
 
 const REASON_COPY: Record<
   CompletionReason,

@@ -140,9 +140,10 @@ async function persistSelfVerdicts(
         .from("field_reviews")
         .update({
           self_verdict: verdict.verdict,
-          self_justification: verdictRequiresJustification(verdict.verdict)
-            ? (verdict.justification?.trim() ?? null)
-            : null,
+          self_justification: normalizedSelfJustification(
+            verdict.verdict,
+            verdict.justification,
+          ),
         })
         .eq("project_id", scope.projectId)
         .eq("document_id", scope.documentId)
