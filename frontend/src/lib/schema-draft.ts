@@ -29,9 +29,17 @@ const formatMarkerSchema = z.object({ formatVersion: z.number().int() });
 // formato MAIOR que o nosso foi escrito por um build que sabe mais: não é lixo,
 // é de outro dono.
 export type SchemaDraftRead =
-  // Vazio, lixo, ou formato anterior ao nosso: o slot é assumível.
+  // Vazio ou lixo que nem envelope é: nada foi perdido ao assumir o slot.
   | { kind: "empty" }
   | { kind: "draft"; draft: SchemaDraftEnvelope }
+  // Envelope que este build não sabe ler, mas de um formato que ele já superou
+  // (ou do formato corrente, corrompido). O slot é assumível — não há como
+  // mesclar o conteúdo com o contrato atual —, mas existia trabalho ali e o
+  // usuário precisa saber. Separado de `empty` porque "não havia rascunho" e
+  // "havia um rascunho que não consegui ler" são fatos diferentes, e colapsá-los
+  // era a via mais provável de perda silenciosa: o formato já foi bumpado 3
+  // vezes, então todo deploy que bumpa produz este caso para quem tinha rascunho.
+  | { kind: "stale-format"; formatVersion: number }
   | { kind: "newer-format"; formatVersion: number };
 
 export function readSchemaDraft(raw: string | null): SchemaDraftRead {
@@ -47,13 +55,17 @@ export function readSchemaDraft(raw: string | null): SchemaDraftRead {
   if (envelope.success) return { kind: "draft", draft: envelope.data };
 
   const marker = formatMarkerSchema.safeParse(parsed);
-  if (marker.success && marker.data.formatVersion > SCHEMA_DRAFT_FORMAT_VERSION) {
-    return { kind: "newer-format", formatVersion: marker.data.formatVersion };
+  if (marker.success) {
+    if (marker.data.formatVersion > SCHEMA_DRAFT_FORMAT_VERSION) {
+      return { kind: "newer-format", formatVersion: marker.data.formatVersion };
+    }
+    // Assumível de propósito: não há como mesclar um envelope antigo com o
+    // contrato atual, e travar o slot para sempre por causa de um formato que
+    // ninguém mais escreve seria pior. O que não se justifica é fazê-lo calado
+    // — descartar e avisar é a terceira opção entre travar e apagar em silêncio.
+    return { kind: "stale-format", formatVersion: marker.data.formatVersion };
   }
 
-  // Formato anterior ao nosso conta como assumível de propósito: não há como
-  // mesclá-lo com o contrato atual, e travar o rascunho para sempre por causa
-  // de um envelope que ninguém mais escreve seria pior do que assumir o slot.
   return { kind: "empty" };
 }
 

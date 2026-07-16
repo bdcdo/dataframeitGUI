@@ -154,6 +154,22 @@ function readStoredDraft(scope: SchemaDraftScope): StorageRead {
   }
 }
 
+// Um envelope de formato que este build já superou é descartável, mas não é
+// "não havia nada": o trabalho existia. Fica fora da máquina de estados porque é
+// um fato do mount, não uma transição — o `key={userId:projectId}` do
+// SchemaEditorSession garante que remontar reavalia.
+function readStaleDraftFormat(scope: SchemaDraftScope): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const read = readSchemaDraft(
+      window.localStorage.getItem(schemaDraftStorageKey(scope)),
+    );
+    return read.kind === "stale-format" ? read.formatVersion : null;
+  } catch {
+    return null;
+  }
+}
+
 function writeDraftIfTokenMatches(
   scope: SchemaDraftScope,
   draft: SchemaDraftEnvelope,
@@ -600,6 +616,9 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
     () => false,
   );
   const [state, setReactState] = useState<SchemaDraftState>(() => initialState(params));
+  // Só o mount decide: depois da primeira escrita o envelope antigo já foi
+  // sobrescrito, e reavaliar apagaria o aviso justamente por tê-lo atendido.
+  const [staleDraftFormatVersion] = useState(() => readStaleDraftFormat(scope));
   const stateRef = useRef(state);
   const renderedRevisionRef = useRef(currentRevision);
 
@@ -699,6 +718,7 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
     conflict: state.kind === "conflict" ? state.conflict : null,
     storageAvailable: state.storage.available,
     storageBlocked: state.storage.blocked,
+    staleDraftDiscarded: staleDraftFormatVersion !== null,
     draftPersisted,
     prepareSubmission,
     markSaved,

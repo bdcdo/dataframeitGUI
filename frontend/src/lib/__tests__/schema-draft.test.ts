@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SCHEMA_DRAFT_FORMAT_VERSION,
   parseSchemaDraft,
+  readSchemaDraft,
 } from "@/lib/schema-draft";
 import { PYDANTIC_FIELD_PROPERTY_KEYS } from "@/lib/pydantic-field";
 import { snapshotOf } from "@/lib/schema-utils";
@@ -38,6 +39,46 @@ function rawDraft(fields: PydanticField[] = [trigger, complete]) {
     fields,
   });
 }
+
+describe("readSchemaDraft", () => {
+  it("reconhece o envelope legível", () => {
+    expect(readSchemaDraft(rawDraft()).kind).toBe("draft");
+  });
+
+  it("distingue envelope de formato anterior de slot vazio", () => {
+    // A distinção é o que permite avisar em vez de apagar calado: os dois casos
+    // liberam o slot, mas só um deles perdeu trabalho do usuário.
+    const base = JSON.parse(rawDraft()) as Record<string, unknown>;
+    expect(
+      readSchemaDraft(JSON.stringify({ ...base, formatVersion: 2 })),
+    ).toEqual({ kind: "stale-format", formatVersion: 2 });
+
+    expect(readSchemaDraft(null)).toEqual({ kind: "empty" });
+    expect(readSchemaDraft("{")).toEqual({ kind: "empty" });
+    // Sem marcador de formato não é envelope nosso: nada foi perdido.
+    expect(readSchemaDraft(JSON.stringify({ foo: 1 }))).toEqual({ kind: "empty" });
+  });
+
+  it("trata envelope do formato corrente porém corrompido como ilegível, não como vazio", () => {
+    const base = JSON.parse(rawDraft()) as Record<string, unknown>;
+    expect(readSchemaDraft(JSON.stringify({ ...base, writeToken: "" }))).toEqual({
+      kind: "stale-format",
+      formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,
+    });
+  });
+
+  it("cede o slot a um envelope de formato mais novo", () => {
+    const base = JSON.parse(rawDraft()) as Record<string, unknown>;
+    expect(
+      readSchemaDraft(
+        JSON.stringify({ ...base, formatVersion: SCHEMA_DRAFT_FORMAT_VERSION + 1 }),
+      ),
+    ).toEqual({
+      kind: "newer-format",
+      formatVersion: SCHEMA_DRAFT_FORMAT_VERSION + 1,
+    });
+  });
+});
 
 describe("parseSchemaDraft", () => {
   it("mantém o schema Zod alinhado ao snapshot canônico mais hash derivado", () => {

@@ -51,6 +51,14 @@ interface SchemaProjectRow {
 const SCHEMA_PROJECT_SELECT =
   "pydantic_fields, pydantic_code, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, schema_revision";
 
+// Todo caminho que vá escrever schema recusa antes de escrever quando o que
+// está persistido não passa no Zod. O backfill é o caso que obriga a copy a ser
+// compartilhada: ele é a ferramenta de projeto legado, logo é o mais provável de
+// encontrar o estado inválido, e a RPC dele commita antes de o chamador ver o
+// retorno — validar só o retorno reportaria como falha uma escrita que ocorreu.
+const PERSISTED_SCHEMA_INVALID =
+  "O schema persistido é inválido e precisa ser corrigido antes da edição.";
+
 function projectVersion(project: Partial<SchemaProjectRow>): {
   major: number;
   minor: number;
@@ -118,10 +126,7 @@ async function loadSchemaSaveContext(
   const persistedFields = parsePydanticFields(project.pydantic_fields);
   if (!persistedFields) {
     return {
-      result: {
-        status: "error",
-        message: "O schema persistido é inválido e precisa ser corrigido antes da edição.",
-      },
+      result: { status: "error", message: PERSISTED_SCHEMA_INVALID },
     };
   }
   project.pydantic_fields = persistedFields;
@@ -508,7 +513,17 @@ async function fetchAllPages<T>(
     // conhecido sem uma consulta adicional que também poderia ficar stale.
     // react-doctor-disable-next-line react-doctor/async-await-in-loop
     const { data, error } = await loadPage(from, from + BACKFILL_PAGE_SIZE - 1);
-    if (error) throw new Error(error.message);
+    if (error) {
+      // Estes SELECT precedem a RPC, então escapam do mapeamento por (rpc,
+      // errcode) — e eram o único ponto do backfill que entregava texto cru do
+      // Postgres ao toast pt-BR ("canceling statement due to statement
+      // timeout", num projeto grande). Vale a mesma regra do mapRpcError: o
+      // texto é diagnóstico de desenvolvedor e vai para o log do servidor.
+      console.error("[schema] paginação do backfill falhou", {
+        message: error.message,
+      });
+      throw new Error(SCHEMA_RPC_COPY.apply_schema_backfill.generic);
+    }
     if (!data || data.length === 0) return rows;
     rows.push(...data);
     if (data.length < BACKFILL_PAGE_SIZE) return rows;
@@ -570,10 +585,22 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
   if (!project) throw new Error("Projeto não encontrado ou sem permissão");
   const expectedRevision = project.schema_revision;
 
+  // `apply_schema_backfill` commita e só então devolve os campos persistidos,
+  // que `mapCommitResult` valida. Sem esta recusa prévia, um schema inválido no
+  // banco produzia a escrita completa (log reclassificado, respostas versionadas,
+  // revisão avançada) e mesmo assim uma resposta de erro ao usuário, com o
+  // revalidate pulado — a repetição só reencontra o mesmo erro. O snapshot
+  // reconstruído parte destes campos, então a validação também é o que sustenta
+  // o cast que reconstructSnapshotsByVersion recebe.
+  const persistedFields = parsePydanticFields(project.pydantic_fields);
+  if (!persistedFields) {
+    return { status: "error", message: PERSISTED_SCHEMA_INVALID };
+  }
+
   const { enriched, finalVersion } = classifyLogEntries(log);
 
   const snapByVersion = reconstructSnapshotsByVersion(
-    ((project?.pydantic_fields as PydanticField[]) ?? []),
+    persistedFields,
     enriched,
     finalVersion,
   );

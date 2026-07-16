@@ -529,8 +529,16 @@ BEGIN
        OR update_bucket.version_major < 0
        OR update_bucket.version_minor < 0
        OR update_bucket.version_patch < 0
+       -- 'live_save' fica fora do whitelist de propósito: é a marca de versão
+       -- gravada ao vivo pelo save, e tanto o filtro do UPDATE abaixo quanto a
+       -- contagem de cobertura a tratam como precisa e intocável. Aceitá-la aqui
+       -- deixaria um chamador carimbar de precisa uma versão que o backfill
+       -- *adivinhou* — e, como o filtro pula quem já é 'live_save', a marca
+       -- errada nunca mais seria revisada. Nenhum caller a produz
+       -- (matchResponsesToVersions descarta essas respostas antes de formar
+       -- bucket); recusar aqui é o que torna o estado irrepresentável.
        OR update_bucket.version_inferred_from NOT IN (
-         'live_save', 'hashes', 'created_at', 'fallback_created_at'
+         'hashes', 'created_at', 'fallback_created_at'
        )
   ) THEN
     RAISE EXCEPTION 'Invalid response backfill bucket'
