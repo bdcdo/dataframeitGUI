@@ -45,7 +45,7 @@ interface SchemaEditorDialogsProps {
 
 function conflictTitle(conflict: SchemaMergeConflict): string {
   if (conflict.kind === "property") {
-    return `${conflict.fieldName}: ${conflict.property === "hash" ? "hash do campo" : propertyLabel(conflict.property)}`;
+    return `${conflict.fieldName}: ${propertyLabel(conflict.property)}`;
   }
   if (conflict.kind === "order") return "Ordem dos campos";
   const reason = {

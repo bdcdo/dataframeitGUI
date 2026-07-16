@@ -2,6 +2,7 @@
 
 import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { DraftOrigin } from "@/hooks/useSchemaDraft";
 
 interface SchemaEditorFooterProps {
   mode: "gui" | "code";
@@ -11,9 +12,15 @@ interface SchemaEditorFooterProps {
   storageAvailable: boolean;
   storageBlocked: boolean;
   draftPersisted: boolean;
-  recoveredDraft: boolean;
+  origin: DraftOrigin;
   onSave: () => void;
 }
+
+const ORIGIN_MESSAGE: Record<DraftOrigin, string> = {
+  session: "Alterações não salvas · rascunho local",
+  recovered: "Rascunho recuperado · alterações não salvas",
+  rebased: "Mesclado com a versão mais recente · alterações não salvas",
+};
 
 function statusMessage({
   isDirty,
@@ -21,7 +28,7 @@ function statusMessage({
   storageAvailable,
   storageBlocked,
   draftPersisted,
-  recoveredDraft,
+  origin,
 }: Omit<SchemaEditorFooterProps, "mode" | "saveDisabled" | "onSave">) {
   if (conflictCount !== null) {
     return conflictCount > 0
@@ -36,9 +43,7 @@ function statusMessage({
     return "Alterações não salvas · o armazenamento local está indisponível";
   }
   if (!draftPersisted) return "Alterações não salvas · salvando rascunho local";
-  return recoveredDraft
-    ? "Rascunho recuperado · alterações não salvas"
-    : "Alterações não salvas · rascunho local";
+  return ORIGIN_MESSAGE[origin];
 }
 
 export function SchemaEditorFooter({
@@ -49,7 +54,7 @@ export function SchemaEditorFooter({
   storageAvailable,
   storageBlocked,
   draftPersisted,
-  recoveredDraft,
+  origin,
   onSave,
 }: SchemaEditorFooterProps) {
   if (mode === "code") return null;
@@ -60,7 +65,7 @@ export function SchemaEditorFooter({
     storageAvailable,
     storageBlocked,
     draftPersisted,
-    recoveredDraft,
+    origin,
   });
 
   return (

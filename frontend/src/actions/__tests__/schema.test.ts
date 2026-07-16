@@ -250,6 +250,7 @@ describe("publishMajorVersion", () => {
         data: {
           ...(PROJECT_SELECT.data as object),
           pydantic_fields: [FIELD],
+          pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
           schema_version_minor: 18,
           schema_revision: 7,
         },
@@ -286,6 +287,29 @@ describe("publishMajorVersion", () => {
       },
     });
     expect(state.writes).toHaveLength(0);
+  });
+
+  // A RPC deriva pydantic_hash do código; sem código o hash sairia nulo, que
+  // compare-version.ts lê como "projeto anterior ao versionamento".
+  it("recusa publicar MAJOR em projeto sem schema salvo", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          pydantic_fields: [FIELD],
+          pydantic_code: null,
+          schema_revision: 7,
+        },
+      },
+    };
+
+    const result = await publishMajorVersion("p1", { revision: 7 });
+
+    expect(result).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/schema salvo/i),
+    });
+    expect(state.rpcs).toHaveLength(0);
   });
 
   it("não publica sobre uma revisão que o usuário nunca viu", async () => {

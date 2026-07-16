@@ -41,7 +41,11 @@ interface SchemaProjectRow {
   schema_version_major: number | null;
   schema_version_minor: number | null;
   schema_version_patch: number | null;
-  schema_revision: number | null;
+  // `projects.schema_revision` é NOT NULL DEFAULT 0 desde
+  // 20260715180000_schema_revision_atomic_rpcs. Tipar como anulável obrigaria
+  // todo leitor a inventar um significado para o nulo — e os dois que existiam
+  // discordavam entre si (um mapeava para 0, o outro para conflito).
+  schema_revision: number;
 }
 
 const SCHEMA_PROJECT_SELECT =
@@ -67,7 +71,7 @@ function projectSnapshot(project: SchemaProjectRow): SchemaSnapshot {
   return {
     fields: project.pydantic_fields,
     version: versionString(projectVersion(project)),
-    revision: project.schema_revision ?? 0,
+    revision: project.schema_revision,
   };
 }
 
@@ -129,10 +133,7 @@ async function loadSchemaSaveContext(
   }
   project.pydantic_fields = persistedFields;
   const remoteBaseline = projectSnapshot(project);
-  if (
-    expectedBaseline.revision !== remoteBaseline.revision ||
-    project.schema_revision == null
-  ) {
+  if (expectedBaseline.revision !== remoteBaseline.revision) {
     return { result: conflictResult(project) };
   }
 
@@ -555,13 +556,12 @@ function fetchAllLogEntries(
   });
 }
 
+// Só a ausência da linha é um estado real: a coluna é NOT NULL, então uma linha
+// visível sempre traz revisão.
 function requireSchemaRevision(
-  project: { schema_revision?: number | null } | null,
+  project: { schema_revision: number } | null,
 ): number {
   if (!project) throw new Error("Projeto não encontrado ou sem permissão");
-  if (project.schema_revision == null) {
-    throw new Error("Projeto sem revisão canônica de schema");
-  }
   return project.schema_revision;
 }
 
@@ -650,6 +650,18 @@ export async function publishMajorVersion(
   if ("result" in loaded) return loaded.result;
   const { supabase, userId, context } = loaded;
   const typedProject = context.project;
+  // Publicar MAJOR reapresenta à RPC o código já armazenado, sem regerá-lo. Um
+  // projeto sem código não tem o que publicar, e deixar passar gravaria
+  // `pydantic_hash` nulo — que `compare-version.ts` lê como "anterior ao
+  // versionamento", rebaixando silenciosamente o projeto recém-publicado.
+  const storedCode = typedProject.pydantic_code;
+  if (!storedCode) {
+    return {
+      status: "error",
+      message:
+        "Este projeto ainda não tem um schema salvo para publicar. Salve o schema antes de publicar uma versão MAJOR.",
+    };
+  }
   const current = projectVersion(typedProject);
   const bumped = bumpVersion(current, "major");
   const fields = typedProject.pydantic_fields;
@@ -658,7 +670,7 @@ export async function publishMajorVersion(
       p_project_id: projectId,
       p_expected_revision: expectedBaseline.revision,
       p_pydantic_fields: fields,
-      p_pydantic_code: typedProject.pydantic_code,
+      p_pydantic_code: storedCode,
       p_version_major: bumped.major,
       p_version_minor: bumped.minor,
       p_version_patch: bumped.patch,
