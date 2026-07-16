@@ -122,6 +122,7 @@ def _assemble_field_dict(
     description: str,
     target: str,
     help_text: str | None,
+    required: bool,
     allow_other: bool,
     subfields: list[dict] | None,
     subfield_rule: str | None,
@@ -139,6 +140,13 @@ def _assemble_field_dict(
 
     if help_text:
         field_dict["help_text"] = help_text
+
+    # Espelha o gerador (`fieldExtra` em schema-utils.ts): só o caso não-default
+    # é representado, aqui e no código. O default de `required` é True, ao
+    # contrário do `required` de subcampo, que é portado pela anotação
+    # (Optional[str]) e cujo default é False — ver `_extract_subfields`.
+    if not required:
+        field_dict["required"] = False
 
     if allow_other and field_type in ("single", "multi"):
         field_dict["allow_other"] = True
@@ -178,6 +186,7 @@ def _build_field_dict(field_name: str, field_info) -> dict:
         description=description,
         target=extra.get("target", "all"),
         help_text=help_text,
+        required=bool(extra.get("required", True)),
         allow_other=bool(extra.get("allowOther", False)),
         subfields=_extract_subfields(annotation),
         subfield_rule=_normalize_optional_str(extra.get("subfield_rule")),
