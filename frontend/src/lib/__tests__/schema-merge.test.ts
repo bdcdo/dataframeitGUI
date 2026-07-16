@@ -177,3 +177,49 @@ describe("mergeSchemas", () => {
     expect(resolved.fields.map(({ name }) => name)).toEqual(["q2", "q1", "q3"]);
   });
 });
+
+// `hash` é metadado derivado que só o servidor escreve. Um projeto legado tem
+// campos sem hash (é por isso que o backfill existe); o primeiro save remoto
+// injeta hash em todos eles. Se o merge comparasse o objeto inteiro, essa
+// injeção viraria "edição remota" e fabricaria conflitos que ninguém causou.
+describe("mergeSchemas — hash não é conteúdo do campo", () => {
+  const semHash: PydanticField = { ...q1, hash: undefined };
+  const comHash: PydanticField = { ...q1, hash: "hash-do-servidor" };
+
+  it("remoto ganhar hash não conflita com deleção local", () => {
+    const merge = mergeSchemas([semHash], [], [comHash]);
+    expect(merge.conflicts).toEqual([]);
+    expect(merge.fields).toEqual([]);
+  });
+
+  it("local sem hash não conflita com deleção remota", () => {
+    const merge = mergeSchemas([comHash], [semHash], []);
+    expect(merge.conflicts).toEqual([]);
+    expect(merge.fields).toEqual([]);
+  });
+
+  it("add-add que difere só no hash não é conflito", () => {
+    const merge = mergeSchemas([], [semHash], [comHash]);
+    expect(merge.conflicts).toEqual([]);
+    expect(merge.fields).toEqual([comHash]);
+  });
+
+  it("hash divergente nunca vira conflito de propriedade", () => {
+    const merge = mergeSchemas(
+      [semHash],
+      [{ ...semHash, description: "Editada localmente" }],
+      [comHash],
+    );
+    expect(unresolvedSchemaConflicts(merge)).toEqual([]);
+    expect(merge.fields[0].description).toBe("Editada localmente");
+  });
+
+  it("uma edição de conteúdo real ainda conflita, mesmo com hash igual", () => {
+    const merge = mergeSchemas(
+      [comHash],
+      [{ ...comHash, description: "Local" }],
+      [{ ...comHash, description: "Remota" }],
+    );
+    expect(unresolvedSchemaConflicts(merge)).toHaveLength(1);
+  });
+});

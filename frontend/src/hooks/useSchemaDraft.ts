@@ -11,6 +11,7 @@ import {
 import {
   SCHEMA_DRAFT_FORMAT_VERSION,
   parseSchemaDraft,
+  readSchemaDraft,
   type SchemaDraftEnvelope,
 } from "@/lib/schema-draft";
 import {
@@ -51,6 +52,18 @@ export interface SchemaDraftConflict {
   merge: SchemaMergeResult;
 }
 
+// De onde vieram as alterações que estão na tela. Um booleano "recuperado" não
+// dá conta: um rascunho rebasado sobre uma revisão remota nova não foi
+// recuperado de lugar nenhum — o usuário nunca fechou a aba — e anunciá-lo como
+// "rascunho recuperado" descreve um evento que não aconteceu.
+export type DraftOrigin =
+  // Editado nesta sessão, do zero.
+  | "session"
+  // Lido do localStorage no mount (a aba foi fechada ou recarregada antes).
+  | "recovered"
+  // Rebasado sobre uma revisão remota que chegou durante a edição.
+  | "rebased";
+
 interface DraftStorageState {
   available: boolean;
   persistedToken: string | null;
@@ -60,21 +73,21 @@ interface DraftStorageState {
 interface CleanState {
   kind: "clean";
   snapshot: SchemaSnapshot;
-  recoveredDraft: boolean;
+  origin: DraftOrigin;
   storage: DraftStorageState;
 }
 
 interface DirtyState {
   kind: "dirty";
   draft: SchemaDraftEnvelope;
-  recoveredDraft: boolean;
+  origin: DraftOrigin;
   storage: DraftStorageState;
 }
 
 interface ConflictState {
   kind: "conflict";
   conflict: SchemaDraftConflict;
-  recoveredDraft: boolean;
+  origin: DraftOrigin;
   storage: DraftStorageState;
 }
 
@@ -155,10 +168,14 @@ function writeDraftIfTokenMatches(
 ): StorageWrite {
   if (typeof window === "undefined") return { status: "unavailable" };
   try {
-    const stored = parseSchemaDraft(
+    const stored = readSchemaDraft(
       window.localStorage.getItem(schemaDraftStorageKey(scope)),
     );
-    if ((stored?.writeToken ?? null) !== expectedToken) {
+    // Um envelope que este build não sabe ler pertence a uma aba mais nova, e
+    // sobrescrevê-lo apagaria trabalho que não temos como recuperar.
+    if (stored.kind === "newer-format") return { status: "blocked" };
+    const storedToken = stored.kind === "draft" ? stored.draft.writeToken : null;
+    if (storedToken !== expectedToken) {
       return { status: "blocked" };
     }
     window.localStorage.setItem(
@@ -178,10 +195,10 @@ function deleteDraftIfTokenMatches(
   if (!writeToken) return { available: true, deleted: false };
   if (typeof window === "undefined") return { available: false, deleted: false };
   try {
-    const stored = parseSchemaDraft(
+    const stored = readSchemaDraft(
       window.localStorage.getItem(schemaDraftStorageKey(scope)),
     );
-    if (stored?.writeToken !== writeToken) {
+    if (stored.kind !== "draft" || stored.draft.writeToken !== writeToken) {
       return { available: true, deleted: false };
     }
     window.localStorage.removeItem(schemaDraftStorageKey(scope));
@@ -205,7 +222,7 @@ function createDraft(
 
 function dirtyAfterWrite(
   draft: SchemaDraftEnvelope,
-  recoveredDraft: boolean,
+  origin: DraftOrigin,
   previousStorage: DraftStorageState,
   write: StorageWrite,
 ): DirtyState {
@@ -213,7 +230,7 @@ function dirtyAfterWrite(
     return {
       kind: "dirty",
       draft,
-      recoveredDraft,
+      origin,
       storage: {
         available: true,
         persistedToken: draft.writeToken,
@@ -224,7 +241,7 @@ function dirtyAfterWrite(
   return {
     kind: "dirty",
     draft,
-    recoveredDraft,
+    origin,
     storage: {
       available: write.status !== "unavailable",
       persistedToken: write.status === "blocked"
@@ -242,7 +259,7 @@ function cleanState(
   return {
     kind: "clean",
     snapshot,
-    recoveredDraft: false,
+    origin: "session",
     storage: {
       available: storageAvailable,
       persistedToken: null,
@@ -281,7 +298,7 @@ function initialState({
     return {
       kind: "dirty",
       draft,
-      recoveredDraft: true,
+      origin: "recovered",
       storage,
     };
   }
@@ -291,7 +308,7 @@ function initialState({
     return {
       kind: "conflict",
       conflict: { draft, remote, merge },
-      recoveredDraft: true,
+      origin: "recovered",
       storage,
     };
   }
@@ -302,7 +319,7 @@ function initialState({
   const rebased = createDraft(merge.fields, remote);
   return dirtyAfterWrite(
     rebased,
-    true,
+    "rebased",
     storage,
     writeDraftIfTokenMatches(scope, rebased, draft.writeToken),
   );
@@ -325,7 +342,7 @@ function stateAfterFieldsChange(
   return {
     kind: "dirty",
     draft: createDraft(fields, baseline),
-    recoveredDraft: current.recoveredDraft,
+    origin: current.origin,
     storage: current.storage,
   };
 }
@@ -344,7 +361,7 @@ function stateAfterSave(
   const draft = createDraft(fields, saved);
   return dirtyAfterWrite(
     draft,
-    false,
+    "session",
     current.storage,
     writeDraftIfTokenMatches(
       scope,
@@ -395,7 +412,7 @@ function stateAfterRemoteChange(
     const rebased = createDraft(merge.fields, remote);
     return dirtyAfterWrite(
       rebased,
-      true,
+      "rebased",
       current.storage,
       writeDraftIfTokenMatches(
         scope,
@@ -411,7 +428,7 @@ function stateAfterRemoteChange(
   return {
     kind: "conflict",
     conflict: { draft, remote, merge },
-    recoveredDraft: true,
+    origin: "rebased",
     storage: {
       available: stored.available,
       persistedToken: expectedDraftStillStored ? expectedToken : null,
@@ -478,7 +495,7 @@ function stateAfterResolvedDraftApplication(
   return {
     state: dirtyAfterWrite(
       draft,
-      true,
+      "rebased",
       current.storage,
       writeDraftIfTokenMatches(
         scope,
@@ -522,7 +539,7 @@ function persistDirtyState(
   if (writeToken && current.draft.writeToken !== writeToken) return current;
   return dirtyAfterWrite(
     current.draft,
-    current.recoveredDraft,
+    current.origin,
     current.storage,
     writeDraftIfTokenMatches(
       scope,
@@ -682,7 +699,7 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
     fields,
     setFields,
     isDirty,
-    recoveredDraft: state.recoveredDraft,
+    origin: state.origin,
     savedVersion: baseline.version,
     baseline: { revision: baseline.revision },
     conflict: state.kind === "conflict" ? state.conflict : null,

@@ -79,7 +79,7 @@ describe("useSchemaDraft — isolamento entre usuários", () => {
 
     const second = renderDraft("0.1.0", 1, BASE_FIELDS, OTHER);
 
-    expect(second.result.current.recoveredDraft).toBe(false);
+    expect(second.result.current.origin).toBe("session");
     expect(second.result.current.isDirty).toBe(false);
     expect(second.result.current.fields).toEqual(BASE_FIELDS);
   });
@@ -122,7 +122,7 @@ describe("useSchemaDraft", () => {
     first.unmount();
     const second = renderDraft();
     expect(second.result.current.fields).toEqual(EDITED_FIELDS);
-    expect(second.result.current.recoveredDraft).toBe(true);
+    expect(second.result.current.origin).toBe("recovered");
   });
 
   it("substitui o mesmo envelope em edições sucessivas", () => {
@@ -160,7 +160,7 @@ describe("useSchemaDraft", () => {
     view.unmount();
     const reloaded = renderDraft();
     expect(reloaded.result.current.fields).toEqual(BASE_FIELDS);
-    expect(reloaded.result.current.recoveredDraft).toBe(false);
+    expect(reloaded.result.current.origin).toBe("session");
   });
 
   it("faz flush em pagehide, visibilitychange e beforeunload", () => {
@@ -197,6 +197,50 @@ describe("useSchemaDraft", () => {
     view.unmount();
 
     expect(storedDraft()?.fields).toEqual(EDITED_FIELDS);
+  });
+
+  // SCHEMA_DRAFT_FORMAT_VERSION já foi bumpado 3 vezes. Durante um deploy que o
+  // bumpe de novo, a aba velha convive com a nova: se ela tratar o envelope que
+  // não sabe ler como "slot livre", apaga o rascunho da aba nova em silêncio.
+  it("não sobrescreve rascunho de um formato mais novo que o seu", () => {
+    window.localStorage.setItem(
+      schemaDraftStorageKey(SCOPE),
+      JSON.stringify({
+        formatVersion: 99,
+        writeToken: "build-mais-novo",
+        algoQueAindaNaoExiste: true,
+      }),
+    );
+
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+
+    expect(
+      JSON.parse(window.localStorage.getItem(schemaDraftStorageKey(SCOPE))!),
+    ).toMatchObject({ formatVersion: 99, writeToken: "build-mais-novo" });
+    expect(view.result.current.storageBlocked).toBe(true);
+  });
+
+  // Contrapartida: lixo e formato anterior não podem travar o rascunho para
+  // sempre — ninguém mais escreve neles e não há o que preservar.
+  it("assume o slot quando o conteúdo é lixo ou de formato anterior", () => {
+    window.localStorage.setItem(schemaDraftStorageKey(SCOPE), "{{{ não é json");
+    const lixo = renderDraft();
+    act(() => lixo.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    expect(storedDraft()?.fields).toEqual(EDITED_FIELDS);
+    lixo.unmount();
+
+    window.localStorage.setItem(
+      schemaDraftStorageKey(SCOPE),
+      JSON.stringify({ formatVersion: 1, writeToken: "build-antigo" }),
+    );
+    const antigo = renderDraft();
+    act(() => antigo.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    expect(storedDraft()?.fields).toEqual(EDITED_FIELDS);
+    expect(antigo.result.current.storageBlocked).toBe(false);
   });
 
   it("não sobrescreve o rascunho que outra aba gravou", () => {
@@ -318,6 +362,27 @@ describe("useSchemaDraft", () => {
       { ...EDITED_FIELDS[0], help_text: "Ajuda remota" },
     ]);
     expect(storedDraft()?.base.revision).toBe(2);
+    // Nada foi recuperado: a aba nunca foi fechada. Anunciar "rascunho
+    // recuperado" aqui descreveria um evento que não aconteceu.
+    expect(view.result.current.origin).toBe("rebased");
+  });
+
+  it("um rascunho recuperado do storage passa a rebasado ao mesclar revisão nova", () => {
+    const first = renderDraft();
+    act(() => first.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    first.unmount();
+
+    const second = renderDraft();
+    expect(second.result.current.origin).toBe("recovered");
+
+    act(() =>
+      second.result.current.registerRemoteConflict(
+        snapshot([{ ...BASE_FIELDS[0], help_text: "Ajuda remota" }], "0.1.1", 2),
+      ),
+    );
+
+    expect(second.result.current.origin).toBe("rebased");
   });
 
   it("exige resolução explícita antes de aplicar merge conflitante", () => {

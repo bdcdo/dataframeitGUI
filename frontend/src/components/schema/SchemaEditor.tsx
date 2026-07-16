@@ -112,7 +112,7 @@ function SchemaEditor({
     fields,
     setFields,
     isDirty,
-    recoveredDraft,
+    origin,
     savedVersion,
     baseline,
     conflict,
@@ -152,11 +152,21 @@ function SchemaEditor({
     dismissHelp,
   } = useSchemaEditorDialogs();
 
+  // Cada proveniência anuncia o que de fato aconteceu. Antes as duas caíam na
+  // mesma mensagem, e um merge automático durante a sessão dizia "rascunho
+  // recuperado" para quem nunca tinha fechado a aba.
   useEffect(() => {
-    if (recoveredDraft) {
-      toast.info("Rascunho local recuperado. Revise e salve para confirmar as alterações.");
+    if (origin === "recovered") {
+      toast.info(
+        "Rascunho local recuperado. Revise e salve para confirmar as alterações.",
+      );
     }
-  }, [recoveredDraft]);
+    if (origin === "rebased") {
+      toast.info(
+        "O schema mudou em outra sessão. Suas alterações foram mescladas com a versão mais recente.",
+      );
+    }
+  }, [origin]);
 
   const handlePublishMajor = () => {
     if (isDirty || conflict) {
@@ -362,7 +372,7 @@ function SchemaEditor({
         storageAvailable={storageAvailable}
         storageBlocked={storageBlocked}
         draftPersisted={draftPersisted}
-        recoveredDraft={recoveredDraft}
+        origin={origin}
       />
 
       <SchemaEditorDialogs

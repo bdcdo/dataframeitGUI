@@ -46,9 +46,9 @@ async function applyApprovedSuggestion(
     )
     .eq("id", projectId)
     .single();
-  if (!project || project.schema_revision == null) {
-    return "Projeto não encontrado ou sem permissão";
-  }
+  // `schema_revision` é NOT NULL: só a ausência da linha (inexistente ou
+  // filtrada pela RLS) é um estado real aqui.
+  if (!project) return "Projeto não encontrado ou sem permissão";
 
   const parsedChanges = schemaSuggestionChangesSchema.safeParse(
     suggestion.suggested_changes,

@@ -116,6 +116,17 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- `pydantic_hash` é derivado do código e de nada mais, então aceitar código
+  -- nulo gravaria hash nulo — que `compare-version.ts` lê como "projeto anterior
+  -- ao versionamento". Todo caller gera o código a partir dos campos; só
+  -- `publishMajorVersion` reapresenta o código armazenado, e ele recusa antes de
+  -- chegar aqui quando o projeto não tem schema. O nulo não descreve estado
+  -- legítimo nenhum.
+  IF p_pydantic_code IS NULL THEN
+    RAISE EXCEPTION 'p_pydantic_code must not be null'
+      USING ERRCODE = '22023';
+  END IF;
+
   IF p_log_entries IS NULL OR jsonb_typeof(p_log_entries) <> 'array' THEN
     RAISE EXCEPTION 'p_log_entries must be a non-empty JSON array'
       USING ERRCODE = '22023';
@@ -202,13 +213,10 @@ BEGIN
   UPDATE public.projects AS p
   SET pydantic_fields = p_pydantic_fields,
       pydantic_code = p_pydantic_code,
-      pydantic_hash = CASE
-        WHEN p_pydantic_code IS NULL THEN NULL
-        ELSE substring(
-          encode(extensions.digest(p_pydantic_code, 'sha256'), 'hex')
-          FROM 1 FOR 16
-        )
-      END,
+      pydantic_hash = substring(
+        encode(extensions.digest(p_pydantic_code, 'sha256'), 'hex')
+        FROM 1 FOR 16
+      ),
       schema_version_major = p_version_major,
       schema_version_minor = p_version_minor,
       schema_version_patch = p_version_patch,

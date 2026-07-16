@@ -1,5 +1,5 @@
 import { PYDANTIC_FIELD_PROPERTY_KEYS } from "@/lib/pydantic-field";
-import { stableStringify } from "@/lib/schema-utils";
+import { snapshotOf, stableStringify } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
 export type SchemaMergeChoice = "local" | "remote";
@@ -10,10 +10,21 @@ interface ConflictBase {
   resolution: SchemaMergeChoice | null;
 }
 
+// `name` é a identidade do campo no merge, não uma propriedade a mesclar, e
+// `hash` é metadado derivado que só o servidor escreve e que o save recalcula.
+// Nenhum dos dois é conteúdo editável pelo usuário, então nenhum dos dois pode
+// virar conflito para ele resolver — o tipo abaixo é o que garante isso.
+const NON_MERGEABLE_PROPERTIES = new Set<string>(["name", "hash"]);
+
+export type MergeableFieldProperty = Exclude<
+  keyof PydanticField,
+  "name" | "hash"
+>;
+
 export interface SchemaPropertyConflict extends ConflictBase {
   kind: "property";
   fieldName: string;
-  property: Exclude<keyof PydanticField, "name">;
+  property: MergeableFieldProperty;
   baseValue: unknown;
   localValue: unknown;
   remoteValue: unknown;
@@ -55,6 +66,17 @@ function equal(left: unknown, right: unknown): boolean {
   return stableStringify(left) === stableStringify(right);
 }
 
+// Igualdade de CONTEÚDO entre campos, que é o que decide conflito. Comparar o
+// objeto inteiro incluiria `hash`, um metadado derivado que só o servidor
+// escreve — e aí um campo legado sem hash viraria "editado remotamente" assim
+// que o primeiro save injetasse o hash, fabricando um conflito que o usuário
+// não causou. `snapshotOf` é a mesma serialização canônica usada pela detecção
+// de dirty e pelo log de auditoria: fonte única, sem uma segunda noção de
+// "campo igual" divergindo desta.
+function sameFieldContent(left: PydanticField, right: PydanticField): boolean {
+  return equal(snapshotOf(left), snapshotOf(right));
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -83,7 +105,7 @@ function resolutionFor(
 
 function assignProperty(
   field: PydanticField,
-  property: Exclude<keyof PydanticField, "name">,
+  property: MergeableFieldProperty,
   value: unknown,
 ): void {
   const target = field as unknown as Record<string, unknown>;
@@ -103,7 +125,7 @@ function mergeAddedField(
   resolutions: SchemaMergeResolutions,
 ): FieldMergeOutcome {
   if (!localField) return { field: clone(remoteField ?? null), conflicts: [] };
-  if (!remoteField || equal(localField, remoteField)) {
+  if (!remoteField || sameFieldContent(localField, remoteField)) {
     return { field: clone(remoteField ?? localField), conflicts: [] };
   }
 
@@ -134,8 +156,8 @@ function mergeFieldProperties(
   const field = clone(remoteField);
   const conflicts: SchemaMergeConflict[] = [];
   for (const rawProperty of PYDANTIC_FIELD_PROPERTY_KEYS) {
-    if (rawProperty === "name") continue;
-    const property = rawProperty as Exclude<keyof PydanticField, "name">;
+    if (NON_MERGEABLE_PROPERTIES.has(rawProperty)) continue;
+    const property = rawProperty as MergeableFieldProperty;
     const baseValue = baseField[property];
     const localValue = localField[property];
     const remoteValue = remoteField[property];
@@ -168,7 +190,7 @@ function mergeLocalDeletion(
   remoteField: PydanticField,
   resolutions: SchemaMergeResolutions,
 ): FieldMergeOutcome {
-  if (equal(remoteField, baseField)) return { field: null, conflicts: [] };
+  if (sameFieldContent(remoteField, baseField)) return { field: null, conflicts: [] };
   const id = conflictId("field", name, "delete-edit");
   const resolution = resolutionFor(id, resolutions);
   return {
@@ -192,7 +214,7 @@ function mergeRemoteDeletion(
   localField: PydanticField,
   resolutions: SchemaMergeResolutions,
 ): FieldMergeOutcome {
-  if (equal(localField, baseField)) return { field: null, conflicts: [] };
+  if (sameFieldContent(localField, baseField)) return { field: null, conflicts: [] };
   const id = conflictId("field", name, "edit-delete");
   const resolution = resolutionFor(id, resolutions);
   return {
