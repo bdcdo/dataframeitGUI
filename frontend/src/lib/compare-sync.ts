@@ -15,6 +15,13 @@ import {
 import type { EquivalencePair } from "@/lib/equivalence";
 
 const PG_UNIQUE_VIOLATION = "23505";
+// O índice parcial criado pelo #490 (uma comparação ATIVA por documento;
+// concluídas ficam fora do predicado). É o único unique de `assignments`
+// alcançável por um UPDATE que só toca status/completed_at — a outra,
+// UNIQUE(document_id, user_id, type), tem colunas que este UPDATE não mexe.
+// Casar pelo nome mantém o skip preso a ESTA regra: um índice futuro sobre
+// `status` propaga em vez de ser engolido junto.
+const ACTIVE_COMPARACAO_INDEX = "assignments_one_active_comparacao_per_doc";
 
 interface UpdateCompareAssignmentStatusParams {
   supabase: SupabaseServerClient;
@@ -45,6 +52,7 @@ async function updateCompareAssignmentStatus({
 
   if (
     error.code === PG_UNIQUE_VIOLATION &&
+    error.message.includes(ACTIVE_COMPARACAO_INDEX) &&
     assignment.status === "concluido" &&
     next !== "concluido"
   ) {

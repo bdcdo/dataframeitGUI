@@ -173,6 +173,9 @@ describe("syncCompareAssignment — guarda de <2 respostas qualificadas (#286)",
 describe("syncCompareAssignment — regressão de comparação histórica (#497)", () => {
   it("mantém a concluída e loga o 23505 quando outra comparação está ativa", async () => {
     const { syncCompareAssignment } = await loadLib();
+    // `a2` documenta o cenário (o documento já tem outra comparação ativa), não
+    // o produz: o mock não modela o índice parcial — quem força o 23505 é o
+    // `queryErrors` abaixo.
     tableData.assignments = [
       assignment("concluido"),
       {
@@ -285,6 +288,22 @@ describe("syncCompareAssignment — regressão de comparação histórica (#497)
     await expect(
       syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
     ).rejects.toThrow("permission denied for table assignments");
+  });
+
+  it("propaga 23505 de outra constraint mesmo na regressão de uma concluída", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.assignments = [assignment("concluido")];
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    queryErrors["assignments:update"] = {
+      message:
+        'duplicate key value violates unique constraint "assignments_document_id_user_id_type_key"',
+      code: "23505",
+    };
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).rejects.toThrow("assignments_document_id_user_id_type_key");
   });
 
   it("não trata 23505 como skip fora da regressão de uma concluída", async () => {
