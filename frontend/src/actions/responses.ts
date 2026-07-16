@@ -4,6 +4,7 @@ import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { dropHiddenConditionals } from "@/lib/conditional";
+import { mergeSubmittedAnswers } from "@/lib/answer-merge";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import type { PydanticField } from "@/lib/types";
 
@@ -31,7 +32,7 @@ async function fetchSaveContext(
         .single(),
       supabase
         .from("responses")
-        .select("id, is_partial")
+        .select("id, is_partial, answers")
         .eq("project_id", projectId)
         .eq("document_id", documentId)
         .eq("respondent_id", effectiveId)
@@ -221,9 +222,22 @@ export async function saveResponse(
     // (getDocumentForCoding / code/page.tsx) — ver #252.
     const sanitizedAnswers = dropHiddenConditionals(fields, answers);
 
+    // Persistência preserva o que a leitura descartou por estar fora das opções
+    // atuais; sem isto, salvar um campo apaga do banco o valor de outro que o
+    // formulário nem chegou a exibir (#484). Os dois conjuntos são distintos de
+    // propósito e NÃO devem ser unificados: `sanitizedAnswers` responde "o
+    // pesquisador respondeu o formulário atual?" e é o que segue alimentando
+    // isCodingComplete/automação em syncCodingAssignmentStatus, enquanto
+    // `answersToPersist` responde "o que sabemos sobre este documento?".
+    // Unificar faria um valor invisível na tela concluir a codificação sozinho.
+    const answersToPersist = dropHiddenConditionals(
+      fields,
+      mergeSubmittedAnswers(existing?.answers as Record<string, unknown> | null, sanitizedAnswers),
+    );
+
     const payload = buildResponsePayload({
       fields,
-      sanitizedAnswers,
+      sanitizedAnswers: answersToPersist,
       project,
       existing,
       isAutoSave,
