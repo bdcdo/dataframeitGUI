@@ -423,6 +423,45 @@ describe("useSchemaDraft", () => {
     expect(second.result.current.origin).toBe("rebased");
   });
 
+  it("conflito não anuncia merge: a proveniência só passa a rebasada quando ele fecha", () => {
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot([{ ...BASE_FIELDS[0], description: "Pergunta remota" }], "0.1.1", 2),
+      ),
+    );
+
+    // O merge PAROU: quem decide é o usuário, no diálogo. "rebased" aqui fazia o
+    // toast dizer "suas alterações foram mescladas" com o diálogo aberto.
+    expect(view.result.current.conflict).not.toBeNull();
+    expect(view.result.current.origin).toBe("session");
+
+    const conflictId = view.result.current.conflict!.merge.conflicts[0].id;
+    act(() => view.result.current.resolveConflict(conflictId, "local"));
+    act(() => view.result.current.applyResolvedDraft());
+
+    expect(view.result.current.conflict).toBeNull();
+    expect(view.result.current.origin).toBe("rebased");
+  });
+
+  it("um rascunho à frente do render do servidor sobrevive ao mount", () => {
+    // A aba salvou (revisão 2) e voltou a editar; `revalidateSchemaConsumers`
+    // não revalida `config/schema`, então o remount pode receber a revisão 1.
+    const first = renderDraft("0.1.1", 2);
+    act(() => first.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    first.unmount();
+
+    const stale = renderDraft("0.1.0", 1);
+
+    expect(stale.result.current.isDirty).toBe(true);
+    expect(stale.result.current.fields).toEqual(EDITED_FIELDS);
+    expect(stale.result.current.baseline.revision).toBe(2);
+    expect(stale.result.current.conflict).toBeNull();
+  });
+
   it("exige resolução explícita antes de aplicar merge conflitante", () => {
     const view = renderDraft();
     act(() => view.result.current.setFields(EDITED_FIELDS));

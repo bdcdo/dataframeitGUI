@@ -299,6 +299,16 @@ function initialState({
     persistedToken: draft.writeToken,
     blocked: false,
   };
+  // O par da guarda de `stateAfterRemoteChange`, que recusa retroceder a
+  // baseline. Aqui o remoto é o render do servidor, e ele pode estar ATRÁS do
+  // rascunho: `revalidateSchemaConsumers` não revalida `config/schema`, então
+  // uma aba que salvou e voltou a editar pode remontar sobre a revisão anterior.
+  // Tratar esse remoto como autoridade rebasaria o rascunho sobre o passado — e
+  // pior, o atalho `sameFields`→`clean` logo abaixo compararia contra campos
+  // stale e apagaria o rascunho por "coincidir" com o que já não é o remoto.
+  if (draft.base.revision > remote.revision) {
+    return { kind: "dirty", draft, origin: "recovered", storage };
+  }
   if (draft.base.revision === remote.revision) {
     if (sameFields(draft.fields, remote.fields)) {
       const deleted = deleteDraftIfTokenMatches(scope, draft.writeToken);
@@ -447,7 +457,14 @@ function stateAfterRemoteChange(
   return {
     kind: "conflict",
     conflict: { draft, remote, merge },
-    origin: "rebased",
+    // A proveniência não muda: o merge PAROU aqui, e é o usuário quem vai
+    // decidi-lo no diálogo. Anunciar "rebased" fazia o toast dizer "suas
+    // alterações foram mescladas" — e o rodapé, "mesclado com a versão mais
+    // recente" — exatamente enquanto o diálogo pedia que ele resolvesse as
+    // colisões. Quem passa a "rebased" é o ramo sem conflito acima e
+    // `stateAfterResolvedDraftApplication`, os dois pontos em que o merge de
+    // fato fecha.
+    origin: current.origin,
     storage: {
       available: stored.available,
       persistedToken: expectedDraftStillStored ? expectedToken : null,
@@ -703,11 +720,14 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
   // recuperado na mesma revisão porque revisão igual é schema igual (o trigger
   // do banco exige +1 a cada mudança). Recomparar aqui não protegeria de nada:
   // se algum construtor violasse a invariante, isto mascararia o estado
-  // inconsistente em vez de deixá-lo aparecer. Só `conflict` precisa do teste,
-  // porque a ordem mesclada pode coincidir com a remota.
-  const isDirty =
-    state.kind === "dirty" ||
-    (state.kind === "conflict" && !sameFields(fields, baseline.fields));
+  // inconsistente em vez de deixá-lo aparecer.
+  //
+  // Em `conflict` o valor é irrelevante por construção, e por isso nem é
+  // calculado: todo consumidor testa o conflito ANTES de olhar para `isDirty` —
+  // `saveDisabled` (`conflict !== null || !isDirty`), `handlePublishMajor` e
+  // `handleBackfill` (`isDirty || conflict`), e `statusMessage`, que sai pelo
+  // ramo de `conflictCount` sem chegar a ler o dirty.
+  const isDirty = state.kind === "dirty";
   const hasUnsavedWork = isDirty || state.kind === "conflict";
   const draftPersisted = persistedDraft(state) !== null;
   useDraftPersistenceLifecycle(pendingWriteToken, hasUnsavedWork, persistDraft);
