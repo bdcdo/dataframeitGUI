@@ -7,6 +7,8 @@ import routes.pydantic_routes as pr
 from main import app
 from services.auth import AuthUser, require_authenticated_user
 
+PROJECT_ID = "22222222-2222-2222-2222-222222222222"
+
 
 @pytest.fixture
 def client() -> TestClient:
@@ -67,14 +69,14 @@ def test_recover_fields_404_quando_projeto_nao_existe(client, monkeypatch):
     # maybe_single retorna data=None para projeto inexistente — o guard deve
     # responder 404 claro, não 500 (a regressão que o single() causava).
     _patch_supabase(monkeypatch, _Response(None))
-    r = client.post("/api/pydantic/recover-fields", json={"project_id": "nope"})
+    r = client.post("/api/pydantic/recover-fields", json={"project_id": PROJECT_ID})
     assert r.status_code == 404
     assert r.json()["detail"] == "Projeto não encontrado"
 
 
 def test_recover_fields_404_quando_sem_codigo(client, monkeypatch):
     _patch_supabase(monkeypatch, _Response({"pydantic_code": None}))
-    r = client.post("/api/pydantic/recover-fields", json={"project_id": "p1"})
+    r = client.post("/api/pydantic/recover-fields", json={"project_id": PROJECT_ID})
     assert r.status_code == 404
     assert "código Pydantic" in r.json()["detail"]
 
@@ -86,7 +88,7 @@ def test_recover_fields_reconstroi_campos_do_codigo_armazenado(client, monkeypat
         '    x: str = Field(description="X")\n'
     )
     _patch_supabase(monkeypatch, _Response({"pydantic_code": code}))
-    r = client.post("/api/pydantic/recover-fields", json={"project_id": "p1"})
+    r = client.post("/api/pydantic/recover-fields", json={"project_id": PROJECT_ID})
     assert r.status_code == 200
     body = r.json()
     assert body["valid"] is True

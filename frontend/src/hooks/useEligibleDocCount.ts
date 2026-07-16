@@ -24,18 +24,25 @@ export type EligibleFilterMode =
 export function useEligibleDocCount(
   projectId: string,
   filterMode: EligibleFilterMode | "specific",
-  maxResponseCount: number,
+  maxResponseCount: number | null,
   status: string,
 ): { eligibleCount: number | null } {
   const [eligibleCount, setEligibleCount] = useState<number | null>(null);
 
   useEffect(() => {
-    if (filterMode === "specific") return;
+    if (
+      filterMode === "specific" ||
+      (filterMode === "max_responses" && maxResponseCount === null)
+    ) {
+      return;
+    }
     let cancelled = false;
     getEligibleDocCount(
       projectId,
       filterMode,
-      filterMode === "max_responses" ? maxResponseCount : undefined,
+      filterMode === "max_responses"
+        ? (maxResponseCount ?? undefined)
+        : undefined,
     )
       .then((result) => {
         if (!cancelled) setEligibleCount(result.eligible);

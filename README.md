@@ -114,6 +114,8 @@ fly deploy -c fly.toml -a gui-analise-sistematica-frontend   # fallback; o norma
 | `CLERK_SECRET_KEY` | Frontend (Fly secret) | Secret key do Clerk |
 | `SUPABASE_SERVICE_ROLE_KEY` | Frontend (Fly secret) | Service role (server actions) |
 | `CLERK_WEBHOOK_SECRET` | Frontend (Fly secret) | Signing secret do webhook do Clerk |
+| `LLM_RATE_LIMIT_REQUESTS` | Backend (`fly.toml [env]`) | Máximo compartilhado de disparos LLM por usuário efetivo e projeto em cada janela (default: `5`) |
+| `LLM_RATE_LIMIT_WINDOW_SECONDS` | Backend (`fly.toml [env]`) | Duração da janela atômica no Postgres, em segundos (default: `60`) |
 
 ## Estrutura do Projeto
 
