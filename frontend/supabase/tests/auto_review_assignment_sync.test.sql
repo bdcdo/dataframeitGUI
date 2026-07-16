@@ -184,5 +184,120 @@ BEGIN
 END;
 $$;
 
+-- ========== Reabertura: trabalho novo devolve o documento à fila ==========
+RESET ROLE;
+SELECT set_config('request.jwt.claims', '', true);
+
+DO $$
+DECLARE
+  v_created INTEGER;
+  current_status TEXT;
+BEGIN
+  -- Estado de partida: assignment concluído (o bloco anterior fechou a fila).
+  SELECT status INTO current_status FROM public.assignments
+  WHERE id = 'e0000000-0000-0000-0000-000000000001';
+  IF current_status <> 'concluido' THEN
+    RAISE EXCEPTION 'fixture: assignment deveria estar concluido, está %',
+      current_status;
+  END IF;
+
+  -- O pesquisador edita a codificação e um campo novo passa a divergir. Antes,
+  -- o upsert com ignoreDuplicates criava o stub e deixava o assignment
+  -- concluído: documento fora da fila com veredito por fazer.
+  v_created := public.assign_auto_review_if_eligible(
+    'b0000000-0000-0000-0000-000000000001',
+    'c0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001',
+    ARRAY['q3'],
+    'd0000000-0000-0000-0000-000000000001',
+    'd0000000-0000-0000-0000-000000000002'
+  );
+
+  IF v_created <> 1 THEN
+    RAISE EXCEPTION 'FALHOU reabertura: esperava 1 stub novo, criou %', v_created;
+  END IF;
+
+  SELECT status INTO current_status FROM public.assignments
+  WHERE id = 'e0000000-0000-0000-0000-000000000001';
+  IF current_status <> 'pendente' THEN
+    RAISE EXCEPTION
+      'FALHOU reabertura: campo pendente novo não devolveu o doc à fila (status=%)',
+      current_status;
+  END IF;
+
+  RAISE NOTICE 'OK: trabalho novo reabre o assignment concluído';
+END;
+$$;
+
+-- ========== Idempotência: sem stub novo, não reabre fila já fechada ==========
+DO $$
+DECLARE
+  v_created INTEGER;
+  current_status TEXT;
+BEGIN
+  -- Fecha tudo de novo.
+  UPDATE public.field_reviews
+    SET self_verdict = 'admite_erro', self_reviewed_at = now()
+    WHERE project_id = 'b0000000-0000-0000-0000-000000000001'
+      AND self_verdict IS NULL;
+  UPDATE public.assignments SET status = 'concluido', completed_at = now()
+    WHERE id = 'e0000000-0000-0000-0000-000000000001';
+
+  -- Reexecução com os mesmos campos: os stubs já existem, nada fica pendente.
+  v_created := public.assign_auto_review_if_eligible(
+    'b0000000-0000-0000-0000-000000000001',
+    'c0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000001',
+    ARRAY['q1', 'q2', 'q3'],
+    'd0000000-0000-0000-0000-000000000001',
+    'd0000000-0000-0000-0000-000000000002'
+  );
+
+  IF v_created <> 0 THEN
+    RAISE EXCEPTION 'FALHOU idempotência: recriou % stub(s)', v_created;
+  END IF;
+
+  SELECT status INTO current_status FROM public.assignments
+  WHERE id = 'e0000000-0000-0000-0000-000000000001';
+  IF current_status <> 'concluido' THEN
+    RAISE EXCEPTION
+      'FALHOU idempotência: reabriu fila sem trabalho pendente (status=%)',
+      current_status;
+  END IF;
+
+  RAISE NOTICE 'OK: reexecução sem trabalho novo não reabre a fila';
+END;
+$$;
+
+-- ========== Reconciliação em lote do backlog ==========
+DO $$
+DECLARE
+  v_reopened INTEGER;
+  current_status TEXT;
+BEGIN
+  -- Simula o que a regeneração manual produzia: field_review pendente devolvido
+  -- ao backlog enquanto o assignment seguia concluído.
+  UPDATE public.field_reviews
+    SET self_verdict = NULL, self_reviewed_at = NULL
+    WHERE id = 'f0000000-0000-0000-0000-000000000002';
+
+  v_reopened := public.reopen_auto_review_assignments_with_pending(
+    'b0000000-0000-0000-0000-000000000001'
+  );
+
+  IF v_reopened <> 1 THEN
+    RAISE EXCEPTION 'FALHOU backlog: reabriu % assignment(s)', v_reopened;
+  END IF;
+
+  SELECT status INTO current_status FROM public.assignments
+  WHERE id = 'e0000000-0000-0000-0000-000000000001';
+  IF current_status <> 'pendente' THEN
+    RAISE EXCEPTION 'FALHOU backlog: assignment ficou em %', current_status;
+  END IF;
+
+  RAISE NOTICE 'OK: backlog reconcilia assignment fechado com campo pendente';
+END;
+$$;
+
 RESET ROLE;
 ROLLBACK;

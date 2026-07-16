@@ -175,6 +175,13 @@ async function claimSupabaseUserMapping(
     p_email: email,
   });
   if (error) {
+    // A RPC sinaliza os conflitos de identidade com 23514 (e-mail duplicado,
+    // profile já ativo, placeholder de outra conta Clerk). São estados do
+    // banco, não indisponibilidade: repetir devolve o mesmo erro, e a
+    // mensagem da RPC já descreve o que está no caminho.
+    if (error.code === "23514") {
+      throw new ClerkIdentityConflictError(error.message);
+    }
     throw new Error(`Erro ao vincular identidade Clerk: ${error.message}`);
   }
   return (data as string | null) ?? null;

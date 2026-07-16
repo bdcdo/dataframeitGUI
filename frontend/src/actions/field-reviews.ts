@@ -1205,9 +1205,25 @@ async function persistBacklogReconciliation(
   );
   await upsertBacklogAssignments(supabase, assignmentRows);
   await upsertBacklogFieldReviews(getAdmin, fieldReviewRows);
+  // Precisa vir depois dos field_reviews: o upsert de assignments não reabre
+  // linha concluída, então um campo devolvido ao backlog ficaria pendente num
+  // documento fora da fila. Reconcilia o projeto inteiro, não só as linhas
+  // deste lote — backlogs fechados cedo por execuções anteriores também voltam.
+  await reopenAutoReviewAssignmentsWithPending(getAdmin, projectId);
 
   await removeOrphanAssignments(supabase, projectId);
   return actuallyRemoved;
+}
+
+async function reopenAutoReviewAssignmentsWithPending(
+  getAdmin: () => SupabaseDataClient,
+  projectId: string,
+): Promise<void> {
+  const { error } = await getAdmin().rpc(
+    "reopen_auto_review_assignments_with_pending",
+    { p_project_id: projectId },
+  );
+  if (error) throw new Error(error.message);
 }
 
 export async function regenerateAutoReviewBacklog(projectId: string): Promise<{

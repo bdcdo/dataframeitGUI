@@ -8,6 +8,11 @@ type UpsertCall = {
   options: unknown;
 };
 
+type RpcCall = {
+  fn: string;
+  args: Record<string, unknown>;
+};
+
 interface MockState {
   project: { pydantic_fields: unknown } | null;
   humanResponse: { id: string; answers: Record<string, unknown> } | null;
@@ -18,6 +23,7 @@ interface MockState {
     response_b_id: string;
   }>;
   upserts: UpsertCall[];
+  rpcs: RpcCall[];
 }
 
 let state: MockState;
@@ -29,6 +35,7 @@ beforeEach(() => {
     llmResponse: null,
     equivalences: [],
     upserts: [],
+    rpcs: [],
   };
 });
 
@@ -80,6 +87,10 @@ vi.mock("@/lib/supabase/admin", () => {
         }
         throw new Error(`Unexpected table: ${table}`);
       },
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        state.rpcs.push({ fn, args });
+        return { data: null, error: null };
+      },
     };
   };
   return { createSupabaseAdmin: adminFactory };
@@ -124,31 +135,19 @@ describe("createAutoReviewIfDiverges", () => {
     // Apenas q1 diverge
     expect(r.divergentCount).toBe(1);
 
-    const assignmentUpsert = state.upserts.find(
-      (u) => u.table === "assignments",
-    );
-    expect(assignmentUpsert).toBeDefined();
-    expect(assignmentUpsert?.rows).toMatchObject({
-      project_id: "p1",
-      document_id: "doc1",
-      user_id: "user1",
-      type: "auto_revisao",
-      status: "pendente",
-    });
-
-    const frUpsert = state.upserts.find((u) => u.table === "field_reviews");
-    expect(frUpsert).toBeDefined();
-    expect(Array.isArray(frUpsert?.rows)).toBe(true);
-    const rows = frUpsert?.rows as Array<Record<string, unknown>>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      project_id: "p1",
-      document_id: "doc1",
-      field_name: "q1",
-      human_response_id: "h1",
-      llm_response_id: "l1",
-      self_reviewer_id: "user1",
-    });
+    expect(state.rpcs).toEqual([
+      {
+        fn: "assign_auto_review_if_eligible",
+        args: {
+          p_project_id: "p1",
+          p_document_id: "doc1",
+          p_self_reviewer_id: "user1",
+          p_field_names: ["q1"],
+          p_human_response_id: "h1",
+          p_llm_response_id: "l1",
+        },
+      },
+    ]);
   });
 
   it("codificacao humana incompleta → divergentCount=0 e nenhum upsert (#174)", async () => {
@@ -186,7 +185,11 @@ describe("createAutoReviewIfDiverges", () => {
     expect(state.upserts).toHaveLength(0);
   });
 
-  it("upserts usam ignoreDuplicates (idempotencia)", async () => {
+  // Antes, os stubs e o assignment eram dois upserts com ignoreDuplicates: um
+  // campo divergente novo nascia pendente sem reabrir o assignment concluído, e
+  // o documento sumia da fila. A reabertura condicional só existe dentro da
+  // RPC, então escrever nessas tabelas por fora traz o bug de volta.
+  it("não escreve em assignments/field_reviews fora da RPC", async () => {
     const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
     state.project = {
       pydantic_fields: [
@@ -198,8 +201,9 @@ describe("createAutoReviewIfDiverges", () => {
 
     await createAutoReviewIfDiverges("p1", "doc1", "user1");
 
-    for (const u of state.upserts) {
-      expect(u.options).toMatchObject({ ignoreDuplicates: true });
-    }
+    expect(state.upserts).toEqual([]);
+    expect(state.rpcs.map((c) => c.fn)).toEqual([
+      "assign_auto_review_if_eligible",
+    ]);
   });
 });

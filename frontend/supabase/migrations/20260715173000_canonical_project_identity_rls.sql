@@ -61,8 +61,8 @@ ALTER TABLE public.clerk_user_mapping
 -- clerk_uid(), então nem o master conseguiria reconciliar as contas presas. Os
 -- mappings pré-existentes já eram a fonte de verdade antes deste schema, então
 -- marcá-los como concluídos preserva o estado atual; a exigência de snapshot
--- Clerk verificado passa a valer no próximo reconcile de cada conta. Roda antes
--- de enforce_clerk_mapping_identity existir, que barraria este UPDATE.
+-- Clerk verificado passa a valer no próximo reconcile de cada conta, que
+-- regrava a versão a partir do estado real do Clerk.
 UPDATE public.clerk_user_mapping
   SET access_sync_version = 1
   WHERE NOT clerk_deleted;
