@@ -6,6 +6,7 @@ import {
   filterEligibleDocs,
   resolveWeight,
   resolveCap,
+  resolveResearchersPerDoc,
   type LotteryFilters,
 } from "@/lib/lottery-utils";
 import { toast } from "sonner";
@@ -91,6 +92,15 @@ export function useLotteryRun({
 
   const isComparacao = type === "comparacao";
 
+  // Derivado no render, nunca por effect: o state segue 2 (o default correto da
+  // codificação) e é simplesmente ignorado em comparação. Trocar de tipo não
+  // "herda" valor porque nada é herdado — e voltar para codificação restaura o
+  // que o coordenador tinha digitado. Mesma função pura do server (#490).
+  const researchersPerDocEffective = resolveResearchersPerDoc(
+    type,
+    researchersPerDoc,
+  );
+
   const filters = useMemo<LotteryFilters>(() => {
     const f: LotteryFilters = {};
     if (codingsFilterMode === "none") f.maxHumanCodings = 0;
@@ -121,7 +131,7 @@ export function useLotteryRun({
   // buildParams na hora do submit
   const configKey = JSON.stringify({
     type,
-    researchersPerDoc,
+    researchersPerDoc: researchersPerDocEffective,
     docsPerResearcherEnabled,
     docsPerResearcher,
     docSubsetEnabled,
@@ -158,22 +168,27 @@ export function useLotteryRun({
 
   const canSubmit = !blockedMessage && stats !== null;
 
-  const buildParams = (withSeed: boolean): LotteryParams => ({
-    projectId,
-    type,
-    mode,
-    balancing,
-    seed: withSeed && seed !== null ? seed : undefined,
-    researchersPerDoc,
-    docsPerResearcher: docsPerResearcherEnabled
-      ? docsPerResearcher
-      : undefined,
-    docSubsetSize: docSubsetEnabled ? docSubsetSize : undefined,
-    label: label || undefined,
-    filters,
-    participantIds,
-    participantSettings,
-  });
+  const buildParams = (withSeed: boolean): LotteryParams => {
+    const base = {
+      projectId,
+      mode,
+      balancing,
+      seed: withSeed && seed !== null ? seed : undefined,
+      docsPerResearcher: docsPerResearcherEnabled
+        ? docsPerResearcher
+        : undefined,
+      docSubsetSize: docSubsetEnabled ? docSubsetSize : undefined,
+      label: label || undefined,
+      filters,
+      participantIds,
+      participantSettings,
+    };
+    // A união discriminada não tem researchersPerDoc no braço de comparação —
+    // um revisor por documento é a regra, não uma configuração.
+    return type === "comparacao"
+      ? { ...base, type: "comparacao" }
+      : { ...base, type: "codificacao", researchersPerDoc: researchersPerDocEffective };
+  };
 
   const handlePreview = async () => {
     setPreviewing(true);
@@ -216,7 +231,9 @@ export function useLotteryRun({
 
   const estimatedPerParticipant =
     docsConsidered !== null && participantIds.length > 0
-      ? Math.ceil((docsConsidered * researchersPerDoc) / participantIds.length)
+      ? Math.ceil(
+          (docsConsidered * researchersPerDocEffective) / participantIds.length,
+        )
       : 0;
 
   return {
