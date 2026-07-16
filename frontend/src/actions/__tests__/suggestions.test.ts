@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   makeSupabaseMock,
+  type RpcCall,
+  type TableResult,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
@@ -16,6 +18,8 @@ const supabaseState = vi.hoisted(() => ({
   tableResults: undefined as TableResults | undefined,
   revalidatePath: vi.fn(),
   revalidateTag: vi.fn(),
+  rpcCalls: [] as RpcCall[],
+  rpcResults: undefined as Record<string, TableResult> | undefined,
 }));
 
 vi.mock("next/cache", () => ({
@@ -38,6 +42,8 @@ vi.mock("@/lib/supabase/server", () => ({
     makeSupabaseMock({
       tableResults: supabaseState.tableResults,
       writeCalls: supabaseState.writeCalls,
+      rpcCalls: supabaseState.rpcCalls,
+      rpcResults: supabaseState.rpcResults,
     }),
 }));
 
@@ -49,12 +55,28 @@ import {
 beforeEach(() => {
   supabaseState.writeCalls = [];
   supabaseState.tableResults = undefined;
+  supabaseState.rpcCalls = [];
+  supabaseState.rpcResults = undefined;
 });
+
+const savedSchema = {
+  data: {
+    status: "saved",
+    schema_revision: 1,
+    pydantic_fields: [{ ...FIELD, hash: "hash" }],
+    schema_version_major: 0,
+    schema_version_minor: 2,
+    schema_version_patch: 0,
+  },
+};
 
 describe("approveSchemaSuggestionWithEdits", () => {
   it("schema não aplicado (0 linhas em projects) → erro e sugestão NÃO marcada como aprovada", async () => {
     supabaseState.tableResults = {
-      projects: [PROJECT_SELECT, { data: [] }],
+      projects: PROJECT_SELECT,
+    };
+    supabaseState.rpcResults = {
+      commit_project_schema: { error: { message: "sem permissão" } },
     };
 
     const r = await approveSchemaSuggestionWithEdits(
@@ -73,10 +95,10 @@ describe("approveSchemaSuggestionWithEdits", () => {
 
   it("schema aplicado mas UPDATE de schema_suggestions filtrado (0 linhas) → erro, não sucesso falso", async () => {
     supabaseState.tableResults = {
-      projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
-      schema_change_log: { data: null, error: null },
+      projects: PROJECT_SELECT,
       schema_suggestions: { data: [] },
     };
+    supabaseState.rpcResults = { commit_project_schema: savedSchema };
 
     const r = await approveSchemaSuggestionWithEdits(
       "s1",
@@ -89,10 +111,10 @@ describe("approveSchemaSuggestionWithEdits", () => {
 
   it("caminho feliz: schema aplicado e sugestão marcada como aprovada", async () => {
     supabaseState.tableResults = {
-      projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
-      schema_change_log: { data: null, error: null },
+      projects: PROJECT_SELECT,
       schema_suggestions: { data: [{ id: "s1" }] },
     };
+    supabaseState.rpcResults = { commit_project_schema: savedSchema };
 
     const r = await approveSchemaSuggestionWithEdits(
       "s1",

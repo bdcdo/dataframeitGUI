@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import type { LlmConfig, PydanticField } from "@/lib/types";
+import type {
+  LlmConfig,
+  PydanticField,
+  SchemaBaselineIdentity,
+} from "@/lib/types";
 import { PromptCard } from "./PromptCard";
 import { ModelConfigCard } from "./ModelConfigCard";
 import { RunCard } from "./RunCard";
@@ -13,6 +17,7 @@ interface LlmConfigurePaneProps {
   config: LlmConfig;
   pydanticFields: PydanticField[] | null;
   pydanticCode: string | null;
+  schemaBaseline: SchemaBaselineIdentity;
   totalDocs: number;
   docsWithLlm: number;
 }
@@ -31,6 +36,7 @@ export function LlmConfigurePane({
   config: initialConfig,
   pydanticFields,
   pydanticCode,
+  schemaBaseline,
   totalDocs,
   docsWithLlm,
 }: LlmConfigurePaneProps) {
@@ -50,6 +56,7 @@ export function LlmConfigurePane({
         config={config}
         setConfig={setConfig}
         pydanticFields={pydanticFields}
+        schemaBaseline={schemaBaseline}
       />
       <RunCard
         projectId={projectId}

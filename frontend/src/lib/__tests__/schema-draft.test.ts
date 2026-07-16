@@ -4,7 +4,7 @@ import {
   parseSchemaDraft,
 } from "@/lib/schema-draft";
 import { PYDANTIC_FIELD_PROPERTY_KEYS } from "@/lib/pydantic-field";
-import { schemaFieldsFingerprint, snapshotOf } from "@/lib/schema-utils";
+import { snapshotOf } from "@/lib/schema-utils";
 import type { FieldCondition, PydanticField } from "@/lib/types";
 
 const trigger: PydanticField = {
@@ -33,24 +33,28 @@ const complete: PydanticField = {
 function rawDraft(fields: PydanticField[] = [trigger, complete]) {
   return JSON.stringify({
     formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,
-    draftId: "draft-1",
-    revision: 1,
+    writeToken: "write-1",
     updatedAt: 1,
-    baseVersion: "0.1.0",
-    baseFingerprint: schemaFieldsFingerprint([trigger]),
+    base: { fields: [trigger], version: "0.1.0", revision: 4 },
     fields,
   });
 }
 
 describe("parseSchemaDraft", () => {
-  it("mantém o parser runtime alinhado ao snapshot canônico mais hash derivado", () => {
+  it("mantém o schema Zod alinhado ao snapshot canônico mais hash derivado", () => {
     expect(PYDANTIC_FIELD_PROPERTY_KEYS).toEqual(
       [...Object.keys(snapshotOf(complete)), "hash"].sort(),
     );
   });
 
-  it("aceita todas as propriedades atuais de PydanticField", () => {
-    expect(parseSchemaDraft(rawDraft())?.fields).toEqual([trigger, complete]);
+  it("aceita envelope v3 com baseline completo e todas as propriedades", () => {
+    expect(parseSchemaDraft(rawDraft())).toEqual({
+      formatVersion: 3,
+      writeToken: "write-1",
+      updatedAt: 1,
+      base: { fields: [trigger], version: "0.1.0", revision: 4 },
+      fields: [trigger, complete],
+    });
   });
 
   it.each<FieldCondition>([
@@ -72,45 +76,52 @@ describe("parseSchemaDraft", () => {
     [
       "subcampo",
       {
-        fields: [trigger, { ...complete, subfields: [{ ...complete.subfields![0], extra: true }] }],
+        fields: [
+          trigger,
+          {
+            ...complete,
+            subfields: [{ ...complete.subfields![0], extra: true }],
+          },
+        ],
       },
     ],
     [
       "condição",
-      { fields: [trigger, { ...complete, condition: { field: "gatilho", equals: "Sim", extra: true } }] },
+      {
+        fields: [
+          trigger,
+          {
+            ...complete,
+            condition: { field: "gatilho", equals: "Sim", extra: true },
+          },
+        ],
+      },
     ],
+    ["baseline", { base: { fields: [trigger], version: "0.1.0", revision: 4, extra: true } }],
   ])("rejeita chave desconhecida no %s", (_label, override) => {
     const base = JSON.parse(rawDraft()) as Record<string, unknown>;
     expect(parseSchemaDraft(JSON.stringify({ ...base, ...override }))).toBeNull();
   });
 
-  it("preserva estado intermediário estruturalmente válido para validar só no save", () => {
+  it("preserva estado intermediário estruturalmente válido", () => {
     const intermediate = [{ ...trigger, description: "" }];
-    expect(parseSchemaDraft(rawDraft(intermediate))?.fields).toEqual(
-      intermediate,
-    );
+    expect(parseSchemaDraft(rawDraft(intermediate))?.fields).toEqual(intermediate);
   });
 
-  it("rejeita valor fora do contrato estrutural", () => {
+  it("rejeita JSON corrompido, formato antigo, token vazio e revisão inválida", () => {
+    expect(parseSchemaDraft("{")).toBeNull();
     const base = JSON.parse(rawDraft()) as Record<string, unknown>;
+    expect(
+      parseSchemaDraft(JSON.stringify({ ...base, formatVersion: 2 })),
+    ).toBeNull();
+    expect(parseSchemaDraft(JSON.stringify({ ...base, writeToken: "" }))).toBeNull();
     expect(
       parseSchemaDraft(
         JSON.stringify({
           ...base,
-          fields: [{ ...trigger, type: "tipo-inexistente" }],
+          base: { fields: [trigger], version: "0.1.0", revision: -1 },
         }),
       ),
-    ).toBeNull();
-  });
-
-  it("rejeita JSON corrompido, formato antigo e revision inválida", () => {
-    expect(parseSchemaDraft("{")).toBeNull();
-    const base = JSON.parse(rawDraft()) as Record<string, unknown>;
-    expect(
-      parseSchemaDraft(JSON.stringify({ ...base, formatVersion: 1 })),
-    ).toBeNull();
-    expect(
-      parseSchemaDraft(JSON.stringify({ ...base, revision: 0 })),
     ).toBeNull();
   });
 });

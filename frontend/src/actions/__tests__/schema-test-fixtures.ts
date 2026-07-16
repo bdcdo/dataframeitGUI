@@ -1,5 +1,4 @@
-import { schemaBaselineIdentity } from "@/lib/schema-utils";
-import type { PydanticField } from "@/lib/types";
+import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 import type { TableResult } from "./supabase-mock";
 
 export const FIELD: PydanticField = {
@@ -17,7 +16,11 @@ export const PROJECT_SELECT: TableResult = {
     schema_version_major: 0,
     schema_version_minor: 1,
     schema_version_patch: 0,
+    schema_revision: 0,
   },
 };
 
-export const EMPTY_BASELINE = schemaBaselineIdentity([], "0.1.0");
+export const EMPTY_BASELINE: SchemaBaselineIdentity = {
+  version: "0.1.0",
+  revision: 0,
+};

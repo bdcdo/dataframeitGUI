@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,51 @@ interface FieldCardProps {
   // Opcional: callback para substituir TODA a lista de campos. Usado quando
   // remover uma opção exige também atualizar `condition` de outros campos.
   onAllFieldsChange?: (fields: PydanticField[]) => void;
+}
+
+function FieldNameInput({
+  field,
+  allFields,
+  onChange,
+}: {
+  field: PydanticField;
+  allFields: PydanticField[];
+  onChange: (name: string) => void;
+}) {
+  const [duplicateName, setDuplicateName] = useState(false);
+  const nameIsValid = /^[a-z_][a-z0-9_]*$/.test(field.name);
+  const handleChange = (name: string) => {
+    const duplicate = allFields.some(
+      (candidate) => candidate !== field && candidate.name === name,
+    );
+    setDuplicateName(duplicate);
+    if (!duplicate) onChange(name);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Nome do campo</Label>
+      <Input
+        value={field.name}
+        onChange={(event) => handleChange(event.target.value)}
+        placeholder="nome_do_campo"
+        className={cn(
+          "font-mono text-sm h-8",
+          !nameIsValid && field.name && "border-destructive",
+        )}
+      />
+      {!nameIsValid && field.name && (
+        <p className="text-xs text-destructive">
+          Use apenas letras minúsculas, números e _ (ex: tipo_documento)
+        </p>
+      )}
+      {duplicateName && (
+        <p className="text-xs text-destructive">
+          Já existe um campo com esse nome.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function FieldCard({
@@ -96,8 +142,6 @@ export function FieldCard({
     }
   };
 
-  const nameIsValid = /^[a-z_][a-z0-9_]*$/.test(field.name);
-
   return (
     <div ref={setNodeRef} style={sortableStyle}>
       <Collapsible open={isExpanded} onOpenChange={onToggle}>
@@ -118,23 +162,11 @@ export function FieldCard({
         <CollapsibleContent>
           <div className="border-t p-4 space-y-4">
             {/* Nome do campo */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Nome do campo</Label>
-              <Input
-                value={field.name}
-                onChange={(e) => updateField({ name: e.target.value })}
-                placeholder="nome_do_campo"
-                className={cn(
-                  "font-mono text-sm h-8",
-                  !nameIsValid && field.name && "border-destructive"
-                )}
-              />
-              {!nameIsValid && field.name && (
-                <p className="text-xs text-destructive">
-                  Use apenas letras minúsculas, números e _ (ex: tipo_documento)
-                </p>
-              )}
-            </div>
+            <FieldNameInput
+              field={field}
+              allFields={allFields}
+              onChange={(name) => updateField({ name })}
+            />
 
             {/* Descrição */}
             <div className="space-y-1.5">

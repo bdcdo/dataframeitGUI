@@ -25,6 +25,13 @@ interface SchemaBuilderGUIProps {
   onChange: (fields: PydanticField[]) => void;
 }
 
+function nextAvailableFieldName(fields: PydanticField[]): string {
+  const names = new Set(fields.map(({ name }) => name));
+  let suffix = 1;
+  while (names.has(`campo_${suffix}`)) suffix += 1;
+  return `campo_${suffix}`;
+}
+
 export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
 
@@ -38,7 +45,7 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
     onChange([
       ...fields,
       {
-        name: `campo_${newIndex + 1}`,
+        name: nextAvailableFieldName(fields),
         type: "text",
         options: null,
         description: "",

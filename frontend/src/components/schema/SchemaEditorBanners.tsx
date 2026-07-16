@@ -11,10 +11,8 @@ interface SchemaEditorBannersProps {
   onRecover: () => void;
   isPending: boolean;
   draftConflict: SchemaDraftConflict | null;
-  currentVersion: string;
   storageAvailable: boolean;
   draftPersisted: boolean;
-  onApplyDraft: () => void;
   onDiscardDraft: () => void;
 }
 
@@ -29,15 +27,10 @@ export function SchemaEditorBanners({
   onRecover,
   isPending,
   draftConflict,
-  currentVersion,
   storageAvailable,
   draftPersisted,
-  onApplyDraft,
   onDiscardDraft,
 }: SchemaEditorBannersProps) {
-  const sameConflictVersion =
-    draftConflict?.draft.baseVersion === currentVersion;
-
   return (
     <>
       {!helpDismissed && (
@@ -92,26 +85,15 @@ export function SchemaEditorBanners({
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-700" />
           <div className="flex-1 text-muted-foreground" role="alert">
             <strong className="text-foreground">
-              Rascunho baseado em outro estado do schema.
+              Rascunho em conflito com o schema salvo.
             </strong>{" "}
-            {sameConflictVersion
-              ? `O conteúdo-base da v${currentVersion} mudou desde a criação do rascunho.`
-              : `Ele foi criado sobre a v${draftConflict.draft.baseVersion}, mas o projeto está na v${currentVersion}.`} {" "}
-            O conteúdo local não foi aplicado automaticamente. {" "}
+            Ele foi criado sobre a v{draftConflict.draft.base.version}, revisão {draftConflict.draft.base.revision}, mas o projeto está na v{draftConflict.remote.version}, revisão {draftConflict.remote.revision}. As mudanças independentes foram mescladas; escolha o resultado das {draftConflict.merge.unresolvedConflictIds.length} colisões antes de salvar. {" "}
             {draftPersisted
               ? "O rascunho continua salvo neste navegador."
               : storageAvailable
                 ? "Não foi possível confirmar a gravação local; fechar, recarregar ou navegar pode perdê-lo."
                 : "O armazenamento local está indisponível; fechar, recarregar ou navegar pode perdê-lo."}
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 shrink-0 text-xs"
-            onClick={onApplyDraft}
-          >
-            Aplicar para revisar
-          </Button>
           <Button
             variant="ghost"
             size="sm"

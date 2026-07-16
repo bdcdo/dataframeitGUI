@@ -1,3 +1,5 @@
+import type { PydanticField } from "./pydantic-field";
+
 export interface Profile {
   id: string;
   email: string;
@@ -89,68 +91,28 @@ export interface Project {
   out_of_scope_enabled: boolean;
 }
 
-export interface SubfieldDef {
-  key: string;
-  label: string;
-  required?: boolean;
-}
-
-export type ConditionScalar = string | number | boolean;
-
-export type FieldCondition =
-  | { field: string; equals: ConditionScalar }
-  | { field: string; not_equals: ConditionScalar }
-  | { field: string; in: ConditionScalar[] }
-  | { field: string; not_in: ConditionScalar[] }
-  | { field: string; exists: boolean };
-
-export const PYDANTIC_FIELD_TYPES = ["single", "multi", "text", "date"] as const;
-export type PydanticFieldType = (typeof PYDANTIC_FIELD_TYPES)[number];
-
-export const PYDANTIC_FIELD_TARGETS = [
-  "all",
-  "llm_only",
-  "human_only",
-  "none",
-] as const;
-export type PydanticFieldTarget = (typeof PYDANTIC_FIELD_TARGETS)[number];
-
-export const PYDANTIC_SUBFIELD_RULES = ["all", "at_least_one"] as const;
-export type PydanticSubfieldRule = (typeof PYDANTIC_SUBFIELD_RULES)[number];
-
-export interface PydanticField {
-  name: string;
-  type: PydanticFieldType;
-  options: string[] | null;
-  description: string;
-  help_text?: string;
-  target?: PydanticFieldTarget;
-  required?: boolean;
-  hash?: string;
-  subfields?: SubfieldDef[];
-  subfield_rule?: PydanticSubfieldRule;
-  allow_other?: boolean;
-  condition?: FieldCondition;
-  // Texto-base do prompt da justificativa do LLM para este campo. Quando
-  // ausente, o backend usa um default exigente (cita trecho do documento).
-  // Ver _extend_model_with_justifications em backend/services/llm_runner.py.
-  justification_prompt?: string;
-}
+// Reexports exclusivamente de tipo mantem consumidores de `types.ts` livres
+// do parser Zod no bundle quando so precisam do contrato estatico.
+export type {
+  ConditionScalar,
+  FieldCondition,
+  PydanticField,
+  SubfieldDef,
+} from "./pydantic-field";
 
 export interface SchemaBaselineIdentity {
   version: string;
-  fingerprint: string;
+  revision: number;
 }
 
 export interface SchemaSnapshot extends SchemaBaselineIdentity {
   fields: PydanticField[];
 }
 
-export interface SchemaSaveResult {
-  saved?: SchemaSnapshot;
-  conflict?: SchemaSnapshot;
-  error?: string;
-}
+export type SchemaSaveResult =
+  | { status: "saved"; snapshot: SchemaSnapshot }
+  | { status: "conflict"; current: SchemaSnapshot }
+  | { status: "error"; message: string };
 
 export interface ProjectMember {
   id: string;
