@@ -19,6 +19,7 @@ import {
 import { notFound } from "next/navigation";
 
 type AdminClient = ReturnType<typeof createSupabaseAdmin>;
+type ServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
 type MemberQueryRow = ProjectMember & { profiles: Profile };
 type EmailLinkQueryRow = MemberEmailLink & {
   linked_profile: Pick<Profile, "activated_at"> | null;
@@ -85,14 +86,14 @@ function buildMemberRows(
 }
 
 async function countOrphanedComparisons(
-  admin: AdminClient,
+  supabase: ServerClient,
   projectId: string,
   mode: string | null | undefined,
 ): Promise<number> {
   if (mode !== "compare_humans" && mode !== "compare_llm") return 0;
   // A comparação não materializa divergência. Esta página é coordinator-only e
   // de baixo tráfego, então a varredura sob demanda preserva uma fonte única.
-  return (await scanComparisonBacklog(admin, projectId, mode)).length;
+  return (await scanComparisonBacklog(supabase, projectId, mode)).length;
 }
 
 export default async function MembersPage({
@@ -147,7 +148,7 @@ export default async function MembersPage({
   const admin = createSupabaseAdmin();
   const [mappingsByUserId, orphanedComparisons] = await Promise.all([
     loadClerkMappings(admin, members, emailLinks),
-    countOrphanedComparisons(admin, id, project?.automation_mode),
+    countOrphanedComparisons(supabase, id, project?.automation_mode),
   ]);
   const emailLinkViews = buildEmailLinkViews(emailLinks, mappingsByUserId);
   const typedMembers = buildMemberRows(

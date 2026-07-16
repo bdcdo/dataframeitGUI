@@ -34,6 +34,8 @@ from services.auth import (
 # vs o _configure_secret deste módulo setam o MESMO valor).
 SECRET = TEST_JWT_SECRET
 USER = "11111111-1111-1111-1111-111111111111"
+PROJECT = "22222222-2222-2222-2222-222222222222"
+JOB = "33333333-3333-3333-3333-333333333333"
 
 
 def make_token(claims: dict | None = None, secret: str = SECRET) -> str:
@@ -485,13 +487,13 @@ def test_run_field_forbidden_for_non_coordinator(client, monkeypatch):
         monkeypatch,
         FakeSupabase(
             master_users=[],
-            projects=[{"id": "p1", "created_by": "other"}],
+            projects=[{"id": PROJECT, "created_by": "other"}],
             project_members=[],
         ),
     )
     resp = client.post(
         "/api/llm/run-field",
-        json={"project_id": "p1", "field_names": ["a"]},
+        json={"project_id": PROJECT, "field_names": ["a"]},
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 403
@@ -503,13 +505,13 @@ def test_cleanup_stale_forbidden_for_non_coordinator(client, monkeypatch):
         monkeypatch,
         FakeSupabase(
             master_users=[],
-            projects=[{"id": "p1", "created_by": "other"}],
+            projects=[{"id": PROJECT, "created_by": "other"}],
             project_members=[],
         ),
     )
     resp = client.post(
         "/api/llm/cleanup-stale",
-        json={"project_id": "p1"},
+        json={"project_id": PROJECT},
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 403
@@ -521,14 +523,14 @@ def test_status_not_found_for_non_member(client, monkeypatch):
     use_supabase(
         monkeypatch,
         FakeSupabase(
-            llm_runs=[{"job_id": "job1", "project_id": "p1"}],
+            llm_runs=[{"job_id": JOB, "project_id": PROJECT}],
             master_users=[],
-            projects=[{"id": "p1", "created_by": "other"}],
+            projects=[{"id": PROJECT, "created_by": "other"}],
             project_members=[],
         ),
     )
     resp = client.get(
-        "/api/llm/status/job1",
+        f"/api/llm/status/{JOB}",
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 404
@@ -541,13 +543,13 @@ def test_run_forbidden_for_non_coordinator(client, monkeypatch):
         monkeypatch,
         FakeSupabase(
             master_users=[],
-            projects=[{"id": "p1", "created_by": "other"}],
+            projects=[{"id": PROJECT, "created_by": "other"}],
             project_members=[],
         ),
     )
     resp = client.post(
         "/api/llm/run",
-        json={"project_id": "p1"},
+        json={"project_id": PROJECT},
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 403
@@ -560,13 +562,13 @@ def test_recover_fields_forbidden_for_non_coordinator(client, monkeypatch):
         monkeypatch,
         FakeSupabase(
             master_users=[],
-            projects=[{"id": "p1", "created_by": "other"}],
+            projects=[{"id": PROJECT, "created_by": "other"}],
             project_members=[],
         ),
     )
     resp = client.post(
         "/api/pydantic/recover-fields",
-        json={"project_id": "p1"},
+        json={"project_id": PROJECT},
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 403
@@ -579,7 +581,7 @@ def test_recover_fields_allows_coordinator(client, monkeypatch):
         master_users=[],
         projects=[
             {
-                "id": "p1",
+                "id": PROJECT,
                 "created_by": USER,
                 "pydantic_code": "from pydantic import BaseModel\n\nclass Analysis(BaseModel):\n    x: str",
             }
@@ -593,7 +595,7 @@ def test_recover_fields_allows_coordinator(client, monkeypatch):
     monkeypatch.setattr(pydantic_routes_mod, "get_supabase", lambda: fake)
     resp = client.post(
         "/api/pydantic/recover-fields",
-        json={"project_id": "p1"},
+        json={"project_id": PROJECT},
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 200
@@ -606,7 +608,7 @@ def test_cleanup_stale_allows_coordinator(client, monkeypatch):
     # negativo (403) garantindo que o caminho autorizado responde 200.
     fake = FakeSupabase(
         master_users=[],
-        projects=[{"id": "p1", "created_by": USER}],
+        projects=[{"id": PROJECT, "created_by": USER}],
         project_members=[],
     )
     use_supabase(monkeypatch, fake)
@@ -618,7 +620,7 @@ def test_cleanup_stale_allows_coordinator(client, monkeypatch):
     )
     resp = client.post(
         "/api/llm/cleanup-stale",
-        json={"project_id": "p1"},
+        json={"project_id": PROJECT},
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 200
@@ -630,9 +632,9 @@ def test_status_allows_member(client, monkeypatch):
     # get_job_status e devolve 200. Complementa o teste negativo (404) garantindo
     # que o caminho autorizado responde com o status da run.
     fake = FakeSupabase(
-        llm_runs=[{"job_id": "job1", "project_id": "p1"}],
+        llm_runs=[{"job_id": JOB, "project_id": PROJECT}],
         master_users=[],
-        projects=[{"id": "p1", "created_by": USER}],
+        projects=[{"id": PROJECT, "created_by": USER}],
         project_members=[],
     )
     use_supabase(monkeypatch, fake)
@@ -647,7 +649,7 @@ def test_status_allows_member(client, monkeypatch):
         },
     )
     resp = client.get(
-        "/api/llm/status/job1",
+        f"/api/llm/status/{JOB}",
         headers={"Authorization": f"Bearer {make_token()}"},
     )
     assert resp.status_code == 200

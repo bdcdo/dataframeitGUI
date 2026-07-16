@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
@@ -33,10 +33,10 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     if (!gate.ok)
       return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
-    const admin = createSupabaseAdmin();
+    const supabase = await createSupabaseServer();
 
     // Só compare_humans/compare_llm têm backlog de comparação a drenar.
-    const { data: project, error: projectError } = await admin
+    const { data: project, error: projectError } = await supabase
       .from("projects")
       .select("automation_mode")
       .eq("id", projectId)
@@ -48,7 +48,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     }
 
     const backlog = await scanComparisonBacklog(
-      admin,
+      supabase,
       projectId,
       mode as ComparisonMode,
     );
@@ -58,7 +58,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
     // Carga aberta pré-computada uma vez; assignComparisonReviewer a incrementa
     // entre docs para preservar o balanceamento sem N queries (sequencial: cada
     // atribuição enxerga a carga atualizada da anterior).
-    const loadByUser = await loadOpenComparisonLoad(admin, projectId);
+    const loadByUser = await loadOpenComparisonLoad(supabase, projectId);
 
     let assigned = 0;
     let stillNoPool = 0;
@@ -67,7 +67,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       // a carga atualizada da anterior; paralelizar degradaria o balanceamento.
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const result = await assignComparisonReviewer(
-        admin,
+        supabase,
         projectId,
         documentId,
         coderIds,

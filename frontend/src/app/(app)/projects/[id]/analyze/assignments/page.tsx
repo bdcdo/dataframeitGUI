@@ -1,10 +1,14 @@
 import { unstable_cache } from "next/cache";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { AssignmentTable } from "@/components/assignments/AssignmentTable";
 import { LotteryDialog } from "@/components/assignments/LotteryDialog";
 import { ClearPendingButton } from "@/components/assignments/ClearPendingButton";
 import type { ProjectMember } from "@/lib/types";
+import { notFound } from "next/navigation";
 import {
   activeAliasMemberIds,
   clerkMappingAccessStatesByUserId,
@@ -44,16 +48,18 @@ function requireQueryRows<T>(result: {
   return result.data ?? [];
 }
 
-async function getMembers(projectId: string) {
-  const admin = createSupabaseAdmin();
+async function getMembers(
+  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  projectId: string,
+) {
   const [membersResult, linksResult] = await Promise.all([
-    admin
+    supabase
       .from("project_members")
       .select(
         "user_id, role, project_id, assignment_weight, assignment_cap, profiles(first_name, email, activated_at)",
       )
       .eq("project_id", projectId),
-    admin
+    supabase
       .from("member_email_links")
       .select(
         "member_user_id, linked_user_id, linked_profile:profiles!member_email_links_linked_user_id_fkey(activated_at)",
@@ -67,7 +73,7 @@ async function getMembers(projectId: string) {
     if (link.linked_user_id) identityUserIds.add(link.linked_user_id);
   }
   const mappingResult = identityUserIds.size
-    ? await admin
+    ? await createSupabaseAdmin()
         .from("clerk_user_mapping")
         .select("supabase_user_id, access_sync_version, clerk_deleted")
         .in("supabase_user_id", [...identityUserIds])
@@ -84,14 +90,17 @@ export default async function AssignmentsPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, supabase] = await Promise.all([
-    params,
-    createSupabaseServer(),
-  ]);
+  const [{ id }, user] = await Promise.all([params, requirePageAuthUser()]);
+  const access = requireResolvedProjectAccess(
+    await getProjectAccessContext(id, user),
+  );
+  if (!access.project) notFound();
+
+  const supabase = await createSupabaseServer();
 
   const [documents, memberState, { data: assignments }] = await Promise.all([
     getCachedDocuments(id),
-    getMembers(id),
+    getMembers(supabase, id),
     supabase
       .from("assignments")
       .select(

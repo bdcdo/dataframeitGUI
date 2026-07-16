@@ -238,14 +238,15 @@ const resolveProjectMemberIdentity = cache(
     accountUserId: string,
   ): Promise<ProjectMemberIdentity> => {
     try {
-      const admin = createSupabaseAdmin();
-      const { data: alias, error } = await admin
+      const supabase = await createSupabaseServer();
+      const { data: alias, error } = await supabase
         .from("member_email_links")
         .select("member_user_id")
         .eq("project_id", projectId)
         .eq("linked_user_id", accountUserId)
-        // Uma conta pode ter vários e-mails no projeto, mas o schema obriga
-        // todos a apontarem para o mesmo membro canônico.
+        // A migration torna impossível uma conta apontar para dois membros
+        // canônicos no mesmo projeto. O limite evita materializar aliases
+        // redundantes sem duplicar essa validação na aplicação.
         .limit(1)
         .maybeSingle();
 

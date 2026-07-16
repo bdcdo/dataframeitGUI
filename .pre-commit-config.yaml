@@ -29,7 +29,7 @@ repos:
   # so barra/formata o arquivo que voce tocar. --fix auto-corrige imports e afins.
   # Config em backend/pyproject.toml; suppressions pontuais ficam inline no codigo.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.19
+    rev: v0.15.20
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -175,7 +175,8 @@ repos:
         stages: [pre-push]
 
       # pytest do backend como gate de pre-push: roda a suite inteira (auth,
-      # rotas, cors) quando o push toca backend/**. Diferente do semgrep
+      # rotas, cors) quando o push toca codigo ou o grafo/deploy do backend.
+      # Diferente do semgrep
       # (fail-open em erro de infra), pytest e fail-CLOSED — sem `uv` o push
       # e barrado com mensagem, pois e um gate de verdade. `package = false`
       # no backend/pyproject.toml faz `uv run` nao tentar empacotar (issue #337).
@@ -183,7 +184,7 @@ repos:
         name: pytest backend (pre-push)
         entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para rodar os testes do backend" >&2; exit 1; }; cd backend && exec uv run pytest -q'
         language: system
-        files: ^backend/.*\.py$
+        files: ^(backend/(.*\.py|pyproject\.toml|uv\.lock|Dockerfile|\.dockerignore)|docker-compose\.yml)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

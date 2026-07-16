@@ -11,7 +11,9 @@ import {
 import type { EquivalencePair } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
-type Admin = ReturnType<typeof createSupabaseAdmin>;
+// Both factories return the same data-client shape. Coordinator flows pass an
+// authenticated reader; automatic writes pass a service-role client.
+type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 
 interface QueryResult<T> {
   data: T;
@@ -118,7 +120,7 @@ function buildEquivByField(
 }
 
 export async function loadOpenComparisonLoad(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
 ): Promise<Map<string, number>> {
   const result = await admin
@@ -131,7 +133,7 @@ export async function loadOpenComparisonLoad(
 }
 
 async function loadEligibleReviewerIds(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   documentId: string,
   coderIds: Set<string>,
@@ -180,7 +182,7 @@ function chooseLeastLoadedReviewer(
 }
 
 async function commitComparisonAssignment(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   documentId: string,
   reviewerId: string,
@@ -205,11 +207,12 @@ async function commitComparisonAssignment(
 //   - precomputedOpenLoad: quando passado (batch do retry), evita N queries de
 //     carga e é incrementado a cada atribuição para balancear entre docs.
 export async function assignComparisonReviewer(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   documentId: string,
   coderIds: Set<string>,
   precomputedOpenLoad?: Map<string, number>,
+  writeClient?: SupabaseDataClient,
 ): Promise<{ assigned: boolean; noPool: boolean }> {
   const eligibleReviewerIds = await loadEligibleReviewerIds(
     admin,
@@ -226,7 +229,7 @@ export async function assignComparisonReviewer(
   // Desempate aleatorio entre os de menor carga (sem preferencia de role).
   const reviewerId = chooseLeastLoadedReviewer(eligibleReviewerIds, loadByUser);
   const assigned = await commitComparisonAssignment(
-    admin,
+    writeClient ?? createSupabaseAdmin(),
     projectId,
     documentId,
     reviewerId,
@@ -383,7 +386,7 @@ function analyzeComparison({
 }
 
 async function loadAutoComparisonContext(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   documentId: string,
 ) {
@@ -523,6 +526,8 @@ export async function createAutoComparisonIfDiverges(
     projectId,
     documentId,
     analysis.coderIds,
+    undefined,
+    admin,
   );
   log(result.assigned ? "created" : "no_pool", {
     projectId,
@@ -599,7 +604,7 @@ function candidateDocumentIds(
 }
 
 async function loadBacklogCandidates(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   mode: ComparisonMode,
 ): Promise<{
@@ -686,7 +691,7 @@ function groupEquivalencesByDocument(
 }
 
 async function loadBacklogComparisonData(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   documentIds: string[],
 ) {
@@ -737,7 +742,7 @@ async function loadBacklogComparisonData(
 // puxar `answers` de todo doc: fase 1 acha candidatos por metadado leve, fase 2
 // busca answers so deles e recomputa divergencia.
 export async function scanComparisonBacklog(
-  admin: Admin,
+  admin: SupabaseDataClient,
   projectId: string,
   mode: ComparisonMode,
 ): Promise<Array<{ documentId: string; coderIds: Set<string> }>> {

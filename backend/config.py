@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -31,6 +32,11 @@ class Settings(BaseSettings):
     # ENABLE_DOCS=true no .env. Produção (Fly) mantém o default fechado — nada
     # a setar no fly.toml.
     enable_docs: bool = False
+
+    # Fixed-window budget shared by POST /api/llm/run and /run-field. The
+    # counter lives in Postgres, so every Fly machine enforces the same limit.
+    llm_rate_limit_requests: int = Field(default=5, ge=1, le=10_000)
+    llm_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86_400)
 
     model_config = {"env_file": ".env"}
 

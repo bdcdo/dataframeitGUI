@@ -38,6 +38,7 @@ export interface SelfVerdictInput {
 }
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
+type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 
 interface ProjectCommentDraft {
   sourceFieldReviewId: string;
@@ -354,6 +355,7 @@ async function persistAmbiguousReviewComments(
 }
 
 async function assignContestedAutoReviews(
+  supabase: SupabaseServerClient,
   scope: AutoReviewScope,
   verdicts: SelfVerdictInput[],
   effects: Map<string, AutoReviewEffectState>,
@@ -368,6 +370,7 @@ async function assignContestedAutoReviews(
   if (contestedFields.length === 0) return { arbitrated: 0 };
 
   const result = await assignArbitrator(
+    supabase,
     scope.projectId,
     scope.documentId,
     scope.memberUserId,
@@ -421,7 +424,12 @@ export async function submitAutoReview(
     validatePersistedSelfVerdicts(verdicts, effects);
     await persistEquivalentReviews(supabase, scope, verdicts, effects);
     await persistAmbiguousReviewComments(supabase, scope, verdicts, effects);
-    const result = await assignContestedAutoReviews(scope, verdicts, effects);
+    const result = await assignContestedAutoReviews(
+      supabase,
+      scope,
+      verdicts,
+      effects,
+    );
     await syncAutoRevisaoAssignmentStatus(
       supabase,
       scope.projectId,
@@ -463,14 +471,14 @@ export async function submitAutoReview(
 //    usa para alertar o pesquisador; sem esse sinal, o submit completa
 //    silenciosamente e os campos ficam presos sem árbitro)
 async function assignArbitrator(
+  reader: SupabaseDataClient,
   projectId: string,
   documentId: string,
   excludeUserId: string,
   fieldNames: string[],
   precomputedCoderIds?: Set<string>,
+  writeClient?: SupabaseDataClient,
 ): Promise<{ count: number; noPool: boolean }> {
-  const admin = createSupabaseAdmin();
-
   // Codificadores humanos deste documento — quem já tem resposta registrada
   // para o doc (recurso de comparação N+). Quando o caller pré-buscou em
   // batch (retryPendingArbitrations), reusa o set para evitar N queries.
@@ -478,7 +486,7 @@ async function assignArbitrator(
   if (precomputedCoderIds) {
     coderIds = precomputedCoderIds;
   } else {
-    const { data: coders, error: codersError } = await admin
+    const { data: coders, error: codersError } = await reader
       .from("responses")
       .select("respondent_id")
       .eq("project_id", projectId)
@@ -493,7 +501,7 @@ async function assignArbitrator(
 
   // Elegíveis (can_arbitrate) menos o auto-revisor original — esse nunca
   // arbitra, sob nenhuma circunstância, porque julgaria a própria resposta.
-  const { data: eligibleMembers, error: membersError } = await admin
+  const { data: eligibleMembers, error: membersError } = await reader
     .from("project_members")
     .select("user_id, role")
     .eq("project_id", projectId)
@@ -514,7 +522,7 @@ async function assignArbitrator(
   if (members.length === 0) return { count: 0, noPool: true };
 
   // Conta arbitragens abertas por candidato (balanceamento)
-  const { data: openCounts, error: openCountsError } = await admin
+  const { data: openCounts, error: openCountsError } = await reader
     .from("assignments")
     .select("user_id")
     .eq("project_id", projectId)
@@ -547,15 +555,14 @@ async function assignArbitrator(
   const arbitratorId =
     finalPool[Math.floor(Math.random() * finalPool.length)].user_id;
 
-  const { data: assigned, error: assignmentError } = await admin.rpc(
-    "assign_arbitration_if_eligible",
-    {
-      p_project_id: projectId,
-      p_document_id: documentId,
-      p_user_id: arbitratorId,
-      p_field_names: fieldNames,
-    },
-  );
+  const { data: assigned, error: assignmentError } = await (
+    writeClient ?? createSupabaseAdmin()
+  ).rpc("assign_arbitration_if_eligible", {
+    p_project_id: projectId,
+    p_document_id: documentId,
+    p_user_id: arbitratorId,
+    p_field_names: fieldNames,
+  });
   if (assignmentError) throw new Error(assignmentError.message);
 
   return { count: typeof assigned === "number" ? assigned : 0, noPool: false };
@@ -1011,8 +1018,6 @@ export async function submitFinalVerdicts(
 //
 // Bulk-otimizado: queries em batch + upserts/deletes em batch, independente do
 // numero de respostas.
-type SupabaseAdminClient = ReturnType<typeof createSupabaseAdmin>;
-
 interface BacklogInputs {
   fields: PydanticField[];
   humanResponses: HumanResponseRow[];
@@ -1025,7 +1030,7 @@ interface BacklogInputs {
 // convertido em { success: false, error } pelo try/catch de
 // regenerateAutoReviewBacklog.
 async function fetchBacklogInputs(
-  admin: SupabaseAdminClient,
+  admin: SupabaseDataClient,
   projectId: string,
 ): Promise<BacklogInputs> {
   const [
@@ -1090,7 +1095,7 @@ async function fetchBacklogInputs(
 // concluidos sao preservados. As duas leituras refletem o estado pos-
 // delete/upsert e sao independentes entre si — buscadas em paralelo.
 async function removeOrphanAssignments(
-  admin: SupabaseAdminClient,
+  admin: SupabaseDataClient,
   projectId: string,
 ): Promise<void> {
   const [
@@ -1142,14 +1147,14 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
     );
     if (!gate.ok) return { success: false, error: gate.error };
 
-    const admin = createSupabaseAdmin();
+    const supabase = await createSupabaseServer();
     const {
       fields,
       humanResponses,
       llmResponses,
       equivalences,
       existingReviews,
-    } = await fetchBacklogInputs(admin, projectId);
+    } = await fetchBacklogInputs(supabase, projectId);
 
     if (fields.length === 0) {
       return { success: true, scanned: 0, regenerated: 0 };
@@ -1172,6 +1177,13 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       fieldReviewRows,
     );
 
+    // Structural field-review writes are service-only. Create that capability
+    // only after the authenticated reads and pure reconciliation have passed.
+    const admin =
+      idsToDelete.length > 0 || fieldReviewRows.length > 0
+        ? createSupabaseAdmin()
+        : null;
+
     // Defesa em profundidade: `.is("self_verdict", null)` fecha a janela TOCTOU
     // entre a leitura de `existingReviews` (fetchBacklogInputs) e este DELETE.
     // Se um pesquisador resolver um campo nesse intervalo, o DB recusa a linha
@@ -1179,7 +1191,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
     // efetivamente apagadas, fonte da contagem `removed` retornada.
     let actuallyRemoved = 0;
     if (idsToDelete.length > 0) {
-      const { data: deleted, error } = await admin
+      const { data: deleted, error } = await admin!
         .from("field_reviews")
         .delete()
         .in("id", idsToDelete)
@@ -1190,10 +1202,12 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
     }
 
     if (assignmentRows.length > 0) {
-      const { error } = await admin.from("assignments").upsert(assignmentRows, {
-        onConflict: "document_id,user_id,type",
-        ignoreDuplicates: true,
-      });
+      const { error } = await supabase
+        .from("assignments")
+        .upsert(assignmentRows, {
+          onConflict: "document_id,user_id,type",
+          ignoreDuplicates: true,
+        });
       if (error) return { success: false, error: error.message };
     }
     if (fieldReviewRows.length > 0) {
@@ -1201,7 +1215,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       // (doc+field), nao os ponteiros. Uma linha ja existente mantem seus
       // human_response_id/llm_response_id antigos mesmo que o LLM tenha
       // re-rodado desde entao — atualizar FKs stale fica fora deste reconcile.
-      const { error } = await admin
+      const { error } = await admin!
         .from("field_reviews")
         .upsert(fieldReviewRows, {
           onConflict: "document_id,field_name",
@@ -1210,7 +1224,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       if (error) return { success: false, error: error.message };
     }
 
-    await removeOrphanAssignments(admin, projectId);
+    await removeOrphanAssignments(supabase, projectId);
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -1248,8 +1262,8 @@ export async function retryPendingArbitrations(projectId: string): Promise<{
     if (!gate.ok)
       return { success: false, error: gate.error, assigned: 0, stillNoPool: 0 };
 
-    const admin = createSupabaseAdmin();
-    const { data: pending, error } = await admin
+    const supabase = await createSupabaseServer();
+    const { data: pending, error } = await supabase
       .from("field_reviews")
       .select("document_id, field_name, self_reviewer_id")
       .eq("project_id", projectId)
@@ -1290,7 +1304,7 @@ export async function retryPendingArbitrations(projectId: string): Promise<{
     ];
     const codersByDoc = new Map<string, Set<string>>();
     if (allDocIds.length > 0) {
-      const { data: allCoders, error: codersError } = await admin
+      const { data: allCoders, error: codersError } = await supabase
         .from("responses")
         .select("document_id, respondent_id")
         .eq("project_id", projectId)
@@ -1323,6 +1337,7 @@ export async function retryPendingArbitrations(projectId: string): Promise<{
       // openCounts recalculado; paralelizar degradaria a distribuição.
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       const result = await assignArbitrator(
+        supabase,
         projectId,
         g.documentId,
         g.selfReviewerId,

@@ -78,15 +78,7 @@ function resolveAdminQuery(table: string, filters: QueryFilters): QueryResult {
     };
   }
   if (table === "member_email_links") {
-    memberEmailLinkQueries += 1;
-    const key = aliasKey(
-      filterValue(filters, "project_id"),
-      filterValue(filters, "linked_user_id"),
-    );
-    return {
-      data: aliasByIdentity[key] ?? null,
-      error: aliasErrorByIdentity[key] ?? null,
-    };
+    throw new Error("member_email_links deve usar o client da sessão");
   }
   return { data: null, error: null };
 }
@@ -118,6 +110,17 @@ function resolveMembershipQuery(filters: QueryFilters): QueryResult {
 }
 
 function resolveServerQuery(table: string, filters: QueryFilters): QueryResult {
+  if (table === "member_email_links") {
+    memberEmailLinkQueries += 1;
+    const key = aliasKey(
+      filterValue(filters, "project_id"),
+      filterValue(filters, "linked_user_id"),
+    );
+    return {
+      data: aliasByIdentity[key] ?? null,
+      error: aliasErrorByIdentity[key] ?? null,
+    };
+  }
   serverQueries += 1;
   return table === "projects"
     ? resolveProjectQuery(filters)
@@ -201,10 +204,12 @@ describe("resolveProjectMemberActor — membro canônico", () => {
 
     const { resolveProjectMemberActor } = await import("@/lib/auth");
 
-    await expect(resolveProjectMemberActor("p-current")).resolves.toMatchObject({
-      ok: true,
-      memberUserId: "acc1",
-    });
+    await expect(resolveProjectMemberActor("p-current")).resolves.toMatchObject(
+      {
+        ok: true,
+        memberUserId: "acc1",
+      },
+    );
   });
 
   it("falha técnica não degrada para o id bruto", async () => {
@@ -237,9 +242,8 @@ describe("resolveProjectMemberActor", () => {
     vi.resetModules();
     authenticated = true;
     authThrows = true;
-    const { resolveProjectMemberActor: resolveAfterFailure } = await import(
-      "@/lib/auth"
-    );
+    const { resolveProjectMemberActor: resolveAfterFailure } =
+      await import("@/lib/auth");
 
     await expect(resolveAfterFailure("p-failure")).resolves.toEqual({
       ok: false,
@@ -247,7 +251,6 @@ describe("resolveProjectMemberActor", () => {
       error: "Não foi possível verificar sua identidade no projeto.",
     });
   });
-
 });
 
 const projectUser = { id: "account-1", isMaster: false };
@@ -368,7 +371,7 @@ describe("getProjectAccessContext", () => {
 
   it("classifica falha técnica da membership", async () => {
     accessByProject.p1 = {
-      project: { id: "p1", name: "Projeto", created_by: "owner" },
+      project: { id: "p1", name: "Projeto", created_by: "account-1" },
       membershipRole: null,
       membershipError: "timeout",
     };

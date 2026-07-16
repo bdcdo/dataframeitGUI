@@ -14,6 +14,7 @@ let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown>;
+let adminClientCreations: number;
 
 const arbitrationCalls = () =>
   rpcCalls.filter((call) => call.fn === "assign_arbitration_if_eligible");
@@ -37,7 +38,10 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(),
+  createSupabaseAdmin: () => {
+    adminClientCreations += 1;
+    return makeClient();
+  },
 }));
 
 beforeEach(() => {
@@ -52,6 +56,7 @@ beforeEach(() => {
     assignments: [],
     responses: [],
   };
+  adminClientCreations = 0;
   coordinatorGate.mockResolvedValue(true);
 });
 
@@ -78,12 +83,14 @@ describe("retryPendingArbitrations — guards", () => {
     expect(r.error).toContain("coordenadores");
     expect(r.assigned).toBe(0);
     expect(writeCalls).toHaveLength(0);
+    expect(adminClientCreations).toBe(0);
   });
 
   it("sem field_reviews pendentes → assigned 0 e nenhuma RPC", async () => {
     tableData.field_reviews = [];
     await expectSuccessfulRetry(0, 0);
     expect(arbitrationCalls()).toHaveLength(0);
+    expect(adminClientCreations).toBe(0);
   });
 
   it("falha ao carregar codificadores → erro técnico, sem RPC", async () => {
@@ -278,5 +285,6 @@ describe("regenerateAutoReviewBacklog — guard", () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain("coordenadores");
     expect(writeCalls).toHaveLength(0);
+    expect(adminClientCreations).toBe(0);
   });
 });

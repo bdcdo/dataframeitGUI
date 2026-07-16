@@ -27,6 +27,25 @@ function makeRpc(state: {
   };
 }
 
+// Factories canônicos dos módulos mockados. Manter o shape aqui evita que cada
+// teste replique o mesmo par createSupabaseServer/createSupabaseAdmin; `onCreate`
+// preserva os casos que também verificam se a service role chegou a ser criada.
+export function makeSupabaseServerModuleMock<T>(createClient: () => T) {
+  return { createSupabaseServer: async () => createClient() };
+}
+
+export function makeSupabaseAdminModuleMock<T>(
+  createClient: () => T,
+  onCreate?: () => void,
+) {
+  return {
+    createSupabaseAdmin: () => {
+      onCreate?.();
+      return createClient();
+    },
+  };
+}
+
 export function callsOf(
   writeCalls: WriteCall[],
   op: string,
