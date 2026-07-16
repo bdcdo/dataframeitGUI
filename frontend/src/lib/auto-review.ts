@@ -146,9 +146,8 @@ export async function createAutoReviewIfDiverges(
     return { divergentCount: 0 };
   }
 
-  // Stubs e assignment numa transação só, sob a mesma chave que o fechamento
-  // usa: escritos daqui em requests separadas, um campo divergente novo podia
-  // nascer depois do assignment ter sido concluído e nunca mais voltar à fila.
+  // RPC porque stubs e assignment precisam da mesma transação e da mesma trava
+  // que o fechamento pega — ver migration 20260716130000.
   const { error: assignErr } = await admin.rpc("assign_auto_review_if_eligible", {
     p_project_id: projectId,
     p_document_id: documentId,

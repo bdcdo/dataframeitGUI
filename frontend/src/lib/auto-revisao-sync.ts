@@ -6,10 +6,8 @@ import type { createSupabaseAdmin } from "@/lib/supabase/admin";
 // nenhum field_review pendente do doc — o envio e parcial, entao um submit
 // de subconjunto nao pode tirar o doc da fila.
 //
-// A decisao vive na RPC porque ler as pendencias aqui e gravar 'concluido' em
-// seguida sao duas requests: um stub liberado no intervalo por
-// assign_auto_review_if_eligible ficaria invisivel, e o documento sairia da fila
-// com veredito por fazer. A RPC serializa os dois lados pela mesma chave.
+// A decisao vive na RPC, sob a trava que o produtor tambem pega — ver migration
+// 20260716130000.
 export async function syncAutoRevisaoAssignmentStatus(
   admin: ReturnType<typeof createSupabaseAdmin>,
   projectId: string,

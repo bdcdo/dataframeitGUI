@@ -97,15 +97,15 @@ vi.mock("@/lib/supabase/admin", () => {
 });
 
 describe("createAutoReviewIfDiverges", () => {
-  it("sem projeto/respostas → divergentCount=0 e nenhum upsert", async () => {
+  it("sem projeto/respostas → divergentCount=0 e nenhuma RPC", async () => {
     const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
     state.project = null;
     const r = await createAutoReviewIfDiverges("p1", "doc1", "user1");
     expect(r.divergentCount).toBe(0);
-    expect(state.upserts).toHaveLength(0);
+    expect(state.rpcs).toEqual([]);
   });
 
-  it("respostas iguais → divergentCount=0 e nenhum upsert", async () => {
+  it("respostas iguais → divergentCount=0 e nenhuma RPC", async () => {
     const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
     state.project = {
       pydantic_fields: [
@@ -116,7 +116,7 @@ describe("createAutoReviewIfDiverges", () => {
     state.llmResponse = { id: "l1", answers: { q1: "a" } };
     const r = await createAutoReviewIfDiverges("p1", "doc1", "user1");
     expect(r.divergentCount).toBe(0);
-    expect(state.upserts).toHaveLength(0);
+    expect(state.rpcs).toEqual([]);
   });
 
   it("respostas divergentes → cria 1 assignment + N field_reviews", async () => {
@@ -135,6 +135,11 @@ describe("createAutoReviewIfDiverges", () => {
     // Apenas q1 diverge
     expect(r.divergentCount).toBe(1);
 
+    // Antes, os stubs e o assignment eram dois upserts com ignoreDuplicates: um
+    // campo divergente novo nascia pendente sem reabrir o assignment concluído,
+    // e o documento sumia da fila. A reabertura condicional só existe dentro da
+    // RPC, então escrever nessas tabelas por fora traz o bug de volta.
+    expect(state.upserts).toEqual([]);
     expect(state.rpcs).toEqual([
       {
         fn: "assign_auto_review_if_eligible",
@@ -150,7 +155,7 @@ describe("createAutoReviewIfDiverges", () => {
     ]);
   });
 
-  it("codificacao humana incompleta → divergentCount=0 e nenhum upsert (#174)", async () => {
+  it("codificacao humana incompleta → divergentCount=0 e nenhuma RPC (#174)", async () => {
     const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
     state.project = {
       pydantic_fields: [
@@ -165,7 +170,9 @@ describe("createAutoReviewIfDiverges", () => {
 
     const r = await createAutoReviewIfDiverges("p1", "doc1", "user1");
     expect(r.divergentCount).toBe(0);
-    expect(state.upserts).toHaveLength(0);
+    // A RPC reabre por pendência viva do revisor, sem filtrar por p_field_names:
+    // chamá-la com lista vazia devolveria à fila um documento já resolvido.
+    expect(state.rpcs).toEqual([]);
   });
 
   it("equivalencia marcada → campo nao conta como divergente", async () => {
@@ -182,28 +189,6 @@ describe("createAutoReviewIfDiverges", () => {
 
     const r = await createAutoReviewIfDiverges("p1", "doc1", "user1");
     expect(r.divergentCount).toBe(0);
-    expect(state.upserts).toHaveLength(0);
-  });
-
-  // Antes, os stubs e o assignment eram dois upserts com ignoreDuplicates: um
-  // campo divergente novo nascia pendente sem reabrir o assignment concluído, e
-  // o documento sumia da fila. A reabertura condicional só existe dentro da
-  // RPC, então escrever nessas tabelas por fora traz o bug de volta.
-  it("não escreve em assignments/field_reviews fora da RPC", async () => {
-    const { createAutoReviewIfDiverges } = await import("@/lib/auto-review");
-    state.project = {
-      pydantic_fields: [
-        { name: "q1", type: "single", options: ["a", "b"], target: "all" },
-      ],
-    };
-    state.humanResponse = { id: "h1", answers: { q1: "a" } };
-    state.llmResponse = { id: "l1", answers: { q1: "b" } };
-
-    await createAutoReviewIfDiverges("p1", "doc1", "user1");
-
-    expect(state.upserts).toEqual([]);
-    expect(state.rpcs.map((c) => c.fn)).toEqual([
-      "assign_auto_review_if_eligible",
-    ]);
+    expect(state.rpcs).toEqual([]);
   });
 });

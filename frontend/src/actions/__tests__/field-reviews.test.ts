@@ -8,6 +8,9 @@ type WriteCall = { table: string; op: string; payload: unknown };
 type RpcCall = { fn: string; args: unknown };
 let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
+// Faz uma RPC especifica falhar, por nome — usado para fixar o que sobrevive
+// quando o fechamento da fila cai.
+let rpcErrors: Record<string, string>;
 let tableData: Record<string, unknown>;
 let projectAccessible: boolean;
 let adminFactoryCalls: number;
@@ -19,7 +22,8 @@ function makeClient() {
   return {
     rpc: async (fn: string, args: unknown) => {
       rpcCalls.push({ fn, args });
-      return { data: tableData[`rpc:${fn}`] ?? null, error: null };
+      const message = rpcErrors[fn];
+      return { data: null, error: message ? { message } : null };
     },
     from: (table: string) => {
       // `limited` distingue a query de "ainda há campo pendente?" (usa .limit)
@@ -95,6 +99,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 beforeEach(() => {
   writeCalls = [];
   rpcCalls = [];
+  rpcErrors = {};
   projectAccessible = true;
   adminFactoryCalls = 0;
   tableData = {
@@ -108,7 +113,9 @@ beforeEach(() => {
         llm_response_id: "lr1",
       },
     ],
-    // por padrão não sobra campo pendente → assignment é concluído
+    // Consumida pelo `.limit(1)` de syncArbitragemAssignmentStatus, que ainda
+    // decide o fechamento da ARBITRAGEM no TypeScript (a auto-revisão decide na
+    // RPC). Vazia = nada pendente, o caminho que não explode.
     field_reviews_pending: [],
     // respostas para o contexto do comentario de "ambiguo"
     responses: [
@@ -349,6 +356,28 @@ describe("submitAutoReview — conclusão do assignment", () => {
       },
     });
     expect(updateCallsOf("assignments")).toHaveLength(0);
+  });
+
+  // O fechamento é o ÚLTIMO passo porque a RPC lança e falhar antes da
+  // arbitragem seria definitivo: o veredito já está gravado, então o re-submit
+  // casa 0 linhas no UPDATE (`.is("self_verdict", null)`), `updatedFieldNames`
+  // sai vazio e o árbitro nunca mais é sorteado. Perder o fechamento, não: a
+  // próxima submissão ou o reconcile do backlog o recuperam.
+  it("fechamento falha → arbitragem de contesta_llm já foi criada", async () => {
+    rpcErrors.sync_auto_review_assignment_status = "lock timeout";
+    tableData.project_members = [{ user_id: "arb1", role: "pesquisador" }];
+    const submitAutoReview = await loadSubmit();
+
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldName: "q1", verdict: "contesta_llm", justification: "discordo" },
+    ]);
+
+    expect(r.success).toBe(false);
+    const order = rpcCalls.map((c) => c.fn);
+    expect(order).toEqual([
+      "assign_arbitration_if_eligible",
+      "sync_auto_review_assignment_status",
+    ]);
   });
 });
 

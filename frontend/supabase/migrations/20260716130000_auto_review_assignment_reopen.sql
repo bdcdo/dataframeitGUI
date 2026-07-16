@@ -33,7 +33,6 @@ CREATE OR REPLACE FUNCTION public.lock_auto_review_assignment(
   p_user_id UUID
 ) RETURNS void
 LANGUAGE sql
-SECURITY DEFINER
 SET search_path = ''
 AS $$
   SELECT pg_catalog.pg_advisory_xact_lock(
@@ -47,12 +46,10 @@ AS $$
   )
 $$;
 
--- Ambos os chamadores (assign_auto_review_if_eligible e
--- sync_auto_review_assignment_status) são SECURITY DEFINER e rodam como owner,
--- que mantém o EXECUTE independentemente destes REVOKE. Nenhum role de runtime
--- precisa da trava avulsa, e concedê-la deixaria qualquer sessão segurar a fila
--- alheia até o fim da transação — daí service_role entrar no REVOKE também: as
--- default privileges do schema public dariam EXECUTE a ele por omissão.
+-- service_role entra no REVOKE junto com os roles de cliente: as default
+-- privileges do schema public dariam EXECUTE a ele por omissão, e a trava avulsa
+-- na mão de uma sessão qualquer segura a fila alheia até o fim da transação. Os
+-- dois chamadores continuam alcançando-a por rodarem como owner.
 REVOKE ALL ON FUNCTION public.lock_auto_review_assignment(UUID, UUID, UUID)
   FROM PUBLIC, anon, authenticated, service_role;
 
@@ -74,11 +71,6 @@ AS $$
 DECLARE
   v_created INTEGER;
 BEGIN
-  IF p_field_names IS NULL OR pg_catalog.array_length(p_field_names, 1) IS NULL
-  THEN
-    RETURN 0;
-  END IF;
-
   -- Mesma chave do fechamento: a partir daqui, sync_auto_review_assignment_status
   -- para este (projeto, documento, revisor) espera esta transação terminar.
   PERFORM public.lock_auto_review_assignment(
@@ -107,34 +99,42 @@ BEGIN
 
   GET DIAGNOSTICS v_created = ROW_COUNT;
 
-  -- A reabertura é condicionada ao trabalho pendente real, não a v_created: um
-  -- retry que não cria stub nenhum ainda precisa reabrir um assignment fechado
-  -- cedo demais por uma execução anterior.
+  -- O trabalho pendente real — não v_created — governa criar E reabrir.
+  --
+  -- Reabrir por pendência, e não por ter criado stub agora, é o que faz um retry
+  -- sem stub novo ainda resgatar uma fila fechada cedo demais por uma execução
+  -- anterior. Criar sob a mesma condição fecha o outro lado: a UNIQUE de
+  -- field_reviews é (document_id, field_name) — global, não por humano —, então
+  -- o stub do segundo humano a codificar o documento colide e o DO NOTHING acima
+  -- o descarta. Sem o EXISTS governando o INSERT, ele ganharia uma fila
+  -- 'pendente' sem nenhum field_review seu para revisar, contrariando o contrato
+  -- da constraint (ver 20260513000001/20260513040000: só o primeiro humano entra
+  -- na auto-revisão do par (doc, campo)).
   INSERT INTO public.assignments (
     project_id,
     document_id,
     user_id,
     type,
     status
-  ) VALUES (
+  )
+  SELECT
     p_project_id,
     p_document_id,
     p_self_reviewer_id,
     'auto_revisao',
     'pendente'
+  WHERE EXISTS (
+    SELECT 1
+    FROM public.field_reviews AS review
+    WHERE review.project_id = p_project_id
+      AND review.document_id = p_document_id
+      AND review.self_reviewer_id = p_self_reviewer_id
+      AND review.self_verdict IS NULL
   )
   ON CONFLICT (document_id, user_id, type) DO UPDATE
   SET status = 'pendente',
       completed_at = NULL
-  WHERE assignments.status = 'concluido'
-    AND EXISTS (
-      SELECT 1
-      FROM public.field_reviews AS review
-      WHERE review.project_id = p_project_id
-        AND review.document_id = p_document_id
-        AND review.self_reviewer_id = p_self_reviewer_id
-        AND review.self_verdict IS NULL
-    );
+  WHERE assignments.status = 'concluido';
 
   RETURN v_created;
 END;
@@ -147,18 +147,10 @@ GRANT EXECUTE ON FUNCTION public.assign_auto_review_if_eligible(
   UUID, UUID, UUID, TEXT[], UUID, UUID
 ) TO service_role;
 
--- O outro tomador da trava. Antes o fechamento era SELECT de pendências seguido
--- de UPDATE, em duas requests do cliente admin: entre as duas, um stub recém
--- liberado para o mesmo (documento, auto-revisor) ficava invisível e o
--- assignment ia para 'concluido' com self_verdict IS NULL vivo. Trazido para o
--- banco, o EXISTS e o UPDATE passam a ler o mesmo snapshot sob a trava que
--- assign_auto_review_if_eligible também pega, então em qualquer ordem
--- concorrente ou o fechamento enxerga o campo novo, ou a atribuição reabre o
--- assignment depois do fechamento.
---
--- Chamada pelo backend (service_role) no submit da auto-revisão, onde clerk_uid()
--- é NULL: como no produtor, não há gate de identidade e o REVOKE é o que mantém
--- a função fora do alcance de authenticated.
+-- O outro tomador da trava, e a razão de o fechamento ter saído do TypeScript:
+-- aqui o EXISTS e o UPDATE leem o mesmo snapshot, sob a chave que o produtor
+-- também pega. Mesma superfície do produtor (service_role, sem gate de
+-- identidade).
 CREATE OR REPLACE FUNCTION public.sync_auto_review_assignment_status(
   p_project_id UUID,
   p_document_id UUID,
@@ -190,7 +182,7 @@ BEGIN
 
   UPDATE public.assignments AS assignment
   SET status = 'concluido',
-      completed_at = pg_catalog.statement_timestamp()
+      completed_at = pg_catalog.now()
   WHERE assignment.project_id = p_project_id
     AND assignment.document_id = p_document_id
     AND assignment.user_id = p_user_id

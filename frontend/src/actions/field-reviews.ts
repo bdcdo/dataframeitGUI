@@ -131,9 +131,6 @@ export async function submitAutoReview(
       }
     }
 
-    // Sync do assignment auto_revisao — ver lib/auto-revisao-sync.ts.
-    await syncAutoRevisaoAssignmentStatus(admin, projectId, documentId, effectiveId);
-
     // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
     // campos recem-atualizados quanto para os que JA estavam com o verdict
     // gravado — retry apos falha parcial (o UPDATE acima casa 0 linhas porque
@@ -312,6 +309,14 @@ export async function submitAutoReview(
         warning = `Não há árbitros elegíveis para ${contested.length} campo(s) contestado(s). Peça ao coordenador para marcar membros como elegíveis em Configuração → Equipe.`;
       }
     }
+
+    // Último passo de propósito: o sync lança se a RPC falhar, e falhar aqui
+    // custa só o fechamento do assignment — que a próxima submissão ou
+    // reopen_auto_review_assignments_with_pending reconciliam. Antes da
+    // arbitragem, a mesma falha seria definitiva: o veredito já está gravado,
+    // então o re-submit casa 0 linhas no UPDATE acima, `updatedFieldNames` sai
+    // vazio e o árbitro de contesta_llm nunca mais seria sorteado.
+    await syncAutoRevisaoAssignmentStatus(admin, projectId, documentId, effectiveId);
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -1009,11 +1014,17 @@ export async function regenerateAutoReviewBacklog(
     }
 
     if (admin) {
-      // Precisa vir depois dos field_reviews: o upsert de assignments acima usa
-      // ignoreDuplicates e não reabre linha concluída, então um campo devolvido
-      // ao backlog ficaria pendente num documento fora da fila. Reconcilia o
-      // projeto inteiro, não só as linhas deste lote — filas fechadas cedo por
-      // execuções anteriores também voltam.
+      // Depois dos field_reviews: o upsert de assignments acima usa
+      // ignoreDuplicates e não reabre linha concluída. Reconcilia o projeto
+      // inteiro, não só este lote — filas fechadas cedo por execuções
+      // anteriores também voltam.
+      //
+      // Pular quando `admin` é null (lote sem field_reviews) é seguro por um
+      // invariante que não é local: diffReviewsToRemove manda para idsToDelete
+      // TODA linha existente fora do conjunto novo com self_verdict null, e o
+      // DELETE acima as apaga. Lote vazio ⇒ nenhuma pendência sobrevive ⇒ não há
+      // o que reabrir. Se aquele diff um dia passar a preservar pendência, este
+      // gate precisa deixar de depender do tamanho do lote.
       const { error } = await admin.rpc(
         "reopen_auto_review_assignments_with_pending",
         { p_project_id: projectId },
