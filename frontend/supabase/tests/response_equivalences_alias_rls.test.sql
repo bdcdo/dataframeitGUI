@@ -20,7 +20,8 @@ INSERT INTO auth.users (id, email) VALUES
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'creator-427@example.test'),
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'master-427@example.test'),
   ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'arbitrary-427@example.test'),
-  ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'project-b-owner-427@example.test');
+  ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'project-b-owner-427@example.test'),
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'creator-alias-427@example.test');
 
 INSERT INTO public.master_users (user_id) VALUES
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
@@ -47,6 +48,11 @@ INSERT INTO public.project_members (project_id, user_id, role) VALUES
     '33333333-3333-3333-3333-333333333333',
     '77777777-7777-7777-7777-777777777777',
     'coordenador'
+  ),
+  (
+    '33333333-3333-3333-3333-333333333333',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'pesquisador'
   );
 
 INSERT INTO public.member_email_links
@@ -64,6 +70,13 @@ VALUES
     '77777777-7777-7777-7777-777777777777',
     'coordinator-alias-427@example.test',
     '88888888-8888-8888-8888-888888888888',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  ),
+  (
+    '33333333-3333-3333-3333-333333333333',
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    'creator-alias-427@example.test',
+    'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
   );
 
@@ -175,12 +188,20 @@ INSERT INTO public.response_equivalences (
     '60000000-0000-0000-0000-000000000001',
     '60000000-0000-0000-0000-000000000002',
     'dddddddd-dddd-dddd-dddd-dddddddddddd'
+  ),
+  (
+    '33333333-3333-3333-3333-333333333333',
+    '44444444-4444-4444-4444-444444444444',
+    'creator-alias-case',
+    '50000000-0000-0000-0000-000000000002',
+    '50000000-0000-0000-0000-000000000004',
+    '11111111-1111-1111-1111-111111111111'
   );
 
 -- O Supabase local não concede DML desta tabela ao role por padrão. O GRANT é
 -- revertido no ROLLBACK; assim o teste isola as policies RLS.
 GRANT SELECT, INSERT, UPDATE, DELETE
-  ON public.response_equivalences TO authenticated;
+  ON public.response_equivalences, public.reviews TO authenticated;
 
 -- Pesquisador-alias: cria, lê, atualiza e exclui como identidade canônica.
 SELECT set_config(
@@ -229,10 +250,140 @@ WHERE project_id = '33333333-3333-3333-3333-333333333333'
   AND field_name = 'alias-case'
   AND reviewer_id = '11111111-1111-1111-1111-111111111111';
 
-DELETE FROM public.response_equivalences
-WHERE project_id = '33333333-3333-3333-3333-333333333333'
-  AND field_name = 'alias-case-updated'
-  AND reviewer_id = '11111111-1111-1111-1111-111111111111';
+INSERT INTO public.reviews (
+  project_id,
+  document_id,
+  field_name,
+  reviewer_id,
+  verdict
+) VALUES (
+  '33333333-3333-3333-3333-333333333333',
+  '44444444-4444-4444-4444-444444444444',
+  'alias-case-updated',
+  '11111111-1111-1111-1111-111111111111',
+  'equivalente'
+);
+
+-- Falha no segundo DELETE precisa reverter também a equivalência. O trigger
+-- existe apenas nesta transação de teste e é removido antes do caminho feliz.
+RESET ROLE;
+CREATE FUNCTION pg_temp.reject_alias_review_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'forced review delete failure #427';
+END;
+$$;
+CREATE TRIGGER reject_alias_review_delete
+  BEFORE DELETE ON public.reviews
+  FOR EACH ROW
+  WHEN (
+    OLD.project_id = '33333333-3333-3333-3333-333333333333'
+    AND OLD.field_name = 'alias-case-updated'
+  )
+  EXECUTE FUNCTION pg_temp.reject_alias_review_delete();
+
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE
+  equivalence_id uuid;
+BEGIN
+  SELECT id INTO equivalence_id
+  FROM public.response_equivalences
+  WHERE project_id = '33333333-3333-3333-3333-333333333333'
+    AND field_name = 'alias-case-updated';
+
+  BEGIN
+    PERFORM * FROM public.unmark_response_equivalence(
+      '33333333-3333-3333-3333-333333333333',
+      equivalence_id,
+      '11111111-1111-1111-1111-111111111111'
+    );
+    RAISE EXCEPTION 'FALHOU #427: RPC não propagou a falha do review';
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF SQLERRM <> 'forced review delete failure #427' THEN
+        RAISE;
+      END IF;
+  END;
+END $$;
+
+RESET ROLE;
+DROP TRIGGER reject_alias_review_delete ON public.reviews;
+
+DO $$
+DECLARE
+  equivalence_count integer;
+  review_count integer;
+BEGIN
+  SELECT count(*) INTO equivalence_count
+  FROM public.response_equivalences
+  WHERE project_id = '33333333-3333-3333-3333-333333333333'
+    AND field_name = 'alias-case-updated';
+  SELECT count(*) INTO review_count
+  FROM public.reviews
+  WHERE project_id = '33333333-3333-3333-3333-333333333333'
+    AND field_name = 'alias-case-updated'
+    AND reviewer_id = '11111111-1111-1111-1111-111111111111';
+
+  IF equivalence_count <> 1 OR review_count <> 1 THEN
+    RAISE EXCEPTION
+      'FALHOU #427: rollback parcial (equivalência=%, review=%)',
+      equivalence_count,
+      review_count;
+  END IF;
+END $$;
+
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE
+  equivalence_id uuid;
+  removed_count integer;
+BEGIN
+  SELECT id INTO equivalence_id
+  FROM public.response_equivalences
+  WHERE project_id = '33333333-3333-3333-3333-333333333333'
+    AND field_name = 'alias-case-updated';
+
+  SELECT count(*) INTO removed_count
+  FROM public.unmark_response_equivalence(
+    '33333333-3333-3333-3333-333333333333',
+    equivalence_id,
+    '11111111-1111-1111-1111-111111111111'
+  );
+  IF removed_count <> 1 THEN
+    RAISE EXCEPTION
+      'FALHOU #427: RPC não retornou o par removido (n=%)',
+      removed_count;
+  END IF;
+END $$;
+
+RESET ROLE;
+DO $$
+DECLARE
+  remaining_count integer;
+BEGIN
+  SELECT
+    (SELECT count(*)
+     FROM public.response_equivalences
+     WHERE project_id = '33333333-3333-3333-3333-333333333333'
+       AND field_name = 'alias-case-updated')
+    +
+    (SELECT count(*)
+     FROM public.reviews
+     WHERE project_id = '33333333-3333-3333-3333-333333333333'
+       AND field_name = 'alias-case-updated'
+       AND reviewer_id = '11111111-1111-1111-1111-111111111111')
+  INTO remaining_count;
+  IF remaining_count <> 0 THEN
+    RAISE EXCEPTION
+      'FALHOU #427: RPC deixou equivalência/review após sucesso (n=%)',
+      remaining_count;
+  END IF;
+END $$;
+
+SET LOCAL ROLE authenticated;
 
 -- A leitura é compartilhada, mas ownership continua individual: o
 -- pesquisador-alias não pode alterar nem excluir a linha do coordenador no
@@ -450,6 +601,43 @@ END $$;
 
 RESET ROLE;
 
+-- A conta-alias do criador herda a autoridade da identidade canônica e pode
+-- gerir linha criada por outro revisor.
+SELECT set_config(
+  'request.jwt.claims',
+  '{"supabase_uid":"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  created_count integer;
+  affected_count integer;
+BEGIN
+  SELECT count(*) INTO created_count
+  FROM public.auth_user_coordinator_or_creator_project_ids()
+    AS coordinated(project_id)
+  WHERE coordinated.project_id = '33333333-3333-3333-3333-333333333333';
+  IF created_count <> 1 THEN
+    RAISE EXCEPTION
+      'FALHOU #427: alias do criador não resolveu o projeto (n=%)',
+      created_count;
+  END IF;
+
+  DELETE FROM public.response_equivalences
+  WHERE project_id = '33333333-3333-3333-3333-333333333333'
+    AND field_name = 'creator-alias-case';
+  GET DIAGNOSTICS affected_count = ROW_COUNT;
+  IF affected_count <> 1 THEN
+    RAISE EXCEPTION
+      'FALHOU #427: alias do criador não geriu linha alheia (n=%)',
+      affected_count;
+  END IF;
+END $$;
+
+RESET ROLE;
+
 -- O criador direto mantém autoridade sobre linha criada por outro revisor.
 SELECT set_config(
   'request.jwt.claims',
@@ -541,6 +729,7 @@ BEGIN
     'outsider-attempt',
     'coordinator-case',
     'coordinator-case-updated',
+    'creator-alias-case',
     'creator-case',
     'master-case'
   );
@@ -551,7 +740,7 @@ BEGIN
   END IF;
 
   RAISE NOTICE
-    'OK #427: identidade efetiva e limites RLS validados para alias, coordenador, criador, master e estranhos';
+    'OK #427: identidade efetiva e limites RLS validados para aliases de pesquisador/coordenador/criador, master e estranhos';
 END $$;
 
 ROLLBACK;

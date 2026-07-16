@@ -1,11 +1,12 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+import { getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
+import { ZeroRowsError } from "@/lib/supabase/rls-guard";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
 
 type EquivalenceActionContext =
@@ -60,9 +61,6 @@ export async function confirmEquivalentVerdict(
       error: "Gabarito precisa estar na lista de respostas selecionadas.",
     };
   }
-
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
 
   // Identidade de trabalho no projeto (spec 002): a conta vinculada cria a
   // equivalência e o review como o membro canônico.
@@ -159,9 +157,6 @@ export async function markLlmEquivalent(
     return { error: "Respostas já são as mesmas." };
   }
 
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
   const context = await resolveEquivalenceActionContext(projectId);
   if (!context.ok) return { error: context.error };
   const { effectiveId, supabase } = context;
@@ -201,49 +196,39 @@ export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
   const context = await resolveEquivalenceActionContext(projectId);
   if (!context.ok) return { error: context.error };
   const { effectiveId, supabase } = context;
 
   try {
-    const { data: row } = await supabase
-      .from("response_equivalences")
-      .select("document_id, field_name")
-      .eq("id", equivalenceId)
-      .eq("project_id", projectId)
-      .maybeSingle();
-
-    // Ordem obrigatória, não awaits independentes: o select acima captura
-    // document_id/field_name ANTES de a linha ser apagada. Paralelizar com o
-    // delete criaria uma race read-after-delete (row viria null e a limpeza de
-    // reviews abaixo não rodaria).
-    // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
-    const { error } = await supabase
-      .from("response_equivalences")
-      .delete()
-      .eq("id", equivalenceId)
-      .eq("project_id", projectId);
+    const { data, error } = await supabase.rpc(
+      "unmark_response_equivalence",
+      {
+        p_project_id: projectId,
+        p_equivalence_id: equivalenceId,
+        p_reviewer_id: effectiveId,
+      },
+    );
     if (error) throw new Error(error.message);
 
-    if (row?.document_id && row.field_name) {
-      await supabase
-        .from("reviews")
-        .delete()
-        .eq("project_id", projectId)
-        .eq("document_id", row.document_id)
-        .eq("field_name", row.field_name)
-        .eq("reviewer_id", effectiveId);
-
-      await syncCompareAssignment(
-        supabase,
-        projectId,
-        row.document_id,
-        effectiveId,
+    const [deletedPair] = (data ?? []) as Array<{
+      document_id: string;
+      field_name: string;
+    }>;
+    if (!deletedPair) {
+      throw new ZeroRowsError(
+        "response_equivalences",
+        "delete",
+        "Equivalência não encontrada ou sem permissão para removê-la.",
       );
     }
+
+    await syncCompareAssignment(
+      supabase,
+      projectId,
+      deletedPair.document_id,
+      effectiveId,
+    );
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
   }

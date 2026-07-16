@@ -7,13 +7,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // esse contrato — nenhuma das três pode voltar a lançar em vez de retornar.
 import {
   makeSupabaseMock,
-  type FilterCall,
+  type RpcCall,
+  type TableResult,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
 
 let writeCalls: WriteCall[];
-let filterCalls: FilterCall[];
+let rpcCalls: RpcCall[];
+let rpcResults: Record<string, TableResult>;
 let serverTableResults: TableResults | undefined;
 
 const { mockGetEffectiveMemberId, mockSyncCompareAssignment } = vi.hoisted(
@@ -25,7 +27,6 @@ const { mockGetEffectiveMemberId, mockSyncCompareAssignment } = vi.hoisted(
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "alias-account" }),
   getEffectiveMemberId: mockGetEffectiveMemberId,
 }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -33,7 +34,8 @@ vi.mock("@/lib/supabase/server", () => ({
     makeSupabaseMock({
       tableResults: serverTableResults,
       writeCalls,
-      filterCalls,
+      rpcCalls,
+      rpcResults,
     }),
 }));
 // syncCompareAssignment é best-effort e teria seu próprio teste dedicado
@@ -44,7 +46,8 @@ vi.mock("@/lib/compare-sync", () => ({
 
 beforeEach(() => {
   writeCalls = [];
-  filterCalls = [];
+  rpcCalls = [];
+  rpcResults = {};
   serverTableResults = undefined;
   mockGetEffectiveMemberId.mockClear();
   mockSyncCompareAssignment.mockClear();
@@ -56,6 +59,20 @@ async function loadActions() {
 
 function upsertsOn(table: string) {
   return writeCalls.filter((c) => c.op === "upsert" && c.table === table);
+}
+
+function expectCanonicalIdentityLookup() {
+  expect(mockGetEffectiveMemberId).toHaveBeenCalledOnce();
+  expect(mockGetEffectiveMemberId).toHaveBeenCalledWith("p1");
+}
+
+function expectCanonicalAssignmentSync() {
+  expect(mockSyncCompareAssignment).toHaveBeenCalledWith(
+    expect.anything(),
+    "p1",
+    "doc1",
+    "canonical-reviewer",
+  );
 }
 
 type Actions = Awaited<ReturnType<typeof loadActions>>;
@@ -79,6 +96,7 @@ describe.each([
         "resposta fundida",
       ),
     expectedError: "pair upsert boom",
+    arrange: undefined,
     extraChecks: () => {
       expect(upsertsOn("response_equivalences")).toHaveLength(1);
       expect(upsertsOn("reviews")).toHaveLength(0);
@@ -92,25 +110,27 @@ describe.each([
     call: (fns: Actions) =>
       fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1"),
     expectedError: "llm pair boom",
+    arrange: undefined,
     extraChecks: undefined,
   },
   {
     action: "unmarkEquivalencePair",
-    tableResults: {
-      response_equivalences: [
-        { data: { document_id: "doc1", field_name: "q1" } },
-        { error: { message: "delete pair boom" } },
-      ],
-    },
+    tableResults: undefined,
     call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
     expectedError: "delete pair boom",
+    arrange: () => {
+      rpcResults.unmark_response_equivalence = {
+        error: { message: "delete pair boom" },
+      };
+    },
     extraChecks: undefined,
   },
 ])(
   "$action — falha no upsert/delete",
-  ({ tableResults, call, expectedError, extraChecks }) => {
+  ({ tableResults, call, expectedError, arrange, extraChecks }) => {
     it("retorna { error }, não lança", async () => {
       serverTableResults = tableResults;
+      arrange?.();
       const fns = await loadActions();
 
       const result = await call(fns);
@@ -217,14 +237,8 @@ describe("confirmEquivalentVerdict", () => {
       verdict: "resposta fundida",
       chosen_response_id: "r2",
     });
-    expect(mockGetEffectiveMemberId).toHaveBeenCalledOnce();
-    expect(mockGetEffectiveMemberId).toHaveBeenCalledWith("p1");
-    expect(mockSyncCompareAssignment).toHaveBeenCalledWith(
-      expect.anything(),
-      "p1",
-      "doc1",
-      "canonical-reviewer",
-    );
+    expectCanonicalIdentityLookup();
+    expectCanonicalAssignmentSync();
   });
 });
 
@@ -246,44 +260,57 @@ describe("markLlmEquivalent", () => {
       project_id: "p1",
       reviewer_id: "canonical-reviewer",
     });
-    expect(mockGetEffectiveMemberId).toHaveBeenCalledOnce();
-    expect(mockGetEffectiveMemberId).toHaveBeenCalledWith("p1");
+    expectCanonicalIdentityLookup();
   });
 });
 
 describe("unmarkEquivalencePair", () => {
   it("caminho feliz → retorna {} e limpa o review do revisor atual para o par", async () => {
-    serverTableResults = {
-      response_equivalences: [
-        { data: { document_id: "doc1", field_name: "q1" } },
-        { error: null },
-      ],
-      reviews: { error: null },
+    rpcResults.unmark_response_equivalence = {
+      data: [{ document_id: "doc1", field_name: "q1" }],
+      error: null,
     };
     const { unmarkEquivalencePair } = await loadActions();
 
     const result = await unmarkEquivalencePair("p1", "eq1");
 
     expect(result).toEqual({});
-    expect(
-      writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
-    ).toBe(true);
-    expect(
-      filterCalls.some(
-        (call) =>
-          call.table === "reviews" &&
-          call.method === "eq" &&
-          call.args[0] === "reviewer_id" &&
-          call.args[1] === "canonical-reviewer",
-      ),
-    ).toBe(true);
-    expect(mockGetEffectiveMemberId).toHaveBeenCalledOnce();
-    expect(mockGetEffectiveMemberId).toHaveBeenCalledWith("p1");
-    expect(mockSyncCompareAssignment).toHaveBeenCalledWith(
-      expect.anything(),
-      "p1",
-      "doc1",
-      "canonical-reviewer",
-    );
+    expect(rpcCalls).toEqual([
+      {
+        fn: "unmark_response_equivalence",
+        args: {
+          p_project_id: "p1",
+          p_equivalence_id: "eq1",
+          p_reviewer_id: "canonical-reviewer",
+        },
+      },
+    ]);
+    expectCanonicalIdentityLookup();
+    expectCanonicalAssignmentSync();
+  });
+
+  it("RLS filtra o delete → retorna erro sem apagar review nem sincronizar", async () => {
+    rpcResults.unmark_response_equivalence = { data: [], error: null };
+    const { unmarkEquivalencePair } = await loadActions();
+
+    const result = await unmarkEquivalencePair("p1", "eq-alheia");
+
+    expect(result).toEqual({
+      error: "Equivalência não encontrada ou sem permissão para removê-la.",
+    });
+    expect(writeCalls).toEqual([]);
+    expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
+  });
+
+  it("RPC aborta a transação → retorna erro e não sincroniza o assignment", async () => {
+    rpcResults.unmark_response_equivalence = {
+      error: { message: "review delete boom" },
+    };
+    const { unmarkEquivalencePair } = await loadActions();
+
+    const result = await unmarkEquivalencePair("p1", "eq1");
+
+    expect(result).toEqual({ error: "review delete boom" });
+    expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
   });
 });
