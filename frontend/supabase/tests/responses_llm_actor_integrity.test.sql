@@ -46,6 +46,12 @@ INSERT INTO auth.users (id, email) VALUES
   ('48310000-0000-0000-0000-000000000005', 'outsider-483@example.test'),
   ('48310000-0000-0000-0000-000000000006', 'alias-483@example.test');
 
+INSERT INTO public.clerk_user_mapping
+  (clerk_user_id, supabase_user_id, access_sync_version)
+SELECT id::TEXT, id, 1
+FROM auth.users
+WHERE id::TEXT LIKE '48310000-0000-0000-0000-%';
+
 INSERT INTO public.projects (id, name, created_by) VALUES (
   '48320000-0000-0000-0000-000000000001',
   'responses actor integrity',
@@ -132,7 +138,7 @@ SELECT is(
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"48310000-0000-0000-0000-000000000002"}',
+  '{"sub":"48310000-0000-0000-0000-000000000002","supabase_uid":"48310000-0000-0000-0000-000000000002"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -169,7 +175,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"48310000-0000-0000-0000-000000000001"}',
+  '{"sub":"48310000-0000-0000-0000-000000000001","supabase_uid":"48310000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -192,7 +198,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"48310000-0000-0000-0000-000000000003"}',
+  '{"sub":"48310000-0000-0000-0000-000000000003","supabase_uid":"48310000-0000-0000-0000-000000000003"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -215,7 +221,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"48310000-0000-0000-0000-000000000004"}',
+  '{"sub":"48310000-0000-0000-0000-000000000004","supabase_uid":"48310000-0000-0000-0000-000000000004"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -238,7 +244,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"48310000-0000-0000-0000-000000000005"}',
+  '{"sub":"48310000-0000-0000-0000-000000000005","supabase_uid":"48310000-0000-0000-0000-000000000005"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -262,7 +268,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"48310000-0000-0000-0000-000000000006"}',
+  '{"sub":"48310000-0000-0000-0000-000000000006","supabase_uid":"48310000-0000-0000-0000-000000000006"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -283,7 +289,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"48310000-0000-0000-0000-000000000002"}',
+  '{"sub":"48310000-0000-0000-0000-000000000002","supabase_uid":"48310000-0000-0000-0000-000000000002"}',
   true
 );
 SET LOCAL ROLE authenticated;

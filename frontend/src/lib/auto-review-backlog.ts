@@ -30,17 +30,13 @@ export interface ExistingFieldReviewRow {
   self_verdict: string | null;
 }
 
-// Local de propósito: é o payload de INSERT desta rodada de backlog (literais
-// estreitos), não um tipo de domínio. Nenhum módulo importa o nome — o shape
-// chega em `field-reviews.ts` por inferência, via o retorno de
-// `computeBacklogRows`. Exportá-lo colidia com o `AssignmentRow` homônimo de
-// `compare-queue.ts`, que é uma row de SELECT com outro shape.
-interface AssignmentRow {
-  project_id: string;
-  document_id: string;
-  user_id: string;
-  type: "auto_revisao";
-  status: "pendente";
+// Contrato mínimo da RPC transacional. Projeto, documento e pesquisador são
+// derivados das respostas pelo banco; assim o chamador não consegue montar
+// uma tupla incoerente com seis identificadores independentes.
+export interface AutoReviewCandidate {
+  human_response_id: string;
+  llm_response_id: string;
+  field_names: string[];
 }
 
 export interface FieldReviewRow {
@@ -60,8 +56,12 @@ export function computeBacklogRows(
   llmByDocId: Map<string, LlmResponseRow>,
   equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
-): { assignmentRows: AssignmentRow[]; fieldReviewRows: FieldReviewRow[]; regenerated: number } {
-  const assignmentRows: AssignmentRow[] = [];
+): {
+  candidates: AutoReviewCandidate[];
+  fieldReviewRows: FieldReviewRow[];
+  regenerated: number;
+} {
+  const candidates: AutoReviewCandidate[] = [];
   const fieldReviewRows: FieldReviewRow[] = [];
   let regenerated = 0;
 
@@ -103,12 +103,10 @@ export function computeBacklogRows(
     if (divergent.length === 0) continue;
 
     regenerated++;
-    assignmentRows.push({
-      project_id: projectId,
-      document_id: human.document_id,
-      user_id: human.respondent_id,
-      type: "auto_revisao",
-      status: "pendente",
+    candidates.push({
+      human_response_id: human.id,
+      llm_response_id: llm.id,
+      field_names: divergent,
     });
     for (const fieldName of divergent) {
       fieldReviewRows.push({
@@ -122,7 +120,7 @@ export function computeBacklogRows(
     }
   }
 
-  return { assignmentRows, fieldReviewRows, regenerated };
+  return { candidates, fieldReviewRows, regenerated };
 }
 
 // Compartilhado entre diffReviewsToRemove e removeOrphanAssignments (na

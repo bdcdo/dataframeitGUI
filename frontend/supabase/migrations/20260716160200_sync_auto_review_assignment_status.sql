@@ -30,14 +30,11 @@ AS $$
   )
 $$;
 
--- Ambos os chamadores (sync_auto_review_assignment_status e
--- assign_auto_review_if_eligible) são SECURITY DEFINER e rodam como owner, então
+-- Todos os chamadores públicos são SECURITY DEFINER e rodam como owner, então
 -- nenhum role precisa deste EXECUTE — concedê-lo só abriria a trava da fila
 -- alheia a qualquer sessão.
 REVOKE ALL ON FUNCTION public.lock_auto_review_assignment(UUID, UUID, UUID)
-  FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.lock_auto_review_assignment(UUID, UUID, UUID)
-  TO service_role;
+  FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.sync_auto_review_assignment_status(
   p_project_id UUID,
@@ -77,6 +74,18 @@ BEGIN
     p_document_id,
     p_user_id
   );
+
+  -- A fila usa uma única ordem de locks em atribuição, fechamento e
+  -- reconciliação: membership → advisory → field_reviews → assignments.
+  -- Bloquear também as linhas já resolvidas evita que caminhos futuros
+  -- introduzam a ordem inversa ao atualizar o assignment.
+  PERFORM 1
+  FROM public.field_reviews AS review
+  WHERE review.project_id = p_project_id
+    AND review.document_id = p_document_id
+    AND review.self_reviewer_id = p_user_id
+  ORDER BY review.id
+  FOR UPDATE;
 
   -- O envio é parcial: enquanto sobrar um campo sem veredito, o documento
   -- continua na fila.

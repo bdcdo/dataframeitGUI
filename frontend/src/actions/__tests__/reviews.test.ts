@@ -15,7 +15,10 @@ function makeClient() {
       for (const m of ["select", "eq", "is", "in", "neq", "not", "order", "limit"]) {
         builder[m] = () => builder;
       }
-      builder.upsert = () => builder;
+      builder.upsert = (payload: Record<string, unknown>) => {
+        opCalls.push({ op: "upsert", table, payload });
+        return builder;
+      };
       builder.insert = (payload: Record<string, unknown>) => {
         opCalls.push({ op: "insert", table, payload });
         return builder;
@@ -44,8 +47,8 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
   resolveProjectMemberActor: async () => ({
     ok: true,
-    user: { id: "user1" },
-    memberUserId: "user1",
+    user: { id: "account-alias" },
+    memberUserId: "canonical-reviewer",
   }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -66,6 +69,28 @@ async function loadSubmit() {
 }
 
 describe("submitVerdict — veredito ambiguo vira comentario automatico", () => {
+  it("grava o review no membro canônico e mantém a autoria na conta autenticada", async () => {
+    tableData = { project_comments: null };
+    const submitVerdict = await loadSubmit();
+
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "ambiguo",
+    });
+
+    expect(
+      opCalls.find((call) => call.op === "upsert" && call.table === "reviews")
+        ?.payload,
+    ).toMatchObject({ reviewer_id: "canonical-reviewer" });
+    expect(
+      opCalls.find(
+        (call) => call.op === "insert" && call.table === "project_comments",
+      )?.payload,
+    ).toMatchObject({ author_id: "account-alias" });
+  });
+
   it("ambiguo sem comentario existente → insere project_comments kind='ambiguity'", async () => {
     tableData = { project_comments: null };
     const submitVerdict = await loadSubmit();

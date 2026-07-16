@@ -45,7 +45,7 @@ describe("computeBacklogRows", () => {
 
   it("gera assignment + field_review quando humano e LLM divergem", () => {
     const llmByDocId = new Map([["doc1", llm({})]]);
-    const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
+    const { candidates, fieldReviewRows, regenerated } = computeBacklogRows(
       "proj1",
       [human({})],
       llmByDocId,
@@ -54,13 +54,11 @@ describe("computeBacklogRows", () => {
     );
 
     expect(regenerated).toBe(1);
-    expect(assignmentRows).toEqual([
+    expect(candidates).toEqual([
       {
-        project_id: "proj1",
-        document_id: "doc1",
-        user_id: "user1",
-        type: "auto_revisao",
-        status: "pendente",
+        human_response_id: "human1",
+        llm_response_id: "llm1",
+        field_names: ["campo1"],
       },
     ]);
     expect(fieldReviewRows).toEqual([

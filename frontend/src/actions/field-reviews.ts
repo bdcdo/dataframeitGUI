@@ -11,9 +11,8 @@ import {
   computeBacklogRows,
   compositeKeySet,
   diffReviewsToRemove,
-  type AssignmentRow,
+  type AutoReviewCandidate,
   type ExistingFieldReviewRow,
-  type FieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
 } from "@/lib/auto-review-backlog";
@@ -1051,6 +1050,7 @@ async function fetchBacklogInputs(
       .select("id, document_id, respondent_id, answers, answer_field_hashes")
       .eq("project_id", projectId)
       .eq("respondent_type", "humano")
+      .eq("is_latest", true)
       .eq("is_partial", false),
     admin
       .from("responses")
@@ -1159,43 +1159,11 @@ async function deletePendingFieldReviews(
   return deleted?.length ?? 0;
 }
 
-async function upsertBacklogAssignments(
-  supabase: SupabaseDataClient,
-  assignmentRows: AssignmentRow[],
-): Promise<void> {
-  if (assignmentRows.length === 0) return;
-
-  const { error } = await supabase.from("assignments").upsert(assignmentRows, {
-    onConflict: "document_id,user_id,type",
-    ignoreDuplicates: true,
-  });
-  if (error) throw new Error(error.message);
-}
-
-async function upsertBacklogFieldReviews(
-  getAdmin: () => SupabaseDataClient,
-  fieldReviewRows: FieldReviewRow[],
-): Promise<void> {
-  if (fieldReviewRows.length === 0) return;
-
-  // This reconciles the row set by document and field. Existing rows keep
-  // their response pointers after an LLM rerun; refreshing those pointers is
-  // a separate operation with different replacement semantics.
-  const { error } = await getAdmin()
-    .from("field_reviews")
-    .upsert(fieldReviewRows, {
-      onConflict: "document_id,field_name",
-      ignoreDuplicates: true,
-    });
-  if (error) throw new Error(error.message);
-}
-
 async function persistBacklogReconciliation(
   supabase: SupabaseDataClient,
   projectId: string,
   idsToDelete: string[],
-  assignmentRows: AssignmentRow[],
-  fieldReviewRows: FieldReviewRow[],
+  candidates: AutoReviewCandidate[],
 ): Promise<number> {
   // Structural field-review writes are service-only. Create that capability
   // only after the authenticated reads and pure reconciliation have passed.
@@ -1204,24 +1172,26 @@ async function persistBacklogReconciliation(
     getAdmin,
     idsToDelete,
   );
-  await upsertBacklogAssignments(supabase, assignmentRows);
-  await upsertBacklogFieldReviews(getAdmin, fieldReviewRows);
-  // Precisa vir depois dos field_reviews: o upsert de assignments não reabre
-  // linha concluída, então um campo devolvido ao backlog ficaria pendente num
-  // documento fora da fila. Reconcilia o projeto inteiro, não só as linhas
-  // deste lote — backlogs fechados cedo por execuções anteriores também voltam.
-  await reopenAutoReviewAssignmentsWithPending(getAdmin, projectId);
+  if (candidates.length > 0) {
+    const { error } = await getAdmin().rpc("assign_auto_reviews_if_eligible", {
+      p_candidates: candidates,
+    });
+    if (error) throw new Error(error.message);
+  }
+  // Reconcilia o projeto inteiro, inclusive filas fechadas cedo por execuções
+  // anteriores. A RPC usa a mesma ordem de locks da criação transacional.
+  await reconcileAutoReviewAssignmentsWithPending(getAdmin, projectId);
 
   await removeOrphanAssignments(supabase, projectId);
   return actuallyRemoved;
 }
 
-async function reopenAutoReviewAssignmentsWithPending(
+async function reconcileAutoReviewAssignmentsWithPending(
   getAdmin: () => SupabaseDataClient,
   projectId: string,
 ): Promise<void> {
   const { error } = await getAdmin().rpc(
-    "reopen_auto_review_assignments_with_pending",
+    "reconcile_auto_review_assignments_with_pending",
     { p_project_id: projectId },
   );
   if (error) throw new Error(error.message);
@@ -1259,7 +1229,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
     const llmByDocId = new Map(llmResponses.map((r) => [r.document_id, r]));
     const equivByDoc = buildEquivalenceMap(equivalences);
 
-    const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
+    const { candidates, fieldReviewRows, regenerated } = computeBacklogRows(
       projectId,
       humanResponses,
       llmByDocId,
@@ -1276,8 +1246,7 @@ export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
       supabase,
       projectId,
       idsToDelete,
-      assignmentRows,
-      fieldReviewRows,
+      candidates,
     );
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);

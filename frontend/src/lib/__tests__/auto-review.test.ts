@@ -137,14 +137,15 @@ describe("createAutoReviewIfDiverges", () => {
 
     expect(state.rpcs).toEqual([
       {
-        fn: "assign_auto_review_if_eligible",
+        fn: "assign_auto_reviews_if_eligible",
         args: {
-          p_project_id: "p1",
-          p_document_id: "doc1",
-          p_self_reviewer_id: "user1",
-          p_field_names: ["q1"],
-          p_human_response_id: "h1",
-          p_llm_response_id: "l1",
+          p_candidates: [
+            {
+              human_response_id: "h1",
+              llm_response_id: "l1",
+              field_names: ["q1"],
+            },
+          ],
         },
       },
     ]);
@@ -203,7 +204,7 @@ describe("createAutoReviewIfDiverges", () => {
 
     expect(state.upserts).toEqual([]);
     expect(state.rpcs.map((c) => c.fn)).toEqual([
-      "assign_auto_review_if_eligible",
+      "assign_auto_reviews_if_eligible",
     ]);
   });
 });

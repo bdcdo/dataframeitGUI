@@ -28,7 +28,7 @@
    - retry idempotente de conclusão de acesso;
    - `viewAs` sem concessão de escrita como identidade visualizada.
 
-3. Validar as migrations e regressões no banco local. A aplicação ao ambiente remoto ocorre somente pelo procedimento manual separado do projeto; este quickstart não publica schema. No rollout aprovado, `20260715173000` e `20260715180000` precisam ser aplicadas antes do frontend: o código novo exige os markers e RPCs novos e deve falhar fechado diante do schema anterior.
+3. Validar as migrations e regressões no banco local. A aplicação ao ambiente remoto ocorre somente pelo procedimento manual separado do projeto; este quickstart não publica schema. A integridade da autoria LLM já vem da `main` em `20260716154500_responses_llm_actor_integrity.sql`. No rollout aprovado, o bloco pendente deste PR — `20260716160000_canonical_project_identity_rls.sql`, `20260716160100_prevent_self_arbitration.sql`, `20260716160200_sync_auto_review_assignment_status.sql` e `20260716160300_auto_review_assignment_integrity.sql` — precisa ser aplicado, nessa ordem, antes do frontend. O `db push --dry-run` deve listar exatamente essas quatro migrations, sem `--include-all`; o código novo exige os markers e RPCs novos e falha fechado diante do schema anterior.
 
    ```bash
    cd frontend

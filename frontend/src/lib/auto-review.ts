@@ -51,6 +51,7 @@ export async function createAutoReviewIfDiverges(
       .eq("document_id", documentId)
       .eq("respondent_id", humanUserId)
       .eq("respondent_type", "humano")
+      .eq("is_latest", true)
       .maybeSingle(),
     admin
       .from("responses")
@@ -149,13 +150,14 @@ export async function createAutoReviewIfDiverges(
   // Stubs e assignment numa transação só, sob a mesma chave que o fechamento
   // usa: escritos daqui em requests separadas, um campo divergente novo podia
   // nascer depois do assignment ter sido concluído e nunca mais voltar à fila.
-  const { error: assignErr } = await admin.rpc("assign_auto_review_if_eligible", {
-    p_project_id: projectId,
-    p_document_id: documentId,
-    p_self_reviewer_id: humanUserId,
-    p_field_names: divergent,
-    p_human_response_id: humanResponse.id,
-    p_llm_response_id: llmResponse.id,
+  const { error: assignErr } = await admin.rpc("assign_auto_reviews_if_eligible", {
+    p_candidates: [
+      {
+        human_response_id: humanResponse.id,
+        llm_response_id: llmResponse.id,
+        field_names: divergent,
+      },
+    ],
   });
   if (assignErr) {
     log(

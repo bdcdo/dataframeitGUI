@@ -1632,12 +1632,12 @@ INSERT INTO public.responses
 VALUES
   ('42000000-0000-0000-0000-000000000007', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000006', 'humano', '{"campo":"histórica"}', false);
 
--- O sorteio manual continua aceitando vários revisores no mesmo documento.
+-- Uma comparação ativa basta para provar o lado assignment→response; desde a
+-- #496 o banco rejeita um segundo revisor ativo para o mesmo documento.
 INSERT INTO public.assignments
   (id, project_id, document_id, user_id, status, type)
 VALUES
-  ('41000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000006', 'pendente', 'comparacao'),
-  ('41000000-0000-0000-0000-000000000004', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000008', 'pendente', 'comparacao');
+  ('41000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000006', 'pendente', 'comparacao');
 
 DO $$
 BEGIN
@@ -2006,6 +2006,15 @@ INSERT INTO public.responses
   (id, project_id, document_id, respondent_id, respondent_type, answers)
 VALUES
   ('42000000-0000-0000-0000-000000000008', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-00000000000e', 'humano', '{"campo":"source"}');
+
+-- O teste anterior deixou uma comparação válida no documento. Fecha o ciclo
+-- antes de criar a nova comparação ativa usada pelo cenário de unificação.
+UPDATE public.assignments
+SET status = 'concluido', completed_at = pg_catalog.now()
+WHERE project_id = '20000000-0000-0000-0000-000000000001'
+  AND document_id = '40000000-0000-0000-0000-000000000002'
+  AND type = 'comparacao'
+  AND status IS DISTINCT FROM 'concluido';
 
 INSERT INTO public.assignments
   (id, project_id, document_id, user_id, status, type)

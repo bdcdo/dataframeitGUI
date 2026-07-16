@@ -403,7 +403,11 @@ BEGIN
     'comparacao',
     'pendente'
   )
-  ON CONFLICT (document_id, user_id, type) DO NOTHING;
+  -- Sem conflict target: além da unicidade por (documento, usuário, tipo), a
+  -- migration 20260716120100 protege um único comparador ativo por documento
+  -- com índice parcial. Assim o índice, e não a leitura acima, arbitra duas
+  -- tentativas concorrentes sem transformar a disputa em unique_violation.
+  ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_inserted = ROW_COUNT;
 
   RETURN v_inserted = 1;

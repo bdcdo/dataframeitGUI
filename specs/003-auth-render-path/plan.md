@@ -88,7 +88,7 @@ frontend/
 │   └── components/
 │       └── auth/AccessCompletionCard.tsx
 └── supabase/
-    ├── migrations/20260715173000_canonical_project_identity_rls.sql
+    ├── migrations/20260716160000_canonical_project_identity_rls.sql
     └── tests/clerk_mapping_completion.test.sql
 ```
 
