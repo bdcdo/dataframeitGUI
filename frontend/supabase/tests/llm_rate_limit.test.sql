@@ -1,4 +1,4 @@
--- Runtime contract for 20260715150000_llm_rate_limit.sql (#135).
+-- Runtime contract for 20260715170000_llm_rate_limit.sql (#135).
 --
 -- Run after `npx supabase db reset`:
 --   psql "$(npx supabase status -o env | grep DB_URL | cut -d= -f2- | tr -d '\"')" \
