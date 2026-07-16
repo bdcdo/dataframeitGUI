@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { Trash2, RotateCcw } from "lucide-react";
 import type { Document } from "@/lib/types";
+import { formatDate } from "@/lib/date-format";
 
 export type DocumentSummary = Pick<Document, "id" | "external_id" | "title"> & {
   responseCount?: number;
@@ -31,15 +32,6 @@ interface DocumentListProps {
   onRequestHardDelete?: (doc: DocumentSummary) => void;
   /** quando true, lista mostra apenas excluidos e troca acoes (restaurar / apagar permanente) */
   showExcluded?: boolean;
-}
-
-function formatDate(iso: string | null | undefined) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
 }
 
 export function DocumentList({
@@ -160,7 +152,7 @@ export function DocumentList({
                 {showExcluded ? (
                   <>
                     <td className="px-4 py-2 whitespace-nowrap text-muted-foreground">
-                      {formatDate(doc.excluded_at)}
+                      {doc.excluded_at ? formatDate(doc.excluded_at) : "—"}
                     </td>
                     <td className="px-4 py-2 text-muted-foreground">
                       {doc.excluded_by_name || "—"}

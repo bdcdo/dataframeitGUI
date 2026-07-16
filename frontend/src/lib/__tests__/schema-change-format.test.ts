@@ -68,9 +68,9 @@ describe("formatRelativeDate", () => {
   });
 
   it("retorna data formatada para >= 7 dias", () => {
-    const result = formatRelativeDate("2026-04-20T12:00:00Z");
-    // toLocaleDateString pt-BR: "20/04/2026"
-    expect(result).toMatch(/\d{2}\/\d{2}\/\d{4}/);
+    // Assert na string exata: o fallback delega a formatDate, que fixa o fuso
+    // (ver lib/date-format.ts), entao a saida nao depende do TZ da maquina.
+    expect(formatRelativeDate("2026-04-20T12:00:00Z")).toBe("20/04/2026");
   });
 });
 

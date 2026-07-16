@@ -14,8 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { AssignmentFilter } from "@/lib/lottery-utils";
-import { ptBR } from "date-fns/locale";
-import { format } from "date-fns";
+import { formatDate } from "@/lib/date-format";
 import type {
   CodingsFilterMode,
   LotteryStats,
@@ -25,12 +24,6 @@ import type { LotteryParamsState } from "./useLotteryParams";
 // Seção "Documentos elegíveis" do LotteryDialog (US1): filtros de
 // codificações humanas, status de atribuição, lotes anteriores e seleção
 // manual de documentos.
-// Formata a data de criação de um lote no rodapé dos filtros (batch-exclude
-// e batch-only compartilham o mesmo formato).
-function formatBatchDate(iso: string): string {
-  return format(new Date(iso), "dd/MM/yyyy", { locale: ptBR });
-}
-
 export function LotteryEligibilitySection({
   params,
   stats,
@@ -188,7 +181,7 @@ export function LotteryEligibilitySection({
                   >
                     {b.label || "Sem rótulo"}
                     <span className="ml-1.5 text-xs text-muted-foreground">
-                      {formatBatchDate(b.createdAt)}
+                      {formatDate(b.createdAt)}
                     </span>
                   </Label>
                 </div>
@@ -211,7 +204,7 @@ export function LotteryEligibilitySection({
                   >
                     {b.label || "Sem rótulo"}
                     <span className="ml-1.5 text-xs text-muted-foreground">
-                      {formatBatchDate(b.createdAt)}
+                      {formatDate(b.createdAt)}
                     </span>
                   </Label>
                 </div>

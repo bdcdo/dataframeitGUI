@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import type { LlmResponseRecord, LlmRunRecord } from "@/actions/llm";
 import { formatModelLabel } from "@/lib/model-registry";
+import { formatDate } from "@/lib/date-format";
 import { LlmResponseRow } from "./LlmResponseRow";
 import { classifyResponse, type ResponseStatus } from "./classify";
 
@@ -24,14 +25,6 @@ interface LlmResponsesPaneProps {
   runs: LlmRunRecord[];
   fieldLabels: Record<string, string>;
   activeJobId: string | null;
-}
-
-function formatDateShort(iso: string): string {
-  return new Date(iso).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
 }
 
 export function LlmResponsesPane({
@@ -124,7 +117,7 @@ export function LlmResponsesPane({
                     : "—";
                 return (
                   <SelectItem key={r.id} value={r.job_id}>
-                    {formatDateShort(r.started_at)} · {model}
+                    {formatDate(r.started_at)} · {model}
                   </SelectItem>
                 );
               })}
