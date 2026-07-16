@@ -3,6 +3,7 @@ import {
   makeSupabaseAdminModuleMock,
   makeSupabaseServerModuleMock,
   makeSimpleSupabaseMock,
+  type QueryError,
   type RpcCall,
   type RpcResult,
   type WriteCall,
@@ -16,6 +17,7 @@ let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown>;
+let queryErrors: Record<string, QueryError | null>;
 
 const arbitrationCalls = () =>
   rpcCalls.filter((call) => call.fn === "assign_arbitration_if_eligible");
@@ -26,6 +28,7 @@ function makeClient() {
     writeCalls,
     rpcCalls,
     rpcResults,
+    queryErrors,
   });
 }
 
@@ -55,6 +58,7 @@ beforeEach(() => {
     assignments: [],
     responses: [],
   };
+  queryErrors = {};
   adminFactory.mockClear();
   coordinatorGate.mockResolvedValue(true);
 });
@@ -97,7 +101,7 @@ describe("retryPendingArbitrations — guards", () => {
       { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [{ user_id: "userB", role: "pesquisador" }];
-    tableData["__error:responses:select"] = {
+    queryErrors["responses:select"] = {
       message: "falha ao carregar codificadores",
     };
 

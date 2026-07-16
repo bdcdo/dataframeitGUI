@@ -3,6 +3,7 @@ import {
   makeFilterAwareSupabaseMock,
   makeSupabaseAdminModuleMock,
   makeSupabaseServerModuleMock,
+  type QueryError,
   type RpcCall,
   type RpcResult,
   type WriteCall,
@@ -21,6 +22,7 @@ let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError | null>;
 let assignmentSelectErrorAt: number | null;
 
 const assignmentCalls = () =>
@@ -32,6 +34,7 @@ function makeClient() {
     writeCalls,
     rpcCalls,
     rpcResults,
+    queryErrors,
   });
   let assignmentSelectCount = 0;
   return {
@@ -74,6 +77,7 @@ beforeEach(() => {
     assign_comparison_if_eligible: { data: true },
   };
   tableData = makeEmptyComparisonTableData(["doc1", "doc2"]);
+  queryErrors = {};
   assignmentSelectErrorAt = null;
   hoisted.isCoord.mockResolvedValue(true);
 });
@@ -124,9 +128,9 @@ describe("retryPendingComparisons — guards", () => {
   });
 
   it("falha ao carregar projeto → erro técnico, sem RPC", async () => {
-    tableData["__error:projects:select"] = {
+    queryErrors["projects:select"] = {
       message: "falha ao carregar projeto",
-    } as unknown as unknown[];
+    };
 
     const result = await runRetry();
 

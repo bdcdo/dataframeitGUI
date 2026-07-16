@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   makeFilterAwareSupabaseMock,
+  type QueryError,
   type RpcCall,
   type RpcResult,
   type WriteCall,
@@ -22,6 +23,7 @@ let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError | null>;
 
 const assignmentCalls = () =>
   rpcCalls.filter((call) => call.fn === "assign_comparison_if_eligible");
@@ -32,6 +34,7 @@ function makeClient() {
     writeCalls,
     rpcCalls,
     rpcResults,
+    queryErrors,
   });
 }
 
@@ -66,6 +69,7 @@ beforeEach(() => {
     assign_comparison_if_eligible: { data: true },
   };
   tableData = makeEmptyComparisonTableData();
+  queryErrors = {};
 });
 
 async function loadLib() {
@@ -238,9 +242,9 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
       makeHumanResponse("userB", "B"),
     ];
     tableData.project_members = [makeProjectMember("userC")];
-    tableData["__error:response_equivalences:select"] = {
+    queryErrors["response_equivalences:select"] = {
       message: "falha ao carregar equivalências",
-    } as unknown as unknown[];
+    };
 
     await expect(runAutoComparison()).rejects.toThrow(
       "falha ao carregar equivalências",
