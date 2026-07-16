@@ -26,6 +26,7 @@ const baseProps = {
   },
   setConfig: vi.fn(),
   pydanticFields: [] as { name: string }[],
+  schemaBaseline: { version: "0.1.0", revision: 0 },
 };
 
 afterEach(() => {
@@ -40,7 +41,10 @@ function ambiguitiesSwitch() {
 
 describe("ModelConfigCard — toggle de ambiguidades", () => {
   it("chama toggleLlmField com LLM_AMBIGUITIES_FIELD e mostra sucesso", async () => {
-    toggleLlmField.mockResolvedValue({});
+    toggleLlmField.mockResolvedValue({
+      status: "saved",
+      snapshot: { fields: [], version: "0.2.0", revision: 1 },
+    });
     const user = userEvent.setup();
     render(<ModelConfigCard {...baseProps} />);
 
@@ -51,6 +55,7 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
         "p1",
         LLM_AMBIGUITIES_FIELD,
         true,
+        { version: "0.1.0", revision: 0 },
       ),
     );
     expect(toastSuccess).toHaveBeenCalledWith("Campo de ambiguidades adicionado");
@@ -58,7 +63,7 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
   });
 
   it("reverte o estado otimista e mostra erro quando a action falha", async () => {
-    toggleLlmField.mockResolvedValue({ error: "schema bloqueado" });
+    toggleLlmField.mockResolvedValue({ status: "error", message: "schema bloqueado" });
     const user = userEvent.setup();
     render(<ModelConfigCard {...baseProps} />);
 

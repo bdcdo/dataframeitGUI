@@ -1,6 +1,6 @@
 interface SchemaEditorStatus {
   isDirty: boolean;
-  hasConflict: boolean;
+  conflictCount: number | null;
   storageAvailable: boolean;
   draftPersisted: boolean;
   recoveredDraft: boolean;
@@ -8,24 +8,22 @@ interface SchemaEditorStatus {
 
 export function schemaEditorStatusMessage({
   isDirty,
-  hasConflict,
+  conflictCount,
   storageAvailable,
   draftPersisted,
   recoveredDraft,
 }: SchemaEditorStatus): string | null {
-  if (!isDirty && !hasConflict) return null;
-  if (hasConflict && draftPersisted) {
-    return "Rascunho conflitante · aplique ou descarte antes de salvar";
+  if (conflictCount !== null) {
+    return conflictCount > 0
+      ? `${conflictCount} conflito(s) pendente(s) · resolva antes de salvar`
+      : "Conflitos resolvidos · confirme o merge para continuar";
   }
-  if (hasConflict) {
-    return "Rascunho conflitante não gravado localmente · sair pode perdê-lo";
-  }
+  if (!isDirty) return null;
   if (!storageAvailable) {
-    return "Alterações não salvas · o navegador avisará ao fechar ou recarregar; a navegação interna pode perdê-las";
+    return "Alterações não salvas · o armazenamento local está indisponível";
   }
-  if (!draftPersisted) {
-    return "Alterações não salvas · o rascunho local não foi atualizado, possivelmente por outra aba";
-  }
-  if (recoveredDraft) return "Rascunho recuperado · alterações não salvas";
-  return "Alterações não salvas · rascunho local";
+  if (!draftPersisted) return "Alterações não salvas · salvando rascunho local";
+  return recoveredDraft
+    ? "Rascunho recuperado · alterações não salvas"
+    : "Alterações não salvas · rascunho local";
 }

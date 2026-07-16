@@ -23,11 +23,9 @@
  * O cálculo (classificação, versão, log de auditoria, código Pydantic e
  * hash) usa `planSchemaPersistence` de `src/lib/schema-utils` (pura,
  * client-safe — extração da issue #63/PR #352), a mesma função usada por
- * saveSchemaFromGUI. A escrita em si usa `updateOrThrow` de
- * `src/lib/supabase/rls-guard` (mesma guarda contra "histórico fantasma" —
- * #178 — que saveSchema usa) porque é código puro sem `"use server"`, então
- * é chamável fora do Next runtime; só a revalidação de cache
- * (`revalidatePath`/`revalidateTag`) fica de fora, por depender do runtime.
+ * saveSchemaFromGUI. A escrita usa a mesma RPC transacional da aplicação, de
+ * modo que projeto, revisão concorrente e histórico sejam confirmados ou
+ * revertidos juntos. Só a revalidação de cache fica fora deste script.
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -35,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { planSchemaPersistence } from "../../src/lib/schema-utils";
-import { updateOrThrow } from "../../src/lib/supabase/rls-guard";
+import { parsePydanticFields } from "../../src/lib/pydantic-field";
 import type { PydanticField } from "../../src/lib/types";
 import { loadEnv } from "./load-env";
 
@@ -99,6 +97,11 @@ interface ResolutionResult {
   detail?: string;
 }
 
+interface SchemaCommitRow {
+  status: "saved" | "conflict" | "forbidden" | "not_found";
+  schema_revision: number | null;
+}
+
 // review_id/respondent_id de "duvida" entram num filtro .or() construído por
 // template string (verdict_acknowledgments tem chave composta, sem coluna
 // `id` única — batchResolveUpdate/.in() não se aplicam). .in() escapa valores
@@ -120,10 +123,15 @@ async function applySchemaChanges(
   changedBy: string,
   write: boolean,
 ) {
+  const validatedFields = parsePydanticFields(newFields);
+  if (!validatedFields) {
+    throw new Error("newFields não corresponde ao contrato canônico de PydanticField");
+  }
+
   const { data: project, error: projErr } = await supabase
     .from("projects")
     .select(
-      "pydantic_fields, pydantic_code, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch",
+      "pydantic_fields, pydantic_code, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
     )
     .eq("id", projectId)
     .single();
@@ -136,7 +144,7 @@ async function applySchemaChanges(
   // malformado (newFields vazio/parcial) apagaria o schema inteiro com a
   // service role key.
   const hasExistingSchema = oldFields.length > 0 || !!project?.pydantic_code;
-  if (newFields.length === 0 && hasExistingSchema) {
+  if (validatedFields.length === 0 && hasExistingSchema) {
     throw new Error(
       "guarda anti-wipe: newFields está vazio mas o projeto já tem schema. " +
         "Se a intenção é remover todos os campos, faça pela UI.",
@@ -150,7 +158,7 @@ async function applySchemaChanges(
   };
 
   const { changeType, bumped, logEntries, code, hash, fieldsWithHash } =
-    planSchemaPersistence(oldFields, newFields, current);
+    planSchemaPersistence(oldFields, validatedFields, current);
 
   const summary = {
     changeType,
@@ -170,27 +178,6 @@ async function applySchemaChanges(
     return { preview: false, summary, applied: false, reason: "sem mudanças" };
   }
 
-  // Update projects
-  const updatePayload: Record<string, unknown> = {
-    pydantic_code: code,
-    pydantic_hash: hash,
-    pydantic_fields: fieldsWithHash,
-  };
-  if (changeType) {
-    updatePayload.schema_version_major = bumped.major;
-    updatePayload.schema_version_minor = bumped.minor;
-    updatePayload.schema_version_patch = bumped.patch;
-  }
-  // updateOrThrow (não .update().eq()) checa linhas afetadas: um projectId
-  // inexistente/desatualizado faria o UPDATE "suceder" com 0 linhas
-  // (comportamento normal do PostgREST) e o INSERT em schema_change_log
-  // abaixo gravaria histórico de uma mudança nunca persistida — o mesmo bug
-  // de "histórico fantasma" que updateOrThrow já existe para prevenir em
-  // saveSchema (issue #178).
-  await updateOrThrow(supabase, "projects", updatePayload, { id: projectId }, {
-    message: `Nenhuma linha atualizada em projects para id=${projectId} (registro inexistente): abortando antes de gravar schema_change_log.`,
-  });
-
   // Sem invalidação de responses na troca de schema: is_latest significa
   // "última resposta ativa por respondente", não "compatível com o schema
   // vigente" (rename + semântica em 20260514190000; saveSchema também não
@@ -198,23 +185,39 @@ async function applySchemaChanges(
   // pydantic_hash/answer_field_hashes. Flipar aqui reintroduziria o bug de
   // respostas LLM órfãs revivido pela migration 20260505000001 (issue #349).
 
-  // Audit log
-  if (logEntries.length > 0) {
-    const { error: logErr } = await supabase.from("schema_change_log").insert(
-      logEntries.map((e) => ({
-        project_id: projectId,
-        changed_by: changedBy,
-        change_type: changeType ?? "patch",
-        version_major: bumped.major,
-        version_minor: bumped.minor,
-        version_patch: bumped.patch,
-        ...e,
-      })),
+  const { data: commitData, error: commitError } = await supabase
+    .rpc("commit_project_schema", {
+      p_project_id: projectId,
+      p_expected_revision: project?.schema_revision ?? 0,
+      p_pydantic_fields: fieldsWithHash,
+      p_pydantic_code: code,
+      p_pydantic_hash: hash,
+      p_version_major: bumped.major,
+      p_version_minor: bumped.minor,
+      p_version_patch: bumped.patch,
+      p_change_type: changeType ?? "patch",
+      p_log_entries: logEntries,
+      p_changed_by: changedBy,
+    })
+    .single();
+  const committed = commitData as SchemaCommitRow | null;
+  if (commitError) {
+    throw new Error(`commit_project_schema: ${commitError.message}`);
+  }
+  if (committed?.status !== "saved") {
+    throw new Error(
+      committed?.status === "conflict"
+        ? `schema concorrente: revisão esperada ${project?.schema_revision ?? 0}, revisão atual ${committed.schema_revision}`
+        : `commit_project_schema recusou a escrita (${committed?.status ?? "sem retorno"})`,
     );
-    if (logErr) throw new Error(`schema_change_log insert: ${logErr.message}`);
   }
 
-  return { preview: false, summary, applied: true };
+  return {
+    preview: false,
+    summary,
+    applied: true,
+    schemaRevision: committed.schema_revision,
+  };
 }
 
 // ----------------------- Comment resolution -----------------------

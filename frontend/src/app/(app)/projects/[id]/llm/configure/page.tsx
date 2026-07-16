@@ -14,7 +14,7 @@ export default async function LlmConfigurePage({
       supabase
         .from("projects")
         .select(
-          "prompt_template, description, llm_provider, llm_model, llm_kwargs, pydantic_fields, pydantic_code"
+          "prompt_template, description, llm_provider, llm_model, llm_kwargs, pydantic_fields, pydantic_code, schema_version_major, schema_version_minor, schema_version_patch, schema_revision"
         )
         .eq("id", id)
         .single(),
@@ -39,7 +39,7 @@ export default async function LlmConfigurePage({
 
   const docsWithLlm = Math.min(
     totalDocs ?? 0,
-    new Set(llmResponses?.map((r) => r.document_id)).size,
+    new Set(llmResponses?.map((response) => response.document_id)).size,
   );
 
   return (
@@ -58,6 +58,10 @@ export default async function LlmConfigurePage({
       }}
       pydanticFields={(project?.pydantic_fields as PydanticField[]) || null}
       pydanticCode={(project?.pydantic_code as string | null) ?? null}
+      schemaBaseline={{
+        version: `${project?.schema_version_major ?? 0}.${project?.schema_version_minor ?? 1}.${project?.schema_version_patch ?? 0}`,
+        revision: project?.schema_revision ?? 0,
+      }}
       totalDocs={totalDocs ?? 0}
       docsWithLlm={docsWithLlm}
     />

@@ -29,13 +29,14 @@ import {
 } from "@/lib/model-registry";
 import { ModelCombobox } from "./ModelCombobox";
 import { AdvancedParamsSection } from "./AdvancedParamsSection";
-import type { LlmConfig } from "@/lib/types";
+import type { LlmConfig, SchemaBaselineIdentity } from "@/lib/types";
 
 interface ModelConfigCardProps {
   projectId: string;
   config: LlmConfig;
   setConfig: Dispatch<SetStateAction<LlmConfig>>;
   pydanticFields: { name: string }[] | null;
+  schemaBaseline: SchemaBaselineIdentity;
 }
 
 function buildKwargsForCapabilities(
@@ -55,6 +56,7 @@ export function ModelConfigCard({
   config,
   setConfig,
   pydanticFields,
+  schemaBaseline,
 }: ModelConfigCardProps) {
   const capabilities = getModelCapabilities(
     config.llm_provider as Provider,
@@ -112,9 +114,20 @@ export function ModelConfigCard({
     startTransition(async () => {
       setOptimisticAmbiguities(checked);
       try {
-        const r = await toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked);
-        if (r?.error) {
-          toast.error(r.error);
+        const r = await toggleLlmField(
+          projectId,
+          LLM_AMBIGUITIES_FIELD,
+          checked,
+          schemaBaseline,
+        );
+        if (r.status === "error") {
+          toast.error(r.message);
+          return;
+        }
+        if (r.status === "conflict") {
+          toast.error(
+            "O schema mudou em outra sessão. Recarregue a página antes de alterar este campo.",
+          );
           return;
         }
         toast.success(

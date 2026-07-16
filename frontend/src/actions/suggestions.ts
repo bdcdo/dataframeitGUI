@@ -4,8 +4,11 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { saveSchemaFromGUI } from "./schema";
-import { schemaBaselineIdentity } from "@/lib/schema-utils";
-import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
+import type {
+  PydanticField,
+  SchemaBaselineIdentity,
+  SchemaSaveResult,
+} from "@/lib/types";
 
 function projectVersion(project: {
   schema_version_major?: number | null;
@@ -13,6 +16,67 @@ function projectVersion(project: {
   schema_version_patch?: number | null;
 }): string {
   return `${project.schema_version_major ?? 0}.${project.schema_version_minor ?? 1}.${project.schema_version_patch ?? 0}`;
+}
+
+function schemaSaveError(result: SchemaSaveResult): string | null {
+  if (result.status === "saved") return null;
+  if (result.status === "conflict") {
+    return "O schema mudou enquanto a sugestão era revisada. Recarregue a página e reaplique a sugestão sobre a versão atual.";
+  }
+  return result.message;
+}
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
+
+async function applyApprovedSuggestion(
+  supabase: SupabaseServerClient,
+  suggestionId: string,
+  projectId: string,
+): Promise<string | null> {
+  const { data: suggestion } = await supabase
+    .from("schema_suggestions")
+    .select("field_name, suggested_changes")
+    .eq("id", suggestionId)
+    .single();
+  if (!suggestion) return "Sugestão não encontrada";
+
+  const { data: project } = await supabase
+    .from("projects")
+    .select(
+      "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
+    )
+    .eq("id", projectId)
+    .single();
+  if (!project || project.schema_revision == null) {
+    return "Projeto não encontrado ou sem permissão";
+  }
+
+  const changes = suggestion.suggested_changes as Record<string, unknown>;
+  const fields = (project.pydantic_fields as PydanticField[]) || [];
+  const updatedFields = fields.map((field) =>
+    field.name === suggestion.field_name
+      ? {
+          ...field,
+          ...(changes.description !== undefined && {
+            description: changes.description as string,
+          }),
+          ...(changes.help_text !== undefined && {
+            help_text: (changes.help_text as string) || undefined,
+          }),
+          ...(changes.options !== undefined && {
+            options: (changes.options as string[])?.length
+              ? changes.options as string[]
+              : null,
+          }),
+        }
+      : field,
+  );
+  return schemaSaveError(
+    await saveSchemaFromGUI(projectId, updatedFields, {
+      version: projectVersion(project),
+      revision: project.schema_revision,
+    }),
+  );
 }
 
 export async function createSchemaSuggestion(
@@ -55,51 +119,11 @@ export async function resolveSchemaSuggestion(
   const supabase = await createSupabaseServer();
 
   if (action === "approved") {
-    // Fetch the suggestion to get changes
-    const { data: suggestion } = await supabase
-      .from("schema_suggestions")
-      .select("field_name, suggested_changes")
-      .eq("id", suggestionId)
-      .single();
-
-    if (!suggestion) return { error: "Sugestão não encontrada" };
-
-    // Fetch current fields
-    const { data: project } = await supabase
-      .from("projects")
-      .select(
-        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
-      )
-      .eq("id", projectId)
-      .single();
-
-    const fields = (project?.pydantic_fields as PydanticField[]) || [];
-    const expectedBaseline = schemaBaselineIdentity(
-      fields,
-      projectVersion(project ?? {}),
-    );
-    const changes = suggestion.suggested_changes as Record<string, unknown>;
-
-    // Apply changes to the matching field
-    const updatedFields = fields.map((f) => {
-      if (f.name !== suggestion.field_name) return f;
-      return {
-        ...f,
-        ...(changes.description !== undefined && { description: changes.description as string }),
-        ...(changes.help_text !== undefined && { help_text: (changes.help_text as string) || undefined }),
-        ...(changes.options !== undefined && { options: (changes.options as string[])?.length ? changes.options as string[] : null }),
-      };
-    });
-
     // Save schema (triggers audit log). Em falha (ex.: RLS filtrou o UPDATE
     // de projects — #178), retorna sem marcar a sugestão como aprovada,
     // evitando a divergência "Aprovada" com schema não aplicado.
-    const saved = await saveSchemaFromGUI(
-      projectId,
-      updatedFields,
-      expectedBaseline,
-    );
-    if (saved.error) return { error: saved.error };
+    const saveError = await applyApprovedSuggestion(supabase, suggestionId, projectId);
+    if (saveError) return { error: saveError };
   }
 
   // Mark suggestion as resolved. O .select() detecta o caso inverso ao da
@@ -150,7 +174,8 @@ export async function approveSchemaSuggestionWithEdits(
     createSupabaseServer(),
     saveSchemaFromGUI(projectId, editedFields, expectedBaseline),
   ]);
-  if (saved.error) return { error: saved.error };
+  const saveError = schemaSaveError(saved);
+  if (saveError) return { error: saveError };
 
   const { data: updated, error } = await supabase
     .from("schema_suggestions")

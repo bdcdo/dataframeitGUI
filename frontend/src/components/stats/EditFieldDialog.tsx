@@ -127,7 +127,12 @@ export function EditFieldDialog({
             updatedFields,
             schemaBaseline,
           );
-          if (result?.error) throw new Error(result.error);
+          if (result.status === "error") throw new Error(result.message);
+          if (result.status === "conflict") {
+            throw new Error(
+              "O schema mudou em outra sessão. Recarregue a página e reaplique esta edição sobre a versão atual.",
+            );
+          }
           toast.success("Campo atualizado");
         }
         onOpenChange(false);

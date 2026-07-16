@@ -12,7 +12,7 @@ export default async function SchemaPage({
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "pydantic_code, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      "pydantic_code, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
     )
     .eq("id", id)
     .single();
@@ -27,6 +27,7 @@ export default async function SchemaPage({
       initialCode={project?.pydantic_code}
       initialFields={fields}
       currentVersion={version}
+      currentRevision={project?.schema_revision ?? 0}
     />
   );
 }

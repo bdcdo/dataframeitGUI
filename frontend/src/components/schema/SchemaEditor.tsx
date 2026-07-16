@@ -10,9 +10,7 @@ import {
   recoverFieldsFromStoredCode,
 } from "@/actions/schema";
 import {
-  schemaEditorSessionKey,
   generatePydanticCode,
-  schemaFieldsFingerprint,
   validateGUIFields,
 } from "@/lib/schema-utils";
 import { toast } from "sonner";
@@ -38,19 +36,16 @@ interface SchemaEditorProps {
   initialCode: string | null;
   initialFields: PydanticField[] | null;
   currentVersion: string;
+  currentRevision: number;
 }
 
-// Este boundary transforma a identidade remota do schema na identidade React
-// da sessão. Assim, navegação entre projetos no mesmo segmento dinâmico e um
-// refresh com versão/fingerprint novo remontam todos os estados e refs locais.
+// Este boundary transforma a revisão canônica do schema na identidade React
+// da sessão. Navegação entre projetos e refresh com revisão nova remontam todos
+// os estados e refs locais.
 export function SchemaEditorSession(props: SchemaEditorProps) {
   return (
     <SchemaEditor
-      key={schemaEditorSessionKey(
-        props.projectId,
-        props.initialFields || [],
-        props.currentVersion,
-      )}
+      key={`${props.projectId}:${props.currentRevision}`}
       {...props}
     />
   );
@@ -70,6 +65,7 @@ function SchemaEditor({
   initialCode,
   initialFields,
   currentVersion,
+  currentRevision,
 }: SchemaEditorProps) {
   const { refresh } = useRouter();
 
@@ -83,19 +79,22 @@ function SchemaEditor({
     isDirty,
     recoveredDraft,
     savedVersion,
+    baseline,
     conflict,
     storageAvailable,
     draftPersisted,
     prepareSubmission,
     markSaved,
     registerRemoteConflict,
-    applyConflictingDraft,
+    resolveConflict,
+    applyResolvedDraft,
     discardConflictingDraft,
     isHydrated,
   } = useSchemaDraft({
     projectId,
     initialFields: initialFields || [],
     currentVersion,
+    currentRevision,
   });
   // O código é uma visualização DERIVADA dos campos, não estado próprio. Para um
   // projeto sem campos mas com código armazenado (legado), mostra o código
@@ -137,26 +136,18 @@ function SchemaEditor({
     }
     startTransition(async () => {
       try {
-        const r = await publishMajorVersion(projectId);
-        if (r?.error) {
-          toast.error(r.error);
-          // Falha parcial: a MAJOR foi publicada (só o log falhou) — reflete.
-          if (!r.bumped) return;
-        } else if (r?.bumped) {
-          const b = r.bumped;
-          toast.success(`Nova versão MAJOR publicada: ${b.major}.${b.minor}.${b.patch}`);
+        const r = await publishMajorVersion(projectId, baseline);
+        if (r.status === "error") {
+          toast.error(r.message);
+          return;
         }
-        if (r?.bumped) {
-          const b = r.bumped;
-          markSaved(
-            {
-              fields,
-              version: `${b.major}.${b.minor}.${b.patch}`,
-              fingerprint: schemaFieldsFingerprint(fields),
-            },
-            null,
-          );
+        if (r.status === "conflict") {
+          registerRemoteConflict(r.current);
+          toast.error("O schema mudou em outra sessão. Revise o conflito antes de publicar.");
+          return;
         }
+        markSaved(r.snapshot, null);
+        toast.success(`Nova versão MAJOR publicada: ${r.snapshot.version}`);
         setMajorDialogOpen(false);
         refresh();
       } catch (e: unknown) {
@@ -174,8 +165,13 @@ function SchemaEditor({
     startTransition(async () => {
       try {
         const r = await backfillSchemaVersionHistory(projectId);
-        if (r?.error || !r?.stats) {
-          toast.error(r?.error ?? "Erro ao reconstruir");
+        if (r.status === "error") {
+          toast.error(r.message);
+          return;
+        }
+        if (r.status === "conflict") {
+          registerRemoteConflict(r.current);
+          toast.error("O schema mudou em outra sessão. Revise o conflito antes de reconstruir.");
           return;
         }
         const v = r.stats.finalVersion;
@@ -184,14 +180,7 @@ function SchemaEditor({
           `v${v.major}.${v.minor}.${v.patch} · ${r.stats.logEntriesUpdated} entradas, ${r.stats.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
           { duration: 10000 },
         );
-        markSaved(
-          {
-            fields,
-            version: `${v.major}.${v.minor}.${v.patch}`,
-            fingerprint: schemaFieldsFingerprint(fields),
-          },
-          null,
-        );
+        markSaved(r.snapshot, null);
         setBackfillDialogOpen(false);
         refresh();
       } catch (e: unknown) {
@@ -252,12 +241,16 @@ function SchemaEditor({
           submission.fields,
           submission.expectedBaseline,
         );
-        if (r?.saved) markSaved(r.saved, submission.draftToken);
-        else if (r?.conflict) registerRemoteConflict(r.conflict);
-        if (r?.error) {
-          toast.error(r.error);
+        if (r.status === "error") {
+          toast.error(r.message);
           return;
         }
+        if (r.status === "conflict") {
+          registerRemoteConflict(r.current);
+          toast.warning("O schema mudou em outra sessão. Revise as diferenças para continuar.");
+          return;
+        }
+        markSaved(r.snapshot, submission.writeToken);
         toast.success("Schema salvo!");
       } catch (e: unknown) {
         toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
@@ -290,10 +283,8 @@ function SchemaEditor({
         onRecover={handleRecover}
         isPending={isPending}
         draftConflict={conflict}
-        currentVersion={savedVersion}
         storageAvailable={storageAvailable}
         draftPersisted={draftPersisted}
-        onApplyDraft={applyConflictingDraft}
         onDiscardDraft={discardConflictingDraft}
       />
 
@@ -338,15 +329,15 @@ function SchemaEditor({
 
       <SchemaEditorFooter
         mode={mode}
-        saveDisabled={isPending || conflict !== null}
+        onSave={handleSave}
+        saveDisabled={isPending || conflict !== null || !isDirty}
         statusMessage={schemaEditorStatusMessage({
           isDirty,
-          hasConflict: conflict !== null,
+          conflictCount: conflict?.merge.unresolvedConflictIds.length ?? null,
           storageAvailable,
           draftPersisted,
           recoveredDraft,
         })}
-        onSave={handleSave}
       />
 
       <SchemaEditorDialogs
@@ -358,6 +349,10 @@ function SchemaEditor({
         onConfirmPublishMajor={handlePublishMajor}
         isPending={isPending}
         currentVersion={savedVersion}
+        conflict={conflict}
+        onResolveConflict={resolveConflict}
+        onApplyResolvedDraft={applyResolvedDraft}
+        onDiscardConflictingDraft={discardConflictingDraft}
       />
     </div>
   );

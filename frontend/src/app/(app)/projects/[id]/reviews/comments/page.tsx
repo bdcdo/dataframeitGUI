@@ -3,7 +3,6 @@ import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
 import { coordinatorGate } from "@/lib/project-access";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { PydanticField } from "@/lib/types";
-import { schemaBaselineIdentity } from "@/lib/schema-utils";
 import {
   mapReviewComments,
   mapNoteComments,
@@ -45,7 +44,7 @@ export default async function CommentsPage({
     supabase
       .from("projects")
       .select(
-        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+        "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
       )
       .eq("id", id)
       .single(),
@@ -127,7 +126,10 @@ export default async function CommentsPage({
       )),
     ]),
   ];
-  const schemaBaseline = schemaBaselineIdentity(fields, schemaVersion);
+  const schemaBaseline = {
+    version: schemaVersion,
+    revision: project?.schema_revision ?? 0,
+  };
 
   // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
   // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so

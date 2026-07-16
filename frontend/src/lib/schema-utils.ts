@@ -2,7 +2,6 @@ import type {
   ConditionScalar,
   FieldCondition,
   PydanticField,
-  SchemaBaselineIdentity,
 } from "@/lib/types";
 
 // ---------- Geração de código Pydantic (pure, client-safe) ----------
@@ -687,27 +686,11 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
   };
 }
 
-// Identidade canônica do estado editável do schema. `hash` fica de fora porque
-// é metadado derivado no save; as propriedades autoradas vêm da mesma
-// serialização usada pelo histórico, evitando uma segunda definição de
-// igualdade para PydanticField.
-export function schemaFieldsFingerprint(fields: PydanticField[]): string {
-  return sha256Hex(stableStringify(fields.map(snapshotOf)));
-}
-
-export function schemaBaselineIdentity(
-  fields: PydanticField[],
-  version: string,
-): SchemaBaselineIdentity {
-  return { version, fingerprint: schemaFieldsFingerprint(fields) };
-}
-
-export function schemaEditorSessionKey(
-  projectId: string,
-  fields: PydanticField[],
-  version: string,
-): string {
-  return `${projectId}:${version}:${schemaFieldsFingerprint(fields)}`;
+// Serialização canônica do estado editável. `hash` fica de fora porque é
+// metadado derivado no save; a comparação local não precisa recalcular um hash
+// criptográfico a cada tecla.
+export function serializeSchemaFields(fields: PydanticField[]): string {
+  return stableStringify(fields.map(snapshotOf));
 }
 
 // Classifica um diff de schema_change_log (before/after por campo) como
