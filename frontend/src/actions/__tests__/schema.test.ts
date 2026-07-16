@@ -382,6 +382,65 @@ describe("backfillSchemaVersionHistory", () => {
     ]);
     expect(state.writes).toHaveLength(0);
   });
+
+  // A RPC commita antes de o chamador ver o retorno. Validar só o retorno
+  // reportaria como falha uma escrita que aconteceu — e o backfill é a
+  // ferramenta de projeto legado, logo é quem mais encontra schema inválido.
+  it("recusa schema persistido inválido antes de chamar a RPC", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [{ ...FIELD, propriedadeDesconhecida: true }],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: { data: [] },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1");
+
+    expect(result).toEqual({
+      status: "error",
+      message:
+        "O schema persistido é inválido e precisa ser corrigido antes da edição.",
+    });
+    // O ponto do teste: nenhuma escrita foi tentada.
+    expect(state.rpcs).toHaveLength(0);
+    expect(state.writes).toHaveLength(0);
+  });
+
+  // Os SELECT paginados precedem a RPC e escapam do mapeamento por (rpc,
+  // errcode) — eram o único ponto do backfill que entregava texto do Postgres
+  // ao toast pt-BR.
+  it("não vaza a mensagem crua do Postgres quando a paginação falha", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: {
+        error: { message: "canceling statement due to statement timeout" },
+      },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1");
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Não foi possível reconstruir o histórico. Tente novamente.",
+    });
+    expect(state.rpcs).toHaveLength(0);
+  });
 });
 
 describe("recoverFieldsFromStoredCode", () => {

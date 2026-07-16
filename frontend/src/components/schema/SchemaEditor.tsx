@@ -149,6 +149,7 @@ function SchemaEditor({
     conflict,
     storageAvailable,
     storageBlocked,
+    staleDraftDiscarded,
     draftPersisted,
     prepareSubmission,
     markSaved,
@@ -356,6 +357,7 @@ function SchemaEditor({
         onRecover={handleRecover}
         isPending={isPending}
         storageBlocked={storageBlocked}
+        staleDraftDiscarded={staleDraftDiscarded}
       />
 
       {/* Conteúdo */}

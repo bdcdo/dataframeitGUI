@@ -223,13 +223,18 @@ describe("useSchemaDraft", () => {
   });
 
   // Contrapartida: lixo e formato anterior não podem travar o rascunho para
-  // sempre — ninguém mais escreve neles e não há o que preservar.
+  // sempre — ninguém mais escreve neles e não há o que preservar. Mas assumir o
+  // slot e ficar calado são coisas diferentes: um envelope de formato anterior
+  // era trabalho do usuário, e essa é a via mais provável de perda (o formato já
+  // foi bumpado 3 vezes, logo todo deploy que bumpa produz este caso).
   it("assume o slot quando o conteúdo é lixo ou de formato anterior", () => {
     window.localStorage.setItem(schemaDraftStorageKey(SCOPE), "{{{ não é json");
     const lixo = renderDraft();
     act(() => lixo.result.current.setFields(EDITED_FIELDS));
     flushDebounce();
     expect(storedDraft()?.fields).toEqual(EDITED_FIELDS);
+    // Lixo não é rascunho: não há perda a anunciar.
+    expect(lixo.result.current.staleDraftDiscarded).toBe(false);
     lixo.unmount();
 
     window.localStorage.setItem(
@@ -241,6 +246,11 @@ describe("useSchemaDraft", () => {
     flushDebounce();
     expect(storedDraft()?.fields).toEqual(EDITED_FIELDS);
     expect(antigo.result.current.storageBlocked).toBe(false);
+    expect(antigo.result.current.staleDraftDiscarded).toBe(true);
+  });
+
+  it("não anuncia rascunho perdido quando o slot estava vazio", () => {
+    expect(renderDraft().result.current.staleDraftDiscarded).toBe(false);
   });
 
   it("não sobrescreve o rascunho que outra aba gravou", () => {
