@@ -3,7 +3,7 @@
 // só podem exportar funções async (regra do Next), então o que é puro e
 // testável vive aqui e a action importa.
 
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import {
   computeFieldHash,
   bumpVersion,
@@ -38,7 +38,7 @@ export type LogEntryRow = {
 export type ResponseRow = {
   id: string;
   created_at: string;
-  answer_field_hashes: Record<string, string> | null;
+  answer_field_hashes: AnswerFieldHashes;
   version_inferred_from: string | null;
 };
 
@@ -234,19 +234,22 @@ export function matchResponsesToVersions(
     }
 
     const rHashes = r.answer_field_hashes ?? null;
+    const knownHashEntries = rHashes
+      ? Object.entries(rHashes).filter((entry): entry is [string, string] => entry[1] !== null)
+      : [];
     const ts = new Date(r.created_at).getTime();
 
     let chosenKey: string | null = null;
     let chosenMethod: "hashes" | "created_at" | "fallback_created_at" = "created_at";
 
-    if (rHashes && Object.keys(rHashes).length > 0) {
+    if (knownHashEntries.length > 0) {
       // Score each version
       let bestScore = -1;
       let bestKey: string | null = null;
       let bestTieTs = Infinity;
       for (const [k, vHashes] of hashesByVersion) {
         let score = 0;
-        for (const [fn, h] of Object.entries(rHashes)) {
+        for (const [fn, h] of knownHashEntries) {
           if (vHashes[fn] === h) score++;
         }
         if (score === 0) continue;
@@ -271,8 +274,7 @@ export function matchResponsesToVersions(
         .sort((a, b) => b[1] - a[1]);
       chosenKey =
         candidates.length > 0 ? candidates[0][0] : versionKey({ major: 0, minor: 1, patch: 0 });
-      chosenMethod =
-        rHashes && Object.keys(rHashes).length > 0 ? "fallback_created_at" : "created_at";
+      chosenMethod = knownHashEntries.length > 0 ? "fallback_created_at" : "created_at";
     }
 
     const v = versionByKey.get(chosenKey) ?? { major: 0, minor: 1, patch: 0 };

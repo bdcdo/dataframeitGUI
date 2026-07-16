@@ -6,7 +6,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
 import { createHash } from "crypto";
-import { sanitizeStoredAnswers } from "@/lib/stored-answers";
+import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type { DocumentMetadata, PydanticField } from "@/lib/types";
 
 export interface DocumentRow {

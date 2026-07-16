@@ -213,4 +213,43 @@ describe("matchResponsesToVersions", () => {
     expect(bucket?.ids).toEqual(["r3"]);
     expect(byMethod.fallback_created_at).toBe(1);
   });
+
+  it("ignora proveniência null e usa os hashes conhecidos na pontuação", () => {
+    const versions = new Map<string, Record<string, string>>([
+      ["0.1.0", {}],
+      ["0.2.0", { conhecido: "hashB" }],
+    ]);
+    const { updates, byMethod } = matchResponsesToVersions(
+      [
+        responseRow({
+          id: "r4",
+          created_at: "1970-01-01T00:00:02.000Z",
+          answer_field_hashes: { desconhecido: null, conhecido: "hashB" },
+        }),
+      ],
+      versions,
+      enriched,
+    );
+
+    expect(updates.get("0.2.0|hashes")?.ids).toEqual(["r4"]);
+    expect(byMethod.hashes).toBe(1);
+  });
+
+  it("mapa apenas com null é legacy e usa created_at", () => {
+    const { updates, byMethod } = matchResponsesToVersions(
+      [
+        responseRow({
+          id: "r5",
+          created_at: "1970-01-01T00:00:00.500Z",
+          answer_field_hashes: { campo1: null },
+        }),
+      ],
+      hashesByVersion,
+      enriched,
+    );
+
+    expect(updates.get("0.1.0|created_at")?.ids).toEqual(["r5"]);
+    expect(byMethod.created_at).toBe(1);
+    expect(byMethod.fallback_created_at).toBe(0);
+  });
 });

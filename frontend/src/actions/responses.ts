@@ -3,9 +3,7 @@
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
-import { dropHiddenConditionals } from "@/lib/conditional";
-import { mergeSubmittedAnswers } from "@/lib/answer-merge";
-import { buildFieldHashMap, mergeFieldHashes } from "@/lib/answer-staleness";
+import { buildPersistedResponseSnapshot } from "@/lib/response-snapshot";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
@@ -78,7 +76,7 @@ interface SaveResponseProjectFields {
 
 interface BuildResponsePayloadParams {
   answersToPersist: Record<string, unknown>;
-  answerFieldHashes: Record<string, string>;
+  answerFieldHashes: Exclude<AnswerFieldHashes, null>;
   project: SaveResponseProjectFields | null | undefined;
   existing: { is_partial: boolean | null } | null | undefined;
   isAutoSave: boolean;
@@ -219,45 +217,19 @@ export async function saveResponse(
 
     const fields = (project?.pydantic_fields as PydanticField[]) || [];
 
-    // Drop values of fields whose visibility condition is not satisfied —
-    // prevents orphaned answers from earlier trigger values ending up in the
-    // persisted payload. Ponto-fixo compartilhado com o clean de leitura
-    // (getDocumentForCoding / code/page.tsx) — ver #252.
-    const sanitizedAnswers = dropHiddenConditionals(fields, answers);
-
-    // Persistência preserva o que a leitura descartou por estar fora das opções
-    // atuais; sem isto, salvar um campo apaga do banco o valor de outro que o
-    // formulário nem chegou a exibir (#484). Os dois conjuntos são distintos de
-    // propósito e NÃO devem ser unificados: `sanitizedAnswers` responde "o
-    // pesquisador respondeu o formulário atual?" e `answersToPersist` responde
-    // "o que sabemos sobre este documento?".
-    //
-    // Escopo da distinção: ela protege o gate INLINE abaixo
-    // (syncCodingAssignmentStatus), que recebe `sanitizedAnswers` e portanto não
-    // deixa um valor invisível na tela promover a codificação a concluída. Ela
-    // NÃO alcança quem avalia a completude retroativamente relendo do banco
-    // (auto-review-backlog, auto-comparison), que só enxerga o conjunto
-    // persistido e conta o valor herdado como resposta — ver #492.
-    const answersToPersist = dropHiddenConditionals(
+    // O formulário devolve um snapshot sanitizado, não um patch. A reconciliação
+    // compara esse snapshot com a projeção que foi apresentada e preserva o
+    // valor bruto + sua proveniência quando o campo não mudou (#484).
+    const snapshot = buildPersistedResponseSnapshot({
       fields,
-      mergeSubmittedAnswers(existing?.answers, sanitizedAnswers),
-    );
-
-    // Campos cujo valor veio de `existing` sem passar pelo formulário atual.
-    // Carimbá-los com o hash de agora os faria passar por respostas ao schema
-    // vigente e apagaria o badge "desatualizada" justamente neles — ver
-    // mergeFieldHashes.
-    const inheritedFieldNames = Object.keys(answersToPersist).filter(
-      (name) => !(name in sanitizedAnswers),
-    );
+      storedAnswers: existing?.answers,
+      storedHashes: existing?.answer_field_hashes,
+      rawSubmittedAnswers: answers,
+    });
 
     const payload = buildResponsePayload({
-      answersToPersist,
-      answerFieldHashes: mergeFieldHashes(
-        existing?.answer_field_hashes ?? null,
-        buildFieldHashMap(fields),
-        inheritedFieldNames,
-      ),
+      answersToPersist: snapshot.persistedAnswers,
+      answerFieldHashes: snapshot.answerFieldHashes,
       project,
       existing,
       isAutoSave,
@@ -281,7 +253,7 @@ export async function saveResponse(
         documentId,
         userId: effectiveId,
         fields,
-        sanitizedAnswers,
+        sanitizedAnswers: snapshot.submittedAnswers,
         isAutoSave,
         automationMode: project?.automation_mode,
       });

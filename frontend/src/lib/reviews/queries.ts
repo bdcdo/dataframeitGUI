@@ -45,7 +45,7 @@ export interface ReviewComputationContext {
   fields: PydanticField[];
   comparableFields: PydanticField[];
   projectPydanticHash: string | null;
-  currentFieldHashes: Record<string, string>;
+  currentFieldHashes: Record<string, string | null>;
   fieldMap: Map<string, PydanticField>;
   docMap: Map<string, string>;
   responsesByDoc: Map<string, ResponseRow[]>;

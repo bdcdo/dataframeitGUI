@@ -7,7 +7,7 @@ import {
 } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { CodingPage } from "@/components/coding/CodingPage";
-import { sanitizeStoredAnswers } from "@/lib/stored-answers";
+import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type {
   Document,
   Assignment,

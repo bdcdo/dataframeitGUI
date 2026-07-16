@@ -16,13 +16,6 @@ interface ResponseLike {
   answerFieldHashes?: AnswerFieldHashes;
 }
 
-// Excluir da comparação um campo que a response não tinha evita um falso
-// "(vazio)" divergente. A regra vive em `fieldExistedWhenCoded`; aqui só
-// desembrulhamos o `ResponseLike`.
-function responseHadField(r: ResponseLike, fieldName: string): boolean {
-  return fieldExistedWhenCoded(r.answerFieldHashes, fieldName);
-}
-
 // Returns the names of fields whose responses diverge.
 // `equivalencesByField` maps fieldName -> list of equivalence pairs for that
 // (document, field). When provided, free-text fields use union-find class keys
@@ -43,7 +36,7 @@ export function computeDivergentFieldNames(
       continue;
 
     const applicable = responses.filter((r) => {
-      if (!responseHadField(r, field.name)) return false;
+      if (!fieldExistedWhenCoded(r.answerFieldHashes, field.name)) return false;
       if (
         field.condition &&
         !isFieldVisible(field, (r.answers as Record<string, unknown>) ?? {})
