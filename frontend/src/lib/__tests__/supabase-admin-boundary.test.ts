@@ -375,7 +375,11 @@ describe("fronteira do Supabase admin client", () => {
       .map(relative)
       .toSorted();
     expect(importers).toEqual(EXPECTED_RUNTIME_IMPORTERS);
-    expect(countAdminFactoryCalls(files)).toBe(19);
+    // 17 após compor com a #433: as RPCs atômicas de permissão
+    // (set_member_arbitration_permission / set_member_comparison_permission)
+    // absorveram releaseArbitrationsFromUser e releaseComparisonsFromUser no
+    // banco, eliminando 2 bypasses que existiam no PR standalone (19).
+    expect(countAdminFactoryCalls(files)).toBe(17);
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {

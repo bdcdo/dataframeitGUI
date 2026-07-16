@@ -5,12 +5,8 @@ import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import { preregisterSupabaseUser } from "@/lib/clerk-sync";
 import type { MemberEmailLink } from "@/lib/types";
-import {
-  retryPendingArbitrations,
-  releaseArbitrationsFromUser,
-} from "@/actions/field-reviews";
+import { retryPendingArbitrations } from "@/actions/field-reviews";
 import { retryPendingComparisons } from "@/actions/comparisons";
-import { releaseComparisonsFromUser } from "@/lib/auto-comparison";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { MEMBERS_TAG_PROFILE as TAG_PROFILE } from "@/lib/cache";
 
@@ -215,50 +211,16 @@ export async function updatePendingMemberEmail(
   return { otherProjectsCount: count ?? 0 };
 }
 
-export async function removeMember(projectId: string, memberId: string) {
+export async function removeMember(memberId: string) {
   const supabase = await createSupabaseServer();
-  const { data: removed, error } = await supabase
-    .from("project_members")
-    .delete()
-    .eq("id", memberId)
-    .select("user_id")
-    .single();
+  const { data, error } = await supabase
+    .rpc("remove_project_member", { p_member_id: memberId })
+    .maybeSingle();
 
   if (error) return { error: error.message };
-
-  // FR-005 (research D6): atribuições nunca iniciadas voltam ao pool de
-  // documentos não atribuídos. Trabalho começado (outros status) permanece.
-  // Vínculos de e-mail do membro no projeto saem junto (FR-012/contracts):
-  // acessos futuros por alias cessam; histórico permanece.
-  const admin = createSupabaseAdmin();
-  const [{ error: assignmentsError }, { error: linksError }] =
-    await Promise.all([
-      admin
-        .from("assignments")
-        .delete()
-        .eq("project_id", projectId)
-        .eq("user_id", removed.user_id)
-        .eq("status", "pendente"),
-      admin
-        .from("member_email_links")
-        .delete()
-        .eq("project_id", projectId)
-        .eq("member_user_id", removed.user_id),
-    ]);
-  if (assignmentsError) {
-    console.error("[removeMember] erro ao liberar atribuições pendentes", {
-      projectId,
-      userId: removed.user_id,
-      error: assignmentsError.message,
-    });
-  }
-  if (linksError) {
-    console.error("[removeMember] erro ao remover vínculos de e-mail", {
-      projectId,
-      userId: removed.user_id,
-      error: linksError.message,
-    });
-  }
+  const removed = data as { project_id: string } | null;
+  if (!removed) return { error: "Membro não encontrado ou sem permissão." };
+  const projectId = removed.project_id;
 
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
@@ -267,18 +229,18 @@ export async function removeMember(projectId: string, memberId: string) {
 export async function changeRole(
   memberId: string,
   role: "coordenador" | "pesquisador",
-  projectId: string
 ) {
   const supabase = await createSupabaseServer();
-  const { data, error } = await supabase
+  const { data: member, error } = await supabase
     .from("project_members")
     .update({ role })
     .eq("id", memberId)
-    .select("id");
+    .select("project_id")
+    .maybeSingle();
 
   if (error) return { error: error.message };
-  if (!data || data.length === 0)
-    return { error: "Sem permissão para alterar papéis neste projeto." };
+  if (!member) return { error: "Membro não encontrado ou sem permissão." };
+  const projectId = member.project_id;
   revalidatePath(`/projects/${projectId}`);
   revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
@@ -289,18 +251,18 @@ export async function changeRole(
 export async function setCanResolve(
   memberId: string,
   canResolve: boolean,
-  projectId: string,
 ): Promise<{ error?: string }> {
   const supabase = await createSupabaseServer();
-  const { data, error } = await supabase
+  const { data: member, error } = await supabase
     .from("project_members")
     .update({ can_resolve: canResolve })
     .eq("id", memberId)
-    .select("id");
+    .select("project_id")
+    .maybeSingle();
 
   if (error) return { error: error.message };
-  if (!data || data.length === 0)
-    return { error: "Sem permissão para alterar permissões neste projeto." };
+  if (!member) return { error: "Membro não encontrado ou sem permissão." };
+  const projectId = member.project_id;
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);
@@ -315,35 +277,26 @@ export async function setCanResolve(
 // Habilita (canArbitrate=true): drena os field_reviews que estavam sem árbitro
 // elegível (arbitrator_id IS NULL), sem esperar o próximo submitAutoReview.
 //
-// Desabilita (canArbitrate=false): primeiro solta as arbitragens não
-// concluídas que estavam com esse membro (releaseArbitrationsFromUser) —
-// senão ficariam presas, atribuídas a quem não pode mais arbitrar — e em
-// seguida re-sorteia os casos liberados.
+// Desabilita (canArbitrate=false): a RPC atualiza a permissão e solta as
+// arbitragens não concluídas na mesma transação; em seguida re-sorteamos os
+// casos liberados. Assim não existe janela com a permissão alterada e os casos
+// ainda presos ao antigo árbitro.
 export async function setCanArbitrate(
   memberId: string,
   canArbitrate: boolean,
-  projectId: string,
 ): Promise<{ error?: string; retried?: { assigned: number; stillNoPool: number } }> {
   const supabase = await createSupabaseServer();
-  const { data: member, error } = await supabase
-    .from("project_members")
-    .update({ can_arbitrate: canArbitrate })
-    .eq("id", memberId)
-    .select("user_id")
-    .single();
+  const { data, error } = await supabase
+    .rpc("set_member_arbitration_permission", {
+      p_member_id: memberId,
+      p_enabled: canArbitrate,
+    })
+    .maybeSingle();
 
   if (error) return { error: error.message };
-
-  if (!canArbitrate) {
-    const releaseResult = await releaseArbitrationsFromUser(
-      projectId,
-      member.user_id,
-    );
-    // Falha no release deixa field_reviews atribuídos a quem não pode mais
-    // arbitrar — devolve error sem chamar retry (retry filtra
-    // `arbitrator_id IS NULL` e não tocaria nesses casos travados).
-    if (releaseResult.error) return { error: releaseResult.error };
-  }
+  const member = data as { project_id: string } | null;
+  if (!member) return { error: "Membro não encontrado ou sem permissão." };
+  const projectId = member.project_id;
 
   let retried: { assigned: number; stillNoPool: number } | undefined;
   const result = await retryPendingArbitrations(projectId);
@@ -363,35 +316,24 @@ export async function setCanArbitrate(
 // `retried` para a UI informar o coordenador.
 //
 // Habilita: drena os documentos divergentes que estavam sem revisor elegível.
-// Desabilita: solta as comparações PENDENTES atribuídas a esse membro
-// (releaseComparisonsFromUser) — senão ficariam presas com quem não pode mais
-// comparar — e em seguida re-sorteia os casos liberados.
+// Desabilita: a RPC atualiza a permissão e solta as comparações pendentes na
+// mesma transação; em seguida re-sorteamos os casos liberados.
 export async function setCanCompare(
   memberId: string,
   canCompare: boolean,
-  projectId: string,
 ): Promise<{ error?: string; retried?: { assigned: number; stillNoPool: number } }> {
   const supabase = await createSupabaseServer();
-  const { data: member, error } = await supabase
-    .from("project_members")
-    .update({ can_compare: canCompare })
-    .eq("id", memberId)
-    .select("user_id")
-    .single();
+  const { data, error } = await supabase
+    .rpc("set_member_comparison_permission", {
+      p_member_id: memberId,
+      p_enabled: canCompare,
+    })
+    .maybeSingle();
 
   if (error) return { error: error.message };
-
-  if (!canCompare) {
-    const releaseResult = await releaseComparisonsFromUser(
-      supabase,
-      projectId,
-      member.user_id,
-    );
-    // Falha no release deixa comparações atribuídas a quem não pode mais
-    // comparar — devolve error sem chamar retry (o retry só recomputa o backlog
-    // sem comparação ativa e não tocaria nesses casos travados).
-    if (releaseResult.error) return { error: releaseResult.error };
-  }
+  const member = data as { project_id: string } | null;
+  if (!member) return { error: "Membro não encontrado ou sem permissão." };
+  const projectId = member.project_id;
 
   let retried: { assigned: number; stillNoPool: number } | undefined;
   const result = await retryPendingComparisons(projectId);

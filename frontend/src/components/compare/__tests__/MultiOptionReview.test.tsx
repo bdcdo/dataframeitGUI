@@ -16,6 +16,7 @@ describe("MultiOptionReview — atalhos de teclado", () => {
         options={["A", "B", "C"]}
         responses={[]}
         existingVerdict={null}
+        isSubmitting={false}
         onSubmit={onSubmit}
       />,
     );
@@ -43,6 +44,7 @@ describe("MultiOptionReview — atalhos de teclado", () => {
         options={["A", "B"]}
         responses={[]}
         existingVerdict={null}
+        isSubmitting={false}
         onSubmit={onSubmit}
       />,
     );
@@ -54,6 +56,34 @@ describe("MultiOptionReview — atalhos de teclado", () => {
       A: false,
       B: false,
     });
+  });
+
+  it("bloqueia controles e atalhos enquanto a submissão está em andamento", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <MultiOptionReview
+        options={["A", "B"]}
+        responses={[]}
+        existingVerdict={null}
+        isSubmitting
+        onSubmit={onSubmit}
+      />,
+    );
+
+    const confirmButton = screen.getByRole("button", { name: "Salvando..." });
+    expect(confirmButton).toHaveProperty("disabled", true);
+    for (const checkbox of screen.getAllByRole("checkbox")) {
+      expect(checkbox).toHaveProperty("disabled", true);
+    }
+
+    await user.keyboard("1");
+    await user.keyboard("{Enter}");
+
+    expect(
+      screen.getAllByRole("checkbox")[0].getAttribute("aria-checked"),
+    ).toBe("false");
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
 
@@ -67,6 +97,7 @@ describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", ()
         options={["A", "B"]}
         responses={[]}
         existingVerdict={null}
+        isSubmitting={false}
         onSubmit={vi.fn()}
       />,
     );
@@ -92,6 +123,7 @@ describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", ()
           chosenResponseId: null,
           comment: null,
         }}
+        isSubmitting={false}
         onSubmit={vi.fn()}
       />,
     );

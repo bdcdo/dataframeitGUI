@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { config as loadEnv } from "dotenv";
+import { assertRequiredPrePushEnv } from "./playwright-pre-push-env";
 
 // E2E lê as mesmas credenciais Clerk/Supabase de .env.local; .env.e2e (não
 // versionado) sobrescreve com as credenciais dos usuários de teste. Ver
@@ -14,30 +15,7 @@ loadEnv({ path: ".env.e2e", override: true });
 // cada `git push` em worktrees paralelas.
 const isPrePush = !!process.env.PLAYWRIGHT_PRE_PUSH;
 
-const requiredPrePushEnv = [
-  "CLERK_SECRET_KEY",
-  "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-  "E2E_COORDINATOR_EMAIL",
-  "E2E_MEMBER_EMAIL",
-  "E2E_MASTER_EMAIL",
-  "E2E_PROJECT_ID",
-  "E2E_LOTTERY_PROJECT_ID",
-] as const;
-
-const missingPrePushEnv = isPrePush
-  ? requiredPrePushEnv.filter((name) => !process.env[name])
-  : [];
-
-if (missingPrePushEnv.length > 0) {
-  throw new Error(
-    [
-      "e2e-smoke pre-push sem variáveis obrigatórias.",
-      `Faltando: ${missingPrePushEnv.join(", ")}`,
-      "Configure frontend/.env.local com as chaves Clerk e copie frontend/.env.e2e.example para frontend/.env.e2e preenchendo os usuários/projetos de teste.",
-      "Bypass intencional neste push: SKIP=e2e-smoke git push",
-    ].join("\n"),
-  );
-}
+if (isPrePush) assertRequiredPrePushEnv(process.env);
 
 // CI e pre-push sao os dois contextos "gated" (execucao deterministica, sem
 // paralelismo nem reaproveitamento de servidor) — usar um unico booleano nos

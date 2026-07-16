@@ -1,39 +1,44 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Mock supabase chainable compartilhado (supabase-mock.ts). setCanArbitrate
-// executa um UPDATE em project_members com .select("user_id").single() e
-// dispara releaseArbitrationsFromUser / retryPendingArbitrations (mockados
-// abaixo). `tableResults` permite a testes (addMember) fixarem o retorno por
-// tabela e por cliente (server vs admin); sem entrada, vale o default
-// histórico ({ user_id: "userMemberX" }, ou erro quando clientError é setado).
 import {
   makeSupabaseMock,
+  type FilterCall,
+  type RpcCall,
+  type TableResult,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
 
 let writeCalls: WriteCall[];
+let filterCalls: FilterCall[];
+let rpcCalls: RpcCall[];
 
 function makeClient(
   updateError?: { message: string },
   tableResults?: TableResults,
+  rpcResults?: Record<string, TableResult>,
 ) {
   return makeSupabaseMock({
     tableResults,
     defaultResult: updateError
       ? { data: null, error: updateError }
-      : { data: { user_id: "userMemberX" } },
+      : { data: { project_id: "p-derived", user_id: "userMemberX" } },
     writeCalls,
+    filterCalls,
+    rpcCalls,
+    rpcResults,
   });
 }
 
 let clientError: { message: string } | undefined;
 let serverTableResults: TableResults | undefined;
 let adminTableResults: TableResults | undefined;
+let serverRpcResults: Record<string, TableResult>;
+let adminCreateCalls: number;
 
-// hoisted mocks — release/retry precisam ser observáveis por teste para
-// distinguir o caminho de habilitar vs desabilitar.
 const hoisted = vi.hoisted(() => ({
+  revalidatePath: vi.fn<(path: string) => void>(),
+  revalidateTag: vi.fn<(tag: string, profile: unknown) => void>(),
   retry: vi.fn<(projectId: string) => Promise<{
     success: boolean;
     assigned: number;
@@ -44,20 +49,24 @@ const hoisted = vi.hoisted(() => ({
     assigned: 0,
     stillNoPool: 0,
   })),
-  release: vi.fn<
-    (
-      projectId: string,
-      userId: string,
-    ) => Promise<{ released: number; error?: string }>
-  >(async () => ({ released: 0 })),
   preregister: vi.fn<(email: string) => Promise<string>>(
     async () => "placeholderUid",
   ),
+  retryComparisons: vi.fn<(projectId: string) => Promise<{
+    success: boolean;
+    assigned: number;
+    stillNoPool: number;
+    error?: string;
+  }>>(async () => ({
+    success: true,
+    assigned: 0,
+    stillNoPool: 0,
+  })),
 }));
 
 vi.mock("next/cache", () => ({
-  revalidatePath: () => {},
-  revalidateTag: () => {},
+  revalidatePath: hoisted.revalidatePath,
+  revalidateTag: hoisted.revalidateTag,
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "userCoord" }),
@@ -69,27 +78,105 @@ vi.mock("@/lib/clerk-sync", () => ({
   preregisterSupabaseUser: hoisted.preregister,
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => makeClient(clientError, serverTableResults),
+  createSupabaseServer: async () =>
+    makeClient(clientError, serverTableResults, serverRpcResults),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeClient(clientError, adminTableResults),
+  createSupabaseAdmin: () => {
+    adminCreateCalls++;
+    return makeClient(clientError, adminTableResults);
+  },
 }));
 vi.mock("@/actions/field-reviews", () => ({
   retryPendingArbitrations: hoisted.retry,
-  releaseArbitrationsFromUser: hoisted.release,
 }));
-
+vi.mock("@/actions/comparisons", () => ({
+  retryPendingComparisons: hoisted.retryComparisons,
+}));
 beforeEach(() => {
   writeCalls = [];
+  filterCalls = [];
+  rpcCalls = [];
   clientError = undefined;
   serverTableResults = undefined;
   adminTableResults = undefined;
+  serverRpcResults = {
+    remove_project_member: {
+      data: { project_id: "p-derived" },
+    },
+    set_member_arbitration_permission: {
+      data: { project_id: "p-derived" },
+    },
+    set_member_comparison_permission: {
+      data: { project_id: "p-derived" },
+    },
+  };
+  adminCreateCalls = 0;
+  hoisted.revalidatePath.mockReset();
+  hoisted.revalidateTag.mockReset();
   hoisted.retry.mockReset();
   hoisted.retry.mockResolvedValue({ success: true, assigned: 0, stillNoPool: 0 });
-  hoisted.release.mockReset();
-  hoisted.release.mockResolvedValue({ released: 0 });
   hoisted.preregister.mockReset();
   hoisted.preregister.mockResolvedValue("placeholderUid");
+  hoisted.retryComparisons.mockReset();
+  hoisted.retryComparisons.mockResolvedValue({
+    success: true,
+    assigned: 0,
+    stillNoPool: 0,
+  });
+});
+
+function rpcArgs(fn: string): Record<string, unknown> {
+  const call = rpcCalls.find((entry) => entry.fn === fn);
+  return (call?.args as Record<string, unknown>) ?? {};
+}
+
+async function loadRemove() {
+  return (await import("@/actions/members")).removeMember;
+}
+
+describe("removeMember", () => {
+  it("remove membership, pendências e aliases por uma RPC atômica", async () => {
+    serverRpcResults.remove_project_member = {
+      data: { project_id: "p-canonical" },
+    };
+    const remove = await loadRemove();
+    const r = await remove("member-1");
+
+    expect(r?.error).toBeUndefined();
+    expect(rpcArgs("remove_project_member")).toEqual({
+      p_member_id: "member-1",
+    });
+    expect(adminCreateCalls).toBe(0);
+    expect(writeCalls).toEqual([]);
+    expect(hoisted.revalidatePath).toHaveBeenCalledWith("/projects/p-canonical");
+    expect(hoisted.revalidateTag).toHaveBeenCalledWith(
+      "project-p-canonical-members",
+      expect.anything(),
+    );
+  });
+
+  it("linha ausente → erro fail-closed", async () => {
+    serverRpcResults.remove_project_member = { data: null };
+    const remove = await loadRemove();
+
+    expect(await remove("missing")).toEqual({
+      error: "Membro não encontrado ou sem permissão.",
+    });
+    expect(adminCreateCalls).toBe(0);
+  });
+
+  it("falha transacional → propaga erro e não invalida cache", async () => {
+    serverRpcResults.remove_project_member = {
+      error: { message: "falha ao revogar alias" },
+    };
+    const remove = await loadRemove();
+
+    expect(await remove("member-1")).toEqual({
+      error: "falha ao revogar alias",
+    });
+    expect(hoisted.revalidatePath).not.toHaveBeenCalled();
+  });
 });
 
 async function loadSet() {
@@ -97,44 +184,41 @@ async function loadSet() {
 }
 
 describe("setCanArbitrate", () => {
-  it("habilita → dispara retry (sem release) e devolve contagem", async () => {
+  it("habilita via RPC e usa o projeto canônico no retry", async () => {
     hoisted.retry.mockResolvedValueOnce({
       success: true,
       assigned: 3,
       stillNoPool: 1,
     });
     const set = await loadSet();
-    const r = await set("member1", true, "p1");
+    const r = await set("member1", true);
     expect(r.error).toBeUndefined();
     expect(r.retried).toEqual({ assigned: 3, stillNoPool: 1 });
-    expect(hoisted.retry).toHaveBeenCalledWith("p1");
-    expect(hoisted.release).not.toHaveBeenCalled();
-    // UPDATE em project_members com can_arbitrate=true
-    expect(writeCalls).toContainEqual({
-      table: "project_members",
-      op: "update",
-      payload: { can_arbitrate: true },
+    expect(hoisted.retry).toHaveBeenCalledWith("p-derived");
+    expect(rpcArgs("set_member_arbitration_permission")).toEqual({
+      p_member_id: "member1",
+      p_enabled: true,
     });
+    expect(adminCreateCalls).toBe(0);
+    expect(writeCalls).toEqual([]);
   });
 
-  it("desabilita → solta arbitragens do membro e dispara retry", async () => {
+  it("desabilita atomicamente via RPC e dispara retry", async () => {
     hoisted.retry.mockResolvedValueOnce({
       success: true,
       assigned: 2,
       stillNoPool: 0,
     });
     const set = await loadSet();
-    const r = await set("member1", false, "p1");
+    const r = await set("member1", false);
     expect(r.error).toBeUndefined();
-    // release recebe o user_id do membro (resolvido via .select().single())
-    expect(hoisted.release).toHaveBeenCalledWith("p1", "userMemberX");
-    expect(hoisted.retry).toHaveBeenCalledWith("p1");
+    expect(hoisted.retry).toHaveBeenCalledWith("p-derived");
     expect(r.retried).toEqual({ assigned: 2, stillNoPool: 0 });
-    expect(writeCalls).toContainEqual({
-      table: "project_members",
-      op: "update",
-      payload: { can_arbitrate: false },
+    expect(rpcArgs("set_member_arbitration_permission")).toEqual({
+      p_member_id: "member1",
+      p_enabled: false,
     });
+    expect(adminCreateCalls).toBe(0);
   });
 
   it("habilita mas retry falha → result.retried undefined, sem propagar erro", async () => {
@@ -145,37 +229,128 @@ describe("setCanArbitrate", () => {
       stillNoPool: 0,
     });
     const set = await loadSet();
-    const r = await set("member1", true, "p1");
-    // setCanArbitrate em si não falha — o UPDATE em project_members deu certo.
+    const r = await set("member1", true);
+    // setCanArbitrate em si não falha — a RPC transacional deu certo.
     // O retry rodou em best-effort. Coordenador vê "habilitado" mas o banner
     // continua mostrando pendências se houver.
     expect(r.error).toBeUndefined();
     expect(r.retried).toBeUndefined();
   });
 
-  it("UPDATE falha → retorna error e NÃO dispara release/retry", async () => {
-    clientError = { message: "RLS bloqueou" };
+  it("RPC falha → retorna error e não dispara retry", async () => {
+    serverRpcResults.set_member_arbitration_permission = {
+      error: { message: "RLS bloqueou" },
+    };
     const set = await loadSet();
-    const r = await set("member1", true, "p1");
+    const r = await set("member1", true);
     expect(r.error).toBe("RLS bloqueou");
     expect(hoisted.retry).not.toHaveBeenCalled();
-    expect(hoisted.release).not.toHaveBeenCalled();
   });
 
-  it("desabilita + release retorna error → propaga error e NÃO dispara retry", async () => {
-    hoisted.release.mockResolvedValueOnce({
-      released: 0,
-      error: "RLS bloqueou release",
-    });
+  it("RPC sem linha → erro fail-closed e não dispara retry", async () => {
+    serverRpcResults.set_member_arbitration_permission = { data: null };
     const set = await loadSet();
-    const r = await set("member1", false, "p1");
-    expect(r.error).toBe("RLS bloqueou release");
-    expect(hoisted.release).toHaveBeenCalledWith("p1", "userMemberX");
-    // retry filtra arbitrator_id IS NULL — não tocaria nos casos que ficaram
-    // travados; rodar mesmo assim só faria queries inúteis e a UI poderia
-    // mostrar "X realocados" enganosamente quando o release não rodou.
+
+    expect(await set("missing", false)).toEqual({
+      error: "Membro não encontrado ou sem permissão.",
+    });
     expect(hoisted.retry).not.toHaveBeenCalled();
-    expect(r.retried).toBeUndefined();
+  });
+});
+
+async function loadSetCompare() {
+  return (await import("@/actions/members")).setCanCompare;
+}
+
+describe("setCanCompare", () => {
+  it("desabilita atomicamente e usa o projeto canônico no retry", async () => {
+    const set = await loadSetCompare();
+    const r = await set("member-1", false);
+
+    expect(r.error).toBeUndefined();
+    expect(rpcArgs("set_member_comparison_permission")).toEqual({
+      p_member_id: "member-1",
+      p_enabled: false,
+    });
+    expect(hoisted.retryComparisons).toHaveBeenCalledWith("p-derived");
+    expect(adminCreateCalls).toBe(0);
+    expect(writeCalls).toEqual([]);
+  });
+
+  it("habilita via RPC e devolve a contagem do retry", async () => {
+    hoisted.retryComparisons.mockResolvedValueOnce({
+      success: true,
+      assigned: 4,
+      stillNoPool: 2,
+    });
+    const set = await loadSetCompare();
+
+    expect(await set("member-1", true)).toEqual({
+      retried: { assigned: 4, stillNoPool: 2 },
+    });
+    expect(rpcArgs("set_member_comparison_permission")).toEqual({
+      p_member_id: "member-1",
+      p_enabled: true,
+    });
+  });
+
+  it("RPC falha → retorna error e não dispara retry", async () => {
+    serverRpcResults.set_member_comparison_permission = {
+      error: { message: "falha atômica" },
+    };
+    const set = await loadSetCompare();
+
+    expect(await set("member-1", false)).toEqual({ error: "falha atômica" });
+    expect(hoisted.retryComparisons).not.toHaveBeenCalled();
+  });
+
+  it("retry falha após commit → mantém sucesso sem contagem", async () => {
+    hoisted.retryComparisons.mockResolvedValueOnce({
+      success: false,
+      error: "retry indisponível",
+      assigned: 0,
+      stillNoPool: 0,
+    });
+    const set = await loadSetCompare();
+
+    expect(await set("member-1", true)).toEqual({ retried: undefined });
+    expect(hoisted.retryComparisons).toHaveBeenCalledWith("p-derived");
+  });
+
+  it("RPC sem linha → erro fail-closed e não dispara retry", async () => {
+    serverRpcResults.set_member_comparison_permission = { data: null };
+    const set = await loadSetCompare();
+
+    expect(await set("missing", true)).toEqual({
+      error: "Membro não encontrado ou sem permissão.",
+    });
+    expect(hoisted.retryComparisons).not.toHaveBeenCalled();
+  });
+});
+
+async function loadChangeRole() {
+  return (await import("@/actions/members")).changeRole;
+}
+
+describe("changeRole", () => {
+  it("deriva o projeto da linha alterada", async () => {
+    serverTableResults = {
+      project_members: { data: { project_id: "p-canonical" } },
+    };
+    const change = await loadChangeRole();
+    const r = await change("member-1", "coordenador");
+
+    expect(r?.error).toBeUndefined();
+    expect(hoisted.revalidatePath).toHaveBeenCalledWith("/projects/p-canonical");
+  });
+
+  it("linha ausente → erro fail-closed", async () => {
+    serverTableResults = { project_members: { data: null } };
+    const change = await loadChangeRole();
+
+    expect(await change("missing", "pesquisador")).toEqual({
+      error: "Membro não encontrado ou sem permissão.",
+    });
   });
 });
 
@@ -184,9 +359,9 @@ async function loadSetResolve() {
 }
 
 describe("setCanResolve", () => {
-  it("habilita → UPDATE com can_resolve=true e NÃO dispara retry de arbitragem", async () => {
+  it("habilita e deriva o projeto sem disparar retry de arbitragem", async () => {
     const set = await loadSetResolve();
-    const r = await set("member1", true, "p1");
+    const r = await set("member1", true);
     expect(r.error).toBeUndefined();
     expect(hoisted.retry).not.toHaveBeenCalled();
     expect(writeCalls).toContainEqual({
@@ -194,11 +369,12 @@ describe("setCanResolve", () => {
       op: "update",
       payload: { can_resolve: true },
     });
+    expect(hoisted.revalidatePath).toHaveBeenCalledWith("/projects/p-derived");
   });
 
   it("desabilita → UPDATE com can_resolve=false", async () => {
     const set = await loadSetResolve();
-    const r = await set("member1", false, "p1");
+    const r = await set("member1", false);
     expect(r.error).toBeUndefined();
     expect(writeCalls).toContainEqual({
       table: "project_members",
@@ -210,8 +386,17 @@ describe("setCanResolve", () => {
   it("UPDATE falha → retorna error", async () => {
     clientError = { message: "RLS bloqueou" };
     const set = await loadSetResolve();
-    const r = await set("member1", true, "p1");
+    const r = await set("member1", true);
     expect(r.error).toBe("RLS bloqueou");
+  });
+
+  it("linha ausente → erro fail-closed", async () => {
+    serverTableResults = { project_members: { data: null } };
+    const set = await loadSetResolve();
+
+    expect(await set("missing", true)).toEqual({
+      error: "Membro não encontrado ou sem permissão.",
+    });
   });
 });
 

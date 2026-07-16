@@ -8,19 +8,35 @@ on:
       - '.github/workflows/fly-deploy.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: fly-deploy-backend
   cancel-in-progress: false
+  queue: max
 
 jobs:
   deploy:
     name: flyctl deploy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin a SHA (tag 1.6) por supply-chain safety — @master é floating ref.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - run: flyctl deploy --remote-only -a gui-analise-sistematica-api
         working-directory: backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  # Criar ou comentar uma issue nao dispara este workflow, que escuta apenas
+  # push e workflow_dispatch; portanto a notificacao nao forma loop recursivo.
+  notify-failure:
+    name: Registrar falha do deploy
+    needs: deploy
+    if: ${{ always() && needs.deploy.result == 'failure' }}
+    permissions:
+      issues: write
+    uses: ./.github/workflows/notify-deploy-failure.yml
+    with:
+      deploy_app: gui-analise-sistematica-api

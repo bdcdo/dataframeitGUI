@@ -416,6 +416,42 @@ describe("assembleExport — inteiro teor só na aba Documentos", () => {
     expect(docRow[idx(d.documents, "original_document_text")]).toBe("auxiliar");
   });
 
+  it("preserva coluna auxiliar homônima à coluna de texto de outro documento", () => {
+    const d = run({
+      documents: [
+        doc("A", {
+          external_id: "EXT-A",
+          columns: ["texto", "tribunal"],
+          row: { texto: "Inteiro teor de A", tribunal: "TJSP" },
+          textColumn: "texto",
+        }),
+        doc("B", {
+          external_id: "EXT-B",
+          columns: ["conteudo", "texto"],
+          row: { conteudo: "Inteiro teor de B", texto: "dado auxiliar" },
+          textColumn: "conteudo",
+        }),
+      ],
+    });
+
+    expect(d.documents.headers).toContain("texto");
+    expect(d.csv.headers).toContain("texto");
+
+    const docA = d.documents.rows.find((row) => row[0] === "EXT-A")!;
+    const docB = d.documents.rows.find((row) => row[0] === "EXT-B")!;
+    expect(docA[idx(d.documents, "texto")]).toBe("");
+    expect(docA[idx(d.documents, "document_text")]).toBe("Inteiro teor de A");
+    expect(docB[idx(d.documents, "texto")]).toBe("dado auxiliar");
+    expect(docB[idx(d.documents, "document_text")]).toBe("Inteiro teor de B");
+
+    const csvA = d.csv.rows.find((row) => row[0] === "EXT-A")!;
+    const csvB = d.csv.rows.find((row) => row[0] === "EXT-B")!;
+    expect(csvA[idx(d.csv, "texto")]).toBe("");
+    expect(csvB[idx(d.csv, "texto")]).toBe("dado auxiliar");
+    expect(d.csv.rows.some((row) => row.includes("Inteiro teor de A"))).toBe(false);
+    expect(d.csv.rows.some((row) => row.includes("Inteiro teor de B"))).toBe(false);
+  });
+
   it("doc sem text_column mantém comportamento antigo (toda coluna é auxiliar)", () => {
     // Guarda de retrocompatibilidade: metadata sem text_column (legado/NULL) não
     // cria document_text e não omite nenhuma coluna.
