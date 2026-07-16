@@ -253,6 +253,23 @@ describe("mergeSchemas — default implícito não é edição", () => {
     expect(merge.fields[0].description).toBe("Editada localmente");
   });
 
+  // O caso acima passa mesmo comparando valor cru, porque o local permanece
+  // igual ao base e o atalho `local === base` resolve antes de olhar o remoto.
+  // Aqui os dois lados divergem do base ao mesmo tempo: o local muda o alvo de
+  // verdade, e o remoto só ganha a forma explícita do MESMO default. É o ramo
+  // `remoto === base → local vence` que precisa enxergar `undefined` e `"all"`
+  // como o mesmo valor; sem resolver, o usuário resolve um conflito inventado
+  // entre `llm_only` e `all` num campo cujo alvo só mudou de um lado.
+  it("edição local do target não conflita com remoto que só explicitou o default", () => {
+    const merge = mergeSchemas(
+      [semTarget],
+      [{ ...semTarget, target: "llm_only" }],
+      [comTargetAll],
+    );
+    expect(merge.conflicts).toEqual([]);
+    expect(merge.fields[0].target).toBe("llm_only");
+  });
+
   it("required e allow_other implícitos também não conflitam", () => {
     const implicito: PydanticField = { ...q2, required: undefined, allow_other: undefined };
     const explicito: PydanticField = { ...q2, required: true, allow_other: false };
