@@ -8,8 +8,13 @@ import {
   diffFields,
   fieldDiffIsStructural,
   generatePydanticCode,
+  isProjectScopedLogEntry,
+  ORDER_LOG_FIELD_NAME,
+  planSchemaPersistence,
+  PROJECT_LOG_FIELD_NAME,
   stableStringify,
 } from "@/lib/schema-utils";
+import { pydanticFieldNameIssue } from "@/lib/pydantic-field";
 import type { FieldCondition, PydanticField } from "@/lib/types";
 
 const baseField = (over: Partial<PydanticField>): PydanticField => ({
@@ -214,6 +219,92 @@ describe("diffFields", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].change_summary).toContain("prompt de justificativa");
     expect(entries[0].after_value.justification_prompt).toBe("novo");
+  });
+});
+
+describe("sentinelas de entrada de escopo do projeto", () => {
+  // A segurança do sentinel vem de os parênteses serem rejeitados como
+  // identificador Python: nenhum campo real pode se chamar "(ordem)", então o
+  // replay do backfill nunca confunde a entrada com um campo.
+  it.each([PROJECT_LOG_FIELD_NAME, ORDER_LOG_FIELD_NAME])(
+    "%s não é um nome de campo válido",
+    (sentinel) => {
+      expect(pydanticFieldNameIssue(sentinel)).toBe("invalid");
+      expect(isProjectScopedLogEntry(sentinel)).toBe(true);
+    },
+  );
+
+  it("um nome de campo real não é tratado como escopo de projeto", () => {
+    expect(isProjectScopedLogEntry("ordem")).toBe(false);
+  });
+});
+
+describe("diffFields — reordenação", () => {
+  const a = baseField({ name: "a", options: ["A"] });
+  const b = baseField({ name: "b", options: ["A"] });
+  const c = baseField({ name: "c", options: ["A"] });
+
+  it("emite entrada (ordem) quando só a ordem muda", () => {
+    const entries = diffFields([a, b, c], [c, a, b]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      field_name: ORDER_LOG_FIELD_NAME,
+      change_summary: "ordem dos campos alterada",
+      before_value: { order: ["a", "b", "c"] },
+      after_value: { order: ["c", "a", "b"] },
+    });
+  });
+
+  it("não relata reordenação ao inserir um campo no meio", () => {
+    const entries = diffFields([a, c], [a, b, c]);
+    expect(entries.map((e) => e.field_name)).toEqual(["b"]);
+  });
+
+  it("não relata reordenação ao remover um campo do meio", () => {
+    const entries = diffFields([a, b, c], [a, c]);
+    expect(entries.map((e) => e.field_name)).toEqual(["b"]);
+  });
+
+  it("relata reordenação e adição quando as duas coisas acontecem", () => {
+    const entries = diffFields([a, c], [b, c, a]);
+    expect(entries.map((e) => e.field_name).sort()).toEqual([
+      ORDER_LOG_FIELD_NAME,
+      "b",
+    ]);
+  });
+});
+
+// A RPC `commit_project_schema` recusa uma mudança de versão sem histórico
+// (`p_log_entries must be a non-empty JSON array`). Antes da entrada (ordem),
+// reordenar campos produzia changeType="patch" com logEntries=[] e o save
+// quebrava com o erro cru do Postgres.
+describe("planSchemaPersistence — invariante de auditoria", () => {
+  const v = { major: 0, minor: 1, patch: 0 };
+  const q1 = baseField({ name: "q1", options: ["A", "B"] });
+  const q2 = baseField({ name: "q2", options: ["A"] });
+
+  const cases: Array<[string, PydanticField[], PydanticField[]]> = [
+    ["reordenação pura", [q1, q2], [q2, q1]],
+    ["campo adicionado", [q1], [q1, q2]],
+    ["campo removido", [q1, q2], [q1]],
+    ["descrição alterada", [q1], [{ ...q1, description: "outra" }]],
+    ["tipo alterado", [q1], [{ ...q1, type: "text", options: null }]],
+    ["opções reordenadas", [q1], [{ ...q1, options: ["B", "A"] }]],
+    ["alvo alterado", [q1], [{ ...q1, target: "llm_only" }]],
+    ["rename", [q1], [{ ...q1, name: "q9" }]],
+    ["reordenação + edição", [q1, q2], [{ ...q2, description: "x" }, q1]],
+  ];
+
+  it.each(cases)("%s: mudança classificada tem log", (_label, oldF, newF) => {
+    const plan = planSchemaPersistence(oldF, newF, v);
+    expect(plan.changeType).not.toBeNull();
+    expect(plan.logEntries.length).toBeGreaterThan(0);
+  });
+
+  it("sem mudança: nem classificação nem log", () => {
+    const plan = planSchemaPersistence([q1, q2], [q1, q2], v);
+    expect(plan.changeType).toBeNull();
+    expect(plan.logEntries).toEqual([]);
   });
 });
 

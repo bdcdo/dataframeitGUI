@@ -123,6 +123,10 @@ async function applySchemaChanges(
   changedBy: string,
   write: boolean,
 ) {
+  // Guarda anti-wipe, entre outras: `saveablePydanticFieldsSchema` recusa lista
+  // vazia, então um decisions.json malformado não chega a apagar o schema com a
+  // service role key. A verificação é a mesma de `saveSchemaFromGUI` porque é o
+  // mesmo schema Zod — não uma cópia que possa divergir.
   const validatedFields = parseSaveablePydanticFields(newFields);
   if (!validatedFields) {
     throw new Error("newFields não corresponde ao contrato canônico de PydanticField");
@@ -131,25 +135,13 @@ async function applySchemaChanges(
   const { data: project, error: projErr } = await supabase
     .from("projects")
     .select(
-      "pydantic_fields, pydantic_code, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
+      "pydantic_fields, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
     )
     .eq("id", projectId)
     .single();
   if (projErr) throw new Error(`projects select: ${projErr.message}`);
 
   const oldFields = (project?.pydantic_fields as PydanticField[]) ?? [];
-
-  // Guarda anti-wipe — espelha saveSchemaFromGUI (src/actions/schema.ts):
-  // nunca gravar 0 campos por cima de um schema existente. Um decisions.json
-  // malformado (newFields vazio/parcial) apagaria o schema inteiro com a
-  // service role key.
-  const hasExistingSchema = oldFields.length > 0 || !!project?.pydantic_code;
-  if (validatedFields.length === 0 && hasExistingSchema) {
-    throw new Error(
-      "guarda anti-wipe: newFields está vazio mas o projeto já tem schema. " +
-        "Se a intenção é remover todos os campos, faça pela UI.",
-    );
-  }
 
   const current = {
     major: project?.schema_version_major ?? 0,

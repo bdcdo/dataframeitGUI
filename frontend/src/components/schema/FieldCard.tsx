@@ -51,6 +51,13 @@ function FieldNameInput({
 }) {
   const [duplicateName, setDuplicateName] = useState(false);
   const nameIssue = pydanticFieldNameIssue(field.name);
+  // Recusar o rename em vez de propagá-lo sustenta a unicidade de nome que
+  // `mergeSchemas` exige (seu `fieldMap` lança em duplicata, porque o nome é a
+  // identidade do campo no merge). O custo é real e conhecido: um nome que passe
+  // por um nome existente fica intransponível — com "q1" presente, "q2" -> "q10"
+  // trava no "q1" intermediário. Soltar o bloqueio aqui, sozinho, troca isso por
+  // um crash: a duplicata seria gravada no rascunho e o merge explodiria no
+  // reload seguinte. A correção é dar identidade própria ao campo — ver issue #473.
   const handleChange = (name: string) => {
     const duplicate = allFields.some(
       (candidate) => candidate !== field && candidate.name === name,

@@ -37,6 +37,10 @@ const MonacoEditor = dynamic(
 
 interface SchemaEditorSessionProps {
   projectId: string;
+  // Usuário autenticado no Clerk, não a identidade efetiva de `viewAsUser`: é
+  // ele que a RPC grava como autor em `schema_change_log`, e o rascunho precisa
+  // pertencer a quem vai assinar a mudança.
+  userId: string;
   initialCode: string | null;
   initialFields: PydanticField[] | null;
   currentVersion: string;
@@ -47,12 +51,13 @@ interface SchemaEditorProps extends Omit<SchemaEditorSessionProps, "initialField
   initialFields: PydanticField[];
 }
 
-// A identidade da sessão é o projeto. Revisões novas entram no hook como
-// snapshots remotos e passam pelo mesmo merge de três vias dos conflitos de save.
+// A identidade da sessão é o par projeto+usuário. Revisões novas entram no hook
+// como snapshots remotos e passam pelo mesmo merge de três vias dos conflitos de
+// save; já uma troca de usuário não tem merge possível — é outro rascunho.
 export function SchemaEditorSession(props: SchemaEditorSessionProps) {
   return (
     <SchemaEditor
-      key={props.projectId}
+      key={`${props.userId}:${props.projectId}`}
       {...props}
       initialFields={requirePydanticFields(props.initialFields ?? [])}
     />
@@ -91,6 +96,7 @@ function pendingConflictCount(conflict: SchemaDraftConflict | null): number | nu
 
 function SchemaEditor({
   projectId,
+  userId,
   initialCode,
   initialFields,
   currentVersion,
@@ -122,6 +128,7 @@ function SchemaEditor({
     isHydrated,
   } = useSchemaDraft({
     projectId,
+    userId,
     initialFields,
     currentVersion,
     currentRevision,

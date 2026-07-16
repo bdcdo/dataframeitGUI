@@ -84,11 +84,12 @@ describe("createSchemaSuggestion", () => {
 
 describe("approveSchemaSuggestionWithEdits", () => {
   it("falha da RPC atômica não produz update paralelo", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     supabaseState.tableResults = {
       projects: PROJECT_SELECT,
     };
     supabaseState.rpcResults = {
-      approve_schema_suggestion: { error: { message: "sem permissão" } },
+      approve_schema_suggestion: { error: { code: "42501", message: "sem permissão" } },
     };
 
     const r = await approveSchemaSuggestionWithEdits(
@@ -97,21 +98,30 @@ describe("approveSchemaSuggestionWithEdits", () => {
       [FIELD],
       EMPTY_BASELINE,
     );
-    expect(r.error).toMatch(/sem permissão/i);
+    expect(r.error).toBe("Não foi possível aplicar a sugestão. Tente novamente.");
     expect(
       supabaseState.writeCalls.some(
         (call) => call.table === "schema_suggestions" && call.op === "update",
       ),
     ).toBe(false);
+    consoleError.mockRestore();
   });
 
-  it("falha ao resolver a sugestão volta como erro da mesma transação", async () => {
+  // P0001 é a condição de negócio da RPC ("sugestão ausente, de outro projeto ou
+  // já resolvida"). Diferente das violações de contrato, ela é acionável — o
+  // usuário precisa saber que a sugestão saiu de pendente — e por isso ganha
+  // copy pt-BR própria em vez da genérica.
+  it("sugestão não pendente volta com copy pt-BR específica", async () => {
     supabaseState.tableResults = {
       projects: PROJECT_SELECT,
     };
     supabaseState.rpcResults = {
       approve_schema_suggestion: {
-        error: { message: "sugestão não pôde ser resolvida; transação revertida" },
+        error: {
+          code: "P0001",
+          message:
+            "Suggestion is missing, belongs to another project, or is not pending",
+        },
       },
     };
 
@@ -121,7 +131,7 @@ describe("approveSchemaSuggestionWithEdits", () => {
       [FIELD],
       EMPTY_BASELINE,
     );
-    expect(r.error).toMatch(/transação revertida/);
+    expect(r.error).toBe("Sugestão não encontrada ou já resolvida.");
   });
 
   it("caminho feliz: schema aplicado e sugestão marcada como aprovada", async () => {

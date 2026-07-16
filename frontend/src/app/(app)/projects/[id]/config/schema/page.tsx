@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { getAuthUser } from "@/lib/auth";
 import { SchemaEditorSession } from "@/components/schema/SchemaEditor";
 import type { PydanticField } from "@/lib/types";
 
@@ -7,7 +9,12 @@ export default async function SchemaPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, supabase] = await Promise.all([params, createSupabaseServer()]);
+  const [{ id }, user, supabase] = await Promise.all([
+    params,
+    getAuthUser(),
+    createSupabaseServer(),
+  ]);
+  if (!user) redirect("/auth/login");
 
   const { data: project } = await supabase
     .from("projects")
@@ -24,6 +31,7 @@ export default async function SchemaPage({
   return (
     <SchemaEditorSession
       projectId={id}
+      userId={user.id}
       initialCode={project?.pydantic_code}
       initialFields={fields}
       currentVersion={version}

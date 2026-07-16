@@ -95,10 +95,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const SCOPE = { projectId: "project-1", userId: "user-1" };
+
 async function renderEditor(fields = BASE_FIELDS, version = "0.1.0", revision = 0) {
   const view = render(
     <SchemaEditorSession
       projectId="project-1"
+      userId="user-1"
       initialCode={null}
       initialFields={fields}
       currentVersion={version}
@@ -121,7 +124,7 @@ describe("SchemaEditor — ciclo do draft", () => {
     await editAndSave();
 
     await waitFor(() => expect(hoisted.toast.error).toHaveBeenCalledWith("Falha remota"));
-    expect(window.localStorage.getItem(schemaDraftStorageKey("project-1"))).not.toBeNull();
+    expect(window.localStorage.getItem(schemaDraftStorageKey(SCOPE))).not.toBeNull();
     expect(screen.getByRole("status").textContent).toContain("Alterações não salvas");
   });
 
@@ -139,7 +142,7 @@ describe("SchemaEditor — ciclo do draft", () => {
       [{ ...BASE_FIELDS[0], description: "Editada" }],
       { revision: 0 },
     );
-    expect(window.localStorage.getItem(schemaDraftStorageKey("project-1"))).toBeNull();
+    expect(window.localStorage.getItem(schemaDraftStorageKey(SCOPE))).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByText("Versão 0.1.1")).toBeTruthy();
   });
@@ -171,6 +174,7 @@ describe("SchemaEditor — ciclo do draft", () => {
     view.rerender(
       <SchemaEditorSession
         projectId="project-1"
+        userId="user-1"
         initialCode={null}
         initialFields={[{ ...BASE_FIELDS[0], description: "Remota" }]}
         currentVersion="0.2.0"
