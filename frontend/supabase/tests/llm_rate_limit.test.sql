@@ -1,12 +1,32 @@
 -- Runtime contract for 20260715170000_llm_rate_limit.sql (#135).
 --
--- Run after `npx supabase db reset`:
---   psql "$(npx supabase status -o env | grep DB_URL | cut -d= -f2- | tr -d '\"')" \
---     -v ON_ERROR_STOP=1 -f supabase/tests/llm_rate_limit.test.sql
+-- Run after `npx supabase db reset`, via the shared runner (from frontend/):
+--   ./scripts/run-sql-test.sh supabase/tests/llm_rate_limit.test.sql
+--   # or the whole chain: npm run test:db
+--
+-- Do NOT run this file directly against the DB_URL from `supabase status`: that
+-- URL points at 127.0.0.1, whose pg_hba route is trust, and dblink called by a
+-- non-superuser is refused there ("password required"). The runner connects
+-- over the container's routable IP (scram), which is why the dblink section
+-- only passes through it.
 --
 -- The first transaction rolls back all ordinary fixtures. The concurrency
 -- section uses two dblink sessions because one SQL session cannot prove the row
--- lock; its committed fixture is explicitly deleted before the final rollback.
+-- lock; its committed fixture is explicitly deleted after the final rollback.
+
+-- Fora da transação, de propósito: o teardown roda após o ROLLBACK e ainda
+-- precisa das funções de dblink — criada dentro do BEGIN, a extensão seria
+-- desfeita junto num banco recém-resetado. Idempotente.
+CREATE EXTENSION IF NOT EXISTS dblink WITH SCHEMA extensions;
+
+-- Auto-limpeza preventiva: os escritos das sessões dblink são commitados fora
+-- da transação externa, então uma rodada anterior interrompida (deadlock,
+-- kill, falha de teardown) deixa resíduo que quebraria o INSERT abaixo com
+-- duplicate key. Idempotente num banco limpo.
+DELETE FROM public.projects
+  WHERE id = '55555555-5555-5555-5555-555555555135';
+DELETE FROM auth.users
+  WHERE id = '66666666-6666-6666-6666-666666666135';
 
 BEGIN;
 
@@ -222,7 +242,6 @@ END $$;
 
 -- Real two-session proof: session B remains blocked while session A owns the
 -- new bucket row, then observes A's committed count and rejects at limit 1.
-CREATE EXTENSION IF NOT EXISTS dblink WITH SCHEMA extensions;
 CREATE TEMP TABLE concurrent_results (
   session_name text PRIMARY KEY,
   allowed boolean NOT NULL,
@@ -326,6 +345,14 @@ BEGIN
   END IF;
 END $$;
 
+ROLLBACK;
+
+-- Teardown DEPOIS do ROLLBACK externo, de propósito: as fixtures da transação
+-- externa seguram o advisory lock global de identidade (triggers de
+-- 20260716155000 em project_members/auth.users), e cada dblink_exec roda em
+-- autocommit pedindo o MESMO lock — teardown dentro da transação externa é
+-- deadlock que o Postgres não detecta (a espera atravessa o dblink). Com o
+-- ROLLBACK antes, o lock já foi solto quando as deleções rodam.
 SELECT extensions.dblink_exec(
   'rate_limit_a',
   $$DELETE FROM public.projects
@@ -338,5 +365,3 @@ SELECT extensions.dblink_exec(
 );
 SELECT extensions.dblink_disconnect('rate_limit_a');
 SELECT extensions.dblink_disconnect('rate_limit_b');
-
-ROLLBACK;

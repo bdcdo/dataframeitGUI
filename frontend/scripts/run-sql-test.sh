@@ -37,6 +37,23 @@ fi
 
 echo "▸ ${SQL_FILE}"
 
-docker exec -i "${CONTAINER}" \
-  psql -U postgres -d postgres -X -v ON_ERROR_STOP=1 \
+# TCP no IP roteável do container em vez do socket unix, por dois motivos
+# compostos das suítes com dblink (llm_rate_limit): (1) sobre socket,
+# inet_server_addr()/inet_server_port() são NULL e a conexão derivada vira
+# "port=", falhando em qualquer ambiente; (2) sobre 127.0.0.1 o pg_hba é
+# trust, e dblink chamado por não-superuser (postgres não é superuser na
+# imagem do Supabase) exige que a senha seja efetivamente usada — só as rotas
+# privadas (172.16/12 etc.) autenticam por scram. PGPASSWORD idem.
+#
+# Assume o container numa única rede roteável (o caso do Supabase local). Se
+# estiver em mais de uma, `println` emite um IP por linha e `grep -m1 .` pega o
+# primeiro não-vazio — sem o `println`, o `range` concatenaria os IPs sem
+# separador e produziria um host inválido.
+CONTAINER_IP="$(docker inspect -f \
+  '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "${CONTAINER}" \
+  | grep -m1 .)"
+
+docker exec -e PGPASSWORD=postgres -i "${CONTAINER}" \
+  psql -h "${CONTAINER_IP}" -p 5432 -U postgres -d postgres \
+  -X -v ON_ERROR_STOP=1 \
   < "${SQL_FILE}"
