@@ -1,5 +1,28 @@
-import { saveResponse } from "@/actions/responses";
+import {
+  saveResponse,
+  type SaveResponseOpts,
+  type SaveResponseResult,
+} from "@/actions/responses";
 import { toast } from "sonner";
+
+export const CODING_SAVE_TRANSPORT_ERROR =
+  "Não foi possível salvar suas respostas. Suas alterações continuam nesta página. Tente novamente sem recarregar.";
+
+// Server Actions rejeitam a Promise quando o transporte falha antes de o
+// handler executar. Normalizar essa rejeição preserva um único contrato para
+// todos os callers: o rascunho só é limpo quando `success` é true.
+export async function saveCodingResponse(
+  projectId: string,
+  documentId: string,
+  answers: Record<string, unknown>,
+  opts: SaveResponseOpts = {},
+): Promise<SaveResponseResult> {
+  try {
+    return await saveResponse(projectId, documentId, answers, opts);
+  } catch {
+    return { success: false, error: CODING_SAVE_TRANSPORT_ERROR };
+  }
+}
 
 interface AutosaveDirtyDocParams {
   projectId: string;
@@ -7,8 +30,6 @@ interface AutosaveDirtyDocParams {
   answers: Record<string, unknown>;
   notes: string;
   markClean: (docId: string) => void;
-  /** Executado só no sucesso, após `markClean` (ex.: bump otimista da lista). */
-  onSuccess?: () => void;
 }
 
 /**
@@ -26,18 +47,15 @@ export function autosaveDirtyDoc({
   answers,
   notes,
   markClean,
-  onSuccess,
 }: AutosaveDirtyDocParams): void {
-  saveResponse(projectId, docId, answers, { notes, isAutoSave: true })
-    .then((result) => {
-      if (result.success) {
-        markClean(docId);
-        onSuccess?.();
-      } else {
-        toast.error(result.error || "Erro ao salvar respostas");
-      }
-    })
-    .catch(() => {
-      toast.error("Erro ao salvar respostas");
-    });
+  void saveCodingResponse(projectId, docId, answers, {
+    notes,
+    isAutoSave: true,
+  }).then((result) => {
+    if (result.success) {
+      markClean(docId);
+    } else {
+      toast.error(result.error);
+    }
+  });
 }

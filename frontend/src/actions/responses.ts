@@ -12,6 +12,10 @@ export interface SaveResponseOpts {
   isAutoSave?: boolean;
 }
 
+export type SaveResponseResult =
+  | { success: true }
+  | { success: false; error: string };
+
 // Response já existente do mesmo respondente para o mesmo documento. `answers`
 // e `answer_field_hashes` são lidos porque o save PRESERVA o que a leitura
 // descartou (#484) — ver `answersToPersist` em saveResponse.
@@ -180,8 +184,9 @@ export async function saveResponse(
   documentId: string,
   answers: Record<string, unknown>,
   opts: SaveResponseOpts = {},
-): Promise<{ success: boolean; error?: string }> {
+): Promise<SaveResponseResult> {
   const { notes, isAutoSave = false } = opts;
+
   try {
     const actor = await resolveProjectMemberActor(projectId);
     if (!actor.ok) return { success: false, error: actor.error };
@@ -260,6 +265,9 @@ export async function saveResponse(
     revalidateAfterSave(projectId, isAutoSave);
     return { success: true };
   } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : "Erro desconhecido",
+    };
   }
 }
