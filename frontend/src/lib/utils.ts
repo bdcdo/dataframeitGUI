@@ -51,6 +51,19 @@ export function resolveDocTitle(
   return title || externalId || id.slice(0, 8);
 }
 
+// crypto.randomUUID is only exposed in secure contexts (HTTPS/localhost); fall
+// back so a dev server reached over a plain-http LAN IP doesn't crash editing.
+// Shared because the fallback is the whole point: it existed inline in
+// useStableListIds and CsvPreviewTable, and the third caller (the schema draft
+// envelope) shipped without it — where the throw lands on the first keystroke,
+// inside a route segment that has no error.tsx.
+export function makeId(prefix: string): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `${prefix}-${Math.random().toString(36).slice(2)}`
+  );
+}
+
 export function normalizeForComparison(answer: unknown): string {
   if (typeof answer === "string") return JSON.stringify(normalizeText(answer));
   if (Array.isArray(answer))

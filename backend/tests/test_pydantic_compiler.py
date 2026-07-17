@@ -440,6 +440,61 @@ class Analysis(BaseModel):
     assert "justification_prompt" not in f
 
 
+def test_required_false_round_trips():
+    """`required` (campo opcional não bloqueia a conclusão da tarefa) é lido de
+    volta de json_schema_extra. Sem isto, `recoverFieldsFromStoredCode`
+    devolveria o campo como obrigatório e reverteria a decisão do coordenador."""
+    code = """from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    verdict: Literal["sim", "nao"] = Field(
+        description="Houve provimento?",
+        json_schema_extra={"required": False},
+    )
+"""
+    result = compile_pydantic(code)
+    assert result["valid"], result["errors"]
+    f = _field(result, "verdict")
+    assert f["required"] is False
+
+
+def test_required_absent_when_default():
+    """O default de `required` é True e o gerador omite a chave nesse caso, então
+    o compilador não pode inventá-la: um campo obrigatório volta sem a
+    propriedade, exatamente como a UI o representa."""
+    code = """from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    verdict: Literal["sim", "nao"] = Field(description="Houve provimento?")
+"""
+    result = compile_pydantic(code)
+    f = _field(result, "verdict")
+    assert "required" not in f
+
+
+def test_required_excluded_from_field_hash():
+    """`_field_hash` cobre name|type|options|description e nada mais. Se
+    `required` entrasse no hash, marcar um campo como opcional invalidaria as
+    respostas já codificadas daquele campo na Comparação."""
+    base = """from pydantic import BaseModel, Field
+from typing import Literal
+
+class Analysis(BaseModel):
+    verdict: Literal["sim", "nao"] = Field(
+        description="Houve provimento?"{extra}
+    )
+"""
+    obrigatorio = compile_pydantic(base.format(extra=""))
+    opcional = compile_pydantic(
+        base.format(extra=',\n        json_schema_extra={"required": False}')
+    )
+    assert opcional["valid"], opcional["errors"]
+    assert _field(opcional, "verdict")["required"] is False
+    assert _field(obrigatorio, "verdict")["hash"] == _field(opcional, "verdict")["hash"]
+
+
 def test_date_field_with_sentinel_options_round_trips():
     """Date fields carry sentinel options (ex: 'Não identificável') via
     json_schema_extra because the annotation itself is `str`, not Literal."""

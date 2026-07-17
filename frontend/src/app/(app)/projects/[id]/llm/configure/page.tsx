@@ -2,6 +2,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { LlmConfigurePane } from "@/components/llm/LlmConfigurePane";
 import type { PydanticField } from "@/lib/types";
 
+// fallow-ignore-next-line complexity -- esta mudança só propaga a revisão do schema; a composição preexistente da página permanece fora deste refactor.
 export default async function LlmConfigurePage({
   params,
 }: {
@@ -14,7 +15,7 @@ export default async function LlmConfigurePage({
       supabase
         .from("projects")
         .select(
-          "prompt_template, description, llm_provider, llm_model, llm_kwargs, pydantic_fields, pydantic_code"
+          "prompt_template, description, llm_provider, llm_model, llm_kwargs, pydantic_fields, pydantic_code, schema_revision"
         )
         .eq("id", id)
         .single(),
@@ -39,7 +40,7 @@ export default async function LlmConfigurePage({
 
   const docsWithLlm = Math.min(
     totalDocs ?? 0,
-    new Set(llmResponses?.map((r) => r.document_id)).size,
+    new Set(llmResponses?.map((response) => response.document_id)).size,
   );
 
   return (
@@ -58,6 +59,9 @@ export default async function LlmConfigurePage({
       }}
       pydanticFields={(project?.pydantic_fields as PydanticField[]) || null}
       pydanticCode={(project?.pydantic_code as string | null) ?? null}
+      schemaBaseline={{
+        revision: project?.schema_revision ?? 0,
+      }}
       totalDocs={totalDocs ?? 0}
       docsWithLlm={docsWithLlm}
     />

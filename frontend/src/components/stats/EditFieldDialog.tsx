@@ -28,7 +28,8 @@ import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
-import type { PydanticField } from "@/lib/types";
+import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
+import { resolveTarget } from "@/lib/pydantic-field";
 
 export type { PendingSuggestion };
 
@@ -39,6 +40,7 @@ interface EditFieldDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pendingSuggestion?: PendingSuggestion | null;
+  schemaBaseline: SchemaBaselineIdentity;
 }
 
 export function EditFieldDialog({
@@ -48,6 +50,7 @@ export function EditFieldDialog({
   open,
   onOpenChange,
   pendingSuggestion,
+  schemaBaseline,
 }: EditFieldDialogProps) {
   const { refresh } = useRouter();
   const field = allFields.find((f) => f.name === fieldName);
@@ -115,12 +118,22 @@ export function EditFieldDialog({
             pendingSuggestion.id,
             projectId,
             updatedFields,
+            schemaBaseline,
           );
           if (result.error) throw new Error(result.error);
           toast.success("Sugestão aprovada e campo atualizado");
         } else {
-          const result = await saveSchemaFromGUI(projectId, updatedFields);
-          if (result?.error) throw new Error(result.error);
+          const result = await saveSchemaFromGUI(
+            projectId,
+            updatedFields,
+            schemaBaseline,
+          );
+          if (result.status === "error") throw new Error(result.message);
+          if (result.status === "conflict") {
+            throw new Error(
+              "O schema mudou em outra sessão. Recarregue a página e reaplique esta edição sobre a versão atual.",
+            );
+          }
           toast.success("Campo atualizado");
         }
         onOpenChange(false);
@@ -235,8 +248,8 @@ export function EditFieldDialog({
 
           {/* Prompt de justificativa do LLM — só faz sentido quando o campo
               é enviado ao LLM. Vazio = backend usa o default exigente. */}
-          {(field.target || "all") !== "human_only" &&
-            field.target !== "none" && (
+          {resolveTarget(field.target) !== "human_only" &&
+            resolveTarget(field.target) !== "none" && (
               <JustificationPromptField
                 value={justificationPrompt}
                 onChange={setJustificationPrompt}

@@ -56,6 +56,7 @@ const baseProps = {
   },
   pydanticFields: [],
   pydanticCode: null,
+  schemaBaseline: { revision: 0 },
   totalDocs: 42,
   docsWithLlm: 0,
 };

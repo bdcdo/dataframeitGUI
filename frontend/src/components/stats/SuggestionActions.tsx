@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { resolveSchemaSuggestion } from "@/actions/suggestions";
+import { rejectSchemaSuggestion } from "@/actions/suggestions";
 import { toast } from "sonner";
 
 interface SuggestionActionsProps {
@@ -51,7 +51,7 @@ export function SuggestionActions({
             disabled={suggestionPending}
             onClick={() => {
               startSuggestionAction(async () => {
-                const result = await resolveSchemaSuggestion(suggestionId, projectId, "rejected");
+                const result = await rejectSchemaSuggestion(suggestionId, projectId);
                 if (result.error) toast.error(result.error);
                 else { toast.success("Sugestão rejeitada"); refresh(); }
               });

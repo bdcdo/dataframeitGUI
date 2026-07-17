@@ -2,6 +2,7 @@ import { useCallback, useState, type RefObject } from "react";
 import { toast } from "sonner";
 import { isIncompleteOther } from "@/lib/other-option";
 import { getScrollBehavior } from "@/lib/scroll";
+import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
 import type { PydanticField } from "@/lib/types";
 
 const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
@@ -38,7 +39,7 @@ export function useQuestionValidation(
 } {
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
-  const requiredFields = visibleFields.filter((f) => f.required !== false);
+  const requiredFields = visibleFields.filter((f) => resolveRequired(f.required));
   const answeredRequiredCount = requiredFields.filter((f) =>
     isAnsweredValue(f, answers[f.name]),
   ).length;
@@ -65,7 +66,12 @@ export function useQuestionValidation(
     if (submitting || outOfScopeBlocked) return;
 
     const unanswered = visibleFields
-      .filter((f) => (f.target || "all") !== "llm_only" && f.required !== false && !isAnswered(f))
+      .filter(
+        (f) =>
+          resolveTarget(f.target) !== "llm_only" &&
+          resolveRequired(f.required) &&
+          !isAnswered(f),
+      )
       .map((f) => f.name);
 
     if (unanswered.length > 0) {

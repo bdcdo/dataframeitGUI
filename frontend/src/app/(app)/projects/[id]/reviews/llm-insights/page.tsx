@@ -58,7 +58,9 @@ export default async function LlmInsightsPage({
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, schema_revision",
+      )
       .eq("id", id)
       .single(),
     supabase
@@ -105,6 +107,9 @@ export default async function LlmInsightsPage({
   const isCoordinator = coordinatorGate(accessResult, { failOpen: true });
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
+  const schemaBaseline = {
+    revision: project?.schema_revision ?? 0,
+  };
 
   const fieldMap = new Map(allFields.map((f) => [f.name, f]));
   const fieldDescMap = new Map(allFields.map((f) => [f.name, f.description]));
@@ -235,7 +240,7 @@ export default async function LlmInsightsPage({
         errors={errors}
         reviewedEntries={reviewedEntries}
         fields={visibleFields}
-        allFields={allFields}
+        schemaEditor={{ fields: allFields, baseline: schemaBaseline }}
         isCoordinator={isCoordinator}
         summary={{ totalLlmDocs, unreviewedLlmDocs }}
       />

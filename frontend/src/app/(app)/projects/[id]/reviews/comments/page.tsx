@@ -44,7 +44,9 @@ export default async function CommentsPage({
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, schema_revision",
+      )
       .eq("id", id)
       .single(),
     supabase
@@ -122,6 +124,9 @@ export default async function CommentsPage({
       )),
     ]),
   ];
+  const schemaBaseline = {
+    revision: project?.schema_revision ?? 0,
+  };
 
   // Fail-open em contexto de acesso indisponível (erro transitório de query):
   // não rebaixa um coordenador legítimo a não-coordenador por falha transiente.
@@ -225,6 +230,7 @@ export default async function CommentsPage({
         projectId={id}
         comments={comments}
         fields={fields}
+        schemaBaseline={schemaBaseline}
         isCoordinator={isCoordinator}
         totalLlmDocs={totalLlmDocs}
         llmDocsWithoutAmbiguities={llmDocsWithoutAmbiguities}

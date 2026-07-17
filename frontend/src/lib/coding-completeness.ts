@@ -1,13 +1,15 @@
 import { isFieldVisible } from "@/lib/conditional";
 import { isIncompleteOther } from "@/lib/other-option";
 import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
+import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 // Campos que o humano precisa responder para a codificação contar como
-// completa: visíveis para humano (target != "llm_only"/"none"), obrigatórios
-// (required !== false), com a condição de visibilidade satisfeita pelas
-// respostas atuais e — quando `answerFieldHashes` é fornecido — que já existiam
-// no schema contra o qual a resposta foi codificada (staleness-aware).
+// completa: visíveis para humano, obrigatórios, com a condição de visibilidade
+// satisfeita pelas respostas atuais e — quando `answerFieldHashes` é fornecido —
+// que já existiam no schema contra o qual a resposta foi codificada
+// (staleness-aware). Os defaults de `target` e `required` saem dos resolvedores
+// de pydantic-field, nunca de uma re-derivação local.
 function requiredHumanFields(
   fields: PydanticField[],
   answers: Record<string, unknown>,
@@ -15,9 +17,9 @@ function requiredHumanFields(
 ): PydanticField[] {
   return fields.filter(
     (f) =>
-      (f.target || "all") !== "llm_only" &&
-      f.target !== "none" &&
-      f.required !== false &&
+      resolveTarget(f.target) !== "llm_only" &&
+      resolveTarget(f.target) !== "none" &&
+      resolveRequired(f.required) &&
       isFieldVisible(f, answers) &&
       fieldExistedWhenCoded(answerFieldHashes, f.name),
   );
