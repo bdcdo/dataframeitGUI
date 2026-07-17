@@ -1,6 +1,7 @@
 # Frontend Next.js 16 (standalone) no Fly.io.
 # Secrets de runtime (CLERK_SECRET_KEY, SUPABASE_SERVICE_ROLE_KEY,
-# CLERK_WEBHOOK_SECRET) sao setadas via `fly secrets set`, nunca aqui.
+# CLERK_WEBHOOK_SECRET, AUTO_REVIEW_RECONCILIATION_SECRET) sao setadas via
+# `fly secrets set`, nunca aqui.
 # As NEXT_PUBLIC_* ficam em [build.args] porque precisam estar presentes em
 # build time (sao embutidas no bundle do browser) e sao todas publicas por
 # design (anon key e publishable key vao para o cliente de qualquer forma).

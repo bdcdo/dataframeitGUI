@@ -13,11 +13,9 @@ export default async function AnalyzeLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  // Quais abas de revisão aparecem depende do modo de automação do projeto +
-  // dos assignments do usuário. O coordenador vê as abas do mecanismo ativo no
-  // modo; o pesquisador vê enquanto tiver assignment do tipo (pendente,
-  // em_andamento OU concluido) — preserva acesso ao histórico mesmo se o modo
-  // mudou depois. Ver computeAnalyzeTabVisibility.
+  // Quais abas de revisão aparecem depende do modo de automação do projeto e
+  // do trabalho ativo do usuário. Auto-revisão deriva de field_reviews;
+  // comparação e arbitragem continuam materializadas em assignments.
   const [{ id }, user] = await Promise.all([params, requirePageAuthUser()]);
   const [supabase, rawAccess] = await Promise.all([
     createSupabaseServer(),
@@ -35,11 +33,12 @@ export default async function AnalyzeLayout({
     { data: project },
   ] = await Promise.all([
     supabase
-      .from("assignments")
+      .from("field_reviews")
       .select("id")
       .eq("project_id", id)
-      .eq("user_id", memberUserId)
-      .eq("type", "auto_revisao")
+      .eq("self_reviewer_id", memberUserId)
+      .is("superseded_at", null)
+      .is("self_verdict", null)
       .limit(1)
       .maybeSingle(),
     supabase
@@ -69,7 +68,7 @@ export default async function AnalyzeLayout({
     computeAnalyzeTabVisibility({
       mode: project?.automation_mode as AutomationMode | undefined,
       isCoordinator,
-      hasAutoRevisaoAssignment: autoReviewRow !== null,
+      hasPendingAutoReview: autoReviewRow !== null,
       hasArbitragemAssignment: arbitragemRow !== null,
       hasComparacaoAssignment: comparacaoRow !== null,
     });

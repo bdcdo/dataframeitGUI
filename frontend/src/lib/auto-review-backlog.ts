@@ -23,22 +23,6 @@ export interface LlmResponseRow {
   answer_field_hashes: AnswerFieldHashes;
 }
 
-export interface ExistingFieldReviewRow {
-  id: string;
-  document_id: string;
-  field_name: string;
-  self_verdict: string | null;
-}
-
-// Contrato mínimo da RPC transacional. Projeto, documento e pesquisador são
-// derivados das respostas pelo banco; assim o chamador não consegue montar
-// uma tupla incoerente com seis identificadores independentes.
-export interface AutoReviewCandidate {
-  human_response_id: string;
-  llm_response_id: string;
-  field_names: string[];
-}
-
 export interface FieldReviewRow {
   project_id: string;
   document_id: string;
@@ -56,29 +40,13 @@ export function computeBacklogRows(
   llmByDocId: Map<string, LlmResponseRow>,
   equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
-  memberIds: ReadonlySet<string>,
-): {
-  candidates: AutoReviewCandidate[];
-  fieldReviewRows: FieldReviewRow[];
-  regenerated: number;
-} {
-  const candidates: AutoReviewCandidate[] = [];
+): { fieldReviewRows: FieldReviewRow[]; regenerated: number } {
   const fieldReviewRows: FieldReviewRow[] = [];
   let regenerated = 0;
 
   for (const human of humanResponses) {
     const llm = llmByDocId.get(human.document_id);
     if (!llm) continue;
-
-    // A remoção de um membro apaga a membership e os assignments pendentes, mas
-    // preserva as respostas — por design. Sem este filtro, elas continuavam
-    // virando candidatas e a RPC rejeitava o LOTE INTEIRO com 23514 ("a
-    // resposta humana não pertence a um membro atual do projeto"), de forma
-    // determinística e permanente: bastava um pesquisador removido para a
-    // regeneração do backlog nunca mais funcionar no projeto, inclusive para
-    // quem continua membro. Restringir o produtor ao mesmo universo que a RPC
-    // exige torna esse estado inconstruível, em vez de tratar a exceção.
-    if (!memberIds.has(human.respondent_id)) continue;
 
     // #174: só arbitrar codificações completas. is_partial é sinal inútil de
     // completude para o humano (quase sempre false), então o filtro de query
@@ -114,11 +82,6 @@ export function computeBacklogRows(
     if (divergent.length === 0) continue;
 
     regenerated++;
-    candidates.push({
-      human_response_id: human.id,
-      llm_response_id: llm.id,
-      field_names: divergent,
-    });
     for (const fieldName of divergent) {
       fieldReviewRows.push({
         project_id: projectId,
@@ -131,38 +94,5 @@ export function computeBacklogRows(
     }
   }
 
-  return { candidates, fieldReviewRows, regenerated };
-}
-
-// Reconcilia uma coleção recém-computada contra uma existente via chave
-// composta document_id+algo. Puro.
-function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
-  return new Set(rows.map(keyFn));
-}
-
-// --- Reconcile: quais field_reviews não deveriam mais existir ---
-// O conjunto correto é o que acabou de ser computado em fieldReviewRows.
-// Linhas pendentes (self_verdict IS NULL) fora desse conjunto sao espurias
-// — tipicamente campos que ficaram "stale" apos edicao de schema — e podem
-// ser apagadas. Linhas ja resolvidas pelo pesquisador sao preservadas. Puro.
-export function diffReviewsToRemove(
-  existingReviews: ExistingFieldReviewRow[],
-  fieldReviewRows: FieldReviewRow[],
-): { idsToDelete: string[]; keptResolved: number } {
-  const correctKeys = compositeKeySet(
-    fieldReviewRows,
-    (r) => `${r.document_id}|${r.field_name}`,
-  );
-
-  const idsToDelete: string[] = [];
-  let keptResolved = 0;
-  for (const fr of existingReviews) {
-    if (correctKeys.has(`${fr.document_id}|${fr.field_name}`)) continue;
-    if (fr.self_verdict == null) {
-      idsToDelete.push(fr.id);
-    } else {
-      keptResolved++;
-    }
-  }
-  return { idsToDelete, keptResolved };
+  return { fieldReviewRows, regenerated };
 }

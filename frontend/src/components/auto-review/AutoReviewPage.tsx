@@ -18,7 +18,7 @@ import { AutoReviewPageHeader } from "./AutoReviewPageHeader";
 import { AutoReviewPageContent } from "./AutoReviewPageContent";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
 import { choiceKey, isAutoReviewFieldDecided } from "@/lib/auto-review-decided";
-import { usePinnedDocNavigation } from "@/hooks/usePinnedDoc";
+import { useReviewQueueNavigation } from "@/hooks/useReviewQueueNavigation";
 
 export interface AutoReviewDoc {
   docId: string;
@@ -74,17 +74,16 @@ function AutoReviewPageInner({
   const readOnly = !isOwnQueue;
 
   // Seleção persistida em sessionStorage (restore + limpeza de órfão quando um
-  // doc resolvido sai da fila) encapsulada em usePinnedDoc — ver hook.
-  const { docIndex, navigateToIndex } = usePinnedDocNavigation(
-    `${STORAGE_KEY_PREFIX}${projectId}:${queueUserId}`,
-    docs,
-  );
-
-  const [listCollapsed, setListCollapsed] = useState(false);
+  // doc resolvido sai da fila) e estado da lista vivem no hook compartilhado.
+  const { docIndex, listCollapsed, navigate, toggleList } =
+    useReviewQueueNavigation(
+      `${STORAGE_KEY_PREFIX}${projectId}:${queueUserId}`,
+      docs,
+    );
   // Estado compartilhado entre a contagem de pendentes da sidebar
   // (docListEntries) e a interação de campo (AutoReviewPageContent); por isso
-  // vive aqui, no pai, e não no Content. Keyed por `${docId}::${fieldName}` —
-  // o composto isola escolha/justificativa por (documento, campo).
+  // vive aqui, no pai, e não no Content. A chave é fieldReviewId, portanto um
+  // ciclo novo nunca herda o rascunho mantido para o snapshot anterior.
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
   const [justifications, setJustifications] = useState<Record<string, string>>(
     {},
@@ -108,7 +107,7 @@ function AutoReviewPageInner({
         // contesta_llm sem justificativa conta como pendente).
         const pending = d.fields.filter((f) => {
           if (f.alreadyAnswered) return false;
-          const k = choiceKey(d.docId, f.fieldName);
+          const k = choiceKey(f.fieldReviewId);
           return !isAutoReviewFieldDecided(
             false,
             choices[k],
@@ -156,16 +155,16 @@ function AutoReviewPageInner({
         onViewAsChange={handleViewAsChange}
         docsCount={docs.length}
         docIndex={docIndex}
-        onNavigate={navigateToIndex}
+        onNavigate={navigate}
       />
 
       <div className="flex flex-1 overflow-hidden">
         <AutoReviewDocList
           docs={docListEntries}
           currentIndex={docIndex}
-          onSelect={navigateToIndex}
+          onSelect={navigate}
           collapsed={listCollapsed}
-          onToggle={() => setListCollapsed((v) => !v)}
+          onToggle={toggleList}
         />
         <ResizablePanelGroup className="flex-1">
           <ResizablePanel defaultSize={50} minSize={25}>

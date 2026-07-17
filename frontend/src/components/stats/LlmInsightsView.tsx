@@ -62,14 +62,11 @@ export function LlmInsightsView({
         return;
       }
       const parts = [
-        `${result.scanned ?? 0} resposta(s) escaneada(s)`,
-        `${result.regenerated ?? 0} doc(s) com divergência`,
+        `${result.queued ?? 0} documento(s) reenfileirado(s)`,
+        `${result.processed ?? 0} pedido(s) processado(s)`,
       ];
-      if (result.removed) {
-        parts.push(`${result.removed} revisão(ões) obsoleta(s) removida(s)`);
-      }
-      if (result.keptResolved) {
-        parts.push(`${result.keptResolved} já resolvida(s) mantida(s)`);
+      if (result.deferred) {
+        parts.push(`${result.deferred} pedido(s) aguardando a resposta LLM`);
       }
       toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
       refresh();

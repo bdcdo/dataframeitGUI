@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { usePinnedDocNavigation } from "@/hooks/usePinnedDoc";
+import { useMemo } from "react";
 import { useArbitrationDoc } from "@/hooks/useArbitrationDoc";
+import { useReviewQueueNavigation } from "@/hooks/useReviewQueueNavigation";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 import { type ArbitrationDocListEntry } from "./ArbitrationDocList";
 import { ArbitrationEmptyState } from "./ArbitrationEmptyState";
@@ -49,14 +49,10 @@ export function ArbitrationPage({
   docs,
   arbitrationBlind,
 }: ArbitrationPageProps) {
-  // Seleção persistida em sessionStorage (restore + limpeza de órfão) encapsulada
-  // em usePinnedDoc — o hook lê via useSyncExternalStore (sem effect de restore).
-  const { docIndex, navigateToIndex } = usePinnedDocNavigation(
-    `${STORAGE_KEY_PREFIX}${projectId}`,
-    docs,
-  );
-
-  const [listCollapsed, setListCollapsed] = useState(false);
+  // Seleção persistida em sessionStorage e estado da lista vivem no hook
+  // compartilhado pelas filas pessoais de revisão.
+  const { docIndex, listCollapsed, navigate, toggleList } =
+    useReviewQueueNavigation(`${STORAGE_KEY_PREFIX}${projectId}`, docs);
 
   const fieldMeta = useMemo(
     () => new Map(fields.map((f) => [f.name, f])),
@@ -69,7 +65,7 @@ export function ArbitrationPage({
     docIndex,
     docsLength: docs.length,
     projectId,
-    onNavigate: navigateToIndex,
+    onNavigate: navigate,
   });
 
   const docListEntries: ArbitrationDocListEntry[] = useMemo(
@@ -103,7 +99,7 @@ export function ArbitrationPage({
         submitting={arb.submitting}
         allBlindChosen={arb.allBlindChosen}
         allFinalChosen={arb.allFinalChosen}
-        onNavigate={navigateToIndex}
+        onNavigate={navigate}
         onBackToBlind={arb.onBackToBlind}
         onBlindSubmit={() => void arb.handleBlindSubmit()}
         onFinalSubmit={() => void arb.handleFinalSubmit()}
@@ -116,8 +112,8 @@ export function ArbitrationPage({
         docListEntries={docListEntries}
         docIndex={docIndex}
         listCollapsed={listCollapsed}
-        onSelectDoc={navigateToIndex}
-        onToggleList={() => setListCollapsed((v) => !v)}
+        onSelectDoc={navigate}
+        onToggleList={toggleList}
         blindChoices={arb.blindChoices}
         finalChoices={arb.effectiveFinalChoices}
         suggestions={arb.suggestions}

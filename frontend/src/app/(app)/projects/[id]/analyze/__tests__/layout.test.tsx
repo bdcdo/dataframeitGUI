@@ -47,12 +47,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   tableData = {
     projects: [{ id: "project-1", automation_mode: "compare_humans" }],
-    assignments: [
+    assignments: [],
+    field_reviews: [
       {
-        id: "assignment-1",
+        id: "review-1",
         project_id: "project-1",
-        user_id: "canonical-member",
-        type: "auto_revisao",
+        self_reviewer_id: "canonical-member",
+        superseded_at: null,
+        self_verdict: null,
       },
     ],
   };
@@ -74,8 +76,8 @@ beforeEach(() => {
   });
 });
 
-describe("AnalyzeLayout — identidade efetiva dos assignments", () => {
-  it("mantém a aba visível para assignment do membro canônico da conta-alias", async () => {
+describe("AnalyzeLayout — identidade efetiva da fila", () => {
+  it("mantém a aba visível para ciclo ativo do membro canônico da conta-alias", async () => {
     const layout = await loadLayout();
 
     const result = await layout({

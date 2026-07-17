@@ -194,6 +194,7 @@ describe("useArbitrationDoc — handleFinalSubmit", () => {
     });
     expect(submitFinalVerdicts).toHaveBeenCalledWith("p1", "d1", [
       {
+        fieldReviewId: "f1",
         fieldName: "q1",
         verdict: "humano",
         questionImprovementSuggestion: undefined,
@@ -234,6 +235,7 @@ describe("useArbitrationDoc — handleFinalSubmit", () => {
     });
     expect(submitFinalVerdicts).toHaveBeenCalledWith("p1", "d1", [
       {
+        fieldReviewId: "f1",
         fieldName: "q1",
         verdict: "llm",
         questionImprovementSuggestion: "melhorar X",

@@ -7,9 +7,90 @@ import {
   type AutoReviewDoc,
   type AutoReviewQueueOwner,
 } from "@/components/auto-review/AutoReviewPage";
+import {
+  buildReviewQueueDocumentMap,
+  loadReviewQueueRows,
+} from "@/lib/review-queue";
 import type { PydanticField } from "@/lib/types";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
-import { fetchActiveReviewQueueDocuments } from "@/lib/reviews/queries";
+
+interface MemberRow {
+  user_id: string;
+  profiles: {
+    id: string;
+    email: string | null;
+    first_name: string | null;
+    last_name: string | null;
+  };
+}
+
+interface AutoReviewFieldReviewRow {
+  id: string;
+  document_id: string;
+  field_name: string;
+  human_answer_snapshot: unknown;
+  llm_answer_snapshot: unknown;
+  llm_justification_snapshot: unknown;
+  self_verdict: string | null;
+  self_justification: string | null;
+}
+
+function buildQueueOwners(
+  memberRows: unknown[] | null,
+  isCoordinator: boolean,
+): AutoReviewQueueOwner[] {
+  if (!isCoordinator) return [];
+
+  return (memberRows ?? []).map((row) => {
+    const member = row as MemberRow;
+    const fullName = [member.profiles.first_name, member.profiles.last_name]
+      .filter(Boolean)
+      .join(" ");
+    return {
+      userId: member.user_id,
+      email: member.profiles.email,
+      name: fullName || null,
+    };
+  });
+}
+
+function buildAutoReviewDocuments(
+  documents: Parameters<typeof buildReviewQueueDocumentMap>[0],
+  fieldReviews: AutoReviewFieldReviewRow[],
+  fields: PydanticField[],
+): AutoReviewDoc[] {
+  const fieldDescById = new Map(
+    fields.map((field) => [field.name, field.description]),
+  );
+  const fieldHelpTextById = new Map(
+    fields.map((field) => [field.name, field.help_text ?? null]),
+  );
+  const docMap =
+    buildReviewQueueDocumentMap<AutoReviewDoc["fields"][number]>(documents);
+
+  for (const review of fieldReviews) {
+    const document = docMap.get(review.document_id);
+    if (!document) continue;
+    document.fields.push({
+      fieldReviewId: review.id,
+      fieldName: review.field_name,
+      fieldDescription: fieldDescById.get(review.field_name) ?? null,
+      fieldHelpText: fieldHelpTextById.get(review.field_name) ?? null,
+      humanAnswer: review.human_answer_snapshot ?? null,
+      llmAnswer: review.llm_answer_snapshot ?? null,
+      llmJustification:
+        typeof review.llm_justification_snapshot === "string"
+          ? review.llm_justification_snapshot
+          : null,
+      alreadyAnswered: review.self_verdict !== null,
+      selfJustification: review.self_justification ?? null,
+    });
+  }
+
+  return Array.from(docMap.values()).filter((document) =>
+    document.fields.some((field) => !field.alreadyAnswered),
+  );
+}
 
 export default async function AutoReviewRoute({
   params,
@@ -36,16 +117,16 @@ export default async function AutoReviewRoute({
   // demais filas.
   const queueUserId = isCoordinator && viewAs ? viewAs : ownQueueUserId;
 
-  const [{ data: project }, { data: assignments }, { data: memberRows }] =
+  const [{ data: project }, { data: pendingReviews }, { data: memberRows }] =
     await Promise.all([
       supabase.from("projects").select("pydantic_fields").eq("id", id).single(),
       supabase
-        .from("assignments")
-        .select("document_id, status")
+        .from("field_reviews")
+        .select("document_id")
         .eq("project_id", id)
-        .eq("user_id", queueUserId)
-        .eq("type", "auto_revisao")
-        .neq("status", "concluido"),
+        .eq("self_reviewer_id", queueUserId)
+        .is("superseded_at", null)
+        .is("self_verdict", null),
       isCoordinator
         ? supabase
             .from("project_members")
@@ -54,115 +135,29 @@ export default async function AutoReviewRoute({
         : Promise.resolve({ data: [] as Array<unknown> }),
     ]);
 
-  const reviewers: AutoReviewQueueOwner[] = isCoordinator
-    ? (
-        (memberRows ?? []) as Array<{
-          user_id: string;
-          profiles: {
-            id: string;
-            email: string | null;
-            first_name: string | null;
-            last_name: string | null;
-          };
-        }>
-      ).map((m) => {
-        const fullName = [m.profiles?.first_name, m.profiles?.last_name]
-          .filter(Boolean)
-          .join(" ");
-        return {
-          userId: m.user_id,
-          email: m.profiles?.email ?? null,
-          name: fullName || null,
-        };
-      })
-    : [];
-
-  const docIds = (assignments ?? []).map((a) => a.document_id);
-  if (docIds.length === 0) {
-    return (
-      <AutoReviewPage
-        projectId={id}
-        fields={(project?.pydantic_fields as PydanticField[]) ?? []}
-        docs={[]}
-        isCoordinator={isCoordinator}
-        queueUserId={queueUserId}
-        reviewers={reviewers}
-        ownQueueUserId={ownQueueUserId}
-      />
-    );
-  }
-
-  const [{ data: docs }, { data: fieldReviews }] = await Promise.all([
-    fetchActiveReviewQueueDocuments(supabase, docIds),
-    supabase
-      .from("field_reviews")
-      .select(
-        "id, document_id, field_name, human_response_id, llm_response_id, self_verdict, self_justification",
-      )
-      .in("document_id", docIds)
-      .eq("self_reviewer_id", queueUserId),
-  ]);
-
-  // Buscar só as respostas referenciadas (evita puxar todas as versões
-  // históricas de humano/LLM dos docs).
-  const responseIdSet = new Set<string>();
-  for (const fr of fieldReviews ?? []) {
-    responseIdSet.add(fr.human_response_id);
-    responseIdSet.add(fr.llm_response_id);
-  }
-  const responseIds = Array.from(responseIdSet);
-  const { data: responses } =
-    responseIds.length > 0
-      ? await supabase
-          .from("responses")
-          .select("id, document_id, respondent_type, answers, justifications")
-          .in("id", responseIds)
-      : { data: [] };
-
-  const responsesById = new Map((responses ?? []).map((r) => [r.id, r]));
-
-  const fieldsMeta = (project?.pydantic_fields as PydanticField[]) ?? [];
-  const fieldDescById = new Map(fieldsMeta.map((f) => [f.name, f.description]));
-  const fieldHelpTextById = new Map(
-    fieldsMeta.map((f) => [f.name, f.help_text ?? null]),
+  const reviewers = buildQueueOwners(memberRows, isCoordinator);
+  const docIds = Array.from(
+    new Set((pendingReviews ?? []).map((review) => review.document_id)),
   );
-
-  const docMap = new Map<string, AutoReviewDoc>();
-  for (const d of docs ?? []) {
-    docMap.set(d.id, {
-      docId: d.id,
-      title: d.title,
-      externalId: d.external_id,
-      text: d.text,
-      fields: [],
-    });
-  }
-
-  for (const fr of fieldReviews ?? []) {
-    const payload = docMap.get(fr.document_id);
-    if (!payload) continue;
-    const human = responsesById.get(fr.human_response_id);
-    const llm = responsesById.get(fr.llm_response_id);
-    payload.fields.push({
-      fieldName: fr.field_name,
-      fieldDescription: fieldDescById.get(fr.field_name) ?? null,
-      fieldHelpText: fieldHelpTextById.get(fr.field_name) ?? null,
-      humanAnswer:
-        (human?.answers as Record<string, unknown>)?.[fr.field_name] ?? null,
-      llmAnswer:
-        (llm?.answers as Record<string, unknown>)?.[fr.field_name] ?? null,
-      llmJustification:
-        (llm?.justifications as Record<string, string> | null)?.[
-          fr.field_name
-        ] ?? null,
-      alreadyAnswered: fr.self_verdict !== null,
-      selfJustification: fr.self_justification ?? null,
-    });
-  }
-
-  // Só mostra docs com pelo menos um campo divergente não revisado.
-  const docsToReview = Array.from(docMap.values()).filter((d) =>
-    d.fields.some((f) => !f.alreadyAnswered),
+  const { documents: docs, fieldReviews } = await loadReviewQueueRows(
+    supabase,
+    docIds,
+    () =>
+      supabase
+        .from("field_reviews")
+        .select(
+          "id, document_id, field_name, human_answer_snapshot, llm_answer_snapshot, llm_justification_snapshot, self_verdict, self_justification",
+        )
+        .eq("project_id", id)
+        .in("document_id", docIds)
+        .eq("self_reviewer_id", queueUserId)
+        .is("superseded_at", null),
+  );
+  const fieldsMeta = (project?.pydantic_fields as PydanticField[]) ?? [];
+  const docsToReview = buildAutoReviewDocuments(
+    docs,
+    fieldReviews as AutoReviewFieldReviewRow[],
+    fieldsMeta,
   );
 
   return (

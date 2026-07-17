@@ -39,15 +39,6 @@ function seedQueue(ownerId: string) {
         ],
       },
     ],
-    assignments: [
-      {
-        project_id: "project-1",
-        document_id: "doc-1",
-        user_id: ownerId,
-        type: "auto_revisao",
-        status: "pendente",
-      },
-    ],
     project_members: [],
     documents: [
       {
@@ -62,29 +53,16 @@ function seedQueue(ownerId: string) {
     field_reviews: [
       {
         id: "review-1",
+        project_id: "project-1",
         document_id: "doc-1",
         field_name: "outcome",
-        human_response_id: "human-1",
-        llm_response_id: "llm-1",
         self_reviewer_id: ownerId,
+        superseded_at: null,
         self_verdict: null,
         self_justification: null,
-      },
-    ],
-    responses: [
-      {
-        id: "human-1",
-        document_id: "doc-1",
-        respondent_type: "human",
-        answers: { outcome: "A" },
-        justifications: null,
-      },
-      {
-        id: "llm-1",
-        document_id: "doc-1",
-        respondent_type: "llm",
-        answers: { outcome: "B" },
-        justifications: { outcome: "Justificativa" },
+        human_answer_snapshot: "A",
+        llm_answer_snapshot: "B",
+        llm_justification_snapshot: "Justificativa",
       },
     ],
   };
@@ -143,7 +121,7 @@ beforeEach(() => {
 });
 
 describe("AutoReviewRoute — identidade efetiva", () => {
-  it("filtra assignments e field_reviews pelo membro canônico da conta-alias", async () => {
+  it("filtra ciclos ativos pelo membro canônico da conta-alias", async () => {
     seedQueue("canonical-member");
     const props = await renderRoute();
 

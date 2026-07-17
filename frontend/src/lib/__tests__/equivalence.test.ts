@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   buildResponseGroupKeys,
   canonicalPair,
-  type EquivalencePair,
+  filterCurrentEquivalencePairs,
+  type EquivalenceEdge,
 } from "@/lib/equivalence";
 
 interface Resp {
@@ -63,7 +64,7 @@ describe("buildResponseGroupKeys", () => {
       { id: "b", answer: "foo" },
       { id: "c", answer: "bar" },
     ];
-    const pairs: EquivalencePair[] = [
+    const pairs: EquivalenceEdge[] = [
       { response_a_id: "a", response_b_id: "c" },
     ];
     const result = buildResponseGroupKeys(responses, pairs, getAnswer);
@@ -75,7 +76,7 @@ describe("buildResponseGroupKeys", () => {
       { id: "a", answer: "x" },
       { id: "b", answer: "y" },
     ];
-    const pairs: EquivalencePair[] = [
+    const pairs: EquivalenceEdge[] = [
       { response_a_id: "a", response_b_id: "ghost" },
     ];
     const result = buildResponseGroupKeys(responses, pairs, getAnswer);
@@ -88,7 +89,7 @@ describe("buildResponseGroupKeys", () => {
       { id: "b", answer: "2" },
       { id: "c", answer: "3" },
     ];
-    const pairs: EquivalencePair[] = [
+    const pairs: EquivalenceEdge[] = [
       { response_a_id: "a", response_b_id: "b" },
       { response_a_id: "b", response_b_id: "c" },
     ];
@@ -102,7 +103,7 @@ describe("buildResponseGroupKeys", () => {
       { id: "a", answer: "y" },
       { id: "m", answer: "z" },
     ];
-    const pairs: EquivalencePair[] = [
+    const pairs: EquivalenceEdge[] = [
       { response_a_id: "z", response_b_id: "a" },
       { response_a_id: "a", response_b_id: "m" },
     ];
@@ -119,7 +120,7 @@ describe("buildResponseGroupKeys", () => {
       { id: "c", answer: "3" },
       { id: "d", answer: "4" },
     ];
-    const pairs: EquivalencePair[] = [
+    const pairs: EquivalenceEdge[] = [
       { response_a_id: "a", response_b_id: "b" },
       { response_a_id: "c", response_b_id: "d" },
     ];
@@ -128,5 +129,57 @@ describe("buildResponseGroupKeys", () => {
       ["a", "b"],
       ["c", "d"],
     ]);
+  });
+});
+
+describe("filterCurrentEquivalencePairs", () => {
+  const responses: Resp[] = [
+    { id: "a", answer: "current-a" },
+    { id: "b", answer: "current-b" },
+  ];
+
+  it("mantém a decisão enquanto os dois valores correspondem aos snapshots", () => {
+    const pairs = [{
+      response_a_id: "a",
+      response_b_id: "b",
+      response_a_answer_snapshot: "current-a",
+      response_b_answer_snapshot: "current-b",
+    }];
+    expect(
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+    ).toEqual(pairs);
+  });
+
+  it("descarta a decisão assim que um endpoint muda", () => {
+    const pairs = [{
+      response_a_id: "a",
+      response_b_id: "b",
+      response_a_answer_snapshot: "old-a",
+      response_b_answer_snapshot: "current-b",
+    }];
+    expect(
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+    ).toEqual([]);
+  });
+
+  it("descarta decisão sem snapshots verificáveis", () => {
+    const pairs = [
+      { response_a_id: "a", response_b_id: "b" },
+    ] as unknown as Parameters<typeof filterCurrentEquivalencePairs>[1];
+    expect(
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+    ).toEqual([]);
+  });
+
+  it("usa a mesma normalização da comparação de respostas", () => {
+    const pairs = [{
+      response_a_id: "a",
+      response_b_id: "b",
+      response_a_answer_snapshot: "  CURRENT-A  ",
+      response_b_answer_snapshot: "current-b",
+    }];
+    expect(
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+    ).toEqual(pairs);
   });
 });

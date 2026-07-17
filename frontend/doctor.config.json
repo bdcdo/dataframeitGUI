@@ -37,7 +37,6 @@
       },
       {
         "files": [
-          "src/lib/auto-review.ts",
           "src/actions/assignments.ts",
           "src/actions/members.ts",
           "src/actions/projects.ts"

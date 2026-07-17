@@ -107,6 +107,8 @@ function buildEquivByField(
     field_name: string;
     response_a_id: string;
     response_b_id: string;
+    response_a_answer_snapshot: unknown;
+    response_b_answer_snapshot: unknown;
   }> | null,
 ): Map<string, EquivalencePair[]> {
   const map = new Map<string, EquivalencePair[]>();
@@ -115,6 +117,8 @@ function buildEquivByField(
     list.push({
       response_a_id: eq.response_a_id,
       response_b_id: eq.response_b_id,
+      response_a_answer_snapshot: eq.response_a_answer_snapshot,
+      response_b_answer_snapshot: eq.response_b_answer_snapshot,
     });
     map.set(eq.field_name, list);
   }
@@ -430,11 +434,14 @@ async function loadAutoComparisonContext(
       .eq("respondent_type", "llm")
       .eq("is_latest", true)
       .maybeSingle(),
-    admin
-      .from("response_equivalences")
-      .select("field_name, response_a_id, response_b_id")
-      .eq("project_id", projectId)
-      .eq("document_id", documentId),
+      admin
+        .from("response_equivalences")
+        .select(
+          "field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot",
+        )
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .is("superseded_at", null),
     admin
       .from("assignments")
       .select("id")
@@ -566,6 +573,8 @@ interface DocumentEquivalenceRow {
   field_name: string;
   response_a_id: string;
   response_b_id: string;
+  response_a_answer_snapshot: unknown;
+  response_b_answer_snapshot: unknown;
 }
 
 function candidateDocumentIds(
@@ -685,6 +694,8 @@ function groupEquivalencesByDocument(
     fieldEquivalences.push({
       response_a_id: equivalence.response_a_id,
       response_b_id: equivalence.response_b_id,
+      response_a_answer_snapshot: equivalence.response_a_answer_snapshot,
+      response_b_answer_snapshot: equivalence.response_b_answer_snapshot,
     });
     byField.set(equivalence.field_name, fieldEquivalences);
     byDocument.set(equivalence.document_id, byField);
@@ -719,9 +730,12 @@ async function loadBacklogComparisonData(
         .in("document_id", documentIds),
       admin
         .from("response_equivalences")
-        .select("document_id, field_name, response_a_id, response_b_id")
+        .select(
+          "document_id, field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot",
+        )
         .eq("project_id", projectId)
-        .in("document_id", documentIds),
+        .in("document_id", documentIds)
+        .is("superseded_at", null),
     ]);
 
   const humans = (queryData(humanResponsesResult) ??

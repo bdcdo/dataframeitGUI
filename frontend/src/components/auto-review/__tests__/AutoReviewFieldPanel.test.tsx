@@ -10,6 +10,7 @@ import {
 afterEach(cleanup);
 
 const field: AutoReviewField = {
+  fieldReviewId: "fr1",
   fieldName: "diagnostico",
   fieldDescription: "Diagnóstico principal",
   fieldHelpText: null,

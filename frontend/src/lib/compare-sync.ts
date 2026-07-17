@@ -122,9 +122,10 @@ export async function syncCompareAssignment(
       .eq("reviewer_id", userId),
     supabase
       .from("response_equivalences")
-      .select("field_name, response_a_id, response_b_id")
+      .select("field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot")
       .eq("project_id", projectId)
-      .eq("document_id", documentId),
+      .eq("document_id", documentId)
+      .is("superseded_at", null),
   ]);
 
   const reviewedFields = new Set((reviews ?? []).map((r) => r.field_name));
@@ -199,6 +200,8 @@ export async function syncCompareAssignment(
     equivalencesByField.get(eq.field_name)!.push({
       response_a_id: eq.response_a_id,
       response_b_id: eq.response_b_id,
+      response_a_answer_snapshot: eq.response_a_answer_snapshot,
+      response_b_answer_snapshot: eq.response_b_answer_snapshot,
     });
   }
 

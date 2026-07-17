@@ -13,6 +13,7 @@ import { AutoReviewJustificationInput } from "./AutoReviewJustificationInput";
 import { AutoReviewFooter } from "./AutoReviewFooter";
 
 export interface AutoReviewField {
+  fieldReviewId: string;
   fieldName: string;
   fieldDescription: string | null;
   fieldHelpText: string | null;

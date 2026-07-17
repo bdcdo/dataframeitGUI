@@ -2,7 +2,10 @@
 
 import { useMemo } from "react";
 import { normalizeForComparison } from "@/lib/utils";
-import { buildResponseGroupKeys } from "@/lib/equivalence";
+import {
+  buildResponseGroupKeys,
+  filterCurrentEquivalencePairs,
+} from "@/lib/equivalence";
 import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { PydanticField } from "@/lib/types";
 import type {
@@ -77,10 +80,21 @@ export function useCompareFieldData({
     };
   });
 
-  const currentFieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
+  const fieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
     if (!currentDoc || !currentFieldName) return [];
     return equivalencesByDocField[currentDoc.id]?.[currentFieldName] ?? [];
   }, [equivalencesByDocField, currentDoc, currentFieldName]);
+
+  const currentFieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
+    const present = fieldResponses.filter(
+      (response) => response.answer !== undefined,
+    );
+    return filterCurrentEquivalencePairs(
+      present,
+      fieldEquivalences,
+      (response) => response.answer,
+    );
+  }, [fieldResponses, fieldEquivalences]);
 
   // Equivalência (fundir respostas distintas como iguais) vale para qualquer
   // campo NÃO-multi: texto, data e single (com ou sem opções). Todos renderizam

@@ -77,6 +77,8 @@ A imagem do backend instala o grafo de produção com `uv sync --locked --no-dev
 
 Se um deploy falhar, o workflow abre um incidente atribuído ao owner com a aplicação, o commit e o link da execução; novas falhas da mesma aplicação são adicionadas ao incidente aberto. Depois de confirmar a recuperação de produção, feche a issue para que uma falha futura abra outro incidente. Deploy verde não gera ruído.
 
+A reconciliação da auto-revisão tem uma ordem de rollout deliberada: configurar o mesmo `AUTO_REVIEW_RECONCILIATION_SECRET` nos dois apps, aplicar as migrations, implantar o frontend e, por fim, implantar o backend. O backend verifica a RPC de capability no startup e não substitui a versão anterior se o contrato do banco ainda não existir.
+
 ### 1. Supabase Cloud
 
 1. Criar projeto em [supabase.com](https://supabase.com)
@@ -92,6 +94,7 @@ Config em `backend/fly.toml`. Secrets de runtime via `fly secrets set` (nunca no
 cd backend
 fly secrets set SUPABASE_URL=https://xxx.supabase.co \
   SUPABASE_SERVICE_KEY=your-key \
+  AUTO_REVIEW_RECONCILIATION_SECRET=the-same-long-random-secret \
   CLERK_JWKS_URL='https://<slug>.clerk.accounts.dev/.well-known/jwks.json' \
   -a gui-analise-sistematica-api
 # CORS_ORIGINS fica em [env] no fly.toml (origens permitidas, JSON array).
@@ -102,13 +105,14 @@ Verificar: `curl https://gui-analise-sistematica-api.fly.dev/health`
 
 ### 3. Frontend (Fly.io — `gui-analise-sistematica-frontend`)
 
-Config em `frontend/fly.toml`. As `NEXT_PUBLIC_*` ficam em `[build.args]` (embutidas no bundle em build time, todas públicas por design); os secrets de runtime (`CLERK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CLERK_WEBHOOK_SECRET`) via `fly secrets set`:
+Config em `frontend/fly.toml`. As `NEXT_PUBLIC_*` ficam em `[build.args]` (embutidas no bundle em build time, todas públicas por design); os secrets de runtime (`CLERK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CLERK_WEBHOOK_SECRET`, `AUTO_REVIEW_RECONCILIATION_SECRET`) via `fly secrets set`:
 
 ```bash
 cd frontend
 fly secrets set CLERK_SECRET_KEY=sk_... \
   SUPABASE_SERVICE_ROLE_KEY=your-key \
   CLERK_WEBHOOK_SECRET=whsec_... \
+  AUTO_REVIEW_RECONCILIATION_SECRET=the-same-long-random-secret \
   -a gui-analise-sistematica-frontend
 fly deploy -c fly.toml -a gui-analise-sistematica-frontend   # fallback; o normal é via CI
 ```
@@ -132,6 +136,7 @@ Mudanças que dependem de RPCs, constraints ou colunas novas seguem ordem estrit
 | `CLERK_SECRET_KEY` | Frontend (Fly secret) | Secret key do Clerk |
 | `SUPABASE_SERVICE_ROLE_KEY` | Frontend (Fly secret) | Service role (server actions) |
 | `CLERK_WEBHOOK_SECRET` | Frontend (Fly secret) | Signing secret do webhook do Clerk |
+| `AUTO_REVIEW_RECONCILIATION_SECRET` | Backend e frontend (Fly secret) | Segredo dedicado, idêntico nos dois apps, para o wakeup HTTP da outbox |
 | `LLM_RATE_LIMIT_REQUESTS` | Backend (`fly.toml [env]`) | Máximo compartilhado de disparos LLM por usuário efetivo e projeto em cada janela (default: `5`) |
 | `LLM_RATE_LIMIT_WINDOW_SECONDS` | Backend (`fly.toml [env]`) | Duração da janela atômica no Postgres, em segundos (default: `60`) |
 

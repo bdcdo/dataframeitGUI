@@ -9,11 +9,16 @@ import {
   makeSupabaseMock,
   type TableResults,
   type WriteCall,
+  type RpcCall,
 } from "./supabase-mock";
 
 let writeCalls: WriteCall[];
 let serverTableResults: TableResults | undefined;
-const syncCompareAssignment = vi.hoisted(() => vi.fn(async () => {}));
+let rpcCalls: RpcCall[];
+let rpcResults: Record<string, {
+  data?: unknown;
+  error?: { message: string } | null;
+}>;
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/auth", () => ({
@@ -25,17 +30,23 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
+    makeSupabaseMock({
+      tableResults: serverTableResults,
+      writeCalls,
+      rpcCalls,
+      rpcResults,
+    }),
 }));
 // syncCompareAssignment é best-effort e teria seu próprio teste dedicado
 // (compare-sync.ts); aqui só interessa não deixá-lo derrubar a action.
 vi.mock("@/lib/compare-sync", () => ({
-  syncCompareAssignment,
+  syncCompareAssignment: async () => {},
 }));
 
 beforeEach(() => {
-  syncCompareAssignment.mockClear();
   writeCalls = [];
+  rpcCalls = [];
+  rpcResults = {};
   serverTableResults = undefined;
 });
 
@@ -56,7 +67,7 @@ describe.each([
   {
     action: "confirmEquivalentVerdict",
     tableResults: {
-      response_equivalences: { error: { message: "pair upsert boom" } },
+      response_equivalences: { error: null },
     },
     call: (fns: Actions) =>
       fns.confirmEquivalentVerdict({
@@ -69,35 +80,39 @@ describe.each([
       }),
     expectedError: "pair upsert boom",
     extraChecks: () => {
-      expect(upsertsOn("response_equivalences")).toHaveLength(1);
+      expect(rpcCalls).toHaveLength(1);
       expect(upsertsOn("reviews")).toHaveLength(0);
     },
+    rpcError: "pair upsert boom",
   },
   {
     action: "markLlmEquivalent",
     tableResults: {
-      response_equivalences: { error: { message: "llm pair boom" } },
+      response_equivalences: { error: null },
     },
     call: (fns: Actions) =>
       fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1"),
     expectedError: "llm pair boom",
     extraChecks: undefined,
+    rpcError: "llm pair boom",
   },
   {
     action: "unmarkEquivalencePair",
-    tableResults: {
-      response_equivalences: [
-        { data: { document_id: "doc1", field_name: "q1" } },
-        { error: { message: "delete pair boom" } },
-      ],
-    },
+    tableResults: undefined,
     call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
     expectedError: "delete pair boom",
     extraChecks: undefined,
+    rpcError: "delete pair boom",
   },
-])("$action — falha no upsert/delete", ({ tableResults, call, expectedError, extraChecks }) => {
+])("$action — falha no upsert/delete", ({ action, tableResults, call, expectedError, extraChecks, rpcError }) => {
   it("retorna { error }, não lança", async () => {
     serverTableResults = tableResults;
+    if (rpcError) {
+      const rpcName = action === "unmarkEquivalencePair"
+        ? "remove_response_equivalence"
+        : "record_response_equivalences";
+      rpcResults[rpcName] = { error: { message: rpcError } };
+    }
     const fns = await loadActions();
 
     const result = await call(fns);
@@ -110,7 +125,6 @@ describe.each([
 describe("confirmEquivalentVerdict", () => {
   it("upsert em reviews falha após response_equivalences já gravado → retorna { error }, não lança", async () => {
     serverTableResults = {
-      response_equivalences: { error: null },
       reviews: { error: { message: "review upsert boom" } },
     };
     const { confirmEquivalentVerdict } = await loadActions();
@@ -128,13 +142,12 @@ describe("confirmEquivalentVerdict", () => {
     // persistido quando o upsert de reviews falha (não há rollback), mesmo
     // com a action reportando erro ao client.
     expect(result).toEqual({ error: "review upsert boom" });
-    expect(upsertsOn("response_equivalences")).toHaveLength(1);
+    expect(rpcCalls).toHaveLength(1);
     expect(upsertsOn("reviews")).toHaveLength(1);
   });
 
   it("caminho feliz → retorna {} e grava o par canônico (a < b) e o chosen_response_id do gabarito", async () => {
     serverTableResults = {
-      response_equivalences: { error: null },
       reviews: { error: null },
     };
     const { confirmEquivalentVerdict } = await loadActions();
@@ -149,16 +162,17 @@ describe("confirmEquivalentVerdict", () => {
     });
 
     expect(result).toEqual({});
-    expect(upsertsOn("response_equivalences")[0]?.payload).toEqual([
-      {
+    expect(rpcCalls[0]).toEqual({
+      fn: "record_response_equivalences",
+      args: { p_rows: [{
         project_id: "p1",
         document_id: "doc1",
         field_name: "q1",
         response_a_id: "r1",
         response_b_id: "r2",
         reviewer_id: "canonical-reviewer",
-      },
-    ]);
+      }] },
+    });
     expect(upsertsOn("reviews")[0]?.payload).toMatchObject({
       project_id: "p1",
       document_id: "doc1",
@@ -172,27 +186,23 @@ describe("confirmEquivalentVerdict", () => {
 
 describe("markLlmEquivalent", () => {
   it("caminho feliz → retorna {}", async () => {
-    serverTableResults = { response_equivalences: { error: null } };
     const { markLlmEquivalent } = await loadActions();
 
     const result = await markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1");
 
     expect(result).toEqual({});
-    expect(upsertsOn("response_equivalences")).toHaveLength(1);
-    expect(upsertsOn("response_equivalences")[0]?.payload).toMatchObject({
-      reviewer_id: "canonical-reviewer",
-    });
+    expect(rpcCalls).toHaveLength(1);
   });
 });
 
 describe("unmarkEquivalencePair", () => {
   it("caminho feliz → retorna {} e limpa o review do revisor atual para o par", async () => {
     serverTableResults = {
-      response_equivalences: [
-        { data: { document_id: "doc1", field_name: "q1" } },
-        { error: null },
-      ],
       reviews: { error: null },
+    };
+    rpcResults.remove_response_equivalence = {
+      data: [{ document_id: "doc1", field_name: "q1" }],
+      error: null,
     };
     const { unmarkEquivalencePair } = await loadActions();
 
@@ -202,11 +212,5 @@ describe("unmarkEquivalencePair", () => {
     expect(
       writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
     ).toBe(true);
-    expect(syncCompareAssignment).toHaveBeenCalledWith(
-      expect.anything(),
-      "p1",
-      "doc1",
-      "canonical-reviewer",
-    );
   });
 });

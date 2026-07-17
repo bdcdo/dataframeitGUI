@@ -5,6 +5,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
+    frontend_internal_url: str = ""
+    auto_review_reconciliation_secret: str = ""
     cors_origins: list[str] = ["http://localhost:3000"]
     cors_origin_regex: str | None = None
 

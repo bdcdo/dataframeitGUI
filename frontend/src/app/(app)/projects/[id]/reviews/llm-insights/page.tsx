@@ -91,7 +91,8 @@ export default async function LlmInsightsPage({
     supabase
       .from("response_equivalences")
       .select("document_id, field_name, response_a_id, response_b_id")
-      .eq("project_id", id),
+      .eq("project_id", id)
+      .is("superseded_at", null),
     getProjectAccessContext(id, user),
   ]);
 
