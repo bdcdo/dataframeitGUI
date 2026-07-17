@@ -22,25 +22,20 @@ IN SHARE ROW EXCLUSIVE MODE;
 
 -- ========== 0. Mapping Clerk concluído e ancorado em profiles ==========
 -- auth.users sozinho não representa uma identidade utilizável pela aplicação.
--- O preflight recusa mappings órfãos antes de substituir a FK; a nova versão
--- de sync só é publicada depois que profile e aliases convergiram.
 LOCK TABLE public.clerk_user_mapping IN SHARE ROW EXCLUSIVE MODE;
 
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-    FROM public.clerk_user_mapping mapping
-    LEFT JOIN public.profiles profile
-      ON profile.id = mapping.supabase_user_id
-    WHERE profile.id IS NULL
-  ) THEN
-    RAISE EXCEPTION
-      'clerk_user_mapping contém identidade sem profile'
-      USING ERRCODE = '23503';
-  END IF;
-END;
-$$;
+-- Mapping órfão (sem profile) é inautenticável — resolveAuth exige o profile —
+-- e é exatamente o estado que a FK abaixo torna irrepresentável; removê-lo é o
+-- reparo, não motivo de abortar o deploy (o dono do clerk id, se voltar, passa
+-- pelo claim por e-mail e ganha mapping novo consistente). Medido em produção
+-- em 2026-07-17: exatamente 1 órfão, criado em 2026-04-01 — anterior à própria
+-- feature de identidade, sobra de um profile apagado sob o schema antigo.
+DELETE FROM public.clerk_user_mapping mapping
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM public.profiles profile
+  WHERE profile.id = mapping.supabase_user_id
+);
 
 ALTER TABLE public.clerk_user_mapping
   ADD COLUMN access_sync_version INTEGER NOT NULL DEFAULT 0,
