@@ -153,18 +153,6 @@ function getRespondentDisplayName(
 
 export const REVIEW_BASE_DATA_LIMIT = 50000;
 
-export function fetchActiveReviewQueueDocuments(
-  supabase: SupabaseClient,
-  documentIds: string[],
-) {
-  return supabase
-    .from("documents")
-    .select("id, title, external_id, text")
-    .in("id", documentIds)
-    .is("excluded_at", null)
-    .is("exclusion_pending_at", null);
-}
-
 /**
  * Marca como `true` cada tabela cuja query atingiu o teto de
  * REVIEW_BASE_DATA_LIMIT linhas. Query que falhou (`null`) nao conta como

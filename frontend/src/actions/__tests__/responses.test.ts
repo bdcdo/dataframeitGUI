@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { revalidatePath, revalidateTag } from "next/cache";
 
+const drainAutoReviewReconciliationRequests = vi.hoisted(() => vi.fn(async () => ({
+  processed: 1,
+  stale: 0,
+  deferred: 0,
+  failed: 0,
+  remaining: 0,
+})));
+
 // Mocks precisam ser declarados antes do import dinamico do modulo sob teste.
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
@@ -13,6 +21,9 @@ vi.mock("@/lib/auth", () => ({
     user: { id: "user-1", email: "u@test.com" },
     memberUserId: "user-1",
   })),
+}));
+vi.mock("@/lib/auto-review-reconciler", () => ({
+  drainAutoReviewReconciliationRequests,
 }));
 
 interface State {
@@ -36,6 +47,7 @@ interface State {
   }>;
   schemaVersion: { major: number; minor: number; patch: number };
   documentExcludedAt: string | null;
+  automationMode: string | null;
 }
 
 let state: State;
@@ -52,9 +64,11 @@ beforeEach(() => {
     ],
     schemaVersion: { major: 1, minor: 0, patch: 0 },
     documentExcludedAt: null,
+    automationMode: null,
   };
   vi.mocked(revalidatePath).mockClear();
   vi.mocked(revalidateTag).mockClear();
+  drainAutoReviewReconciliationRequests.mockClear();
 });
 
 // Builder generico awaitable: usado quando o resultado final eh `{ error: null }`
@@ -94,6 +108,7 @@ vi.mock("@/lib/supabase/server", () => ({
                   schema_version_patch: state.schemaVersion.patch,
                   round_strategy: "schema_version",
                   current_round_id: null,
+                  automation_mode: state.automationMode,
                 },
                 error: null,
               }),
@@ -220,6 +235,25 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.responseUpdatePayload?.is_partial).toBe(false);
     // Assignment.status nao deve regredir (guard pre-existente).
     expect(state.assignmentUpdatePayload).toBeNull();
+  });
+
+  it("auto-save em response já submetida invalida imediatamente a auto-revisão", async () => {
+    state.existingResponse = { id: "resp-1", is_partial: false };
+    state.currentAssignmentStatus = "concluido";
+    state.automationMode = "compare_humans";
+    const saveResponse = await loadSaveResponse();
+
+    const result = await saveResponse(
+      "proj-1",
+      "doc-1",
+      { q1: "b" },
+      { isAutoSave: true },
+    );
+
+    expect(result.success).toBe(true);
+    expect(drainAutoReviewReconciliationRequests).toHaveBeenCalledWith({
+      projectId: "proj-1",
+    });
   });
 
   it("submit apos auto-save sobrescreve is_partial: true -> false (UPDATE)", async () => {

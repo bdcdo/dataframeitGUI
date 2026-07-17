@@ -14,8 +14,8 @@ export type RoundStrategy = "schema_version" | "manual";
 
 // Modo de automação de revisão do projeto (projects.automation_mode). Define o
 // "mínimo necessário para liberar a revisão" + quem revê, e governa quais abas
-// de revisão aparecem. Mutuamente exclusivo. Ver lib/auto-review.ts (auto_review_llm)
-// e lib/auto-comparison.ts (compare_*).
+// de revisão aparecem. Mutuamente exclusivo. Ver lib/auto-review-reconciler.ts
+// (auto_review_llm) e lib/auto-comparison.ts (compare_*).
 export type AutomationMode =
   | "none"
   | "auto_review_llm"

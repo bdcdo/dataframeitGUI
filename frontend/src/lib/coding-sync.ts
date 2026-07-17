@@ -2,9 +2,18 @@ import "server-only";
 
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import { isCodingComplete } from "@/lib/coding-completeness";
-import { createAutoReviewIfDiverges } from "@/lib/auto-review";
+import { drainAutoReviewReconciliationRequests } from "@/lib/auto-review-reconciler";
 import { createAutoComparisonIfDiverges } from "@/lib/auto-comparison";
 import type { PydanticField } from "@/lib/types";
+
+async function drainAutoReviewForProject(projectId: string): Promise<void> {
+  const result = await drainAutoReviewReconciliationRequests({ projectId });
+  if (result.failed > 0) {
+    throw new Error(
+      `${result.failed} pedido(s) de reconciliação permaneceram na fila`,
+    );
+  }
+}
 
 async function runCodingAutomation(
   mode: string | null | undefined,
@@ -21,7 +30,7 @@ async function runCodingAutomation(
   // retryPendingComparisons). "none" nao dispara nada.
   try {
     if (mode === "auto_review_llm") {
-      await createAutoReviewIfDiverges(projectId, documentId, userId);
+      await drainAutoReviewForProject(projectId);
     } else if (mode === "compare_humans") {
       await createAutoComparisonIfDiverges(projectId, documentId, "compare_humans");
     } else if (mode === "compare_llm") {
@@ -52,6 +61,77 @@ export interface SyncCodingAssignmentParams {
   sanitizedAnswers: Record<string, unknown>;
   isAutoSave: boolean;
   automationMode: string | null | undefined;
+  hadCompletedResponse: boolean;
+}
+
+async function reconcileEditedResponse(
+  params: Pick<SyncCodingAssignmentParams, "projectId" | "documentId" | "userId">,
+): Promise<{ error?: string }> {
+  try {
+    await drainAutoReviewForProject(params.projectId);
+    return {};
+  } catch (error) {
+    console.error(
+      `[auto-review] ${JSON.stringify({
+        event: "edit_reconcile_failed",
+        projectId: params.projectId,
+        documentId: params.documentId,
+        userId: params.userId,
+        error: error instanceof Error ? error.message : String(error),
+      })}`,
+    );
+    return {
+      error: "Resposta salva e revisão anterior invalidada, mas a nova fila não pôde ser reconciliada. Tente salvar novamente.",
+    };
+  }
+}
+
+async function completeCodingAssignment(
+  supabase: SupabaseServerClient,
+  params: SyncCodingAssignmentParams,
+): Promise<{ error?: string }> {
+  const { error } = await supabase
+    .from("assignments")
+    .update({ status: "concluido", completed_at: new Date().toISOString() })
+    .eq("project_id", params.projectId)
+    .eq("document_id", params.documentId)
+    .eq("user_id", params.userId)
+    .eq("type", "codificacao");
+  if (error) return { error: error.message };
+
+  if (!params.hadCompletedResponse) {
+    await runCodingAutomation(
+      params.automationMode,
+      params.projectId,
+      params.documentId,
+      params.userId,
+    );
+  }
+  return {};
+}
+
+async function keepCodingAssignmentInProgress(
+  supabase: SupabaseServerClient,
+  params: SyncCodingAssignmentParams,
+): Promise<{ error?: string }> {
+  const { data: currentAssignment } = await supabase
+    .from("assignments")
+    .select("status")
+    .eq("project_id", params.projectId)
+    .eq("document_id", params.documentId)
+    .eq("user_id", params.userId)
+    .eq("type", "codificacao")
+    .maybeSingle();
+  if (!currentAssignment || currentAssignment.status === "concluido") return {};
+
+  const { error } = await supabase
+    .from("assignments")
+    .update({ status: "em_andamento", completed_at: null })
+    .eq("project_id", params.projectId)
+    .eq("document_id", params.documentId)
+    .eq("user_id", params.userId)
+    .eq("type", "codificacao");
+  return error ? { error: error.message } : {};
 }
 
 // Recomputes the reviewer's "codificacao" assignment status right after a
@@ -65,50 +145,26 @@ export async function syncCodingAssignmentStatus(
   supabase: SupabaseServerClient,
   params: SyncCodingAssignmentParams,
 ): Promise<{ error?: string }> {
-  const { projectId, documentId, userId, fields, sanitizedAnswers, isAutoSave, automationMode } =
-    params;
-
   // Definição única de "codificação completa" — ver lib/coding-completeness.
   // O mesmo helper gateia o backlog de auto-revisão (issue #174).
-  const allAnswered = isCodingComplete(fields, sanitizedAnswers);
+  const allAnswered = isCodingComplete(params.fields, params.sanitizedAnswers);
+
+  // A response humana continua sendo a mesma row depois do primeiro submit.
+  // Portanto, qualquer save posterior (inclusive autosave) precisa reconciliar
+  // imediatamente os ciclos que dependiam do valor anterior.
+  if (params.hadCompletedResponse) {
+    const reconciliation = await reconcileEditedResponse(params);
+    if (reconciliation.error) return reconciliation;
+  }
 
   // Auto-save nunca promove para "concluido" — mesmo que todos os campos
   // estejam preenchidos, o pesquisador ainda nao clicou em Enviar. Sem essa
   // guarda, sair da pagina dispara visibilitychange -> saveResponse -> doc
   // some da lista no filtro padrao por virar current_done.
-  if (allAnswered && !isAutoSave) {
-    const { error: assignErr } = await supabase
-      .from("assignments")
-      .update({ status: "concluido", completed_at: new Date().toISOString() })
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("user_id", userId)
-      .eq("type", "codificacao");
-    if (assignErr) return { error: assignErr.message };
-
-    await runCodingAutomation(automationMode, projectId, documentId, userId);
-    return {};
+  if (allAnswered && !params.isAutoSave) {
+    return completeCodingAssignment(supabase, params);
   }
 
   // So regredir se NAO esta concluido (evita desfazer progresso por auto-save)
-  const { data: currentAssignment } = await supabase
-    .from("assignments")
-    .select("status")
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .eq("user_id", userId)
-    .eq("type", "codificacao")
-    .maybeSingle();
-
-  if (currentAssignment && currentAssignment.status !== "concluido") {
-    const { error: assignErr } = await supabase
-      .from("assignments")
-      .update({ status: "em_andamento", completed_at: null })
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("user_id", userId)
-      .eq("type", "codificacao");
-    if (assignErr) return { error: assignErr.message };
-  }
-  return {};
+  return keepCodingAssignmentInProgress(supabase, params);
 }

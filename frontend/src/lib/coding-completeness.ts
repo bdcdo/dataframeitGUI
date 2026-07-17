@@ -34,7 +34,7 @@ function requiredHumanFields(
 // em server actions quanto em testes Vitest.
 //
 // `answerFieldHashes` (opcional): quando avaliado RETROATIVAMENTE (backlog,
-// createAutoReviewIfDiverges) contra o schema atual, passar o snapshot per-campo
+// reconciliação da auto-revisão) contra o schema atual, passar o snapshot per-campo
 // da resposta evita que um campo obrigatório recém-adicionado torne codificações
 // antigas — completas à época — falsamente "incompletas". O gate inline de
 // saveResponse roda em save-time (schema = schema da codificação), então não

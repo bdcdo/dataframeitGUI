@@ -127,6 +127,7 @@ export default async function MembersPage({
         .select("id", { count: "exact", head: true })
         .eq("project_id", id)
         .eq("self_verdict", "contesta_llm")
+        .is("superseded_at", null)
         .is("arbitrator_id", null),
       supabase
         .from("member_email_links")

@@ -7,7 +7,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { normalizeForComparison } from "@/lib/utils";
 import { formatPartialDate } from "@/lib/date-parts";
-import { buildResponseGroupKeys } from "@/lib/equivalence";
+import {
+  buildResponseGroupKeys,
+} from "@/lib/equivalence";
 import { Link2 } from "lucide-react";
 
 interface AgreementResponse {
@@ -26,6 +28,8 @@ export interface FieldEquivalencePair {
   response_a_id: string;
   response_b_id: string;
   reviewer_id: string | null;
+  response_a_answer_snapshot: unknown;
+  response_b_answer_snapshot: unknown;
 }
 
 function compareVersionsDesc(a: string, b: string): number {

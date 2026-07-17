@@ -57,7 +57,7 @@ const EXPECTED_RUNTIME_IMPORTERS = [
   "app/(app)/projects/[id]/config/members/page.tsx",
   "lib/auth.ts",
   "lib/auto-comparison.ts",
-  "lib/auto-review.ts",
+  "lib/auto-review-reconciler.ts",
   "lib/clerk-sync.ts",
 ];
 
@@ -409,13 +409,14 @@ describe("fronteira do Supabase admin client", () => {
       .map(relative)
       .toSorted();
     expect(importers).toEqual(EXPECTED_RUNTIME_IMPORTERS);
-    // 18 após compor com a #433: as RPCs atômicas de permissão
+    // 19 após compor com a #433: as RPCs atômicas de permissão
     // (set_member_arbitration_permission / set_member_comparison_permission)
     // absorveram releaseArbitrationsFromUser e releaseComparisonsFromUser no
     // banco. O commit de comparação acrescenta 1 uso tardio porque a RPC
     // assign_comparison_if_eligible é executável somente por service_role;
-    // todas as leituras do retry continuam no client autenticado.
-    expect(countAdminFactoryCalls(files)).toBe(18);
+    // todas as leituras do retry continuam no client autenticado. O
+    // reconciliador interno acrescenta o uso necessário para drenar a outbox.
+    expect(countAdminFactoryCalls(files)).toBe(19);
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {

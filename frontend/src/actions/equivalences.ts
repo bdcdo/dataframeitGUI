@@ -74,12 +74,10 @@ export async function confirmEquivalentVerdict({
   }
 
   try {
-    const { error: equivErr } = await supabase
-      .from("response_equivalences")
-      .upsert(rows, {
-        onConflict: "project_id,document_id,field_name,response_a_id,response_b_id",
-        ignoreDuplicates: true,
-      });
+    const { error: equivErr } = await supabase.rpc(
+      "record_response_equivalences",
+      { p_rows: rows },
+    );
     if (equivErr) throw new Error(equivErr.message);
 
     const { error: reviewErr } = await supabase.from("reviews").upsert(
@@ -142,21 +140,16 @@ export async function markLlmEquivalent(
   const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
 
   try {
-    const { error } = await supabase.from("response_equivalences").upsert(
-      {
+    const { error } = await supabase.rpc("record_response_equivalences", {
+      p_rows: [{
         project_id: projectId,
         document_id: documentId,
         field_name: fieldName,
         response_a_id: a,
         response_b_id: b,
         reviewer_id: reviewerId,
-      },
-      {
-        onConflict:
-          "project_id,document_id,field_name,response_a_id,response_b_id",
-        ignoreDuplicates: true,
-      },
-    );
+      }],
+    });
     if (error) throw new Error(error.message);
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
@@ -183,24 +176,12 @@ export async function unmarkEquivalencePair(
   let syncDocumentId: string | null = null;
 
   try {
-    const { data: row } = await supabase
-      .from("response_equivalences")
-      .select("document_id, field_name")
-      .eq("id", equivalenceId)
-      .eq("project_id", projectId)
-      .maybeSingle();
-
-    // Ordem obrigatória, não awaits independentes: o select acima captura
-    // document_id/field_name ANTES de a linha ser apagada. Paralelizar com o
-    // delete criaria uma race read-after-delete (row viria null e a limpeza de
-    // reviews abaixo não rodaria).
-    // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
-    const { error } = await supabase
-      .from("response_equivalences")
-      .delete()
-      .eq("id", equivalenceId)
-      .eq("project_id", projectId);
+    const { data, error } = await supabase.rpc("remove_response_equivalence", {
+      p_project_id: projectId,
+      p_equivalence_id: equivalenceId,
+    });
     if (error) throw new Error(error.message);
+    const row = data?.[0];
 
     if (row?.document_id && row.field_name) {
       await supabase

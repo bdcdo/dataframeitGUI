@@ -148,6 +148,8 @@ describe("AgreementGroup — 'Todas são similares' (issue #247, ponto 5)", () =
           response_a_id: "ni-1",
           response_b_id: "na-1",
           reviewer_id: "u1",
+          response_a_answer_snapshot: "NI",
+          response_b_answer_snapshot: "N/A",
         },
       ],
     });

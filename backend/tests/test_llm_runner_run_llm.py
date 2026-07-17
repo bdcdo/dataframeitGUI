@@ -141,6 +141,7 @@ class _FakeTable:
 class _FakeSupabase:
     def __init__(self, tables: dict[str, _FakeTable]):
         self._tables = tables
+        self.rpc_calls: list[tuple[str, dict]] = []
         self.operation_log: list[
             tuple[str, str, dict, list[tuple[str, str, object]]]
         ] = []
@@ -150,6 +151,12 @@ class _FakeSupabase:
 
     def table(self, name):
         return self._tables[name]
+
+    def rpc(self, name, params):
+        def record(_filters):
+            self.rpc_calls.append((name, params))
+
+        return _FakeQuery(params, on_execute=record)
 
 
 def _project_row(**overrides) -> dict:
@@ -231,6 +238,7 @@ def _run_llm_sync(
     row_specs: dict[str, dict],
     *,
     dataframeit_calls: list[dict] | None = None,
+    wakeup_calls: list[bool] | None = None,
 ) -> None:
     monkeypatch.setattr("services.llm_runner.get_supabase", lambda: sb)
     monkeypatch.setitem(
@@ -239,6 +247,15 @@ def _run_llm_sync(
         SimpleNamespace(
             dataframeit=_make_fake_dataframeit(row_specs, dataframeit_calls)
         ),
+    )
+
+    async def _fake_wakeup() -> bool:
+        if wakeup_calls is not None:
+            wakeup_calls.append(True)
+        return True
+
+    monkeypatch.setattr(
+        "services.llm_runner.wake_auto_review_reconciliation", _fake_wakeup
     )
     init_job(JOB_ID, PROJECT_ID, "all")
     asyncio.run(run_llm(JOB_ID, PROJECT_ID))
@@ -249,6 +266,14 @@ def _last_update_where(table: _FakeTable, **kv) -> dict | None:
         if all(payload.get(k) == v for k, v in kv.items()):
             return payload
     return None
+
+
+def _published_responses(sb: _FakeSupabase) -> list[dict]:
+    return [
+        params["p_response"]
+        for name, params in sb.rpc_calls
+        if name == "publish_latest_llm_response"
+    ]
 
 
 def teardown_function(_fn):
@@ -270,10 +295,11 @@ def test_run_llm_happy_path(monkeypatch):
         docs,
     )
 
-    _run_llm_sync(monkeypatch, sb, row_specs)
+    wakeup_calls: list[bool] = []
+    _run_llm_sync(monkeypatch, sb, row_specs, wakeup_calls=wakeup_calls)
 
     assert _jobs[JOB_ID]["status"] == "completed"
-    inserts = sb.table("responses").insert_calls
+    inserts = _published_responses(sb)
     assert len(inserts) == 2
     assert all(
         row["is_partial"] is False and row["is_latest"] is True for row in inserts
@@ -283,6 +309,7 @@ def test_run_llm_happy_path(monkeypatch):
         row["answer_field_hashes"] == {"campo_a": "ha", "campo_b": None}
         for row in inserts
     )
+    assert wakeup_calls == [True]
 
     completion = _last_update_where(sb.table("llm_runs"), status="completed")
     assert completion is not None
@@ -350,7 +377,7 @@ def test_run_llm_processes_multiple_batches_and_tracks_progress(monkeypatch):
     assert _jobs[JOB_ID]["current_batch"] == 2
     assert _jobs[JOB_ID]["total_batches"] == 2
     assert _jobs[JOB_ID]["progress"] == 3
-    assert {row["document_id"] for row in sb.table("responses").insert_calls} == {
+    assert {row["document_id"] for row in _published_responses(sb)} == {
         "doc-0",
         "doc-1",
         "doc-2",
@@ -397,33 +424,24 @@ def test_run_llm_flattens_nested_model_before_adding_justifications(monkeypatch)
     assert "q5__doenca" in model_fields
     assert "q5__doenca_justification" in model_fields
     assert "q5_justification" not in model_fields
-    inserted = sb.table("responses").insert_calls[0]
+    inserted = _published_responses(sb)[0]
     assert inserted["answers"] == {"q5": {"doenca": "AME"}}
     assert inserted["justifications"] == {"q5": "doenca: O documento identifica AME."}
 
 
-def test_run_llm_marks_previous_llm_responses_before_inserting_new_ones(monkeypatch):
+def test_run_llm_publishes_each_response_atomically_without_bulk_update(monkeypatch):
     docs = _docs(1)
     row_specs = {"doc-0": {"campo_a": "a", "campo_b": "b", "campo_c": "c"}}
     sb = _build_supabase(_project_row(), docs)
 
     _run_llm_sync(monkeypatch, sb, row_specs)
 
-    operations = [entry for entry in sb.operation_log if entry[0] == "responses"]
-    update_index = next(
-        i
-        for i, (_, operation, payload, _) in enumerate(operations)
-        if operation == "update" and payload == {"is_latest": False}
-    )
-    first_insert_index = next(
-        i for i, (_, operation, _, _) in enumerate(operations) if operation == "insert"
-    )
-    assert update_index < first_insert_index
-    assert operations[update_index][3] == [
-        ("eq", "project_id", PROJECT_ID),
-        ("in", "document_id", ["doc-0"]),
-        ("eq", "respondent_type", "llm"),
-    ]
+    assert sb.table("responses").update_calls == []
+    assert sb.table("responses").insert_calls == []
+    assert [name for name, _params in sb.rpc_calls].count(
+        "publish_latest_llm_response"
+    ) == 1
+    assert _published_responses(sb)[0]["document_id"] == "doc-0"
 
 
 def test_run_llm_completes_empty_run_without_calling_dataframeit(monkeypatch):
@@ -435,7 +453,7 @@ def test_run_llm_completes_empty_run_without_calling_dataframeit(monkeypatch):
     assert _jobs[JOB_ID]["status"] == "completed"
     assert _jobs[JOB_ID]["total"] == 0
     assert dataframeit_calls == []
-    assert sb.table("responses").insert_calls == []
+    assert _published_responses(sb) == []
     completion = _last_update_where(sb.table("llm_runs"), status="completed")
     assert completion is not None
     assert completion["progress"] == 0
@@ -468,7 +486,7 @@ def test_run_llm_skips_excluded_documents(monkeypatch):
     _run_llm_sync(monkeypatch, sb, row_specs)
 
     assert _jobs[JOB_ID]["status"] == "completed"
-    inserts = sb.table("responses").insert_calls
+    inserts = _published_responses(sb)
     assert {row["document_id"] for row in inserts} == {"doc-0", "doc-1"}
 
 
@@ -488,7 +506,7 @@ def test_run_llm_partial_run_does_not_fail(monkeypatch):
     assert _jobs[JOB_ID]["processed_complete"] == 3
     assert _jobs[JOB_ID]["processed_empty"] == 0
 
-    inserts = sb.table("responses").insert_calls
+    inserts = _published_responses(sb)
     assert len(inserts) == 4
     partial_row = next(row for row in inserts if row["document_id"] == "doc-0")
     assert partial_row["is_partial"] is True
@@ -517,9 +535,9 @@ def test_run_llm_compromised_run_raises_runtime_error(monkeypatch):
     assert _jobs[JOB_ID]["error_type"] == "RuntimeError"
     assert "Run comprometida" in _jobs[JOB_ID]["errors"][0]
 
-    # As respostas já foram gravadas (com is_latest=false) ANTES do raise —
+    # As respostas já foram publicadas (com is_latest=false) ANTES do raise —
     # o RuntimeError só marca a run como erro, não desfaz o que já foi salvo.
-    inserts = sb.table("responses").insert_calls
+    inserts = _published_responses(sb)
     assert len(inserts) == 4
 
     error_update = _last_update_where(sb.table("llm_runs"), status="error")
@@ -537,7 +555,7 @@ def test_run_llm_unhandled_exception_is_persisted(monkeypatch):
     assert _jobs[JOB_ID]["errors"] == ["boom"]
 
     # Falhou antes de qualquer processamento: nenhuma resposta foi inserida.
-    assert sb.table("responses").insert_calls == []
+    assert _published_responses(sb) == []
 
     error_update = _last_update_where(sb.table("llm_runs"), status="error")
     assert error_update is not None

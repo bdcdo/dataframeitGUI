@@ -1,6 +1,45 @@
-export interface EquivalencePair {
+import { normalizeForComparison } from "@/lib/utils";
+
+export interface EquivalenceEdge {
   response_a_id: string;
   response_b_id: string;
+}
+
+export interface EquivalencePair extends EquivalenceEdge {
+  response_a_answer_snapshot: unknown;
+  response_b_answer_snapshot: unknown;
+}
+
+// An equivalence is a decision about two answer values, not permanently about
+// two mutable response rows. Missing snapshots fail closed: a caller that
+// forgets to select them cannot silently reactivate an unverifiable decision.
+export function filterCurrentEquivalencePairs<
+  T extends { id: string },
+  P extends EquivalencePair,
+>(
+  responses: T[],
+  pairs: P[],
+  getAnswer: (response: T) => unknown,
+): P[] {
+  const byId = new Map(responses.map((response) => [response.id, response]));
+
+  return pairs.filter((pair) => {
+    const responseA = byId.get(pair.response_a_id);
+    const responseB = byId.get(pair.response_b_id);
+    if (!responseA || !responseB) return false;
+
+    if (
+      pair.response_a_answer_snapshot === undefined ||
+      pair.response_b_answer_snapshot === undefined
+    ) return false;
+
+    return (
+      normalizeForComparison(pair.response_a_answer_snapshot) ===
+        normalizeForComparison(getAnswer(responseA)) &&
+      normalizeForComparison(pair.response_b_answer_snapshot) ===
+        normalizeForComparison(getAnswer(responseB))
+    );
+  });
 }
 
 // Unified grouping key via union-find: fuses responses connected via
@@ -13,7 +52,7 @@ export interface EquivalencePair {
 // literal text as a paired response don't end up in a separate group.
 export function buildResponseGroupKeys<T extends { id: string }>(
   responses: T[],
-  pairs: EquivalencePair[],
+  pairs: EquivalenceEdge[],
   getAnswerKey: (r: T) => string,
 ): Map<string, string> {
   const parent = new Map<string, string>();

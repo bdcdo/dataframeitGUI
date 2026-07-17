@@ -55,7 +55,7 @@ export function AutoReviewPageContent({
     incompleteCount,
   } = useMemo(() => {
     const status = doc.fields.map((f) => {
-      const key = choiceKey(doc.docId, f.fieldName);
+      const key = choiceKey(f.fieldReviewId);
       const choice = choices[key];
       const justification = justifications[key];
       const incomplete =
@@ -74,23 +74,23 @@ export function AutoReviewPageContent({
       readyCount: status.filter((s) => s.ready).length,
       incompleteCount: status.filter((s) => s.incomplete).length,
     };
-  }, [doc.docId, doc.fields, choices, justifications]);
+  }, [doc.fields, choices, justifications]);
 
   const canSubmit = readyCount > 0 && !submitting;
   const currentField = doc.fields[fieldIndex];
-  const currentKey = choiceKey(doc.docId, currentField.fieldName);
+  const currentKey = choiceKey(currentField.fieldReviewId);
 
   async function handleSubmit() {
     if (readOnly) return;
-    const readyFieldNames = doc.fields
-      .filter((_, i) => fieldStatus[i].ready)
-      .map((f) => f.fieldName);
-    if (readyFieldNames.length === 0) return;
+    const readyFields = doc.fields.filter((_, i) => fieldStatus[i].ready);
+    if (readyFields.length === 0) return;
+    const readyFieldNames = readyFields.map((field) => field.fieldName);
     setSubmitting(true);
-    const payload = readyFieldNames.map((fieldName) => {
-      const key = choiceKey(doc.docId, fieldName);
+    const payload = readyFields.map((field) => {
+      const key = choiceKey(field.fieldReviewId);
       return {
-        fieldName,
+        fieldReviewId: field.fieldReviewId,
+        fieldName: field.fieldName,
         verdict: choices[key],
         justification: justifications[key],
       };
@@ -114,14 +114,12 @@ export function AutoReviewPageContent({
     // justificativa) permanecem para o usuario continuar de onde parou.
     setChoices((c) => {
       const next = { ...c };
-      for (const fieldName of readyFieldNames)
-        delete next[choiceKey(doc.docId, fieldName)];
+      for (const field of readyFields) delete next[choiceKey(field.fieldReviewId)];
       return next;
     });
     setJustifications((j) => {
       const next = { ...j };
-      for (const fieldName of readyFieldNames)
-        delete next[choiceKey(doc.docId, fieldName)];
+      for (const field of readyFields) delete next[choiceKey(field.fieldReviewId)];
       return next;
     });
     // Recarrega o estado do servidor: os campos enviados voltam como

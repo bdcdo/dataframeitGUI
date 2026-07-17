@@ -1,6 +1,10 @@
 import { normalizeForComparison } from "@/lib/utils";
 import { isFieldVisible } from "@/lib/conditional";
-import { buildResponseGroupKeys, type EquivalencePair } from "@/lib/equivalence";
+import {
+  buildResponseGroupKeys,
+  filterCurrentEquivalencePairs,
+  type EquivalencePair,
+} from "@/lib/equivalence";
 import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
@@ -77,11 +81,15 @@ export function computeDivergentFieldNames(
     // é equivalente a agrupar por resposta normalizada (comportamento antigo do
     // ramo scalar). multi tem seu próprio caminho (set de opções) acima, pois
     // sua UI de revisão (MultiOptionReview) não tem cards de equivalência.
-    const pairs = equivalencesByField?.get(field.name) ?? [];
     const items = applicable.map((r) => ({
       id: r.id,
       answer: (r.answers as Record<string, unknown>)?.[field.name],
     }));
+    const pairs = filterCurrentEquivalencePairs(
+      items,
+      equivalencesByField?.get(field.name) ?? [],
+      (item) => item.answer,
+    );
     const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
       normalizeForComparison(r.answer),
     );

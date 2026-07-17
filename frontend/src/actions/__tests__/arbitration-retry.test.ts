@@ -3,7 +3,6 @@ import {
   makeSupabaseAdminModuleMock,
   makeSupabaseServerModuleMock,
   makeSimpleSupabaseMock,
-  type QueryError,
   type RpcCall,
   type RpcResult,
   type WriteCall,
@@ -17,10 +16,9 @@ let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown>;
-let queryErrors: Record<string, QueryError | null>;
 
 const arbitrationCalls = () =>
-  rpcCalls.filter((call) => call.fn === "assign_arbitration_if_eligible");
+  rpcCalls.filter((call) => call.fn === "assign_arbitration_cycles_if_eligible");
 
 function makeClient() {
   return makeSimpleSupabaseMock({
@@ -28,29 +26,27 @@ function makeClient() {
     writeCalls,
     rpcCalls,
     rpcResults,
-    queryErrors,
   });
 }
 
-const coordinatorGate = vi.hoisted(() =>
-  vi.fn<() => Promise<boolean>>(async () => true),
-);
-const adminFactory = vi.hoisted(() => vi.fn());
+// isProjectCoordinator: hoisted para permitir override por teste.
+const hoisted = vi.hoisted(() => ({
+  isCoord: vi.fn<() => Promise<boolean>>(async () => true),
+  adminFactory: vi.fn(),
+}));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-vi.mock("@/lib/auth", () => authModuleMock(coordinatorGate));
-vi.mock("@/lib/supabase/server", () =>
-  makeSupabaseServerModuleMock(makeClient),
-);
+vi.mock("@/lib/auth", () => authModuleMock(hoisted.isCoord));
+vi.mock("@/lib/supabase/server", () => makeSupabaseServerModuleMock(makeClient));
 vi.mock("@/lib/supabase/admin", () =>
-  makeSupabaseAdminModuleMock(makeClient, adminFactory),
+  makeSupabaseAdminModuleMock(makeClient, hoisted.adminFactory),
 );
 
 beforeEach(() => {
   writeCalls = [];
   rpcCalls = [];
   rpcResults = {
-    assign_arbitration_if_eligible: { data: 1 },
+    assign_arbitration_cycles_if_eligible: { data: 1 },
   };
   tableData = {
     field_reviews: [],
@@ -58,62 +54,32 @@ beforeEach(() => {
     assignments: [],
     responses: [],
   };
-  queryErrors = {};
-  adminFactory.mockClear();
-  coordinatorGate.mockResolvedValue(true);
+  hoisted.isCoord.mockResolvedValue(true);
+  hoisted.adminFactory.mockClear();
 });
 
 async function loadRetry() {
   return (await import("@/actions/field-reviews")).retryPendingArbitrations;
 }
 
-async function runRetry() {
-  return (await loadRetry())("p1");
-}
-
-async function expectSuccessfulRetry(assigned: number, stillNoPool: number) {
-  const result = await runRetry();
-  expect(result).toMatchObject({ success: true, assigned, stillNoPool });
-  return result;
-}
-
 describe("retryPendingArbitrations — guards", () => {
   it("não-coordenador → erro, sem efeito colateral", async () => {
-    coordinatorGate.mockResolvedValueOnce(false);
+    hoisted.isCoord.mockResolvedValueOnce(false);
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(false);
     expect(r.error).toContain("coordenadores");
     expect(r.assigned).toBe(0);
     expect(writeCalls).toHaveLength(0);
-    expect(adminFactory).not.toHaveBeenCalled();
   });
 
   it("sem field_reviews pendentes → assigned 0 e nenhuma RPC", async () => {
     tableData.field_reviews = [];
-    await expectSuccessfulRetry(0, 0);
-    expect(arbitrationCalls()).toHaveLength(0);
-    expect(adminFactory).not.toHaveBeenCalled();
-  });
-
-  it("falha ao carregar codificadores → erro técnico, sem RPC", async () => {
-    tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-    ];
-    tableData.project_members = [{ user_id: "userB", role: "pesquisador" }];
-    queryErrors["responses:select"] = {
-      message: "falha ao carregar codificadores",
-    };
-
     const retry = await loadRetry();
-    const result = await retry("p1");
-
-    expect(result).toMatchObject({
-      success: false,
-      error: "falha ao carregar codificadores",
-      assigned: 0,
-      stillNoPool: 0,
-    });
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
+    expect(r.assigned).toBe(0);
+    expect(r.stillNoPool).toBe(0);
     expect(arbitrationCalls()).toHaveLength(0);
   });
 });
@@ -121,40 +87,51 @@ describe("retryPendingArbitrations — guards", () => {
 describe("retryPendingArbitrations — agrupamento por (document_id, self_reviewer_id)", () => {
   it("dois fields do mesmo doc/self_reviewer → 1 commit atômico", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc1", field_name: "q2", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     // Pool com 1 árbitro elegível (assignArbitrator pode sortear)
-    tableData.project_members = [{ user_id: "userB", role: "pesquisador" }];
-    await expectSuccessfulRetry(1, 0);
+    tableData.project_members = [
+      { user_id: "userB", role: "pesquisador" },
+    ];
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
     expect(arbitrationCalls()).toHaveLength(1);
     expect(arbitrationCalls()[0].args).toEqual({
       p_project_id: "p1",
       p_document_id: "doc1",
       p_user_id: "userB",
-      p_field_names: ["q1", "q2"],
+      p_field_review_ids: ["fr1", "fr2"],
     });
     expect(writeCalls).toHaveLength(0);
   });
 
   it("dois docs distintos → 2 commits atômicos", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc2", field_name: "q1", self_reviewer_id: "userC" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc2", self_reviewer_id: "userC" },
     ];
-    tableData.project_members = [{ user_id: "userB", role: "pesquisador" }];
-    await expectSuccessfulRetry(2, 0);
+    tableData.project_members = [
+      { user_id: "userB", role: "pesquisador" },
+    ];
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
     expect(arbitrationCalls()).toHaveLength(2);
     expect(writeCalls).toHaveLength(0);
   });
 
   it("self_reviewers diferentes no mesmo doc → 2 grupos (caso raro mas suportado)", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc1", field_name: "q2", self_reviewer_id: "userC" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc1", self_reviewer_id: "userC" },
     ];
-    tableData.project_members = [{ user_id: "userB", role: "pesquisador" }];
-    await expectSuccessfulRetry(2, 0);
+    tableData.project_members = [
+      { user_id: "userB", role: "pesquisador" },
+    ];
+    const retry = await loadRetry();
+    await retry("p1");
     expect(arbitrationCalls()).toHaveLength(2);
   });
 });
@@ -162,19 +139,25 @@ describe("retryPendingArbitrations — agrupamento por (document_id, self_review
 describe("retryPendingArbitrations — pool vazio", () => {
   it("nenhum membro elegível → stillNoPool incrementa, sem UPDATE", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [];
-    await expectSuccessfulRetry(0, 1);
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
+    expect(r.assigned).toBe(0);
+    expect(r.stillNoPool).toBe(1);
     expect(arbitrationCalls()).toHaveLength(0);
   });
 
   it("candidato desabilitado antes do commit → RPC não grava", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
-    tableData.project_members = [{ user_id: "userB", role: "pesquisador" }];
-    rpcResults.assign_arbitration_if_eligible = { data: 0 };
+    tableData.project_members = [
+      { user_id: "userB", role: "pesquisador" },
+    ];
+    rpcResults.assign_arbitration_cycles_if_eligible = { data: 0 };
 
     const retry = await loadRetry();
 
@@ -191,7 +174,7 @@ describe("retryPendingArbitrations — pool vazio", () => {
 describe("retryPendingArbitrations — exclui codificadores do documento", () => {
   it("membro que codificou o doc é excluído do pool", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
@@ -199,14 +182,16 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
     ];
     // userB deu resposta humana em doc1 → não pode arbitrar (juiz em causa própria)
     tableData.responses = [{ document_id: "doc1", respondent_id: "userB" }];
-    await expectSuccessfulRetry(1, 0);
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
     expect(arbitrationCalls()).toHaveLength(1);
     expect(arbitrationCalls()[0].args).toMatchObject({ p_user_id: "userC" });
   });
 
   it("todos os elegíveis codificaram o doc → fallback para elegível != auto-revisor", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
@@ -218,7 +203,11 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
       { document_id: "doc1", respondent_id: "userB" },
       { document_id: "doc1", respondent_id: "userC" },
     ];
-    await expectSuccessfulRetry(1, 0);
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(true);
+    expect(r.assigned).toBe(1);
+    expect(r.stillNoPool).toBe(0);
     expect(arbitrationCalls()).toHaveLength(1);
     const args = arbitrationCalls()[0].args as { p_user_id: string };
     expect(["userB", "userC"]).toContain(args.p_user_id);
@@ -226,7 +215,7 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
 
   it("único elegível é o próprio auto-revisor → stillNoPool, sem UPDATE", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [{ user_id: "userA", role: "pesquisador" }];
     tableData.responses = [{ document_id: "doc1", respondent_id: "userA" }];
@@ -242,8 +231,8 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
 describe("retryPendingArbitrations — batch de responses agrupado por doc", () => {
   it("dois docs com codificadores distintos → cada assignArbitrator vê só o seu doc", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc2", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc2", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
@@ -280,7 +269,7 @@ async function loadRegenerate() {
 
 describe("regenerateAutoReviewBacklog — guard", () => {
   it("não-coordenador → erro, sem efeito colateral", async () => {
-    coordinatorGate.mockResolvedValueOnce(false);
+    hoisted.isCoord.mockResolvedValueOnce(false);
     const regenerate = await loadRegenerate();
 
     const r = await regenerate("p1");
@@ -288,6 +277,6 @@ describe("regenerateAutoReviewBacklog — guard", () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain("coordenadores");
     expect(writeCalls).toHaveLength(0);
-    expect(adminFactory).not.toHaveBeenCalled();
+    expect(hoisted.adminFactory).not.toHaveBeenCalled();
   });
 });

@@ -93,8 +93,11 @@ export default async function ComparePageRoute({
       // it might be worth gating by `qualifiedDocIds` in a 2-phase fetch,
       // but volume should stay low — pairs are only created on free-text
       // divergences. Revisit if it becomes a bottleneck.
-      .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
-      .eq("project_id", id),
+      .select(
+        "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot",
+      )
+      .eq("project_id", id)
+      .is("superseded_at", null),
     getProjectAccessContext(id, user),
   ]);
   const access = requireResolvedProjectAccess(rawAccess);

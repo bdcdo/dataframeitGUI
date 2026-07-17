@@ -252,6 +252,7 @@ export async function saveResponse(
         sanitizedAnswers: snapshot.submittedAnswers,
         isAutoSave,
         automationMode: project?.automation_mode,
+        hadCompletedResponse: existing?.is_partial === false,
       });
       if (syncErr) return { success: false, error: syncErr };
     }
