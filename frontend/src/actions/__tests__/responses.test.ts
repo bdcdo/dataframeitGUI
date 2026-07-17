@@ -8,9 +8,11 @@ vi.mock("next/cache", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: vi.fn(async () => ({ id: "user-1", email: "u@test.com" })),
-  // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
-  getEffectiveMemberId: vi.fn(async () => "user-1"),
+  resolveProjectMemberActor: vi.fn(async () => ({
+    ok: true,
+    user: { id: "user-1", email: "u@test.com" },
+    memberUserId: "user-1",
+  })),
 }));
 
 interface State {

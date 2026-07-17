@@ -12,7 +12,16 @@ const SRC_ROOT = path.resolve(process.cwd(), "src");
 const FRONTEND_ROOT = path.resolve(process.cwd());
 const REPO_ROOT = path.resolve(FRONTEND_ROOT, "..");
 const ADMIN_FILE = path.join(SRC_ROOT, "lib/supabase/admin.ts");
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
+const SOURCE_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+];
 const SECURITY_TEXT_EXTENSIONS = new Set([
   ...SOURCE_EXTENSIONS,
   ".bash",
@@ -45,7 +54,7 @@ const EXPECTED_RUNTIME_IMPORTERS = [
   "actions/field-reviews.ts",
   "actions/members.ts",
   "app/(app)/projects/[id]/analyze/assignments/page.tsx",
-  "app/api/webhooks/clerk/route.ts",
+  "app/(app)/projects/[id]/config/members/page.tsx",
   "lib/auth.ts",
   "lib/auto-comparison.ts",
   "lib/auto-review.ts",
@@ -63,9 +72,9 @@ function sourceFiles(dir: string): string[] {
       continue;
     }
     if (
-      SOURCE_EXTENSIONS.includes(path.extname(entry.name))
-      && !entry.name.includes(".test.")
-      && !entry.name.includes(".spec.")
+      SOURCE_EXTENSIONS.includes(path.extname(entry.name)) &&
+      !entry.name.includes(".test.") &&
+      !entry.name.includes(".spec.")
     ) {
       files.push(absolute);
     }
@@ -93,11 +102,14 @@ function parseText(source: string): ts.SourceFile {
   );
 }
 
-function hasDirective(source: ts.SourceFile, directive: "use client" | "use server"): boolean {
+function hasDirective(
+  source: ts.SourceFile,
+  directive: "use client" | "use server",
+): boolean {
   for (const statement of source.statements) {
     if (
-      !ts.isExpressionStatement(statement)
-      || !ts.isStringLiteral(statement.expression)
+      !ts.isExpressionStatement(statement) ||
+      !ts.isStringLiteral(statement.expression)
     ) {
       return false;
     }
@@ -114,17 +126,22 @@ function isServerActionModule(source: ts.SourceFile): boolean {
   return hasDirective(source, "use server");
 }
 
-function hasSideEffectImport(source: ts.SourceFile, specifier: string): boolean {
+function hasSideEffectImport(
+  source: ts.SourceFile,
+  specifier: string,
+): boolean {
   return source.statements.some(
     (statement) =>
-      ts.isImportDeclaration(statement)
-      && statement.importClause === undefined
-      && ts.isStringLiteral(statement.moduleSpecifier)
-      && statement.moduleSpecifier.text === specifier,
+      ts.isImportDeclaration(statement) &&
+      statement.importClause === undefined &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === specifier,
   );
 }
 
-function importClauseHasRuntimeValue(clause: ts.ImportClause | undefined): boolean {
+function importClauseHasRuntimeValue(
+  clause: ts.ImportClause | undefined,
+): boolean {
   if (!clause) return true;
   if (clause.isTypeOnly) return false;
   if (clause.name) return true;
@@ -176,7 +193,10 @@ function runtimeImportSpecifiers(source: ts.SourceFile): string[] {
   );
 }
 
-function resolveInternalImport(importer: string, specifier: string): string | null {
+function resolveInternalImport(
+  importer: string,
+  specifier: string,
+): string | null {
   let base: string;
   if (specifier.startsWith("@/")) {
     base = path.join(SRC_ROOT, specifier.slice(2));
@@ -189,9 +209,16 @@ function resolveInternalImport(importer: string, specifier: string): string | nu
   const candidates = [
     base,
     ...SOURCE_EXTENSIONS.map((extension) => `${base}${extension}`),
-    ...SOURCE_EXTENSIONS.map((extension) => path.join(base, `index${extension}`)),
+    ...SOURCE_EXTENSIONS.map((extension) =>
+      path.join(base, `index${extension}`),
+    ),
   ];
-  return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) ?? null;
+  return (
+    candidates.find(
+      (candidate) =>
+        fs.existsSync(candidate) && fs.statSync(candidate).isFile(),
+    ) ?? null
+  );
 }
 
 function importGraph(files: string[]): Map<string, string[]> {
@@ -235,10 +262,8 @@ function relative(file: string): string {
 
 function isVersionableEnvTemplate(name: string): boolean {
   return (
-    name.startsWith(".env")
-    && [".example", ".sample", ".template"].some((suffix) =>
-      name.endsWith(suffix),
-    )
+    name.startsWith(".env") &&
+    [".example", ".sample", ".template"].some((suffix) => name.endsWith(suffix))
   );
 }
 
@@ -247,10 +272,10 @@ function shouldScanSecurityFile(name: string): boolean {
   // continuam cobertos, assim como scripts e configs sem extensão.
   if (name.startsWith(".env")) return isVersionableEnvTemplate(name);
   return (
-    name.startsWith("Dockerfile")
-    || name === "Makefile"
-    || name === "Procfile"
-    || SECURITY_TEXT_EXTENSIONS.has(path.extname(name))
+    name.startsWith("Dockerfile") ||
+    name === "Makefile" ||
+    name === "Procfile" ||
+    SECURITY_TEXT_EXTENSIONS.has(path.extname(name))
   );
 }
 
@@ -279,9 +304,9 @@ function countAdminFactoryCalls(files: string[]): number {
   for (const file of files) {
     function visit(node: ts.Node): void {
       if (
-        ts.isCallExpression(node)
-        && ts.isIdentifier(node.expression)
-        && node.expression.text === "createSupabaseAdmin"
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "createSupabaseAdmin"
       ) {
         count += 1;
       }
@@ -333,31 +358,40 @@ describe("fronteira do Supabase admin client", () => {
       );
       expect(mockedCreateClient).not.toHaveBeenCalled();
     } finally {
-      if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+      if (previousUrl === undefined)
+        delete process.env.NEXT_PUBLIC_SUPABASE_URL;
       else process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
-      if (previousKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (previousKey === undefined)
+        delete process.env.SUPABASE_SERVICE_ROLE_KEY;
       else process.env.SUPABASE_SERVICE_ROLE_KEY = previousKey;
     }
   });
 
   it("só reconhece use client/use server no directive prologue", () => {
-    expect(isClientModule(parseText('"use strict"; "use client"; export {};'))).toBe(true);
-    expect(isClientModule(parseText('const value = 1; "use client";'))).toBe(false);
-    expect(isServerActionModule(parseText('"use server"; export {};'))).toBe(true);
-    expect(isServerActionModule(parseText('export {}; "use server";'))).toBe(false);
+    expect(
+      isClientModule(parseText('"use strict"; "use client"; export {};')),
+    ).toBe(true);
+    expect(isClientModule(parseText('const value = 1; "use client";'))).toBe(
+      false,
+    );
+    expect(isServerActionModule(parseText('"use server"; export {};'))).toBe(
+      true,
+    );
+    expect(isServerActionModule(parseText('export {}; "use server";'))).toBe(
+      false,
+    );
   });
 
   it("distingue import runtime de import type no grafo", () => {
-    const specifiers = runtimeImportSpecifiers(parseText(`
+    const specifiers = runtimeImportSpecifiers(
+      parseText(`
       import { createSupabaseAdmin } from "@/lib/supabase/admin";
       export { helper } from "@/lib/helper";
       import type { Safe } from "@/safe-type";
       export type { Shape } from "@/shape";
-    `));
-    expect(specifiers).toEqual([
-      "@/lib/supabase/admin",
-      "@/lib/helper",
-    ]);
+    `),
+    );
+    expect(specifiers).toEqual(["@/lib/supabase/admin", "@/lib/helper"]);
   });
 
   it("não permite caminho de import runtime partindo de use client", () => {
@@ -375,11 +409,13 @@ describe("fronteira do Supabase admin client", () => {
       .map(relative)
       .toSorted();
     expect(importers).toEqual(EXPECTED_RUNTIME_IMPORTERS);
-    // 17 após compor com a #433: as RPCs atômicas de permissão
+    // 18 após compor com a #433: as RPCs atômicas de permissão
     // (set_member_arbitration_permission / set_member_comparison_permission)
     // absorveram releaseArbitrationsFromUser e releaseComparisonsFromUser no
-    // banco, eliminando 2 bypasses que existiam no PR standalone (19).
-    expect(countAdminFactoryCalls(files)).toBe(17);
+    // banco. O commit de comparação acrescenta 1 uso tardio porque a RPC
+    // assign_comparison_if_eligible é executável somente por service_role;
+    // todas as leituras do retry continuam no client autenticado.
+    expect(countAdminFactoryCalls(files)).toBe(18);
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {
@@ -390,7 +426,9 @@ describe("fronteira do Supabase admin client", () => {
     });
 
     expect(violations).toEqual([]);
-    expect(scannedFiles).toContain(path.join(REPO_ROOT, "backend/.env.example"));
+    expect(scannedFiles).toContain(
+      path.join(REPO_ROOT, "backend/.env.example"),
+    );
     const unsafeName = [
       "NEXT",
       "PUBLIC",
@@ -404,7 +442,9 @@ describe("fronteira do Supabase admin client", () => {
 
   it("mantém a leitura do secret do runtime Next em um único módulo", () => {
     const secretName = ["SUPABASE", "SERVICE", "ROLE", "KEY"].join("_");
-    const secretReaders = files.filter((file) => fs.readFileSync(file, "utf8").includes(secretName));
+    const secretReaders = files.filter((file) =>
+      fs.readFileSync(file, "utf8").includes(secretName),
+    );
 
     expect(secretReaders.map(relative)).toEqual(["lib/supabase/admin.ts"]);
   });

@@ -13,6 +13,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, refresh }),
 }));
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken: vi.fn() }),
+}));
+
 vi.mock("@/actions/complete-access", () => ({
   completeAccess: vi.fn(async () => ({ ok: true })),
 }));
@@ -78,5 +82,16 @@ describe("AccessCompletionCard — acessibilidade e ausência de detalhe técnic
     ]) {
       expect(text).not.toContain(forbidden);
     }
+  });
+
+  it("omite a linha da conta quando a falha ocorre antes de ler o e-mail", () => {
+    render(
+      <AccessCompletionCard
+        reason="sync-temporary-failure"
+        nextUrl="/dashboard"
+      />,
+    );
+
+    expect(screen.queryByText(/conta conectada/i)).toBeNull();
   });
 });

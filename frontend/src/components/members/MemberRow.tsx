@@ -2,18 +2,21 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { MemberEmailLink } from "@/lib/types";
 import { EditPendingEmailDialog } from "./EditPendingEmailDialog";
 import { MemberEmailLinks } from "./MemberEmailLinks";
 import { MemberPermissionSwitches } from "./MemberPermissionSwitches";
 import { MemberRoleControls } from "./MemberRoleControls";
-import { memberDisplayName, type MemberRow as MemberRowData } from "./member-list-utils";
+import {
+  memberDisplayName,
+  type MemberEmailLinkView,
+  type MemberRow as MemberRowData,
+} from "./member-list-utils";
 
 interface MemberRowProps {
   member: MemberRowData;
   projectId: string;
   currentUserId: string;
-  links: MemberEmailLink[];
+  links: MemberEmailLinkView[];
   editingEmailMemberId: string | null;
   onEditingEmailChange: (memberId: string | null) => void;
   onLinkEmail: (member: MemberRowData) => void;
@@ -24,7 +27,10 @@ interface MemberRowProps {
   onToggleArbitrate: (memberId: string, value: boolean) => void;
   onToggleResolve: (memberId: string, value: boolean) => void;
   onToggleCompare: (memberId: string, value: boolean) => void;
-  onChangeRole: (memberId: string, newRole: "coordenador" | "pesquisador") => void;
+  onChangeRole: (
+    memberId: string,
+    newRole: "coordenador" | "pesquisador",
+  ) => void;
   onRemove: (memberId: string) => void;
 }
 
@@ -46,14 +52,15 @@ export function MemberRow({
   onChangeRole,
   onRemove,
 }: MemberRowProps) {
-  const isPending = member.profiles && member.profiles.activated_at === null;
+  const isProjectPending = member.accessState === "pending";
+  const isAccessUnavailable = member.accessState === "unavailable";
 
   return (
     <div className="flex items-center justify-between rounded-lg border p-3">
       <div>
         <p className="flex items-center gap-2 text-sm font-medium">
           {memberDisplayName(member)}
-          {isPending && (
+          {isProjectPending && (
             <Badge
               variant="secondary"
               title="Pré-registrado: ainda não criou conta. Entra no projeto no primeiro acesso."
@@ -61,15 +68,25 @@ export function MemberRow({
               Pendente
             </Badge>
           )}
+          {isAccessUnavailable && (
+            <Badge
+              variant="secondary"
+              title="A conta existe, mas o acesso está revogado ou ainda não concluiu a sincronização."
+            >
+              Sem acesso
+            </Badge>
+          )}
         </p>
-        <p className="text-xs text-muted-foreground">{member.profiles?.email}</p>
+        <p className="text-xs text-muted-foreground">
+          {member.profiles?.email}
+        </p>
         <MemberEmailLinks links={links} onUnlink={onUnlinkEmailLink} />
       </div>
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="sm" onClick={() => onLinkEmail(member)}>
           Vincular e-mail
         </Button>
-        {isPending && (
+        {member.isClaimable && (
           <>
             <Button
               variant="ghost"
@@ -82,7 +99,9 @@ export function MemberRow({
               projectId={projectId}
               member={member}
               open={editingEmailMemberId === member.id}
-              onOpenChange={(open) => onEditingEmailChange(open ? member.id : null)}
+              onOpenChange={(open) =>
+                onEditingEmailChange(open ? member.id : null)
+              }
             />
           </>
         )}

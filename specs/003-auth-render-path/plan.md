@@ -6,17 +6,17 @@
 
 ## Summary
 
-Reduzir a latência de páginas protegidas causada por resolução repetida de autenticação, preservando Clerk + Supabase/RLS como caminho oficial, distinguindo estados de acesso recuperáveis e mantendo papéis, aliases e `viewAs` sem ampliar permissões. A abordagem técnica é consolidar resolução de identidade e contexto de projeto como dados request-scoped, separar conclusão/reparo de vínculo do render protegido e exigir checks de regressão para impedir retorno de lookup remoto repetido, token customizado legado ou bypass privilegiado de RLS.
+Reduzir a latência de páginas protegidas causada por resolução repetida de autenticação, preservando Clerk + Supabase/RLS como caminho oficial, distinguindo estados recuperáveis e mantendo papéis, aliases e `viewAs` sem ampliar permissões. `resolveAuth()` e o contexto de projeto são request-scoped e read-only; webhook e `completeAccess()` relêem o estado atual do Clerk e executam um snapshot de duas fases, no qual a primeira transação invalida o marker anterior e escolhe a geração e a segunda aplica profile, aliases e marker final atomicamente. `user.deleted`, 404 e ausência de primário verificado falham fechados.
 
 ## Technical Context
 
-**Language/Version**: TypeScript 5.7, React 19, Next.js 16 App Router; Python/FastAPI apenas fora do escopo ordinário desta feature, salvo se algum reparo backend específico for necessário.
+**Language/Version**: TypeScript 6, React 19.2, Next.js 16.2 App Router; Python/FastAPI permanece fora do escopo desta feature.
 
 **Primary Dependencies**: Clerk (`@clerk/nextjs`, `@clerk/localizations`), Supabase (`@supabase/supabase-js`), React Server Components, Server Actions, shadcn/ui, Tailwind CSS v4, Vitest.
 
-**Storage**: Supabase Postgres com RLS via JWT Clerk/Supabase; tabelas relevantes incluem `profiles`, `master_users`, `clerk_user_mapping`, `projects`, `project_members` e `member_email_links`.
+**Storage**: Supabase Postgres com RLS via JWT Clerk/Supabase; `clerk_user_mapping` persiste `access_sync_version`, `access_snapshot_version` e `clerk_deleted`, referencia `profiles(id) ON DELETE CASCADE` e ancora a validação atual do claim. Migrations são validadas localmente e aplicadas remotamente somente por operação manual separada.
 
-**Testing**: Vitest para helpers frontend e regressões de auth/autorização; testes manuais guiados pelo quickstart para render path, papéis e performance; pytest somente se backend FastAPI for alterado.
+**Testing**: Vitest em `frontend/src/lib/__tests__/`, `frontend/src/actions/__tests__/`, `frontend/src/app/auth/__tests__/` e testes de layouts/dashboard; testes SQL locais em `frontend/supabase/tests/`; quickstart manual para Clerk real, papéis e performance.
 
 **Target Platform**: Web app desktop-first acessado por navegador em computador.
 
@@ -24,7 +24,7 @@ Reduzir a latência de páginas protegidas causada por resolução repetida de a
 
 **Performance Goals**: Usuário autenticado com vínculo preparado deve conseguir usar páginas protegidas em até 300 ms p95 sem cache de navegador, com 150–250 ms como alvo; identidade autenticada deve ser resolvida uma vez por request protegida representativa.
 
-**Constraints**: Manter Clerk como provedor de login; manter Supabase/RLS como boundary de dados; não expor service key ao browser; não usar service key como caminho ordinário de páginas protegidas; não introduzir token customizado sem medição prévia e revisão de segurança; não fazer reparo silencioso de vínculo dentro do render protegido.
+**Constraints**: Manter Clerk como autoridade atual de login e e-mails; manter Supabase/RLS como boundary de dados; não expor service key ao browser nem usá-la como caminho ordinário; não introduzir token customizado sem medição e revisão de segurança; não reparar vínculo no render; não aceitar metadata, profile por e-mail ou webhook antigo como prova isolada; não aplicar migration remota automaticamente neste fluxo.
 
 **Scale/Scope**: Dashboard, layouts protegidos, páginas de projeto, filas pessoais e fluxos de leitura com múltiplas consultas na mesma request. Deve cobrir coordenadores, pesquisadores diretos, pesquisadores por e-mail alternativo, master users, `viewAs` e usuários sem acesso.
 
@@ -74,15 +74,22 @@ frontend/
 │   ├── app/
 │   │   ├── (app)/layout.tsx
 │   │   ├── (app)/projects/[id]/layout.tsx
-│   │   └── auth/
+│   │   ├── (app)/dashboard/__tests__/page.test.tsx
+│   │   ├── api/webhooks/clerk/route.ts
+│   │   └── auth/post-login/page.tsx
 │   ├── lib/
 │   │   ├── auth.ts
+│   │   ├── clerk-primary-email.ts
 │   │   ├── clerk-sync.ts
+│   │   ├── project-access.ts
 │   │   └── supabase/server.ts
 │   ├── actions/
+│   │   └── complete-access.ts
 │   └── components/
+│       └── auth/AccessCompletionCard.tsx
 └── supabase/
-    └── migrations/
+    ├── migrations/20260716155000_canonical_project_identity_rls.sql
+    └── tests/clerk_mapping_completion.test.sql
 ```
 
 **Structure Decision**: A implementação deve ficar no frontend Next.js, porque o problema ocorre no render path autenticado e nos helpers server-side de Clerk/Supabase. O backend FastAPI permanece fora do escopo salvo se uma evidência futura mostrar dependência direta de LLM/Pydantic, o que não é indicado pela spec atual.
@@ -93,13 +100,16 @@ Research completed in [research.md](./research.md).
 
 Decisions recorded:
 
-1. `getAuthUser()` permanece como ponto único request-scoped de resolução da identidade autenticada.
+1. `resolveAuth()` é a fonte discriminada request-scoped; `getAuthUser()` é apenas sua projeção autenticada/null.
 2. Clerk + JWT Supabase + RLS continuam sendo o caminho oficial padrão.
 3. Vínculo ausente ou divergente redireciona para conclusão/reparo, sem reparo silencioso no render protegido.
 4. Estados signed out, link pendente, sem projeto e falha técnica são distinguíveis.
-5. `getProjectAccessContext()` e `resolveEffectiveUserId()` preservam autorização por projeto, aliases e `viewAs`.
+5. `getProjectAccessContext(projectId, user)` preserva conta real e membro canônico; `resolveProjectQueueIdentity(access, viewAsUser)` aplica a precedência de fila e `viewAs`.
 6. Regressões de lookup remoto repetido e token customizado legado precisam de check explícito.
 7. Preparação/reparo de vínculo precisa ser idempotente.
+8. O estado atual do Clerk é autoridade; ausência de primário e remoção de conta revogam acesso.
+9. O snapshot em duas fases e sua geração impedem restauração por evento antigo.
+10. `profileByEmail` administrativo e `ownerProfile` verificado são identidades distintas.
 
 ## Phase 1 — Design
 
@@ -114,11 +124,11 @@ Design artifacts generated:
 
 ### Implementation guidance for `/speckit-tasks`
 
-- Reuse `frontend/src/lib/auth.ts` as the primary seam: `getAuthUser()`, `getEffectiveMemberId()`, `resolveEffectiveUserId()` and `getProjectAccessContext()` already encode most of the intended separation.
+- Reuse `frontend/src/lib/auth.ts` as the primary seam: `resolveAuth()`/`getAuthUser()` resolve the session, `getProjectAccessContext(projectId, user)` serves pages and layouts, `resolveProjectMemberActor(projectId)` is the only personal-mutation gate, and `resolveProjectQueueIdentity(access, viewAsUser)` affects only the viewed queue.
 - Reuse `frontend/src/lib/supabase/server.ts` for the official Clerk/Supabase JWT path; do not replace ordinary protected reads with `createSupabaseAdmin()`.
-- Preserve `frontend/src/lib/clerk-sync.ts` idempotence patterns when moving or isolating link completion/recovery.
+- Preserve o protocolo de `frontend/src/lib/clerk-sync.ts`: primário verificado por `clerk-primary-email.ts`, geração `User.updatedAt`, `begin_*` antes de `complete_*`, metadata por último e revogação explícita para `user.deleted`/404.
 - Introduce any user-facing completion UI under `frontend/src/app/auth/` or an equivalent auth route, using pt-BR and shadcn/ui patterns.
-- Tests should focus on pure resolution and authorization helpers first, then add integration/regression coverage around layouts and access states.
+- Tests should cover `auth-fail-closed.test.ts`, `auth-effective-member.test.ts`, `clerk-primary-email.test.ts`, `clerk-sync.test.ts`, `complete-access.test.ts`, access-completion UI, `project-access.test.ts`, `viewas-no-write.test.ts` and the structural gate `no-legacy-token-path.test.ts`.
 
 ## Constitution Check — Post-design
 

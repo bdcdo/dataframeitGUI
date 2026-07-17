@@ -22,7 +22,7 @@ export type RpcCall = {
 
 export type FilterCall = {
   table: string;
-  method: "eq" | "is" | "in" | "neq" | "match";
+  method: "eq" | "is" | "in" | "neq" | "match" | "not";
   column: string;
   value: unknown;
 };
@@ -34,6 +34,32 @@ export type TableResult = {
 };
 
 export type TableResults = Record<string, TableResult | TableResult[]>;
+
+export interface SupabaseMockState {
+  tableResults: TableResults | undefined;
+  readonly writeCalls: WriteCall[];
+  createClient: () => ReturnType<typeof makeSupabaseMock>;
+  reset: (tableResults?: TableResults) => void;
+}
+
+// Estado mutável compartilhado pelo mock e pelo teste. O array de writes
+// mantém a referência entre resets; os resultados podem variar por cenário.
+export function createSupabaseMockState(): SupabaseMockState {
+  const state: SupabaseMockState = {
+    tableResults: undefined,
+    writeCalls: [],
+    createClient: () =>
+      makeSupabaseMock({
+        tableResults: state.tableResults,
+        writeCalls: state.writeCalls,
+      }),
+    reset: (tableResults) => {
+      state.tableResults = tableResults;
+      state.writeCalls.length = 0;
+    },
+  };
+  return state;
+}
 
 export function makeSupabaseMock(opts?: {
   tableResults?: TableResults;
@@ -79,6 +105,11 @@ export function makeSupabaseMock(opts?: {
           return builder;
         };
       }
+      // not() tem aridade 3 (coluna, operador, valor); registra o valor final.
+      builder.not = (column: string, _operator: string, value: unknown) => {
+        filterCalls?.push({ table, method: "not", column, value });
+        return builder;
+      };
       builder.update = (payload: unknown) => {
         writeCalls?.push({ table, op: "update", payload });
         return builder;

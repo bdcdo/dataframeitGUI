@@ -51,6 +51,7 @@ export async function createAutoReviewIfDiverges(
       .eq("document_id", documentId)
       .eq("respondent_id", humanUserId)
       .eq("respondent_type", "humano")
+      .eq("is_latest", true)
       .maybeSingle(),
     admin
       .from("responses")
@@ -146,53 +147,31 @@ export async function createAutoReviewIfDiverges(
     return { divergentCount: 0 };
   }
 
-  // Upsert assignment auto_revisao para o humano (idempotente via UNIQUE doc+user+type)
-  const { error: asgErr } = await admin.from("assignments").upsert(
-    {
-      project_id: projectId,
-      document_id: documentId,
-      user_id: humanUserId,
-      type: "auto_revisao",
-      status: "pendente",
-    },
-    { onConflict: "document_id,user_id,type", ignoreDuplicates: true },
-  );
-  if (asgErr) {
-    log(
-      "assignment_upsert_failed",
-      { projectId, documentId, userId: humanUserId, error: asgErr.message },
-      "error",
-    );
-    throw new Error(asgErr.message);
-  }
-
-  // Upsert field_reviews stubs (1 por campo divergente)
-  const rows = divergent.map((fieldName) => ({
-    project_id: projectId,
-    document_id: documentId,
-    field_name: fieldName,
-    human_response_id: humanResponse.id,
-    llm_response_id: llmResponse.id,
-    self_reviewer_id: humanUserId,
-  }));
-
-  const { error: frErr } = await admin.from("field_reviews").upsert(rows, {
-    onConflict: "document_id,field_name",
-    ignoreDuplicates: true,
+  // Stubs e assignment numa transação só, sob a mesma chave que o fechamento
+  // usa: escritos daqui em requests separadas, um campo divergente novo podia
+  // nascer depois do assignment ter sido concluído e nunca mais voltar à fila.
+  const { error: assignErr } = await admin.rpc("assign_auto_reviews_if_eligible", {
+    p_candidates: [
+      {
+        human_response_id: humanResponse.id,
+        llm_response_id: llmResponse.id,
+        field_names: divergent,
+      },
+    ],
   });
-  if (frErr) {
+  if (assignErr) {
     log(
-      "field_reviews_upsert_failed",
+      "auto_review_assign_failed",
       {
         projectId,
         documentId,
         userId: humanUserId,
         divergentCount: divergent.length,
-        error: frErr.message,
+        error: assignErr.message,
       },
       "error",
     );
-    throw new Error(frErr.message);
+    throw new Error(assignErr.message);
   }
 
   log("created", {

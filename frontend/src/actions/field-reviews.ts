@@ -2,20 +2,15 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import {
-  getAuthUser,
-  getEffectiveMemberId,
-  getProjectAccessContext,
-  requireCoordinator,
-} from "@/lib/auth";
+import { requireCoordinator, resolveProjectMemberActor } from "@/lib/auth";
 import { buildLoadMap } from "@/lib/load-balancing";
 import { errorMessage } from "@/lib/utils";
 import { canonicalPair } from "@/lib/equivalence";
 import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-queue";
 import {
   computeBacklogRows,
-  compositeKeySet,
   diffReviewsToRemove,
+  type AutoReviewCandidate,
   type ExistingFieldReviewRow,
   type HumanResponseRow,
   type LlmResponseRow,
@@ -42,6 +37,384 @@ export interface SelfVerdictInput {
   justification?: string;
 }
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServer>>;
+type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
+
+interface ProjectCommentDraft {
+  sourceFieldReviewId: string;
+  fieldName: string;
+  body: string;
+}
+
+// A revisão de origem identifica o único comentário automático que ela pode
+// produzir. NULL permanece reservado aos comentários manuais; a UNIQUE do
+// banco fecha retries concorrentes sem codificar identidade em strings.
+async function insertMissingProjectComments(
+  projectId: string,
+  documentId: string,
+  authorId: string,
+  drafts: ProjectCommentDraft[],
+): Promise<string | null> {
+  if (drafts.length === 0) return null;
+  // source_field_review_id é reservado ao backend: clientes autenticados só
+  // podem criar comentários manuais. As validações e escritas de estado da
+  // action já ocorreram pelo cliente RLS antes deste efeito recuperável.
+  const admin = createSupabaseAdmin();
+  const rows = drafts.map((draft) => ({
+    project_id: projectId,
+    document_id: documentId,
+    field_name: draft.fieldName,
+    author_id: authorId,
+    body: draft.body,
+    source_field_review_id: draft.sourceFieldReviewId,
+  }));
+
+  // Comentários automáticos anteriores à coluna source_field_review_id têm
+  // NULL ali — e NULL nunca conflita na UNIQUE, então o upsert sozinho
+  // duplicaria o comentário legado no primeiro re-submit pós-deploy (o retry
+  // idêntico é o caminho de recuperação desenhado deste efeito). O match é
+  // por corpo EXATO além de (campo, autor): o retry regenera o corpo do
+  // template a partir do mesmo estado persistido, então o duplicado legado é
+  // byte-idêntico — e uma nota manual do mesmo autor no campo nunca casa,
+  // preservando a regra de que nota manual não suprime o comentário
+  // automático.
+  const { data: legacyComments, error: legacyError } = await admin
+    .from("project_comments")
+    .select("field_name, body")
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("author_id", authorId)
+    .is("source_field_review_id", null)
+    .in(
+      "field_name",
+      rows.map((row) => row.field_name),
+    );
+  if (legacyError) return legacyError.message;
+  const legacyBodies = new Set(
+    (legacyComments ?? []).map(
+      (comment) => `${comment.field_name}\n${comment.body}`,
+    ),
+  );
+  const missingRows = rows.filter(
+    (row) => !legacyBodies.has(`${row.field_name}\n${row.body}`),
+  );
+  if (missingRows.length === 0) return null;
+
+  const { error } = await admin.from("project_comments").upsert(missingRows, {
+    onConflict: "source_field_review_id",
+    ignoreDuplicates: true,
+  });
+  return error?.message ?? null;
+}
+
+interface AutoReviewScope {
+  projectId: string;
+  documentId: string;
+  accountUserId: string;
+  memberUserId: string;
+}
+
+interface AutoReviewEffectState {
+  id: string;
+  self_verdict: SelfVerdict | null;
+  self_justification: string | null;
+  arbitrator_id: string | null;
+  human_response_id: string;
+  llm_response_id: string;
+}
+
+function duplicateValue<T>(
+  values: T[],
+  keyOf: (value: T) => string,
+): string | null {
+  const seen = new Set<string>();
+  for (const value of values) {
+    const key = keyOf(value);
+    if (seen.has(key)) return key;
+    seen.add(key);
+  }
+  return null;
+}
+
+function duplicateFieldName<T extends { fieldName: string }>(
+  choices: T[],
+): string | null {
+  return duplicateValue(choices, (choice) => choice.fieldName);
+}
+
+function validateSelfVerdicts(verdicts: SelfVerdictInput[]): string | null {
+  const duplicate = duplicateFieldName(verdicts);
+  if (duplicate) return `Campo "${duplicate}" enviado mais de uma vez.`;
+
+  for (const verdict of verdicts) {
+    if (
+      verdictRequiresJustification(verdict.verdict) &&
+      !verdict.justification?.trim()
+    ) {
+      return verdict.verdict === "ambiguo"
+        ? `Campo "${verdict.fieldName}": justificativa obrigatória quando você marca como ambíguo.`
+        : `Campo "${verdict.fieldName}": justificativa obrigatória quando você contesta o LLM.`;
+    }
+  }
+  return null;
+}
+
+async function persistSelfVerdicts(
+  supabase: SupabaseServerClient,
+  scope: AutoReviewScope,
+  verdicts: SelfVerdictInput[],
+): Promise<void> {
+  const results = await Promise.all(
+    verdicts.map((verdict) =>
+      supabase
+        .from("field_reviews")
+        .update({
+          self_verdict: verdict.verdict,
+          self_justification: normalizedSelfJustification(
+            verdict.verdict,
+            verdict.justification,
+          ),
+        })
+        .eq("project_id", scope.projectId)
+        .eq("document_id", scope.documentId)
+        .eq("field_name", verdict.fieldName)
+        .eq("self_reviewer_id", scope.memberUserId)
+        .is("self_verdict", null),
+    ),
+  );
+
+  for (const result of results) {
+    if (result.error) throw new Error(result.error.message);
+  }
+}
+
+async function loadAutoReviewEffects(
+  supabase: SupabaseServerClient,
+  scope: AutoReviewScope,
+  verdicts: SelfVerdictInput[],
+): Promise<Map<string, AutoReviewEffectState>> {
+  const fieldNames = verdicts.map((verdict) => verdict.fieldName);
+  if (fieldNames.length === 0) return new Map();
+
+  const { data, error } = await supabase
+    .from("field_reviews")
+    .select(
+      "id, field_name, self_verdict, self_justification, arbitrator_id, human_response_id, llm_response_id",
+    )
+    .eq("project_id", scope.projectId)
+    .eq("document_id", scope.documentId)
+    .eq("self_reviewer_id", scope.memberUserId)
+    .in("field_name", fieldNames);
+  if (error) throw new Error(error.message);
+
+  return new Map(
+    (data ?? []).map((row) => [
+      row.field_name,
+      {
+        id: row.id,
+        self_verdict: row.self_verdict,
+        self_justification: row.self_justification,
+        arbitrator_id: row.arbitrator_id,
+        human_response_id: row.human_response_id,
+        llm_response_id: row.llm_response_id,
+      },
+    ]),
+  );
+}
+
+function normalizedSelfJustification(
+  verdict: SelfVerdict,
+  justification: string | null | undefined,
+): string | null {
+  return verdictRequiresJustification(verdict)
+    ? (justification?.trim() ?? null)
+    : null;
+}
+
+function validatePersistedSelfVerdicts(
+  verdicts: SelfVerdictInput[],
+  effects: Map<string, AutoReviewEffectState>,
+): void {
+  for (const verdict of verdicts) {
+    const effect = effects.get(verdict.fieldName);
+    if (!effect) {
+      throw new Error(
+        `Campo "${verdict.fieldName}": linha de revisão não encontrada ou sem permissão.`,
+      );
+    }
+    if (effect.self_verdict !== verdict.verdict) {
+      throw new Error(
+        `Campo "${verdict.fieldName}": auto-revisão já registrada com valor diferente.`,
+      );
+    }
+    if (
+      normalizedSelfJustification(
+        verdict.verdict,
+        effect.self_justification,
+      ) !== normalizedSelfJustification(verdict.verdict, verdict.justification)
+    ) {
+      throw new Error(
+        `Campo "${verdict.fieldName}": a justificativa enviada difere da auto-revisão já registrada.`,
+      );
+    }
+  }
+}
+
+async function persistEquivalentReviews(
+  supabase: SupabaseServerClient,
+  scope: AutoReviewScope,
+  verdicts: SelfVerdictInput[],
+  effects: Map<string, AutoReviewEffectState>,
+): Promise<void> {
+  const rows = verdicts.flatMap((verdict) => {
+    const effect = effects.get(verdict.fieldName);
+    if (
+      verdict.verdict !== "equivalente" ||
+      effect?.self_verdict !== "equivalente"
+    ) {
+      return [];
+    }
+    const [responseA, responseB] = canonicalPair(
+      effect.human_response_id,
+      effect.llm_response_id,
+    );
+    return [
+      {
+        project_id: scope.projectId,
+        document_id: scope.documentId,
+        field_name: verdict.fieldName,
+        response_a_id: responseA,
+        response_b_id: responseB,
+        reviewer_id: scope.memberUserId,
+      },
+    ];
+  });
+  if (rows.length === 0) return;
+
+  const { error } = await supabase.from("response_equivalences").upsert(rows, {
+    onConflict: "project_id,document_id,field_name,response_a_id,response_b_id",
+    ignoreDuplicates: true,
+  });
+  if (error) throw new Error(error.message);
+}
+
+interface ResponseAnswerState {
+  id: string;
+  answers: unknown;
+}
+
+async function loadResponsesById(
+  supabase: SupabaseServerClient,
+  responseIds: Iterable<string>,
+): Promise<Map<string, ResponseAnswerState>> {
+  const { data, error } = await supabase
+    .from("responses")
+    .select("id, answers")
+    .in("id", Array.from(responseIds));
+  if (error) throw new Error(error.message);
+
+  return new Map(
+    ((data ?? []) as ResponseAnswerState[]).map((response) => [
+      response.id,
+      response,
+    ]),
+  );
+}
+
+async function persistAmbiguousReviewComments(
+  supabase: SupabaseServerClient,
+  scope: AutoReviewScope,
+  verdicts: SelfVerdictInput[],
+  effects: Map<string, AutoReviewEffectState>,
+): Promise<void> {
+  const ambiguousVerdicts = verdicts.filter(
+    (verdict) =>
+      verdict.verdict === "ambiguo" &&
+      effects.get(verdict.fieldName)?.self_verdict === "ambiguo",
+  );
+  if (ambiguousVerdicts.length === 0) return;
+
+  const responseIds = new Set<string>();
+  for (const verdict of ambiguousVerdicts) {
+    const effect = effects.get(verdict.fieldName)!;
+    responseIds.add(effect.human_response_id);
+    responseIds.add(effect.llm_response_id);
+  }
+  const responsesById = await loadResponsesById(supabase, responseIds);
+  const drafts = ambiguousVerdicts.map((verdict) => {
+    const effect = effects.get(verdict.fieldName)!;
+    const justification = effect.self_justification?.trim();
+    if (!justification) {
+      throw new Error(
+        `Campo "${verdict.fieldName}": revisão ambígua sem justificativa persistida.`,
+      );
+    }
+    const humanAnswer = formatAnswerTechnical(
+      (
+        responsesById.get(effect.human_response_id)?.answers as Record<
+          string,
+          unknown
+        > | null
+      )?.[verdict.fieldName],
+    );
+    const llmAnswer = formatAnswerTechnical(
+      (
+        responsesById.get(effect.llm_response_id)?.answers as Record<
+          string,
+          unknown
+        > | null
+      )?.[verdict.fieldName],
+    );
+    return {
+      sourceFieldReviewId: effect.id,
+      fieldName: verdict.fieldName,
+      body: [
+        `Campo "${verdict.fieldName}" marcado como ambíguo na auto-revisão.`,
+        `Humano respondeu: ${humanAnswer}`,
+        `LLM respondeu: ${llmAnswer}`,
+        `Justificativa do pesquisador: ${justification}`,
+        "Precisa de discussão para decidir o gabarito.",
+      ].join("\n\n"),
+    };
+  });
+
+  const commentError = await insertMissingProjectComments(
+    scope.projectId,
+    scope.documentId,
+    scope.accountUserId,
+    drafts,
+  );
+  if (commentError) throw new Error(commentError);
+}
+
+async function assignContestedAutoReviews(
+  supabase: SupabaseServerClient,
+  scope: AutoReviewScope,
+  verdicts: SelfVerdictInput[],
+  effects: Map<string, AutoReviewEffectState>,
+): Promise<{ arbitrated: number; warning?: string }> {
+  const contestedFields = verdicts.flatMap((verdict) =>
+    verdict.verdict === "contesta_llm" &&
+    effects.get(verdict.fieldName)?.self_verdict === "contesta_llm" &&
+    effects.get(verdict.fieldName)?.arbitrator_id == null
+      ? [verdict.fieldName]
+      : [],
+  );
+  if (contestedFields.length === 0) return { arbitrated: 0 };
+
+  const result = await assignArbitrator(
+    supabase,
+    scope.projectId,
+    scope.documentId,
+    scope.memberUserId,
+    contestedFields,
+  );
+  const warning = result.noPool
+    ? `Não há árbitros elegíveis para ${contestedFields.length} campo(s) contestado(s). Peça ao coordenador para marcar membros como elegíveis em Configuração → Equipe.`
+    : undefined;
+  return { arbitrated: result.count, warning };
+}
+
 // Humano original conclui sua fase de auto-revisao. Para cada campo:
 //   - admite_erro  → gabarito do campo = LLM, fica resolvido
 //   - contesta_llm → cai na fila de arbitragem (sorteia arbitro neste mesmo call)
@@ -50,9 +423,9 @@ export interface SelfVerdictInput {
 //   - ambiguo      → gera um project_comments para discussao; campo fica
 //                    resolvido, sem arbitragem
 //
-// Idempotente: regravar a auto-revisao apos enviada nao reinicia arbitragem
-// (UPDATE so toca campos com self_verdict IS NULL; os efeitos colaterais de
-// equivalente/ambiguo so agem nos campos cujo UPDATE retornou linha).
+// Idempotente: regravar a auto-revisao apos enviada nao reinicia arbitragem.
+// O UPDATE só toca campos pendentes; efeitos recuperáveis consultam o estado
+// persistido e usam upsert ou deduplicação exata.
 export async function submitAutoReview(
   projectId: string,
   documentId: string,
@@ -64,258 +437,41 @@ export async function submitAutoReview(
   arbitrated?: number;
 }> {
   try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
+    const actor = await resolveProjectMemberActor(projectId);
+    if (!actor.ok) return { success: false, error: actor.error };
 
-    // contesta_llm e ambiguo exigem justificativa — o arbitro precisa do
-    // contraponto humano na revelacao; ambiguo leva o porque para a discussao.
-    for (const v of verdicts) {
-      if (verdictRequiresJustification(v.verdict) && !v.justification?.trim()) {
-        return {
-          success: false,
-          error:
-            v.verdict === "ambiguo"
-              ? `Campo "${v.fieldName}": justificativa obrigatória quando você marca como ambíguo.`
-              : `Campo "${v.fieldName}": justificativa obrigatória quando você contesta o LLM.`,
-        };
-      }
-    }
+    const validationError = validateSelfVerdicts(verdicts);
+    if (validationError) return { success: false, error: validationError };
 
-    // Esta action usa service role para materializar efeitos que um pesquisador
-    // não pode escrever diretamente (equivalência, comentário e arbitragem).
-    // Revalidar o acesso no entrypoint impede que uma linha histórica seja usada
-    // para acionar o bypass depois da remoção do projeto.
-    const [{ project, queryFailed }, effectiveId] = await Promise.all([
-      getProjectAccessContext(projectId, user.id, user.isMaster),
-      getEffectiveMemberId(projectId),
-    ]);
-    if (queryFailed || !project) {
-      return { success: false, error: "Projeto não encontrado ou inacessível." };
-    }
+    const supabase = await createSupabaseServer();
+    const scope: AutoReviewScope = {
+      projectId,
+      documentId,
+      accountUserId: actor.user.id,
+      memberUserId: actor.memberUserId,
+    };
+    await persistSelfVerdicts(supabase, scope, verdicts);
 
-    const admin = createSupabaseAdmin();
-    const now = new Date().toISOString();
-
-    // UPDATE paralelo (em vez de N+1 sequencial). Cada UPDATE so toca o seu
-    // proprio par (doc, field) com self_verdict ainda NULL — RETURNING ajuda
-    // a saber quais campos foram efetivamente atualizados.
-    const updateResults = await Promise.all(
-      verdicts.map((v) =>
-        admin
-          .from("field_reviews")
-          .update({
-            self_verdict: v.verdict,
-            self_reviewed_at: now,
-            self_justification: verdictRequiresJustification(v.verdict)
-              ? (v.justification?.trim() ?? null)
-              : null,
-          })
-          .eq("project_id", projectId)
-          .eq("document_id", documentId)
-          .eq("field_name", v.fieldName)
-          .eq("self_reviewer_id", effectiveId)
-          .is("self_verdict", null)
-          .select("field_name"),
-      ),
+    const effects = await loadAutoReviewEffects(supabase, scope, verdicts);
+    validatePersistedSelfVerdicts(verdicts, effects);
+    await persistEquivalentReviews(supabase, scope, verdicts, effects);
+    await persistAmbiguousReviewComments(supabase, scope, verdicts, effects);
+    const result = await assignContestedAutoReviews(
+      supabase,
+      scope,
+      verdicts,
+      effects,
     );
-
-    // Campos efetivamente atualizados neste call (UPDATE casou linha). Fonte
-    // para a logica de arbitragem de contesta_llm — re-submit nao reabre
-    // arbitragem. Os efeitos de equivalente/ambiguo usam outra fonte (estado
-    // real de field_reviews) para tolerar retry apos falha parcial.
-    const updatedFieldNames = new Set<string>();
-    for (const res of updateResults) {
-      if (res.error) return { success: false, error: res.error.message };
-      for (const r of res.data ?? []) {
-        if (r.field_name) updatedFieldNames.add(r.field_name);
-      }
-    }
-
-    // Sync do assignment auto_revisao — ver lib/auto-revisao-sync.ts.
-    await syncAutoRevisaoAssignmentStatus(admin, projectId, documentId, effectiveId, now);
-
-    // Efeitos colaterais de equivalente/ambiguo precisam rodar tanto para
-    // campos recem-atualizados quanto para os que JA estavam com o verdict
-    // gravado — retry apos falha parcial (o UPDATE acima casa 0 linhas porque
-    // self_verdict ja nao e NULL). Por isso a fonte de verdade aqui e o estado
-    // real de field_reviews, nao `updatedByField`. Os efeitos sao idempotentes
-    // (upsert ignoreDuplicates / check-before-insert), entao re-executar e
-    // seguro.
-    const sideEffectFieldNames = verdicts.flatMap((v) =>
-      v.verdict === "equivalente" || v.verdict === "ambiguo"
-        ? [v.fieldName]
-        : [],
+    await syncAutoRevisaoAssignmentStatus(
+      supabase,
+      scope.projectId,
+      scope.documentId,
+      scope.memberUserId,
     );
-    const effectByField = new Map<
-      string,
-      {
-        self_verdict: SelfVerdict | null;
-        human_response_id: string;
-        llm_response_id: string;
-      }
-    >();
-    if (sideEffectFieldNames.length > 0) {
-      const { data: stateRows, error: stateErr } = await admin
-        .from("field_reviews")
-        .select("field_name, self_verdict, human_response_id, llm_response_id")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("self_reviewer_id", effectiveId)
-        .in("field_name", sideEffectFieldNames);
-      if (stateErr) return { success: false, error: stateErr.message };
-      for (const r of stateRows ?? []) {
-        effectByField.set(r.field_name, {
-          self_verdict: r.self_verdict,
-          human_response_id: r.human_response_id,
-          llm_response_id: r.llm_response_id,
-        });
-      }
-    }
-
-    // equivalente: registra o par humano↔LLM em response_equivalences. O campo
-    // fica resolvido (sem arbitragem) e a divergencia nao reaparece, pois
-    // createAutoReviewIfDiverges/regenerateAutoReviewBacklog passam a consultar
-    // response_equivalences. So age em campos cujo self_verdict gravado e
-    // 'equivalente' (cobre este call e retry de falha parcial).
-    const equivalentFields = verdicts.filter(
-      (v) =>
-        v.verdict === "equivalente" &&
-        effectByField.get(v.fieldName)?.self_verdict === "equivalente",
-    );
-    if (equivalentFields.length > 0) {
-      const equivRows = equivalentFields.map((v) => {
-        const ids = effectByField.get(v.fieldName)!;
-        const [a, b] = canonicalPair(
-          ids.human_response_id,
-          ids.llm_response_id,
-        );
-        return {
-          project_id: projectId,
-          document_id: documentId,
-          field_name: v.fieldName,
-          response_a_id: a,
-          response_b_id: b,
-          reviewer_id: effectiveId,
-        };
-      });
-      const { error: equivErr } = await admin
-        .from("response_equivalences")
-        .upsert(equivRows, {
-          onConflict:
-            "project_id,document_id,field_name,response_a_id,response_b_id",
-          ignoreDuplicates: true,
-        });
-      if (equivErr) return { success: false, error: equivErr.message };
-    }
-
-    // ambiguo: o campo e genuinamente ambiguo → registra um project_comments
-    // com o contraste humano vs LLM para discussao posterior. Check-before-insert
-    // evita duplicar em retry. So age em campos cujo self_verdict gravado e
-    // 'ambiguo' (cobre este call e retry de falha parcial).
-    const ambiguousFields = verdicts.filter(
-      (v) =>
-        v.verdict === "ambiguo" &&
-        effectByField.get(v.fieldName)?.self_verdict === "ambiguo",
-    );
-    if (ambiguousFields.length > 0) {
-      const responseIds = new Set<string>();
-      for (const v of ambiguousFields) {
-        const ids = effectByField.get(v.fieldName)!;
-        responseIds.add(ids.human_response_id);
-        responseIds.add(ids.llm_response_id);
-      }
-      const { data: respRows } = await admin
-        .from("responses")
-        .select("id, answers")
-        .in("id", Array.from(responseIds));
-      const answersById = new Map(
-        (respRows ?? []).map((r) => [
-          r.id as string,
-          r.answers as Record<string, unknown> | null,
-        ]),
-      );
-
-      const { data: existingComments } = await admin
-        .from("project_comments")
-        .select("field_name")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .in(
-          "field_name",
-          ambiguousFields.map((v) => v.fieldName),
-        )
-        .eq("author_id", effectiveId);
-      const alreadyCommented = new Set(
-        (existingComments ?? []).map((r) => r.field_name as string),
-      );
-
-      const commentRows = ambiguousFields.flatMap((v) => {
-        if (alreadyCommented.has(v.fieldName)) return [];
-        const ids = effectByField.get(v.fieldName)!;
-        const humanAnswer = formatAnswerTechnical(
-          answersById.get(ids.human_response_id)?.[v.fieldName],
-        );
-        const llmAnswer = formatAnswerTechnical(
-          answersById.get(ids.llm_response_id)?.[v.fieldName],
-        );
-        const body = [
-          `Campo "${v.fieldName}" marcado como ambíguo na auto-revisão.`,
-          `Humano respondeu: ${humanAnswer}`,
-          `LLM respondeu: ${llmAnswer}`,
-          // Justificativa garantida nao-vazia pela validacao no topo da funcao.
-          `Justificativa do pesquisador: ${v.justification!.trim()}`,
-          `Precisa de discussão para decidir o gabarito.`,
-        ].join("\n\n");
-        return [{
-          project_id: projectId,
-          document_id: documentId,
-          field_name: v.fieldName,
-          author_id: effectiveId,
-          body,
-        }];
-      });
-
-      if (commentRows.length > 0) {
-        const { error: commentErr } = await admin
-          .from("project_comments")
-          .insert(commentRows);
-        if (commentErr) return { success: false, error: commentErr.message };
-      }
-    }
-
-    // Sorteia arbitro APENAS para campos cujo UPDATE acabou de gravar
-    // contesta_llm (re-submit nao reabre arbitragem).
-    const contested = verdicts.flatMap((v) =>
-      v.verdict === "contesta_llm" && updatedFieldNames.has(v.fieldName)
-        ? [v.fieldName]
-        : [],
-    );
-
-    let arbitrated = 0;
-    let warning: string | undefined;
-    if (contested.length > 0) {
-      const result = await assignArbitrator(
-        admin,
-        projectId,
-        documentId,
-        effectiveId,
-        contested,
-      );
-      arbitrated = result.count;
-      // Pool vazio: o submit completa (self_verdict gravado) mas os campos
-      // contestados ficam sem árbitro. Pode ser falta de outros membros ou
-      // que nenhum dos demais foi marcado como elegível (can_arbitrate). Sem
-      // este warning, os campos ficariam invisíveis em estado
-      // "aguarda_arbitragem" indefinidamente. O retryPendingArbitrations
-      // do setCanArbitrate cobre o caso de o coordenador habilitar alguém depois.
-      if (result.noPool) {
-        warning = `Não há árbitros elegíveis para ${contested.length} campo(s) contestado(s). Peça ao coordenador para marcar membros como elegíveis em Configuração → Equipe.`;
-      }
-    }
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
-    return { success: true, arbitrated, warning };
+    return { success: true, ...result };
   } catch (e) {
     return { success: false, error: errorMessage(e) || "Erro" };
   }
@@ -346,12 +502,13 @@ export async function submitAutoReview(
 //    usa para alertar o pesquisador; sem esse sinal, o submit completa
 //    silenciosamente e os campos ficam presos sem árbitro)
 async function assignArbitrator(
-  admin: SupabaseDataClient,
+  reader: SupabaseDataClient,
   projectId: string,
   documentId: string,
   excludeUserId: string,
   fieldNames: string[],
   precomputedCoderIds?: Set<string>,
+  writeClient?: SupabaseDataClient,
 ): Promise<{ count: number; noPool: boolean }> {
   // Codificadores humanos deste documento — quem já tem resposta registrada
   // para o doc (recurso de comparação N+). Quando o caller pré-buscou em
@@ -360,12 +517,13 @@ async function assignArbitrator(
   if (precomputedCoderIds) {
     coderIds = precomputedCoderIds;
   } else {
-    const { data: coders } = await admin
+    const { data: coders, error: codersError } = await reader
       .from("responses")
       .select("respondent_id")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("respondent_type", "humano");
+    if (codersError) throw new Error(codersError.message);
     coderIds = new Set<string>();
     for (const c of coders ?? []) {
       if (c.respondent_id) coderIds.add(c.respondent_id as string);
@@ -374,13 +532,14 @@ async function assignArbitrator(
 
   // Elegíveis (can_arbitrate) menos o auto-revisor original — esse nunca
   // arbitra, sob nenhuma circunstância, porque julgaria a própria resposta.
-  const { data: eligibleMembers } = await admin
+  const { data: eligibleMembers, error: membersError } = await reader
     .from("project_members")
     .select("user_id, role")
     .eq("project_id", projectId)
     .eq("can_arbitrate", true);
+  if (membersError) throw new Error(membersError.message);
   const eligible = (eligibleMembers ?? []).filter(
-    (m) => m.user_id !== excludeUserId,
+    (member) => member.user_id !== excludeUserId,
   );
 
   // Pool ideal: árbitro que NÃO codificou o documento — totalmente neutro na
@@ -394,12 +553,13 @@ async function assignArbitrator(
   if (members.length === 0) return { count: 0, noPool: true };
 
   // Conta arbitragens abertas por candidato (balanceamento)
-  const { data: openCounts } = await admin
+  const { data: openCounts, error: openCountsError } = await reader
     .from("assignments")
     .select("user_id")
     .eq("project_id", projectId)
     .eq("type", "arbitragem")
     .neq("status", "concluido");
+  if (openCountsError) throw new Error(openCountsError.message);
 
   const loadByUser = buildLoadMap(openCounts ?? []);
 
@@ -417,23 +577,23 @@ async function assignArbitrator(
   const researchersAtMinLoad = candidatesAtMinLoad.filter(
     (m) => m.role === "pesquisador",
   );
-  const finalPool = researchersAtMinLoad.length > 0
-    ? researchersAtMinLoad
-    : candidatesAtMinLoad;
+  const finalPool =
+    researchersAtMinLoad.length > 0
+      ? researchersAtMinLoad
+      : candidatesAtMinLoad;
 
   // Sorteio aleatorio entre os empatados
   const arbitratorId =
     finalPool[Math.floor(Math.random() * finalPool.length)].user_id;
 
-  const { data: assigned, error: assignmentError } = await admin.rpc(
-    "assign_arbitration_if_eligible",
-    {
-      p_project_id: projectId,
-      p_document_id: documentId,
-      p_user_id: arbitratorId,
-      p_field_names: fieldNames,
-    },
-  );
+  const { data: assigned, error: assignmentError } = await (
+    writeClient ?? createSupabaseAdmin()
+  ).rpc("assign_arbitration_if_eligible", {
+    p_project_id: projectId,
+    p_document_id: documentId,
+    p_user_id: arbitratorId,
+    p_field_names: fieldNames,
+  });
   if (assignmentError) throw new Error(assignmentError.message);
 
   return { count: typeof assigned === "number" ? assigned : 0, noPool: false };
@@ -442,6 +602,23 @@ async function assignArbitrator(
 export interface BlindChoice {
   fieldReviewId: string;
   choice: "a" | "b";
+}
+
+function validateBlindChoices(choices: BlindChoice[]): string | null {
+  for (const choice of choices) {
+    if (
+      typeof choice.fieldReviewId !== "string" ||
+      choice.fieldReviewId.trim() === ""
+    ) {
+      return "ID da revisão cega é obrigatório.";
+    }
+    if (choice.choice !== "a" && choice.choice !== "b") {
+      return `Escolha inválida para a revisão "${choice.fieldReviewId}".`;
+    }
+  }
+
+  const duplicate = duplicateValue(choices, (choice) => choice.fieldReviewId);
+  return duplicate ? `Revisão "${duplicate}" enviada mais de uma vez.` : null;
 }
 
 // Fase 1 da arbitragem: arbitro escolhe cegamente entre A/B (sem justificativa).
@@ -459,21 +636,23 @@ export async function submitBlindVerdicts(
   choices: BlindChoice[],
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
+    const actor = await resolveProjectMemberActor(projectId);
+    if (!actor.ok) return { success: false, error: actor.error };
+
+    const validationError = validateBlindChoices(choices);
+    if (validationError) return { success: false, error: validationError };
 
     // Conta vinculada arbitra como o membro canônico (spec 002).
-    const effectiveId = await getEffectiveMemberId(projectId);
+    const effectiveId = actor.memberUserId;
 
     const supabase = await createSupabaseServer();
-    const now = new Date().toISOString();
 
     const results = await Promise.all(
       choices.map((c) => {
         const verdict = resolveBlindVerdict(c.fieldReviewId, c.choice);
         return supabase
           .from("field_reviews")
-          .update({ blind_verdict: verdict, blind_decided_at: now })
+          .update({ blind_verdict: verdict })
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("id", c.fieldReviewId)
@@ -497,11 +676,16 @@ export async function submitBlindVerdicts(
 
     if (failedIndices.length > 0) {
       const failedIds = failedIndices.map((i) => choices[i].fieldReviewId);
-      const { data: existing } = await supabase
+      const { data: existing, error: existingError } = await supabase
         .from("field_reviews")
         .select("id, blind_verdict")
         .in("id", failedIds)
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
         .eq("arbitrator_id", effectiveId);
+      if (existingError) {
+        return { success: false, error: existingError.message };
+      }
       const existingById = new Map(
         (existing ?? []).map((r) => [
           r.id as string,
@@ -543,6 +727,255 @@ export interface FinalChoice {
   arbitratorComment?: string;
 }
 
+interface FinalReviewState {
+  id: string;
+  field_name: string;
+  human_response_id: string;
+  llm_response_id: string;
+  blind_verdict: ArbitrationVerdict | null;
+  final_verdict: ArbitrationVerdict | null;
+  question_improvement_suggestion: string | null;
+  arbitrator_comment: string | null;
+}
+
+interface FinalVerdictScope {
+  projectId: string;
+  documentId: string;
+  memberUserId: string;
+}
+
+type FinalResponseState = ResponseAnswerState;
+
+function validateFinalChoices(choices: FinalChoice[]): string | null {
+  const duplicate = duplicateFieldName(choices);
+  if (duplicate) return `Campo "${duplicate}" enviado mais de uma vez.`;
+
+  for (const choice of choices) {
+    if (
+      choice.verdict === "llm" &&
+      !choice.questionImprovementSuggestion?.trim()
+    ) {
+      return `Campo "${choice.fieldName}": sugestão de melhoria obrigatória quando você decide pelo LLM contra o humano.`;
+    }
+  }
+  return null;
+}
+
+function normalizedOptionalText(
+  value: string | null | undefined,
+): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+async function loadFinalReviews(
+  supabase: SupabaseServerClient,
+  scope: FinalVerdictScope,
+  choices: FinalChoice[],
+): Promise<FinalReviewState[]> {
+  // As duas FKs de field_reviews para responses tornam o nested select
+  // ambíguo no PostgREST; as respostas são carregadas separadamente.
+  const { data, error } = await supabase
+    .from("field_reviews")
+    .select(
+      "id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict, question_improvement_suggestion, arbitrator_comment",
+    )
+    .eq("project_id", scope.projectId)
+    .eq("document_id", scope.documentId)
+    .in(
+      "field_name",
+      choices.map((choice) => choice.fieldName),
+    )
+    .eq("arbitrator_id", scope.memberUserId);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as FinalReviewState[];
+}
+
+function choicesNeedingFinalVerdict(
+  choices: FinalChoice[],
+  reviewsByField: Map<string, FinalReviewState>,
+): FinalChoice[] {
+  const pending: FinalChoice[] = [];
+  for (const choice of choices) {
+    const review = reviewsByField.get(choice.fieldName);
+    if (!review) {
+      throw new Error(
+        `Campo "${choice.fieldName}": linha de revisão não encontrada ou sem permissão.`,
+      );
+    }
+    if (review.blind_verdict == null) {
+      throw new Error(
+        `Campo "${choice.fieldName}": fase cega ainda não decidida.`,
+      );
+    }
+    if (review.final_verdict == null) {
+      pending.push(choice);
+      continue;
+    }
+    if (review.final_verdict !== choice.verdict) {
+      throw new Error(
+        `Campo "${choice.fieldName}": veredito final já registrado como "${review.final_verdict}".`,
+      );
+    }
+    if (
+      normalizedOptionalText(review.question_improvement_suggestion) !==
+        normalizedOptionalText(choice.questionImprovementSuggestion) ||
+      normalizedOptionalText(review.arbitrator_comment) !==
+        normalizedOptionalText(choice.arbitratorComment)
+    ) {
+      throw new Error(
+        `Campo "${choice.fieldName}": os detalhes enviados diferem do veredito final já registrado.`,
+      );
+    }
+  }
+  return pending;
+}
+
+async function loadFinalResponses(
+  supabase: SupabaseServerClient,
+  reviews: FinalReviewState[],
+  choices: FinalChoice[],
+): Promise<Map<string, FinalResponseState>> {
+  if (!choices.some((choice) => choice.verdict === "llm")) return new Map();
+
+  const responseIds = new Set<string>();
+  for (const review of reviews) {
+    responseIds.add(review.human_response_id);
+    responseIds.add(review.llm_response_id);
+  }
+  return loadResponsesById(supabase, responseIds);
+}
+
+async function persistFinalVerdicts(
+  supabase: SupabaseServerClient,
+  scope: FinalVerdictScope,
+  choices: FinalChoice[],
+): Promise<void> {
+  // Os filtros impõem a sequência cego → final e tornam explícita a corrida
+  // entre a leitura anterior e outro submit do mesmo árbitro.
+  const results = await Promise.all(
+    choices.map((choice) =>
+      supabase
+        .from("field_reviews")
+        .update({
+          final_verdict: choice.verdict,
+          question_improvement_suggestion: normalizedOptionalText(
+            choice.questionImprovementSuggestion,
+          ),
+          arbitrator_comment: normalizedOptionalText(choice.arbitratorComment),
+        })
+        .eq("project_id", scope.projectId)
+        .eq("document_id", scope.documentId)
+        .eq("field_name", choice.fieldName)
+        .eq("arbitrator_id", scope.memberUserId)
+        .not("blind_verdict", "is", null)
+        .is("final_verdict", null)
+        .select("id"),
+    ),
+  );
+
+  const concurrentChoices: FinalChoice[] = [];
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index];
+    if (result.error) throw new Error(result.error.message);
+    if (!result.data || result.data.length === 0) {
+      concurrentChoices.push(choices[index]);
+    }
+  }
+
+  if (concurrentChoices.length === 0) return;
+
+  // Outro request pode ter vencido entre a leitura inicial e o UPDATE. A
+  // releitura aceita somente o mesmo payload completo; ausência, estado ainda
+  // pendente ou qualquer divergência continuam sendo erro explícito.
+  const concurrentReviews = await loadFinalReviews(
+    supabase,
+    scope,
+    concurrentChoices,
+  );
+  const concurrentByField = new Map(
+    concurrentReviews.map((review) => [review.field_name, review]),
+  );
+  const stillPending = choicesNeedingFinalVerdict(
+    concurrentChoices,
+    concurrentByField,
+  );
+  if (stillPending.length > 0) {
+    throw new Error(
+      `Campo "${stillPending[0].fieldName}": UPDATE rejeitado (concorrência ou RLS).`,
+    );
+  }
+}
+
+function buildFinalVerdictCommentDrafts(
+  choices: FinalChoice[],
+  reviewsByField: Map<string, FinalReviewState>,
+  responsesById: Map<string, FinalResponseState>,
+): ProjectCommentDraft[] {
+  return choices.flatMap((choice) => {
+    if (choice.verdict !== "llm") return [];
+
+    const review = reviewsByField.get(choice.fieldName)!;
+    const humanResponse = responsesById.get(review.human_response_id);
+    const llmResponse = responsesById.get(review.llm_response_id);
+    const humanAnswer = formatAnswerTechnical(
+      (humanResponse?.answers as Record<string, unknown> | undefined)?.[
+        choice.fieldName
+      ],
+    );
+    const llmAnswer = formatAnswerTechnical(
+      (llmResponse?.answers as Record<string, unknown> | undefined)?.[
+        choice.fieldName
+      ],
+    );
+    const body = [
+      `Discordância em "${choice.fieldName}".`,
+      `Humano respondeu: ${humanAnswer}`,
+      `LLM respondeu: ${llmAnswer}`,
+      "Árbitro manteve LLM.",
+      `Sugestão de melhoria: ${normalizedOptionalText(choice.questionImprovementSuggestion)}`,
+      normalizedOptionalText(choice.arbitratorComment)
+        ? `Comentário: ${normalizedOptionalText(choice.arbitratorComment)}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    return [
+      {
+        sourceFieldReviewId: review.id,
+        fieldName: choice.fieldName,
+        body,
+      },
+    ];
+  });
+}
+
+async function persistFinalVerdictComments(
+  scope: FinalVerdictScope,
+  accountUserId: string,
+  choices: FinalChoice[],
+  reviewsByField: Map<string, FinalReviewState>,
+  responsesById: Map<string, FinalResponseState>,
+): Promise<void> {
+  const drafts = buildFinalVerdictCommentDrafts(
+    choices,
+    reviewsByField,
+    responsesById,
+  );
+  const error = await insertMissingProjectComments(
+    scope.projectId,
+    scope.documentId,
+    accountUserId,
+    drafts,
+  );
+  if (error) {
+    throw new Error(
+      `Veredicto salvo mas comentário de divergência falhou: ${error}`,
+    );
+  }
+}
+
 // Fase 2: arbitro confirma/troca veredito apos ver justificativa LLM.
 // Se final_verdict='llm' (humano perdeu), exige question_improvement_suggestion
 // e cria entry em project_comments com contexto da divergencia.
@@ -554,230 +987,44 @@ export async function submitFinalVerdicts(
   choices: FinalChoice[],
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const user = await getAuthUser();
-    if (!user) return { success: false, error: "Não autenticado" };
+    const actor = await resolveProjectMemberActor(projectId);
+    if (!actor.ok) return { success: false, error: actor.error };
 
     // Conta vinculada arbitra como o membro canônico (spec 002).
-    const effectiveId = await getEffectiveMemberId(projectId);
+    const scope: FinalVerdictScope = {
+      projectId,
+      documentId,
+      memberUserId: actor.memberUserId,
+    };
 
-    // Validacao: se humano perdeu (final='llm'), sugestao obrigatoria
-    for (const c of choices) {
-      if (c.verdict === "llm" && !c.questionImprovementSuggestion?.trim()) {
-        return {
-          success: false,
-          error: `Campo "${c.fieldName}": sugestão de melhoria obrigatória quando você decide pelo LLM contra o humano.`,
-        };
-      }
-    }
+    const validationError = validateFinalChoices(choices);
+    if (validationError) return { success: false, error: validationError };
 
     const supabase = await createSupabaseServer();
-    const now = new Date().toISOString();
+    const reviews = await loadFinalReviews(supabase, scope, choices);
+    const reviewsByField = new Map(
+      reviews.map((review) => [review.field_name, review]),
+    );
+    const choicesToUpdate = choicesNeedingFinalVerdict(choices, reviewsByField);
+    const responsesById = await loadFinalResponses(supabase, reviews, choices);
 
-    // Estrategia de clientes:
-    //  - supabase (RLS): qualquer operacao onde o proprio arbitro e o ator.
-    //    Policies de field_reviews ("Arbitrator updates own row", SELECT
-    //    arbitrator_id=clerk_uid()) e de assignments ("Researchers update
-    //    own assignments") ja cobrem o caso.
-    //  - admin (service key): apenas onde o arbitro pode nao ter visibilidade
-    //    por RLS — leitura de responses (cross-user, RLS de responses e mais
-    //    restritiva) e INSERT em project_comments (autor != arbitro em alguns
-    //    cenarios, evitar policy-shaped erros).
+    await persistFinalVerdicts(supabase, scope, choicesToUpdate);
 
-    // 1) Carrega field_reviews com estado atual (inclui blind/final_verdict).
-    // O estado pre-carregado permite que retries apos falha parcial em (4)
-    // detectem "ja gravado com mesmo verdict" como sucesso idempotente em vez
-    // de erro travante.
-    // Duas FKs de field_reviews para responses (human_/llm_response_id) tornam
-    // o nested select ambiguo no PostgREST — buscar respostas separadamente.
-    const { data: frRows, error: frErr } = await supabase
-      .from("field_reviews")
-      .select(
-        "id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict",
-      )
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .in(
-        "field_name",
-        choices.map((c) => c.fieldName),
-      )
-      .eq("arbitrator_id", effectiveId);
-    if (frErr) return { success: false, error: frErr.message };
-
-    const frByField = new Map(
-      (frRows ?? []).map((r) => [r.field_name as string, r]),
+    // A autoria é da conta autenticada; a fila permanece no membro canônico.
+    await persistFinalVerdictComments(
+      scope,
+      actor.user.id,
+      choices,
+      reviewsByField,
+      responsesById,
     );
 
-    // Pre-validacao por linha + classificacao (skip idempotente vs erro vs update).
-    const choicesToUpdate: FinalChoice[] = [];
-    for (const c of choices) {
-      const fr = frByField.get(c.fieldName);
-      if (!fr) {
-        return {
-          success: false,
-          error: `Campo "${c.fieldName}": linha de revisão não encontrada ou sem permissão.`,
-        };
-      }
-      if (fr.blind_verdict == null) {
-        return {
-          success: false,
-          error: `Campo "${c.fieldName}": fase cega ainda não decidida.`,
-        };
-      }
-      if (fr.final_verdict != null) {
-        // Veredito ja gravado — retry idempotente apenas se for o MESMO verdict.
-        if (fr.final_verdict !== c.verdict) {
-          return {
-            success: false,
-            error: `Campo "${c.fieldName}": veredito final já registrado como "${fr.final_verdict}".`,
-          };
-        }
-        // mesmo verdict → segue para passos 4/5 sem re-UPDATE
-        continue;
-      }
-      choicesToUpdate.push(c);
-    }
-
-    // A service role só é necessária para decisões pelo LLM (leitura das duas
-    // responses + comentário canônico). Instanciar depois de validar todas as
-    // linhas garante que documento/campo/arbitrator/RLS falhem antes de a chave
-    // administrativa sequer ser lida; decisões humanas não criam admin client.
-    const llmChoices = choices.filter((c) => c.verdict === "llm");
-    const admin = llmChoices.length > 0 ? createSupabaseAdmin() : null;
-
-    // 2) Respostas: admin porque a RLS de responses restringe leitura cross-user
-    // (arbitro nao precisa ser membro do mesmo "scope" da resposta humana).
-    // So precisa carregar respostas se ha algum verdict='llm' (para o comment).
-    const responseById = new Map<string, { id: string; answers: unknown }>();
-    if (admin) {
-      const responseIds = new Set<string>();
-      for (const r of frRows ?? []) {
-        responseIds.add(r.human_response_id);
-        responseIds.add(r.llm_response_id);
-      }
-      const { data: respRows } = await admin
-        .from("responses")
-        .select("id, answers")
-        .in("id", Array.from(responseIds));
-      for (const r of respRows ?? []) {
-        responseById.set(r.id as string, r);
-      }
-    }
-
-    // 3) UPDATEs em paralelo via supabase (RLS cobre "Arbitrator updates own row").
-    //
-    //  - not("blind_verdict", "is", null): obriga sequência blind → final.
-    //    Sem isto, um árbitro (ou chamada direta à Server Action) pulava a
-    //    fase cega e gravava final_verdict diretamente.
-    //  - is("final_verdict", null): proteção contra race entre o pre-fetch
-    //    acima e este UPDATE (outro submit concorrente do mesmo árbitro).
-    //  - select("id"): detecta UPDATE de 0 linhas (race), erro descritivo.
-    if (choicesToUpdate.length > 0) {
-      const updateResults = await Promise.all(
-        choicesToUpdate.map((c) =>
-          supabase
-            .from("field_reviews")
-            .update({
-              final_verdict: c.verdict,
-              final_decided_at: now,
-              question_improvement_suggestion:
-                c.questionImprovementSuggestion ?? null,
-              arbitrator_comment: c.arbitratorComment ?? null,
-            })
-            .eq("project_id", projectId)
-            .eq("document_id", documentId)
-            .eq("field_name", c.fieldName)
-            .eq("arbitrator_id", effectiveId)
-            .not("blind_verdict", "is", null)
-            .is("final_verdict", null)
-            .select("id"),
-        ),
-      );
-      for (let i = 0; i < updateResults.length; i++) {
-        const res = updateResults[i];
-        if (res.error) return { success: false, error: res.error.message };
-        if (!res.data || res.data.length === 0) {
-          return {
-            success: false,
-            error: `Campo "${choicesToUpdate[i].fieldName}": UPDATE rejeitado (concorrência ou RLS).`,
-          };
-        }
-      }
-    }
-
-    // 4) project_comments para verdict='llm': check-before-insert evita dupes
-    // em retry (sem precisar de UNIQUE constraint que limitaria o uso geral
-    // de comments). Race window minuscula entre SELECT e INSERT — aceitavel
-    // dado o custo de evitar.
-    if (admin) {
-      const { data: existingComments } = await admin
-        .from("project_comments")
-        .select("field_name")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .in(
-          "field_name",
-          llmChoices.map((c) => c.fieldName),
-        )
-        .eq("author_id", effectiveId);
-      const alreadyCommented = new Set(
-        (existingComments ?? []).map((r) => r.field_name as string),
-      );
-
-      const commentRows = llmChoices.flatMap((c) => {
-        if (alreadyCommented.has(c.fieldName)) return [];
-        const fr = frByField.get(c.fieldName);
-        const humanResp = fr
-          ? responseById.get(fr.human_response_id)
-          : null;
-        const llmResp = fr ? responseById.get(fr.llm_response_id) : null;
-        const humanAnswer = formatAnswerTechnical(
-          (humanResp?.answers as Record<string, unknown> | undefined)?.[
-            c.fieldName
-          ],
-        );
-        const llmAnswer = formatAnswerTechnical(
-          (llmResp?.answers as Record<string, unknown> | undefined)?.[
-            c.fieldName
-          ],
-        );
-        const body = [
-          `Discordância em "${c.fieldName}".`,
-          `Humano respondeu: ${humanAnswer}`,
-          `LLM respondeu: ${llmAnswer}`,
-          `Árbitro manteve LLM.`,
-          `Sugestão de melhoria: ${c.questionImprovementSuggestion}`,
-          c.arbitratorComment ? `Comentário: ${c.arbitratorComment}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-
-        return [{
-          project_id: projectId,
-          document_id: documentId,
-          field_name: c.fieldName,
-          author_id: effectiveId,
-          body,
-        }];
-      });
-
-      if (commentRows.length > 0) {
-        // Falha aqui significa que o veredito ja foi gravado mas o comentario
-        // nao — coordenador perderia a sugestao. Propaga o erro para que retry
-        // do usuario re-tente (e nao duplique, pelo check acima).
-        const { error: commentErr } = await admin
-          .from("project_comments")
-          .insert(commentRows);
-        if (commentErr) {
-          return {
-            success: false,
-            error: `Veredicto salvo mas comentário de divergência falhou: ${commentErr.message}`,
-          };
-        }
-      }
-    }
-
-    // 5) Sync do assignment arbitragem — ver lib/arbitragem-sync.ts.
-    await syncArbitragemAssignmentStatus(supabase, projectId, documentId, effectiveId, now);
+    await syncArbitragemAssignmentStatus(
+      supabase,
+      scope.projectId,
+      scope.documentId,
+      scope.memberUserId,
+    );
 
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };
@@ -802,18 +1049,16 @@ export async function submitFinalVerdicts(
 //
 // Bulk-otimizado: queries em batch + upserts/deletes em batch, independente do
 // numero de respostas.
-// Os dois factories retornam o mesmo cliente Supabase; o papel efetivo vem da
-// chave/token usado na criação. Helpers coordinator-only recebem o cliente
-// autenticado para preservar RLS, enquanto fluxos disparados por pesquisador
-// podem passar o admin client explicitamente.
-type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
-
 interface BacklogInputs {
   fields: PydanticField[];
   humanResponses: HumanResponseRow[];
   llmResponses: LlmResponseRow[];
   equivalences: EquivalenceRow[];
   existingReviews: ExistingFieldReviewRow[];
+  // Membros atuais: a RPC de atribuição exige membership viva para cada
+  // respondente, então o produtor precisa do mesmo universo para não emitir
+  // candidato que ela vai recusar.
+  memberIds: Set<string>;
 }
 
 // Batch de leitura inicial do backlog — lança em qualquer erro de query,
@@ -829,6 +1074,7 @@ async function fetchBacklogInputs(
     { data: llmResponses, error: llmErr },
     { data: equivalences, error: equivErr },
     { data: existingReviews, error: existingErr },
+    { data: members, error: membersErr },
   ] = await Promise.all([
     admin
       .from("projects")
@@ -840,6 +1086,7 @@ async function fetchBacklogInputs(
       .select("id, document_id, respondent_id, answers, answer_field_hashes")
       .eq("project_id", projectId)
       .eq("respondent_type", "humano")
+      .eq("is_latest", true)
       .eq("is_partial", false),
     admin
       .from("responses")
@@ -849,7 +1096,9 @@ async function fetchBacklogInputs(
       .eq("is_latest", true),
     admin
       .from("response_equivalences")
-      .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
+      .select(
+        "id, document_id, field_name, response_a_id, response_b_id, reviewer_id",
+      )
       .eq("project_id", projectId),
     // Estado atual de field_reviews — usado no reconcile abaixo. Independe
     // do conjunto recem-computado, entao buscamos junto do batch inicial.
@@ -857,6 +1106,7 @@ async function fetchBacklogInputs(
       .from("field_reviews")
       .select("id, document_id, field_name, self_verdict")
       .eq("project_id", projectId),
+    admin.from("project_members").select("user_id").eq("project_id", projectId),
   ]);
 
   if (projErr) throw new Error(projErr.message);
@@ -864,6 +1114,7 @@ async function fetchBacklogInputs(
   if (llmErr) throw new Error(llmErr.message);
   if (equivErr) throw new Error(equivErr.message);
   if (existingErr) throw new Error(existingErr.message);
+  if (membersErr) throw new Error(membersErr.message);
 
   return {
     fields: (project?.pydantic_fields as PydanticField[]) ?? [],
@@ -871,58 +1122,82 @@ async function fetchBacklogInputs(
     llmResponses: (llmResponses ?? []) as LlmResponseRow[],
     equivalences: (equivalences ?? []) as EquivalenceRow[],
     existingReviews: (existingReviews ?? []) as ExistingFieldReviewRow[],
+    memberIds: new Set(
+      ((members ?? []) as Array<{ user_id: string }>).map((m) => m.user_id),
+    ),
   };
 }
 
-// As etapas puras (computeBacklogRows, diffReviewsToRemove, compositeKeySet)
-// vivem em @/lib/auto-review-backlog — "use server" só pode exportar funções
-// async (regra do Next), então o que é puro e testável fica fora deste arquivo.
+// As etapas puras (computeBacklogRows, diffReviewsToRemove) vivem em
+// @/lib/auto-review-backlog — "use server" só pode exportar funções async
+// (regra do Next), então o que é puro e testável fica fora deste arquivo.
 
-// Remove assignments auto_revisao orfaos: sem nenhum field_review restante
-// para o doc+pesquisador e ainda `pendente`. Assignments ja iniciados ou
-// concluidos sao preservados. As duas leituras refletem o estado pos-
-// delete/upsert e sao independentes entre si — buscadas em paralelo.
-async function removeOrphanAssignments(
-  admin: SupabaseDataClient,
-  projectId: string,
-): Promise<void> {
-  const [
-    { data: remainingReviews, error: remainingErr },
-    { data: autoAssignments, error: autoErr },
-  ] = await Promise.all([
-    admin
-      .from("field_reviews")
-      .select("document_id, self_reviewer_id")
-      .eq("project_id", projectId),
-    admin
-      .from("assignments")
-      .select("id, document_id, user_id")
-      .eq("project_id", projectId)
-      .eq("type", "auto_revisao")
-      .eq("status", "pendente"),
-  ]);
-  if (remainingErr) throw new Error(remainingErr.message);
-  if (autoErr) throw new Error(autoErr.message);
-  const docUserWithReviews = compositeKeySet(
-    remainingReviews ?? [],
-    (r) => `${r.document_id}|${r.self_reviewer_id}`,
-  );
-
-  const orphanAssignmentIds = (autoAssignments ?? []).flatMap((a) =>
-    docUserWithReviews.has(`${a.document_id}|${a.user_id}`) ? [] : [a.id],
-  );
-  if (orphanAssignmentIds.length > 0) {
-    const { error } = await admin
-      .from("assignments")
-      .delete()
-      .in("id", orphanAssignmentIds);
-    if (error) throw new Error(error.message);
-  }
+function deferredAdminClient(): () => SupabaseDataClient {
+  let client: SupabaseDataClient | null = null;
+  return () => {
+    client ??= createSupabaseAdmin();
+    return client;
+  };
 }
 
-export async function regenerateAutoReviewBacklog(
+async function deletePendingFieldReviews(
+  getAdmin: () => SupabaseDataClient,
+  idsToDelete: string[],
+): Promise<number> {
+  if (idsToDelete.length === 0) return 0;
+
+  // The persisted predicate closes the TOCTOU window with a self-review that
+  // completes after the initial snapshot and must no longer be deleted.
+  const { data: deleted, error } = await getAdmin()
+    .from("field_reviews")
+    .delete()
+    .in("id", idsToDelete)
+    .is("self_verdict", null)
+    .select("id");
+  if (error) throw new Error(error.message);
+  return deleted?.length ?? 0;
+}
+
+async function persistBacklogReconciliation(
   projectId: string,
-): Promise<{
+  idsToDelete: string[],
+  candidates: AutoReviewCandidate[],
+): Promise<number> {
+  // Structural field-review writes are service-only. Create that capability
+  // only after the authenticated reads and pure reconciliation have passed.
+  const getAdmin = deferredAdminClient();
+  const actuallyRemoved = await deletePendingFieldReviews(
+    getAdmin,
+    idsToDelete,
+  );
+  if (candidates.length > 0) {
+    const { error } = await getAdmin().rpc("assign_auto_reviews_if_eligible", {
+      p_candidates: candidates,
+    });
+    if (error) throw new Error(error.message);
+  }
+  // Reconcilia o projeto inteiro, inclusive filas fechadas cedo por execuções
+  // anteriores e assignments órfãos (pendentes sem field_review pendente): a
+  // RPC reabre e apaga sob a mesma ordem de locks da criação transacional —
+  // fazer o delete de órfãos aqui fora, em passos auto-commitados, deixava uma
+  // janela em que a fila recém-criada por detecção concorrente era apagada.
+  await reconcileAutoReviewAssignmentsWithPending(getAdmin, projectId);
+
+  return actuallyRemoved;
+}
+
+async function reconcileAutoReviewAssignmentsWithPending(
+  getAdmin: () => SupabaseDataClient,
+  projectId: string,
+): Promise<void> {
+  const { error } = await getAdmin().rpc(
+    "reconcile_auto_review_assignments_with_pending",
+    { p_project_id: projectId },
+  );
+  if (error) throw new Error(error.message);
+}
+
+export async function regenerateAutoReviewBacklog(projectId: string): Promise<{
   success: boolean;
   error?: string;
   scanned?: number;
@@ -938,8 +1213,14 @@ export async function regenerateAutoReviewBacklog(
     if (!gate.ok) return { success: false, error: gate.error };
 
     const supabase = await createSupabaseServer();
-    const { fields, humanResponses, llmResponses, equivalences, existingReviews } =
-      await fetchBacklogInputs(supabase, projectId);
+    const {
+      fields,
+      humanResponses,
+      llmResponses,
+      equivalences,
+      existingReviews,
+      memberIds,
+    } = await fetchBacklogInputs(supabase, projectId);
 
     if (fields.length === 0) {
       return { success: true, scanned: 0, regenerated: 0 };
@@ -949,12 +1230,13 @@ export async function regenerateAutoReviewBacklog(
     const llmByDocId = new Map(llmResponses.map((r) => [r.document_id, r]));
     const equivByDoc = buildEquivalenceMap(equivalences);
 
-    const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
+    const { candidates, fieldReviewRows, regenerated } = computeBacklogRows(
       projectId,
       humanResponses,
       llmByDocId,
       equivByDoc,
       fields,
+      memberIds,
     );
 
     const { idsToDelete, keptResolved } = diffReviewsToRemove(
@@ -962,53 +1244,11 @@ export async function regenerateAutoReviewBacklog(
       fieldReviewRows,
     );
 
-    // A migration de hardening da #134 remove todo INSERT autenticado em
-    // field_reviews: a fila só pode ser materializada por um serviço após um
-    // gate explícito. Validar a configuração do factory antes de qualquer
-    // mutation evita apagar/upsertar metade do backlog quando o secret estiver
-    // ausente; sem linhas novas, nenhuma service role é criada.
-    const admin =
-      fieldReviewRows.length > 0 ? createSupabaseAdmin() : null;
-
-    // Defesa em profundidade: `.is("self_verdict", null)` fecha a janela TOCTOU
-    // entre a leitura de `existingReviews` (fetchBacklogInputs) e este DELETE.
-    // Se um pesquisador resolver um campo nesse intervalo, o DB recusa a linha
-    // mesmo que o id esteja em `idsToDelete`. `.select("id")` devolve as linhas
-    // efetivamente apagadas, fonte da contagem `removed` retornada.
-    let actuallyRemoved = 0;
-    if (idsToDelete.length > 0) {
-      const { data: deleted, error } = await supabase
-        .from("field_reviews")
-        .delete()
-        .in("id", idsToDelete)
-        .is("self_verdict", null)
-        .select("id");
-      if (error) return { success: false, error: error.message };
-      actuallyRemoved = deleted?.length ?? 0;
-    }
-
-    if (assignmentRows.length > 0) {
-      const { error } = await supabase.from("assignments").upsert(assignmentRows, {
-        onConflict: "document_id,user_id,type",
-        ignoreDuplicates: true,
-      });
-      if (error) return { success: false, error: error.message };
-    }
-    if (admin) {
-      // NB: ignoreDuplicates reconcilia o *conjunto* de field_reviews
-      // (doc+field), nao os ponteiros. Uma linha ja existente mantem seus
-      // human_response_id/llm_response_id antigos mesmo que o LLM tenha
-      // re-rodado desde entao — atualizar FKs stale fica fora deste reconcile.
-      const { error } = await admin
-        .from("field_reviews")
-        .upsert(fieldReviewRows, {
-          onConflict: "document_id,field_name",
-          ignoreDuplicates: true,
-        });
-      if (error) return { success: false, error: error.message };
-    }
-
-    await removeOrphanAssignments(supabase, projectId);
+    const actuallyRemoved = await persistBacklogReconciliation(
+      projectId,
+      idsToDelete,
+      candidates,
+    );
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -1032,9 +1272,7 @@ export async function regenerateAutoReviewBacklog(
 // Agrupa por (document_id, self_reviewer_id) e chama assignArbitrator para
 // cada grupo — preserva a regra "todos os campos contestados do mesmo doc
 // recebem o MESMO árbitro" e a exclusão do auto-revisor original do pool.
-export async function retryPendingArbitrations(
-  projectId: string,
-): Promise<{
+export async function retryPendingArbitrations(projectId: string): Promise<{
   success: boolean;
   error?: string;
   assigned: number;
@@ -1056,7 +1294,12 @@ export async function retryPendingArbitrations(
       .eq("self_verdict", "contesta_llm")
       .is("arbitrator_id", null);
     if (error)
-      return { success: false, error: error.message, assigned: 0, stillNoPool: 0 };
+      return {
+        success: false,
+        error: error.message,
+        assigned: 0,
+        stillNoPool: 0,
+      };
     if (!pending || pending.length === 0)
       return { success: true, assigned: 0, stillNoPool: 0 };
 
@@ -1066,13 +1309,11 @@ export async function retryPendingArbitrations(
     >();
     for (const p of pending) {
       const key = `${p.document_id}|${p.self_reviewer_id}`;
-      const g =
-        groups.get(key) ??
-        {
-          documentId: p.document_id as string,
-          selfReviewerId: p.self_reviewer_id as string,
-          fieldNames: [] as string[],
-        };
+      const g = groups.get(key) ?? {
+        documentId: p.document_id as string,
+        selfReviewerId: p.self_reviewer_id as string,
+        fieldNames: [] as string[],
+      };
       g.fieldNames.push(p.field_name as string);
       groups.set(key, g);
     }
@@ -1087,12 +1328,13 @@ export async function retryPendingArbitrations(
     ];
     const codersByDoc = new Map<string, Set<string>>();
     if (allDocIds.length > 0) {
-      const { data: allCoders } = await supabase
+      const { data: allCoders, error: codersError } = await supabase
         .from("responses")
         .select("document_id, respondent_id")
         .eq("project_id", projectId)
         .in("document_id", allDocIds)
         .eq("respondent_type", "humano");
+      if (codersError) throw new Error(codersError.message);
       for (const c of allCoders ?? []) {
         const docId = c.document_id as string;
         const respId = c.respondent_id as string | null;

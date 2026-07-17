@@ -23,11 +23,12 @@ vi.mock("next/cache", () => ({
   revalidatePath: supabaseState.revalidatePath,
   revalidateTag: supabaseState.revalidateTag,
 }));
+// isProjectCoordinator saiu de @/lib/auth neste branch (identidade canônica);
+// o shape do mock segue o da main (#454), sem o símbolo removido.
 vi.mock("@/lib/auth", () => {
   const user = { id: "userCoord" };
   return {
     getAuthUser: async () => user,
-    isProjectCoordinator: async () => true,
     requireCoordinator: async () => ({ ok: true, user }),
   };
 });

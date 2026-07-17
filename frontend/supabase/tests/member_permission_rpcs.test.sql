@@ -20,6 +20,12 @@ INSERT INTO auth.users (id, email) VALUES
   ('93000000-0000-0000-0000-000000000017', 'alias-happy-rpc@example.test'),
   ('93000000-0000-0000-0000-000000000018', 'alias-rollback-rpc@example.test');
 
+INSERT INTO public.clerk_user_mapping
+  (clerk_user_id, supabase_user_id, access_sync_version)
+SELECT id::text, id, 1
+FROM auth.users
+WHERE id::text LIKE '93000000-0000-0000-0000-%';
+
 INSERT INTO public.projects (id, name, created_by) VALUES
   ('90000000-0000-0000-0000-000000000001', 'member permission RPC test',
    '93000000-0000-0000-0000-000000000011'),
@@ -50,7 +56,8 @@ INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('94000000-0000-0000-0000-000000000005', '90000000-0000-0000-0000-000000000001', 'rollback arbitragem', 'd5'),
   ('94000000-0000-0000-0000-000000000006', '90000000-0000-0000-0000-000000000001', 'rollback comparação', 'd6'),
   ('94000000-0000-0000-0000-000000000007', '90000000-0000-0000-0000-000000000002', 'IDOR arbitragem', 'd7'),
-  ('94000000-0000-0000-0000-000000000008', '90000000-0000-0000-0000-000000000002', 'IDOR comparação', 'd8');
+  ('94000000-0000-0000-0000-000000000008', '90000000-0000-0000-0000-000000000002', 'IDOR comparação', 'd8'),
+  ('94000000-0000-0000-0000-000000000009', '90000000-0000-0000-0000-000000000001', 'retry de arbitragem', 'd9');
 
 INSERT INTO public.responses
   (id, project_id, document_id, respondent_id, respondent_type, answers)
@@ -74,33 +81,42 @@ VALUES
   ('95000000-0000-0000-0000-000000000009', '90000000-0000-0000-0000-000000000002',
    '94000000-0000-0000-0000-000000000008', '93000000-0000-0000-0000-000000000015', 'humano', '{}'),
   ('95000000-0000-0000-0000-000000000010', '90000000-0000-0000-0000-000000000002',
-   '94000000-0000-0000-0000-000000000008', NULL, 'llm', '{}');
+   '94000000-0000-0000-0000-000000000008', NULL, 'llm', '{}'),
+  ('95000000-0000-0000-0000-000000000011', '90000000-0000-0000-0000-000000000001',
+   '94000000-0000-0000-0000-000000000009', '93000000-0000-0000-0000-000000000012', 'humano', '{}'),
+  ('95000000-0000-0000-0000-000000000012', '90000000-0000-0000-0000-000000000001',
+   '94000000-0000-0000-0000-000000000009', NULL, 'llm', '{}');
 
 INSERT INTO public.field_reviews
   (id, project_id, document_id, field_name, human_response_id, llm_response_id,
-   self_reviewer_id, self_verdict, arbitrator_id, blind_verdict,
+   self_reviewer_id, self_verdict, self_reviewed_at, arbitrator_id, blind_verdict,
    blind_decided_at, final_verdict, final_decided_at)
 VALUES
   ('97000000-0000-0000-0000-000000000001', '90000000-0000-0000-0000-000000000001',
    '94000000-0000-0000-0000-000000000001', 'field_a',
    '95000000-0000-0000-0000-000000000001', '95000000-0000-0000-0000-000000000002',
-   '93000000-0000-0000-0000-000000000012', 'contesta_llm',
+   '93000000-0000-0000-0000-000000000012', 'contesta_llm', now(),
    '93000000-0000-0000-0000-000000000013', 'humano', now(), NULL, NULL),
   ('97000000-0000-0000-0000-000000000002', '90000000-0000-0000-0000-000000000001',
    '94000000-0000-0000-0000-000000000002', 'field_a',
    '95000000-0000-0000-0000-000000000003', '95000000-0000-0000-0000-000000000004',
-   '93000000-0000-0000-0000-000000000012', 'contesta_llm',
+   '93000000-0000-0000-0000-000000000012', 'contesta_llm', now(),
    '93000000-0000-0000-0000-000000000013', 'humano', now(), 'humano', now()),
   ('97000000-0000-0000-0000-000000000003', '90000000-0000-0000-0000-000000000001',
    '94000000-0000-0000-0000-000000000005', 'field_a',
    '95000000-0000-0000-0000-000000000005', '95000000-0000-0000-0000-000000000006',
-   '93000000-0000-0000-0000-000000000012', 'contesta_llm',
+   '93000000-0000-0000-0000-000000000012', 'contesta_llm', now(),
    '93000000-0000-0000-0000-000000000014', 'llm', now(), NULL, NULL),
   ('97000000-0000-0000-0000-000000000004', '90000000-0000-0000-0000-000000000002',
    '94000000-0000-0000-0000-000000000007', 'field_a',
    '95000000-0000-0000-0000-000000000007', '95000000-0000-0000-0000-000000000008',
-   '93000000-0000-0000-0000-000000000015', 'contesta_llm',
-   '93000000-0000-0000-0000-000000000016', 'humano', now(), NULL, NULL);
+   '93000000-0000-0000-0000-000000000015', 'contesta_llm', now(),
+   '93000000-0000-0000-0000-000000000016', 'humano', now(), NULL, NULL),
+  ('97000000-0000-0000-0000-000000000005', '90000000-0000-0000-0000-000000000001',
+   '94000000-0000-0000-0000-000000000009', 'field_b',
+   '95000000-0000-0000-0000-000000000011', '95000000-0000-0000-0000-000000000012',
+   '93000000-0000-0000-0000-000000000012', 'contesta_llm', now(),
+   NULL, NULL, NULL, NULL, NULL);
 
 INSERT INTO public.assignments
   (id, project_id, document_id, user_id, status, type)
@@ -122,7 +138,13 @@ VALUES
   ('96000000-0000-0000-0000-000000000008', '90000000-0000-0000-0000-000000000002',
    '94000000-0000-0000-0000-000000000008', '93000000-0000-0000-0000-000000000016', 'pendente', 'comparacao'),
   ('96000000-0000-0000-0000-000000000009', '90000000-0000-0000-0000-000000000001',
-   '94000000-0000-0000-0000-000000000004', '93000000-0000-0000-0000-000000000013', 'pendente', 'auto_revisao');
+   '94000000-0000-0000-0000-000000000004', '93000000-0000-0000-0000-000000000013', 'pendente', 'auto_revisao'),
+  ('96000000-0000-0000-0000-000000000010', '90000000-0000-0000-0000-000000000001',
+   '94000000-0000-0000-0000-000000000009', '93000000-0000-0000-0000-000000000013', 'concluido', 'arbitragem');
+
+UPDATE public.assignments
+SET completed_at = '2000-01-01T00:00:00Z'::timestamptz
+WHERE id = '96000000-0000-0000-0000-000000000010';
 
 INSERT INTO public.member_email_links
   (id, project_id, member_user_id, email, linked_user_id, created_by)
@@ -140,7 +162,8 @@ GRANT SELECT, DELETE ON public.assignments TO authenticated;
 GRANT SELECT, DELETE ON public.member_email_links TO authenticated;
 GRANT SELECT, UPDATE ON public.project_members TO service_role;
 GRANT SELECT, UPDATE ON public.field_reviews TO service_role;
-GRANT SELECT, INSERT ON public.assignments TO service_role;
+GRANT SELECT, INSERT, UPDATE ON public.assignments TO service_role;
+GRANT SELECT ON public.responses TO service_role;
 
 CREATE TEMP TABLE permission_rpc_results (
   name text PRIMARY KEY,
@@ -206,10 +229,43 @@ BEGIN
   RAISE NOTICE 'OK ACL: RPCs de membro e assignment têm roles mínimas';
 END $$;
 
+-- ----- Retry: uma nova divergência reabre assignment concluída -----
+SET LOCAL ROLE service_role;
+DO $$
+DECLARE
+  v_assigned integer;
+BEGIN
+  v_assigned := public.assign_arbitration_if_eligible(
+    '90000000-0000-0000-0000-000000000001',
+    '94000000-0000-0000-0000-000000000009',
+    '93000000-0000-0000-0000-000000000013',
+    ARRAY['field_b']
+  );
+
+  IF v_assigned <> 1 OR NOT EXISTS (
+    SELECT 1
+    FROM public.field_reviews
+    WHERE id = '97000000-0000-0000-0000-000000000005'
+      AND arbitrator_id = '93000000-0000-0000-0000-000000000013'
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM public.assignments
+    WHERE id = '96000000-0000-0000-0000-000000000010'
+      AND status = 'pendente'
+      AND completed_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'FALHOU retry: assignment concluída não reabriu com a nova divergência';
+  END IF;
+
+  RAISE NOTICE 'OK retry: assignment concluída reabriu como pendente';
+END;
+$$;
+RESET ROLE;
+
 -- ----- RLS: pesquisador vê o membro, mas não altera nem libera trabalho -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"93000000-0000-0000-0000-000000000012"}',
+  '{"sub":"93000000-0000-0000-0000-000000000012","supabase_uid":"93000000-0000-0000-0000-000000000012"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -276,7 +332,7 @@ END $$;
 -- ----- IDOR: coordenador de A não altera membro nem trabalho de B -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"93000000-0000-0000-0000-000000000011"}',
+  '{"sub":"93000000-0000-0000-0000-000000000011","supabase_uid":"93000000-0000-0000-0000-000000000011"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -353,7 +409,7 @@ END $$;
 -- ----- Caminho feliz: desabilita/limpa e habilita sem limpar -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"93000000-0000-0000-0000-000000000011"}',
+  '{"sub":"93000000-0000-0000-0000-000000000011","supabase_uid":"93000000-0000-0000-0000-000000000011"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -488,7 +544,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"93000000-0000-0000-0000-000000000011"}',
+  '{"sub":"93000000-0000-0000-0000-000000000011","supabase_uid":"93000000-0000-0000-0000-000000000011"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -569,7 +625,7 @@ CREATE TRIGGER test_fail_member_permission_cleanup
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"93000000-0000-0000-0000-000000000011"}',
+  '{"sub":"93000000-0000-0000-0000-000000000011","supabase_uid":"93000000-0000-0000-0000-000000000011"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -633,7 +689,7 @@ END $$;
 -- ----- Remoção: membership, pendências e aliases formam uma transação -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"93000000-0000-0000-0000-000000000011"}',
+  '{"sub":"93000000-0000-0000-0000-000000000011","supabase_uid":"93000000-0000-0000-0000-000000000011"}',
   true
 );
 SET LOCAL ROLE authenticated;

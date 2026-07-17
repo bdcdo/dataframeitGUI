@@ -80,7 +80,7 @@ Se um deploy falhar, o workflow abre um incidente atribuído ao owner com a apli
 ### 1. Supabase Cloud
 
 1. Criar projeto em [supabase.com](https://supabase.com)
-2. Aplicar as migrations de `frontend/supabase/migrations/` (`npx supabase db push`)
+2. Antes do deploy da aplicação, revisar `npx supabase db push --dry-run` e aplicar manualmente apenas as migrations esperadas de `frontend/supabase/migrations/` (`npx supabase db push`); não usar `--include-all` para incorporar migrations retroativas
 3. Auth é via **Clerk** (não o Auth nativo do Supabase); o RLS valida o JWT do Clerk
 4. Anotar: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`
 
@@ -112,6 +112,10 @@ fly secrets set CLERK_SECRET_KEY=sk_... \
   -a gui-analise-sistematica-frontend
 fly deploy -c fly.toml -a gui-analise-sistematica-frontend   # fallback; o normal é via CI
 ```
+
+O endpoint de webhook do Clerk em produção é `https://dataframeit.com.br/api/webhooks/clerk`. Ele deve assinar e entregar `user.created`, `user.updated` e `user.deleted`; o signing secret correspondente fica em `CLERK_WEBHOOK_SECRET`. Ao ativar uma rota nova de reconciliação, configure esses três eventos somente depois que o frontend compatível estiver no ar e confirme uma entrega `2xx` de cada tipo — uma rota antiga pode responder `2xx` sem processar eventos que ainda não conhece.
+
+Mudanças que dependem de RPCs, constraints ou colunas novas seguem ordem estrita: backup e preflight, reparo de dados incompatíveis, migrations, verificação de pós-condições, deploy do frontend do mesmo SHA e smokes autenticados. Depois que o schema novo recebe escritas, o rollback suportado é roll-forward; não edite uma migration já registrada.
 
 ### Variáveis de ambiente
 

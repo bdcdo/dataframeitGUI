@@ -1,8 +1,13 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, resolveEffectiveUserId } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import {
+  getProjectAccessContext,
+  resolveProjectQueueIdentity,
+} from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { ArbitrationPage } from "@/components/arbitration/ArbitrationPage";
 import { assignOrder } from "@/lib/arbitration-order";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { fetchActiveReviewQueueDocuments } from "@/lib/reviews/queries";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 
 // Server-side A/B embaralhamento da fase cega — o navegador nunca recebe os
@@ -20,15 +25,17 @@ export default async function ArbitrationRoute({
   const [{ id }, sp, user, supabase] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
 
   // Fila 100% pessoal: pertence à identidade EFETIVA (impersonação master via
   // ?viewAsUser= ou conta-alias da spec 002), como no Codificar/Comparação.
   // Com user.id cru, o master "visualizando como" via a própria fila (vazia).
-  const { effectiveUserId } = await resolveEffectiveUserId(id, user, sp.viewAsUser);
+  const access = requireResolvedProjectAccess(
+    await getProjectAccessContext(id, user),
+  );
+  const { queueUserId } = resolveProjectQueueIdentity(access, sp.viewAsUser);
 
   const [{ data: project }, { data: assignments }] = await Promise.all([
     supabase
@@ -40,7 +47,7 @@ export default async function ArbitrationRoute({
       .from("assignments")
       .select("document_id, status")
       .eq("project_id", id)
-      .eq("user_id", effectiveUserId)
+      .eq("user_id", queueUserId)
       .eq("type", "arbitragem")
       .neq("status", "concluido"),
   ]);
@@ -59,19 +66,14 @@ export default async function ArbitrationRoute({
   }
 
   const [{ data: docs }, { data: fieldReviews }] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("id, title, external_id, text")
-      .in("id", docIds)
-      .is("excluded_at", null)
-      .is("exclusion_pending_at", null),
+    fetchActiveReviewQueueDocuments(supabase, docIds),
     supabase
       .from("field_reviews")
       .select(
         "id, document_id, field_name, human_response_id, llm_response_id, blind_verdict, final_verdict, self_justification",
       )
       .in("document_id", docIds)
-      .eq("arbitrator_id", effectiveUserId)
+      .eq("arbitrator_id", queueUserId)
       .eq("self_verdict", "contesta_llm")
       .is("final_verdict", null),
   ]);
@@ -143,11 +145,14 @@ export default async function ArbitrationRoute({
       (llm?.answers as Record<string, unknown>)?.[fr.field_name] ?? null;
 
     const order = assignOrder(fr.id);
-    const aSide: ArbitrationVerdict = order === "human_first" ? "humano" : "llm";
-    const bSide: ArbitrationVerdict = order === "human_first" ? "llm" : "humano";
+    const aSide: ArbitrationVerdict =
+      order === "human_first" ? "humano" : "llm";
+    const bSide: ArbitrationVerdict =
+      order === "human_first" ? "llm" : "humano";
     const aAnswer = order === "human_first" ? humanAnswer : llmAnswer;
     const bAnswer = order === "human_first" ? llmAnswer : humanAnswer;
-    const blindVerdict = (fr.blind_verdict as ArbitrationVerdict | null) ?? null;
+    const blindVerdict =
+      (fr.blind_verdict as ArbitrationVerdict | null) ?? null;
 
     payload.fields.push({
       fieldReviewId: fr.id,

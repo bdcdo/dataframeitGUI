@@ -42,25 +42,25 @@ describe("computeBacklogRows", () => {
       ...overrides,
     };
   }
+  const members = (...ids: string[]) => new Set(ids.length ? ids : ["user1"]);
 
   it("gera assignment + field_review quando humano e LLM divergem", () => {
     const llmByDocId = new Map([["doc1", llm({})]]);
-    const { assignmentRows, fieldReviewRows, regenerated } = computeBacklogRows(
+    const { candidates, fieldReviewRows, regenerated } = computeBacklogRows(
       "proj1",
       [human({})],
       llmByDocId,
       new Map(),
       [field],
+      members(),
     );
 
     expect(regenerated).toBe(1);
-    expect(assignmentRows).toEqual([
+    expect(candidates).toEqual([
       {
-        project_id: "proj1",
-        document_id: "doc1",
-        user_id: "user1",
-        type: "auto_revisao",
-        status: "pendente",
+        human_response_id: "human1",
+        llm_response_id: "llm1",
+        field_names: ["campo1"],
       },
     ]);
     expect(fieldReviewRows).toEqual([
@@ -76,7 +76,14 @@ describe("computeBacklogRows", () => {
   });
 
   it("pula quando não há resposta LLM para o documento", () => {
-    const result = computeBacklogRows("proj1", [human({})], new Map(), new Map(), [field]);
+    const result = computeBacklogRows(
+      "proj1",
+      [human({})],
+      new Map(),
+      new Map(),
+      [field],
+      members(),
+    );
     expect(result.regenerated).toBe(0);
     expect(result.fieldReviewRows).toEqual([]);
   });
@@ -89,8 +96,54 @@ describe("computeBacklogRows", () => {
       llmByDocId,
       new Map(),
       [field],
+      members(),
     );
     expect(result.regenerated).toBe(0);
+  });
+
+  // A remoção de um membro preserva as respostas dele. Sem este filtro, elas
+  // viravam candidatas e a RPC recusava o LOTE INTEIRO com 23514, deixando a
+  // regeneração do backlog quebrada para sempre no projeto — inclusive para
+  // quem continua membro.
+  it("pula a resposta de quem não é mais membro do projeto", () => {
+    const llmByDocId = new Map([["doc1", llm({})]]);
+    const result = computeBacklogRows(
+      "proj1",
+      [human({ respondent_id: "ex-membro" })],
+      llmByDocId,
+      new Map(),
+      [field],
+      members("user1"),
+    );
+    expect(result.regenerated).toBe(0);
+    expect(result.candidates).toEqual([]);
+    expect(result.fieldReviewRows).toEqual([]);
+  });
+
+  it("não deixa um ex-membro impedir a regeneração dos membros atuais", () => {
+    const llmByDocId = new Map([
+      ["doc1", llm({})],
+      ["doc2", llm({ id: "llm2", document_id: "doc2" })],
+    ]);
+    const result = computeBacklogRows(
+      "proj1",
+      [
+        human({ id: "human-ex", document_id: "doc1", respondent_id: "ex-membro" }),
+        human({ id: "human-atual", document_id: "doc2", respondent_id: "user1" }),
+      ],
+      llmByDocId,
+      new Map(),
+      [field],
+      members("user1"),
+    );
+    expect(result.regenerated).toBe(1);
+    expect(result.candidates).toEqual([
+      {
+        human_response_id: "human-atual",
+        llm_response_id: "llm2",
+        field_names: ["campo1"],
+      },
+    ]);
   });
 
   it("equivalência registrada funde humano e LLM, eliminando a divergência", () => {
@@ -113,6 +166,7 @@ describe("computeBacklogRows", () => {
       llmByDocId,
       equivByDoc,
       [field],
+      members(),
     );
 
     expect(result.regenerated).toBe(0);

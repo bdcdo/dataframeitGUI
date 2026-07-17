@@ -1,8 +1,8 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { RoundsConfig } from "@/components/config/RoundsConfig";
-import { coordinatorGate } from "@/lib/project-access";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import type { Round, RoundStrategy } from "@/lib/types";
 import { versionLabel } from "@/lib/rounds";
 
@@ -13,12 +13,11 @@ export default async function RoundsConfigPage({
 }) {
   const [{ id }, user, supabase] = await Promise.all([
     params,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
 
-  const [{ data: project }, { data: rounds }, access] = await Promise.all([
+  const [{ data: project }, { data: rounds }, accessResult] = await Promise.all([
     supabase
       .from("projects")
       .select(
@@ -31,14 +30,10 @@ export default async function RoundsConfigPage({
       .select("id, project_id, label, created_at")
       .eq("project_id", id)
       .order("created_at", { ascending: true }),
-    getProjectAccessContext(id, user.id, user.isMaster),
+    getProjectAccessContext(id, user),
   ]);
 
-  // Fail-open em erro transitorio, alinhado ao gate fail-open de config/layout:
-  // isCoordinator aqui so liga affordances de config (mutacoes de rodada
-  // re-checam coordenador em actions/rounds.ts). getProjectAccessContext cobre
-  // isMaster e e cache-hit da leitura ja feita pelo config/layout.
-  const isCoordinator = coordinatorGate(access, { failOpen: true });
+  const { isCoordinator } = requireResolvedProjectAccess(accessResult);
 
   const currentVersion = versionLabel({
     major: project?.schema_version_major ?? 0,

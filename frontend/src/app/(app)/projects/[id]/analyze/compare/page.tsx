@@ -1,9 +1,12 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext, resolveEffectiveUserId } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import {
+  getProjectAccessContext,
+  resolveProjectQueueIdentity,
+} from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { ComparePage } from "@/components/compare/ComparePage";
-import { coordinatorGate } from "@/lib/project-access";
 import {
   readCompareFilters,
   compareDefaultsForMode,
@@ -44,20 +47,9 @@ export default async function ComparePageRoute({
   const [{ id }, sp, user, supabase] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
-  if (!user) redirect("/auth/login");
-
-  // Fila pessoal pertence à identidade EFETIVA: impersonação master
-  // (?viewAsUser=, mesmo param do Codificar) ou conta-alias (spec 002).
-  // Filtrar por user.id cru mostrava a fila do master (vazia) durante a
-  // impersonação — foi o "não tem documento atribuído" da Mariana.
-  const { effectiveUserId, isImpersonating } = await resolveEffectiveUserId(
-    id,
-    user,
-    sp.viewAsUser,
-  );
 
   const [
     { data: project },
@@ -65,7 +57,7 @@ export default async function ComparePageRoute({
     { data: versionLog },
     { data: allAssignments },
     { data: allEquivalences },
-    access,
+    rawAccess,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -103,8 +95,15 @@ export default async function ComparePageRoute({
       // divergences. Revisit if it becomes a bottleneck.
       .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id")
       .eq("project_id", id),
-    getProjectAccessContext(id, user.id, user.isMaster),
+    getProjectAccessContext(id, user),
   ]);
+  const access = requireResolvedProjectAccess(rawAccess);
+
+  // Fila pessoal pertence à identidade canônica; a impersonação master
+  // (?viewAsUser=, mesmo param do Codificar) tem precedência. Uma falha na
+  // resolução interrompe a rota em vez de parecer uma fila vazia.
+  const { ownMemberUserId, queueUserId, isImpersonating } =
+    resolveProjectQueueIdentity(access, sp.viewAsUser);
 
   // Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
   // detection on the server and for fusing answer cards on the client.
@@ -115,7 +114,7 @@ export default async function ComparePageRoute({
   // atribuidos a si (compareAssignedDocIds). A policy RLS deixa qualquer
   // membro ler todas as responses, entao esse recorte e so aplicacional;
   // fail-open exporia documentos/respostas de terceiros em erro transitorio.
-  const isCoordinator = coordinatorGate(access, { failOpen: false });
+  const { isCoordinator } = access;
 
   // Coordenador também compara documentos (não só supervisiona) — por isso o
   // padrão é a fila pessoal dele, igual pesquisador. "Todos" é uma escolha
@@ -165,7 +164,7 @@ export default async function ComparePageRoute({
   const compareAssignedDocIds = assignedCompareDocIds(
     showAllQueue,
     allAssignments,
-    effectiveUserId,
+    queueUserId,
   );
 
   // Distingue "sem nada atribuído" de "tem atribuído, mas foi filtrado por
@@ -182,7 +181,7 @@ export default async function ComparePageRoute({
   const compareAssignmentStatusByDoc = buildCompareAssignmentStatusByDoc(
     allAssignments,
     showAllQueue,
-    effectiveUserId,
+    queueUserId,
   );
 
   const { responsesByDoc, docsMetaMap } = indexResponsesByDoc(allResponses);
@@ -222,7 +221,7 @@ export default async function ComparePageRoute({
         .from("reviews")
         .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id")
         .eq("project_id", id)
-        .eq("reviewer_id", effectiveUserId),
+        .eq("reviewer_id", queueUserId),
       supabase
         .from("project_comments")
         .select("document_id, field_name")
@@ -246,7 +245,7 @@ export default async function ComparePageRoute({
   // impersonação, o progresso exibido é o do dono da fila, não o do master.
   const { existingReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
     reviews,
-    effectiveUserId,
+    queueUserId,
     qualifiedDocIds,
     divergentFields,
   );
@@ -290,7 +289,7 @@ export default async function ComparePageRoute({
         latestMajorLabel={latestMajorLabel}
         currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
         equivalencesByDocField={equivalencesByDocField}
-        currentUserId={user.id}
+        currentUserId={ownMemberUserId}
         isImpersonating={isImpersonating}
         canManageAnyPair={isCoordinator}
         isCoordinator={isCoordinator}

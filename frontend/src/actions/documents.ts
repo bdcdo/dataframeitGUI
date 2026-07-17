@@ -1,7 +1,12 @@
 "use server";
 
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext, requireCoordinator } from "@/lib/auth";
+import {
+  getAuthUser,
+  getProjectAccessContext,
+  requireCoordinator,
+  resolveProjectMemberActor,
+} from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 
 const TAG_PROFILE = Object.freeze({ expire: 300 });
@@ -244,12 +249,8 @@ export async function revalidateProjectDocumentsCache(projectId: string) {
 export async function revalidateProjectDocuments(projectId: string) {
   const user = await getAuthUser();
   if (!user) return;
-  const { project } = await getProjectAccessContext(
-    projectId,
-    user.id,
-    user.isMaster,
-  );
-  if (!project) return;
+  const access = await getProjectAccessContext(projectId, user);
+  if (access.status === "unavailable" || !access.project) return;
   await revalidateProjectDocumentsCache(projectId);
 }
 
@@ -389,10 +390,12 @@ export interface BrowseDocument {
 }
 
 export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDocument[]> {
-  const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
-
-  const supabase = await createSupabaseServer();
+  const [supabase, actor] = await Promise.all([
+    createSupabaseServer(),
+    resolveProjectMemberActor(projectId),
+  ]);
+  if (!actor.ok) throw new Error(actor.error);
+  const { user, memberUserId } = actor;
 
   const [{ data: docs }, { data: responses }, { data: myPending }] =
     await Promise.all([
@@ -426,7 +429,7 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
   responses?.forEach((r) => {
     if (!countMap.has(r.document_id)) countMap.set(r.document_id, new Set());
     countMap.get(r.document_id)!.add(r.respondent_id);
-    if (r.respondent_id === user.id) userRespondedSet.add(r.document_id);
+    if (r.respondent_id === memberUserId) userRespondedSet.add(r.document_id);
   });
 
   const minePendingSet = new Set(
@@ -460,10 +463,12 @@ export async function getDocumentForCoding(
   projectId: string,
   documentId: string
 ): Promise<{ document: { id: string; external_id: string | null; title: string | null; text: string; exclusionPending: DocumentExclusionPending | null }; existingAnswers: Record<string, unknown> | null; existingJustifications: Record<string, unknown> | null }> {
-  const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
-
-  const supabase = await createSupabaseServer();
+  const [supabase, actor] = await Promise.all([
+    createSupabaseServer(),
+    resolveProjectMemberActor(projectId),
+  ]);
+  if (!actor.ok) throw new Error(actor.error);
+  const { user, memberUserId } = actor;
 
   // Sem filtro de exclusion_pending_at: quem sinalizou precisa continuar
   // abrindo o doc (bloqueado) para poder desfazer; deep-link de terceiro
@@ -510,14 +515,27 @@ export async function getDocumentForCoding(
     exclusionPending,
   };
 
-  const { data: response } = await supabase
+  // O filtro is_latest e o maybeSingle espelham fetchSaveContext em
+  // actions/responses.ts: depois de uma unificação de membros, o conjunto
+  // fundido pode ter respostas antigas (is_latest=false) do mesmo respondente
+  // no mesmo documento. Sem o filtro, .single() erra com múltiplas linhas e o
+  // formulário abriria em branco — e o save seguinte gravaria o branco por
+  // cima da resposta vigente.
+  const { data: response, error: responseError } = await supabase
     .from("responses")
     .select("answers, justifications")
     .eq("project_id", projectId)
     .eq("document_id", documentId)
-    .eq("respondent_id", user.id)
+    .eq("respondent_id", memberUserId)
     .eq("respondent_type", "humano")
-    .single();
+    .eq("is_latest", true)
+    .maybeSingle();
+
+  // Uma leitura falha não pode virar "ainda não respondeu": o formulário em
+  // branco que ela produziria é indistinguível de um documento novo.
+  if (responseError) {
+    throw new Error(responseError.message);
+  }
 
   // Fronteira de leitura do modo Explorar — mesma primitiva do modo Atribuídos
   // (analyze/code/page.tsx), que lê o mesmo dado por outro caminho.

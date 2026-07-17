@@ -17,8 +17,8 @@ interface AutoReviewPageHeaderProps {
   reviewerLabel: string;
   isCoordinator: boolean;
   reviewers: AutoReviewQueueOwner[];
-  viewAsUserId: string;
-  currentUserId: string;
+  queueUserId: string;
+  ownQueueUserId: string;
   onViewAsChange: (userId: string) => void;
   docsCount: number;
   docIndex: number;
@@ -30,8 +30,8 @@ export function AutoReviewPageHeader({
   reviewerLabel,
   isCoordinator,
   reviewers,
-  viewAsUserId,
-  currentUserId,
+  queueUserId,
+  ownQueueUserId,
   onViewAsChange,
   docsCount,
   docIndex,
@@ -49,7 +49,7 @@ export function AutoReviewPageHeader({
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {isCoordinator && reviewers.length > 1 ? (
-          <Select value={viewAsUserId} onValueChange={onViewAsChange}>
+          <Select value={queueUserId} onValueChange={onViewAsChange}>
             <SelectTrigger className="h-7 w-[200px] text-xs">
               <SelectValue />
             </SelectTrigger>
@@ -57,7 +57,7 @@ export function AutoReviewPageHeader({
               {reviewers.map((r) => (
                 <SelectItem key={r.userId} value={r.userId} className="text-xs">
                   {r.name || r.email || r.userId.slice(0, 8)}
-                  {r.userId === currentUserId ? " (você)" : ""}
+                  {r.userId === ownQueueUserId ? " (você)" : ""}
                 </SelectItem>
               ))}
             </SelectContent>

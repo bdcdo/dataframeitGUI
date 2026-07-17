@@ -1,13 +1,15 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, isProjectCoordinator } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import {
   AutoReviewPage,
   type AutoReviewDoc,
   type AutoReviewQueueOwner,
 } from "@/components/auto-review/AutoReviewPage";
 import type { PydanticField } from "@/lib/types";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { fetchActiveReviewQueueDocuments } from "@/lib/reviews/queries";
 
 export default async function AutoReviewRoute({
   params,
@@ -19,30 +21,29 @@ export default async function AutoReviewRoute({
   const [{ id }, { viewAs }, user] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
   ]);
-  if (!user) redirect("/auth/login");
 
-  const [supabase, isCoordinator] = await Promise.all([
+  const [supabase, accessResult] = await Promise.all([
     createSupabaseServer(),
-    isProjectCoordinator(id, user),
+    getProjectAccessContext(id, user),
   ]);
+  const access = requireResolvedProjectAccess(accessResult);
+  const { isCoordinator, memberUserId: ownQueueUserId } = access;
 
-  // viewAs só é honrado para coordenadores; pesquisador sempre vê a própria fila.
-  const targetUserId = isCoordinator && viewAs ? viewAs : user.id;
+  // O viewAs desta tela pertence ao coordenador e tem precedência sobre a
+  // identidade canônica. Sem ele, a fila pessoal resolve contas-alias como as
+  // demais filas.
+  const queueUserId = isCoordinator && viewAs ? viewAs : ownQueueUserId;
 
   const [{ data: project }, { data: assignments }, { data: memberRows }] =
     await Promise.all([
-      supabase
-        .from("projects")
-        .select("pydantic_fields")
-        .eq("id", id)
-        .single(),
+      supabase.from("projects").select("pydantic_fields").eq("id", id).single(),
       supabase
         .from("assignments")
         .select("document_id, status")
         .eq("project_id", id)
-        .eq("user_id", targetUserId)
+        .eq("user_id", queueUserId)
         .eq("type", "auto_revisao")
         .neq("status", "concluido"),
       isCoordinator
@@ -54,15 +55,17 @@ export default async function AutoReviewRoute({
     ]);
 
   const reviewers: AutoReviewQueueOwner[] = isCoordinator
-    ? ((memberRows ?? []) as Array<{
-        user_id: string;
-        profiles: {
-          id: string;
-          email: string | null;
-          first_name: string | null;
-          last_name: string | null;
-        };
-      }>).map((m) => {
+    ? (
+        (memberRows ?? []) as Array<{
+          user_id: string;
+          profiles: {
+            id: string;
+            email: string | null;
+            first_name: string | null;
+            last_name: string | null;
+          };
+        }>
+      ).map((m) => {
         const fullName = [m.profiles?.first_name, m.profiles?.last_name]
           .filter(Boolean)
           .join(" ");
@@ -82,27 +85,22 @@ export default async function AutoReviewRoute({
         fields={(project?.pydantic_fields as PydanticField[]) ?? []}
         docs={[]}
         isCoordinator={isCoordinator}
-        viewAsUserId={targetUserId}
+        queueUserId={queueUserId}
         reviewers={reviewers}
-        currentUserId={user.id}
+        ownQueueUserId={ownQueueUserId}
       />
     );
   }
 
   const [{ data: docs }, { data: fieldReviews }] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("id, title, external_id, text")
-      .in("id", docIds)
-      .is("excluded_at", null)
-      .is("exclusion_pending_at", null),
+    fetchActiveReviewQueueDocuments(supabase, docIds),
     supabase
       .from("field_reviews")
       .select(
         "id, document_id, field_name, human_response_id, llm_response_id, self_verdict, self_justification",
       )
       .in("document_id", docIds)
-      .eq("self_reviewer_id", targetUserId),
+      .eq("self_reviewer_id", queueUserId),
   ]);
 
   // Buscar só as respostas referenciadas (evita puxar todas as versões
@@ -168,15 +166,19 @@ export default async function AutoReviewRoute({
   );
 
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>
+    <Suspense
+      fallback={
+        <div className="p-6 text-sm text-muted-foreground">Carregando…</div>
+      }
+    >
       <AutoReviewPage
         projectId={id}
         fields={fieldsMeta}
         docs={docsToReview}
         isCoordinator={isCoordinator}
-        viewAsUserId={targetUserId}
+        queueUserId={queueUserId}
         reviewers={reviewers}
-        currentUserId={user.id}
+        ownQueueUserId={ownQueueUserId}
       />
     </Suspense>
   );

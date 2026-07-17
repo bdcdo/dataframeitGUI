@@ -106,21 +106,21 @@ export function formatAnswer(val: unknown): string {
   return String(val);
 }
 
-// Resolve o respondente efetivo cujas respostas a aba "Meu Gabarito" exibe.
+// Resolve o respondente cujas respostas a aba "Meu Gabarito" exibe.
 // Só coordenador, criador ou master podem inspecionar as respostas de OUTRO
-// respondente (via ?viewAsUser=...); qualquer outro vê apenas as próprias.
+// respondente (via ?viewAsUser=...); qualquer outro vê as do próprio membro
+// canônico do projeto.
 // SEGURANÇA: a policy RLS "Members view responses" deixa qualquer membro ler
 // todas as responses do projeto (não filtra por respondent_id), então esta
 // checagem é a única barreira — por isso o `isCoordinator` que a alimenta é
-// fail-closed (não incorpora queryFailed). Ver reviews/my-verdicts/page.tsx.
-export function resolveEffectiveUserId(opts: {
-  selfId: string;
-  isMaster: boolean;
+// fail-closed. Ver reviews/my-verdicts/page.tsx.
+export function resolveViewedRespondentId(opts: {
+  ownMemberUserId: string;
   isCoordinator: boolean;
   viewAsUser: string | undefined;
 }): string {
-  const { selfId, isMaster, isCoordinator, viewAsUser } = opts;
-  return (isMaster || isCoordinator) && viewAsUser ? viewAsUser : selfId;
+  const { ownMemberUserId, isCoordinator, viewAsUser } = opts;
+  return isCoordinator && viewAsUser ? viewAsUser : ownMemberUserId;
 }
 
 function getRespondentKey(r: {
@@ -152,6 +152,18 @@ function getRespondentDisplayName(
 /* ── Fetch base data ── */
 
 export const REVIEW_BASE_DATA_LIMIT = 50000;
+
+export function fetchActiveReviewQueueDocuments(
+  supabase: SupabaseClient,
+  documentIds: string[],
+) {
+  return supabase
+    .from("documents")
+    .select("id, title, external_id, text")
+    .in("id", documentIds)
+    .is("excluded_at", null)
+    .is("exclusion_pending_at", null);
+}
 
 /**
  * Marca como `true` cada tabela cuja query atingiu o teto de

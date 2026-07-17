@@ -14,6 +14,7 @@
 
 - Q: Quando uma página protegida encontra sessão válida, mas vínculo interno ausente ou divergente, ela deve tentar reparo silencioso no render ou encaminhar o usuário para conclusão de acesso? → A: Redirecionar para conclusão de acesso/reparo; páginas protegidas não fazem reparo silencioso.
 - Q: `viewAs`/impersonação deve afetar também escritas ou apenas leitura, navegação e escopo visual? → A: `viewAs`/impersonação só afeta leitura, navegação e escopo visual; escritas continuam proibidas ou feitas como ator real quando já permitido.
+- Q: Qual fonte decide se uma conta ainda possui um e-mail e pode manter aliases? → A: O estado atual relido do Clerk. `profiles.email`, metadata ou payload antigo de webhook não substituem e-mail primário verificado; ausência de primário e `user.deleted` falham fechados.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -77,13 +78,16 @@ O coordenador, pesquisador, pesquisador vinculado por e-mail alternativo ou usu�
 - Usuário master visualiza filas como pesquisador, mas executa ações que precisam registrar o ator real.
 - Provedor de identidade ou serviço de sincronização fica temporariamente indisponível durante o login.
 - Página protegida faz múltiplas leituras independentes de dados do mesmo projeto durante uma única solicitação.
+- Conta Clerk existe, mas o ID primário está ausente, não está verificado ou não corresponde a nenhum endereço atual; a resolução não escolhe o primeiro e-mail da lista.
+- `user.deleted` chega depois de uma reconciliação em voo, ou um `user.updated` antigo chega depois da exclusão; o marker revogado e a geração impedem restauração de acesso.
+- Uma geração nova do Clerk supera outra já iniciada; apenas o snapshot mais recente pode concluir profile, aliases e marker.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: The system MUST reduce repeated authentication work within a single protected page request by reusing the resolved authenticated identity for all reads that belong to that request.
-- **FR-002**: The system MUST support authenticated access to dashboards and project pages without requiring a remote identity-provider lookup during the critical rendering path when the user's account link is already prepared.
+- **FR-002**: The system MUST support authenticated access to dashboards and project pages without repeating full identity-provider resolution for each protected consumer; the single request-scoped resolution may read the current Clerk user once.
 - **FR-003**: The system MUST use the official supported integration path between the identity provider and the data authorization layer as the default approach for authenticated data access.
 - **FR-004**: The system MUST NOT replace per-user authorization controls with a general privileged data-access path for ordinary authenticated pages.
 - **FR-005**: The system MUST preserve project-level authorization for coordinators, direct researchers, linked-email researchers, master users, and users without project access.
@@ -95,15 +99,18 @@ O coordenador, pesquisador, pesquisador vinculado por e-mail alternativo ou usu�
 - **FR-011**: The system MUST distinguish at least these outcomes: signed out, signed in but link pending, signed in without project access, and signed in with a technical synchronization failure.
 - **FR-012**: The system MUST keep account-link preparation idempotent so retrying access completion does not create duplicate user records or duplicate project memberships.
 - **FR-013**: The system MUST define a measured contingency process for any non-default token path: it can only be considered after the official supported path fails the performance target in measurement, and it must require explicit security review before implementation.
-- **FR-014**: The system MUST provide a regression check that flags reintroduction of the legacy custom-token path or full remote user lookup in protected rendering flows.
+- **FR-014**: The system MUST provide a regression check that flags reintroduction of the legacy custom-token path or repeated full remote user lookup per protected consumer.
 - **FR-015**: The system MUST provide observability or test evidence sufficient to show whether authentication work is still contributing materially to protected-page latency.
 - **FR-016**: The system MUST keep existing login and sign-out behavior recognizable to current users, except for clearer completion and error states after login.
+- **FR-017**: The system MUST treat the current Clerk state as authoritative for e-mail identity; missing or unverified primary e-mail, removed verified addresses and `user.deleted` MUST fail closed and revoke derived access.
+- **FR-018**: The system MUST use a generation-aware two-phase reconciliation so an older webhook, token or retry cannot restore access after a newer Clerk snapshot or account deletion.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Authenticated Actor**: The real signed-in account controlling the session; used for accountability, master checks, and security decisions that must refer to who is actually logged in.
 - **Internal User Profile**: The platform identity used by project membership, ownership, assignments, responses, reviews, and row-level access controls.
-- **Account Link**: The durable association between the authenticated actor and the internal user profile, including links created during first login, webhook synchronization, or recovery.
+- **Account Link**: The row in `clerk_user_mapping` that associates a Clerk ID with a profile and persists completion marker, snapshot generation and deletion state; metadata alone is insufficient.
+- **Clerk Access Snapshot**: The two-phase reconciliation of a specific `User.updatedAt` generation: phase one invalidates the prior marker; phase two atomically applies profile, verified aliases and the completed marker before metadata is published.
 - **Effective Project Member**: The internal identity used for project work when aliases or linked e-mails cause a signed-in account to act as a canonical project member.
 - **Project Access Context**: The user's relationship to a project, including creator, coordinator, researcher, master visibility, or no access.
 - **Access Completion State**: A temporary state shown after login when the session exists but the platform cannot yet confirm the internal account link required for protected data access.
@@ -117,14 +124,16 @@ O coordenador, pesquisador, pesquisador vinculado por e-mail alternativo ou usu�
 - **SC-003**: 100% of tested roles — coordinator, direct researcher, linked-email researcher, master user, and authenticated user without access — retain their expected project visibility and permissions after the change.
 - **SC-004**: 100% of tested account-link failure cases show a non-technical completion or recovery state instead of a raw error, loop, blank page, or diagnostic-token instruction.
 - **SC-005**: No ordinary protected page uses a general privileged data-access path to bypass per-user authorization in the standard authenticated flow.
-- **SC-006**: A regression check fails if the legacy custom-token path or full remote user lookup is reintroduced into the protected rendering path.
+- **SC-006**: A regression check fails if the legacy custom-token path or repeated full remote user lookup per protected consumer is reintroduced into the protected rendering path.
 - **SC-007**: Retrying access completion for the same signed-in account produces at most one internal profile link and does not duplicate project membership records.
+- **SC-008**: 100% of tests for missing primary e-mail, `user.deleted`, 404 re-read and superseded generation remain fail-closed: stale tokens or events do not keep or restore project access.
 
 ## Assumptions
 
 - The existing identity provider remains the login system for this feature; replacing it is out of scope.
 - The existing per-user data authorization model remains the security boundary for protected project data; replacing it with application-only authorization is out of scope.
-- The first release may include an immediate request-scoped caching slice before the deeper migration, as long as the full feature still targets removal of remote identity work from the critical render path.
+- The current contract permits one request-scoped `currentUser()` read plus the bounded mapping/master lookups; eliminating that remaining provider read is a separate future optimization that requires measurement and must preserve the same fail-closed contract.
 - The official supported integration path between the identity provider and the data authorization layer is the default path unless measurement proves it cannot meet the performance target.
 - A locally issued database-access token is not part of the default solution; it is a contingency that requires separate security review if measurement justifies it.
 - Existing users, project memberships, account links, aliases, and master-user behavior must continue working through the migration.
+- Schema changes are validated locally and applied to remote environments only through the project's separate manual operation; the feature workflow never publishes migrations automatically.

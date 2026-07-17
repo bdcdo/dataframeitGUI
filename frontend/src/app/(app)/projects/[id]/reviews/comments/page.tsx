@@ -1,5 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { getProjectAccessContext } from "@/lib/auth";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { coordinatorGate } from "@/lib/project-access";
 import { ReviewCommentsView } from "@/components/stats/ReviewCommentsView";
 import type { PydanticField } from "@/lib/types";
@@ -24,7 +25,7 @@ export default async function CommentsPage({
 }) {
   const [{ id }, user, supabase] = await Promise.all([
     params,
-    getAuthUser(),
+    requirePageAuthUser(),
     createSupabaseServer(),
   ]);
 
@@ -39,7 +40,7 @@ export default async function CommentsPage({
     { data: projectComments },
     { data: verdictQuestions },
     { data: noteResolutions },
-    accessContext,
+    accessResult,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -101,9 +102,7 @@ export default async function CommentsPage({
       .from("note_resolutions")
       .select("response_id, resolved_at")
       .eq("project_id", id),
-    user
-      ? getProjectAccessContext(id, user.id, user.isMaster)
-      : Promise.resolve(null),
+    getProjectAccessContext(id, user),
   ]);
 
   const noteResolvedMap = new Map(
@@ -129,14 +128,16 @@ export default async function CommentsPage({
     revision: project?.schema_revision ?? 0,
   };
 
-  // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
-  // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so
-  // liga affordances no ReviewCommentsView (a view nao recorta dados por papel)
-  // e as mutacoes por tras delas re-checam via isProjectCoordinator (fail-closed).
-  // NB: ao contrario de config/rounds, o layout-pai reviews/layout.tsx NAO
-  // gateia coordenador (so faz `if (!user) redirect`) — a seguranca do fail-open
-  // aqui depende inteiramente do affordance-only acima, nao de um backstop no layout.
-  const isCoordinator = coordinatorGate(accessContext, { failOpen: true });
+  // Fail-open em contexto de acesso indisponível (erro transitório de query):
+  // não rebaixa um coordenador legítimo a não-coordenador por falha transiente.
+  // Seguro aqui porque isCoordinator só liga affordances no ReviewCommentsView
+  // (a view não recorta dados por papel) e as mutações por trás delas
+  // re-checam via requireCoordinator (fail-closed).
+  // NB: ao contrário de config/rounds, o layout-pai reviews/layout.tsx NÃO
+  // gateia coordenador (só exige usuário autenticado) — a segurança do
+  // fail-open aqui depende inteiramente do affordance-only acima, não de um
+  // backstop no layout.
+  const isCoordinator = coordinatorGate(accessResult, { failOpen: true });
 
   let reviewerMap = new Map<string, string>();
   if (reviewerIds.length > 0) {

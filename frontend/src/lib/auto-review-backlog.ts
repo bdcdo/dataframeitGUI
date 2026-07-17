@@ -30,17 +30,13 @@ export interface ExistingFieldReviewRow {
   self_verdict: string | null;
 }
 
-// Local de propósito: é o payload de INSERT desta rodada de backlog (literais
-// estreitos), não um tipo de domínio. Nenhum módulo importa o nome — o shape
-// chega em `field-reviews.ts` por inferência, via o retorno de
-// `computeBacklogRows`. Exportá-lo colidia com o `AssignmentRow` homônimo de
-// `compare-queue.ts`, que é uma row de SELECT com outro shape.
-interface AssignmentRow {
-  project_id: string;
-  document_id: string;
-  user_id: string;
-  type: "auto_revisao";
-  status: "pendente";
+// Contrato mínimo da RPC transacional. Projeto, documento e pesquisador são
+// derivados das respostas pelo banco; assim o chamador não consegue montar
+// uma tupla incoerente com seis identificadores independentes.
+export interface AutoReviewCandidate {
+  human_response_id: string;
+  llm_response_id: string;
+  field_names: string[];
 }
 
 export interface FieldReviewRow {
@@ -60,14 +56,29 @@ export function computeBacklogRows(
   llmByDocId: Map<string, LlmResponseRow>,
   equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
-): { assignmentRows: AssignmentRow[]; fieldReviewRows: FieldReviewRow[]; regenerated: number } {
-  const assignmentRows: AssignmentRow[] = [];
+  memberIds: ReadonlySet<string>,
+): {
+  candidates: AutoReviewCandidate[];
+  fieldReviewRows: FieldReviewRow[];
+  regenerated: number;
+} {
+  const candidates: AutoReviewCandidate[] = [];
   const fieldReviewRows: FieldReviewRow[] = [];
   let regenerated = 0;
 
   for (const human of humanResponses) {
     const llm = llmByDocId.get(human.document_id);
     if (!llm) continue;
+
+    // A remoção de um membro apaga a membership e os assignments pendentes, mas
+    // preserva as respostas — por design. Sem este filtro, elas continuavam
+    // virando candidatas e a RPC rejeitava o LOTE INTEIRO com 23514 ("a
+    // resposta humana não pertence a um membro atual do projeto"), de forma
+    // determinística e permanente: bastava um pesquisador removido para a
+    // regeneração do backlog nunca mais funcionar no projeto, inclusive para
+    // quem continua membro. Restringir o produtor ao mesmo universo que a RPC
+    // exige torna esse estado inconstruível, em vez de tratar a exceção.
+    if (!memberIds.has(human.respondent_id)) continue;
 
     // #174: só arbitrar codificações completas. is_partial é sinal inútil de
     // completude para o humano (quase sempre false), então o filtro de query
@@ -103,12 +114,10 @@ export function computeBacklogRows(
     if (divergent.length === 0) continue;
 
     regenerated++;
-    assignmentRows.push({
-      project_id: projectId,
-      document_id: human.document_id,
-      user_id: human.respondent_id,
-      type: "auto_revisao",
-      status: "pendente",
+    candidates.push({
+      human_response_id: human.id,
+      llm_response_id: llm.id,
+      field_names: divergent,
     });
     for (const fieldName of divergent) {
       fieldReviewRows.push({
@@ -122,13 +131,12 @@ export function computeBacklogRows(
     }
   }
 
-  return { assignmentRows, fieldReviewRows, regenerated };
+  return { candidates, fieldReviewRows, regenerated };
 }
 
-// Compartilhado entre diffReviewsToRemove e removeOrphanAssignments (na
-// action): as duas reconciliam uma coleção recém-computada contra uma
-// existente via chave composta document_id+algo. Puro.
-export function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
+// Reconcilia uma coleção recém-computada contra uma existente via chave
+// composta document_id+algo. Puro.
+function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
   return new Set(rows.map(keyFn));
 }
 

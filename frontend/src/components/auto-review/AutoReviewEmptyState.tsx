@@ -13,8 +13,8 @@ interface AutoReviewEmptyStateProps {
   readOnly: boolean;
   isCoordinator: boolean;
   reviewers: AutoReviewQueueOwner[];
-  viewAsUserId: string;
-  currentUserId: string;
+  queueUserId: string;
+  ownQueueUserId: string;
   onViewAsChange: (userId: string) => void;
 }
 
@@ -22,8 +22,8 @@ export function AutoReviewEmptyState({
   readOnly,
   isCoordinator,
   reviewers,
-  viewAsUserId,
-  currentUserId,
+  queueUserId,
+  ownQueueUserId,
   onViewAsChange,
 }: AutoReviewEmptyStateProps) {
   return (
@@ -46,7 +46,7 @@ export function AutoReviewEmptyState({
               <p className="mb-1 text-xs text-muted-foreground">
                 Ver fila de outro pesquisador
               </p>
-              <Select value={viewAsUserId} onValueChange={onViewAsChange}>
+              <Select value={queueUserId} onValueChange={onViewAsChange}>
                 <SelectTrigger className="w-full max-w-sm">
                   <SelectValue />
                 </SelectTrigger>
@@ -54,7 +54,7 @@ export function AutoReviewEmptyState({
                   {reviewers.map((r) => (
                     <SelectItem key={r.userId} value={r.userId}>
                       {r.name || r.email || r.userId.slice(0, 8)}
-                      {r.userId === currentUserId ? " (você)" : ""}
+                      {r.userId === ownQueueUserId ? " (você)" : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

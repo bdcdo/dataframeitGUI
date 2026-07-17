@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser, getEffectiveMemberId } from "@/lib/auth";
+import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
@@ -33,18 +33,15 @@ export async function submitVerdict({
   comment,
   responseSnapshot,
 }: SubmitVerdictInput): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
   // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
-  // como o membro canônico — reviewer_id, author_id e o sync do assignment
-  // usam o id efetivo, casando com o onConflict do upsert.
-  // `getEffectiveMemberId` (admin client, cache()) e `createSupabaseServer`
-  // são independentes — rodam em paralelo.
-  const [effectiveId, supabase] = await Promise.all([
-    getEffectiveMemberId(projectId),
+  // como o membro canônico em reviewer_id e no sync do assignment. Autoria de
+  // comentários permanece ligada à conta autenticada.
+  const [actor, supabase] = await Promise.all([
+    resolveProjectMemberActor(projectId),
     createSupabaseServer(),
   ]);
+  if (!actor.ok) return { error: actor.error };
+  const { user, memberUserId: effectiveId } = actor;
 
   try {
     const { error } = await supabase.from("reviews").upsert(
@@ -159,15 +156,14 @@ export async function markCompareDocReviewed(
   projectId: string,
   documentId: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
-
   // Conta vinculada fecha o doc como o membro canônico (spec 002).
   // Awaits independentes em paralelo.
-  const [effectiveId, supabase] = await Promise.all([
-    getEffectiveMemberId(projectId),
+  const [actor, supabase] = await Promise.all([
+    resolveProjectMemberActor(projectId),
     createSupabaseServer(),
   ]);
+  if (!actor.ok) return { error: actor.error };
+  const effectiveId = actor.memberUserId;
 
   const { error } = await supabase
     .from("assignments")

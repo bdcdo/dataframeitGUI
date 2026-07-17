@@ -15,21 +15,60 @@
 //
 // Um mock GLOBAL via `vitest.config.ts` (setupFiles) foi cogitado e
 // descartado: `src/lib/__tests__/auth-effective-member.test.ts` testa a
-// implementação REAL de `getEffectiveMemberId`/`getAuthUser` (só mocka as
+// implementação REAL de `resolveProjectMemberActor`/`getAuthUser` (só mocka as
 // dependências transitivas — Clerk, supabase/admin — não `@/lib/auth` em
 // si); um `vi.mock("@/lib/auth", ...)` em setupFiles substituiria esse
 // módulo incondicionalmente para TODOS os arquivos, quebrando esse teste.
 // A duplicação do par vi.hoisted/vi.mock nos poucos arquivos que precisam de
 // override por teste é o preço de não ter um mock global de auth no repo.
-export function authModuleMock(isCoord: () => Promise<boolean>, userId = "userCoord") {
+export function authModuleMock(
+  isCoord: () => Promise<boolean>,
+  userId = "userCoord",
+) {
   return {
     getAuthUser: async () => ({ id: userId }),
-    isProjectCoordinator: () => isCoord(),
     // Espelha requireCoordinator real (lib/auth.ts): getAuthUser nesta
     // factory nunca retorna null, então só o gate de coordenador varia.
     requireCoordinator: async (_projectId: string, deniedMessage: string) => {
-      if (!(await isCoord())) return { ok: false, error: deniedMessage };
+      if (!(await isCoord())) {
+        return { ok: false, code: "forbidden", error: deniedMessage };
+      }
       return { ok: true, user: { id: userId } };
     },
   };
+}
+
+export function projectIdentityAuthModuleMock(
+  resolveMemberUserId: (projectId: string) => Promise<string>,
+  accountUserId = "linked-account",
+) {
+  const user = { id: accountUserId };
+  return {
+    getAuthUser: async () => user,
+    resolveProjectMemberActor: async (projectId: string) => {
+      try {
+        return {
+          ok: true,
+          user,
+          memberUserId: await resolveMemberUserId(projectId),
+        };
+      } catch {
+        return {
+          ok: false,
+          code: "identity_unavailable",
+          error: "Não foi possível verificar sua identidade no projeto.",
+        };
+      }
+    },
+  };
+}
+
+export function projectAccessAuthModuleMock(
+  getAuthUser: () => Promise<unknown>,
+  getProjectAccessContext: (
+    projectId: string,
+    user: unknown,
+  ) => Promise<unknown>,
+) {
+  return { getAuthUser, getProjectAccessContext };
 }
