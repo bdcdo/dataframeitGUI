@@ -167,6 +167,9 @@ GRANT SELECT ON public.profiles, public.projects, public.project_members,
   TO authenticated;
 GRANT UPDATE (role) ON public.project_members TO authenticated;
 GRANT UPDATE ON public.field_reviews TO authenticated;
+-- INSERT em responses exercita o WITH CHECK (braço próprio do master); no
+-- remoto o DML vem dos default privileges, aqui precisa ser concedido.
+GRANT SELECT, INSERT ON public.responses TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE
   ON public.verdict_acknowledgments, public.response_equivalences,
   public.researcher_field_orders
