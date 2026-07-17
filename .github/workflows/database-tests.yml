@@ -49,6 +49,14 @@ jobs:
         run: npm run test:db:clerk-mapping
       - name: Fechamento da fila de auto-revisão
         run: npm run test:db:auto-review-sync
+      - name: RPCs atômicas de replace
+        run: npm run test:db:atomic-replace
+      - name: Rate limit de LLM
+        run: npm run test:db:llm-rate-limit
+      - name: RPCs de permissão de membros
+        run: npm run test:db:member-permissions
+      - name: Column guard de project_members
+        run: npm run test:db:column-guard
 
       # As fixtures deste precisam estar commitadas (duas conexões dblink veem
       # o mesmo estado), então ele suja o banco e fica por último.

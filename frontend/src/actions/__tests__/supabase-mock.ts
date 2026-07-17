@@ -22,7 +22,7 @@ export type RpcCall = {
 
 export type FilterCall = {
   table: string;
-  method: "eq" | "is" | "in" | "neq" | "match";
+  method: "eq" | "is" | "in" | "neq" | "match" | "not";
   column: string;
   value: unknown;
 };
@@ -104,6 +104,11 @@ export function makeSupabaseMock(opts?: {
           return builder;
         };
       }
+      // not() tem aridade 3 (coluna, operador, valor); registra o valor final.
+      builder.not = (column: string, _operator: string, value: unknown) => {
+        filterCalls?.push({ table, method: "not", column, value });
+        return builder;
+      };
       builder.update = (payload: unknown) => {
         writeCalls?.push({ table, op: "update", payload });
         return builder;

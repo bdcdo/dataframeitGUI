@@ -468,11 +468,12 @@ export async function reconcileVerifiedClerkEmailOwner(
     const result = await reconcileVerifiedOwnerSnapshot(currentUser);
     if (!result) return { status: "changed" };
     if (result.status === "applied") {
-      if (!result.supabaseUserId) {
-        throw new ClerkIdentityConflictError(
-          "Snapshot verificado sem identidade Supabase",
-        );
-      }
+      // applied + null só acontece quando o webhook de exclusão marcou o
+      // mapping como clerk_deleted entre a releitura e a aplicação — a mesma
+      // corrida de exclusão que os dois handlers vizinhos (404 na releitura e
+      // 404 na aplicação) devolvem como "changed" retryable. Tratar igual:
+      // o retry observa a conta ausente e resolve limpo como "unowned".
+      if (!result.supabaseUserId) return { status: "changed" };
       return {
         status: "resolved",
         userId: result.supabaseUserId,

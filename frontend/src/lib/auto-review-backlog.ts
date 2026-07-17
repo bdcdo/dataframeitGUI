@@ -136,7 +136,7 @@ export function computeBacklogRows(
 
 // Reconcilia uma coleção recém-computada contra uma existente via chave
 // composta document_id+algo. Puro.
-export function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
+function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
   return new Set(rows.map(keyFn));
 }
 

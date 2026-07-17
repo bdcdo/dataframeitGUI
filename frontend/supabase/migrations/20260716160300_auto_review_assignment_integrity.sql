@@ -502,6 +502,12 @@ DO $$
 DECLARE
   v_project_id UUID;
 BEGIN
+  -- Dois sentidos de drift selecionam projetos: field_review pendente sem
+  -- fila ativa (reabertura) E assignment 'pendente' órfão sem nenhum veredito
+  -- por fazer (remoção). Selecionar só pelo primeiro deixava projetos cujo
+  -- único drift são filas órfãs fora do reparo — e a pós-condição antiga,
+  -- que só cobria a reabertura, passava em silêncio apesar do cabeçalho
+  -- prometer erro de deploy para drift residual.
   FOR v_project_id IN
     SELECT DISTINCT review.project_id
     FROM public.field_reviews AS review
@@ -514,7 +520,20 @@ BEGIN
     WHERE review.self_verdict IS NULL
       AND document.excluded_at IS NULL
       AND document.exclusion_pending_at IS NULL
-    ORDER BY review.project_id
+    UNION
+    SELECT DISTINCT assignment.project_id
+    FROM public.assignments AS assignment
+    WHERE assignment.type = 'auto_revisao'
+      AND assignment.status = 'pendente'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.field_reviews AS review
+        WHERE review.project_id = assignment.project_id
+          AND review.document_id = assignment.document_id
+          AND review.self_reviewer_id = assignment.user_id
+          AND review.self_verdict IS NULL
+      )
+    ORDER BY 1
   LOOP
     PERFORM public.reconcile_auto_review_assignments_with_pending(v_project_id);
   END LOOP;
@@ -546,6 +565,28 @@ BEGIN
   ) THEN
     RAISE EXCEPTION
       'há field_review pendente de membro atual sem assignment ativo'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- Sentido inverso: nenhuma fila 'pendente' pode sobreviver ao deploy sem
+  -- um veredito por fazer no par — é exatamente o que o DELETE de órfãos da
+  -- reconciliação remove, então resíduo aqui significa projeto fora do loop.
+  IF EXISTS (
+    SELECT 1
+    FROM public.assignments AS assignment
+    WHERE assignment.type = 'auto_revisao'
+      AND assignment.status = 'pendente'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.field_reviews AS review
+        WHERE review.project_id = assignment.project_id
+          AND review.document_id = assignment.document_id
+          AND review.self_reviewer_id = assignment.user_id
+          AND review.self_verdict IS NULL
+      )
+  ) THEN
+    RAISE EXCEPTION
+      'há assignment de auto-revisão pendente órfão após a reconciliação'
       USING ERRCODE = '23514';
   END IF;
 END;

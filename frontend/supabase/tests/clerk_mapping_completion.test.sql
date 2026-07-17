@@ -530,10 +530,14 @@ $$;
 DROP TRIGGER fail_snapshot_profile_update_trigger ON public.profiles;
 
 -- Replay da MESMA geração já concluída. O Svix entrega at-least-once e a versão
--- é o `updatedAt` do Clerk, então a reentrega é rotina — e o begin só comparava
--- `>`, deixando `V > V` falso: a reentrega seguia para o UPDATE incondicional e
--- zerava o marker de uma conta sincronizada, revogando o acesso dela até um
--- retry concluir a segunda fase (ou para sempre, se ela falhasse).
+-- é o `updatedAt` do Clerk, então a reentrega é rotina. Duas propriedades
+-- compostas: (1) o begin NÃO derruba o marker para 0 (a versão só-`>` zerava o
+-- marker de conta sincronizada, revogando o acesso até a segunda fase); (2) o
+-- begin devolve TRUE — devolver false classificava o estado convergido como
+-- "superseded" nos callers, quebrando addMember/linkMemberEmail/unifyMembers
+-- para conta estável, pondo o webhook em loop de 500 e tornando o reparo de
+-- metadata inalcançável. O ciclo begin+complete do replay precisa concluir
+-- idempotente, com o marker em 1 durante e depois.
 -- Conta dedicada: o teste precisa concluir uma geração para reentregá-la, e
 -- fazer isso na conta compartilhada avançaria a generation dela e quebraria o
 -- protocolo 100→200 exercitado logo abaixo (foi exatamente o que aconteceu
@@ -559,14 +563,15 @@ BEGIN
     RAISE EXCEPTION 'FALHOU replay: não consegui sincronizar a geração 300';
   END IF;
 
-  IF public.begin_clerk_access_snapshot(
+  IF NOT public.begin_clerk_access_snapshot(
     'clerk_replay_test',
     '91000000-0000-0000-0000-00000000000c',
     300,
     ARRAY['replay-account@example.test']
   ) THEN
     RAISE EXCEPTION
-      'FALHOU replay: begin aceitou reentrega de uma geração já concluída';
+      'FALHOU replay: begin devolveu false para reentrega convergida — '
+      'callers tratariam conta estável como superseded';
   END IF;
 
   SELECT access_sync_version
@@ -580,7 +585,31 @@ BEGIN
       v_sync_version;
   END IF;
 
-  RAISE NOTICE 'OK: replay da geração concluída é no-op e preserva o acesso';
+  IF NOT public.complete_clerk_access_snapshot(
+    'clerk_replay_test',
+    '91000000-0000-0000-0000-00000000000c',
+    300,
+    ARRAY['replay-account@example.test'],
+    'Nome 300',
+    'Replay',
+    true
+  ) THEN
+    RAISE EXCEPTION
+      'FALHOU replay: complete recusou a fase 2 idempotente da reentrega';
+  END IF;
+
+  SELECT access_sync_version
+  INTO v_sync_version
+  FROM public.clerk_user_mapping
+  WHERE clerk_user_id = 'clerk_replay_test';
+
+  IF v_sync_version <> 1 THEN
+    RAISE EXCEPTION
+      'FALHOU replay: ciclo completo da reentrega deixou o marker em %',
+      v_sync_version;
+  END IF;
+
+  RAISE NOTICE 'OK: replay da geração concluída é no-op de sucesso e preserva o acesso';
 END;
 $$;
 

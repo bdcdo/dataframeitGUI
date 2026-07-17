@@ -1021,6 +1021,30 @@ describe("reconcileClerkUserAccess", () => {
     ]);
   });
 
+  it("dono marcado clerk_deleted na janela releitura→aplicação retorna changed retryable", async () => {
+    // A mesma corrida de exclusão observada via 404 nos vizinhos: aqui o
+    // webhook de exclusão marcou o mapping antes da aplicação, então o
+    // snapshot volta applied+null. Precisa ser 'changed' (retry resolve como
+    // unowned), nunca ClerkIdentityConflictError terminal.
+    clerkUserList = [makeClerkUser({ verifiedEmails: ["alias@exemplo.com"] })];
+    currentClerkUser = makeClerkUser({
+      primaryEmail: "alias@exemplo.com",
+      verifiedEmails: ["alias@exemplo.com"],
+    });
+    mappingReadResult.data = {
+      supabase_user_id: "accountUid",
+      access_sync_version: 1,
+      clerk_deleted: true,
+    };
+    const { reconcileVerifiedClerkEmailOwner } = await loadClerkSync();
+
+    await expect(
+      reconcileVerifiedClerkEmailOwner("alias@exemplo.com"),
+    ).resolves.toEqual({ status: "changed" });
+
+    expect(updateUserMetadataSpy).not.toHaveBeenCalled();
+  });
+
   it("limpa nomes removidos no Clerk em vez de preservar valores antigos", async () => {
     mappingReadResult.data = {
       supabase_user_id: "accountUid",

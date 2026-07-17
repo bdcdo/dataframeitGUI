@@ -363,6 +363,7 @@ export async function updatePendingMemberEmail(
     targetProfileResult,
     emailOwnerResult,
     emailLinkResult,
+    resolvedAliasResult,
   ] = await Promise.all([
     admin
       .from("project_members")
@@ -382,12 +383,21 @@ export async function updatePendingMemberEmail(
       .eq("project_id", projectId)
       .eq("email", newEmail)
       .maybeSingle(),
+    admin
+      .from("member_email_links")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("member_user_id", memberUserId)
+      .not("linked_user_id", "is", null)
+      .limit(1)
+      .maybeSingle(),
   ]);
   const lookupError =
     membershipResult.error ??
     targetProfileResult.error ??
     emailOwnerResult.error ??
-    emailLinkResult.error;
+    emailLinkResult.error ??
+    resolvedAliasResult.error;
   if (lookupError) return { error: lookupError.message };
   const membership = membershipResult.data;
   const targetProfile = targetProfileResult.data;
@@ -408,6 +418,16 @@ export async function updatePendingMemberEmail(
   }
   if (emailLink) {
     return { error: "Este e-mail já está vinculado a um membro do projeto." };
+  }
+  // Membro trabalhado via alias resolvido não é placeholder livre: repontar o
+  // e-mail dele deixaria uma segunda pessoa reivindicar a MESMA identidade
+  // canônica enquanto o alias continua resolvendo para a primeira. Mesmo
+  // critério da affordance na UI (canEditPendingMemberEmail).
+  if (resolvedAliasResult.data) {
+    return {
+      error:
+        "Este membro já trabalha via vínculo de e-mail resolvido e não pode ter o e-mail de pré-registro alterado.",
+    };
   }
 
   const identityState = await classifyProfileIdentity(admin, {

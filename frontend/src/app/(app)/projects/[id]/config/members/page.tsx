@@ -79,8 +79,10 @@ function buildMemberRows(
       activeAliasIds,
     ),
     isClaimable: canEditPendingMemberEmail(
+      member.user_id,
       member.profiles.activated_at,
       mappings.has(member.user_id),
+      activeAliasIds,
     ),
   }));
 }

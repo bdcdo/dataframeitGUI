@@ -171,6 +171,22 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
+  -- Placeholder cujo membro já trabalha via vínculo resolvido não está livre:
+  -- activated_at fica NULL nesse arranjo (a ativação é da conta-alias), mas
+  -- concedê-lo a um novo cadastro poria duas pessoas escrevendo como o MESMO
+  -- member_user_id — o alias continua resolvendo para a primeira. Fail-closed;
+  -- o coordenador resolve desfazendo o vínculo antes, se for intencional.
+  IF EXISTS (
+    SELECT 1
+    FROM public.member_email_links link
+    WHERE link.member_user_id = v_profile_id
+      AND link.linked_user_id IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION
+      'placeholder com vínculo de e-mail resolvido não pode ser reclamado'
+      USING ERRCODE = '23514';
+  END IF;
+
   PERFORM 1
   FROM public.clerk_user_mapping mapping
   WHERE mapping.supabase_user_id = v_profile_id
@@ -907,23 +923,29 @@ BEGIN
     RETURN false;
   END IF;
 
-  -- Replay da geração já concluída é no-op, não recomeço. A versão vem do
-  -- `updatedAt` do Clerk e o Svix entrega at-least-once, então a mesma versão
-  -- chega mais de uma vez; sem este corte, a reentrega passava pelo `>` acima
-  -- (V > V é falso) e derrubava para 0 o marker de uma conta já sincronizada —
-  -- revogando o acesso até um retry concluir a segunda fase, ou para sempre se
-  -- ela falhasse.
-  IF v_current_snapshot_version = p_snapshot_version
-     AND v_access_sync_version >= 1
-  THEN
-    RETURN false;
+  -- Replay da geração já concluída é no-op DE SUCESSO, não recomeço nem
+  -- conflito. A versão vem do `updatedAt` do Clerk e o Svix entrega
+  -- at-least-once, então a mesma versão chega mais de uma vez. Duas proteções
+  -- compostas: (1) o marker NÃO cai para 0 — sem isso a reentrega revogava o
+  -- acesso de conta já sincronizada até a fase 2 refazer a concessão; (2) o
+  -- retorno segue TRUE — devolver false aqui classificava o estado convergido
+  -- (o estado normal de toda conta estável) como "superseded" nos callers,
+  -- fazendo addMember/linkMemberEmail/unifyMembers falharem para sempre,
+  -- o webhook responder 500 em loop de reentrega e o reparo de metadata
+  -- (que vive depois da fase 2 no caller) ficar inalcançável. A fase 2 é
+  -- idempotente sobre a mesma geração, então seguir adiante sem resetar o
+  -- marker é seguro; a revogação por posse abaixo também é idempotente e
+  -- ainda roda, corrigindo drift de links antes da fase 2.
+  IF NOT (
+    v_current_snapshot_version = p_snapshot_version
+    AND v_access_sync_version >= 1
+  ) THEN
+    UPDATE public.clerk_user_mapping
+    SET access_sync_version = 0,
+        access_snapshot_version = p_snapshot_version
+    WHERE clerk_user_id = p_clerk_user_id
+      AND supabase_user_id = p_supabase_user_id;
   END IF;
-
-  UPDATE public.clerk_user_mapping
-  SET access_sync_version = 0,
-      access_snapshot_version = p_snapshot_version
-  WHERE clerk_user_id = p_clerk_user_id
-    AND supabase_user_id = p_supabase_user_id;
 
   -- Revogação por posse, já na geração escolhida: e-mails deste snapshot
   -- deixam de resolver para qualquer outra conta, e os links desta conta para
@@ -1352,7 +1374,11 @@ GRANT EXECUTE ON FUNCTION public.auth_user_member_identity_ids(UUID)
 -- auth_user_project_memberships())` é semanticamente idêntica e
 -- não-correlacionada: o helper roda uma vez e cada linha custa um probe de
 -- hash. As policies abaixo vêm de 20260611130000/20260716154500 (já aplicadas
--- no remoto) e são recriadas aqui apenas nessa forma; predicados inalterados.
+-- no remoto) e são recriadas nessa forma. Diferença deliberada de predicado:
+-- o braço de escrita por uid cru (o helper antigo devolvia clerk_uid()
+-- incondicionalmente) NÃO é recriado para contas-alias — essa é a correção do
+-- #416 —, mas o master mantém um braço explícito para a própria resposta em
+-- responses (abaixo) e para researcher_field_orders (seção própria).
 DROP POLICY IF EXISTS "Users manage own responses" ON public.responses;
 CREATE POLICY "Users manage own responses" ON public.responses
   FOR ALL
@@ -1368,13 +1394,28 @@ CREATE POLICY "Users manage own responses" ON public.responses
   )
   WITH CHECK (
     respondent_type = 'humano'
-    AND (project_id, respondent_id) IN (
-      SELECT membership.project_id, membership.user_id
-      FROM public.auth_user_project_memberships() AS membership
-    )
     AND (
-      project_id IN (SELECT public.auth_user_accessible_project_ids())
-      OR (SELECT public.is_master())
+      (
+        (project_id, respondent_id) IN (
+          SELECT membership.project_id, membership.user_id
+          FROM public.auth_user_project_memberships() AS membership
+        )
+        AND (
+          project_id IN (SELECT public.auth_user_accessible_project_ids())
+          OR (SELECT public.is_master())
+        )
+      )
+      -- Braço de escape do master, espelhando researcher_field_orders: um
+      -- master sem linha em project_members ainda grava a PRÓPRIA resposta
+      -- humana (a base permitia via uid cru no helper de identidades; o gate
+      -- de tupla sozinho tornava o is_master() acima letra morta e o submit
+      -- da codificação falhava com 42501). Restrito ao clerk_uid() do próprio
+      -- master — nunca reabre a escrita por uid cru de conta-alias, que é a
+      -- família de bug (#416) que esta migration fecha.
+      OR (
+        (SELECT public.is_master())
+        AND respondent_id = (SELECT public.clerk_uid())
+      )
     )
   );
 
@@ -2527,8 +2568,9 @@ BEGIN
   -- codificação concluída do target supera uma em andamento do source, e o
   -- DELETE abaixo descarta a do source sem dó.
   --
-  -- A auto-revisão é a exceção, porque o trabalho dela não vive no assignment e
-  -- sim nos field_reviews, que a fusão transfere logo adiante: field_reviews é
+  -- Auto-revisão e arbitragem são as exceções, porque o trabalho delas não
+  -- vive no assignment e sim nos field_reviews, que a fusão transfere logo
+  -- adiante: field_reviews é
   -- UNIQUE(document_id, field_name), então source e target podem deter campos
   -- distintos do MESMO documento. Se o target já concluiu a fila daquele
   -- documento e o source deixou campos sem veredito, descartar o assignment do
@@ -2551,6 +2593,30 @@ BEGIN
         AND fr.document_id = t.document_id
         AND fr.self_reviewer_id = p_source_user_id
         AND fr.self_verdict IS NULL
+    );
+
+  -- A arbitragem tem a MESMA anatomia (trabalho nos field_reviews, não no
+  -- assignment) e o mesmo buraco: campos contestados de levas distintas podem
+  -- deixar o source com fila pendente enquanto o target já concluiu a dele no
+  -- mesmo documento. Sem reabrir, o DELETE abaixo migraria final_verdict IS
+  -- NULL para debaixo de assignment 'concluido' — e nenhum caminho reabre
+  -- arbitragem depois (assign_arbitration_if_eligible só pega arbitrator_id
+  -- IS NULL; sync_arbitration_assignment_status só fecha): o documento
+  -- sumiria da fila de arbitragem para sempre.
+  UPDATE public.assignments t
+  SET status = 'pendente',
+      completed_at = NULL
+  WHERE t.project_id = p_project_id
+    AND t.user_id = p_target_user_id
+    AND t.type = 'arbitragem'
+    AND t.status = 'concluido'
+    AND EXISTS (
+      SELECT 1
+      FROM public.field_reviews fr
+      WHERE fr.project_id = p_project_id
+        AND fr.document_id = t.document_id
+        AND fr.arbitrator_id = p_source_user_id
+        AND fr.final_verdict IS NULL
     );
 
   DELETE FROM public.assignments s
@@ -2664,5 +2730,68 @@ REVOKE ALL ON FUNCTION
 GRANT EXECUTE ON FUNCTION
   public.unify_project_members(UUID, UUID, UUID, UUID, TEXT, UUID, BIGINT)
   TO service_role;
+
+-- ========== 6. Backfill: autoria histórica de conta-alias vira canônica ====
+-- Antes desta migration, equivalências, acknowledgments e ordem de campos
+-- eram gravados com o uid CRU da sessão (`user.id`), enquanto as filas já
+-- resolviam a identidade canônica — uma conta vinculada trabalhando a fila do
+-- membro deixou linhas sob o próprio uid. Como auth_user_member_identity_ids
+-- deixa de devolver o uid cru e as policies acima só reconhecem identidades
+-- canônicas, essas linhas ficariam órfãs (invisíveis e indeléveis para a
+-- própria autora; re-ack criaria segunda linha). Reescrevê-las aqui, uma vez.
+-- Colisões alias×canônico seguem a regra do unify: a linha canônica
+-- prevalece e a do alias cai.
+
+-- response_equivalences: UNIQUE(project_id, document_id, field_name,
+-- response_a_id, response_b_id) não envolve reviewer_id, então a reescrita
+-- não colide — basta o UPDATE.
+UPDATE public.response_equivalences AS equivalence
+SET reviewer_id = link.member_user_id
+FROM public.member_email_links AS link
+WHERE link.project_id = equivalence.project_id
+  AND link.linked_user_id = equivalence.reviewer_id;
+
+-- verdict_acknowledgments: UNIQUE(review_id, respondent_id); sem project_id
+-- próprio, o escopo vem da review. Se alias e canônico reconheceram a mesma
+-- review, a linha canônica prevalece.
+DELETE FROM public.verdict_acknowledgments AS stale
+USING public.reviews AS review,
+      public.member_email_links AS link
+WHERE review.id = stale.review_id
+  AND link.project_id = review.project_id
+  AND link.linked_user_id = stale.respondent_id
+  AND EXISTS (
+    SELECT 1
+    FROM public.verdict_acknowledgments AS canonical
+    WHERE canonical.review_id = stale.review_id
+      AND canonical.respondent_id = link.member_user_id
+  );
+
+UPDATE public.verdict_acknowledgments AS acknowledgment
+SET respondent_id = link.member_user_id
+FROM public.reviews AS review,
+     public.member_email_links AS link
+WHERE review.id = acknowledgment.review_id
+  AND link.project_id = review.project_id
+  AND link.linked_user_id = acknowledgment.respondent_id;
+
+-- researcher_field_orders: UNIQUE(project_id, user_id); preferência do
+-- canônico prevalece, como no unify.
+DELETE FROM public.researcher_field_orders AS stale
+USING public.member_email_links AS link
+WHERE link.project_id = stale.project_id
+  AND link.linked_user_id = stale.user_id
+  AND EXISTS (
+    SELECT 1
+    FROM public.researcher_field_orders AS canonical
+    WHERE canonical.project_id = stale.project_id
+      AND canonical.user_id = link.member_user_id
+  );
+
+UPDATE public.researcher_field_orders AS field_order
+SET user_id = link.member_user_id
+FROM public.member_email_links AS link
+WHERE link.project_id = field_order.project_id
+  AND link.linked_user_id = field_order.user_id;
 
 COMMIT;

@@ -189,6 +189,10 @@ interface LotteryData extends LotteryDocStatsResult {
     status: string;
     type: string;
   }[];
+  humanCoderRows: {
+    document_id: string;
+    respondent_id: string;
+  }[];
 }
 
 /**
@@ -253,12 +257,21 @@ async function fetchLotteryDocStats(projectId: string): Promise<LotteryDocStatsR
 async function fetchLotteryData(projectId: string): Promise<LotteryData> {
   const supabase = await createSupabaseServer();
 
-  const [stats, { data: assignments }] = await Promise.all([
+  const [stats, { data: assignments }, { data: humanCoders }] = await Promise.all([
     fetchLotteryDocStats(projectId),
     supabase
       .from("assignments")
       .select("document_id, user_id, status, type")
       .eq("project_id", projectId),
+    // Mesmo predicado do trigger enforce_comparison_assignment_actor
+    // (20260716160100): resposta humana is_latest define quem codificou.
+    supabase
+      .from("responses")
+      .select("document_id, respondent_id")
+      .eq("project_id", projectId)
+      .eq("respondent_type", "humano")
+      .eq("is_latest", true)
+      .not("respondent_id", "is", null),
   ]);
 
   return {
@@ -269,6 +282,11 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
       status: a.status,
       type: a.type,
     })),
+    humanCoderRows: (humanCoders || []).flatMap((r) =>
+      r.respondent_id
+        ? [{ document_id: r.document_id, respondent_id: r.respondent_id }]
+        : [],
+    ),
   };
 }
 
@@ -377,6 +395,19 @@ async function computeLottery(params: LotteryParams): Promise<{
   // modo) — em replace as pendentes são deletadas na mesma transação do RPC,
   // então o par pode voltar a ser sorteado sem violar UNIQUE(doc, user, type).
   const preservedSet = new Set(preserved.map((a) => `${a.document_id}:${a.user_id}`));
+
+  // O trigger enforce_comparison_assignment_actor (20260716160100) rejeita
+  // comparação atribuída a quem tem resposta humana is_latest no documento, e
+  // apply_lottery_assignments é uma transação única: um único par
+  // codificador×próprio-doc abortaria o LOTE inteiro com 23514. O caminho
+  // automático já exclui codificadores (loadEligibleReviewerIds); aqui o
+  // mesmo invariante entra como par vetado do sorteio manual — veto de par,
+  // não de vaga: o codificador continua elegível para outros documentos.
+  if (assignmentType === "comparacao") {
+    for (const row of data.humanCoderRows) {
+      preservedSet.add(`${row.document_id}:${row.respondent_id}`);
+    }
+  }
 
   // Ocupação de vaga ≠ anti-duplicidade de par. Para comparação a vaga só é
   // ocupada por uma atribuição ATIVA: o invariante é "no máximo 1 comparação

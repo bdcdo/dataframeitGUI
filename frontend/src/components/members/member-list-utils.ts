@@ -82,10 +82,20 @@ export function projectMemberAccessState(
 }
 
 export function canEditPendingMemberEmail(
+  memberUserId: string,
   profileActivatedAt: string | null | undefined,
   hasClerkMapping: boolean,
+  activeAliasIds: ReadonlySet<string>,
 ): boolean {
-  return profileActivatedAt === null && !hasClerkMapping;
+  // Membro "ready" via alias resolvido não é um placeholder reivindicável:
+  // repontar o e-mail dele abriria a mesma identidade canônica para uma
+  // segunda pessoa enquanto o alias continua resolvendo para a primeira.
+  // Mesmo critério de projectMemberAccessState — os dois não podem divergir.
+  return (
+    profileActivatedAt === null &&
+    !hasClerkMapping &&
+    !activeAliasIds.has(memberUserId)
+  );
 }
 
 export function memberDisplayName(m: MemberRow): string {

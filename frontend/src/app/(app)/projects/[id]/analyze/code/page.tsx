@@ -97,9 +97,13 @@ export default async function CodePage({
   const pendingByOthers = new Set<string>();
   for (const pc of pendingExclusions ?? []) {
     if (!pc.document_id) continue;
-    // Pedidos preservam autoria da conta bruta; identidade de fila nunca
-    // concede controle sobre o pedido criado por outra conta.
-    if (pc.author_id === user.id) {
+    // Pedidos preservam autoria da conta bruta, mas a fila é da identidade
+    // canônica: o pedido criado pela conta-irmã da MESMA fila (canônica vs.
+    // alias, ou o pesquisador visto sob viewAsUser) é "próprio" para efeito
+    // de exibição — sem o braço queueUserId, o doc sumia da única fila do
+    // membro em vez de aparecer bloqueado com opção de desfazer (regressão
+    // sobre o comportamento da main, que casava o effectiveUserId).
+    if (pc.author_id === user.id || pc.author_id === queueUserId) {
       pendingExclusionByDoc[pc.document_id] = pc.body as string;
     } else {
       pendingByOthers.add(pc.document_id);

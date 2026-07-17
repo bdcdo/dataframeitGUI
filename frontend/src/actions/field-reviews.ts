@@ -68,7 +68,39 @@ async function insertMissingProjectComments(
     body: draft.body,
     source_field_review_id: draft.sourceFieldReviewId,
   }));
-  const { error } = await admin.from("project_comments").upsert(rows, {
+
+  // Comentários automáticos anteriores à coluna source_field_review_id têm
+  // NULL ali — e NULL nunca conflita na UNIQUE, então o upsert sozinho
+  // duplicaria o comentário legado no primeiro re-submit pós-deploy (o retry
+  // idêntico é o caminho de recuperação desenhado deste efeito). O match é
+  // por corpo EXATO além de (campo, autor): o retry regenera o corpo do
+  // template a partir do mesmo estado persistido, então o duplicado legado é
+  // byte-idêntico — e uma nota manual do mesmo autor no campo nunca casa,
+  // preservando a regra de que nota manual não suprime o comentário
+  // automático.
+  const { data: legacyComments, error: legacyError } = await admin
+    .from("project_comments")
+    .select("field_name, body")
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("author_id", authorId)
+    .is("source_field_review_id", null)
+    .in(
+      "field_name",
+      rows.map((row) => row.field_name),
+    );
+  if (legacyError) return legacyError.message;
+  const legacyBodies = new Set(
+    (legacyComments ?? []).map(
+      (comment) => `${comment.field_name}\n${comment.body}`,
+    ),
+  );
+  const missingRows = rows.filter(
+    (row) => !legacyBodies.has(`${row.field_name}\n${row.body}`),
+  );
+  if (missingRows.length === 0) return null;
+
+  const { error } = await admin.from("project_comments").upsert(missingRows, {
     onConflict: "source_field_review_id",
     ignoreDuplicates: true,
   });

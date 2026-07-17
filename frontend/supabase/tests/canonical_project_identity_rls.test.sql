@@ -897,6 +897,34 @@ BEGIN
       NULL;
   END;
 
+  -- Master sem membership grava a PRÓPRIA resposta humana (braço de escape do
+  -- WITH CHECK de responses; sem ele o submit da codificação falhava com
+  -- 42501 — a base permitia via uid cru no helper de identidades).
+  INSERT INTO public.responses
+    (id, project_id, document_id, respondent_id, respondent_type, answers)
+  VALUES
+    ('42000000-0000-0000-0000-00000000009d', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000d', 'humano', '{"campo":"master próprio"}');
+
+  SELECT count(*) INTO n
+  FROM public.responses
+  WHERE id = '42000000-0000-0000-0000-00000000009d';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'FALHOU master: resposta própria não foi persistida';
+  END IF;
+
+  -- O braço é restrito ao próprio clerk_uid(): master continua sem poder
+  -- forjar resposta humana em nome de terceiro.
+  BEGIN
+    INSERT INTO public.responses
+      (id, project_id, document_id, respondent_id, respondent_type, answers)
+    VALUES
+      ('42000000-0000-0000-0000-00000000009e', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000008', 'humano', '{"campo":"forjada"}');
+    RAISE EXCEPTION 'TESTE FALHOU: master gravou resposta em nome de terceiro';
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      NULL;
+  END;
+
   RAISE NOTICE 'OK: acesso master não regrediu';
 END;
 $$;

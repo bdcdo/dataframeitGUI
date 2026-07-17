@@ -61,12 +61,24 @@ describe("project member activation", () => {
   });
 
   it("só permite editar placeholder pendente ainda sem mapping Clerk", () => {
-    expect(canEditPendingMemberEmail(null, false)).toBe(true);
-    expect(canEditPendingMemberEmail(null, true)).toBe(false);
-    expect(canEditPendingMemberEmail("2026-07-15T12:00:00Z", false)).toBe(
-      false,
-    );
-    expect(canEditPendingMemberEmail(undefined, false)).toBe(false);
+    const none = new Set<string>();
+    expect(canEditPendingMemberEmail("m1", null, false, none)).toBe(true);
+    expect(canEditPendingMemberEmail("m1", null, true, none)).toBe(false);
+    expect(
+      canEditPendingMemberEmail("m1", "2026-07-15T12:00:00Z", false, none),
+    ).toBe(false);
+    expect(canEditPendingMemberEmail("m1", undefined, false, none)).toBe(false);
+  });
+
+  it("membro ready via alias resolvido não é reivindicável", () => {
+    // Mesmo critério de projectMemberAccessState: alias ativo torna o membro
+    // 'ready', então a affordance de trocar o e-mail do placeholder some.
+    expect(
+      canEditPendingMemberEmail("m1", null, false, new Set(["m1"])),
+    ).toBe(false);
+    expect(
+      canEditPendingMemberEmail("m2", null, false, new Set(["m1"])),
+    ).toBe(true);
   });
 
   it("só considera o vínculo pronto com profile ativo e mapping concluído", () => {
