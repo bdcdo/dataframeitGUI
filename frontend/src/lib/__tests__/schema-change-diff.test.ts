@@ -193,5 +193,40 @@ describe("diffPydanticField", () => {
         { property: "allow_other", before: false, after: true },
       ]);
     });
+
+    it("subfield_rule ausente resolve para all", () => {
+      expect(
+        diffPydanticField({ subfield_rule: null }, { subfield_rule: "all" }),
+      ).toEqual([]);
+      expect(
+        diffPydanticField({ subfield_rule: null }, { subfield_rule: "at_least_one" }),
+      ).toEqual([
+        { property: "subfield_rule", before: "all", after: "at_least_one" },
+      ]);
+    });
+
+    // Entrada de campo adicionado: before é `{}` e after é o snapshot que
+    // snapshotOf grava com os defaults resolvidos. Nenhuma propriedade com
+    // default implícito pode gerar linha — antes desta correção, subfield_rule
+    // comparava `undefined ?? null` contra `"all"` e todo add/remove exibia a
+    // linha fantasma "regra de subcampos".
+    it("campo adicionado com snapshot resolvido não gera linha de defaults", () => {
+      const diffs = diffPydanticField(
+        {},
+        {
+          name: "q1",
+          type: "str",
+          description: "x",
+          target: "all",
+          required: true,
+          allow_other: false,
+          subfield_rule: "all",
+        },
+      );
+      expect(diffs.map((d) => d.property)).not.toContain("subfield_rule");
+      expect(diffs.map((d) => d.property)).not.toContain("target");
+      expect(diffs.map((d) => d.property)).not.toContain("required");
+      expect(diffs.map((d) => d.property)).not.toContain("allow_other");
+    });
   });
 });

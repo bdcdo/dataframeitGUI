@@ -2,10 +2,11 @@ import { stableStringify } from "./schema-utils";
 import {
   resolveAllowOther,
   resolveRequired,
+  resolveSubfieldRule,
   resolveTarget,
 } from "./pydantic-field";
 import type { FieldCondition, SchemaChangeEntry, SubfieldDef } from "./types";
-import type { PydanticFieldTarget } from "./pydantic-field";
+import type { PydanticFieldTarget, PydanticSubfieldRule } from "./pydantic-field";
 
 export type FieldChangeKind = "added" | "removed" | "renamed" | "modified";
 
@@ -149,12 +150,10 @@ export function diffPydanticField(
     }
   }
   if (has(before, "subfield_rule") || has(after, "subfield_rule")) {
-    if ((before.subfield_rule ?? null) !== (after.subfield_rule ?? null)) {
-      diffs.push({
-        property: "subfield_rule",
-        before: before.subfield_rule ?? null,
-        after: after.subfield_rule ?? null,
-      });
+    const b = resolveSubfieldRule(before.subfield_rule as PydanticSubfieldRule | null | undefined);
+    const a = resolveSubfieldRule(after.subfield_rule as PydanticSubfieldRule | null | undefined);
+    if (b !== a) {
+      diffs.push({ property: "subfield_rule", before: b, after: a });
     }
   }
   if (has(before, "subfields") || has(after, "subfields")) {
