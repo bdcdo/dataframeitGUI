@@ -16,24 +16,31 @@ BEGIN
       USING ERRCODE = '23502';
   END IF;
 
-  IF EXISTS (
-    SELECT 1
-    FROM public.assignments assignment
-    JOIN public.responses response
-      ON response.project_id = assignment.project_id
-     AND response.document_id = assignment.document_id
-     AND response.respondent_id = assignment.user_id
-     AND response.respondent_type = 'humano'
-     AND response.is_latest
-    WHERE assignment.type = 'comparacao'
-      AND assignment.status IS DISTINCT FROM 'concluido'
-  ) THEN
-    RAISE EXCEPTION
-      'há comparação aberta em que revisor e codificador são a mesma pessoa'
-      USING ERRCODE = '23514';
-  END IF;
 END;
 $$;
+
+-- Comparação aberta em que revisor e codificador são a mesma pessoa é o
+-- estado que os triggers abaixo tornam irrepresentável — removê-la aqui é o
+-- reparo, não motivo de abortar o deploy: o DELETE devolve o documento ao
+-- pool (mesmo canal que o replace do sorteio usa) e outro revisor pode ser
+-- sorteado. Medido em produção em 2026-07-17: 6 linhas, todas nascidas de
+-- lotes do sorteio MANUAL (batch_id preenchido), cujo produtor este PR
+-- corrige (exclusão de codificadores no pool) — 4 'pendente' e 2
+-- 'em_andamento'. Reviews já gravadas por esses pares ficam como histórico:
+-- apagá-las é decisão de produto, e o trigger de responses impede escrita
+-- nova de autojulgamento.
+DELETE FROM public.assignments assignment
+WHERE assignment.type = 'comparacao'
+  AND assignment.status IS DISTINCT FROM 'concluido'
+  AND EXISTS (
+    SELECT 1
+    FROM public.responses response
+    WHERE response.project_id = assignment.project_id
+      AND response.document_id = assignment.document_id
+      AND response.respondent_id = assignment.user_id
+      AND response.respondent_type = 'humano'
+      AND response.is_latest
+  );
 
 ALTER TABLE public.assignments
   ALTER COLUMN status SET NOT NULL;
