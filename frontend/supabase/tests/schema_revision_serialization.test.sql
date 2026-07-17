@@ -13,6 +13,12 @@
 -- `postgres` e assumem `authenticated` via SET LOCAL ROLE, exatamente como a
 -- suíte irmã — o caminho de RLS exercitado é o mesmo.
 --
+-- Identidade canônica (migration 20260716155000, #440): `clerk_uid()` só resolve
+-- o autor quando o JWT carrega `sub` E `supabase_uid` casando com uma linha ativa
+-- de `clerk_user_mapping` (access_sync_version >= 1, não deletada). Por isso a
+-- fixture cria esse mapeamento e as sessões setam ambos os claims — sem ele o
+-- gate devolve `not_found` e T1 nem chega a salvar.
+--
 -- Por que este arquivo existe separado de `schema_revision_rpcs.test.sql`:
 -- aquele roda inteiro num BEGIN ... ROLLBACK, numa conexão só. Um lock nunca
 -- colide consigo mesmo, então lá o `FOR UPDATE` nunca é disputado — apagar a
@@ -31,13 +37,38 @@
 
 CREATE EXTENSION IF NOT EXISTS dblink;
 
--- ----- Fixtures (commitados: as sessões concorrentes precisam enxergá-los) -----
--- Idempotente, para o arquivo poder rodar duas vezes seguidas sem db reset.
+-- ----- Auto-limpeza preventiva (idempotente) -----
+-- O arquivo roda fora de BEGIN/ROLLBACK (as sessões concorrentes precisam de
+-- fixtures commitadas), então um RAISE no meio aborta antes do teardown final e
+-- deixa resíduo no container local compartilhado entre worktrees. Limpar aqui,
+-- no topo, garante que a próxima rodada comece de um estado limpo — sobretudo
+-- os GRANTs de DML em `authenticated`, que persistem no catálogo e, vazados,
+-- afrouxam a RLS que as outras suítes assumem. REVOKE de privilégio não
+-- concedido é no-op (warning, não erro sob ON_ERROR_STOP). O DELETE do projeto
+-- cascateia para project_members e schema_change_log (FK ON DELETE CASCADE); o
+-- mapeamento de identidade é apagado explicitamente por garantia (também
+-- cascatearia via `profiles`, que herda a exclusão de `auth.users` — a FK de
+-- clerk_user_mapping.supabase_user_id aponta para profiles ON DELETE CASCADE).
+REVOKE SELECT, UPDATE ON public.projects FROM authenticated;
+REVOKE SELECT, INSERT ON public.schema_change_log FROM authenticated;
+REVOKE SELECT ON public.project_members FROM authenticated;
 DELETE FROM public.projects WHERE id = '86000000-0000-0000-0000-000000000001';
 DELETE FROM auth.users WHERE id = '86000000-0000-0000-0000-000000000002';
+DELETE FROM public.clerk_user_mapping
+  WHERE supabase_user_id = '86000000-0000-0000-0000-000000000002';
 
 INSERT INTO auth.users (id, email) VALUES
   ('86000000-0000-0000-0000-000000000002', 'schema-serialization@example.test');
+
+-- Mapeamento de identidade canônica: sem ele `clerk_uid()` devolve NULL e o gate
+-- responde `not_found`. clerk_user_id = supabase_user_id, como nas suítes do #440.
+INSERT INTO public.clerk_user_mapping
+  (clerk_user_id, supabase_user_id, access_sync_version) VALUES
+  (
+    '86000000-0000-0000-0000-000000000002',
+    '86000000-0000-0000-0000-000000000002',
+    1
+  );
 
 INSERT INTO public.projects (
   id, name, created_by, pydantic_fields, pydantic_code, pydantic_hash
@@ -78,7 +109,7 @@ SELECT dblink_exec('writer_one', 'BEGIN');
 SELECT dblink_exec(
   'writer_one',
   $cmd$SET LOCAL "request.jwt.claims" =
-    '{"supabase_uid":"86000000-0000-0000-0000-000000000002"}'$cmd$
+    '{"sub":"86000000-0000-0000-0000-000000000002","supabase_uid":"86000000-0000-0000-0000-000000000002"}'$cmd$
 );
 SELECT dblink_exec('writer_one', 'SET LOCAL ROLE authenticated');
 
@@ -120,7 +151,7 @@ SELECT dblink_exec('writer_two', 'BEGIN');
 SELECT dblink_exec(
   'writer_two',
   $cmd$SET LOCAL "request.jwt.claims" =
-    '{"supabase_uid":"86000000-0000-0000-0000-000000000002"}'$cmd$
+    '{"sub":"86000000-0000-0000-0000-000000000002","supabase_uid":"86000000-0000-0000-0000-000000000002"}'$cmd$
 );
 SELECT dblink_exec('writer_two', $cmd$SET LOCAL lock_timeout = '10s'$cmd$);
 SELECT dblink_exec('writer_two', 'SET LOCAL ROLE authenticated');
@@ -254,6 +285,8 @@ DROP TABLE serialization_result;
 DROP TABLE writer_one_result;
 DELETE FROM public.projects WHERE id = '86000000-0000-0000-0000-000000000001';
 DELETE FROM auth.users WHERE id = '86000000-0000-0000-0000-000000000002';
+DELETE FROM public.clerk_user_mapping
+  WHERE supabase_user_id = '86000000-0000-0000-0000-000000000002';
 
 REVOKE SELECT, UPDATE ON public.projects FROM authenticated;
 REVOKE SELECT, INSERT ON public.schema_change_log FROM authenticated;
