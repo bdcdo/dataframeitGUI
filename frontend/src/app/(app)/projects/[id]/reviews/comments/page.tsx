@@ -43,7 +43,9 @@ export default async function CommentsPage({
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields")
+      .select(
+        "pydantic_fields, schema_revision",
+      )
       .eq("id", id)
       .single(),
     supabase
@@ -123,6 +125,9 @@ export default async function CommentsPage({
       )),
     ]),
   ];
+  const schemaBaseline = {
+    revision: project?.schema_revision ?? 0,
+  };
 
   // Fail-open em erro transitorio de query: nao rebaixa um coordenador legitimo
   // a nao-coordenador por falha transiente. Seguro aqui porque isCoordinator so
@@ -224,6 +229,7 @@ export default async function CommentsPage({
         projectId={id}
         comments={comments}
         fields={fields}
+        schemaBaseline={schemaBaseline}
         isCoordinator={isCoordinator}
         totalLlmDocs={totalLlmDocs}
         llmDocsWithoutAmbiguities={llmDocsWithoutAmbiguities}

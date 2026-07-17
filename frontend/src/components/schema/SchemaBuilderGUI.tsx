@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { FieldCard } from "./FieldCard";
+import { useStableListIds } from "@/hooks/useStableListIds";
 import type { PydanticField } from "@/lib/types";
 import {
   DndContext,
@@ -25,8 +26,21 @@ interface SchemaBuilderGUIProps {
   onChange: (fields: PydanticField[]) => void;
 }
 
+function nextAvailableFieldName(fields: PydanticField[]): string {
+  const names = new Set(fields.map(({ name }) => name));
+  let suffix = 1;
+  while (names.has(`campo_${suffix}`)) suffix += 1;
+  return `campo_${suffix}`;
+}
+
 export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // `PydanticField` não tem identidade própria — `name` é conteúdo editável, e
+  // usá-lo como key faz o card perder o foco a cada tecla no nome. Estes ids
+  // são o substituto até a #473 dar identidade ao campo; enquanto isso eles são
+  // posicionais, e não seguem o campo através de uma substituição externa da
+  // lista (rebase/merge remoto).
+  const { ids, removeIdAt, appendId, moveId } = useStableListIds(fields.length);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -34,18 +48,17 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
   );
 
   const addField = () => {
-    const newIndex = fields.length;
+    setExpandedId(appendId());
     onChange([
       ...fields,
       {
-        name: `campo_${newIndex + 1}`,
+        name: nextAvailableFieldName(fields),
         type: "text",
         options: null,
         description: "",
         target: "all",
       },
     ]);
-    setExpandedIndex(newIndex);
   };
 
   const updateField = (index: number, field: PydanticField) => {
@@ -55,11 +68,9 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
   };
 
   const removeField = (index: number) => {
+    removeIdAt(index);
     onChange(fields.filter((_, i) => i !== index));
-    if (expandedIndex === index) setExpandedIndex(null);
-    else if (expandedIndex !== null && expandedIndex > index) {
-      setExpandedIndex((idx) => (idx === null ? null : idx - 1));
-    }
+    if (expandedId === ids[index]) setExpandedId(null);
   };
 
   const moveField = (from: number, to: number) => {
@@ -67,23 +78,15 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
     const next = [...fields];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
+    moveId(from, to);
     onChange(next);
-    if (expandedIndex === from) setExpandedIndex(to);
-    else if (expandedIndex !== null) {
-      // Ajusta indice expandido para acompanhar o item que se moveu por cima dele
-      if (from < expandedIndex && to >= expandedIndex) {
-        setExpandedIndex((idx) => (idx === null ? null : idx - 1));
-      } else if (from > expandedIndex && to <= expandedIndex) {
-        setExpandedIndex((idx) => (idx === null ? null : idx + 1));
-      }
-    }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const from = fields.findIndex((f) => f.name === active.id);
-    const to = fields.findIndex((f) => f.name === over.id);
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
     if (from < 0 || to < 0) return;
     moveField(from, to);
   };
@@ -112,19 +115,16 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext
-            items={fields.map((f) => f.name)}
-            strategy={verticalListSortingStrategy}
-          >
+          <SortableContext items={ids} strategy={verticalListSortingStrategy}>
             {fields.map((field, i) => (
               <FieldCard
-                key={field.name}
-                id={field.name}
+                key={ids[i]}
+                id={ids[i]}
                 field={field}
                 allFields={fields}
-                isExpanded={expandedIndex === i}
+                isExpanded={expandedId === ids[i]}
                 onToggle={() =>
-                  setExpandedIndex(expandedIndex === i ? null : i)
+                  setExpandedId(expandedId === ids[i] ? null : ids[i])
                 }
                 onChange={(f) => updateField(i, f)}
                 onRemove={() => removeField(i)}

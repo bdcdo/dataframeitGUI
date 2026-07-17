@@ -15,7 +15,7 @@ import { regenerateAutoReviewBacklog } from "@/actions/field-reviews";
 import { markLlmEquivalent } from "@/actions/equivalences";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import type { PydanticField } from "@/lib/types";
+import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 import type {
   LlmError,
   ReviewedEntry,
@@ -26,7 +26,10 @@ interface LlmInsightsViewProps {
   errors: LlmError[];
   reviewedEntries: ReviewedEntry[];
   fields: { name: string; description: string }[];
-  allFields?: PydanticField[];
+  schemaEditor?: {
+    fields: PydanticField[];
+    baseline: SchemaBaselineIdentity;
+  };
   isCoordinator?: boolean;
   summary: {
     totalLlmDocs: number;
@@ -39,7 +42,7 @@ export function LlmInsightsView({
   errors,
   reviewedEntries,
   fields,
-  allFields,
+  schemaEditor,
   isCoordinator,
   summary,
 }: LlmInsightsViewProps) {
@@ -184,11 +187,12 @@ export function LlmInsightsView({
       )}
     </div>
 
-    {isCoordinator && editingField && allFields && (
+    {isCoordinator && editingField && schemaEditor && (
       <EditFieldDialog
         projectId={projectId}
         fieldName={editingField}
-        allFields={allFields}
+        allFields={schemaEditor.fields}
+        schemaBaseline={schemaEditor.baseline}
         open={!!editingField}
         onOpenChange={(open) => {
           if (!open) setEditingField(null);

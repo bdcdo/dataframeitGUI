@@ -1,19 +1,22 @@
 import { buildFieldHashMap } from "@/lib/answer-staleness";
 import { dropHiddenConditionals, isFieldVisible } from "@/lib/conditional";
 import { isOtherValue } from "@/lib/other-option";
+import { resolveAllowOther, resolveTarget } from "@/lib/pydantic-field";
 import { stableStringify } from "@/lib/schema-utils";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 const hasOwn = (value: object, key: string): boolean => Object.hasOwn(value, key);
 
 function humanFields(fields: PydanticField[]): PydanticField[] {
-  return fields.filter((field) => field.target !== "llm_only" && field.target !== "none");
+  return fields.filter(
+    (field) => resolveTarget(field.target) !== "llm_only" && resolveTarget(field.target) !== "none",
+  );
 }
 
 function isAllowedOption(field: PydanticField, value: unknown): value is string {
   return (
     (typeof value === "string" && (field.options ?? []).includes(value)) ||
-    (field.allow_other === true && isOtherValue(value))
+    (resolveAllowOther(field.allow_other) && isOtherValue(value))
   );
 }
 
