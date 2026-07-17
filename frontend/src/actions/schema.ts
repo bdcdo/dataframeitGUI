@@ -75,7 +75,16 @@ function versionString(version: { major: number; minor: number; patch: number })
   return `${version.major}.${version.minor}.${version.patch}`;
 }
 
-function projectSnapshot(project: SchemaProjectRow): SchemaSnapshot {
+function projectSnapshot(
+  project: Pick<
+    SchemaProjectRow,
+    | "pydantic_fields"
+    | "schema_version_major"
+    | "schema_version_minor"
+    | "schema_version_patch"
+    | "schema_revision"
+  >,
+): SchemaSnapshot {
   return {
     fields: project.pydantic_fields,
     version: versionString(projectVersion(project)),
@@ -572,9 +581,10 @@ export type BackfillSchemaResult =
 
 export async function backfillSchemaVersionHistory(
   projectId: string,
+  expectedBaseline: SchemaBaselineIdentity,
 ): Promise<BackfillSchemaResult> {
   try {
-    return await runBackfill(projectId);
+    return await runBackfill(projectId, expectedBaseline);
   } catch (e) {
     return {
       status: "error",
@@ -650,7 +660,10 @@ function fetchAllLogEntries(
 
 // Só a ausência da linha é um estado real: a coluna é NOT NULL, então uma linha
 // visível sempre traz revisão.
-async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
+async function runBackfill(
+  projectId: string,
+  expectedBaseline: SchemaBaselineIdentity,
+): Promise<BackfillSchemaResult> {
   const user = await getAuthUser();
   if (!user) throw new Error("Não autenticado");
 
@@ -669,7 +682,15 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
   ]);
 
   if (!project) throw new Error("Projeto não encontrado ou sem permissão");
-  const expectedRevision = project.schema_revision;
+
+  // O CAS compara contra a revisão que a ABA observou, como em
+  // publishMajorVersion — não contra a leitura fresca deste request. Ler o
+  // servidor aqui mascararia a defasagem da aba: um editor stale receberia o
+  // snapshot novo, stateAfterSave o trataria como rascunho próprio e o save
+  // seguinte reverteria em silêncio o schema salvo por outra sessão.
+  if (expectedBaseline.revision !== project.schema_revision) {
+    return { status: "conflict", current: projectSnapshot(project) };
+  }
 
   // `apply_schema_backfill` commita e só então devolve os campos persistidos,
   // que `mapCommitResult` valida. Sem esta recusa prévia, um schema inválido no
@@ -706,7 +727,7 @@ async function runBackfill(projectId: string): Promise<BackfillSchemaResult> {
   const { data, error } = await supabase
     .rpc("apply_schema_backfill", {
       p_project_id: projectId,
-      p_expected_revision: expectedRevision,
+      p_expected_revision: expectedBaseline.revision,
       p_final_major: finalVersion.major,
       p_final_minor: finalVersion.minor,
       p_final_patch: finalVersion.patch,

@@ -363,7 +363,7 @@ describe("backfillSchemaVersionHistory", () => {
       },
     };
 
-    const result = await backfillSchemaVersionHistory("p1");
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
 
     expect(result).toMatchObject({
       status: "saved",
@@ -401,7 +401,7 @@ describe("backfillSchemaVersionHistory", () => {
       responses: { data: [] },
     };
 
-    const result = await backfillSchemaVersionHistory("p1");
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
 
     expect(result).toEqual({
       status: "error",
@@ -433,13 +433,42 @@ describe("backfillSchemaVersionHistory", () => {
       responses: { data: [] },
     };
 
-    const result = await backfillSchemaVersionHistory("p1");
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
 
     expect(result).toEqual({
       status: "error",
       message: "Não foi possível reconstruir o histórico. Tente novamente.",
     });
     expect(state.rpcs).toHaveLength(0);
+  });
+
+  // O CAS compara contra a revisão que a ABA observou, como em
+  // publishMajorVersion. Sem isso, uma aba stale recebia o snapshot novo como
+  // se fosse resultado próprio: stateAfterSave o tratava como rascunho da
+  // sessão e o save seguinte revertia em silêncio o schema de outra sessão.
+  it("não reconstrói sobre uma revisão que a aba nunca viu", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 5,
+        },
+      },
+      schema_change_log: { data: [] },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toMatchObject({
+      status: "conflict",
+      current: { revision: 5, version: "0.1.0" },
+    });
+    expect(state.rpcs).toHaveLength(0);
+    expect(state.writes).toHaveLength(0);
   });
 });
 

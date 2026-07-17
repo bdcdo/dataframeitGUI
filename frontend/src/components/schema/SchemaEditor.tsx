@@ -235,7 +235,7 @@ function SchemaEditor({
     }
     startTransition(async () => {
       try {
-        const r = await backfillSchemaVersionHistory(projectId);
+        const r = await backfillSchemaVersionHistory(projectId, baseline);
         if (r.status === "error") {
           toast.error(r.message);
           return;
