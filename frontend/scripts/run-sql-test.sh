@@ -44,8 +44,14 @@ echo "▸ ${SQL_FILE}"
 # trust, e dblink chamado por não-superuser (postgres não é superuser na
 # imagem do Supabase) exige que a senha seja efetivamente usada — só as rotas
 # privadas (172.16/12 etc.) autenticam por scram. PGPASSWORD idem.
+#
+# Assume o container numa única rede roteável (o caso do Supabase local). Se
+# estiver em mais de uma, `println` emite um IP por linha e `grep -m1 .` pega o
+# primeiro não-vazio — sem o `println`, o `range` concatenaria os IPs sem
+# separador e produziria um host inválido.
 CONTAINER_IP="$(docker inspect -f \
-  '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${CONTAINER}")"
+  '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "${CONTAINER}" \
+  | grep -m1 .)"
 
 docker exec -e PGPASSWORD=postgres -i "${CONTAINER}" \
   psql -h "${CONTAINER_IP}" -p 5432 -U postgres -d postgres \

@@ -1,12 +1,18 @@
 -- Runtime contract for 20260715170000_llm_rate_limit.sql (#135).
 --
--- Run after `npx supabase db reset`:
---   psql "$(npx supabase status -o env | grep DB_URL | cut -d= -f2- | tr -d '\"')" \
---     -v ON_ERROR_STOP=1 -f supabase/tests/llm_rate_limit.test.sql
+-- Run after `npx supabase db reset`, via the shared runner (from frontend/):
+--   ./scripts/run-sql-test.sh supabase/tests/llm_rate_limit.test.sql
+--   # or the whole chain: npm run test:db
+--
+-- Do NOT run this file directly against the DB_URL from `supabase status`: that
+-- URL points at 127.0.0.1, whose pg_hba route is trust, and dblink called by a
+-- non-superuser is refused there ("password required"). The runner connects
+-- over the container's routable IP (scram), which is why the dblink section
+-- only passes through it.
 --
 -- The first transaction rolls back all ordinary fixtures. The concurrency
 -- section uses two dblink sessions because one SQL session cannot prove the row
--- lock; its committed fixture is explicitly deleted before the final rollback.
+-- lock; its committed fixture is explicitly deleted after the final rollback.
 
 -- Fora da transação, de propósito: o teardown roda após o ROLLBACK e ainda
 -- precisa das funções de dblink — criada dentro do BEGIN, a extensão seria
