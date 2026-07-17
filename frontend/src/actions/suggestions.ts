@@ -84,8 +84,11 @@ export async function rejectSchemaSuggestion(
 
   if (error) return { error: error.message };
   if (!updated || updated.length === 0) {
+    // O filtro status='pending' zera o UPDATE tanto para sugestão inexistente
+    // quanto para a já resolvida por outro coordenador (corrida normal) — a
+    // copy espelha a da RPC irmã, não um falso erro de autorização.
     return {
-      error: "Sem permissão para resolver esta sugestão.",
+      error: "Sugestão não encontrada ou já resolvida.",
     };
   }
   revalidatePath(`/projects/${projectId}/reviews/comments`);

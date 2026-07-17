@@ -253,13 +253,16 @@ describe("approveSchemaSuggestionWithEdits", () => {
 });
 
 describe("rejectSchemaSuggestion", () => {
-  it("UPDATE de schema_suggestions filtrado (0 linhas) → erro", async () => {
+  // O filtro status='pending' zera o UPDATE também na corrida normal (outro
+  // coordenador aprovou segundos antes) — a copy é a mesma da RPC irmã, não um
+  // falso erro de autorização para quem tem permissão.
+  it("UPDATE de schema_suggestions filtrado (0 linhas) → copy de já resolvida", async () => {
     supabaseState.tableResults = {
       schema_suggestions: { data: [] },
     };
 
     const r = await rejectSchemaSuggestion("s1", "p1", "fora de escopo");
-    expect(r.error).toMatch(/Sem permissão para resolver/);
+    expect(r.error).toBe("Sugestão não encontrada ou já resolvida.");
   });
 
   it("caminho feliz: rejeição persiste com rejection_reason", async () => {
