@@ -46,7 +46,9 @@ CREATE EXTENSION IF NOT EXISTS dblink;
 -- afrouxam a RLS que as outras suítes assumem. REVOKE de privilégio não
 -- concedido é no-op (warning, não erro sob ON_ERROR_STOP). O DELETE do projeto
 -- cascateia para project_members e schema_change_log (FK ON DELETE CASCADE); o
--- mapeamento de identidade fica em tabela à parte e é apagado explicitamente.
+-- mapeamento de identidade é apagado explicitamente por garantia (também
+-- cascatearia via `profiles`, que herda a exclusão de `auth.users` — a FK de
+-- clerk_user_mapping.supabase_user_id aponta para profiles ON DELETE CASCADE).
 REVOKE SELECT, UPDATE ON public.projects FROM authenticated;
 REVOKE SELECT, INSERT ON public.schema_change_log FROM authenticated;
 REVOKE SELECT ON public.project_members FROM authenticated;
