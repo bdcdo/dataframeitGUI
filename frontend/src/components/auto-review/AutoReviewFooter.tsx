@@ -31,14 +31,16 @@ export function AutoReviewFooter({
     return window.localStorage.getItem(HINTS_DISMISSED_KEY) === null;
   });
 
+  // O `setItem` fica no handler, não dentro do updater: React pode rodar o
+  // updater mais de uma vez e o efeito colateral repetiria. Ler `hintsOpen` do
+  // closure é seguro aqui porque só um clique alterna o valor — não há segunda
+  // fonte de escrita que pudesse ser perdida no batching.
   function toggleHints() {
-    setHintsOpen((v) => {
-      const next = !v;
-      if (typeof window !== "undefined" && !next) {
-        window.localStorage.setItem(HINTS_DISMISSED_KEY, "1");
-      }
-      return next;
-    });
+    const next = !hintsOpen;
+    setHintsOpen(next);
+    if (typeof window !== "undefined" && !next) {
+      window.localStorage.setItem(HINTS_DISMISSED_KEY, "1");
+    }
   }
 
   return (

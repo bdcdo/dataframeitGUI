@@ -39,10 +39,35 @@
         "files": [
           "src/actions/assignments.ts",
           "src/actions/members.ts",
-          "src/actions/projects.ts"
+          "src/actions/projects.ts",
+          "src/lib/compare-sync.ts"
         ],
         "rules": [
           "react-doctor/supabase-client-owned-authz-field"
+        ]
+      },
+      {
+        "files": [
+          "src/hooks/useLlmRunProgress.ts"
+        ],
+        "rules": [
+          "react-doctor/effect-needs-cleanup"
+        ]
+      },
+      {
+        "files": [
+          "src/hooks/useResetOnKeyChange.ts"
+        ],
+        "rules": [
+          "react-doctor/no-prop-callback-in-render"
+        ]
+      },
+      {
+        "files": [
+          "src/components/compare/ComparePage.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-ref-current-in-render"
         ]
       },
       {

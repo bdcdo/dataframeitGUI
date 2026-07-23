@@ -190,7 +190,7 @@ export function DocumentList({
                 {projectId && !showExcluded && (
                   <td className="px-4 py-2">
                     <CopyLinkButton
-                      url={`${typeof window !== "undefined" ? window.location.origin : ""}/projects/${projectId}/analyze/code?doc=${doc.id}`}
+                      url={`/projects/${projectId}/analyze/code?doc=${doc.id}`}
                     />
                   </td>
                 )}

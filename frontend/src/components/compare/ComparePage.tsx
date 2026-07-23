@@ -348,6 +348,19 @@ export function ComparePage({
     [guardNavigation, handleQueueChange],
   );
 
+  // Adaptadores `async () => Promise` → `() => void` para as assinaturas
+  // síncronas de `useCompareKeyboard`. Precisam de identidade estável: o hook
+  // recebe os dois no array de deps do seu único effect, então um arrow inline
+  // religaria o listener de `keydown` a cada render do container.
+  const handleSpecialVerdict = useCallback(
+    (verdict: "ambiguo" | "pular") => void submitVerdictSingleFlight(verdict),
+    [submitVerdictSingleFlight],
+  );
+  const handleConfirmPending = useCallback(
+    () => void confirmPendingVerdict(),
+    [confirmPendingVerdict],
+  );
+
   useCompareKeyboard({
     readOnly,
     isFullscreen,
@@ -360,9 +373,8 @@ export function ComparePage({
     onNextField: nextField,
     onPrevField: prevField,
     onPrepareVerdict: preparePendingVerdict,
-    onSubmitSpecialVerdict: (verdict) =>
-      void submitVerdictSingleFlight(verdict),
-    onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+    onSubmitSpecialVerdict: handleSpecialVerdict,
+    onConfirmPendingVerdict: handleConfirmPending,
     hasPendingVerdict: !!pendingVerdict,
   });
 
@@ -540,7 +552,7 @@ export function ComparePage({
             void submitVerdictSingleFlight(verdict, chosenResponseId),
           pendingVerdict,
           onPrepareVerdict: preparePendingVerdict,
-          onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+          onConfirmPendingVerdict: handleConfirmPending,
           onDiscardPendingVerdict: discardPendingVerdict,
           isSavingVerdict,
           onMarkReviewed: () => void handleMarkReviewed(),
