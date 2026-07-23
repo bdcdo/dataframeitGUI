@@ -69,7 +69,11 @@ export function SortableQuestion({
             <GripVertical className="size-3.5" />
           </button>
         )}
-        <div className="flex-1 min-w-0">
+        {/* `data-question-body` marca o corpo da resposta (label + controle),
+            irmão do drag-handle. A validação de submit foca o primeiro controle
+            focável DENTRO deste container, para o cursor cair na pergunta
+            pendente e não no botão de reordenar (que precede o corpo no card). */}
+        <div className="flex-1 min-w-0" data-question-body>
           <FieldHeaderLabel
             prefix={`${index + 1}.`}
             helpText={field.help_text}
