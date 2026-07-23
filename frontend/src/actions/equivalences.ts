@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
+import { ZeroRowsError } from "@/lib/supabase/rls-guard";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
 
 // Marks two or more responses as equivalent for a (document, field) and at the
@@ -161,9 +162,11 @@ export async function markLlmEquivalent(
   return {};
 }
 
-// Removes a single equivalence pair. Also clears the current reviewer's
-// verdict for the affected (doc, field), since the previously chosen
-// gabarito no longer represents a fused group — forcing a fresh vote.
+// Removes a single equivalence pair. The RPC also clears the calling
+// identity's verdict for the affected (doc, field) in the same transaction,
+// since the previously chosen gabarito no longer represents a fused group —
+// forcing a fresh vote. A coordinator undoing someone else's pair does not
+// erase that person's verdict.
 export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
@@ -173,27 +176,30 @@ export async function unmarkEquivalencePair(
   const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
-  let syncDocumentId: string | null = null;
+  let syncDocumentId: string;
 
   try {
+    // A RPC remove o par e o veredito da identidade de trabalho na mesma
+    // transação — o DELETE de `reviews` não vive mais aqui.
     const { data, error } = await supabase.rpc("remove_response_equivalence", {
       p_project_id: projectId,
       p_equivalence_id: equivalenceId,
     });
     if (error) throw new Error(error.message);
+
+    // Conjunto vazio significa linha inexistente OU autoridade que não bate: a
+    // RPC não distingue, e nenhum dos dois é sucesso. Sem este guard a action
+    // retornaria `{}` sobre nada removido e a revisora veria "desfeito" — o
+    // sucesso falso do #178.
     const row = data?.[0];
-
-    if (row?.document_id && row.field_name) {
-      await supabase
-        .from("reviews")
-        .delete()
-        .eq("project_id", projectId)
-        .eq("document_id", row.document_id)
-        .eq("field_name", row.field_name)
-        .eq("reviewer_id", reviewerId);
-
-      syncDocumentId = row.document_id;
+    if (!row?.document_id || !row.field_name) {
+      throw new ZeroRowsError(
+        "response_equivalences",
+        "delete",
+        "Equivalência não encontrada ou sem permissão para removê-la.",
+      );
     }
+    syncDocumentId = row.document_id;
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
   }
@@ -202,19 +208,26 @@ export async function unmarkEquivalencePair(
   // falha do sync não deve virar { error } — a revisora veria "falha ao
   // desfazer" para uma operação já persistida e tentaria de novo, sobre uma
   // linha que não existe mais. Loga e segue para a revalidação.
-  if (syncDocumentId) {
-    try {
-      await syncCompareAssignment(
-        supabase,
-        projectId,
-        syncDocumentId,
-        reviewerId,
-      );
-    } catch (e) {
-      console.error(
-        `[unmarkEquivalencePair] falha ao sincronizar o assignment: ${errorMessage(e)}`,
-      );
-    }
+  //
+  // `reviewerId` resolve a identidade de trabalho no Node
+  // (`resolveProjectMemberActor`) enquanto o DELETE dentro da RPC resolve a
+  // dele em SQL (`auth_user_member_identity_ids`): duas fontes que precisam
+  // concordar para o assignment recalculado ser o da identidade cujo veredito
+  // saiu. Eliminar a segunda por construção exigiria a RPC devolver o
+  // `reviewer_id` efetivo — o que muda o `RETURNS TABLE` e quebraria a
+  // compatibilidade de assinatura que permite aplicar a migration antes do
+  // merge do código. Fica como follow-up, não como fallback aqui.
+  try {
+    await syncCompareAssignment(
+      supabase,
+      projectId,
+      syncDocumentId,
+      reviewerId,
+    );
+  } catch (e) {
+    console.error(
+      `[unmarkEquivalencePair] falha ao sincronizar o assignment: ${errorMessage(e)}`,
+    );
   }
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);
