@@ -57,7 +57,7 @@ Quem aplica a regra é o hook **`lint-types`** (pre-push, arquivos alterados), e
 
 ### ruff — lint, format e complexidade do backend
 
-`ruff` (dependency-group dev em `backend/pyproject.toml`), via o hook oficial `astral-sh/ruff-pre-commit` v0.15.20. Cobre o backend Python, que não tinha nenhum gate. Resolve o eixo de complexidade que a #260 levantou (a pergunta original era sobre o `lizard`): no frontend a complexidade já está coberta por react-doctor + fallow, então a lacuna real era o Python, e o `ruff` entrega `C901` (mccabe) junto com lint (E/F/I/B) e format num binário só — mais que o `lizard`, que só mede CCN.
+`ruff` (dependency-group dev em `backend/pyproject.toml`), via o hook oficial `astral-sh/ruff-pre-commit` — a versão do hook é o `rev` em `.pre-commit-config.yaml`, que é a fonte única (não repetir o número aqui: o comentário desatualiza sozinho, foi o que aconteceu entre o #513 e o #530). Cobre o backend Python, que não tinha nenhum gate. Resolve o eixo de complexidade que a #260 levantou (a pergunta original era sobre o `lizard`): no frontend a complexidade já está coberta por react-doctor + fallow, então a lacuna real era o Python, e o `ruff` entrega `C901` (mccabe) junto com lint (E/F/I/B) e format num binário só — mais que o `lizard`, que só mede CCN.
 
 Config em `backend/pyproject.toml`: `select = ["E", "F", "I", "B", "C901"]`, `ignore = ["E501"]` (comprimento de linha fica a cargo do `ruff format`), `max-complexity = 10`. Os hooks rodam file-scoped (só os `.py` alterados), com `--fix` no lint, então o débito legado fica grandfathered por arquivo-tocado.
 
@@ -127,7 +127,7 @@ npm run fallow:audit     # gate incremental (new-only vs origin/main)
 npm run scan             # React Scan (precisa de `npm run dev` rodando)
 
 cd backend
-uv run ruff check .      # lint (ruff do dev-group via uv.lock; o hook pina v0.15.20)
+uv run ruff check .      # lint (ruff do dev-group via uv.lock; versao do hook: .pre-commit-config.yaml)
 uv run ruff format .     # format
 uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy acima)
 ```

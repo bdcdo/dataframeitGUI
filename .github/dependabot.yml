@@ -74,3 +74,18 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+
+  # Hooks de .pre-commit-config.yaml. Sem esta entrada, o `rev` do
+  # ruff-pre-commit ficava parado enquanto o ecossistema `uv` subia o `ruff` do
+  # dependency-group dev — a mesma ferramenta rodando em duas versoes conforme
+  # o caminho (hook de commit vs. `uv run ruff`). Cobre tambem gitleaks e
+  # actionlint, hoje pinados a mao.
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "ci"

@@ -28,8 +28,17 @@ repos:
   # framework (so os .py alterados), entao o debito legado fica grandfathered —
   # so barra/formata o arquivo que voce tocar. --fix auto-corrige imports e afins.
   # Config em backend/pyproject.toml; suppressions pontuais ficam inline no codigo.
+  # O `rev` abaixo precisa acompanhar a versao do ruff travada em
+  # backend/uv.lock: sao duas declaracoes da MESMA ferramenta, e versoes
+  # diferentes fazem o hook e o `uv run ruff check .` divergirem em silencio.
+  # O lock e a referencia — nao o `ruff>=X` do dependency-group dev em
+  # backend/pyproject.toml, que e piso e nao versao: um `uv lock --upgrade` sobe
+  # o lock sem tocar o piso, e ai o piso continua "satisfeito" com o rev velho.
+  # O ecossistema `pre-commit` em .github/dependabot.yml existe para que os dois
+  # sejam bumpados; sao PRs separados (grupo `backend-minor-patch` vs. avulso),
+  # entao a convergencia e eventual e nenhum gate compara os dois hoje — ver #554.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.20
+    rev: v0.15.21
     hooks:
       - id: ruff-check
         args: [--fix]
