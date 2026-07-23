@@ -69,6 +69,20 @@ describe("resolveInitialCodingStatus", () => {
     });
   });
 
+  it("codificação COMPLETA mas nunca enviada (is_partial) → em_andamento, não concluido", () => {
+    // `is_partial` marca "não clicou em Enviar", não "faltam campos": o
+    // auto-save grava true com o formulário inteiro preenchido. Nascer
+    // `concluido` aqui seria a #521 ao contrário, e definitivo —
+    // `keepCodingAssignmentInProgress` nunca regride de `concluido`. O par com
+    // o caso acima prova que o veredito vem do is_partial, e não do conteúdo:
+    // as mesmas respostas completas, só a flag muda.
+    const naoEnviada = response({ is_partial: true });
+    expect(resolveInitialCodingStatus(SCHEMA_CTX, NO_ROUNDS, naoEnviada, FIELDS)).toEqual({
+      status: "em_andamento",
+      completed_at: null,
+    });
+  });
+
   it("opção 'outro' sem texto → em_andamento; com texto → concluido", () => {
     // O par prova que o veredito vem do complemento vazio, e não do campo em si:
     // muda só o texto livre e o status vira concluido.

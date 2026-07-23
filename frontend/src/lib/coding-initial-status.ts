@@ -45,6 +45,11 @@ export interface InitialCodingStatus {
  * da response. `syncCodingAssignmentStatus` chama `runCodingAutomation` mesmo
  * quando o UPDATE do assignment não afeta linha nenhuma — que é exatamente o
  * caso em que o assignment ainda não existia.
+ *
+ * O terceiro juiz é o guard de auto-save, replicado aqui a partir de
+ * `syncCodingAssignmentStatus` porque `classifyDocStatus` não o expõe: ele
+ * colapsa `is_partial` em `current_pending`, que é o mesmo ramo de uma response
+ * enviada e incompleta. Ver o comentário no corpo da função.
  */
 export function resolveInitialCodingStatus(
   ctx: RoundContext,
@@ -57,6 +62,17 @@ export function resolveInitialCodingStatus(
   const round = classifyDocStatus(ctx, response, roundsById);
   if (round.kind === "previous" || round.kind === "no_response") {
     return { status: "pendente", completed_at: null };
+  }
+
+  // `is_partial` significa "nunca submetida", não "incompleta": o auto-save
+  // grava true enquanto o pesquisador não clicar em Enviar, mesmo com todos os
+  // campos preenchidos (actions/responses.ts, isPartialToWrite). Promover isso
+  // a `concluido` seria a #521 ao contrário — e um estado do qual não se sai:
+  // `keepCodingAssignmentInProgress` nunca regride de `concluido`, então nem o
+  // auto-save seguinte nem o submit posterior corrigiriam a linha. Mesmo motivo
+  // do gate `!isAutoSave` em `syncCodingAssignmentStatus`.
+  if (response.is_partial === true) {
+    return { status: "em_andamento", completed_at: null };
   }
 
   if (isCodingComplete(fields, response.answers ?? {}, response.answer_field_hashes)) {

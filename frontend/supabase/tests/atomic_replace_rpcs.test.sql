@@ -188,6 +188,9 @@ END $$;
 DO $$
 DECLARE r_status text; r_done timestamptz; r_default text; r_default_done timestamptz;
 BEGIN
+  -- Este DELETE limpa a fixture de assignments dos blocos anteriores, então
+  -- este bloco tem de continuar sendo o ÚLTIMO: um caso novo inserido abaixo
+  -- herdaria a tabela vazia e passaria por vácuo, sem sinal nenhum.
   DELETE FROM public.assignments WHERE project_id = '11111111-1111-1111-1111-111111111111';
   PERFORM public.apply_lottery_assignments(
     '11111111-1111-1111-1111-111111111111'::uuid, 'codificacao', NULL,

@@ -227,6 +227,12 @@ async function insertCodingAssignment(
     .eq("respondent_id", userId)
     .eq("respondent_type", "humano")
     .eq("is_latest", true)
+    // `is_latest` único por par é invariante de trigger (20260716160100), não de
+    // índice: sem o order+limit, uma duplicata faria o `maybeSingle` devolver
+    // PGRST116 e a atribuição manual daquele par ficaria IMPOSSÍVEL — trocar um
+    // status errado por um bloqueio de operação é pior que o bug original.
+    .order("updated_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
   if (responseError) return { error: responseError.message };
 
