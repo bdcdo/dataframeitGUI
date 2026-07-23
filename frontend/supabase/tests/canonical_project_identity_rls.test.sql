@@ -2386,10 +2386,17 @@ BEGIN
       AND status = 'concluido'
       AND completed_at = '2001-01-01T00:00:00Z'::timestamptz
   ) OR NOT EXISTS (
+    -- 012 (auto_revisao no doc 002) migra para o target. O status de
+    -- auto_revisao passou a ser DERIVADO dos field_reviews pela reconciliação
+    -- (trigger archive_review_dependencies_on_response_change, migration
+    -- 20260717120000): sem field_review pendente no doc 002, o assignment é
+    -- fechado — então esperar 'concluido', não 'pendente'. A precedência de
+    -- target segue verificada: 012 existe com user=target (distinto do 010,
+    -- que colidiu e foi deletado).
     SELECT 1 FROM public.assignments
     WHERE id = '41000000-0000-0000-0000-000000000012'
       AND user_id = '10000000-0000-0000-0000-000000000004'
-      AND status = 'pendente'
+      AND status = 'concluido'
   ) OR EXISTS (
     SELECT 1 FROM public.assignments
     WHERE id = '41000000-0000-0000-0000-000000000010'
@@ -2854,8 +2861,12 @@ BEGIN
       'FALHOU contrato: comparison não segue membership→tabelas→advisory';
   END IF;
 
+  -- Caminho de produção da arbitragem: o app chama a função por ciclos
+  -- diretamente (src/actions/field-reviews.ts). O wrapper
+  -- assign_arbitration_if_eligible(...,text[]) é só compat e delega a ela, então
+  -- as guardas de elegibilidade/autoria vivem — e são fixadas — aqui.
   SELECT pg_get_functiondef(
-    'public.assign_arbitration_if_eligible(uuid,uuid,uuid,text[])'::regprocedure
+    'public.assign_arbitration_cycles_if_eligible(uuid,uuid,uuid,uuid[])'::regprocedure
   ) INTO definition;
   IF definition NOT ILIKE '%self_reviewer_id <> p_user_id%'
      OR definition NOT ILIKE '%can_arbitrate = true%'

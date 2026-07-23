@@ -6,7 +6,7 @@
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, actionlint,
 #                                                deploy notifier, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy, db-tests
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
@@ -236,5 +236,25 @@ repos:
         files: ^backend/.*\.py$
         exclude: ^backend/tests/.*\.py$
         pass_filenames: true
+        require_serial: true
+        stages: [pre-push]
+
+      # test:db como gate de pre-push fail-closed (issue #557). A cadeia de
+      # suites SQL de contrato nao rodava em hook nenhum, entao quatro delas
+      # ficaram vermelhas na main sem ninguem ver. O runner
+      # (frontend/scripts/run-db-tests.sh) roda TODAS as suites numa varredura
+      # (sem parar na primeira, ao contrario do antigo `&&`) e sai !=0 se
+      # qualquer suite de GATE falhar. Requer o Supabase local no ar; sem o
+      # container o push e barrado com mensagem (gate de verdade, como o
+      # backend-pytest). As orfas schema_revision_* (#571/#572) estao em
+      # KNOWN_RED no runner e sao reportadas sem bloquear ate serem consertadas.
+      # Escopo por `files`: so roda quando o push toca migrations, suites .sql
+      # ou os scripts do runner.
+      - id: db-tests
+        name: test:db (suites de contrato SQL, pre-push)
+        entry: bash -c 'cd frontend && exec bash scripts/run-db-tests.sh'
+        language: system
+        files: ^frontend/(supabase/(migrations|tests)/.*\.sql|scripts/run-(db-tests|sql-test)\.sh|package\.json)$
+        pass_filenames: false
         require_serial: true
         stages: [pre-push]

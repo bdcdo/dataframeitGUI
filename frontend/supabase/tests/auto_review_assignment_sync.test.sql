@@ -80,6 +80,23 @@ VALUES
    'c0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000001',
    'humano', '{"q4":"canonical"}');
 
+-- Respostas is_latest=false dedicadas aos casos "histórica" do bloco de
+-- atomicidade. Referenciá-las faz a RPC recusar o candidato por check_violation
+-- (ela exige is_latest=true) sem precisar flipar is_latest de uma resposta viva.
+-- O flip dispararia o trigger archive_review_dependencies_on_response_change
+-- (is_latest true→false), que deleta os field_reviews da resposta e quebraria
+-- tanto a asserção de atomicidade quanto os blocos seguintes que dependem de
+-- f001/f002 (ver #557). O índice único de LLM latest é parcial
+-- (WHERE is_latest=true), então d009 coexiste com d002.
+INSERT INTO public.responses
+  (id, project_id, document_id, respondent_id, respondent_type, answers, is_latest)
+VALUES
+  ('d0000000-0000-0000-0000-000000000008', 'b0000000-0000-0000-0000-000000000001',
+   'c0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001',
+   'humano', '{"q1":"x","q2":"y"}', false),
+  ('d0000000-0000-0000-0000-000000000009', 'b0000000-0000-0000-0000-000000000001',
+   'c0000000-0000-0000-0000-000000000001', NULL, 'llm', '{"q1":"z","q2":"w"}', false);
+
 INSERT INTO public.assignments (id, project_id, document_id, user_id, type, status)
 VALUES
   ('e0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000001',
@@ -394,11 +411,10 @@ BEGIN
     WHEN check_violation THEN NULL;
   END;
 
-  UPDATE public.responses SET is_latest = false
-  WHERE id = 'd0000000-0000-0000-0000-000000000001';
+  -- Humana histórica: fixture d...008 (is_latest=false), sem flipar d...001.
   BEGIN
     PERFORM public.assign_auto_reviews_if_eligible(
-      ('[{"human_response_id":"d0000000-0000-0000-0000-000000000001",'
+      ('[{"human_response_id":"d0000000-0000-0000-0000-000000000008",'
         || '"llm_response_id":"d0000000-0000-0000-0000-000000000002",'
         || '"field_names":["q4"]}]')::JSONB
     );
@@ -406,7 +422,7 @@ BEGIN
   EXCEPTION
     WHEN check_violation THEN NULL;
   END;
-  UPDATE public.responses SET is_latest = true, is_partial = true
+  UPDATE public.responses SET is_partial = true
   WHERE id = 'd0000000-0000-0000-0000-000000000001';
   BEGIN
     PERFORM public.assign_auto_reviews_if_eligible(
@@ -421,20 +437,17 @@ BEGIN
   UPDATE public.responses SET is_partial = false
   WHERE id = 'd0000000-0000-0000-0000-000000000001';
 
-  UPDATE public.responses SET is_latest = false
-  WHERE id = 'd0000000-0000-0000-0000-000000000002';
+  -- LLM histórica: fixture d...009 (is_latest=false), sem flipar d...002.
   BEGIN
     PERFORM public.assign_auto_reviews_if_eligible(
       ('[{"human_response_id":"d0000000-0000-0000-0000-000000000001",'
-        || '"llm_response_id":"d0000000-0000-0000-0000-000000000002",'
+        || '"llm_response_id":"d0000000-0000-0000-0000-000000000009",'
         || '"field_names":["q4"]}]')::JSONB
     );
     RAISE EXCEPTION 'FALHOU validação: resposta LLM histórica passou';
   EXCEPTION
     WHEN check_violation THEN NULL;
   END;
-  UPDATE public.responses SET is_latest = true
-  WHERE id = 'd0000000-0000-0000-0000-000000000002';
 
   BEGIN
     PERFORM public.assign_auto_reviews_if_eligible(
