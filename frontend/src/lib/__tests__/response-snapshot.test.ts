@@ -503,3 +503,102 @@ describe("buildPersistedResponseSnapshot", () => {
     expect(result.answerFieldHashes).toEqual({ legado: "hash-antigo" });
   });
 });
+
+describe("buildPersistedResponseSnapshot — stampsCurrentSchema (#529/#548)", () => {
+  const single = (name: string, hash: string): PydanticField =>
+    field({ name, type: "single", options: ["a", "b"], hash });
+
+  it("false quando o pesquisador re-confirma o mesmo valor (toque/auto-save)", () => {
+    // O sinal que autoriza promover as colunas de versão. Re-submeter o valor
+    // já apresentado não é revisão: `samePresentedValue` o exclui de
+    // changedFieldNames, então nenhum campo ganha o hash de hoje.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: false,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(false);
+  });
+
+  it("true quando um valor é de fato alterado (#529)", () => {
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: { q1: "b" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("true quando um campo criado depois é de fato respondido (#529)", () => {
+    // Simétrico com o hash: o campo novo ganha o hash de hoje, e o save promove.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("antigo", "antigo-hash"), single("novo", "novo-hash")],
+      existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
+      rawSubmittedAnswers: { antigo: "a", novo: "b" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("false quando a revisão apenas apaga o valor (fora de persistedAnswers)", () => {
+    // Limpar um campo muda changedFieldNames, mas o valor não persiste — nada
+    // é escrito sob o schema de hoje, então a linha conserva a época.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: {},
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.persistedAnswers).toEqual({});
+    expect(result.stampsCurrentSchema).toBe(false);
+  });
+
+  it("codificação nova com resposta real estampa o schema de hoje", () => {
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: null,
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("true na via de saída legacy: submit completo recodifica e estampa (#548)", () => {
+    // A interação que exige o sinal UNIFICADO: aqui `changedFieldNames` pode até
+    // estar vazio (valores iguais aos apresentados), mas a recodificação completa
+    // desliga o sentinela e estampa o mapa inteiro — então `stampsCurrentSchema`
+    // tem de ser true para o gate `latest_major` promover, alinhado ao mapa. Um
+    // sinal derivado só de `revisedPersistedFieldNames` (pré-#548) diria false e
+    // reverteria a promoção.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.answerFieldHashes).toEqual({ q1: "h1" });
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("false na legacy sob auto-save: conserva a época (#548)", () => {
+    // Mesmo cenário, mas auto-save não atesta a codificação inteira: o sentinela
+    // é conservado (`{}`) e o sinal fica false, simétrico ao mapa.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: false,
+    });
+
+    expect(result.answerFieldHashes).toEqual({});
+    expect(result.stampsCurrentSchema).toBe(false);
+  });
+});
