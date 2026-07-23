@@ -388,6 +388,12 @@ function RespondentRow({
         {respondent.justification && (
           <button
             type="button"
+            aria-label={
+              showJustification
+                ? "Ocultar justificativa"
+                : "Mostrar justificativa"
+            }
+            aria-expanded={showJustification}
             onClick={() => setShowJustification(!showJustification)}
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >

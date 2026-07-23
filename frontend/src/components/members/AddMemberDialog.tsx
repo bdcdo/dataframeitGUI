@@ -46,6 +46,7 @@ export function AddMemberDialog({ projectId }: AddMemberDialogProps) {
         <div className="space-y-4">
           <Input placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <select
+            aria-label="Papel do membro no projeto"
             value={role}
             onChange={(e) => setRole(e.target.value as "coordenador" | "pesquisador")}
             className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"

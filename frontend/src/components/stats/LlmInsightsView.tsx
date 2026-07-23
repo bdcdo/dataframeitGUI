@@ -167,9 +167,12 @@ export function LlmInsightsView({
         </p>
       ) : (
         <div className="space-y-3">
-          {sortedErrors.map((e, i) => (
+          {sortedErrors.map((e) => (
             <LlmErrorCard
-              key={`${e.documentId}-${e.fieldName}-${i}`}
+              // (documentId, fieldName) é a identidade do erro — é por esse par
+              // que resolveError/reopenError o localizam. O índice no fim da
+              // chave só mascarava o reorder dos filtros.
+              key={`${e.documentId}-${e.fieldName}`}
               error={e}
               projectId={projectId}
               isPending={isPending}

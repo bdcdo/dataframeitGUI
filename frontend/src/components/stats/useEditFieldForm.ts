@@ -45,11 +45,11 @@ export function useEditFieldForm(
   const [description, setDescription] = useState(initial.description);
   const [helpText, setHelpText] = useState(initial.helpText);
   const [options, setOptions] = useState<string[]>(initial.options);
-  const [allowOther, setAllowOther] = useState<boolean>(
+  const [allowOther, setAllowOther] = useState<boolean>(() =>
     resolveAllowOther(field?.allow_other),
   );
   const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
-  const [subfieldRule, setSubfieldRule] = useState(
+  const [subfieldRule, setSubfieldRule] = useState(() =>
     resolveSubfieldRule(field?.subfield_rule),
   );
   const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);

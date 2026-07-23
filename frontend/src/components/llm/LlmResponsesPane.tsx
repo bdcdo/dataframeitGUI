@@ -96,16 +96,24 @@ export function LlmResponsesPane({
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2" aria-busy={isPending}>
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          {/* `span` + `aria-labelledby`, não `label` + `htmlFor`: o gatilho do
+              Select do Radix é um `button`, que `htmlFor` não associa. */}
+          <span
+            id="llm-run-filter-label"
+            className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          >
             Execução
             {isPending && <Loader2 className="size-3 animate-spin" />}
-          </label>
+          </span>
           <Select
             value={activeJobId ?? "all"}
             onValueChange={setJobFilter}
             disabled={isPending}
           >
-            <SelectTrigger className="h-8 w-64 text-xs">
+            <SelectTrigger
+              aria-labelledby="llm-run-filter-label"
+              className="h-8 w-64 text-xs"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

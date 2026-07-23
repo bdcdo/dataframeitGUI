@@ -159,6 +159,8 @@ export function AgreementGroup({
     .map((key) => groups.find((g) => g.groupKey === key))
     .filter((g): g is RenderedGroup => !!g);
 
+  // Consultado uma vez por grupo renderizado; como array seria O(grupos²).
+  const selectionSet = new Set(selectionOrder);
   const showGabarito = selectedGroups.length >= 2;
   const effectiveGabarito =
     gabaritoOverride && selectionOrder.includes(gabaritoOverride)
@@ -277,7 +279,7 @@ export function AgreementGroup({
             ),
           ).toSorted(compareVersionsDesc);
 
-          const isSelected = selectionOrder.includes(group.groupKey);
+          const isSelected = selectionSet.has(group.groupKey);
 
           return (
             <AnswerCard

@@ -90,7 +90,8 @@ export function EditFieldDialog({
   const handleSave = () => {
     startSave(async () => {
       const originalOpts = field.options ?? [];
-      const removedOpts = originalOpts.filter((o) => !options.includes(o));
+      const optionSet = new Set(options);
+      const removedOpts = originalOpts.filter((o) => !optionSet.has(o));
       let updatedFields = allFields.map((f) =>
         f.name === fieldName
           ? {

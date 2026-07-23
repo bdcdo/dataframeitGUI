@@ -56,6 +56,15 @@
       },
       {
         "files": [
+          "src/lib/clerk-sync.ts",
+          "src/lib/schema-utils.ts"
+        ],
+        "rules": [
+          "react-doctor/js-set-map-lookups"
+        ]
+      },
+      {
+        "files": [
           "src/hooks/useResetOnKeyChange.ts"
         ],
         "rules": [

@@ -141,8 +141,19 @@ export function DocumentList({
             {filtered.map((doc) => (
               <tr
                 key={doc.id}
-                className="cursor-pointer border-b transition-colors hover:bg-muted/30"
+                className="cursor-pointer border-b transition-colors hover:bg-muted/30 focus-visible:bg-muted/50 focus-visible:outline-none"
+                // A linha inteira é o alvo de clique; sem foco e sem teclado,
+                // abrir um documento era exclusivo do mouse.
+                tabIndex={0}
                 onClick={() => onSelect(doc)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  // Só quando o foco está na própria linha: Enter/espaço em um
+                  // controle interno (checkbox, copiar link, excluir) é dele.
+                  if (e.target !== e.currentTarget) return;
+                  e.preventDefault();
+                  onSelect(doc);
+                }}
               >
                 {canSelect && (
                   <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>

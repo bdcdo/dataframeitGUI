@@ -217,6 +217,8 @@ function ValueControl({
     const values = (
       "in" in condition ? condition.in : condition.not_in
     ) as string[];
+    // Uma varredura de `values` por opção renderizada viraria O(opções × values).
+    const valueSet = new Set(values);
     if (!supportsValues) {
       return (
         <span className="text-xs text-muted-foreground">
@@ -227,7 +229,7 @@ function ValueControl({
     return (
       <div className="flex flex-wrap gap-1">
         {trigger?.options?.map((opt) => {
-          const checked = values.includes(opt);
+          const checked = valueSet.has(opt);
           return (
             <label
               key={opt}
