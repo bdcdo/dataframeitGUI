@@ -1,19 +1,8 @@
 import { useCallback, useState, type RefObject } from "react";
 import { toast } from "sonner";
-import { isIncompleteOther } from "@/lib/other-option";
 import { getScrollBehavior } from "@/lib/scroll";
-import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
+import { isFieldAnswered, requiredHumanFields } from "@/lib/coding-completeness";
 import type { PydanticField } from "@/lib/types";
-
-const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
-  if (val === undefined || val === null || val === "") return false;
-  if (field.type === "single" && isIncompleteOther(val)) return false;
-  if (field.type === "multi" && Array.isArray(val)) {
-    if (val.length === 0) return false;
-    if (val.some(isIncompleteOther)) return false;
-  }
-  return true;
-};
 
 /**
  * Estado de destaque de obrigatórias faltantes + validação de envio. O
@@ -39,13 +28,19 @@ export function useQuestionValidation(
 } {
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
-  const requiredFields = visibleFields.filter((f) => resolveRequired(f.required));
+  // Contagem e bloqueio derivam da MESMA régua canônica do servidor
+  // (`requiredHumanFields`/`isFieldAnswered`, coding-completeness.ts). Sem
+  // `answerFieldHashes` = staleness-blind, igual ao gate inline de saveResponse
+  // (coding-sync.ts). Antes esta contagem usava `visibleFields.filter(resolveRequired)`,
+  // que incluía `llm_only` no denominador (o bloqueio já o excluía), fazendo o
+  // header mostrar "N-1/N" para sempre com o submit liberado.
+  const requiredFields = requiredHumanFields(visibleFields, answers);
   const answeredRequiredCount = requiredFields.filter((f) =>
-    isAnsweredValue(f, answers[f.name]),
+    isFieldAnswered(f, answers[f.name]),
   ).length;
 
   const isAnswered = useCallback(
-    (field: PydanticField) => isAnsweredValue(field, answers[field.name]),
+    (field: PydanticField) => isFieldAnswered(field, answers[field.name]),
     [answers],
   );
 
@@ -65,13 +60,8 @@ export function useQuestionValidation(
   const handleSubmitWithValidation = useCallback(() => {
     if (submitting || outOfScopeBlocked) return;
 
-    const unanswered = visibleFields
-      .filter(
-        (f) =>
-          resolveTarget(f.target) !== "llm_only" &&
-          resolveRequired(f.required) &&
-          !isAnswered(f),
-      )
+    const unanswered = requiredFields
+      .filter((f) => !isAnswered(f))
       .map((f) => f.name);
 
     if (unanswered.length > 0) {
@@ -79,13 +69,21 @@ export function useQuestionValidation(
       const unansweredSet = new Set(unanswered);
       setHighlightedFields(unansweredSet);
       const firstIdx = visibleFields.findIndex((f) => unansweredSet.has(f.name));
-      questionRefs.current[firstIdx]?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
+      const firstEl = questionRefs.current[firstIdx];
+      firstEl?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
+      // O ref é o card da pergunta (HTMLDivElement), não o input — focar o
+      // primeiro controle focável dentro dele leva o cursor direto à pendência.
+      firstEl
+        ?.querySelector<HTMLElement>(
+          'input, textarea, select, button, [tabindex]:not([tabindex="-1"])',
+        )
+        ?.focus({ preventScroll: true });
       toast.warning("Preencha todas as perguntas obrigatórias");
       return;
     }
 
     onSubmit();
-  }, [visibleFields, isAnswered, onSubmit, submitting, outOfScopeBlocked, questionRefs]);
+  }, [requiredFields, visibleFields, isAnswered, onSubmit, submitting, outOfScopeBlocked, questionRefs]);
 
   return {
     highlightedFields,

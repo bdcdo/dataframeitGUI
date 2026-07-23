@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { isCodingComplete } from "@/lib/coding-completeness";
+import {
+  isCodingComplete,
+  isFieldAnswered,
+  requiredHumanFields,
+} from "@/lib/coding-completeness";
 import type { PydanticField } from "@/lib/types";
 
 // Helper: monta um PydanticField com defaults mínimos.
@@ -139,5 +143,59 @@ describe("isCodingComplete — staleness-aware", () => {
     const hashes = { q1: "h1", q2: "h2" };
     // q1/q2 respondidos, medicamento (novo) ausente → completo
     expect(isCodingComplete(fields, { q1: "a", q2: "b" }, hashes)).toBe(true);
+  });
+});
+
+// Primitivas exportadas para que a UI (useQuestionValidation) derive contagem e
+// bloqueio desta mesma fonte, em vez de manter uma cópia paralela que pode divergir.
+describe("isFieldAnswered", () => {
+  it("vazio (undefined/null/'') → false", () => {
+    const f = field({ name: "q1" });
+    expect(isFieldAnswered(f, undefined)).toBe(false);
+    expect(isFieldAnswered(f, null)).toBe(false);
+    expect(isFieldAnswered(f, "")).toBe(false);
+  });
+
+  it("single com valor → true; 'Outro: ' incompleto → false", () => {
+    const f = field({ name: "q1", allow_other: true });
+    expect(isFieldAnswered(f, "a")).toBe(true);
+    expect(isFieldAnswered(f, "Outro: ")).toBe(false);
+    expect(isFieldAnswered(f, "Outro: x")).toBe(true);
+  });
+
+  it("multi vazio → false; com item → true; com 'Outro: ' incompleto → false", () => {
+    const f = field({ name: "q1", type: "multi", allow_other: true });
+    expect(isFieldAnswered(f, [])).toBe(false);
+    expect(isFieldAnswered(f, ["a"])).toBe(true);
+    expect(isFieldAnswered(f, ["a", "Outro: "])).toBe(false);
+  });
+});
+
+describe("requiredHumanFields", () => {
+  it("exclui llm_only, none e required:false; inclui obrigatório visível", () => {
+    const fields = [
+      field({ name: "humano" }),
+      field({ name: "so_llm", target: "llm_only" }),
+      field({ name: "oculto", target: "none" }),
+      field({ name: "opcional", required: false }),
+    ];
+    const names = requiredHumanFields(fields, {}).map((f) => f.name);
+    expect(names).toEqual(["humano"]);
+  });
+
+  it("condicional só é exigido quando visível", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+    ];
+    expect(requiredHumanFields(fields, { q1: "nao" }).map((f) => f.name)).toEqual(["q1"]);
+    expect(requiredHumanFields(fields, { q1: "sim" }).map((f) => f.name)).toEqual(["q1", "q2"]);
+  });
+
+  it("sem answerFieldHashes = staleness-blind (todos os campos existentes contam)", () => {
+    const fields = [field({ name: "q1" }), field({ name: "novo", type: "multi" })];
+    expect(requiredHumanFields(fields, {}).map((f) => f.name)).toEqual(["q1", "novo"]);
+    // Com hashes da época sem "novo", ele deixa de ser exigido.
+    expect(requiredHumanFields(fields, {}, { q1: "h1" }).map((f) => f.name)).toEqual(["q1"]);
   });
 });
