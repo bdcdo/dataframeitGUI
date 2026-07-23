@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Backend FastAPI para dataframeit"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.139.0",
+    "fastapi>=0.139.2",
     "uvicorn[standard]>=0.51.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
@@ -113,6 +113,6 @@ extend-immutable-calls = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.15.21",
+    "ruff>=0.15.22",
     "mypy>=2.3.0",
 ]
