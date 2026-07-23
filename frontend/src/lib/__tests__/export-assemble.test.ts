@@ -193,6 +193,21 @@ describe("assembleExport — auto-fill de concordância", () => {
     });
     expect(d.verdicts.rows).toHaveLength(0);
   });
+
+  // A concordância também considera a união com as opções efetivamente
+  // marcadas: uma opção removida do schema não pode ser ignorada e produzir um
+  // auto-fill de concordância que os codificadores não têm (#484).
+  it("campo multi diverge por opção fora das opções atuais", () => {
+    const d = run({
+      fields: [field("opts", { type: "multi", options: ["x"] })],
+      documents: [doc("A")],
+      responses: [
+        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x", "z"] } },
+        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["x"] } },
+      ],
+    });
+    expect(d.verdicts.rows).toHaveLength(0);
+  });
 });
 
 // --- Prioridade veredicto > concordância > vazio ---

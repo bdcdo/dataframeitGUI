@@ -169,3 +169,76 @@ describe("MultiOptionReview — reset via key (contrato do ComparisonPanel)", ()
     expect(boxes[1].getAttribute("aria-checked")).toBe("true"); // B vem do novo verdict
   });
 });
+
+// `choices` é inicializado UMA vez (o reset é por `key` no pai), então uma
+// opção que entra em `options` sem troca de documento/campo — a união de
+// opções do ComparisonPanel recalcula quando as respostas são refetchadas —
+// não tem chave no mapa de escolhas. Como `isAnswerCorrect` compara conjuntos,
+// gravar o mapa cru deixaria a opção exibida fora do veredito: a mesma classe
+// de bug do #484, em escala menor.
+describe("MultiOptionReview — veredito cobre toda opção exibida", () => {
+  it("opção que entra em options depois do mount sai no veredito", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { rerender } = render(
+      <MultiOptionReview
+        key="doc1|campoA"
+        readOnly={false}
+        options={["A"]}
+        responses={[]}
+        existingVerdict={null}
+        isSubmitting={false}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    // Mesma key: sem remount, o inicializador NÃO roda de novo e "Z" nunca
+    // entra em `choices`.
+    rerender(
+      <MultiOptionReview
+        key="doc1|campoA"
+        readOnly={false}
+        options={["A", "Z"]}
+        responses={[]}
+        existingVerdict={null}
+        isSubmitting={false}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: /Confirmar/i }));
+
+    expect(JSON.parse(onSubmit.mock.calls[0][0])).toEqual({
+      A: false,
+      Z: false,
+    });
+  });
+
+  it("veredito salvo sem a chave de uma opção exibida é completado", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <MultiOptionReview
+        readOnly={false}
+        options={["A", "Z"]}
+        responses={[]}
+        // Veredito gravado antes do #484: só tem as opções do schema da época.
+        existingVerdict={{
+          verdict: '{"A":true}',
+          chosenResponseId: null,
+          comment: null,
+        }}
+        isSubmitting={false}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Confirmar/i }));
+
+    expect(JSON.parse(onSubmit.mock.calls[0][0])).toEqual({
+      A: true,
+      Z: false,
+    });
+  });
+});

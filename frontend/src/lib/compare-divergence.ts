@@ -6,6 +6,10 @@ import {
   type EquivalencePair,
 } from "@/lib/equivalence";
 import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
+import {
+  multiSelectionSets,
+  multiSelectionsAgree,
+} from "@/lib/compare-multi-options";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 interface ResponseLike {
@@ -51,25 +55,12 @@ export function computeDivergentFieldNames(
     if (applicable.length < 2) continue;
 
     if (field.type === "multi" && field.options?.length) {
-      const opts = new Set<string>(field.options);
-      const responseSets = applicable.map((r) => {
-        const arr = (r.answers as Record<string, unknown>)?.[field.name];
-        return new Set(
-          Array.isArray(arr) ? arr.filter((v): v is string => typeof v === "string") : [],
-        );
-      });
-      for (const set of responseSets) {
-        for (const v of set) opts.add(v);
+      const responseSets = multiSelectionSets(
+        applicable.map((r) => (r.answers as Record<string, unknown>)?.[field.name]),
+      );
+      if (!multiSelectionsAgree(field.options, responseSets)) {
+        divergent.push(field.name);
       }
-      let hasDivergence = false;
-      for (const opt of opts) {
-        const sels = responseSets.map((s) => s.has(opt));
-        if (sels.length > 0 && !sels.every((s) => s === sels[0])) {
-          hasDivergence = true;
-          break;
-        }
-      }
-      if (hasDivergence) divergent.push(field.name);
       continue;
     }
 
