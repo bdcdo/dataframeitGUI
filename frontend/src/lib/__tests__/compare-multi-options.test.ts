@@ -34,6 +34,12 @@ describe("comparableMultiOptions", () => {
   it("sem respostas, são as opções do schema", () => {
     expect(comparableMultiOptions(["x", "y"], [])).toEqual(["x", "y"]);
   });
+
+  // A UI usa a opção como `key` de lista: schema com opção repetida geraria
+  // duas linhas com a mesma key.
+  it("dedupa opção repetida no próprio schema, mantendo a 1ª posição", () => {
+    expect(comparableMultiOptions(["x", "y", "x"], [])).toEqual(["x", "y"]);
+  });
 });
 
 describe("multiSelectionsAgree", () => {

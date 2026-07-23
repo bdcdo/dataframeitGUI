@@ -152,14 +152,24 @@ export function ComparisonPanel({
 
   // Opções a exibir num multi: as do schema mais as que alguém marcou e que
   // saíram do schema depois. Sem a união, uma divergência causada por opção
-  // removida — que `computeDivergentFieldNames` conta, pela MESMA primitiva —
+  // removida — que `computeDivergentFieldNames` conta pela mesma primitiva —
   // não teria linha na tela: o revisor via tudo concordando e não conseguia
   // resolver o campo, que voltava à fila para sempre. Pior, `isAnswerCorrect`
   // compara o conjunto do veredito com o da resposta, então a opção nunca
-  // renderizada nunca entrava no veredito e marcava a resposta como incorreta
-  // em definitivo (#484). As do schema mantêm posição — e portanto o atalho
-  // numérico. Calculado aqui, e não no MultiOptionReview, para o `optionCount`
-  // dos atalhos não recomputar a mesma união e sair dessincronizado.
+  // renderizada nunca entrava no veredito e a resposta que a marcasse ficava
+  // sem como ser julgada correta (#484). As do schema mantêm posição — e
+  // portanto o atalho numérico. Calculado aqui, e não no MultiOptionReview,
+  // para o `optionCount` dos atalhos não recomputar a mesma união e sair
+  // dessincronizado.
+  //
+  // A primitiva é a mesma da divergência, mas o CONJUNTO DE ENTRADA é
+  // deliberadamente mais amplo: `computeDivergentFieldNames` filtra por
+  // staleness e visibilidade condicional antes de montar os conjuntos, e aqui
+  // entram todas as respostas — inclusive as stale, que o painel exibe. Ou
+  // seja, este conjunto contém o da divergência: nunca falta linha para uma
+  // opção que divergiu, e pode sobrar linha para uma opção que só uma resposta
+  // stale marcou. Sobrar é coerente com exibir a resposta stale; faltar é o
+  // bug que este código corrige.
   const displayOptions = useMemo(
     () =>
       isMulti

@@ -11,6 +11,11 @@ vi.mock("@/components/stats/SuggestFieldDialog", () => ({
 
 import { ComparisonPanel } from "@/components/compare/ComparisonPanel";
 import type { PydanticField } from "@/lib/types";
+import {
+  panelProps,
+  panelResponse as resp,
+  type PanelResponse as Resp,
+} from "./compare-test-helpers";
 
 afterEach(cleanup);
 
@@ -20,59 +25,20 @@ const FIELD: PydanticField = {
   description: "Data do parecer",
 } as PydanticField;
 
-type Resp = Parameters<typeof ComparisonPanel>[0]["responses"][number];
-
 function renderPanel(responses: Resp[], fieldHelpText?: string) {
   render(
     <ComparisonPanel
-      readOnly={false}
-      projectId="p1"
-      documentId="d1"
-      documentTitle="Nota técnica 1"
-      fieldName="data_parecer"
-      fieldDescription="Data do parecer"
-      fieldHelpText={fieldHelpText}
-      fieldType="date"
-      fieldOptions={null}
-      fields={[FIELD]}
-      fieldIndex={0}
-      totalFields={1}
-      responses={responses}
-      existingVerdict={null}
-      reviewed={[false]}
-      isDivergent={true}
-      docStatus={{ complete: false }}
-      onFieldNavigate={vi.fn()}
-      onVerdict={vi.fn()}
-      pendingVerdict={null}
-      onPrepareVerdict={vi.fn()}
-      onConfirmPendingVerdict={vi.fn()}
-      onDiscardPendingVerdict={vi.fn()}
-      isSavingVerdict={false}
-      onMarkReviewed={vi.fn()}
-      comment=""
-      onCommentChange={vi.fn()}
-      commentCount={0}
-      suggestionCount={0}
-      equivalence={{ allow: false, canManageAnyPair: false }}
-      equivalences={[]}
-      onConfirmEquivalent={vi.fn(async () => {})}
-      onUnmarkEquivalencePair={vi.fn(async () => {})}
-      currentUserId="u1"
+      {...panelProps({
+        documentTitle: "Nota técnica 1",
+        fieldName: "data_parecer",
+        fieldDescription: "Data do parecer",
+        fieldHelpText,
+        fieldType: "date",
+        fields: [FIELD],
+        responses,
+      })}
     />,
   );
-}
-
-function resp(over: Partial<Resp> & { id: string }): Resp {
-  return {
-    respondent_type: "humano",
-    respondent_name: "Anon",
-    respondent_id: null,
-    answer: undefined,
-    is_latest: true,
-    isFieldStale: false,
-    ...over,
-  } as Resp;
 }
 
 describe("ComparisonPanel — não preencheu este campo (issue #247, ponto 3)", () => {

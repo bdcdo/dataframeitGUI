@@ -89,7 +89,17 @@ export function MultiOptionReview({
 
   const handleSubmit = () => {
     if (readOnly || isSubmitting) return;
-    onSubmit(JSON.stringify(choices));
+    // O veredito cobre TODA opção exibida, e não só as chaves presentes no
+    // mapa de escolhas. `choices` é inicializado uma vez (o reset é por `key`
+    // no pai), então uma opção que entrou em `options` depois do mount — ou
+    // que falta num veredito salvo antes de #484 — apareceria na tela, com o
+    // valor de `?? false`, e mesmo assim sairia sem chave do veredito. Como
+    // `isAnswerCorrect` compara CONJUNTOS, chave ausente é exatamente a classe
+    // de bug que este componente corrige: o valor exibido é o valor gravado.
+    const verdict = Object.fromEntries(
+      options.map((opt) => [opt, choices[opt] ?? false]),
+    );
+    onSubmit(JSON.stringify(verdict));
   };
 
   // Keyboard shortcuts: 1-N toggle options, Enter submits.

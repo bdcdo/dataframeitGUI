@@ -29,20 +29,24 @@ export function multiSelectionSets(answers: unknown[]): Set<string>[] {
 // schema e acrescenta as demais na ordem em que aparecem — assim as opções
 // atuais mantêm a posição (e, na UI, o atalho numérico) e as fora do schema
 // entram no fim.
+//
+// O resultado é sem repetição mesmo quando o schema traz uma opção duplicada:
+// a UI usa a opção como `key` de lista, e duas linhas com a mesma key seriam
+// um erro de render por causa de um schema mal montado.
 export function comparableMultiOptions(
   options: string[],
   selectionSets: Set<string>[],
 ): string[] {
-  const seen = new Set(options);
-  const extra: string[] = [];
-  for (const set of selectionSets) {
-    for (const v of set) {
-      if (seen.has(v)) continue;
-      seen.add(v);
-      extra.push(v);
-    }
-  }
-  return [...options, ...extra];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  const push = (v: string) => {
+    if (seen.has(v)) return;
+    seen.add(v);
+    result.push(v);
+  };
+  for (const opt of options) push(opt);
+  for (const set of selectionSets) for (const v of set) push(v);
+  return result;
 }
 
 // True quando toda opção comparável tem seleção uniforme entre as respostas.

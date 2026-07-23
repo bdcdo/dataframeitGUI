@@ -12,6 +12,11 @@ vi.mock("@/components/stats/SuggestFieldDialog", () => ({
 
 import { ComparisonPanel } from "@/components/compare/ComparisonPanel";
 import type { PydanticField } from "@/lib/types";
+import {
+  panelProps,
+  panelResponse as resp,
+  type PanelResponse as Resp,
+} from "./compare-test-helpers";
 
 afterEach(cleanup);
 
@@ -24,56 +29,18 @@ const FIELD: PydanticField = {
   description: "Tags",
 } as PydanticField;
 
-type Resp = Parameters<typeof ComparisonPanel>[0]["responses"][number];
-
-function resp(over: Partial<Resp> & { id: string }): Resp {
-  return {
-    respondent_type: "humano",
-    respondent_name: "Anon",
-    respondent_id: null,
-    answer: undefined,
-    is_latest: true,
-    isFieldStale: false,
-    ...over,
-  } as Resp;
-}
-
 function renderPanel(responses: Resp[], onVerdict = vi.fn()) {
   render(
     <ComparisonPanel
-      readOnly={false}
-      projectId="p1"
-      documentId="d1"
-      documentTitle="Doc 1"
-      fieldName="tags"
-      fieldDescription="Tags"
-      fieldType="multi"
-      fieldOptions={FIELD.options}
-      fields={[FIELD]}
-      fieldIndex={0}
-      totalFields={1}
-      responses={responses}
-      existingVerdict={null}
-      reviewed={[false]}
-      isDivergent={true}
-      docStatus={{ complete: false }}
-      onFieldNavigate={vi.fn()}
-      onVerdict={onVerdict}
-      pendingVerdict={null}
-      onPrepareVerdict={vi.fn()}
-      onConfirmPendingVerdict={vi.fn()}
-      onDiscardPendingVerdict={vi.fn()}
-      isSavingVerdict={false}
-      onMarkReviewed={vi.fn()}
-      comment=""
-      onCommentChange={vi.fn()}
-      commentCount={0}
-      suggestionCount={0}
-      equivalence={{ allow: false, canManageAnyPair: false }}
-      equivalences={[]}
-      onConfirmEquivalent={vi.fn(async () => {})}
-      onUnmarkEquivalencePair={vi.fn(async () => {})}
-      currentUserId="u1"
+      {...panelProps({
+        fieldName: "tags",
+        fieldDescription: "Tags",
+        fieldType: "multi",
+        fieldOptions: FIELD.options,
+        fields: [FIELD],
+        responses,
+        onVerdict,
+      })}
     />,
   );
   return onVerdict;
@@ -98,7 +65,7 @@ describe("ComparisonPanel — multi com opção fora das opções atuais (#484)"
     expect(screen.getByText("y")).toBeTruthy();
   });
 
-  it("a opção stale entra no veredito e é resolvível pelo revisor", async () => {
+  it("a opção stale entra no veredito com o pré-preenchimento de maioria", async () => {
     const user = userEvent.setup();
     const onVerdict = renderPanel([
       resp({ id: "ana", respondent_name: "Ana", answer: ["x", "z"] }),
@@ -117,12 +84,57 @@ describe("ComparisonPanel — multi com opção fora das opções atuais (#484)"
     expect(verdict.z).toBe(false);
   });
 
-  it("sem opção stale, o veredito só tem as opções do schema", () => {
+  // O núcleo da issue não é o pré-preenchimento e sim a AGÊNCIA do revisor:
+  // sem linha na tela ele não tinha como dizer que a opção fora do schema é a
+  // correta. Marcar a checkbox e ver o `true` sair no veredito é o que prova
+  // que a divergência ficou resolvível.
+  it("o revisor consegue marcar a opção stale e ela sai true no veredito", async () => {
+    const user = userEvent.setup();
+    const onVerdict = renderPanel([
+      resp({ id: "ana", respondent_name: "Ana", answer: ["x", "z"] }),
+      resp({ id: "bia", respondent_name: "Bia", answer: ["x"] }),
+    ]);
+
+    await user.click(screen.getByText("z"));
+    await user.click(screen.getByRole("button", { name: /Confirmar/i }));
+
+    const verdict = JSON.parse(onVerdict.mock.calls[0][0] as string);
+    expect(verdict.z).toBe(true);
+    expect(verdict.x).toBe(true);
+  });
+
+  it("sem opção stale, o veredito tem exatamente as opções do schema", async () => {
+    const user = userEvent.setup();
     const onVerdict = renderPanel([
       resp({ id: "ana", respondent_name: "Ana", answer: ["x"] }),
       resp({ id: "bia", respondent_name: "Bia", answer: ["x"] }),
     ]);
     expect(screen.queryByText("z")).toBeNull();
-    expect(onVerdict).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /Confirmar/i }));
+
+    const verdict = JSON.parse(onVerdict.mock.calls[0][0] as string);
+    // Toda opção EXIBIDA tem chave no veredito, inclusive a que ninguém marcou
+    // ("y"): `isAnswerCorrect` compara conjuntos, então chave faltando é a
+    // mesma classe de bug em escala menor.
+    expect(Object.keys(verdict).toSorted()).toEqual(["x", "y"]);
+    expect(verdict.x).toBe(true);
+    expect(verdict.y).toBe(false);
+  });
+
+  // Uma resposta stale (isFieldStale) segue exibida no painel, então as opções
+  // que ela marcou também precisam de linha — o conjunto de entrada da união
+  // aqui é deliberadamente mais amplo que o de `computeDivergentFieldNames`.
+  it("opção marcada só por resposta stale também ganha linha", () => {
+    renderPanel([
+      resp({
+        id: "ana",
+        respondent_name: "Ana",
+        answer: ["x", "w"],
+        isFieldStale: true,
+      }),
+      resp({ id: "bia", respondent_name: "Bia", answer: ["x"] }),
+    ]);
+    expect(screen.getByText("w")).toBeTruthy();
   });
 });
