@@ -1,8 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { completeAccess } from "@/actions/complete-access";
+import {
+  completeAccess,
+  type CompleteAccessResult,
+} from "@/actions/complete-access";
+import type { AuthResolution } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
@@ -10,15 +15,18 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 // pt-BR e sem termo técnico, token, claim ou nome de tabela (FR-010). O motivo
 // vem da resolução read-only (link-pending/divergent, sync-temporary-failure) e
 // pode evoluir para unknown-recoverable após um retry que não resolveu.
+//
+// Derivado de quem produz o motivo, não relistado à mão: um estado novo em
+// AuthResolution ou em CompleteAccessResult passa a quebrar o REASON_COPY
+// abaixo em tempo de compilação, em vez de renderizar undefined em runtime.
 export type CompletionReason =
-  | "link-pending"
-  | "link-divergent"
-  | "sync-temporary-failure"
-  | "unknown-recoverable";
+  | Extract<AuthResolution, { reason: string }>["reason"]
+  | Extract<CompleteAccessResult, { ok: false }>["reason"];
 
+// `action` ausente = estado terminal, sem botão de retry.
 const REASON_COPY: Record<
   CompletionReason,
-  { title: string; description: string; action: string; supportHint?: string }
+  { title: string; description: string; action?: string; supportHint?: string }
 > = {
   "link-pending": {
     title: "Estamos preparando seu acesso",
@@ -46,6 +54,15 @@ const REASON_COPY: Record<
     supportHint:
       "Se o problema persistir após algumas tentativas, procure o coordenador responsável pelo seu projeto.",
   },
+  // Único motivo sem `action`: o conflito não muda por insistência, então
+  // oferecer um botão aqui seria prometer uma saída que não existe.
+  "identity-conflict": {
+    title: "Seu e-mail já está em uso por outra conta",
+    description:
+      "O e-mail desta conta já pertence a um cadastro ativo na plataforma. Por segurança, não é possível concluir o acesso automaticamente.",
+    supportHint:
+      "Procure o coordenador responsável pelo seu projeto para unificar os cadastros.",
+  },
 };
 
 export function AccessCompletionCard({
@@ -54,10 +71,11 @@ export function AccessCompletionCard({
   nextUrl,
 }: {
   reason: CompletionReason;
-  actorEmail: string;
+  actorEmail?: string;
   nextUrl: string;
 }) {
   const router = useRouter();
+  const { getToken } = useAuth();
   const [currentReason, setCurrentReason] = useState<CompletionReason>(reason);
   const [isPending, startTransition] = useTransition();
   const copy = REASON_COPY[currentReason];
@@ -76,18 +94,28 @@ export function AccessCompletionCard({
     startTransition(async () => {
       const result = await completeAccess();
       if (result.ok) {
-        // Vínculo confirmado: segue para o destino pretendido ou dashboard.
+        // A action atualiza a metadata no backend do Clerk e o vínculo JÁ está
+        // gravado neste ponto. A renovação abaixo é best-effort, não um portão:
+        // a página de destino é renderizada no servidor e minta o próprio token
+        // por request (lib/supabase/server.ts), então quem depende deste cache
+        // é só o cliente ao chamar o FastAPI (lib/api.ts). Bloquear a navegação
+        // por um blip aqui anunciaria falha sobre um acesso concluído.
+        try {
+          await getToken({ template: "supabase", skipCache: true });
+        } catch (error) {
+          console.error(
+            "AccessCompletionCard: falha ao renovar token após concluir acesso",
+            { error },
+          );
+        }
+
         router.replace(nextUrl);
         router.refresh();
         return;
       }
       // Retry não resolveu: atualiza a mensagem para o motivo devolvido, sem
       // enviar o usuário de volta ao login como se estivesse sem sessão.
-      setCurrentReason(
-        result.reason === "sync-temporary-failure"
-          ? "sync-temporary-failure"
-          : "unknown-recoverable",
-      );
+      setCurrentReason(result.reason);
     });
   }
 
@@ -118,21 +146,25 @@ export function AccessCompletionCard({
           >
             {copy.description}
           </p>
-          <p className="text-sm text-muted-foreground">
-            Conta conectada: <span className="font-medium">{actorEmail}</span>
-          </p>
+          {actorEmail ? (
+            <p className="text-sm text-muted-foreground">
+              Conta conectada: <span className="font-medium">{actorEmail}</span>
+            </p>
+          ) : null}
           {copy.supportHint ? (
             <p className="text-sm text-muted-foreground">{copy.supportHint}</p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={handleRetry}
-              disabled={isPending}
-              aria-busy={isPending}
-            >
-              {isPending ? "Concluindo acesso…" : copy.action}
-            </Button>
-          </div>
+          {copy.action ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={handleRetry}
+                disabled={isPending}
+                aria-busy={isPending}
+              >
+                {isPending ? "Concluindo acesso…" : copy.action}
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>

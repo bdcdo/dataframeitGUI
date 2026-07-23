@@ -64,6 +64,7 @@ def test_is_latest_segue_is_partial():
 def test_campos_basicos_preservados():
     row = _build_llm_response_row(**_kwargs())
     assert row["respondent_type"] == "llm"
+    assert "respondent_id" not in row
     assert row["respondent_name"] == "google_genai/gemini-3-flash-preview"
     assert row["pydantic_hash"] == "3c5e901f76547135"
     assert row["llm_job_id"] == "job-1"

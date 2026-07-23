@@ -54,13 +54,13 @@ const previewResult: LotteryPreview = {
 
 // Integra useLotteryParams + useLotteryRun como no LotteryDialog real —
 // o contrato sob teste é o casamento prévia↔configuração (research D13).
-function setup() {
+function setup(statsOverride: LotteryStats = stats) {
   return renderHook(() => {
     const params = useLotteryParams();
     const run = useLotteryRun({
       projectId: "p1",
       members,
-      stats,
+      stats: statsOverride,
       params,
       onLotteryDone: vi.fn(),
     });
@@ -164,5 +164,74 @@ describe("useLotteryRun", () => {
     await act(() => result.current.run.handleRandomize());
     expect(onLotteryDone).toHaveBeenCalledOnce();
     expect(result.current.params.previewState).toBeNull();
+  });
+});
+
+// Regressão da issue #490: o RadioGroup de tipo vive no mesmo dialog montado, e
+// o state de revisores/pesquisadores por documento é o mesmo dos dois lados —
+// marcar "Comparação" levava o default 2 da Codificação junto.
+describe("useLotteryRun: um revisor por documento na comparação (#490)", () => {
+  // A fixture global tem docs com 0/1 codificação e piso 2 → comparação zeraria
+  // os elegíveis e o submit nem sairia. Aqui os docs estão aptos a comparar.
+  const comparableStats: LotteryStats = {
+    ...stats,
+    docs: [
+      doc("d1", { humanCodingCount: 2 }),
+      doc("d2", { humanCodingCount: 2 }),
+      doc("d3", { humanCodingCount: 2 }),
+    ],
+  };
+
+  it("trocar para comparação não herda o valor digitado na codificação", async () => {
+    const { result } = setup(comparableStats);
+    act(() => {
+      result.current.params.setResearchersPerDoc(3);
+      result.current.params.setType("comparacao");
+    });
+
+    await act(() => result.current.run.handleRandomize());
+
+    const enviado = mockRandomize.mock.calls.at(-1)![0];
+    expect(enviado).toMatchObject({ type: "comparacao" });
+    // O braço "comparacao" da união nem carrega o campo: não há valor a herdar.
+    expect(enviado).not.toHaveProperty("researchersPerDoc");
+  });
+
+  it("voltar para codificação restaura o valor digitado", async () => {
+    const { result } = setup(comparableStats);
+    act(() => {
+      result.current.params.setResearchersPerDoc(3);
+      result.current.params.setType("comparacao");
+    });
+    act(() => {
+      result.current.params.setType("codificacao");
+    });
+
+    await act(() => result.current.run.handleRandomize());
+
+    expect(mockRandomize).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "codificacao", researchersPerDoc: 3 }),
+    );
+  });
+
+  it("codificação envia o default 2 sem o coordenador tocar no campo", async () => {
+    const { result } = setup(comparableStats);
+    await act(() => result.current.run.handleRandomize());
+
+    expect(mockRandomize).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "codificacao", researchersPerDoc: 2 }),
+    );
+  });
+
+  it("a estimativa por participante usa um revisor por documento", () => {
+    const { result } = setup(comparableStats);
+    // Codificação: 3 docs × 2 pesquisadores por doc ÷ 2 participantes = 3.
+    expect(result.current.run.estimatedPerParticipant).toBe(3);
+
+    act(() => {
+      result.current.params.setType("comparacao");
+    });
+    // Comparação: 3 docs × 1 revisor ÷ 2 participantes = 2 (arredondado p/ cima).
+    expect(result.current.run.estimatedPerParticipant).toBe(2);
   });
 });

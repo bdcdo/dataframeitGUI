@@ -97,12 +97,16 @@ repos:
       # E o gate de regressao de teste que nem o build da Vercel nem o `next
       # build` do deploy Fly pegavam. Falha fechado se o binario estiver ausente.
       # Toda fonte JS/TS em modulo ESM dispara a suite inteira, inclusive regras
-      # e configs ESLint. O glob por extensao nao acopla o hook a nomes de arquivo.
+      # e configs ESLint. O glob por extensao nao acopla o hook a nomes de arquivo
+      # — .mjs/.sh ja cobrem o bootstrap e o contrato de ambiente por extensao.
+      # Os .env.*.example sao a excecao inevitavel: sao a fonte canonica das
+      # variaveis obrigatorias e o teste do contrato afirma os nomes que eles
+      # declaram, mas nao tem extensao pela qual casar.
       - id: vitest
         name: vitest run (full suite, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/.*\.(mjs|mts|ts|tsx)$
+        files: ^frontend/(.*\.(mjs|mts|ts|tsx|sh)|\.env\.(local|e2e)\.example)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -129,7 +133,7 @@ repos:
         name: playwright e2e smoke (pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && PLAYWRIGHT_PRE_PUSH=1 exec ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(mts|ts|tsx)|package(-lock)?\.json|\.env\.e2e\.example))$
+        files: ^(\.pre-commit-config\.yaml|CLAUDE\.md|docs/CODE_QUALITY_TOOLING\.md|frontend/(.*\.(mjs|mts|ts|tsx|sh)|package(-lock)?\.json|\.env\.(local|e2e)\.example))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -149,11 +153,19 @@ repos:
       # fallow audit: grafo do projeto (dead-code + complexidade + duplicacao)
       # escopado aos arquivos alterados. --gate new-only (default) so barra
       # achados INTRODUZIDOS — o baseline legado (56 dead-code, 121 clones, 260
-      # hotspots) fica grandfathered. Sem --base: o fallow usa a merge-base com
-      # origin/main (o `main` local costuma estar defasado). Ver doc.
+      # hotspots) fica grandfathered.
+      #
+      # --base origin/main e explicito de proposito. Sem ele, o default do fallow
+      # e a merge-base contra o UPSTREAM DA BRANCH, caindo para origin/main so
+      # quando nao ha upstream (ver `fallow audit --help`). Numa branch ja pushada
+      # o upstream e o head remoto dela, entao o gate passaria a medir apenas o
+      # delta desde o ultimo push — e, depois de mergear a main na branch, trataria
+      # os arquivos vindos da main como introduzidos aqui, barrando o push por
+      # achado alheio. Fixar em origin/main faz o gate responder a pergunta certa:
+      # o que ESTE PR introduz em relacao ao alvo do merge.
       - id: fallow-audit
         name: fallow audit (new findings block, pre-push)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/fallow && exec ./node_modules/.bin/fallow audit || { echo "fallow ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/fallow && exec ./node_modules/.bin/fallow audit --base origin/main || { echo "fallow ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^frontend/.*\.(mts|ts|tsx)$
         pass_filenames: false

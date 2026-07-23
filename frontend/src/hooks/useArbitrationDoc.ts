@@ -172,6 +172,7 @@ export function useArbitrationDoc({
     }
     setSubmitting(true);
     const payload: FinalChoice[] = doc.fields.map((f: ArbitrationField) => ({
+      fieldReviewId: f.fieldReviewId,
       fieldName: f.fieldName,
       verdict: effectiveFinalChoices[f.fieldReviewId],
       questionImprovementSuggestion:

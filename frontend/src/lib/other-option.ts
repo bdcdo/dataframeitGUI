@@ -6,9 +6,13 @@
 // componentes 'use client' quanto em server actions e testes Vitest.
 export const OTHER_PREFIX = "Outro: ";
 
+export function isOtherValue(v: unknown): v is string {
+  return typeof v === "string" && v.startsWith(OTHER_PREFIX);
+}
+
 // True quando o valor é exatamente o prefixo "Outro" sem complemento — ou seja,
 // o pesquisador marcou "Outro" mas não digitou o texto livre. Conta como
 // resposta incompleta.
 export function isIncompleteOther(v: unknown): boolean {
-  return typeof v === "string" && v === OTHER_PREFIX;
+  return isOtherValue(v) && v === OTHER_PREFIX;
 }

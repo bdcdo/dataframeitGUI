@@ -9,6 +9,8 @@ export interface EquivalencePairWire {
   response_a_id: string;
   response_b_id: string;
   reviewer_id: string | null;
+  response_a_answer_snapshot: unknown;
+  response_b_answer_snapshot: unknown;
 }
 
 export interface CompareResponse {

@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
 export async function acknowledgeVerdict(
@@ -10,15 +10,16 @@ export async function acknowledgeVerdict(
   status: "accepted" | "questioned",
   comment?: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const respondentId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
 
   const { error } = await supabase.from("verdict_acknowledgments").upsert(
     {
       review_id: reviewId,
-      respondent_id: user.id,
+      respondent_id: respondentId,
       status,
       comment: comment || null,
     },

@@ -114,6 +114,35 @@ export function filterComparisonEligible(
 }
 
 /**
+ * Um revisor de comparação por documento: o veredito é ato de desempate único,
+ * não codificação em dupla (a dupla independente é da CODIFICAÇÃO). Dois
+ * revisores no mesmo documento não seriam dupla checagem, e sim um segundo
+ * desempate sem regra de precedência (issue #490).
+ */
+const COMPARISON_REVIEWERS_PER_DOC = 1;
+
+/**
+ * Revisores/pesquisadores por documento EFETIVO do sorteio. Fonte única da
+ * regra, compartilhada pelo client (estimativa/configKey/buildParams) e pelo
+ * server (computeLottery) para que os dois não possam divergir — mesmo motivo
+ * das primitivas puras de schema-utils.ts (#63).
+ *
+ * Para comparação o valor pedido é IGNORADO, não validado: a Server Action é
+ * endpoint HTTP público e este projeto não valida payload com zod, então o
+ * server não pode confiar no client. Espelhado no banco pelo índice
+ * assignments_one_active_comparacao_per_doc.
+ */
+export function resolveResearchersPerDoc(
+  type: "codificacao" | "comparacao",
+  requested?: number | null,
+): number {
+  if (type === "comparacao") return COMPARISON_REVIEWERS_PER_DOC;
+  return requested != null && Number.isFinite(requested) && requested >= 1
+    ? Math.floor(requested)
+    : 1;
+}
+
+/**
  * Pipeline de elegibilidade — interseção em ordem fixa (data-model.md):
  * ativos (garantido no fetch) → manual → codificações → status de
  * atribuição → lote. A exigência mínima de respostas para comparação é

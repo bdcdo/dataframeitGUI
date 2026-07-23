@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import re
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,10 @@ from config import settings
 from routes.llm_routes import router as llm_router
 from routes.pydantic_routes import router as pydantic_router
 from services.auth import require_authenticated_user
+from services.auto_review_reconciliation import (
+    assert_auto_review_reconciliation_capability,
+    run_auto_review_reconciliation_wakeup_loop,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,25 @@ async def lifespan(app: "FastAPI"):
             "distingue a instância Clerk de produção da de desenvolvimento. "
             "Setar CLERK_JWT_ISSUER (ver backend/fly.toml)."
         )
-    yield
+    reconciliation_task: asyncio.Task[None] | None = None
+    if settings.frontend_internal_url:
+        if not settings.auto_review_reconciliation_secret:
+            raise RuntimeError(
+                "FRONTEND_INTERNAL_URL requires AUTO_REVIEW_RECONCILIATION_SECRET."
+            )
+        assert_auto_review_reconciliation_capability()
+        reconciliation_task = asyncio.create_task(
+            run_auto_review_reconciliation_wakeup_loop(),
+            name="auto-review-reconciliation-wakeup",
+        )
+
+    try:
+        yield
+    finally:
+        if reconciliation_task is not None:
+            reconciliation_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reconciliation_task
 
 
 def _normalize_origin(value: str) -> str:

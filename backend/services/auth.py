@@ -75,6 +75,16 @@ def _require_issuer() -> None:
     seria o `kid` ausente do JWKS, que `verify_jwt` traduz (corretamente, para
     o caso de rede) em 503 "upstream indisponível". Um cutover de instância mal
     configurado se apresentaria como indisponibilidade do Clerk.
+
+    Redundante com a guarda de boot em `main.py`, e de propósito — mas a
+    redundância só é justificável enquanto se souber QUANDO ela passa a valer.
+    Hoje: (a) nos testes, que monkeypatcham `settings` diretamente e portanto
+    nunca passam pelo lifespan; (b) em qualquer caminho futuro que importe as
+    rotas sem subir a app (script, worker, task fora do processo do uvicorn).
+    Se um dia o issuer virar validação de carga da config — o que tornaria o
+    estado inválido irrepresentável em vez de checado —, esta função e a guarda
+    do `main.py` saem juntas; enquanto não for o caso, nenhuma das duas sozinha
+    cobre os dois casos acima.
     """
     if settings.clerk_jwks_url and not settings.clerk_jwt_issuer:
         raise HTTPException(
@@ -90,12 +100,22 @@ def _decode_kwargs() -> dict:
     # O session token do Clerk não emite `aud`; o PyJWT exige desligar a checagem
     # explicitamente, senão rejeita todo token por claim ausente. O papel que o
     # `aud` cumpria (fechar token assinado pela mesma chave mas destinado a outro
-    # consumidor) fica com `iss` — ver `_require_issuer`.
+    # consumidor) fica com `iss` — ver `_require_issuer`. A parte que o `iss` não
+    # cobre (qual consumidor, dentro do mesmo emissor) seria papel de `azp`:
+    # avaliado depois do cutover, na issue #533.
     options["verify_aud"] = False
     # leeway absorve skew de relógio e expiração de borda: o session token expira
     # em ~60s e é pollado por minutos, então uma diferença de alguns segundos
     # entre Clerk e o backend não deve derrubar uma run em curso.
     kwargs: dict = {"leeway": settings.jwt_leeway_seconds}
+    # `issuer` só entra se configurado. No caminho RS256 isso é sempre verdade
+    # (`_require_issuer` cobra antes), mas no de rollback HS256 o issuer segue
+    # opcional — escolha, não esquecimento: ali a chave é o Supabase JWT secret,
+    # que não é emitido pelo Clerk e não tem instância dev/prod para separar.
+    # O custo é que o rollback fica sem `iss` E sem `aud` (que este PR removeu).
+    # O único token HS256 que um terceiro possui assinado com esse secret é a
+    # anon key do Supabase, que não carrega `supabase_uid` e para no 503 abaixo.
+    # Ver test_verify_jwt_hs256_nao_exige_issuer, que fixa esta decisão.
     if settings.clerk_jwt_issuer:
         kwargs["issuer"] = settings.clerk_jwt_issuer
     kwargs["options"] = options
@@ -176,6 +196,9 @@ def verify_jwt(token: str) -> AuthUser:
         # renderia 403/404 "acesso negado" espalhados, escondendo a causa real
         # (claim ausente na config do session token) atrás de um erro de permissão.
         # 503, não 401: a credencial está boa; quem está quebrado é o servidor.
+        # Este ramo também pega o usuário recém-criado cujo vínculo ainda não foi
+        # gravado no metadata do Clerk — caso legítimo, que precisa ser resolvido
+        # no fluxo de pós-login e não aqui: ver issue #532.
         logger.error(
             "Token sem claim `supabase_uid` — verificar os custom claims do "
             "session token na instância Clerk (iss=%s).",

@@ -1,4 +1,4 @@
-import { getAuthUser, getProjectAccessContext } from "@/lib/auth";
+import { requireProjectPageAccess } from "@/lib/page-auth";
 import { notFound } from "next/navigation";
 import LlmNav from "@/components/llm/LlmNav";
 
@@ -9,17 +9,8 @@ export default async function LlmLayout({
   children: React.ReactNode;
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user] = await Promise.all([params, getAuthUser()]);
-  if (!user) notFound();
-
-  const { isCoordinator, queryFailed } = await getProjectAccessContext(
-    id,
-    user.id,
-    user.isMaster,
-  );
-  // Fail-open em erro transiente de query (ver getProjectAccessContext): o RLS
-  // continua bloqueando os dados se o usuario realmente nao for coordenador.
-  if (!isCoordinator && !queryFailed) notFound();
+  const { access } = await requireProjectPageAccess(params);
+  if (!access.isCoordinator) notFound();
 
   return (
     <div className="flex flex-col">

@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
+from services.auto_review_reconciliation import wake_auto_review_reconciliation
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
 from services.pydantic_compiler import build_model_from_code, extract_json_schema_extra
 from services.supabase_client import get_supabase
@@ -412,7 +413,7 @@ class _RunMetadata:
     llm_provider: str
     llm_model: str
     pydantic_hash: str
-    answer_field_hashes: dict
+    answer_field_hashes: dict[str, str | None]
     schema_version_major: int
     schema_version_minor: int
     schema_version_patch: int
@@ -479,8 +480,8 @@ def _build_llm_response_row(
         "answers": answers,
         "justifications": justifications if justifications else None,
         # is_latest: respostas parciais já nascem como False para não
-        # poluírem Comparar (ver PR #65). Uma run posterior sobre os mesmos
-        # docs também marca esta resposta como False via bulk update.
+        # poluírem Comparar (ver PR #65). Para respostas completas, a RPC de
+        # publicação troca o latest anterior e grava a outbox atomicamente.
         "is_latest": not is_partial,
         # is_partial: imutável após o insert. Preserva o classificador
         # "cobertura baixa" mesmo depois que uma run posterior supersede esta
@@ -1170,17 +1171,16 @@ def _process_and_save_rows(
             dfi_error_samples,
             processed_row,
         )
-        sb.table("responses").insert(
-            _build_llm_response_row(
-                run=run,
-                doc_id=processed_row.doc_id,
-                answers=processed_row.answers,
-                justifications=processed_row.justifications,
-                is_partial=processed_row.is_partial,
-                job_id=job_id,
-                llm_error_msg=processed_row.llm_error_msg,
-            )
-        ).execute()
+        response = _build_llm_response_row(
+            run=run,
+            doc_id=processed_row.doc_id,
+            answers=processed_row.answers,
+            justifications=processed_row.justifications,
+            is_partial=processed_row.is_partial,
+            job_id=job_id,
+            llm_error_msg=processed_row.llm_error_msg,
+        )
+        sb.rpc("publish_latest_llm_response", {"p_response": response}).execute()
 
     return partial_warnings, dfi_error_samples
 
@@ -1238,9 +1238,7 @@ async def run_llm(
 
         # Build per-field hash snapshot for staleness detection
         answer_field_hashes = {
-            f["name"]: f["hash"]
-            for f in (project.get("pydantic_fields") or [])
-            if f.get("hash")
+            f["name"]: f.get("hash") for f in (project.get("pydantic_fields") or [])
         }
 
         docs = _load_documents_for_run(
@@ -1282,11 +1280,6 @@ async def run_llm(
 
         _jobs[job_id].update(phase="saving", eta_seconds=None)
 
-        doc_ids = [d["id"] for d in docs]
-        sb.table("responses").update({"is_latest": False}).eq(
-            "project_id", project_id
-        ).in_("document_id", doc_ids).eq("respondent_type", "llm").execute()
-
         run_metadata = _RunMetadata(
             project_id=project_id,
             llm_provider=llm_provider,
@@ -1306,6 +1299,7 @@ async def run_llm(
             run_config.partial_coverage_threshold,
             run_metadata,
         )
+        await wake_auto_review_reconciliation()
 
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq(
             "id", project_id

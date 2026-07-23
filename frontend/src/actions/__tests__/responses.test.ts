@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { revalidatePath, revalidateTag } from "next/cache";
 
+const drainAutoReviewReconciliationRequests = vi.hoisted(() => vi.fn(async () => ({
+  processed: 1,
+  stale: 0,
+  deferred: 0,
+  failed: 0,
+  remaining: 0,
+})));
+
 // Mocks precisam ser declarados antes do import dinamico do modulo sob teste.
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
@@ -8,16 +16,26 @@ vi.mock("next/cache", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: vi.fn(async () => ({ id: "user-1", email: "u@test.com" })),
-  // Sem alias nos cenários destes testes: identidade efetiva = a própria conta.
-  getEffectiveMemberId: vi.fn(async () => "user-1"),
+  resolveProjectMemberActor: vi.fn(async () => ({
+    ok: true,
+    user: { id: "user-1", email: "u@test.com" },
+    memberUserId: "user-1",
+  })),
+}));
+vi.mock("@/lib/auto-review-reconciler", () => ({
+  drainAutoReviewReconciliationRequests,
 }));
 
 interface State {
   responseInsertPayload: Record<string, unknown> | null;
   responseUpdatePayload: Record<string, unknown> | null;
   assignmentUpdatePayload: Record<string, unknown> | null;
-  existingResponse: { id: string; is_partial: boolean } | null;
+  existingResponse: {
+    id: string;
+    is_partial: boolean;
+    answers?: Record<string, unknown>;
+    answer_field_hashes?: Record<string, string | null> | null;
+  } | null;
   currentAssignmentStatus: string | null;
   pydanticFields: Array<{
     name: string;
@@ -25,9 +43,11 @@ interface State {
     required?: boolean;
     options?: string[];
     target?: string;
+    hash?: string;
   }>;
   schemaVersion: { major: number; minor: number; patch: number };
   documentExcludedAt: string | null;
+  automationMode: string | null;
 }
 
 let state: State;
@@ -44,9 +64,11 @@ beforeEach(() => {
     ],
     schemaVersion: { major: 1, minor: 0, patch: 0 },
     documentExcludedAt: null,
+    automationMode: null,
   };
   vi.mocked(revalidatePath).mockClear();
   vi.mocked(revalidateTag).mockClear();
+  drainAutoReviewReconciliationRequests.mockClear();
 });
 
 // Builder generico awaitable: usado quando o resultado final eh `{ error: null }`
@@ -86,6 +108,7 @@ vi.mock("@/lib/supabase/server", () => ({
                   schema_version_patch: state.schemaVersion.patch,
                   round_strategy: "schema_version",
                   current_round_id: null,
+                  automation_mode: state.automationMode,
                 },
                 error: null,
               }),
@@ -214,6 +237,25 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.assignmentUpdatePayload).toBeNull();
   });
 
+  it("auto-save em response já submetida invalida imediatamente a auto-revisão", async () => {
+    state.existingResponse = { id: "resp-1", is_partial: false };
+    state.currentAssignmentStatus = "concluido";
+    state.automationMode = "compare_humans";
+    const saveResponse = await loadSaveResponse();
+
+    const result = await saveResponse(
+      "proj-1",
+      "doc-1",
+      { q1: "b" },
+      { isAutoSave: true },
+    );
+
+    expect(result.success).toBe(true);
+    expect(drainAutoReviewReconciliationRequests).toHaveBeenCalledWith({
+      projectId: "proj-1",
+    });
+  });
+
   it("submit apos auto-save sobrescreve is_partial: true -> false (UPDATE)", async () => {
     // Cenario: o pesquisador deu auto-save antes (response existe com is_partial=true)
     // e agora clica Enviar — o submit deve fazer UPDATE com is_partial=false.
@@ -222,6 +264,39 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     await saveResponse("proj-1", "doc-1", { q1: "a" });
     expect(state.responseUpdatePayload?.is_partial).toBe(false);
     expect(state.assignmentUpdatePayload?.status).toBe("concluido");
+  });
+
+  it("preserva resposta stale e seu hash sem usá-la para concluir a codificação", async () => {
+    state.pydanticFields = [
+      {
+        name: "q_stale",
+        type: "single",
+        required: true,
+        options: ["X", "Y"],
+        hash: "h-stale-new",
+      },
+      { name: "q_txt", type: "text", required: true, hash: "h-text" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q_stale: "A", q_txt: "antigo" },
+      answer_field_hashes: { q_stale: "h-stale-old", q_txt: "h-text" },
+    };
+
+    const saveResponse = await loadSaveResponse();
+    const result = await saveResponse("proj-1", "doc-1", { q_txt: "novo" });
+
+    expect(result.success).toBe(true);
+    expect(state.responseUpdatePayload?.answers).toEqual({
+      q_stale: "A",
+      q_txt: "novo",
+    });
+    expect(state.responseUpdatePayload?.answer_field_hashes).toEqual({
+      q_stale: "h-stale-old",
+      q_txt: "h-text",
+    });
+    expect(state.assignmentUpdatePayload?.status).toBe("em_andamento");
   });
 
   it("auto-save com campo obrigatorio vazio mantem pendente em em_andamento", async () => {

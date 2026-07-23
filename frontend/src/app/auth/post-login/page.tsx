@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { resolveAuth } from "@/lib/auth";
 import { safeNextPath } from "@/lib/safe-next-path";
@@ -35,16 +34,10 @@ export default async function PostLoginPage({
     redirect(nextUrl);
   }
 
-  // access-completion-required | technical-sync-failure: mostra o estado
-  // recuperável. O e-mail do ator é lido só para reconhecimento da conta
-  // (currentUser é memoizado por request pelo Clerk).
-  const user = await currentUser();
-  const actorEmail = user?.emailAddresses[0]?.emailAddress ?? "";
-
   return (
     <AccessCompletionCard
       reason={resolution.reason}
-      actorEmail={actorEmail}
+      actorEmail={resolution.actorEmail}
       nextUrl={nextUrl}
     />
   );

@@ -43,6 +43,32 @@ describe("resolveAuth — fail-closed (RC-005) e classificação de estado", () 
     await expect(resolveAuth()).resolves.toEqual({ status: "signed-out" });
   });
 
+  it("falha inesperada do Clerk vira estado técnico recuperável", async () => {
+    session = makeFakeSession();
+    session.currentUser = async () => {
+      throw new Error("Clerk indisponível");
+    };
+    const resolveAuth = await loadResolveAuth();
+
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    });
+  });
+
+  it("preserva exceções internas de renderização dinâmica do Next", async () => {
+    session = makeFakeSession();
+    const dynamicUsage = Object.assign(new Error("dynamic server usage"), {
+      digest: "DYNAMIC_SERVER_USAGE",
+    });
+    session.currentUser = async () => {
+      throw dynamicUsage;
+    };
+    const resolveAuth = await loadResolveAuth();
+
+    await expect(resolveAuth()).rejects.toBe(dynamicUsage);
+  });
+
   it("vínculo preparado e coerente → authenticated", async () => {
     session = makeFakeSession({ scenario: "prepared", supabaseUid: "sb_1" });
     const resolveAuth = await loadResolveAuth();
@@ -57,6 +83,112 @@ describe("resolveAuth — fail-closed (RC-005) e classificação de estado", () 
     await expect(resolveAuth()).resolves.toEqual({
       status: "access-completion-required",
       reason: "link-pending",
+      actorEmail: "user@exemplo.com",
+    });
+  });
+
+  it("metadata sem mapping continua pendente", async () => {
+    session = makeFakeSession({ scenario: "prepared", mappingUid: null });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "access-completion-required",
+      reason: "link-pending",
+      actorEmail: "user@exemplo.com",
+    });
+  });
+
+  it("mapping sem metadata continua pendente porque o JWT não tem identidade", async () => {
+    session = makeFakeSession({ scenario: "pending", mappingUid: "sb_user_1" });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "access-completion-required",
+      reason: "link-pending",
+      actorEmail: "user@exemplo.com",
+    });
+  });
+
+  it("mapping legado versão 0 exige conclusão mesmo com metadata coerente", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      mappingSyncVersion: 0,
+    });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "access-completion-required",
+      reason: "link-pending",
+      actorEmail: "user@exemplo.com",
+    });
+  });
+
+  it("falha ao ler vínculo sem metadata → technical-sync-failure", async () => {
+    session = makeFakeSession({
+      scenario: "pending",
+      mappingError: "timeout",
+    });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+      actorEmail: "user@exemplo.com",
+    });
+  });
+
+  it("gate de coordenador não confunde falha técnica com logout", async () => {
+    session = makeFakeSession({
+      scenario: "pending",
+      mappingError: "timeout",
+    });
+    const { requireCoordinator } = await import("@/lib/auth");
+
+    await expect(
+      requireCoordinator("project-1", "Acesso negado"),
+    ).resolves.toEqual({
+      ok: false,
+      code: "authorization_unavailable",
+      error: "Não foi possível verificar sua permissão. Tente novamente.",
+    });
+  });
+
+  it("falha do mapping invalida também a sessão com metadata preparada", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      mappingError: "timeout",
+    });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+      actorEmail: "user@exemplo.com",
+    });
+  });
+
+  it("falha ao verificar master → technical-sync-failure", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      masterError: "timeout",
+    });
+    const resolveAuth = await loadResolveAuth();
+
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+      actorEmail: "user@exemplo.com",
+    });
+  });
+
+  it("gate de coordenador classifica falha de master como autorização indisponível", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      masterError: "timeout",
+    });
+    const { requireCoordinator } = await import("@/lib/auth");
+
+    await expect(
+      requireCoordinator("project-1", "Acesso negado"),
+    ).resolves.toEqual({
+      ok: false,
+      code: "authorization_unavailable",
+      error: "Não foi possível verificar sua permissão. Tente novamente.",
     });
   });
 
@@ -66,11 +198,42 @@ describe("resolveAuth — fail-closed (RC-005) e classificação de estado", () 
     await expect(resolveAuth()).resolves.toEqual({
       status: "access-completion-required",
       reason: "link-divergent",
+      actorEmail: "user@exemplo.com",
     });
   });
 
   it("sessão sem e-mail utilizável → technical-sync-failure", async () => {
     session = makeFakeSession({ scenario: "no-email" });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    });
+  });
+
+  it("vínculo preparado sem e-mail também falha fechado", async () => {
+    session = makeFakeSession({ scenario: "prepared", email: null });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    });
+  });
+
+  it("vínculo preparado com primário não verificado também falha fechado", async () => {
+    session = makeFakeSession({ scenario: "prepared", emailVerified: false });
+    const resolveAuth = await loadResolveAuth();
+    await expect(resolveAuth()).resolves.toEqual({
+      status: "technical-sync-failure",
+      reason: "sync-temporary-failure",
+    });
+  });
+
+  it("vínculo preparado sem ID primário não escolhe o primeiro endereço", async () => {
+    session = makeFakeSession({
+      scenario: "prepared",
+      primaryEmailAddressId: null,
+    });
     const resolveAuth = await loadResolveAuth();
     await expect(resolveAuth()).resolves.toEqual({
       status: "technical-sync-failure",

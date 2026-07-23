@@ -1,9 +1,9 @@
 "use client";
 
-import type { MemberEmailLink } from "@/lib/types";
+import type { MemberEmailLinkView } from "./member-list-utils";
 
 interface MemberEmailLinksProps {
-  links: MemberEmailLink[];
+  links: MemberEmailLinkView[];
   onUnlink: (linkId: string) => void;
 }
 
@@ -15,13 +15,15 @@ export function MemberEmailLinks({ links, onUnlink }: MemberEmailLinksProps) {
           key={link.id}
           className="flex items-center gap-1 text-xs text-muted-foreground"
           title={
-            link.linked_user_id
+            link.accessReady
               ? "E-mail vinculado: a conta acessa o projeto como este membro."
-              : "E-mail vinculado aguardando criação da conta."
+              : "E-mail vinculado aguardando a conclusão do acesso da conta."
           }
         >
           <span>↳ {link.email}</span>
-          {!link.linked_user_id && <span className="italic">(sem conta)</span>}
+          {!link.accessReady && (
+            <span className="italic">(acesso pendente)</span>
+          )}
           <button
             type="button"
             onClick={() => onUnlink(link.id)}

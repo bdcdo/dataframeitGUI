@@ -1,16 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
+import { makeId } from "@/lib/utils";
 
 interface CsvPreviewTableProps {
   rows: Record<string, string>[];
   columns: string[];
 }
 
-// crypto.randomUUID is only exposed in secure contexts (HTTPS/localhost); fall
-// back so a dev server reached over a plain-http LAN IP doesn't crash the preview.
-const newRowId = () =>
-  crypto.randomUUID?.() ?? `csv-preview-${Math.random().toString(36).slice(2)}`;
+const newRowId = () => makeId("csv-preview");
 
 export function CsvPreviewTable({ rows, columns }: CsvPreviewTableProps) {
   // Assign a stable id per preview row once. The slice never reorders, but a

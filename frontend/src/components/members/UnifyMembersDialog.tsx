@@ -28,24 +28,36 @@ export function UnifyMembersDialog({
   onClose,
 }: UnifyMembersDialogProps) {
   const [loading, setLoading] = useState(false);
+  const hasBlockingConflicts = Boolean(
+    preview &&
+      (preview.reviewConflicts > 0 ||
+        preview.arbitrationConflicts > 0 ||
+        preview.comparisonConflicts > 0),
+  );
 
   const handleUnify = async () => {
-    if (!preview) return;
+    if (!preview || hasBlockingConflicts) return;
     setLoading(true);
-    const result = await unifyMembers(
-      projectId,
-      preview.sourceUserId,
-      preview.targetUserId,
-    );
-    setLoading(false);
-    if (result.error) {
-      toast.error(result.error);
-      return;
+    try {
+      const result = await unifyMembers(
+        projectId,
+        preview.sourceUserId,
+        preview.targetUserId,
+        preview.linkEmail,
+      );
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(
+        `Membros unificados. ${preview.sourceName} agora atua como ${targetName} neste projeto.`,
+      );
+      onClose();
+    } catch {
+      toast.error("Não foi possível unificar os membros. Tente novamente.");
+    } finally {
+      setLoading(false);
     }
-    toast.success(
-      `Membros unificados. ${preview.sourceName} agora atua como ${targetName} neste projeto.`,
-    );
-    onClose();
   };
 
   return (
@@ -57,7 +69,7 @@ export function UnifyMembersDialog({
         {preview && (
           <div className="space-y-4">
             <p className="text-sm">
-              Este e-mail é o principal de <strong>{preview.sourceName}</strong>
+              Este e-mail pertence à conta de <strong>{preview.sourceName}</strong>
               , que já é membro do projeto. Vincular significa unificar os dois
               membros: <strong>{preview.sourceName}</strong> passa a atuar como{" "}
               <strong>{targetName}</strong>.
@@ -76,7 +88,26 @@ export function UnifyMembersDialog({
                 Papel e permissões resultantes: os de {targetName} (
                 {preview.resultingRole}).
               </li>
+              <li>
+                {preview.reviewConflicts} campo(s) têm revisões de ambos os
+                membros.
+              </li>
+              <li>
+                {preview.arbitrationConflicts} arbitragem(ns) aberta(s) têm os
+                dois membros em papéis opostos.
+              </li>
+              <li>
+                {preview.comparisonConflicts} comparação(ões) aberta(s)
+                tornariam revisor e codificador a mesma pessoa.
+              </li>
             </ul>
+            {hasBlockingConflicts && (
+              <p className="text-sm font-medium text-destructive">
+                A unificação está bloqueada para preservar a separação entre
+                autores, revisores e árbitros. Resolva os conflitos antes de
+                tentar novamente.
+              </p>
+            )}
             <p className="text-sm font-medium text-destructive">
               A unificação é permanente e não pode ser desfeita.
             </p>
@@ -86,7 +117,7 @@ export function UnifyMembersDialog({
               </Button>
               <Button
                 onClick={() => void handleUnify()}
-                disabled={loading}
+                disabled={loading || hasBlockingConflicts}
                 className="bg-brand hover:bg-brand/90 text-brand-foreground"
               >
                 {loading ? "Unificando..." : "Unificar membros"}

@@ -366,6 +366,19 @@ def test_verify_jwt_rs256_sem_issuer_configurado_e_503(monkeypatch, rsa_private_
     assert exc.value.status_code == 503
 
 
+def test_verify_jwt_hs256_nao_exige_issuer():
+    # Invariante inversa da anterior: a exigência de issuer é do caminho JWKS, e
+    # o rollback HS256 continua aceitando token sem `iss` (nem `aud`, que saiu
+    # deste PR). Não é esquecimento: ali a chave é o Supabase JWT secret, que não
+    # é emitido pelo Clerk e não tem instância dev/prod para separar. Sem este
+    # teste, transformar `_require_issuer` em "exige sempre" passaria verde e
+    # derrubaria o rollback justamente quando ele fosse necessário.
+    # As fixtures autouse já deixam HS256 ligado com jwks e issuer vazios.
+    token = make_token()
+    assert "iss" not in jwt.decode(token, options={"verify_signature": False})
+    assert verify_jwt(token).id == USER
+
+
 def test_verify_jwt_session_token_sem_supabase_uid_e_503(monkeypatch, rsa_private_key):
     # O modo de falha silencioso do cutover: custom claim não replicado na
     # instância nova. Sem isto, `clerk_uid()` vira NULL e o RLS nega tudo sem

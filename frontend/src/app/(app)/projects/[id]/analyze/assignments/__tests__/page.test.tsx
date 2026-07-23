@@ -2,10 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   user: null as { id: string; isMaster: boolean } | null,
-  access: {
-    project: null as { id: string } | null,
-    queryFailed: false,
-  },
+  access: { status: "unavailable" as "resolved" | "unavailable" },
   adminFactoryCalls: 0,
   serverFactoryCalls: 0,
 }));
@@ -14,12 +11,7 @@ function makeClient() {
   return {
     from: () => {
       const builder: Record<string, unknown> = {};
-      for (const method of [
-        "select",
-        "eq",
-        "is",
-        "order",
-      ]) {
+      for (const method of ["select", "eq", "is", "order"]) {
         builder[method] = () => builder;
       }
       builder.then = (resolve: (value: unknown) => unknown) =>
@@ -40,8 +32,14 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => state.user,
   getProjectAccessContext: async () => state.access,
+}));
+
+vi.mock("@/lib/page-auth", () => ({
+  requirePageAuthUser: async () => {
+    if (!state.user) throw new Error("NEXT_NOT_FOUND");
+    return state.user;
+  },
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -81,7 +79,10 @@ async function expectFailClosedBeforeClientCreation() {
 
 beforeEach(() => {
   state.user = { id: "user-1", isMaster: false };
-  state.access = { project: { id: "project-1" }, queryFailed: false };
+  state.access = {
+    status: "resolved",
+    project: { id: "project-1" },
+  } as typeof state.access;
   state.adminFactoryCalls = 0;
   state.serverFactoryCalls = 0;
 });
@@ -94,14 +95,18 @@ describe("AssignmentsPage — gate antes dos readers service role", () => {
   });
 
   it("acesso ausente ou consulta falha não alcança o admin client", async () => {
-    state.access = { project: null, queryFailed: true };
+    state.access = { status: "unavailable" };
 
-    await expectFailClosedBeforeClientCreation();
+    await expect(renderPage()).rejects.toThrow(
+      "Não foi possível verificar sua identidade no projeto.",
+    );
+    expect(state.adminFactoryCalls).toBe(0);
+    expect(state.serverFactoryCalls).toBe(0);
   });
 
   it("acesso confirmado libera os readers cacheados", async () => {
     await expect(renderPage()).resolves.toBeDefined();
     expect(state.serverFactoryCalls).toBe(1);
-    expect(state.adminFactoryCalls).toBe(3);
+    expect(state.adminFactoryCalls).toBe(1);
   });
 });

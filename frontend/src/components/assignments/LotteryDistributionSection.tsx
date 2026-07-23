@@ -68,22 +68,33 @@ export function LotteryDistributionSection({
     <div className="space-y-4">
       <h4 className="text-sm font-semibold">Distribuição</h4>
 
-      <div>
-        <Label htmlFor="per-doc">
-          {isComparacao ? "Revisores por documento" : "Pesquisadores por documento"}
-        </Label>
-        <Input
-          id="per-doc"
-          type="number"
-          min={1}
-          max={Math.max(1, Math.min(10, membersCount))}
-          value={researchersPerDoc}
-          onChange={(e) =>
-            setResearchersPerDoc(parseInt(e.target.value) || 1)
-          }
-          className="mt-1 w-24"
-        />
-      </div>
+      {/* Comparação não expõe o campo: um revisor por documento é a regra, não
+          uma configuração — deixá-lo editável (ou desabilitado em 1) afirmaria
+          que existe uma escolha a fazer. O valor da codificação continua no
+          state, então voltar para ela restaura o que foi digitado (#490). */}
+      {isComparacao ? (
+        <div>
+          <Label>Revisores por documento</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Um revisor por documento — o veredito é ato de desempate único.
+          </p>
+        </div>
+      ) : (
+        <div>
+          <Label htmlFor="per-doc">Pesquisadores por documento</Label>
+          <Input
+            id="per-doc"
+            type="number"
+            min={1}
+            max={Math.max(1, Math.min(10, membersCount))}
+            value={researchersPerDoc}
+            onChange={(e) =>
+              setResearchersPerDoc(parseInt(e.target.value) || 1)
+            }
+            className="mt-1 w-24"
+          />
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <Label htmlFor="docs-per-switch">

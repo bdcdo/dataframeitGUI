@@ -1,16 +1,16 @@
-export const requiredPrePushEnv = [
-  "CLERK_SECRET_KEY",
-  "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-  "E2E_COORDINATOR_EMAIL",
-  "E2E_MEMBER_EMAIL",
-  "E2E_PROJECT_ID",
-  "E2E_LOTTERY_PROJECT_ID",
-] as const;
+import {
+  hasConfiguredEnvironmentValue,
+  requiredEnvironmentNames,
+} from "./scripts/worktree-env/env-contract.mjs";
+
+export const requiredPrePushEnv = requiredEnvironmentNames(__dirname);
 
 export function assertRequiredPrePushEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): void {
-  const missing = requiredPrePushEnv.filter((name) => !env[name]);
+  const missing = requiredPrePushEnv.filter(
+    (name) => !hasConfiguredEnvironmentValue(env[name]),
+  );
 
   if (missing.length === 0) return;
 
@@ -18,7 +18,7 @@ export function assertRequiredPrePushEnv(
     [
       "e2e-smoke pre-push sem variáveis obrigatórias.",
       `Faltando: ${missing.join(", ")}`,
-      "Configure frontend/.env.local com as chaves Clerk e copie frontend/.env.e2e.example para frontend/.env.e2e preenchendo os usuários/projetos de teste.",
+      "Configure as variáveis não comentadas de frontend/.env.local.example e frontend/.env.e2e.example nos respectivos arquivos locais.",
       "Bypass intencional neste push: SKIP=e2e-smoke git push",
     ].join("\n"),
   );

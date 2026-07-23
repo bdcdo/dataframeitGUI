@@ -1,265 +1,517 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { PydanticField } from "@/lib/types";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   makeSupabaseMock,
+  type RpcCall,
   type TableResult,
   type TableResults,
   type WriteCall,
 } from "./supabase-mock";
+import { EMPTY_BASELINE, FIELD, PROJECT_SELECT } from "./schema-test-fixtures";
+import type { PydanticField } from "@/lib/types";
 
-// Testes do conserto da #178: o UPDATE de projects filtrado pela RLS retorna
-// sucesso com 0 linhas no PostgREST — antes, saveSchemaFromGUI seguia em
-// frente e inseria entradas em schema_change_log, gerando histórico fantasma.
-// As actions retornam { error } (não lançam): o Next mascara a message de
-// erros lançados em Server Actions em produção.
-
-let writeCalls: WriteCall[];
-let serverTableResults: TableResults | undefined;
-
+const state = vi.hoisted(() => ({
+  writes: [] as WriteCall[],
+  rpcs: [] as RpcCall[],
+  tables: undefined as TableResults | undefined,
+  rpcResults: undefined as Record<string, TableResult | TableResult[]> | undefined,
+}));
 const fetchMock = vi.hoisted(() => vi.fn());
 
-vi.mock("next/cache", () => ({
-  revalidatePath: () => {},
-  revalidateTag: () => {},
-}));
-vi.mock("@/lib/auth", () => ({
-  getAuthUser: async () => ({ id: "userCoord" }),
-}));
-vi.mock("@/lib/api-server", () => ({
-  fetchFastAPIServer: fetchMock,
-}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
+vi.mock("@/lib/auth", () => ({ getAuthUser: async () => ({ id: "userCoord" }) }));
+vi.mock("@/lib/api-server", () => ({ fetchFastAPIServer: fetchMock }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({ tableResults: serverTableResults, writeCalls }),
+    makeSupabaseMock({
+      tableResults: state.tables,
+      writeCalls: state.writes,
+      rpcCalls: state.rpcs,
+      rpcResults: state.rpcResults,
+    }),
 }));
 
 import {
-  saveSchemaFromGUI,
-  savePrompt,
+  backfillSchemaVersionHistory,
   publishMajorVersion,
-  saveLlmConfig,
   recoverFieldsFromStoredCode,
+  saveLlmConfig,
+  savePrompt,
+  saveSchemaFromGUI,
 } from "../schema";
 
-const FIELD: PydanticField = {
-  name: "q1",
-  type: "text",
-  options: null,
-  description: "Pergunta 1",
-};
-
-// Estado prévio do projeto lido por saveSchemaFromGUI (schema vazio, v0.1.0).
-const PROJECT_SELECT: TableResult = {
-  data: {
-    pydantic_fields: [],
+function commitRow(overrides: Record<string, unknown> = {}) {
+  return {
+    status: "saved",
+    schema_revision: 1,
+    pydantic_fields: [{ ...FIELD, hash: "field-hash" }],
     schema_version_major: 0,
-    schema_version_minor: 1,
+    schema_version_minor: 2,
     schema_version_patch: 0,
-  },
-};
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
-  writeCalls = [];
-  serverTableResults = undefined;
+  state.writes = [];
+  state.rpcs = [];
+  state.tables = undefined;
+  state.rpcResults = undefined;
   fetchMock.mockReset();
-  fetchMock.mockResolvedValue({
-    valid: true,
-    fields: [],
-    model_name: null,
-    errors: [],
-  });
 });
 
 describe("saveSchemaFromGUI", () => {
-  it("o caso da #178: UPDATE de projects filtrado (0 linhas) retorna erro e NÃO grava histórico fantasma", async () => {
-    serverTableResults = {
-      projects: [PROJECT_SELECT, { data: [] }],
-    };
+  it("persiste schema e histórico numa única RPC e devolve snapshot canônico", async () => {
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
 
-    const r = await saveSchemaFromGUI("p1", [FIELD]);
-    expect(r.error).toMatch(/sem permissão/i);
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
 
-    const logInserts = writeCalls.filter(
-      (c) => c.table === "schema_change_log" && c.op === "insert",
-    );
-    expect(logInserts).toHaveLength(0);
-  });
-
-  it("caminho feliz: update de projects confirmado antes do insert do log, com versão bumpada", async () => {
-    serverTableResults = {
-      projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
-      schema_change_log: { data: null, error: null },
-    };
-
-    const r = await saveSchemaFromGUI("p1", [FIELD]);
-    expect(r.error).toBeUndefined();
-
-    const ops = writeCalls.map((c) => `${c.table}:${c.op}`);
-    expect(ops.indexOf("projects:update")).toBeLessThan(
-      ops.indexOf("schema_change_log:insert"),
-    );
-
-    const logInsert = writeCalls.find(
-      (c) => c.table === "schema_change_log" && c.op === "insert",
-    );
-    const entries = logInsert?.payload as Array<Record<string, unknown>>;
-    expect(entries).toHaveLength(1);
-    // Campo adicionado = mudança estrutural → MINOR (0.1.0 → 0.2.0)
-    expect(entries[0]).toMatchObject({
-      project_id: "p1",
-      changed_by: "userCoord",
-      field_name: "q1",
-      change_type: "minor",
-      version_major: 0,
-      version_minor: 2,
-      version_patch: 0,
+    expect(result).toEqual({
+      status: "saved",
+      snapshot: {
+        revision: 1,
+        version: "0.2.0",
+        fields: [{ ...FIELD, hash: "field-hash" }],
+      },
     });
+    expect(state.rpcs).toHaveLength(1);
+    expect(state.rpcs[0]).toMatchObject({
+      fn: "commit_project_schema",
+      args: {
+        p_project_id: "p1",
+        p_expected_revision: 0,
+        p_version_major: 0,
+        p_version_minor: 2,
+        p_version_patch: 0,
+        p_change_type: "minor",
+        p_changed_by: "userCoord",
+        p_log_entries: [expect.objectContaining({ field_name: "q1" })],
+      },
+    });
+    expect(state.writes).toHaveLength(0);
   });
 
-  it("erro no insert do log retorna erro com mensagem de histórico (schema já salvo)", async () => {
-    serverTableResults = {
-      projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
-      schema_change_log: { data: null, error: { message: "log boom" } },
+  it("permite o primeiro save quando o projeto parte do schema vazio canônico", async () => {
+    state.tables = {
+      projects: {
+        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [] },
+      },
     };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
 
-    const r = await saveSchemaFromGUI("p1", [FIELD]);
-    expect(r.error).toMatch(/histórico.*log boom/);
-    // O update de projects aconteceu antes da falha do log.
-    expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(true);
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(state.rpcs).toHaveLength(1);
   });
 
-  it("guarda anti-wipe: 0 campos sobre schema não-vazio é recusado sem tocar projects", async () => {
-    // Projeto já tem 1 campo; salvar com [] apagaria o schema → recusa.
-    serverTableResults = {
-      projects: [{ data: { ...(PROJECT_SELECT.data as Record<string, unknown>), pydantic_fields: [FIELD] } }],
-    };
-
-    const r = await saveSchemaFromGUI("p1", []);
-    expect(r.error).toMatch(/0 campos|apagaria/i);
-    expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(false);
-  });
-
-  it("guarda anti-wipe (legado): 0 campos com pydantic_fields vazio mas pydantic_code presente é recusado", async () => {
-    // Caso legado: pydantic_fields vazio, mas o schema vive em pydantic_code.
-    // A guarda precisa enxergar o código — checar só oldFields.length deixaria
-    // o wipe passar exatamente neste cenário.
-    serverTableResults = {
-      projects: [
-        {
-          data: {
-            ...(PROJECT_SELECT.data as Record<string, unknown>),
-            pydantic_fields: [],
-            pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
-          },
+  it("baseline antigo retorna conflito antes de calcular ou escrever", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as Record<string, unknown>),
+          schema_revision: 2,
+          schema_version_minor: 3,
+          pydantic_fields: [FIELD],
         },
-      ],
+      },
     };
 
-    const r = await saveSchemaFromGUI("p1", []);
-    expect(r.error).toMatch(/0 campos|apagaria/i);
-    expect(writeCalls.some((c) => c.table === "projects" && c.op === "update")).toBe(false);
-  });
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
 
-  it("permite salvar [] quando o schema já estava vazio (sem campos e sem código)", async () => {
-    serverTableResults = {
-      projects: [PROJECT_SELECT, { data: [{ id: "p1" }] }],
-    };
-    const r = await saveSchemaFromGUI("p1", []);
-    expect(r.error).toBeUndefined();
-  });
-});
-
-describe("recoverFieldsFromStoredCode", () => {
-  it("retorna os campos reconstruídos pelo backend a partir do código armazenado", async () => {
-    fetchMock.mockResolvedValueOnce({
-      valid: true,
-      fields: [FIELD],
-      model_name: "Analysis",
-      errors: [],
+    expect(result).toEqual({
+      status: "conflict",
+      current: { fields: [FIELD], version: "0.3.0", revision: 2 },
     });
-    const r = await recoverFieldsFromStoredCode("p1");
-    expect(r.error).toBeUndefined();
-    expect(r.fields).toEqual([FIELD]);
-    // Envia project_id, nunca código do cliente.
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/pydantic/recover-fields",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ project_id: "p1" }) }),
+    expect(state.rpcs).toHaveLength(0);
+  });
+
+  it("corrida depois da leitura mapeia o snapshot remoto retornado pela RPC", async () => {
+    const remote = { ...FIELD, description: "Mudança remota" };
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = {
+      commit_project_schema: {
+        data: commitRow({
+          status: "conflict",
+          schema_revision: 4,
+          schema_version_minor: 3,
+          pydantic_fields: [remote],
+        }),
+      },
+    };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result).toEqual({
+      status: "conflict",
+      current: { fields: [remote], version: "0.3.0", revision: 4 },
+    });
+  });
+
+  it("falha transacional só pode retornar error, nunca saved + error", async () => {
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = {
+      commit_project_schema: { error: { message: "histórico indisponível" } },
+    };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result.status).toBe("error");
+    expect("snapshot" in result).toBe(false);
+  });
+
+  // Violação de contrato (payload malformado, log vazio, semver incompatível) é
+  // diagnóstico de desenvolvedor: o usuário não tem ação possível e a UI é
+  // pt-BR. A mensagem crua do Postgres vai para o log do servidor, não ao toast.
+  it("erro de contrato da RPC não vaza a mensagem do Postgres", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = {
+      commit_project_schema: {
+        error: {
+          code: "22023",
+          message: "p_log_entries must be a non-empty JSON array",
+        },
+      },
+    };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Não foi possível salvar o schema. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[schema] commit_project_schema falhou",
+      expect.objectContaining({ code: "22023" }),
     );
+    consoleError.mockRestore();
   });
 
-  it("propaga erro quando o backend não consegue reconstruir", async () => {
-    fetchMock.mockResolvedValueOnce({
-      valid: false,
-      fields: [],
-      model_name: null,
-      errors: ["código inválido"],
+  it("recusa schema vazio na fronteira canônica", async () => {
+    state.tables = {
+      projects: {
+        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [FIELD] },
+      },
+    };
+    const result = await saveSchemaFromGUI("p1", [], {
+      revision: 0,
     });
-    const r = await recoverFieldsFromStoredCode("p1");
-    expect(r.fields).toBeUndefined();
-    expect(r.error).toBe("código inválido");
+    expect(result).toMatchObject({ status: "error", message: expect.stringMatching(/inválido/i) });
+    expect(state.rpcs).toHaveLength(0);
+  });
+
+  it("save sem mudanças mantém a revisão e não chama a RPC", async () => {
+    state.tables = {
+      projects: {
+        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [FIELD] },
+      },
+    };
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+    expect(result).toEqual({
+      status: "saved",
+      snapshot: { fields: [FIELD], version: "0.1.0", revision: 0 },
+    });
+    expect(state.rpcs).toHaveLength(0);
+  });
+
+  it("rejeita propriedades desconhecidas recebidas do cliente", async () => {
+    state.tables = { projects: PROJECT_SELECT };
+    const malformed = [{ ...FIELD, unexpected: "client input" }] as unknown as PydanticField[];
+    const result = await saveSchemaFromGUI("p1", malformed, EMPTY_BASELINE);
+    expect(result).toMatchObject({ status: "error", message: expect.stringMatching(/inválido/i) });
+    expect(state.rpcs).toHaveLength(0);
+  });
+
+  it("não tenta salvar quando o schema persistido viola o contrato", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          pydantic_fields: [FIELD, { ...FIELD, description: "Duplicado" }],
+        },
+      },
+    };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/persistido.*inválido/i),
+    });
+    expect(state.rpcs).toHaveLength(0);
   });
 });
 
 describe("publishMajorVersion", () => {
-  it("0 linhas no bump retorna erro e não grava entrada MAJOR fantasma", async () => {
-    serverTableResults = {
-      projects: [
-        { data: { schema_version_major: 0, schema_version_minor: 18, schema_version_patch: 0 } },
-        { data: [] },
-      ],
+  it("publica MAJOR e histórico na mesma RPC", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          pydantic_fields: [FIELD],
+          pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
+          schema_version_minor: 18,
+          schema_revision: 7,
+        },
+      },
+    };
+    state.rpcResults = {
+      commit_project_schema: {
+        data: commitRow({
+          schema_revision: 8,
+          schema_version_major: 1,
+          schema_version_minor: 0,
+          pydantic_fields: [FIELD],
+        }),
+      },
     };
 
-    const r = await publishMajorVersion("p1");
-    expect(r.error).toMatch(/sem permissão/i);
-    expect(r.bumped).toBeUndefined();
-    expect(
-      writeCalls.filter((c) => c.table === "schema_change_log" && c.op === "insert"),
-    ).toHaveLength(0);
+    const result = await publishMajorVersion("p1", {
+      revision: 7,
+    });
+
+    expect(result).toMatchObject({
+      status: "saved",
+      snapshot: { revision: 8, version: "1.0.0" },
+    });
+    expect(state.rpcs[0]).toMatchObject({
+      fn: "commit_project_schema",
+      args: {
+        p_expected_revision: 7,
+        p_change_type: "major",
+        p_version_major: 1,
+        p_version_minor: 0,
+        p_version_patch: 0,
+        p_log_entries: [expect.objectContaining({ field_name: "(projeto)" })],
+      },
+    });
+    expect(state.writes).toHaveLength(0);
   });
 
-  it("falha parcial: MAJOR publicada mas log falhou → retorna bumped E erro", async () => {
-    serverTableResults = {
-      projects: [
-        { data: { schema_version_major: 0, schema_version_minor: 18, schema_version_patch: 0 } },
-        { data: [{ id: "p1" }] },
-      ],
-      schema_change_log: { data: null, error: { message: "log boom" } },
+  // A RPC deriva pydantic_hash do código; sem código o hash sairia nulo, que
+  // compare-version.ts lê como "projeto anterior ao versionamento".
+  it("recusa publicar MAJOR em projeto sem schema salvo", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          pydantic_fields: [FIELD],
+          pydantic_code: null,
+          schema_revision: 7,
+        },
+      },
     };
 
-    const r = await publishMajorVersion("p1");
-    expect(r.bumped).toEqual({ major: 1, minor: 0, patch: 0 });
-    expect(r.error).toMatch(/MAJOR publicada.*log boom/);
+    const result = await publishMajorVersion("p1", { revision: 7 });
+
+    expect(result).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/schema salvo/i),
+    });
+    expect(state.rpcs).toHaveLength(0);
   });
 
-  it("caminho feliz: retorna a versão bumpada sem erro", async () => {
-    serverTableResults = {
-      projects: [
-        { data: { schema_version_major: 0, schema_version_minor: 18, schema_version_patch: 0 } },
-        { data: [{ id: "p1" }] },
-      ],
-      schema_change_log: { data: null, error: null },
+  it("não publica sobre uma revisão que o usuário nunca viu", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          schema_revision: 8,
+          schema_version_minor: 19,
+        },
+      },
+    };
+    const result = await publishMajorVersion("p1", {
+      revision: 7,
+    });
+    expect(result).toMatchObject({
+      status: "conflict",
+      current: { revision: 8, version: "0.19.0" },
+    });
+    expect(state.rpcs).toHaveLength(0);
+  });
+});
+
+describe("backfillSchemaVersionHistory", () => {
+  it("calcula em TypeScript e aplica logs, respostas e revisão numa única RPC", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: {
+        data: [{
+          id: "log-1",
+          field_name: "q1",
+          before_value: {},
+          after_value: FIELD,
+          created_at: "2026-01-01T00:00:00.000Z",
+          change_type: null,
+        }],
+      },
+      responses: { data: [] },
+    };
+    state.rpcResults = {
+      apply_schema_backfill: {
+        data: commitRow({ schema_revision: 4, pydantic_fields: [FIELD] }),
+      },
     };
 
-    const r = await publishMajorVersion("p1");
-    expect(r.error).toBeUndefined();
-    expect(r.bumped).toEqual({ major: 1, minor: 0, patch: 0 });
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toMatchObject({
+      status: "saved",
+      stats: { logEntriesUpdated: 1, responsesProcessed: 0 },
+      snapshot: { revision: 4 },
+    });
+    expect(state.rpcs).toEqual([
+      expect.objectContaining({
+        fn: "apply_schema_backfill",
+        args: expect.objectContaining({
+          p_expected_revision: 3,
+          p_log_updates: [expect.objectContaining({ id: "log-1", change_type: "minor" })],
+          p_response_updates: [],
+        }),
+      }),
+    ]);
+    expect(state.writes).toHaveLength(0);
+  });
+
+  // A RPC commita antes de o chamador ver o retorno. Validar só o retorno
+  // reportaria como falha uma escrita que aconteceu — e o backfill é a
+  // ferramenta de projeto legado, logo é quem mais encontra schema inválido.
+  it("recusa schema persistido inválido antes de chamar a RPC", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [{ ...FIELD, propriedadeDesconhecida: true }],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: { data: [] },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toEqual({
+      status: "error",
+      message:
+        "O schema persistido é inválido e precisa ser corrigido antes da edição.",
+    });
+    // O ponto do teste: nenhuma escrita foi tentada.
+    expect(state.rpcs).toHaveLength(0);
+    expect(state.writes).toHaveLength(0);
+  });
+
+  // Os SELECT paginados precedem a RPC e escapam do mapeamento por (rpc,
+  // errcode) — eram o único ponto do backfill que entregava texto do Postgres
+  // ao toast pt-BR.
+  it("não vaza a mensagem crua do Postgres quando a paginação falha", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: {
+        error: { message: "canceling statement due to statement timeout" },
+      },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Não foi possível reconstruir o histórico. Tente novamente.",
+    });
+    expect(state.rpcs).toHaveLength(0);
+  });
+
+  // O CAS compara contra a revisão que a ABA observou, como em
+  // publishMajorVersion. Sem isso, uma aba stale recebia o snapshot novo como
+  // se fosse resultado próprio: stateAfterSave o tratava como rascunho da
+  // sessão e o save seguinte revertia em silêncio o schema de outra sessão.
+  it("não reconstrói sobre uma revisão que a aba nunca viu", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 5,
+        },
+      },
+      schema_change_log: { data: [] },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toMatchObject({
+      status: "conflict",
+      current: { revision: 5, version: "0.1.0" },
+    });
+    expect(state.rpcs).toHaveLength(0);
+    expect(state.writes).toHaveLength(0);
+  });
+});
+
+describe("recoverFieldsFromStoredCode", () => {
+  it("recupera os campos usando apenas o project_id", async () => {
+    fetchMock.mockResolvedValueOnce({ valid: true, fields: [FIELD], model_name: "Analysis", errors: [] });
+    const result = await recoverFieldsFromStoredCode("p1");
+    expect(result).toEqual({ fields: [FIELD] });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pydantic/recover-fields",
+      expect.objectContaining({ body: JSON.stringify({ project_id: "p1" }) }),
+    );
+  });
+
+  // O backend diz `valid: true` sobre o PYTHON que compilou, não sobre o
+  // contrato de `PydanticField`. Era o único ponto do fluxo que entregava campos
+  // ao editor sem passar pelo Zod: o campo malformado entrava no estado, o
+  // rascunho local o gravava por cima do trabalho anterior, e o erro só aparecia
+  // no save seguinte, com a copy genérica de "schema enviado é inválido".
+  it("recusa campos que o backend reconstruiu fora do contrato", async () => {
+    fetchMock.mockResolvedValueOnce({
+      valid: true,
+      fields: [{ name: "q1", type: "tipo-que-nao-existe", options: null, description: "x" }],
+      model_name: "Analysis",
+      errors: [],
+    });
+    const result = await recoverFieldsFromStoredCode("p1");
+    expect(result.fields).toBeUndefined();
+    expect(result.error).toMatch(/não são válidos/i);
   });
 });
 
 describe("savePrompt / saveLlmConfig", () => {
-  it("savePrompt retorna erro em 0 linhas com a copy específica", async () => {
-    serverTableResults = { projects: { data: [] } };
-    const r = await savePrompt("p1", "novo prompt");
-    expect(r.error).toMatch(/Não foi possível salvar o prompt/);
-  });
-
-  it("saveLlmConfig retorna erro em 0 linhas com a copy específica", async () => {
-    serverTableResults = { projects: { data: [] } };
-    const r = await saveLlmConfig("p1", {
+  it("mantém as mensagens específicas quando RLS filtra o update", async () => {
+    state.tables = { projects: { data: [] } };
+    await expect(savePrompt("p1", "prompt")).resolves.toMatchObject({
+      error: expect.stringMatching(/salvar o prompt/i),
+    });
+    state.tables = { projects: { data: [] } };
+    await expect(saveLlmConfig("p1", {
       llm_provider: "google",
       llm_model: "gemini",
       llm_kwargs: {},
-    });
-    expect(r.error).toMatch(/configuração do LLM/);
+    })).resolves.toMatchObject({ error: expect.stringMatching(/configuração do LLM/i) });
   });
 });
