@@ -1,4 +1,4 @@
-import { useCallback, useState, type RefObject } from "react";
+import { useCallback, useMemo, useState, type RefObject } from "react";
 import { toast } from "sonner";
 import { getScrollBehavior } from "@/lib/scroll";
 import { isFieldAnswered, requiredHumanFields } from "@/lib/coding-completeness";
@@ -34,10 +34,16 @@ export function useQuestionValidation(
   // (coding-sync.ts). Antes esta contagem usava `visibleFields.filter(resolveRequired)`,
   // que incluía `llm_only` no denominador (o bloqueio já o excluía), fazendo o
   // header mostrar "N-1/N" para sempre com o submit liberado.
-  const requiredFields = requiredHumanFields(visibleFields, answers);
-  const answeredRequiredCount = requiredFields.filter((f) =>
-    isFieldAnswered(f, answers[f.name]),
-  ).length;
+  // Memoizado para estabilizar a identidade de `requiredFields` (dep de
+  // `handleSubmitWithValidation`) entre renders sem mudança de campos/respostas.
+  const requiredFields = useMemo(
+    () => requiredHumanFields(visibleFields, answers),
+    [visibleFields, answers],
+  );
+  const answeredRequiredCount = useMemo(
+    () => requiredFields.filter((f) => isFieldAnswered(f, answers[f.name])).length,
+    [requiredFields, answers],
+  );
 
   const isAnswered = useCallback(
     (field: PydanticField) => isFieldAnswered(field, answers[field.name]),
@@ -71,9 +77,14 @@ export function useQuestionValidation(
       const firstIdx = visibleFields.findIndex((f) => unansweredSet.has(f.name));
       const firstEl = questionRefs.current[firstIdx];
       firstEl?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
-      // O ref é o card da pergunta (HTMLDivElement), não o input — focar o
-      // primeiro controle focável dentro dele leva o cursor direto à pendência.
-      firstEl
+      // O ref é o card da pergunta (HTMLDivElement), não o input. Focar o
+      // primeiro controle dentro de `[data-question-body]` (o corpo da resposta)
+      // — não do card inteiro — leva o cursor à pendência e evita cair no
+      // drag-handle de reordenar, que precede o corpo quando o card é arrastável
+      // (o caso normal na codificação). Fallback para o card se o marcador faltar.
+      const focusRoot =
+        firstEl?.querySelector<HTMLElement>("[data-question-body]") ?? firstEl;
+      focusRoot
         ?.querySelector<HTMLElement>(
           'input, textarea, select, button, [tabindex]:not([tabindex="-1"])',
         )

@@ -22,16 +22,25 @@ function field(partial: Partial<PydanticField> & { name: string }): PydanticFiel
   } as PydanticField;
 }
 
-// Monta um RefObject de cards com um input focável dentro de cada, na ordem de
-// `visibleFields`, para exercitar scroll + foco.
+// Monta um RefObject de cards que espelham a estrutura real de `SortableQuestion`
+// no fluxo de codificação (arrastável): o drag-handle é o PRIMEIRO focável do
+// card, seguido do corpo da resposta `[data-question-body]` com o input. Isso é
+// necessário para provar o vermelho do foco — com o seletor escopado ao card
+// inteiro, o `.focus()` cairia no handle; escopado ao corpo, cai no input.
 function refsFor(fields: PydanticField[]): RefObject<(HTMLDivElement | null)[]> {
   const ref = createRef<(HTMLDivElement | null)[]>() as {
     current: (HTMLDivElement | null)[];
   };
   ref.current = fields.map(() => {
     const card = document.createElement("div");
+    const handle = document.createElement("button");
+    handle.setAttribute("aria-label", "Arrastar para reordenar pergunta");
+    card.appendChild(handle);
+    const body = document.createElement("div");
+    body.setAttribute("data-question-body", "");
     const input = document.createElement("input");
-    card.appendChild(input);
+    body.appendChild(input);
+    card.appendChild(body);
     document.body.appendChild(card);
     return card;
   });
@@ -87,10 +96,15 @@ describe("useQuestionValidation — envio", () => {
     expect(onSubmit).not.toHaveBeenCalled();
     expect(view.result.current.highlightedFields).toEqual(new Set(["q2"]));
     expect(warn).toHaveBeenCalledWith("Preencha todas as perguntas obrigatórias");
-    // q2 é o índice 1 em visibleFields; scroll no card e foco no input dentro dele.
+    // q2 é o índice 1 em visibleFields; scroll no card e foco no input do corpo
+    // da resposta — NÃO no drag-handle, que é o primeiro focável do card.
     const secondCard = refs.current![1]!;
     expect(secondCard.scrollIntoView).toHaveBeenCalled();
-    expect(document.activeElement).toBe(secondCard.querySelector("input"));
+    const bodyInput = secondCard.querySelector("[data-question-body] input");
+    expect(document.activeElement).toBe(bodyInput);
+    expect(document.activeElement).not.toBe(
+      secondCard.querySelector('[aria-label="Arrastar para reordenar pergunta"]'),
+    );
   });
 
   it("submitting/outOfScopeBlocked → nunca envia nem avisa", () => {
