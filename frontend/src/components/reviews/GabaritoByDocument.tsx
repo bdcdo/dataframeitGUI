@@ -17,7 +17,6 @@ import {
   Check,
   X,
   AlertTriangle,
-  ChevronDown,
   ChevronRight,
   Bot,
   FileText,
@@ -26,6 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
+import { JustificationToggle } from "@/components/shared/JustificationToggle";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewedDocument } from "@/lib/reviews/types";
 
@@ -402,23 +402,10 @@ function RespondentRow({
           )}
         </span>
         {ra.justification && (
-          <button
-            type="button"
-            aria-label={
-              showJustification
-                ? "Ocultar justificativa"
-                : "Mostrar justificativa"
-            }
-            aria-expanded={showJustification}
-            onClick={() => setShowJustification(!showJustification)}
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            {showJustification ? (
-              <ChevronDown className="size-3.5" />
-            ) : (
-              <ChevronRight className="size-3.5" />
-            )}
-          </button>
+          <JustificationToggle
+            expanded={showJustification}
+            onToggle={() => setShowJustification(!showJustification)}
+          />
         )}
       </div>
       {showJustification && ra.justification && (
