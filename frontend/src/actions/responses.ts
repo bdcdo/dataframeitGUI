@@ -138,10 +138,12 @@ function resolveSchemaProvenance({
   // O fallback {major 0, minor 1, patch 0} é canônico e vive uma única vez em
   // `deriveProjectVersionContext` — reusá-lo evita a duplicação que o cabeçalho
   // de compare-version.ts sinaliza como load-bearing (uma cópia "corrigida" para
-  // minor 0 aqui dessincronizaria a fila/fecho da Comparação).
-  const { version } = deriveProjectVersionContext(project ?? {});
+  // minor 0 aqui dessincronizaria a fila/fecho da Comparação). O `ctx.pydanticHash`
+  // do MESMO helper é `pydantic_hash ?? null`, então hash e versão vêm de uma
+  // fonte única — não re-derivar o hash à parte.
+  const { version, ctx } = deriveProjectVersionContext(project ?? {});
   return {
-    pydantic_hash: project?.pydantic_hash ?? null,
+    pydantic_hash: ctx.pydanticHash,
     schema_version_major: version.major,
     schema_version_minor: version.minor,
     schema_version_patch: version.patch,

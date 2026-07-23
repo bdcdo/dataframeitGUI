@@ -418,8 +418,11 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(payload).not.toHaveProperty("schema_version_minor");
     expect(payload).not.toHaveProperty("schema_version_patch");
     expect(payload).not.toHaveProperty("version_inferred_from");
-    // O resto do save segue normal.
+    // O resto do save segue normal. E o ramo legacy de buildReconciledFieldHashes
+    // NAO recarimba hash (conserva o sentinela `{}`), mesmo com revisao real de
+    // valor — liga o mapa per-campo as colunas preservadas no mesmo caso.
     expect(payload.answers).toEqual({ q1: "b" });
+    expect(payload.answer_field_hashes).toEqual({});
   });
 
   it("response com proveniencia per-campo promove as colunas ao REVISAR um valor", async () => {
