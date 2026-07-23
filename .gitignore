@@ -56,3 +56,9 @@ AGENTS.md
 
 # Relatorios gerados (output de rotinas/skills)
 docs/erros-llm/
+
+# Verificacao descartavel (tier 4 de docs/VERIFICATION.md): replays, checkers ad
+# hoc e dossies de diagnostico. Ignorado aqui, e nao em .git/info/exclude, para
+# que a regra "nunca versionada" valha tambem em worktree, clone novo e agente
+# cloud — nao so no checkout onde o diretorio foi criado.
+harness/

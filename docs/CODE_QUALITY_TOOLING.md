@@ -1,6 +1,6 @@
 # Stack de qualidade de código
 
-Decision record da issue [#260](https://github.com/bdcdo/dataframeitGUI/issues/260) ("Avaliar complementos ao react-doctor"). Registra quais ferramentas de qualidade o projeto adotou, por que cada uma entrou (ou ficou de fora), o baseline de cada gate e como o débito legado é grandfathered. Complementa `docs/LINT_CONFIG.md`, que detalha especificamente o baseline do react-doctor.
+Decision record da issue [#260](https://github.com/bdcdo/dataframeitGUI/issues/260) ("Avaliar complementos ao react-doctor"). Registra quais ferramentas de qualidade o projeto adotou, por que cada uma entrou (ou ficou de fora), o baseline de cada gate e como o débito legado é grandfathered. Complementa `docs/LINT_CONFIG.md`, que detalha especificamente o baseline do react-doctor, e `docs/VERIFICATION.md`, que trata da *estratégia* — que mudança exige qual nível de verificação, os tiers de revisão por PR e as práticas contra a família de bugs "codificação não salva". A divisão é: aqui, quais gates existem e como disparam; lá, o que verificar e com que profundidade.
 
 ## O problema
 
