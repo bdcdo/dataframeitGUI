@@ -153,9 +153,11 @@ const props = {
   currentUserId: "u1",
   canManageAnyPair: false,
   isCoordinator: false,
-  showingAllQueue: false,
-  hasAssignedDocs: false,
-  isImpersonating: false,
+  queueContext: {
+    showingAll: false,
+    hasAssignedDocs: false,
+    isImpersonating: false,
+  },
 };
 
 const renderReal = (overrides: Partial<typeof props> = {}) =>
@@ -364,7 +366,10 @@ describe("ComparePage — árvore real (smoke)", () => {
 
   it("impersonação mantém navegação, mas bloqueia controles e atalhos de escrita", async () => {
     const user = userEvent.setup();
-    renderReal({ isImpersonating: true, canManageAnyPair: true });
+    renderReal({
+      queueContext: { ...props.queueContext, isImpersonating: true },
+      canManageAnyPair: true,
+    });
 
     expect(
       screen.getByRole("status").textContent,
@@ -426,7 +431,10 @@ describe("ComparePage — árvore real (smoke)", () => {
 
     rerender(
       <TooltipProvider>
-        <ComparePage {...props} isImpersonating />
+        <ComparePage
+          {...props}
+          queueContext={{ ...props.queueContext, isImpersonating: true }}
+        />
       </TooltipProvider>,
     );
 

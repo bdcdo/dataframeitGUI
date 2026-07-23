@@ -76,7 +76,8 @@
           "src/components/compare/ComparePage.tsx"
         ],
         "rules": [
-          "react-doctor/no-ref-current-in-render"
+          "react-doctor/no-ref-current-in-render",
+          "react-doctor/no-giant-component"
         ]
       },
       {

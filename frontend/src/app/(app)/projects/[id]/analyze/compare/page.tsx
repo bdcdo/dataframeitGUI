@@ -293,11 +293,13 @@ export default async function ComparePageRoute({
         currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
         equivalencesByDocField={equivalencesByDocField}
         currentUserId={ownMemberUserId}
-        isImpersonating={isImpersonating}
         canManageAnyPair={isCoordinator}
         isCoordinator={isCoordinator}
-        showingAllQueue={showAllQueue}
-        hasAssignedDocs={hasAssignedDocs}
+        queueContext={{
+          showingAll: showAllQueue,
+          hasAssignedDocs,
+          isImpersonating,
+        }}
       />
     </Suspense>
   );

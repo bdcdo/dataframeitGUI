@@ -268,9 +268,11 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
     currentUserId: "u1",
     canManageAnyPair: false,
     isCoordinator: false,
-    showingAllQueue: false,
-    hasAssignedDocs: false,
-    isImpersonating: false,
+    queueContext: {
+      showingAll: false,
+      hasAssignedDocs: false,
+      isImpersonating: false,
+    },
   };
 }
 
@@ -881,8 +883,11 @@ describe("ComparePage — toggle de fila (só coordenador)", () => {
       <ComparePage
         {...emptyProps({
           isCoordinator: true,
-          showingAllQueue: false,
-          hasAssignedDocs: false,
+          queueContext: {
+            showingAll: false,
+            hasAssignedDocs: false,
+            isImpersonating: false,
+          },
         })}
       />,
     );
@@ -896,8 +901,11 @@ describe("ComparePage — toggle de fila (só coordenador)", () => {
       <ComparePage
         {...emptyProps({
           isCoordinator: true,
-          showingAllQueue: false,
-          hasAssignedDocs: true,
+          queueContext: {
+            showingAll: false,
+            hasAssignedDocs: true,
+            isImpersonating: false,
+          },
         })}
       />,
     );
@@ -914,9 +922,11 @@ describe("ComparePage — toggle de fila (só coordenador)", () => {
       <ComparePage
         {...emptyProps({
           isCoordinator: true,
-          showingAllQueue: false,
-          hasAssignedDocs: false,
-          isImpersonating: true,
+          queueContext: {
+            showingAll: false,
+            hasAssignedDocs: false,
+            isImpersonating: true,
+          },
         })}
       />,
     );
@@ -933,9 +943,11 @@ describe("ComparePage — toggle de fila (só coordenador)", () => {
       <ComparePage
         {...emptyProps({
           isCoordinator: true,
-          showingAllQueue: false,
-          hasAssignedDocs: true,
-          isImpersonating: true,
+          queueContext: {
+            showingAll: false,
+            hasAssignedDocs: true,
+            isImpersonating: true,
+          },
         })}
       />,
     );
@@ -948,7 +960,14 @@ describe("ComparePage — toggle de fila (só coordenador)", () => {
   it("na aba 'Todos', a mensagem genérica não menciona assignment", () => {
     render(
       <ComparePage
-        {...emptyProps({ isCoordinator: true, showingAllQueue: true })}
+        {...emptyProps({
+          isCoordinator: true,
+          queueContext: {
+            showingAll: true,
+            hasAssignedDocs: false,
+            isImpersonating: false,
+          },
+        })}
       />,
     );
     expect(

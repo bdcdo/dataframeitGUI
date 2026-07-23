@@ -1,14 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
-import {
-  saveSchemaFromGUI,
-  publishMajorVersion,
-  backfillSchemaVersionHistory,
-  recoverFieldsFromStoredCode,
-} from "@/actions/schema";
 import {
   generatePydanticCode,
   validateGUIFields,
@@ -22,6 +15,7 @@ import { SchemaEditorBanners } from "./SchemaEditorBanners";
 import { SchemaEditorDialogs } from "./SchemaEditorDialogs";
 import { SchemaEditorFooter } from "./SchemaEditorFooter";
 import { useSchemaEditorDialogs } from "./useSchemaEditorDialogs";
+import { useSchemaEditorActions } from "./useSchemaEditorActions";
 import {
   useSchemaDraft,
   type SchemaDraftConflict,
@@ -133,8 +127,6 @@ function SchemaEditor({
   currentVersion,
   currentRevision,
 }: SchemaEditorProps) {
-  const { refresh } = useRouter();
-
   // O modo "código" é somente leitura: o schema é editado no modo visual e o
   // código Pydantic é a fonte de verdade gerada a partir dos campos. Por isso
   // o estado inicial é sempre "gui".
@@ -174,7 +166,6 @@ function SchemaEditor({
   // seria trabalho desperdiçado já que o editor de código nem está montado.
   const code = generatedSchemaCode(mode, fields, initialCode);
   const [validationAttempted, setValidationAttempted] = useState(false);
-  const [isPending, startTransition] = useTransition();
   const {
     majorDialogOpen,
     setMajorDialogOpen,
@@ -183,6 +174,30 @@ function SchemaEditor({
     helpDismissed,
     dismissHelp,
   } = useSchemaEditorDialogs();
+
+  const {
+    isPending,
+    canRecover,
+    handlePublishMajor,
+    handleBackfill,
+    handleRecover,
+    handleSave,
+  } = useSchemaEditorActions({
+    projectId,
+    initialCode,
+    initialFields,
+    fields,
+    isDirty,
+    conflict,
+    baseline,
+    setFields,
+    markSaved,
+    registerRemoteConflict,
+    prepareSubmission,
+    setValidationAttempted,
+    setMajorDialogOpen,
+    setBackfillDialogOpen,
+  });
 
   // Cada proveniência anuncia o que de fato aconteceu. Antes as duas caíam na
   // mesma mensagem, e um merge automático durante a sessão dizia "rascunho
@@ -200,67 +215,6 @@ function SchemaEditor({
     }
   }, [origin]);
 
-  const handlePublishMajor = () => {
-    if (isDirty || conflict) {
-      toast.warning("Resolva e salve as alterações pendentes antes de publicar uma versão MAJOR.");
-      return;
-    }
-    startTransition(async () => {
-      try {
-        const r = await publishMajorVersion(projectId, baseline);
-        if (r.status === "error") {
-          toast.error(r.message);
-          return;
-        }
-        if (r.status === "conflict") {
-          registerRemoteConflict(r.current);
-          toast.error("O schema mudou em outra sessão. Revise o conflito antes de publicar.");
-          return;
-        }
-        markSaved(r.snapshot);
-        toast.success(`Nova versão MAJOR publicada: ${r.snapshot.version}`);
-        setMajorDialogOpen(false);
-        refresh();
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Erro ao publicar MAJOR";
-        toast.error(msg);
-      }
-    });
-  };
-
-  const handleBackfill = () => {
-    if (isDirty || conflict) {
-      toast.warning("Resolva e salve as alterações pendentes antes de reconstruir o histórico.");
-      return;
-    }
-    startTransition(async () => {
-      try {
-        const r = await backfillSchemaVersionHistory(projectId, baseline);
-        if (r.status === "error") {
-          toast.error(r.message);
-          return;
-        }
-        if (r.status === "conflict") {
-          registerRemoteConflict(r.current);
-          toast.error("O schema mudou em outra sessão. Revise o conflito antes de reconstruir.");
-          return;
-        }
-        const v = r.stats.finalVersion;
-        const m = r.stats.byMethod;
-        toast.success(
-          `v${v.major}.${v.minor}.${v.patch} · ${r.stats.logEntriesUpdated} entradas, ${r.stats.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
-          { duration: 10000 },
-        );
-        markSaved(r.snapshot);
-        setBackfillDialogOpen(false);
-        refresh();
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Erro ao reconstruir";
-        toast.error(msg);
-      }
-    });
-  };
-
   // --- Troca de modo ---
   // O modo "código" é só visualização da fonte de verdade. Alternar não
   // recompila nada: os campos já estão no estado e o código é gerado deles.
@@ -270,61 +224,6 @@ function SchemaEditor({
   const switchToGUI = () => {
     setValidationAttempted(false);
     setMode("gui");
-  };
-
-  // --- Recuperação de campos a partir do código armazenado (projeto legado) ---
-  // Quando o projeto tem pydantic_code mas nenhum campo carregado, o editor
-  // abriria vazio e um "Salvar" apagaria o schema (barrado pela guarda em
-  // saveSchemaFromGUI). Recuperar reconstrói os campos a partir do código.
-  const canRecover =
-    initialFields.length === 0 && !!initialCode && fields.length === 0;
-
-  const handleRecover = () => {
-    startTransition(async () => {
-      const r = await recoverFieldsFromStoredCode(projectId);
-      if (r.error) {
-        toast.error(r.error);
-        return;
-      }
-      setFields(r.fields || []);
-      toast.success(`${r.fields?.length ?? 0} campos recuperados do código`);
-    });
-  };
-
-  // --- Salvar ---
-
-  const handleSave = () => {
-    if (conflict) {
-      toast.warning("Aplique ou descarte o rascunho conflitante antes de salvar.");
-      return;
-    }
-    startTransition(async () => {
-      try {
-        const submission = prepareSubmission();
-        setValidationAttempted(true);
-        const errs = validateGUIFields(submission.fields);
-        if (errs.length > 0) return;
-        setValidationAttempted(false);
-        const r = await saveSchemaFromGUI(
-          projectId,
-          submission.fields,
-          submission.expectedBaseline,
-        );
-        if (r.status === "error") {
-          toast.error(r.message);
-          return;
-        }
-        if (r.status === "conflict") {
-          registerRemoteConflict(r.current);
-          toast.warning("O schema mudou em outra sessão. Revise as diferenças para continuar.");
-          return;
-        }
-        markSaved(r.snapshot);
-        toast.success("Schema salvo!");
-      } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
-      }
-    });
   };
 
   if (!isHydrated) {
