@@ -75,8 +75,10 @@ export function useQuestionValidation(
       .map((f) => f.name);
 
     if (unanswered.length > 0) {
-      setHighlightedFields(new Set(unanswered));
-      const firstIdx = visibleFields.findIndex((f) => unanswered.includes(f.name));
+      // Um só `Set`: o mesmo conjunto destaca os campos e localiza o primeiro.
+      const unansweredSet = new Set(unanswered);
+      setHighlightedFields(unansweredSet);
+      const firstIdx = visibleFields.findIndex((f) => unansweredSet.has(f.name));
       questionRefs.current[firstIdx]?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
       toast.warning("Preencha todas as perguntas obrigatórias");
       return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { PydanticField } from "@/lib/types";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -272,6 +272,12 @@ function DateFieldRenderer({
 }
 
 export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
+  // Prefixo dos ids que ligam cada `label` de subcampo ao seu `Input`. Vem de
+  // `useId` e não de `field.name` porque o mesmo campo pode ser renderizado
+  // mais de uma vez na página (comparação lado a lado), e id duplicado faz o
+  // clique no rótulo focar o input errado.
+  const subfieldIdPrefix = useId();
+
   if (field.type === "single" && field.options) {
     const otherChecked = isOtherValue(value);
     const otherValue = otherChecked ? otherText(value as string) : "";
@@ -321,9 +327,12 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
   if (field.type === "multi" && field.options) {
     const selected = Array.isArray(value) ? (value as unknown[]) : [];
     const fixedOptions = field.options;
+    // Os dois conjuntos são consultados uma vez por item da outra lista.
+    const fixedOptionSet = new Set(fixedOptions);
     const selectedFixed = selected.filter(
-      (s): s is string => typeof s === "string" && fixedOptions.includes(s),
+      (s): s is string => typeof s === "string" && fixedOptionSet.has(s),
     );
+    const selectedFixedSet = new Set(selectedFixed);
     const otherItem = selected.find(isOtherValue) as string | undefined;
     const otherChecked = otherItem !== undefined;
     const otherValue = otherChecked ? otherText(otherItem as string) : "";
@@ -338,7 +347,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <input
               type="checkbox"
               value={option}
-              checked={selectedFixed.includes(option)}
+              checked={selectedFixedSet.has(option)}
               onChange={(e) => {
                 const nextFixed = e.target.checked
                   ? [...selectedFixed, option]
@@ -433,13 +442,17 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
           <div className="space-y-2">
             {field.subfields.map((sf) => (
               <div key={sf.key} className="flex items-center gap-2">
-                <label className="w-32 shrink-0 text-right text-xs text-muted-foreground">
+                <label
+                  htmlFor={`${subfieldIdPrefix}-${sf.key}`}
+                  className="w-32 shrink-0 text-right text-xs text-muted-foreground"
+                >
                   {sf.label}
                   {sf.required && field.subfield_rule !== "at_least_one" && (
                     <span className="text-destructive ml-0.5">*</span>
                   )}
                 </label>
                 <Input
+                  id={`${subfieldIdPrefix}-${sf.key}`}
                   className="text-sm"
                   value={objValue[sf.key] || ""}
                   onChange={(e) =>

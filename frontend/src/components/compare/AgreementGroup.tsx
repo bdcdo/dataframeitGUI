@@ -159,20 +159,26 @@ export function AgreementGroup({
     .map((key) => groups.find((g) => g.groupKey === key))
     .filter((g): g is RenderedGroup => !!g);
 
+  // Consultado uma vez por grupo renderizado; como array seria O(grupos²).
+  const selectionSet = new Set(selectionOrder);
   const showGabarito = selectedGroups.length >= 2;
   const effectiveGabarito =
     gabaritoOverride && selectionOrder.includes(gabaritoOverride)
       ? gabaritoOverride
       : (selectionOrder[0] ?? null);
 
+  // Os dois setters ficam no nível do handler: um `setGabaritoOverride`
+  // aninhado no updater de `setSelectionOrder` seria efeito colateral dentro de
+  // função que React pode reexecutar. `selectionOrder` do closure basta para
+  // decidir o ramo — só o clique altera a seleção.
   function toggleSelection(groupKey: string) {
-    setSelectionOrder((prev) => {
-      if (prev.includes(groupKey)) {
-        if (gabaritoOverride === groupKey) setGabaritoOverride(null);
-        return prev.filter((k) => k !== groupKey);
-      }
-      return [...prev, groupKey];
-    });
+    const isDeselecting = selectionOrder.includes(groupKey);
+    if (isDeselecting) {
+      setSelectionOrder((prev) => prev.filter((k) => k !== groupKey));
+      if (gabaritoOverride === groupKey) setGabaritoOverride(null);
+      return;
+    }
+    setSelectionOrder((prev) => [...prev, groupKey]);
   }
 
   function handleConfirm() {
@@ -273,7 +279,7 @@ export function AgreementGroup({
             ),
           ).toSorted(compareVersionsDesc);
 
-          const isSelected = selectionOrder.includes(group.groupKey);
+          const isSelected = selectionSet.has(group.groupKey);
 
           return (
             <AnswerCard

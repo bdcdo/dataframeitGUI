@@ -57,10 +57,17 @@ interface ComparePageProps {
   // "Meus atribuídos" / "Todos" — coordenador também compara documentos, por
   // isso o padrão é a fila pessoal dele, igual pesquisador.
   isCoordinator: boolean;
-  // Valor efetivo (resolvido no servidor) da aba de fila atual — fonte única
-  // pro valor exibido em CompareQueueTabs (evita reler a URL no cliente) e
-  // pra mensagem do estado vazio.
-  showingAllQueue: boolean;
+  // Estado da fila e da sessão, todo resolvido no servidor. Agrupado num objeto
+  // porque as três flags descrevem a mesma coisa — o contexto da fila exibida —
+  // e são consumidas juntas na copy do estado vazio; soltas, contavam como
+  // quatro props booleanas e disparavam `no-many-boolean-props`.
+  queueContext: QueueContext;
+}
+
+interface QueueContext {
+  // Valor efetivo da aba de fila atual — fonte única pro valor exibido em
+  // CompareQueueTabs (evita reler a URL no cliente) e pra mensagem do vazio.
+  showingAll: boolean;
   // Se o coordenador TEM documentos atribuídos a ele para comparação (mesmo
   // que nenhum tenha passado nos filtros de cobertura/divergência) — usado só
   // pra diferenciar a mensagem de estado vazio: "sem nada atribuído" (trocar
@@ -94,10 +101,10 @@ export function ComparePage({
   currentUserId,
   canManageAnyPair,
   isCoordinator,
-  showingAllQueue,
-  hasAssignedDocs,
-  isImpersonating,
+  queueContext,
 }: ComparePageProps) {
+  const { showingAll: showingAllQueue, hasAssignedDocs, isImpersonating } =
+    queueContext;
   // Impersonação master torna a Comparação somente-leitura (issue #428). Mesma
   // convenção `readOnly: boolean` do Codificar (`code/page.tsx`).
   const readOnly = isImpersonating;
@@ -348,6 +355,19 @@ export function ComparePage({
     [guardNavigation, handleQueueChange],
   );
 
+  // Adaptadores `async () => Promise` → `() => void` para as assinaturas
+  // síncronas de `useCompareKeyboard`. Precisam de identidade estável: o hook
+  // recebe os dois no array de deps do seu único effect, então um arrow inline
+  // religaria o listener de `keydown` a cada render do container.
+  const handleSpecialVerdict = useCallback(
+    (verdict: "ambiguo" | "pular") => void submitVerdictSingleFlight(verdict),
+    [submitVerdictSingleFlight],
+  );
+  const handleConfirmPending = useCallback(
+    () => void confirmPendingVerdict(),
+    [confirmPendingVerdict],
+  );
+
   useCompareKeyboard({
     readOnly,
     isFullscreen,
@@ -360,9 +380,8 @@ export function ComparePage({
     onNextField: nextField,
     onPrevField: prevField,
     onPrepareVerdict: preparePendingVerdict,
-    onSubmitSpecialVerdict: (verdict) =>
-      void submitVerdictSingleFlight(verdict),
-    onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+    onSubmitSpecialVerdict: handleSpecialVerdict,
+    onConfirmPendingVerdict: handleConfirmPending,
     hasPendingVerdict: !!pendingVerdict,
   });
 
@@ -540,7 +559,7 @@ export function ComparePage({
             void submitVerdictSingleFlight(verdict, chosenResponseId),
           pendingVerdict,
           onPrepareVerdict: preparePendingVerdict,
-          onConfirmPendingVerdict: () => void confirmPendingVerdict(),
+          onConfirmPendingVerdict: handleConfirmPending,
           onDiscardPendingVerdict: discardPendingVerdict,
           isSavingVerdict,
           onMarkReviewed: () => void handleMarkReviewed(),

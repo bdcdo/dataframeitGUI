@@ -45,12 +45,15 @@ function selectVerifiedEmailIdentity(
   const normalizedPrimaryEmail = normalizeEmail(primaryEmail.email);
   if (!normalizedPrimaryEmail) return null;
 
+  // Uma passada só: filtrar por verificação, normalizar e descartar o vazio
+  // eram três varreduras do mesmo array.
   const verifiedEmails = Array.from(
     new Set(
-      emailAddresses
-        .filter((address) => address.verificationStatus === "verified")
-        .map((address) => normalizeEmail(address.email))
-        .filter(Boolean),
+      emailAddresses.flatMap((address) => {
+        if (address.verificationStatus !== "verified") return [];
+        const normalized = normalizeEmail(address.email);
+        return normalized ? [normalized] : [];
+      }),
     ),
   );
 

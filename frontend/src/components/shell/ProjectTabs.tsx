@@ -157,6 +157,7 @@ function ProjectTabsInner({
             <div className="relative flex items-center gap-1.5">
               <Users className="size-3.5 text-muted-foreground" />
               <select
+                aria-label="Visualizar a plataforma como outro membro"
                 value={viewAsUserId || ""}
                 onChange={(e) =>
                   selectImpersonation(e.target.value || null)

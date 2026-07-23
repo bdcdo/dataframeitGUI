@@ -70,6 +70,8 @@ export function LotteryEligibilitySection({
     setManualDocIds,
   } = params;
   const isComparacao = type === "comparacao";
+  // Uma varredura por lote renderizado viraria O(lotes × excluídos).
+  const batchExcludeSet = new Set(batchExclude);
 
   return (
     <div className="space-y-4">
@@ -166,7 +168,7 @@ export function LotteryEligibilitySection({
                 <div key={b.id} className="flex items-center gap-2">
                   <Checkbox
                     id={`batch-ex-${b.id}`}
-                    checked={batchExclude.includes(b.id)}
+                    checked={batchExcludeSet.has(b.id)}
                     onCheckedChange={(checked) =>
                       setBatchExclude((prev) =>
                         checked

@@ -642,12 +642,13 @@ async function computeLottery(params: LotteryParams): Promise<{
   // Conjunto preservado conforme o modo (research D4): append preserva
   // todas as atribuições do tipo (inclusive pendentes); replace só as que
   // o sorteio nunca toca (em_andamento/concluido)
-  const preservedStatuses =
+  const preservedStatuses = new Set(
     params.mode === "append"
       ? ["pendente", "em_andamento", "concluido"]
-      : ["em_andamento", "concluido"];
+      : ["em_andamento", "concluido"]
+  );
   const preserved = data.assignmentRows.filter(
-    (a) => a.type === assignmentType && preservedStatuses.includes(a.status)
+    (a) => a.type === assignmentType && preservedStatuses.has(a.status)
   );
 
   // Anti-duplicidade de par: continua derivando de `preserved` (dependente do

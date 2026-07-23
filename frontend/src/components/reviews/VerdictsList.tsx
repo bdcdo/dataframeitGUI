@@ -12,8 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  ChevronDown,
-  ChevronRight,
   Check,
   X,
   MessageSquare,
@@ -23,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { isAnswerCorrect } from "@/lib/reviews/queries";
 import { formatVerdictAnswer, formatVerdictDisplay } from "@/lib/reviews/verdict-format";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
+import { JustificationToggle } from "@/components/shared/JustificationToggle";
 import type { VerdictItem } from "@/app/(app)/projects/[id]/reviews/my-verdicts/page";
 import type { PydanticField } from "@/lib/types";
 
@@ -386,17 +385,10 @@ function RespondentRow({
 
         {/* Justification toggle */}
         {respondent.justification && (
-          <button
-            type="button"
-            onClick={() => setShowJustification(!showJustification)}
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            {showJustification ? (
-              <ChevronDown className="size-3.5" />
-            ) : (
-              <ChevronRight className="size-3.5" />
-            )}
-          </button>
+          <JustificationToggle
+            expanded={showJustification}
+            onToggle={() => setShowJustification(!showJustification)}
+          />
         )}
       </div>
 
