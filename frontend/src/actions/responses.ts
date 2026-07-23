@@ -116,6 +116,16 @@ function buildResponsePayload({
   // motivo: carimbar "live_save" fixaria uma versão que este save não prova.
   // Só vale para UPDATE: numa codificação nova não há proveniência anterior a
   // preservar, e mapa vazio ali significa projeto sem campos, não legacy.
+  //
+  // Custo assumido (#548): em troca, a response legacy deixa de ser promovida à
+  // versão corrente por um save. `responseQualifiesForVersion` (compare-version.ts)
+  // curto-circuita em `pydantic_hash === null` e, adiante, compara
+  // `schema_version_major` com o piso — então ela pode ficar fora da fila
+  // `latest_major` mesmo depois de recodificada por inteiro. Hoje isso é inerte
+  // (medido em 2026-07-23: 8 responses legacy, todas já com a major do projeto);
+  // passa a importar no próximo bump MAJOR. A raiz é `pydantic_hash` servir a
+  // dois consumidores com necessidades opostas — o staleness quer o hash da
+  // época, o gate de versão quer o de hoje.
   const keepsLegacyProvenance = !!existing && Object.keys(answerFieldHashes).length === 0;
   const schemaProvenance = keepsLegacyProvenance
     ? {}
