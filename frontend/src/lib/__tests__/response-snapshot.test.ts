@@ -4,6 +4,7 @@ import {
   sanitizeStoredAnswers,
 } from "@/lib/response-snapshot";
 import { OTHER_PREFIX } from "@/lib/other-option";
+import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 const field = (input: Partial<PydanticField> & { name: string }): PydanticField =>
@@ -357,6 +358,40 @@ describe("buildPersistedResponseSnapshot", () => {
     });
 
     expect(result.answerFieldHashes).toEqual({ q1: "h1", q2: "h2" });
+  });
+
+  it("a proveniência promovida não marca nenhum campo falsamente stale (#548)", () => {
+    // Outra metade do par que answer-staleness.ts sustenta: depois que a
+    // recodificação completa desliga o sentinela, `isFieldStale` sai do fallback
+    // do schema INTEIRO e passa a comparar per-campo. Como o mapa estampado é o
+    // schema corrente, todo campo bate consigo mesmo e nada aparece stale — o
+    // que é o correto, já que tudo foi recodificado contra o schema de hoje.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+      field({ name: "q2", hash: "h2" }),
+    ];
+
+    const { answerFieldHashes } = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a", q2: "velho" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b", q2: "novo" },
+      promoteLegacyIfComplete: true,
+    });
+
+    const currentFieldHashes = buildFieldHashMap(fields);
+    for (const f of fields) {
+      expect(
+        isFieldStale({
+          answerFieldHashes,
+          // O pydantic_hash antigo (legacy) divergiria do atual: se o snapshot
+          // per-campo NÃO tivesse sido promovido, o fallback marcaria stale.
+          pydanticHash: "hash-legacy",
+          fieldName: f.name,
+          currentFieldHashes,
+          projectPydanticHash: "hash-atual",
+        }),
+      ).toBe(false);
+    }
   });
 
   it("submit incompleto de response legacy conserva o sentinela mesmo com promoção habilitada (#548)", () => {
