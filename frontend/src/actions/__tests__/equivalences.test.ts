@@ -37,10 +37,16 @@ vi.mock("@/lib/supabase/server", () => ({
       rpcResults,
     }),
 }));
-// syncCompareAssignment é best-effort e teria seu próprio teste dedicado
-// (compare-sync.ts); aqui só interessa não deixá-lo derrubar a action.
+// syncCompareAssignment é best-effort e tem seu próprio teste dedicado
+// (compare-sync.ts); aqui só interessa não deixá-lo derrubar a action. O mock
+// é um vi.fn justamente para poder REJEITAR: enquanto era um `async () => {}`
+// fixo, o teste que dizia cobrir esse contrato era vácuo — nunca exercitou a
+// falha que o #499 tornou possível ao fazer o sync lançar.
+const { mockSyncCompareAssignment } = vi.hoisted(() => ({
+  mockSyncCompareAssignment: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/compare-sync", () => ({
-  syncCompareAssignment: async () => {},
+  syncCompareAssignment: mockSyncCompareAssignment,
 }));
 
 beforeEach(() => {
@@ -48,6 +54,7 @@ beforeEach(() => {
   rpcCalls = [];
   rpcResults = {};
   serverTableResults = undefined;
+  mockSyncCompareAssignment.mockClear();
 });
 
 async function loadActions() {
@@ -196,10 +203,7 @@ describe("markLlmEquivalent", () => {
 });
 
 describe("unmarkEquivalencePair", () => {
-  it("caminho feliz → retorna {} e limpa o review do revisor atual para o par", async () => {
-    serverTableResults = {
-      reviews: { error: null },
-    };
+  it("caminho feliz → retorna {} e delega o delete do review à RPC", async () => {
     rpcResults.remove_response_equivalence = {
       data: [{ document_id: "doc1", field_name: "q1" }],
       error: null,
@@ -209,8 +213,72 @@ describe("unmarkEquivalencePair", () => {
     const result = await unmarkEquivalencePair("p1", "eq1");
 
     expect(result).toEqual({});
+    expect(rpcCalls).toEqual([
+      {
+        fn: "remove_response_equivalence",
+        args: { p_project_id: "p1", p_equivalence_id: "eq1" },
+      },
+    ]);
+    // O par e o veredito saem na mesma transação da RPC. Um delete de
+    // `reviews` pelo client aqui significaria que a escrita voltou a ser
+    // parcial — a metade que podia falhar sozinha.
     expect(
       writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
-    ).toBe(true);
+    ).toBe(false);
+    expect(mockSyncCompareAssignment).toHaveBeenCalledWith(
+      expect.anything(),
+      "p1",
+      "doc1",
+      "canonical-reviewer",
+    );
+  });
+
+  // Conjunto vazio é o que a RPC devolve tanto para linha inexistente quanto
+  // para autoridade que não bate. Antes deste guard a action retornava `{}` e
+  // a revisora via "desfeito" sobre nada removido (classe do #178).
+  it("RPC filtra por autoridade → retorna { error }, não sucesso silencioso", async () => {
+    rpcResults.remove_response_equivalence = { data: [], error: null };
+    const { unmarkEquivalencePair } = await loadActions();
+
+    const result = await unmarkEquivalencePair("p1", "eq-alheia");
+
+    expect(result).toEqual({
+      error: "Equivalência não encontrada ou sem permissão para removê-la.",
+    });
+    expect(writeCalls).toEqual([]);
+    expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
+  });
+
+  it("RPC aborta a transação → retorna { error } e não sincroniza", async () => {
+    rpcResults.remove_response_equivalence = {
+      error: { message: "review delete boom" },
+    };
+    const { unmarkEquivalencePair } = await loadActions();
+
+    const result = await unmarkEquivalencePair("p1", "eq1");
+
+    expect(result).toEqual({ error: "review delete boom" });
+    expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
+  });
+
+  // O sync roda DEPOIS do commit da RPC e fora do try que devolve `{ error }`.
+  // Se voltar para dentro, uma falha de sync vira "falha ao desfazer" sobre uma
+  // escrita já persistida: a revisora tenta de novo sobre uma linha que não
+  // existe mais, e a revalidação nem roda.
+  it("falha do sync pós-commit → retorna {} e só loga", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSyncCompareAssignment.mockRejectedValueOnce(new Error("sync boom"));
+    rpcResults.remove_response_equivalence = {
+      data: [{ document_id: "doc1", field_name: "q1" }],
+      error: null,
+    };
+    const { unmarkEquivalencePair } = await loadActions();
+
+    const result = await unmarkEquivalencePair("p1", "eq1");
+
+    expect(result).toEqual({});
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy.mock.calls[0][0]).toContain("sync boom");
+    errorSpy.mockRestore();
   });
 });
