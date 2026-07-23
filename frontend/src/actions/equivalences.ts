@@ -208,6 +208,15 @@ export async function unmarkEquivalencePair(
   // falha do sync não deve virar { error } — a revisora veria "falha ao
   // desfazer" para uma operação já persistida e tentaria de novo, sobre uma
   // linha que não existe mais. Loga e segue para a revalidação.
+  //
+  // `reviewerId` resolve a identidade de trabalho no Node
+  // (`resolveProjectMemberActor`) enquanto o DELETE dentro da RPC resolve a
+  // dele em SQL (`auth_user_member_identity_ids`): duas fontes que precisam
+  // concordar para o assignment recalculado ser o da identidade cujo veredito
+  // saiu. Eliminar a segunda por construção exigiria a RPC devolver o
+  // `reviewer_id` efetivo — o que muda o `RETURNS TABLE` e quebraria a
+  // compatibilidade de assinatura que permite aplicar a migration antes do
+  // merge do código. Fica como follow-up, não como fallback aqui.
   try {
     await syncCompareAssignment(
       supabase,

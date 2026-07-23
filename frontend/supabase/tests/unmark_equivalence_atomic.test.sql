@@ -1,7 +1,14 @@
 -- Contrato de `remove_response_equivalence`: o par e o veredito da identidade
 -- de trabalho de quem chama saem na MESMA transação, e o veredito de terceiros
 -- nunca sai junto. Fixtures derivadas das que o PR #446 montou para a issue
--- #427 (pesquisadora, conta-alias, coordenador, criador, master, outsider).
+-- #427.
+--
+-- Um cenário por braço do predicado de autoridade — dona, conta-alias,
+-- coordenadora, criadora não-membro, master —, mais outsider (nenhum braço) e
+-- a prova de rollback. Criadora e master existem porque esta migration
+-- REMOVEU o braço explícito `created_by = clerk_uid()` e passou a confiar em
+-- `auth_user_coordinator_or_creator_project_ids()`: sem cenário próprio, uma
+-- regressão no UNION daquele helper passaria sem vermelho.
 --
 -- Como rodar (após `npx supabase start` e `npx supabase db reset`):
 --   psql "$(npx supabase status -o env | grep DB_URL | cut -d= -f2- | tr -d '"')" \
@@ -19,7 +26,8 @@ INSERT INTO auth.users (id, email) VALUES
   ('22222222-2222-2222-2222-222222222222', 'dona-alias-427@example.test'),
   ('77777777-7777-7777-7777-777777777777', 'coordenadora-427@example.test'),
   ('99999999-9999-9999-9999-999999999999', 'outsider-427@example.test'),
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'criadora-427@example.test');
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'criadora-427@example.test'),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'master-427@example.test');
 
 -- `clerk_uid()` resolve a sessão por clerk_user_mapping, não pelo claim cru:
 -- sem estas linhas a identidade seria NULL e todo cenário passaria por
@@ -29,6 +37,11 @@ INSERT INTO public.clerk_user_mapping
 SELECT id::text, id, 1
 FROM auth.users
 WHERE email LIKE '%-427@example.test';
+
+-- `is_master()` testa presença nesta tabela por `clerk_uid()`; a conta master
+-- não é membro nem criadora do projeto, então é o único braço que a habilita.
+INSERT INTO public.master_users (user_id) VALUES
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 
 INSERT INTO public.projects (id, name, created_by) VALUES
   (
@@ -81,7 +94,7 @@ VALUES
     '44444444-4444-4444-4444-444444444444',
     'llm',
     NULL,
-    '{"campo-dona":"a","campo-alias":"a","campo-coord":"a","campo-outsider":"a","campo-rollback":"a"}'
+    '{"campo-dona":"a","campo-alias":"a","campo-coord":"a","campo-criadora":"a","campo-master":"a","campo-outsider":"a","campo-rollback":"a"}'
   ),
   (
     '50000000-0000-0000-0000-000000000002',
@@ -89,7 +102,7 @@ VALUES
     '44444444-4444-4444-4444-444444444444',
     'humano',
     '11111111-1111-1111-1111-111111111111',
-    '{"campo-dona":"b","campo-alias":"b","campo-coord":"b","campo-outsider":"b","campo-rollback":"b"}'
+    '{"campo-dona":"b","campo-alias":"b","campo-coord":"b","campo-criadora":"b","campo-master":"b","campo-outsider":"b","campo-rollback":"b"}'
   );
 
 -- Um par por cenário; todos pertencem à pesquisadora canônica.
@@ -110,7 +123,9 @@ FROM (VALUES
   (2, 'campo-alias'),
   (3, 'campo-coord'),
   (4, 'campo-outsider'),
-  (5, 'campo-rollback')
+  (5, 'campo-rollback'),
+  (6, 'campo-criadora'),
+  (7, 'campo-master')
 ) AS cenario(n, campo);
 
 -- Veredito da pesquisadora em cada campo, mais um veredito da coordenadora
@@ -125,7 +140,8 @@ SELECT
   'resposta fundida'
 FROM (VALUES
   ('campo-dona'), ('campo-alias'), ('campo-coord'),
-  ('campo-outsider'), ('campo-rollback')
+  ('campo-outsider'), ('campo-rollback'),
+  ('campo-criadora'), ('campo-master')
 ) AS cenario(campo);
 
 INSERT INTO public.reviews
@@ -317,6 +333,94 @@ BEGIN
   END IF;
 END $$;
 
+-- ========== Criadora não-membro: o braço unificado cobre `created_by` ========
+-- A criadora não está em project_members: só `auth_user_coordinator_or_creator_project_ids()`
+-- a autoriza. Este cenário é o vermelho que sobra se o UNION por `created_by`
+-- daquele helper regredir — foi o braço explícito que esta migration removeu.
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","supabase_uid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  n integer;
+BEGIN
+  SELECT count(*) INTO n FROM public.remove_response_equivalence(
+    '33333333-3333-3333-3333-333333333333',
+    '60000006-0000-0000-0000-000000000000'
+  );
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'FALHOU criadora: RPC devolveu % linhas, esperava 1', n;
+  END IF;
+END $$;
+
+RESET ROLE;
+
+DO $$
+DECLARE
+  n integer;
+BEGIN
+  SELECT count(*) INTO n FROM public.response_equivalences
+  WHERE id = '60000006-0000-0000-0000-000000000000';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FALHOU criadora: o par não foi removido';
+  END IF;
+
+  -- Sem membership não há identidade de trabalho no projeto:
+  -- `auth_user_member_identity_ids` volta vazio e o DELETE de `reviews` não
+  -- casa nada. O par sai, nenhum veredito sai — nem o da pesquisadora.
+  SELECT count(*) INTO n FROM public.reviews
+  WHERE field_name = 'campo-criadora'
+    AND reviewer_id = '11111111-1111-1111-1111-111111111111';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'FALHOU criadora: apagou o veredito da pesquisadora';
+  END IF;
+END $$;
+
+-- ========== Master: autoridade sem membership, mesma fronteira ==========
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","supabase_uid":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}',
+  true
+);
+SET LOCAL ROLE authenticated;
+
+DO $$
+DECLARE
+  n integer;
+BEGIN
+  SELECT count(*) INTO n FROM public.remove_response_equivalence(
+    '33333333-3333-3333-3333-333333333333',
+    '60000007-0000-0000-0000-000000000000'
+  );
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'FALHOU master: RPC devolveu % linhas, esperava 1', n;
+  END IF;
+END $$;
+
+RESET ROLE;
+
+DO $$
+DECLARE
+  n integer;
+BEGIN
+  SELECT count(*) INTO n FROM public.response_equivalences
+  WHERE id = '60000007-0000-0000-0000-000000000000';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FALHOU master: o par não foi removido';
+  END IF;
+
+  SELECT count(*) INTO n FROM public.reviews
+  WHERE field_name = 'campo-master'
+    AND reviewer_id = '11111111-1111-1111-1111-111111111111';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'FALHOU master: apagou o veredito da pesquisadora';
+  END IF;
+END $$;
+
 -- ========== Falha no DELETE do review desfaz também a remoção do par ==========
 -- A atomicidade é o motivo desta migration existir: enquanto o DELETE de
 -- `reviews` vivia no client, falhar aqui deixava o par removido e o veredito
@@ -344,7 +448,7 @@ SET LOCAL ROLE authenticated;
 DO $$
 DECLARE
   n integer;
-  falhou boolean := false;
+  msg text := NULL;
 BEGIN
   -- O bloco EXCEPTION abre um savepoint: a exceção da RPC desfaz o que ela
   -- escreveu sem derrubar a transação do teste.
@@ -354,11 +458,19 @@ BEGIN
       '60000005-0000-0000-0000-000000000000'
     );
   EXCEPTION WHEN OTHERS THEN
-    falhou := true;
+    msg := SQLERRM;
   END;
 
-  IF NOT falhou THEN
+  IF msg IS NULL THEN
     RAISE EXCEPTION 'FALHOU rollback: a RPC não propagou a falha do DELETE';
+  END IF;
+
+  -- `WHEN OTHERS` captura qualquer erro — nome de função trocado, permissão
+  -- negada, coluna inexistente. Sem casar a mensagem, o teste ficaria verde
+  -- por um erro que não é o do trigger, provando rollback de coisa nenhuma.
+  IF msg NOT LIKE '%falha forçada no DELETE de reviews (#427)%' THEN
+    RAISE EXCEPTION
+      'FALHOU rollback: erro inesperado, o vermelho não veio do trigger: %', msg;
   END IF;
 END $$;
 
