@@ -9,14 +9,12 @@ const { getToken } = vi.hoisted(() => ({
 }));
 const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 
-vi.mock("@/lib/api", () => ({
+// requireSupabaseToken real (via importOriginal): o teste do token nulo prova a
+// falha-fechada do helper de verdade, não de uma réplica. Só a fronteira externa
+// (fetchFastAPI) é mockada; getToken já é dublê via o mock de @clerk/nextjs.
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   fetchFastAPI,
-  // Réplica do real: busca o session token e lança se vier nulo.
-  requireSupabaseToken: async (gt: () => Promise<string | null>) => {
-    const t = await gt();
-    if (!t) throw new Error("MissingAuthTokenError");
-    return t;
-  },
 }));
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ getToken }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: toastError } }));
