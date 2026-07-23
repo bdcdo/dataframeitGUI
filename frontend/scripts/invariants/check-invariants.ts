@@ -1,0 +1,264 @@
+/**
+ * check-invariants.ts — asserções de consistência READ-ONLY contra o banco.
+ *
+ * Verifica ESTADO, não código: pega drift que nenhum gate estático vê (dado
+ * inconsistente deixado por corrida, script de manutenção ou canal de escrita
+ * que contorna uma regra da UI). Rodar: `npm run invariants` (cwd frontend/;
+ * o alias @/ do import de coding-completeness resolve pelo tsconfig daqui).
+ * Precisa de NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY no
+ * .env.local (ou SUPABASE_ENV_PATH). Só SELECTs; um FAIL é evidência para
+ * investigação — nunca gatilho de correção automática de dado.
+ *
+ * Quando rodar: após mudança em write path de codificação/comparação, após
+ * migration aplicada no remoto, e ao investigar relato de "não salvou".
+ *
+ * Cada invariante nomeia o bug histórico que a motivou — se ela falhar, a
+ * regressão é da mesma família. Origem: diagnóstico de 2026-07-23, em que a
+ * primeira execução (então em harness local) encontrou 4 codificações
+ * completas presas em "em_andamento" após o dedup de documentos de 2026-06-23.
+ */
+
+import { createClient } from "@supabase/supabase-js";
+import { isCodingComplete } from "@/lib/coding-completeness";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+import { loadEnv } from "../comentarios-relatorio/load-env";
+
+loadEnv();
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!SUPABASE_URL || !SERVICE_KEY) {
+  console.error(
+    "Faltam NEXT_PUBLIC_SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY (frontend/.env.local ou SUPABASE_ENV_PATH).",
+  );
+  process.exit(2);
+}
+
+const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
+  auth: { persistSession: false },
+});
+
+// Paginação manual: PostgREST corta em 1000 linhas por default; sem isso uma
+// tabela grande passaria "limpa" por truncamento silencioso.
+type SelectBuilder = ReturnType<ReturnType<typeof supabase.from>["select"]>;
+
+async function fetchAll<T>(
+  table: string,
+  columns: string,
+  filter?: (q: SelectBuilder) => SelectBuilder,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase.from(table).select(columns).range(from, from + PAGE - 1);
+    if (filter) q = filter(q);
+    const { data, error } = await q;
+    if (error) throw new Error(`${table}: ${error.message}`);
+    rows.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGE) return rows;
+  }
+}
+
+// Documentos soft-deletados ficam fora das invariantes de fila/status: o dedup
+// de 2026-06 deixa de propósito, na cópia excluída, linhas que conflitariam
+// com UNIQUE na sobrevivente (ver pipeline-processos/dedup, local). Elas são
+// inertes — a UI não as mostra — e não são violação.
+async function activeDocIds(): Promise<Set<string>> {
+  const docs = await fetchAll<{ id: string }>("documents", "id", (q) => q.is("excluded_at", null));
+  return new Set(docs.map((d) => d.id));
+}
+
+type Violation = { key: string; detail: string };
+type Invariant = { name: string; motivation: string; run: () => Promise<Violation[]> };
+
+const invariants: Invariant[] = [
+  {
+    name: "responses-is-latest-unica",
+    motivation:
+      "família de duplicatas por corrida/re-import (#490, dedup Zolgensma): no máximo 1 response is_latest por (documento, respondente)",
+    run: async () => {
+      const rows = await fetchAll<{
+        id: string;
+        document_id: string;
+        respondent_type: string;
+        respondent_id: string | null;
+        respondent_name: string | null;
+      }>(
+        "responses",
+        "id, document_id, respondent_type, respondent_id, respondent_name",
+        (q) => q.eq("is_latest", true),
+      );
+      const byKey = new Map<string, string[]>();
+      for (const r of rows) {
+        const key = `${r.document_id}|${r.respondent_type}|${r.respondent_id ?? r.respondent_name ?? "?"}`;
+        byKey.set(key, [...(byKey.get(key) ?? []), r.id]);
+      }
+      return [...byKey.entries()]
+        .filter(([, ids]) => ids.length > 1)
+        .map(([key, ids]) => ({ key, detail: `${ids.length} responses is_latest: ${ids.join(", ")}` }));
+    },
+  },
+  {
+    name: "comparacao-ativa-unica-por-documento",
+    motivation:
+      "invariante do índice assignments_one_active_comparacao_per_doc (#490/PR #496); FAIL aqui = índice dropado ou canal de escrita que o contorna",
+    run: async () => {
+      const rows = await fetchAll<{ id: string; document_id: string; status: string | null }>(
+        "assignments",
+        "id, document_id, status",
+        (q) => q.eq("type", "comparacao"),
+      );
+      // inclui status NULL, como o predicado IS DISTINCT FROM do índice
+      const active = rows.filter((r) => r.status !== "concluido");
+      const byDoc = new Map<string, string[]>();
+      for (const r of active) byDoc.set(r.document_id, [...(byDoc.get(r.document_id) ?? []), r.id]);
+      return [...byDoc.entries()]
+        .filter(([, ids]) => ids.length > 1)
+        .map(([doc, ids]) => ({ key: doc, detail: `${ids.length} comparações ativas: ${ids.join(", ")}` }));
+    },
+  },
+  {
+    name: "review-chosen-response-do-mesmo-documento",
+    motivation:
+      "FK garante existência mas não coerência: chosen_response_id apontando para response de OUTRO documento é corrupção silenciosa do write path (família #425/#427 de identidade trocada)",
+    run: async () => {
+      const [reviews, responses] = await Promise.all([
+        fetchAll<{ id: string; document_id: string; chosen_response_id: string | null }>(
+          "reviews",
+          "id, document_id, chosen_response_id",
+          (q) => q.not("chosen_response_id", "is", null),
+        ),
+        fetchAll<{ id: string; document_id: string }>("responses", "id, document_id"),
+      ]);
+      const docOf = new Map(responses.map((r) => [r.id, r.document_id]));
+      return reviews
+        .filter((rv) => docOf.get(rv.chosen_response_id!) !== rv.document_id)
+        .map((rv) => ({
+          key: rv.id,
+          detail: `review do doc ${rv.document_id} escolheu response do doc ${docOf.get(rv.chosen_response_id!) ?? "INEXISTENTE"}`,
+        }));
+    },
+  },
+  {
+    name: "codificacao-concluida-tem-response",
+    motivation:
+      "discriminador escrita-vs-exibição (#425): assignment de codificação 'concluido' em doc ATIVO sem response humana do mesmo usuário = ou escrita perdida, ou status gravado por canal que não exige response",
+    run: async () => {
+      const active = await activeDocIds();
+      const [assignments, responses] = await Promise.all([
+        fetchAll<{ id: string; document_id: string; user_id: string }>(
+          "assignments",
+          "id, document_id, user_id",
+          (q) => q.eq("type", "codificacao").eq("status", "concluido"),
+        ),
+        fetchAll<{ document_id: string; respondent_id: string | null }>(
+          "responses",
+          "document_id, respondent_id",
+          (q) => q.eq("respondent_type", "humano"),
+        ),
+      ]);
+      const has = new Set(responses.map((r) => `${r.document_id}|${r.respondent_id}`));
+      return assignments
+        .filter((a) => active.has(a.document_id) && !has.has(`${a.document_id}|${a.user_id}`))
+        .map((a) => ({ key: a.id, detail: `assignment concluído sem response (doc ${a.document_id}, user ${a.user_id})` }));
+    },
+  },
+  {
+    name: "codificacao-completa-marcada-pendente",
+    motivation:
+      "inversa da anterior — o sintoma que o pesquisador vê como 'não salvou' (caso Naomi/dedup 2026-07-23): response submetida (is_partial=false) e completa pelo critério real do produto (isCodingComplete), em doc ativo, com assignment != concluido. Foi o estado deixado pelo dedup nos 4 casos reparados em 2026-07-23",
+    run: async () => {
+      const active = await activeDocIds();
+      const [projects, responses, assignments] = await Promise.all([
+        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+        fetchAll<{ id: string; project_id: string; document_id: string; respondent_id: string | null }>(
+          "responses",
+          "id, project_id, document_id, respondent_id",
+          (q) => q.eq("respondent_type", "humano").eq("is_latest", true).eq("is_partial", false),
+        ),
+        fetchAll<{ document_id: string; user_id: string; status: string | null }>(
+          "assignments",
+          "document_id, user_id, status",
+          (q) => q.eq("type", "codificacao"),
+        ),
+      ]);
+      const fieldsOf = new Map(projects.map((p) => [p.id, p.pydantic_fields ?? []]));
+      const statusOf = new Map(assignments.map((a) => [`${a.document_id}|${a.user_id}`, a.status]));
+
+      // Fase 1 (metadados leves): candidato = doc ativo + assignment existente não-concluído.
+      const candidates = responses.filter((r) => {
+        if (!active.has(r.document_id)) return false;
+        const st = statusOf.get(`${r.document_id}|${r.respondent_id}`);
+        return st !== undefined && st !== "concluido";
+      });
+
+      // Fase 2 (campos pesados só dos candidatos): answers/hashes para o replay
+      // da regra real de completude do produto — a mesma que gateia o submit.
+      const violations: Violation[] = [];
+      for (const c of candidates) {
+        const { data, error } = await supabase
+          .from("responses")
+          .select("answers, answer_field_hashes")
+          .eq("id", c.id)
+          .single();
+        if (error) throw new Error(`responses(${c.id}): ${error.message}`);
+        const fields = fieldsOf.get(c.project_id) ?? [];
+        if (
+          fields.length > 0 &&
+          isCodingComplete(
+            fields,
+            (data.answers ?? {}) as Record<string, unknown>,
+            (data.answer_field_hashes ?? undefined) as AnswerFieldHashes | undefined,
+          )
+        ) {
+          violations.push({
+            key: c.id,
+            detail: `codificação completa com assignment '${statusOf.get(`${c.document_id}|${c.respondent_id}`)}' (doc ${c.document_id}, user ${c.respondent_id})`,
+          });
+        }
+      }
+      return violations;
+    },
+  },
+  {
+    name: "arbitragem-perdida-exige-sugestao",
+    motivation:
+      "regra de fluxo da migration 20260513000001: final_verdict='llm' (humano perdeu) exige question_improvement_suggestion; violação = canal de escrita pulando a regra da UI (família 'regra duplicada por fronteira', #486)",
+    run: async () => {
+      const rows = await fetchAll<{ id: string; question_improvement_suggestion: string | null }>(
+        "field_reviews",
+        "id, question_improvement_suggestion",
+        (q) => q.eq("final_verdict", "llm"),
+      );
+      return rows
+        .filter((r) => !r.question_improvement_suggestion?.trim())
+        .map((r) => ({ key: r.id, detail: "final_verdict=llm sem question_improvement_suggestion" }));
+    },
+  },
+];
+
+async function main() {
+  let failures = 0;
+  console.log(`Invariantes contra ${SUPABASE_URL}\n`);
+  for (const inv of invariants) {
+    try {
+      const violations = await inv.run();
+      if (violations.length === 0) {
+        console.log(`PASS  ${inv.name}`);
+      } else {
+        failures++;
+        console.log(`FAIL  ${inv.name} — ${violations.length} violação(ões)`);
+        console.log(`      motivação: ${inv.motivation}`);
+        for (const v of violations.slice(0, 10)) console.log(`      - [${v.key}] ${v.detail}`);
+        if (violations.length > 10) console.log(`      ... e mais ${violations.length - 10}`);
+      }
+    } catch (err) {
+      failures++;
+      console.log(`ERRO  ${inv.name} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  console.log(`\n${invariants.length - failures}/${invariants.length} invariantes OK`);
+  process.exit(failures > 0 ? 1 : 0);
+}
+
+void main();
