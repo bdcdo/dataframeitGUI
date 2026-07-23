@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, cleanup } from "@testing-library/react";
 import { saveResponse } from "@/actions/responses";
+import { toast } from "sonner";
+import { CODING_SAVE_TRANSPORT_ERROR } from "@/lib/coding-autosave";
 import { useBrowseDocuments } from "@/hooks/useBrowseDocuments";
 import { useDocumentForCoding } from "@/hooks/useDocumentForCoding";
 import type { BrowseDocument } from "@/actions/documents";
@@ -107,10 +109,41 @@ describe("useBrowseCoding", () => {
     expect(params.updateDocParam).toHaveBeenCalledWith(null);
   });
 
+  it("submit mantém rascunho e seleção, e permite retry após rejeição de transporte", async () => {
+    mockSave.mockRejectedValue(new Error("Failed to find Server Action"));
+    const dirty = new Set<string>();
+    const { view, params } = setup("b1", dirty);
+    const draft = { answers: { q: "sim" }, notes: "n" };
+    act(() => view.result.current.handleDraftChange(draft));
+
+    await act(async () => {
+      await view.result.current.handleBrowseSubmit(draft);
+    });
+
+    expect(view.result.current.getPayload()).toEqual({
+      projectId: "p1",
+      documentId: "b1",
+      answers: { q: "sim" },
+      notes: "n",
+    });
+    expect(markResponded).not.toHaveBeenCalled();
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(params.updateDocParam).not.toHaveBeenCalled();
+    expect(params.setSubmitting).toHaveBeenLastCalledWith(false);
+    expect(toast.error).toHaveBeenCalledWith(CODING_SAVE_TRANSPORT_ERROR);
+
+    mockSave.mockResolvedValue({ success: true });
+    await act(async () => {
+      await view.result.current.handleBrowseSubmit(draft);
+    });
+    expect(mockSave).toHaveBeenCalledTimes(2);
+    expect(params.updateDocParam).toHaveBeenCalledWith(null);
+  });
+
   it("nº3: duplo-clique em Enviar não duplica saveResponse (guarda de reentrância)", async () => {
-    let resolveSave: (v: { success: boolean }) => void = () => {};
+    let resolveSave: (v: { success: true }) => void = () => {};
     mockSave.mockReturnValue(
-      new Promise<{ success: boolean }>((r) => {
+      new Promise<{ success: true }>((r) => {
         resolveSave = r;
       }),
     );
@@ -181,6 +214,34 @@ describe("useBrowseCoding", () => {
       notes: "nota",
     });
     expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("back mantém o doc aberto e permite retry quando o transporte rejeita o autosave", async () => {
+    mockSave.mockRejectedValue(new Error("Failed to find Server Action"));
+    const dirty = new Set<string>();
+    const { view, params } = setup("b1", dirty);
+    act(() => view.result.current.handleDraftChange({ answers: { q: "x" }, notes: "nota" }));
+
+    await act(async () => {
+      await view.result.current.handleBrowseBack();
+    });
+
+    expect(view.result.current.getPayload()).toEqual({
+      projectId: "p1",
+      documentId: "b1",
+      answers: { q: "x" },
+      notes: "nota",
+    });
+    expect(params.updateDocParam).not.toHaveBeenCalled();
+    expect(params.setSubmitting).toHaveBeenLastCalledWith(false);
+    expect(toast.error).toHaveBeenCalledWith(CODING_SAVE_TRANSPORT_ERROR);
+
+    mockSave.mockResolvedValue({ success: true });
+    await act(async () => {
+      await view.result.current.handleBrowseBack();
+    });
+    expect(mockSave).toHaveBeenCalledTimes(2);
+    expect(params.updateDocParam).toHaveBeenCalledWith(null);
   });
 
   it("expõe error/retry da lista", () => {

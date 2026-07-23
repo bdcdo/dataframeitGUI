@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor, cleanup } from "@testing-library/react";
 import { saveResponse } from "@/actions/responses";
+import { toast } from "sonner";
+import { CODING_SAVE_TRANSPORT_ERROR } from "@/lib/coding-autosave";
 import { useAssignedCoding } from "../useAssignedCoding";
 import type { Document, Assignment, PydanticField } from "@/lib/types";
 
@@ -92,6 +94,29 @@ describe("useAssignedCoding", () => {
     expect(params.markClean).toHaveBeenCalledWith("d1");
     expect(view.result.current.currentDoc?.id).toBe("d2");
     expect(params.updateDocParam).toHaveBeenCalledWith("d2");
+  });
+
+  it("mantém respostas e documento atual, e permite retry após rejeição de transporte", async () => {
+    mockSave.mockRejectedValue(new Error("Failed to find Server Action"));
+    const { view, params } = setup();
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+
+    await act(async () => {
+      await view.result.current.handleSubmit();
+    });
+
+    expect(view.result.current.docAnswers).toEqual({ q1: "sim" });
+    expect(view.result.current.currentDoc?.id).toBe("d1");
+    expect(params.updateDocParam).not.toHaveBeenCalled();
+    expect(params.setSubmitting).toHaveBeenLastCalledWith(false);
+    expect(toast.error).toHaveBeenCalledWith(CODING_SAVE_TRANSPORT_ERROR);
+
+    mockSave.mockResolvedValue({ success: true });
+    await act(async () => {
+      await view.result.current.handleSubmit();
+    });
+    expect(mockSave).toHaveBeenCalledTimes(2);
+    expect(view.result.current.currentDoc?.id).toBe("d2");
   });
 
   it("handleSubmit marca allDone no último documento", async () => {
@@ -192,9 +217,9 @@ describe("useAssignedCoding", () => {
   });
 
   it("duplo-clique em Enviar não duplica saveResponse (guarda de reentrância)", async () => {
-    let resolveSave: (v: { success: boolean }) => void = () => {};
+    let resolveSave: (v: { success: true }) => void = () => {};
     mockSave.mockReturnValue(
-      new Promise<{ success: boolean }>((r) => {
+      new Promise<{ success: true }>((r) => {
         resolveSave = r;
       }),
     );
@@ -214,9 +239,9 @@ describe("useAssignedCoding", () => {
   });
 
   it("congela a edição enquanto submitting (não perde teclas no save em voo)", async () => {
-    let resolveSave: (v: { success: boolean }) => void = () => {};
+    let resolveSave: (v: { success: true }) => void = () => {};
     mockSave.mockReturnValue(
-      new Promise<{ success: boolean }>((r) => {
+      new Promise<{ success: true }>((r) => {
         resolveSave = r;
       }),
     );

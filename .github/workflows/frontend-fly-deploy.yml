@@ -32,12 +32,22 @@ jobs:
           # FLY_API_TOKEN compartilhado com o backend tem escopo do app da API
           # e dava `unauthorized` aqui — tokens de deploy do Fly sao por app.
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
+          # Chave AES base64 estavel entre builds. O BuildKit a entrega sem
+          # diretivas Dockerfile ARG/ENV persistentes nem registro no historico.
+          NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}
         run: |
+          deploy_args=(
+            --remote-only
+            -a gui-analise-sistematica-frontend
+            --build-arg "NEXT_DEPLOYMENT_ID=${GITHUB_SHA}"
+            --build-secret "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}"
+          )
+
           # Retry: o builder remoto (Depot, via --remote-only) as vezes encerra
           # a conexao no meio do build (rpc "goaway"/"graceful_stop") por causa
           # transitoria do lado do provedor, sem relacao com o codigo do app.
           for attempt in 1 2 3; do
-            if flyctl deploy --remote-only -a gui-analise-sistematica-frontend; then
+            if flyctl deploy "${deploy_args[@]}"; then
               exit 0
             fi
             echo "flyctl deploy falhou (tentativa $attempt/3)"
