@@ -28,8 +28,13 @@ repos:
   # framework (so os .py alterados), entao o debito legado fica grandfathered —
   # so barra/formata o arquivo que voce tocar. --fix auto-corrige imports e afins.
   # Config em backend/pyproject.toml; suppressions pontuais ficam inline no codigo.
+  # O `rev` abaixo precisa acompanhar o `ruff>=X` do dependency-group dev em
+  # backend/pyproject.toml: sao duas declaracoes da MESMA ferramenta, e versoes
+  # diferentes fazem o hook e o `uv run ruff check .` divergirem em silencio.
+  # O ecossistema `pre-commit` em .github/dependabot.yml existe para que os dois
+  # sejam bumpados na mesma rodada.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.20
+    rev: v0.15.21
     hooks:
       - id: ruff-check
         args: [--fix]
