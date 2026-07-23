@@ -202,8 +202,13 @@ try {
   for (const destination of createdDestinations) {
     rmSync(destination, { force: true });
   }
+  // Desfaz só os symlinks criados NESTA execução. Um `relink` já removeu o
+  // link antigo (quebrado ou apontando para outra fonte) antes desta falha, e
+  // ele não é restaurado — recriar um link inválido não teria sentido. Por
+  // isso a mensagem não promete atomicidade ("nenhuma alteração"): manda
+  // reprovisionar, que a idempotência do bootstrap cobre.
   fail(
-    `não foi possível criar frontend/${pendingFilename} (${filesystemErrorCode(error)}); nenhuma alteração foi mantida`,
+    `não foi possível criar frontend/${pendingFilename} (${filesystemErrorCode(error)}); os symlinks criados nesta execução foram desfeitos — rode o bootstrap de novo para reprovisionar`,
   );
 }
 

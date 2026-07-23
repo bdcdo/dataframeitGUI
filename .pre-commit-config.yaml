@@ -149,8 +149,14 @@ repos:
       #
       # NUNCA bloqueia: post-checkout roda depois de o checkout já ter ocorrido,
       # então falhar aqui só produz ruído — quem barra de verdade é o
-      # assertRequiredPrePushEnv no e2e-smoke. Daí o `|| true`; o script
-      # imprime o motivo (ex.: fonte canônica inexistente) e segue.
+      # assertRequiredPrePushEnv no e2e-smoke. Daí o `|| true`.
+      #
+      # Silencioso por design: com `|| true` o hook sempre "passa", e o
+      # pre-commit suprime a saída de hook que passa — logo a mensagem do script
+      # (ex.: "fonte canônica inexistente") NÃO aparece aqui, e nem deve, para
+      # não poluir todo `git checkout`. O diagnóstico do link pendente / alvo
+      # morto é responsabilidade do gate de pre-push (assertRequiredPrePushEnv),
+      # que nomeia o symlink e o alvo inexistente na hora em que de fato importa.
       - id: worktree-env
         name: provisiona .env da worktree (post-checkout)
         entry: bash -c './frontend/scripts/worktree-env/bootstrap.sh || true'
