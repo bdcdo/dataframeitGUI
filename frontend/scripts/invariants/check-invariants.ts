@@ -263,6 +263,46 @@ const invariants: Invariant[] = [
     },
   },
   {
+    name: "codificacao-concluida-response-so-rascunho",
+    motivation:
+      "vão entre as duas invariantes pareadas acima (#552): assignment 'concluido' em doc ATIVO cuja response humana is_latest do par nunca foi submetida (is_partial=true). 'concluida-tem-response' só vê ausência de response; 'completa-marcada-pendente' só olha response submetida (is_partial=false) — nenhuma cobre o rascunho promovido a concluído. Estado que o guard do #538 fechou na criação e do qual keepCodingAssignmentInProgress não regride; FAIL aqui = canal de escrita futuro reintroduziu o vão",
+    run: async () => {
+      const active = await activeDocIds();
+      const [assignments, responses] = await Promise.all([
+        fetchAll<{ id: string; document_id: string; user_id: string }>(
+          "assignments",
+          "id, document_id, user_id",
+          (q) => q.eq("type", "codificacao").eq("status", "concluido"),
+        ),
+        fetchAll<{ document_id: string; respondent_id: string | null; is_partial: boolean | null }>(
+          "responses",
+          "document_id, respondent_id, is_partial",
+          (q) => q.eq("respondent_type", "humano").eq("is_latest", true),
+        ),
+      ]);
+      // is_partial da response is_latest do par (única por (doc, respondente),
+      // garantida por 'responses-is-latest-unica'). Quatro estados possíveis, só
+      // um é violação: `undefined` = sem is_latest humana no par → caso de
+      // 'concluida-tem-response', não deste; `false` = submetida → saudável;
+      // `null` = row legada sem o sinal (a coluna é nullable, ver responses.ts) →
+      // cai no ramo saudável por design, conservador para não falso-positivar sem
+      // prova de rascunho. Só `=== true` (rascunho, nunca enviado) é violação.
+      const partialOf = new Map(
+        responses.map((r) => [`${r.document_id}|${r.respondent_id}`, r.is_partial]),
+      );
+      return assignments
+        .filter(
+          (a) =>
+            active.has(a.document_id) &&
+            partialOf.get(`${a.document_id}|${a.user_id}`) === true,
+        )
+        .map((a) => ({
+          key: a.id,
+          detail: `assignment concluído cuja response is_latest é rascunho, nunca submetida (doc ${a.document_id}, user ${a.user_id})`,
+        }));
+    },
+  },
+  {
     name: "arbitragem-perdida-exige-sugestao",
     motivation:
       "regra de fluxo da migration 20260513000001: final_verdict='llm' (humano perdeu) exige question_improvement_suggestion; violação = canal de escrita pulando a regra da UI (família 'regra duplicada por fronteira', #486)",

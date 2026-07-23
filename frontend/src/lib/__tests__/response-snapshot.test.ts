@@ -4,6 +4,7 @@ import {
   sanitizeStoredAnswers,
 } from "@/lib/response-snapshot";
 import { OTHER_PREFIX } from "@/lib/other-option";
+import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 const field = (input: Partial<PydanticField> & { name: string }): PydanticField =>
@@ -131,6 +132,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: { answers: storedAnswers, hashes: storedHashes },
       rawSubmittedAnswers,
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -170,6 +172,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", detalhe: "d-old" },
       },
       rawSubmittedAnswers: { gatilho: "nao" },
+      promoteLegacyIfComplete: false,
     });
 
     // Só o gatilho foi revisado, então só ele ganha a proveniência de hoje. O
@@ -198,6 +201,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", detalhe: "d-old" },
       },
       rawSubmittedAnswers: { gatilho: "nao" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.submittedAnswers).toEqual({ gatilho: "nao" });
@@ -229,6 +233,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", filho: "f-old", neto: "n-old" },
       },
       rawSubmittedAnswers: { gatilho: "nao" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
@@ -267,6 +272,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", intermediario: "i-old", descendente: "d-old" },
       },
       rawSubmittedAnswers: { gatilho: "B", intermediario: "ocultar" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -295,6 +301,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", detalhe: "d-old" },
       },
       rawSubmittedAnswers: { outro: "novo" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -326,12 +333,101 @@ describe("buildPersistedResponseSnapshot", () => {
         fields,
         existing: { answers: { stale: "A" }, hashes: storedHashes },
         rawSubmittedAnswers: { outro: "novo" },
+        promoteLegacyIfComplete: false,
       });
 
       expect(result.persistedAnswers).toEqual({ stale: "A", outro: "novo" });
       expect(result.answerFieldHashes).toEqual({});
     },
   );
+
+  it("submit explícito que recodifica a response legacy por completo estampa o schema atual (#548)", () => {
+    // Único momento em que dá para afirmar que todos os campos de hoje existiam:
+    // o submit está completo contra o schema atual. Estampar o mapa inteiro
+    // desliga o sentinela e habilita a promoção de versão em buildResponsePayload.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+      field({ name: "q2", hash: "h2" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a", q2: "velho" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b", q2: "novo" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.answerFieldHashes).toEqual({ q1: "h1", q2: "h2" });
+  });
+
+  it("a proveniência promovida não marca nenhum campo falsamente stale (#548)", () => {
+    // Outra metade do par que answer-staleness.ts sustenta: depois que a
+    // recodificação completa desliga o sentinela, `isFieldStale` sai do fallback
+    // do schema INTEIRO e passa a comparar per-campo. Como o mapa estampado é o
+    // schema corrente, todo campo bate consigo mesmo e nada aparece stale — o
+    // que é o correto, já que tudo foi recodificado contra o schema de hoje.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+      field({ name: "q2", hash: "h2" }),
+    ];
+
+    const { answerFieldHashes } = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a", q2: "velho" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b", q2: "novo" },
+      promoteLegacyIfComplete: true,
+    });
+
+    const currentFieldHashes = buildFieldHashMap(fields);
+    for (const f of fields) {
+      expect(
+        isFieldStale({
+          answerFieldHashes,
+          // O pydantic_hash antigo (legacy) divergiria do atual: se o snapshot
+          // per-campo NÃO tivesse sido promovido, o fallback marcaria stale.
+          pydanticHash: "hash-legacy",
+          fieldName: f.name,
+          currentFieldHashes,
+          projectPydanticHash: "hash-atual",
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("submit incompleto de response legacy conserva o sentinela mesmo com promoção habilitada (#548)", () => {
+    // q2 é obrigatório e ficou em branco: a codificação NÃO está completa contra
+    // o schema atual, então não dá para afirmar proveniência — mantém `{}`.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+      field({ name: "q2", hash: "h2" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.answerFieldHashes).toEqual({});
+  });
+
+  it("auto-save de response legacy nunca promove, ainda que completa (#548)", () => {
+    // Auto-save não atesta a codificação inteira: mesmo com todos os obrigatórios
+    // respondidos, `promoteLegacyIfComplete: false` conserva o sentinela.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b" },
+      promoteLegacyIfComplete: false,
+    });
+
+    expect(result.answerFieldHashes).toEqual({});
+  });
 
   it("codificação nova estampa o schema atual inteiro", () => {
     // Não há response anterior: o schema de hoje É o schema da codificação, e
@@ -346,6 +442,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: null,
       rawSubmittedAnswers: { respondido: "x" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.answerFieldHashes).toEqual({
@@ -368,6 +465,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
       rawSubmittedAnswers: { antigo: "b" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({ antigo: "b" });
@@ -384,6 +482,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
       rawSubmittedAnswers: { antigo: "a", novo_obrigatorio: "resposta" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.answerFieldHashes).toEqual({
@@ -397,9 +496,109 @@ describe("buildPersistedResponseSnapshot", () => {
       fields: [],
       existing: { answers: { legado: "valor" }, hashes: { legado: "hash-antigo" } },
       rawSubmittedAnswers: {},
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({ legado: "valor" });
     expect(result.answerFieldHashes).toEqual({ legado: "hash-antigo" });
+  });
+});
+
+describe("buildPersistedResponseSnapshot — stampsCurrentSchema (#529/#548)", () => {
+  const single = (name: string, hash: string): PydanticField =>
+    field({ name, type: "single", options: ["a", "b"], hash });
+
+  it("false quando o pesquisador re-confirma o mesmo valor (toque/auto-save)", () => {
+    // O sinal que autoriza promover as colunas de versão. Re-submeter o valor
+    // já apresentado não é revisão: `samePresentedValue` o exclui de
+    // changedFieldNames, então nenhum campo ganha o hash de hoje.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: false,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(false);
+  });
+
+  it("true quando um valor é de fato alterado (#529)", () => {
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: { q1: "b" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("true quando um campo criado depois é de fato respondido (#529)", () => {
+    // Simétrico com o hash: o campo novo ganha o hash de hoje, e o save promove.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("antigo", "antigo-hash"), single("novo", "novo-hash")],
+      existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
+      rawSubmittedAnswers: { antigo: "a", novo: "b" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("false quando a revisão apenas apaga o valor (fora de persistedAnswers)", () => {
+    // Limpar um campo muda changedFieldNames, mas o valor não persiste — nada
+    // é escrito sob o schema de hoje, então a linha conserva a época.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: {},
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.persistedAnswers).toEqual({});
+    expect(result.stampsCurrentSchema).toBe(false);
+  });
+
+  it("codificação nova com resposta real estampa o schema de hoje", () => {
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: null,
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("true na via de saída legacy: submit completo recodifica e estampa (#548)", () => {
+    // A interação que exige o sinal UNIFICADO: aqui `changedFieldNames` pode até
+    // estar vazio (valores iguais aos apresentados), mas a recodificação completa
+    // desliga o sentinela e estampa o mapa inteiro — então `stampsCurrentSchema`
+    // tem de ser true para o gate `latest_major` promover, alinhado ao mapa. Um
+    // sinal derivado só de `revisedPersistedFieldNames` (pré-#548) diria false e
+    // reverteria a promoção.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.answerFieldHashes).toEqual({ q1: "h1" });
+    expect(result.stampsCurrentSchema).toBe(true);
+  });
+
+  it("false na legacy sob auto-save: conserva a época (#548)", () => {
+    // Mesmo cenário, mas auto-save não atesta a codificação inteira: o sentinela
+    // é conservado (`{}`) e o sinal fica false, simétrico ao mapa.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "a" },
+      promoteLegacyIfComplete: false,
+    });
+
+    expect(result.answerFieldHashes).toEqual({});
+    expect(result.stampsCurrentSchema).toBe(false);
   });
 });

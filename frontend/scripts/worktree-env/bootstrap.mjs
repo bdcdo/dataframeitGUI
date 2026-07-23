@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 
 import {
-  lstatSync,
   realpathSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifyDestination } from "./destination-state.mjs";
 import {
+  canonicalEnvironmentDirectory,
+  canonicalEnvironmentHomeVariable,
   environmentFiles,
   hasConfiguredEnvironmentValue,
   readEnvironmentFile,
@@ -64,24 +67,54 @@ function readSource(path, filename) {
   }
 }
 
+/** @type {Map<string, "missing" | "linked" | "relink" | "occupied">} */
+const destinationStates = new Map();
+
 const [, , option, sourceArgument, ...extraArguments] = process.argv;
-if (option !== "--source" || !sourceArgument || extraArguments.length > 0) {
+// `--source` continua aceito para quem mantem os segredos noutro lugar; sem ele
+// a fonte e a canonica. O default existe porque escolher a fonte a cada
+// invocacao era o que permitia apontar para uma worktree irma — que some no
+// `git worktree remove` e leva junto o ambiente de quem apontava para ela.
+const usesExplicitSource = option === "--source";
+const missingSourceArgument = usesExplicitSource && !sourceArgument;
+const unexpectedArguments =
+  extraArguments.length > 0 || (!usesExplicitSource && option !== undefined);
+
+if (missingSourceArgument || unexpectedArguments) {
   console.error(
-    "Uso: ./frontend/scripts/worktree-env/bootstrap.sh --source <diretorio-frontend-fonte>",
+    "Uso: ./frontend/scripts/worktree-env/bootstrap.sh [--source <diretorio-frontend-fonte>]",
+  );
+  console.error(
+    `Sem --source, a fonte e ${canonicalEnvironmentDirectory()} (ajustavel por ${canonicalEnvironmentHomeVariable}).`,
   );
   process.exit(2);
 }
 
+const requestedSource = usesExplicitSource
+  ? sourceArgument
+  : canonicalEnvironmentDirectory();
+
 let sourceDirectory;
 try {
-  sourceDirectory = realpathSync(sourceArgument);
+  sourceDirectory = realpathSync(requestedSource);
   if (!statSync(sourceDirectory).isDirectory()) {
-    fail(`fonte não é um diretório: ${sourceArgument}`);
+    fail(`fonte não é um diretório: ${requestedSource}`);
   }
 } catch (error) {
-  if (isMissingPathError(error)) fail(`fonte inexistente: ${sourceArgument}`);
+  if (isMissingPathError(error)) {
+    if (usesExplicitSource) fail(`fonte inexistente: ${requestedSource}`);
+    fail(
+      [
+        `fonte canônica inexistente: ${requestedSource}`,
+        "Crie-a uma única vez com os arquivos reais (fora de qualquer worktree):",
+        `  mkdir -p ${requestedSource}`,
+        `  cp frontend/.env.local.example ${requestedSource}/.env.local  # e preencha`,
+        `  cp frontend/.env.e2e.example ${requestedSource}/.env.e2e      # e preencha`,
+      ].join("\n"),
+    );
+  }
   fail(
-    `não foi possível acessar a fonte (${filesystemErrorCode(error)}): ${sourceArgument}`,
+    `não foi possível acessar a fonte (${filesystemErrorCode(error)}): ${requestedSource}`,
   );
 }
 
@@ -97,15 +130,31 @@ for (const filename of environmentFiles) {
   }
 
   try {
-    lstatSync(join(frontendDirectory, filename));
-    fail(`destino já existe: frontend/${filename}`);
+    destinationStates.set(
+      filename,
+      classifyDestination(join(frontendDirectory, filename), source),
+    );
   } catch (error) {
-    if (!isMissingPathError(error)) {
-      fail(
-        `não foi possível validar o destino frontend/${filename} (${filesystemErrorCode(error)})`,
-      );
-    }
+    fail(
+      `não foi possível validar o destino frontend/${filename} (${filesystemErrorCode(error)})`,
+    );
   }
+}
+
+const occupied = environmentFiles.filter(
+  (filename) => destinationStates.get(filename) === "occupied",
+);
+if (occupied.length > 0) {
+  // Arquivo real no destino nunca e sobrescrito: pode ser a unica copia de um
+  // segredo. O provisionamento e que cede, nao o dado.
+  fail(
+    [
+      `destino é arquivo real, não symlink: ${occupied
+        .map((filename) => `frontend/${filename}`)
+        .join(", ")}`,
+      "Mova-o para a fonte canônica (ou remova-o, se for cópia) antes de provisionar.",
+    ].join("\n"),
+  );
 }
 
 const missingNames = [];
@@ -134,7 +183,18 @@ let pendingFilename;
 try {
   for (const filename of environmentFiles) {
     pendingFilename = filename;
+    const state = destinationStates.get(filename);
+    if (state === "linked") continue;
+
     const destination = join(frontendDirectory, filename);
+    // `relink` remove só um symlink — nunca um arquivo real, que o guard de
+    // `occupied` já barrou acima.
+    //
+    // `unlinkSync`, e não `rmSync(..., { force: true })`: com `force`, o rm
+    // decide pela existência do ALVO (via stat), então num symlink pendente —
+    // exatamente o caso que estamos reparando — ele conclui "não existe" e vira
+    // no-op silencioso; o erro só aparece depois, como EEXIST no symlinkSync.
+    if (state === "relink") unlinkSync(destination);
     symlinkSync(join(sourceDirectory, filename), destination);
     createdDestinations.push(destination);
   }
@@ -142,8 +202,22 @@ try {
   for (const destination of createdDestinations) {
     rmSync(destination, { force: true });
   }
+  // Desfaz só os symlinks criados NESTA execução. Um `relink` já removeu o
+  // link antigo (quebrado ou apontando para outra fonte) antes desta falha, e
+  // ele não é restaurado — recriar um link inválido não teria sentido. Por
+  // isso a mensagem não promete atomicidade ("nenhuma alteração"): manda
+  // reprovisionar, que a idempotência do bootstrap cobre.
   fail(
-    `não foi possível criar frontend/${pendingFilename} (${filesystemErrorCode(error)}); nenhuma alteração foi mantida`,
+    `não foi possível criar frontend/${pendingFilename} (${filesystemErrorCode(error)}); os symlinks criados nesta execução foram desfeitos — rode o bootstrap de novo para reprovisionar`,
+  );
+}
+
+const repaired = environmentFiles.filter(
+  (filename) => destinationStates.get(filename) === "relink",
+);
+if (repaired.length > 0) {
+  console.log(
+    `Ambiente reapontado para ${sourceDirectory}: ${repaired.join(", ")}`,
   );
 }
 

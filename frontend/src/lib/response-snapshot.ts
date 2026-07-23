@@ -1,4 +1,5 @@
 import { buildFieldHashMap } from "@/lib/answer-staleness";
+import { isCodingComplete } from "@/lib/coding-completeness";
 import { dropHiddenConditionals, isFieldVisible } from "@/lib/conditional";
 import { isOtherValue } from "@/lib/other-option";
 import { resolveAllowOther, resolveTarget } from "@/lib/pydantic-field";
@@ -57,6 +58,21 @@ export interface PersistedResponseSnapshot {
   submittedAnswers: Record<string, unknown>;
   persistedAnswers: Record<string, unknown>;
   answerFieldHashes: Exclude<AnswerFieldHashes, null>;
+  // True quando ESTE save gravou proveniência do schema de HOJE no mapa
+  // per-campo — o sinal único que autoriza promover as colunas de versão da
+  // response (`pydantic_hash` + `schema_version_*`, ver `buildResponsePayload`).
+  // É simétrico ao mapa por construção: vem do MESMO ponto que decide quais
+  // hashes ficam com a época de hoje (`buildReconciledFieldHashes`), cobrindo os
+  // três ramos em que isso acontece:
+  //   - codificação nova (o schema de hoje é o da codificação);
+  //   - recodificação COMPLETA que desliga o sentinela legacy (#548) — submit
+  //     explícito que estampa o mapa corrente inteiro;
+  //   - revisão de valor numa response não-legacy (#529) — `changedFieldNames ∩
+  //     persistedAnswers ≠ ∅`.
+  // "Trafegou no formulário" ou re-confirmar o mesmo valor sem recodificar NÃO
+  // conta: a linha conserva a época e fica fora do gate `latest_major` até ser
+  // de fato recodificada.
+  stampsCurrentSchema: boolean;
 }
 
 /**
@@ -76,6 +92,10 @@ interface BuildPersistedResponseSnapshotParams {
   fields: PydanticField[];
   existing: ExistingResponseSnapshot | null;
   rawSubmittedAnswers: Record<string, unknown>;
+  // Submit explícito (não auto-save): habilita a promoção de uma response
+  // legacy à proveniência corrente quando este save a recodifica por completo
+  // contra o schema atual (#548). Auto-save nunca promove — não atesta nada.
+  promoteLegacyIfComplete: boolean;
 }
 
 function samePresentedValue(
@@ -184,17 +204,45 @@ function withAnswerProvenanceFallback(
 // bump "passar a dever" os campos novos e reaparecer como pendente sem o
 // pesquisador ter feito nada (#520). Um campo novo só entra quando é de fato
 // respondido — aí a chave é verdadeira e o hash atual é a proveniência correta.
+// Nomes dos campos revisados neste save cujo valor persiste — o conjunto que
+// ganha o hash de HOJE no ramo de herança de `buildReconciledFieldHashes`. Um
+// campo revisado que ficou oculto/apagado (fora de `persistedAnswers`) não
+// entra.
+function revisedPersistedFieldNames(
+  persistedAnswers: Record<string, unknown>,
+  changedFieldNames: Set<string>,
+): string[] {
+  return [...changedFieldNames].filter((fieldName) => hasOwn(persistedAnswers, fieldName));
+}
+
+// O mapa per-campo reconciliado E se ESTE save gravou proveniência do schema de
+// hoje nele. Os dois saem juntos porque a decisão é uma só, tomada aqui: quem
+// consumir o sinal separado do mapa poderia divergir dele (foi o que quase
+// aconteceu ao fundir #529 com #548 — o sinal derivado de `changedFieldNames`
+// não enxergava a via de saída legacy). `stampsCurrentSchema` é o que autoriza
+// promover as colunas de versão em `buildResponsePayload`.
+interface ReconciledFieldHashes {
+  hashes: Exclude<AnswerFieldHashes, null>;
+  stampsCurrentSchema: boolean;
+}
+
 function buildReconciledFieldHashes(
   fields: PydanticField[],
   existing: ExistingResponseSnapshot | null,
   persistedAnswers: Record<string, unknown>,
   changedFieldNames: Set<string>,
-): Exclude<AnswerFieldHashes, null> {
+  promoteLegacyIfComplete: boolean,
+): ReconciledFieldHashes {
   const currentHashes = buildFieldHashMap(fields);
 
   // Codificação nova: o schema de hoje É o schema da codificação, então todo
   // campo dele existia e nenhum obrigatório em branco deve ser perdoado.
-  if (!existing) return withAnswerProvenanceFallback(currentHashes, persistedAnswers);
+  if (!existing) {
+    return {
+      hashes: withAnswerProvenanceFallback(currentHashes, persistedAnswers),
+      stampsCurrentSchema: true,
+    };
+  }
   const storedHashes = existing.hashes;
 
   // `null`/`{}` são o sentinela legacy — "não dá para inferir quais campos
@@ -202,16 +250,37 @@ function buildReconciledFieldHashes(
   // inverteria o sentinela em "só estes existiam", perdoando obrigatórios que
   // ficaram em branco de verdade. Permanece grosseiro até que uma codificação
   // nova estabeleça proveniência.
-  if (!storedHashes || Object.keys(storedHashes).length === 0) return {};
+  //
+  // Via de saída (#548): uma recodificação COMPLETA — submit explícito
+  // (`promoteLegacyIfComplete`) cuja codificação fica completa contra o schema
+  // ATUAL — é o único momento em que dá para afirmar que todos os campos de
+  // hoje existiam. Aí estampamos o schema inteiro como uma codificação nova,
+  // desligando o sentinela e marcando `stampsCurrentSchema` — o que libera
+  // `buildResponsePayload` a promover `pydantic_hash` + `schema_version_*`, e a
+  // response volta à fila `latest_major`. Fora daí (parcial ou auto-save) o
+  // sentinela é conservado, mantendo o fallback de staleness conservador.
+  if (!storedHashes || Object.keys(storedHashes).length === 0) {
+    if (promoteLegacyIfComplete && isCodingComplete(fields, persistedAnswers)) {
+      return {
+        hashes: withAnswerProvenanceFallback(currentHashes, persistedAnswers),
+        stampsCurrentSchema: true,
+      };
+    }
+    return { hashes: {}, stampsCurrentSchema: false };
+  }
 
   const hashes: Exclude<AnswerFieldHashes, null> = { ...storedHashes };
   // Só o que o pesquisador revisou neste save ganha a proveniência de hoje;
-  // o resto conserva a versão contra a qual foi respondido.
-  for (const fieldName of changedFieldNames) {
-    if (!hasOwn(persistedAnswers, fieldName)) continue;
+  // o resto conserva a versão contra a qual foi respondido. Se algum campo foi
+  // de fato revisado (#529), este save estampou proveniência corrente.
+  const revised = revisedPersistedFieldNames(persistedAnswers, changedFieldNames);
+  for (const fieldName of revised) {
     hashes[fieldName] = hasOwn(currentHashes, fieldName) ? currentHashes[fieldName] : null;
   }
-  return withAnswerProvenanceFallback(hashes, persistedAnswers);
+  return {
+    hashes: withAnswerProvenanceFallback(hashes, persistedAnswers),
+    stampsCurrentSchema: revised.length > 0,
+  };
 }
 
 // Reconcilia o snapshot armazenado com o formulário atual sem confundir
@@ -221,6 +290,7 @@ export function buildPersistedResponseSnapshot({
   fields,
   existing,
   rawSubmittedAnswers,
+  promoteLegacyIfComplete,
 }: BuildPersistedResponseSnapshotParams): PersistedResponseSnapshot {
   const storedAnswers = existing?.answers;
   // A leitura sem schema expõe o JSON bruto por compatibilidade, mas não há
@@ -239,12 +309,13 @@ export function buildPersistedResponseSnapshot({
     reconciled.persistedAnswers,
     reconciled.changedFieldNames,
   );
-  const answerFieldHashes = buildReconciledFieldHashes(
+  const { hashes: answerFieldHashes, stampsCurrentSchema } = buildReconciledFieldHashes(
     fields,
     existing,
     persistedAnswers,
     reconciled.changedFieldNames,
+    promoteLegacyIfComplete,
   );
 
-  return { submittedAnswers, persistedAnswers, answerFieldHashes };
+  return { submittedAnswers, persistedAnswers, answerFieldHashes, stampsCurrentSchema };
 }

@@ -31,15 +31,26 @@ npm --prefix frontend run dev
 
 ### Provisionamento de worktrees
 
-Depois de criar uma worktree, execute na raiz dela um único comando e informe explicitamente um checkout cujo diretório `frontend/` já contenha `.env.local` e `.env.e2e` válidos:
+Os arquivos de ambiente vivem num diretório **fonte canônico**, fora de qualquer checkout ou worktree:
 
-```bash
-./frontend/scripts/worktree-env/bootstrap.sh --source /caminho/do/checkout-fonte/frontend
+```
+~/.config/dataframeitGUI/frontend/{.env.local,.env.e2e}
 ```
 
-O bootstrap valida as atribuições não comentadas de `.env.local.example` e `.env.e2e.example`, cria symlinks para os dois arquivos da fonte e falha antes de alterar a worktree se a fonte estiver incompleta ou se algum destino já existir. Ele não copia credenciais, não sobrescreve arquivos e não tenta descobrir outro checkout pelo layout dos diretórios.
+Crie-o uma única vez, a partir dos `.example`, e preencha com os valores reais. Para manter os segredos noutro lugar, aponte `DATAFRAMEITGUI_ENV_HOME` para o diretório desejado.
 
-Nunca adicione `.env.local`, `.env.e2e` ou seus symlinks ao Git. Somente os arquivos `.example`, mantidos sem valores reais, são versionados; o checkout usado como fonte precisa permanecer no mesmo caminho enquanto as worktrees utilizarem os links.
+A partir daí **não há passo manual**: o hook de `post-checkout` (instalado por `pre-commit install`, junto dos demais) roda o bootstrap a cada `git worktree add` e `git checkout`, e a worktree nova já nasce com os symlinks ligados. Para provisionar ou reparar à mão:
+
+```bash
+./frontend/scripts/worktree-env/bootstrap.sh                    # fonte canônica
+./frontend/scripts/worktree-env/bootstrap.sh --source /outro/frontend
+```
+
+O bootstrap valida as atribuições não comentadas de `.env.local.example` e `.env.e2e.example`, cria os symlinks e falha antes de alterar a worktree se a fonte estiver incompleta. É **idempotente e reparador**: link já correto é no-op, link quebrado ou apontando para outra fonte é refeito, e arquivo real no destino faz o script recusar — nunca sobrescreve conteúdo, que pode ser a única cópia de um segredo. Ele não copia credenciais e não descobre checkouts pelo layout dos diretórios.
+
+A fonte é canônica justamente porque worktree é efêmera: apontar o link de uma worktree para outra faz `git worktree remove` quebrar o ambiente de quem apontava para ela — e o sintoma aparece longe da causa, como "faltando N variáveis" no gate de pre-push. Quando isso acontece, a mensagem do gate agora nomeia o link pendente e o alvo morto.
+
+Nunca adicione `.env.local`, `.env.e2e` ou seus symlinks ao Git. Somente os arquivos `.example`, mantidos sem valores reais, são versionados.
 
 ### Backend
 

@@ -9,14 +9,12 @@ const { getToken } = vi.hoisted(() => ({
 }));
 const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 
-vi.mock("@/lib/api", () => ({
+// requireSupabaseToken real (via importOriginal): o teste do token nulo prova a
+// falha-fechada do helper de verdade, não de uma réplica. Só a fronteira externa
+// (fetchFastAPI) é mockada; getToken já é dublê via o mock de @clerk/nextjs.
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   fetchFastAPI,
-  // Réplica do real: busca o session token e lança se vier nulo.
-  requireSupabaseToken: async (gt: () => Promise<string | null>) => {
-    const t = await gt();
-    if (!t) throw new Error("MissingAuthTokenError");
-    return t;
-  },
 }));
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ getToken }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: toastError } }));
@@ -77,7 +75,14 @@ describe("RunLlmButton", () => {
 
     await userEvent.click(screen.getByRole("button"));
 
-    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    // Mensagem do MissingAuthTokenError real (via helper importOriginal) chega ao
+    // toast; fixá-la fecha regressão silenciosa na causa acionável mostrada ao
+    // usuário — não bastaria saber que "algum" toast de erro disparou.
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringContaining("Sessão indisponível"),
+      ),
+    );
     // Falha fechada antes do request: fetchFastAPI nem chega a ser chamado.
     expect(fetchFastAPI).not.toHaveBeenCalled();
   });

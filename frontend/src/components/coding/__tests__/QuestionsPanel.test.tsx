@@ -245,3 +245,31 @@ describe("QuestionsPanel — pergunta fora do escopo", () => {
     ).toBe(true);
   });
 });
+
+describe("QuestionsPanel — contagem de obrigatórias no header", () => {
+  it("denominador exclui llm_only (mesma régua do servidor)", () => {
+    const humano: PydanticField = {
+      name: "humano",
+      type: "single",
+      options: ["a", "b"],
+      description: "Pergunta humana",
+    };
+    const soLlm: PydanticField = {
+      name: "so_llm",
+      type: "single",
+      options: ["a", "b"],
+      description: "Só LLM",
+      target: "llm_only",
+    };
+    render(
+      <QuestionsPanel
+        fields={[humano, soLlm]}
+        answers={{ humano: "a" }}
+        onAnswer={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    // 1 humana respondida de 1 obrigatória; o campo llm_only não infla o denominador.
+    expect(screen.getByText(/1\/1 obrigatórias respondidas/)).toBeTruthy();
+  });
+});
