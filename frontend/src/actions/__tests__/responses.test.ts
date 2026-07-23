@@ -422,10 +422,11 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(payload.answers).toEqual({ q1: "b" });
   });
 
-  it("response com proveniencia per-campo promove as colunas de versao", async () => {
-    // Controle do guard acima: com o mapa herdado nao vazio, a leitura de
-    // staleness usa o snapshot per-campo e as colunas de versao devem
-    // acompanhar o schema de hoje como sempre.
+  it("response com proveniencia per-campo promove as colunas ao REVISAR um valor", async () => {
+    // Com o mapa herdado nao vazio, a leitura de staleness usa o snapshot
+    // per-campo (nao `pydantic_hash`), entao promover as colunas de versao aqui
+    // e seguro. E `q1` mudou de "a" para "b": houve revisao real, entao as
+    // colunas avancam para o schema de hoje.
     state.pydanticFields = [
       { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
     ];
@@ -442,6 +443,35 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.responseUpdatePayload?.pydantic_hash).toBe("hash-1");
     expect(state.responseUpdatePayload?.schema_version_major).toBe(1);
     expect(state.responseUpdatePayload?.version_inferred_from).toBe("live_save");
+  });
+
+  it("toque sem revisao preserva as colunas de versao da epoca (#529)", async () => {
+    // Prova do vermelho do #529: o pesquisador reabre um doc codificado sob a
+    // versao anterior e re-submete o MESMO valor (auto-save por navegacao, sem
+    // editar nada). Nenhum campo e revisado, entao o mapa per-campo (#528) ja
+    // conserva a epoca — as colunas de versao devem acompanhar e NAO promover
+    // para o schema de hoje. Antes deste fix, `buildResponsePayload` promovia em
+    // todo save, deixando a linha assimetrica (hashes de epoca x versao de hoje)
+    // e fazendo-a contar como da versao corrente no gate `latest_major`.
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: { q1: "h1" },
+    };
+
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
+
+    const payload = state.responseUpdatePayload ?? {};
+    expect(payload).not.toHaveProperty("pydantic_hash");
+    expect(payload).not.toHaveProperty("schema_version_major");
+    expect(payload).not.toHaveProperty("schema_version_minor");
+    expect(payload).not.toHaveProperty("schema_version_patch");
+    expect(payload).not.toHaveProperty("version_inferred_from");
   });
 
   it("codificacao nova com mapa vazio ainda promove as colunas de versao (INSERT)", async () => {

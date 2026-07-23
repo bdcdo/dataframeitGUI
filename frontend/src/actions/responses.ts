@@ -5,6 +5,7 @@ import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { buildPersistedResponseSnapshot } from "@/lib/response-snapshot";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
+import { deriveProjectVersionContext } from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 export interface SaveResponseOpts {
@@ -81,15 +82,77 @@ interface SaveResponseProjectFields {
 interface BuildResponsePayloadParams {
   answersToPersist: Record<string, unknown>;
   answerFieldHashes: Exclude<AnswerFieldHashes, null>;
+  hasRevision: boolean;
   project: SaveResponseProjectFields | null | undefined;
   existing: { is_partial: boolean | null } | null | undefined;
   isAutoSave: boolean;
   notes?: string;
 }
 
+// Decide as colunas de versão (`pydantic_hash`, `schema_version_*`,
+// `version_inferred_from`) a gravar. Devolve `{}` — omitindo-as do UPDATE, o que
+// PRESERVA os valores já na linha — quando o save não deve promover a
+// proveniência ao schema de hoje. Duas razões, cada uma um gatilho independente
+// (só para UPDATE — no INSERT não há proveniência anterior a preservar, e mapa
+// vazio ali significa projeto sem campos, não legacy):
+//
+// 1. STALENESS (legacy, #520/#528). Response que conservou o sentinela `{}`
+//    (ver buildReconciledFieldHashes): sem snapshot per-campo, `isFieldStale`
+//    cai no fallback do schema INTEIRO e compara `pydantic_hash`. Promovê-lo
+//    aqui tornaria o fallback permissivo — a codificação antiga passaria a ser
+//    lida como feita contra o schema de hoje e nenhum campo apareceria stale,
+//    reintroduzindo o falso "(vazio)" divergente de answer-staleness.ts.
+//    Preservar mantém o fallback conservador. Fica INDEPENDENTE do gatilho 2
+//    porque uma response legacy pode ter revisão real neste save e ainda assim
+//    conservar `{}` (o ramo legacy nunca carimba chave).
+//
+// 2. SEMÂNTICA DE VERSÃO (#529). Sem nenhuma revisão real de valor
+//    (`!hasRevision` — auto-save/toque, ou re-confirmar o mesmo valor), a linha
+//    não foi codificada sob o schema de hoje: seus valores seguem sendo da época
+//    anterior, e o mapa per-campo (#528) já conserva essa época. Promover só as
+//    colunas deixaria a linha assimétrica — hashes de época × versão de hoje — e
+//    a faria contar como da versão corrente no gate `latest_major` da Comparação
+//    sem que valor algum tenha sido revisado. Preservar mantém as colunas
+//    simétricas ao mapa: só avançam quando algum valor é de fato escrito sob o
+//    schema atual.
+//
+// Custo assumido (#548): preservar prende a linha fora do gate `latest_major`
+// até que ela seja de fato revisada. `responseQualifiesForVersion`
+// (compare-version.ts) curto-circuita em `pydantic_hash === null` e, adiante,
+// compara `schema_version_major` com o piso — então uma legacy pode ficar fora
+// da fila mesmo recodificada por inteiro (inerte hoje; medido em 2026-07-23: 8
+// responses legacy, todas já com a major do projeto). Para o #529 isso é o
+// comportamento desejado: uma codificação não revisada sob o novo schema não
+// deve contar como da versão nova. A raiz é `pydantic_hash` servir a dois
+// consumidores com necessidades opostas — o staleness quer o hash da época, o
+// gate de versão quer o de hoje.
+function resolveSchemaProvenance({
+  project,
+  answerFieldHashes,
+  hasRevision,
+  existing,
+}: Pick<BuildResponsePayloadParams, "project" | "answerFieldHashes" | "hasRevision" | "existing">) {
+  const keepsProvenance =
+    !!existing && (Object.keys(answerFieldHashes).length === 0 || !hasRevision);
+  if (keepsProvenance) return {};
+  // O fallback {major 0, minor 1, patch 0} é canônico e vive uma única vez em
+  // `deriveProjectVersionContext` — reusá-lo evita a duplicação que o cabeçalho
+  // de compare-version.ts sinaliza como load-bearing (uma cópia "corrigida" para
+  // minor 0 aqui dessincronizaria a fila/fecho da Comparação).
+  const { version } = deriveProjectVersionContext(project ?? {});
+  return {
+    pydantic_hash: project?.pydantic_hash ?? null,
+    schema_version_major: version.major,
+    schema_version_minor: version.minor,
+    schema_version_patch: version.patch,
+    version_inferred_from: "live_save",
+  };
+}
+
 function buildResponsePayload({
   answersToPersist,
   answerFieldHashes,
+  hasRevision,
   project,
   existing,
   isAutoSave,
@@ -109,43 +172,11 @@ function buildResponsePayload({
   // 20260425000000 vale so para o fluxo LLM.
   const isPartialToWrite = isAutoSave && existing?.is_partial !== false;
 
-  // Response legacy que conservou o sentinela `{}` (ver buildReconciledFieldHashes,
-  // #520): sem snapshot per-campo, `isFieldStale` cai no fallback do schema
-  // INTEIRO e compara `pydantic_hash`. Promover a coluna aqui tornaria esse
-  // fallback permissivo — a codificação antiga passaria a ser lida como feita
-  // contra o schema de hoje e nenhum campo apareceria stale, reintroduzindo o
-  // falso "(vazio)" divergente que answer-staleness.ts descreve. Preservar o
-  // valor gravado mantém o fallback conservador — é a outra metade do par que
-  // `isFieldStale` sustenta. `version_inferred_from` acompanha pelo mesmo
-  // motivo: carimbar "live_save" fixaria uma versão que este save não prova.
-  // Só vale para UPDATE: numa codificação nova não há proveniência anterior a
-  // preservar, e mapa vazio ali significa projeto sem campos, não legacy.
-  //
-  // Custo assumido (#548): em troca, a response legacy deixa de ser promovida à
-  // versão corrente por um save. `responseQualifiesForVersion` (compare-version.ts)
-  // curto-circuita em `pydantic_hash === null` e, adiante, compara
-  // `schema_version_major` com o piso — então ela pode ficar fora da fila
-  // `latest_major` mesmo depois de recodificada por inteiro. Hoje isso é inerte
-  // (medido em 2026-07-23: 8 responses legacy, todas já com a major do projeto);
-  // passa a importar no próximo bump MAJOR. A raiz é `pydantic_hash` servir a
-  // dois consumidores com necessidades opostas — o staleness quer o hash da
-  // época, o gate de versão quer o de hoje.
-  const keepsLegacyProvenance = !!existing && Object.keys(answerFieldHashes).length === 0;
-  const schemaProvenance = keepsLegacyProvenance
-    ? {}
-    : {
-        pydantic_hash: project?.pydantic_hash ?? null,
-        schema_version_major: project?.schema_version_major ?? 0,
-        schema_version_minor: project?.schema_version_minor ?? 1,
-        schema_version_patch: project?.schema_version_patch ?? 0,
-        version_inferred_from: "live_save",
-      };
-
   const payload = {
     answers: answersToPersist,
     justifications,
     answer_field_hashes: answerFieldHashes,
-    ...schemaProvenance,
+    ...resolveSchemaProvenance({ project, answerFieldHashes, hasRevision, existing }),
     round_id: roundIdToPersist,
     is_partial: isPartialToWrite,
     // Marca a codificacao do pesquisador no tempo — alimenta a ordenacao
@@ -260,6 +291,7 @@ export async function saveResponse(
     const payload = buildResponsePayload({
       answersToPersist: snapshot.persistedAnswers,
       answerFieldHashes: snapshot.answerFieldHashes,
+      hasRevision: snapshot.hasRevision,
       project,
       existing,
       isAutoSave,

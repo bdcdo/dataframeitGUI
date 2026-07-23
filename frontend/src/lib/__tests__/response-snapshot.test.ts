@@ -403,3 +403,65 @@ describe("buildPersistedResponseSnapshot", () => {
     expect(result.answerFieldHashes).toEqual({ legado: "hash-antigo" });
   });
 });
+
+describe("buildPersistedResponseSnapshot — hasRevision (#529)", () => {
+  const single = (name: string, hash: string): PydanticField =>
+    field({ name, type: "single", options: ["a", "b"], hash });
+
+  it("false quando o pesquisador re-confirma o mesmo valor (toque/auto-save)", () => {
+    // O sinal que autoriza promover as colunas de versão. Re-submeter o valor
+    // já apresentado não é revisão: `samePresentedValue` o exclui de
+    // changedFieldNames, então nenhum campo ganha o hash de hoje.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: { q1: "a" },
+    });
+
+    expect(result.hasRevision).toBe(false);
+  });
+
+  it("true quando um valor é de fato alterado", () => {
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: { q1: "b" },
+    });
+
+    expect(result.hasRevision).toBe(true);
+  });
+
+  it("true quando um campo criado depois é de fato respondido", () => {
+    // Simétrico com o hash: o campo novo ganha o hash de hoje, e o save promove.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("antigo", "antigo-hash"), single("novo", "novo-hash")],
+      existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
+      rawSubmittedAnswers: { antigo: "a", novo: "b" },
+    });
+
+    expect(result.hasRevision).toBe(true);
+  });
+
+  it("false quando a revisão apenas apaga o valor (fora de persistedAnswers)", () => {
+    // Limpar um campo muda changedFieldNames, mas o valor não persiste — nada
+    // é escrito sob o schema de hoje, então a linha conserva a época.
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: { answers: { q1: "a" }, hashes: { q1: "h1" } },
+      rawSubmittedAnswers: {},
+    });
+
+    expect(result.persistedAnswers).toEqual({});
+    expect(result.hasRevision).toBe(false);
+  });
+
+  it("codificação nova com resposta real é revisão", () => {
+    const result = buildPersistedResponseSnapshot({
+      fields: [single("q1", "h1")],
+      existing: null,
+      rawSubmittedAnswers: { q1: "a" },
+    });
+
+    expect(result.hasRevision).toBe(true);
+  });
+});

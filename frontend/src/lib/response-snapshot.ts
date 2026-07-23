@@ -57,6 +57,14 @@ export interface PersistedResponseSnapshot {
   submittedAnswers: Record<string, unknown>;
   persistedAnswers: Record<string, unknown>;
   answerFieldHashes: Exclude<AnswerFieldHashes, null>;
+  // True quando ao menos um campo teve o VALOR escrito/alterado sob o schema de
+  // hoje neste save — exatamente o conjunto que ganha o hash de hoje no ramo de
+  // herança de `buildReconciledFieldHashes` (`changedFieldNames ∩
+  // persistedAnswers`). "Trafegou no formulário" ou re-confirmar o mesmo valor
+  // NÃO conta (`samePresentedValue` os exclui de `changedFieldNames`). É o sinal
+  // que autoriza promover as colunas de versão da response (ver
+  // `buildResponsePayload`, #529): sem revisão real, a linha conserva a época.
+  hasRevision: boolean;
 }
 
 /**
@@ -184,6 +192,18 @@ function withAnswerProvenanceFallback(
 // bump "passar a dever" os campos novos e reaparecer como pendente sem o
 // pesquisador ter feito nada (#520). Um campo novo só entra quando é de fato
 // respondido — aí a chave é verdadeira e o hash atual é a proveniência correta.
+// Nomes dos campos revisados neste save cujo valor persiste — o conjunto que
+// ganha o hash de HOJE no ramo de herança de `buildReconciledFieldHashes`. Um
+// campo revisado que ficou oculto/apagado (fora de `persistedAnswers`) não
+// entra. Fonte única do sinal de "houve revisão real": consumido pela herança
+// de hashes e por `hasRevision` (colunas de versão, #529).
+function revisedPersistedFieldNames(
+  persistedAnswers: Record<string, unknown>,
+  changedFieldNames: Set<string>,
+): string[] {
+  return [...changedFieldNames].filter((fieldName) => hasOwn(persistedAnswers, fieldName));
+}
+
 function buildReconciledFieldHashes(
   fields: PydanticField[],
   existing: ExistingResponseSnapshot | null,
@@ -207,8 +227,7 @@ function buildReconciledFieldHashes(
   const hashes: Exclude<AnswerFieldHashes, null> = { ...storedHashes };
   // Só o que o pesquisador revisou neste save ganha a proveniência de hoje;
   // o resto conserva a versão contra a qual foi respondido.
-  for (const fieldName of changedFieldNames) {
-    if (!hasOwn(persistedAnswers, fieldName)) continue;
+  for (const fieldName of revisedPersistedFieldNames(persistedAnswers, changedFieldNames)) {
     hashes[fieldName] = hasOwn(currentHashes, fieldName) ? currentHashes[fieldName] : null;
   }
   return withAnswerProvenanceFallback(hashes, persistedAnswers);
@@ -245,6 +264,8 @@ export function buildPersistedResponseSnapshot({
     persistedAnswers,
     reconciled.changedFieldNames,
   );
+  const hasRevision =
+    revisedPersistedFieldNames(persistedAnswers, reconciled.changedFieldNames).length > 0;
 
-  return { submittedAnswers, persistedAnswers, answerFieldHashes };
+  return { submittedAnswers, persistedAnswers, answerFieldHashes, hasRevision };
 }
