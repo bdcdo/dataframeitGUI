@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useMemo, useRef } from "react";
-import { saveResponse } from "@/actions/responses";
 import { toast } from "sonner";
 import { useBrowseDocuments } from "@/hooks/useBrowseDocuments";
 import { useDocumentForCoding } from "@/hooks/useDocumentForCoding";
+import { saveCodingResponse } from "@/lib/coding-autosave";
 import { type CodingDraft } from "./BrowseDocCoder";
 import type { AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import type { AssignedDoc } from "@/lib/types";
@@ -69,7 +69,7 @@ export function useBrowseCoding({
   // Ref (não estado) para não entrar no render.
   const browseDraftRef = useRef<CodingDraft | null>(null);
   // Guarda de reentrância dos saves de browse: impede que um duplo-clique em
-  // "Enviar"/"Voltar" dispare saveResponse/markResponded duas vezes antes do
+  // "Enviar"/"Voltar" dispare save/markResponded duas vezes antes do
   // setSubmitting re-renderizar e desabilitar os botões.
   const browseSavingRef = useRef(false);
 
@@ -115,7 +115,7 @@ export function useBrowseCoding({
       browseSavingRef.current = true;
       setSubmitting(true);
       try {
-        const result = await saveResponse(projectId, browseDocId, answers, {
+        const result = await saveCodingResponse(projectId, browseDocId, answers, {
           notes,
         });
         if (result.success) {
@@ -130,13 +130,11 @@ export function useBrowseCoding({
           updateDocParam(null);
           invalidateBrowseDoc(browseDocId);
         } else {
-          toast.error(result.error || "Erro ao salvar respostas");
+          toast.error(result.error);
         }
       } finally {
-        // `saveResponse` é Server Action: uma rejeição de transporte (offline /
-        // erro de RPC) rejeita a promessa em vez de devolver `{success:false}`.
-        // O `finally` garante que `submitting`/o ref não fiquem presos (o que
-        // congelaria a edição até reload).
+        // Mesmo com a rejeição de transporte normalizada pelo adapter, o
+        // `finally` evita prender o formulário se um efeito posterior falhar.
         setSubmitting(false);
         browseSavingRef.current = false;
       }
@@ -166,15 +164,12 @@ export function useBrowseCoding({
       const { answers, notes } = browseDraftRef.current;
       setSubmitting(true);
       try {
-        const result = await saveResponse(projectId, docId, answers, {
+        const result = await saveCodingResponse(projectId, docId, answers, {
           notes,
           isAutoSave: true,
         });
         if (!result.success) {
-          toast.error(
-            result.error ||
-              "Não foi possível salvar. Suas alterações não foram perdidas.",
-          );
+          toast.error(result.error);
           return;
         }
         markClean(docId);

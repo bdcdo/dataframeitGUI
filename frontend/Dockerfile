@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM node:24-alpine AS base
 
 # --- Dependencies ---
@@ -21,8 +23,23 @@ ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ARG NEXT_PUBLIC_CLERK_SIGN_IN_URL
 ARG NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
+ARG NEXT_DEPLOYMENT_ID
 
-RUN npm run build
+# O secret mount evita diretivas Dockerfile ARG/ENV persistentes e registro da
+# chave no historico do comando.
+# O Next a incorpora por design no manifesto server-only do build, copiado para
+# a imagem final. O SHA identifica assets e navegacoes desta release.
+#
+# `test -s` (e nao apenas `required=true`): o mount so garante que o secret foi
+# FORNECIDO, nao que tem conteudo. Com o secret ausente no repositorio, a env
+# expande vazia, `--build-secret K=` satisfaz o mount, e o Next trata a chave
+# vazia como ausente — volta a gerar uma chave aleatoria por build, os IDs das
+# Server Actions voltam a girar e o deploy passa verde. Falhar aqui e a unica
+# forma de esse caso nao passar em silencio.
+RUN --mount=type=secret,id=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,required=true \
+    test -n "$NEXT_DEPLOYMENT_ID" \
+    && test -s /run/secrets/NEXT_SERVER_ACTIONS_ENCRYPTION_KEY \
+    && NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="$(cat /run/secrets/NEXT_SERVER_ACTIONS_ENCRYPTION_KEY)" npm run build
 
 # --- Runtime ---
 FROM base AS runner

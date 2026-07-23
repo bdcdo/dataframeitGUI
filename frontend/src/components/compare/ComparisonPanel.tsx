@@ -13,6 +13,10 @@ import { normalizeForComparison } from "@/lib/utils";
 import {
   buildResponseGroupKeys,
 } from "@/lib/equivalence";
+import {
+  comparableMultiOptions,
+  multiSelectionSets,
+} from "@/lib/compare-multi-options";
 import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { VerdictInfo } from "@/lib/compare-reviews";
@@ -145,6 +149,38 @@ export function ComparisonPanel({
   }, [docComplete, docHasNext, documentId]);
 
   const isMulti = fieldType === "multi" && !!fieldOptions?.length;
+
+  // Opções a exibir num multi: as do schema mais as que alguém marcou e que
+  // saíram do schema depois. Sem a união, uma divergência causada por opção
+  // removida — que `computeDivergentFieldNames` conta pela mesma primitiva —
+  // não teria linha na tela: o revisor via tudo concordando e não conseguia
+  // resolver o campo, que voltava à fila para sempre. Pior, `isAnswerCorrect`
+  // compara o conjunto do veredito com o da resposta, então a opção nunca
+  // renderizada nunca entrava no veredito e a resposta que a marcasse ficava
+  // sem como ser julgada correta (#484). As do schema mantêm posição — e
+  // portanto o atalho numérico. Calculado aqui, e não no MultiOptionReview,
+  // para o `optionCount` dos atalhos não recomputar a mesma união e sair
+  // dessincronizado.
+  //
+  // A primitiva é a mesma da divergência, mas o CONJUNTO DE ENTRADA é
+  // deliberadamente mais amplo: `computeDivergentFieldNames` filtra por
+  // staleness e visibilidade condicional antes de montar os conjuntos, e aqui
+  // entram todas as respostas — inclusive as stale, que o painel exibe. Ou
+  // seja, este conjunto contém o da divergência: nunca falta linha para uma
+  // opção que divergiu, e pode sobrar linha para uma opção que só uma resposta
+  // stale marcou. Sobrar é coerente com exibir a resposta stale; faltar é o
+  // bug que este código corrige.
+  const displayOptions = useMemo(
+    () =>
+      isMulti
+        ? comparableMultiOptions(
+            fieldOptions ?? [],
+            multiSelectionSets(responses.map((r) => r.answer)),
+          )
+        : [],
+    [isMulti, fieldOptions, responses],
+  );
+
   const groupCount = useMemo(() => {
     const present = responses.filter((r) => r.answer !== undefined);
     const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
@@ -200,7 +236,7 @@ export function ComparisonPanel({
           <MultiOptionReview
             key={`${documentId}|${fieldName}|${readOnly}`}
             readOnly={readOnly}
-            options={fieldOptions}
+            options={displayOptions}
             responses={responses}
             existingVerdict={existingVerdict}
             isSubmitting={isSavingVerdict}
@@ -349,7 +385,7 @@ export function ComparisonPanel({
           readOnly={readOnly}
           groupCount={groupCount}
           isMulti={isMulti}
-          optionCount={isMulti ? fieldOptions.length : undefined}
+          optionCount={isMulti ? displayOptions.length : undefined}
         />
       )}
     </div>

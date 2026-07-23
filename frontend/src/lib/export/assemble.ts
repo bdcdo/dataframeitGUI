@@ -12,6 +12,10 @@
 
 import type { DocumentMetadata, PydanticField } from "@/lib/types";
 import { normalizeForComparison } from "@/lib/utils";
+import {
+  multiSelectionSets,
+  multiSelectionsAgree,
+} from "@/lib/compare-multi-options";
 import { formatExportValue, formatVerdict } from "./format";
 
 export interface ExportSheet {
@@ -152,21 +156,10 @@ function multiFieldAgrees(
   fieldName: string,
   options: string[]
 ): boolean {
-  const comparableOptions = new Set(options);
-  const responseSets = docResponses.map((r) => {
-    const arr = r.answers?.[fieldName];
-    return new Set(
-      Array.isArray(arr)
-        ? arr.filter((v): v is string => typeof v === "string")
-        : []
-    );
-  });
-  for (const set of responseSets) for (const v of set) comparableOptions.add(v);
-  for (const opt of comparableOptions) {
-    const selections = responseSets.map((s) => s.has(opt));
-    if (!selections.every((s) => s === selections[0])) return false;
-  }
-  return true;
+  return multiSelectionsAgree(
+    options,
+    multiSelectionSets(docResponses.map((r) => r.answers?.[fieldName]))
+  );
 }
 
 // Valor concordante de um campo entre as respostas de um documento, ou null se

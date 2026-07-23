@@ -504,8 +504,10 @@ describe("saveResponse — documento excluído (fora do escopo aprovado)", () =>
     state.documentExcludedAt = "2026-07-01T00:00:00Z";
     const saveResponse = await loadSaveResponse();
     const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
-    expect(r.success).toBe(false);
-    expect(r.error).toContain("removido do escopo");
+    expect(r).toEqual({
+      success: false,
+      error: "Documento removido do escopo do projeto",
+    });
     expect(state.responseInsertPayload).toBeNull();
     expect(state.responseUpdatePayload).toBeNull();
   });

@@ -49,36 +49,50 @@ export function useCompareFieldData({
   projectPydanticHash,
   equivalencesByDocField,
 }: UseCompareFieldDataParams): CompareFieldData {
-  const docResponses = currentDoc ? responses[currentDoc.id] || [] : [];
+  const docResponses = useMemo(
+    () => (currentDoc ? responses[currentDoc.id] || [] : []),
+    [currentDoc, responses],
+  );
 
   const currentFieldHashes = useMemo(() => buildFieldHashMap(fields), [fields]);
 
-  const fieldResponses: FieldResponse[] = docResponses.map((r) => {
-    const stale = isFieldStale({
-      answerFieldHashes: r.answer_field_hashes,
-      pydanticHash: r.pydantic_hash,
-      fieldName: currentFieldName,
-      currentFieldHashes,
-      projectPydanticHash,
-    });
-    const version =
-      r.schema_version_major !== null
-        ? `${r.schema_version_major}.${r.schema_version_minor ?? 0}.${r.schema_version_patch ?? 0}`
-        : null;
-    return {
-      id: r.id,
-      respondent_type: r.respondent_type,
-      respondent_name: r.respondent_name,
-      respondent_id: r.respondent_id,
-      answer: Object.prototype.hasOwnProperty.call(r.answers, currentFieldName)
-        ? r.answers[currentFieldName]
-        : undefined,
-      justification: r.justifications?.[currentFieldName],
-      is_latest: r.is_latest,
-      isFieldStale: stale,
-      schemaVersion: version,
-    };
-  });
+  // Memoizado porque a identidade deste array é dependência de memos a jusante
+  // — no `ComparisonPanel`, `displayOptions` (a união de opções de um multi) e
+  // `groupCount`. Sem memo aqui, o `.map()` devolvia um array novo a cada
+  // render e aqueles memos nunca acertavam o cache.
+  const fieldResponses: FieldResponse[] = useMemo(
+    () =>
+      docResponses.map((r) => {
+        const stale = isFieldStale({
+          answerFieldHashes: r.answer_field_hashes,
+          pydanticHash: r.pydantic_hash,
+          fieldName: currentFieldName,
+          currentFieldHashes,
+          projectPydanticHash,
+        });
+        const version =
+          r.schema_version_major !== null
+            ? `${r.schema_version_major}.${r.schema_version_minor ?? 0}.${r.schema_version_patch ?? 0}`
+            : null;
+        return {
+          id: r.id,
+          respondent_type: r.respondent_type,
+          respondent_name: r.respondent_name,
+          respondent_id: r.respondent_id,
+          answer: Object.prototype.hasOwnProperty.call(
+            r.answers,
+            currentFieldName,
+          )
+            ? r.answers[currentFieldName]
+            : undefined,
+          justification: r.justifications?.[currentFieldName],
+          is_latest: r.is_latest,
+          isFieldStale: stale,
+          schemaVersion: version,
+        };
+      }),
+    [docResponses, currentFieldName, currentFieldHashes, projectPydanticHash],
+  );
 
   const fieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
     if (!currentDoc || !currentFieldName) return [];

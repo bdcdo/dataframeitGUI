@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useMemo, useReducer, useRef } from "react";
-import { saveResponse } from "@/actions/responses";
 import { sortByRecent } from "@/lib/coding-sort";
-import { autosaveDirtyDoc } from "@/lib/coding-autosave";
+import {
+  autosaveDirtyDoc,
+  saveCodingResponse,
+} from "@/lib/coding-autosave";
 import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import { toast } from "sonner";
 import type { AutosavePayload } from "@/hooks/useAutosaveOnExit";
@@ -133,10 +135,10 @@ export function useAssignedCoding({
   );
   const docNotes = allNotes[currentDoc?.id] ?? "";
 
-  // Guarda de reentrância dos saves: liga ANTES do `await saveResponse` e desliga
-  // no `finally`. Espelha o `browseSavingRef` do modo Explorar, mas serve a dois
+  // Guarda de reentrância dos saves: liga antes do await e desliga no `finally`.
+  // Espelha o `browseSavingRef` do modo Explorar, mas serve a dois
   // propósitos com um só ref síncrono: (1) impede que um duplo-clique em "Enviar"
-  // dispare `saveResponse`/`toast` duas vezes antes do re-render desabilitar o
+  // dispare save/toast duas vezes antes do re-render desabilitar o
   // botão; (2) congela a edição enquanto o save está em voo — o container já tirou
   // o snapshot das respostas que está salvando e, ao concluir, navega para o
   // próximo doc; sem o guard, teclas digitadas durante o save editariam o doc já
@@ -171,7 +173,7 @@ export function useAssignedCoding({
     savingRef.current = true;
     setSubmitting(true);
     try {
-      const result = await saveResponse(projectId, currentDoc.id, docAnswers, {
+      const result = await saveCodingResponse(projectId, currentDoc.id, docAnswers, {
         notes: docNotes,
       });
       if (result.success) {
@@ -188,14 +190,13 @@ export function useAssignedCoding({
           dispatch({ type: "allDone", value: true });
         }
       } else {
-        toast.error(result.error || "Erro ao salvar respostas");
+        toast.error(result.error);
       }
     } finally {
-      // `saveResponse` é Server Action: uma rejeição de transporte (offline /
-      // erro de RPC) rejeita a promessa em vez de devolver `{success:false}`.
-      // O `finally` garante que `submitting`/o ref não fiquem presos `true` —
-      // como `submitting` é estado único compartilhado com o modo Explorar, isso
-      // congelaria a edição lá (guards do `BrowseDocCoder`) até um reload.
+      // O `finally` garante que `submitting`/o ref não fiquem presos `true` se
+      // qualquer efeito posterior ao save falhar. Como `submitting` é estado
+      // compartilhado com o modo Explorar, isso congelaria a edição lá até um
+      // reload.
       setSubmitting(false);
       savingRef.current = false;
     }

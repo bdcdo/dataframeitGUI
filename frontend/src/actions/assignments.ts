@@ -21,6 +21,262 @@ import {
 } from "@/lib/lottery-utils";
 import { MEMBERS_TAG_PROFILE, membersTag } from "@/lib/cache";
 import { errorMessage } from "@/lib/utils";
+import {
+  resolveInitialCodingStatus,
+  type InitialCodingStatus,
+} from "@/lib/coding-initial-status";
+import type { ResponseRoundFields, RoundContext } from "@/lib/rounds";
+import type { SupabaseServerClient } from "@/lib/supabase/server";
+import type { AnswerFieldHashes, PydanticField, Round, RoundStrategy } from "@/lib/types";
+
+// --- Status inicial do assignment de codificação (issue #521) ---
+
+/**
+ * Response humana `is_latest` de um par (documento, codificador), sem o jsonb
+ * pesado de `answers`: identifica quem codificou o quê e a que rodada aquilo
+ * pertence. Serve a dois consumidores — o veto de par do sorteio de comparação
+ * e a fase 1 do status inicial de codificação, que só busca `answers` dos pares
+ * que a criação vai de fato tocar.
+ */
+interface HumanCoderRow extends ResponseRoundFields {
+  id: string;
+  document_id: string;
+  respondent_id: string;
+  updated_at: string | null;
+}
+
+const pairKey = (documentId: string, userId: string) => `${documentId}:${userId}`;
+
+/**
+ * Teto de ids por `.in()`: PostgREST recebe a lista na URL, e um sorteio de
+ * projeto inteiro pode ter centenas de pares já codificados — uma única query
+ * estouraria o limite de URI e derrubaria o sorteio todo. Fatiar mantém a
+ * leitura barata sem depender do tamanho do lote.
+ */
+const RESPONSE_ID_CHUNK = 100;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Fase 2 do status inicial: dadas as responses leves dos pares que serão
+ * criados, carrega o que falta para julgar — `answers`/`answer_field_hashes`
+ * das responses relevantes, o schema e a rodada corrente do projeto — e devolve
+ * o status por par. Sem candidatos, não faz I/O nenhum.
+ *
+ * A régua vive em `resolveInitialCodingStatus` (lib/coding-initial-status);
+ * aqui só se junta o insumo. `rounds` só é lido na estratégia manual, que é a
+ * única em que `classifyDocStatus` consulta o mapa.
+ */
+interface InitialStatusInputs {
+  ctx: RoundContext;
+  fields: PydanticField[];
+  /** answers por id de response — só das que interessam ao lote */
+  answersById: Map<
+    string,
+    { answers: Record<string, unknown> | null; answer_field_hashes?: AnswerFieldHashes }
+  >;
+}
+
+/**
+ * Falha alto em vez de degradar para 'pendente': o silêncio aqui reintroduz
+ * exatamente o bug que esta feature existe para impedir, e sem sinal nenhum
+ * para quem sorteou. Os dois chamadores traduzem o throw em { error } antes de
+ * qualquer escrita.
+ */
+function requireData<T>(
+  result: { data: T | null; error: { message: string } | null },
+  context: string,
+): T {
+  if (result.error || !result.data) {
+    throw new Error(`${context}: ${result.error?.message ?? "resposta vazia"}`);
+  }
+  return result.data;
+}
+
+/** Só a estratégia manual consulta o mapa de rodadas em classifyDocStatus. */
+async function loadRoundsIfManual(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  strategy: RoundStrategy,
+): Promise<Round[]> {
+  if (strategy !== "manual") return [];
+  const result = await supabase.from("rounds").select("id, label").eq("project_id", projectId);
+  return requireData(result, "Erro ao ler as rodadas do projeto") as Round[];
+}
+
+async function loadInitialStatusInputs(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  responseIds: string[],
+): Promise<InitialStatusInputs> {
+  const [projectResult, ...answerResults] = await Promise.all([
+    supabase
+      .from("projects")
+      .select(
+        "pydantic_fields, round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch",
+      )
+      .eq("id", projectId)
+      .single(),
+    ...chunk(responseIds, RESPONSE_ID_CHUNK).map((ids) =>
+      supabase.from("responses").select("id, answers, answer_field_hashes").in("id", ids),
+    ),
+  ]);
+
+  const project = requireData(
+    projectResult,
+    "Erro ao ler o schema do projeto para o status inicial",
+  );
+  const answerRows = answerResults.flatMap((result) =>
+    requireData(result, "Erro ao ler as codificações existentes"),
+  );
+
+  const strategy = (project.round_strategy as RoundStrategy) ?? "schema_version";
+  return {
+    ctx: buildRoundContext(project, strategy, await loadRoundsIfManual(supabase, projectId, strategy)),
+    fields: (project.pydantic_fields as PydanticField[]) ?? [],
+    answersById: indexAnswers(answerRows),
+  };
+}
+
+function buildRoundContext(
+  project: Record<string, unknown>,
+  strategy: RoundStrategy,
+  rounds: Round[],
+): RoundContext {
+  return {
+    strategy,
+    currentRoundId: (project.current_round_id as string | null) ?? null,
+    currentVersion: {
+      major: (project.schema_version_major as number | null) ?? 0,
+      minor: (project.schema_version_minor as number | null) ?? 0,
+      patch: (project.schema_version_patch as number | null) ?? 0,
+    },
+    rounds,
+  };
+}
+
+function indexAnswers(rows: Record<string, unknown>[]): InitialStatusInputs["answersById"] {
+  return new Map(
+    rows.map((a) => [
+      a.id as string,
+      {
+        answers: a.answers as Record<string, unknown> | null,
+        answer_field_hashes: a.answer_field_hashes as AnswerFieldHashes | undefined,
+      },
+    ]),
+  );
+}
+
+async function resolveInitialCodingStatuses(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  candidates: HumanCoderRow[],
+): Promise<Map<string, InitialCodingStatus>> {
+  const statuses = new Map<string, InitialCodingStatus>();
+  if (!candidates.length) return statuses;
+
+  const { ctx, fields, answersById } = await loadInitialStatusInputs(
+    supabase,
+    projectId,
+    candidates.map((c) => c.id),
+  );
+  const roundsById = new Map(ctx.rounds.map((r) => [r.id, r]));
+
+  for (const candidate of candidates) {
+    const payload = answersById.get(candidate.id);
+    const response = {
+      ...candidate,
+      answers: payload?.answers ?? null,
+      answer_field_hashes: payload?.answer_field_hashes,
+    };
+    statuses.set(
+      pairKey(candidate.document_id, candidate.respondent_id),
+      resolveInitialCodingStatus(ctx, roundsById, response, fields),
+    );
+  }
+  return statuses;
+}
+
+/**
+ * Cria o assignment de codificação de um par. O status NÃO é o default
+ * 'pendente' da coluna: se este pesquisador já codificou o documento
+ * (tipicamente pelo Explorar, antes de existir atribuição), a linha nasce
+ * refletindo esse trabalho — nada a promoveria depois, porque
+ * `syncCodingAssignmentStatus` só roda no save (#521).
+ */
+async function insertCodingAssignment(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+  // Falso positivo: `userId` é o dono da atribuição criada, não um campo de
+  // autorização — quem autoriza é a policy de coordenador em assignments.
+  // react-doctor-disable-next-line react-doctor/supabase-client-owned-authz-field
+  userId: string,
+): Promise<{ error?: string }> {
+  const { data: existingResponse, error: responseError } = await supabase
+    .from("responses")
+    .select(
+      "id, document_id, respondent_id, updated_at, round_id, is_partial, schema_version_major, schema_version_minor, schema_version_patch",
+    )
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("respondent_id", userId)
+    .eq("respondent_type", "humano")
+    .eq("is_latest", true)
+    // `is_latest` único por par é invariante de trigger (20260716160100), não de
+    // índice: sem o order+limit, uma duplicata faria o `maybeSingle` devolver
+    // PGRST116 e a atribuição manual daquele par ficaria IMPOSSÍVEL — trocar um
+    // status errado por um bloqueio de operação é pior que o bug original.
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (responseError) return { error: responseError.message };
+
+  const statuses = await resolveInitialCodingStatuses(
+    supabase,
+    projectId,
+    existingResponse ? [existingResponse as HumanCoderRow] : [],
+  );
+  const initial = statuses.get(pairKey(documentId, userId));
+
+  const { error } = await supabase.from("assignments").insert({
+    project_id: projectId,
+    document_id: documentId,
+    user_id: userId,
+    type: "codificacao",
+    status: initial?.status ?? "pendente",
+    completed_at: initial?.completed_at ?? null,
+  });
+  return error ? { error: error.message } : {};
+}
+
+/**
+ * codificacao → comparacao por UPDATE atômico (preserva id e metadados).
+ *
+ * Este ciclo enxerga só o par (documento, usuário) — não sabe de comparações de
+ * OUTROS usuários no mesmo documento. Quem barra é o índice
+ * assignments_one_active_comparacao_per_doc (um revisor por documento); o
+ * 23505 vira mensagem em português em vez de vazar o texto do Postgres para o
+ * toast do coordenador. `conflict` distingue essa recusa esperada de uma falha
+ * real, que o chamador propaga como exceção.
+ */
+async function promoteToComparison(
+  supabase: SupabaseServerClient,
+  assignmentId: string,
+): Promise<{ error?: string; conflict?: boolean }> {
+  const { error } = await supabase
+    .from("assignments")
+    .update({ type: "comparacao" })
+    .eq("id", assignmentId);
+  if (error?.code === "23505") {
+    return { error: "Este documento já tem um revisor de comparação atribuído.", conflict: true };
+  }
+  return error ? { error: error.message } : {};
+}
 
 /**
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
@@ -54,27 +310,13 @@ export async function cycleAssignment(
   try {
     if (!pendingCod && !pendingComp) {
       // vazio → codificacao
-      const { error } = await supabase.from("assignments").insert({
-        project_id: projectId,
-        document_id: documentId,
-        user_id: userId,
-        type: "codificacao",
-      });
-      if (error) throw new Error(error.message);
+      const { error } = await insertCodingAssignment(supabase, projectId, documentId, userId);
+      if (error) throw new Error(error);
     } else if (pendingCod && !pendingComp) {
-      // codificacao → comparacao (UPDATE atômico, preserva id e metadados)
-      const { error } = await supabase
-        .from("assignments")
-        .update({ type: "comparacao" })
-        .eq("id", pendingCod.id);
-      // Este ciclo enxerga só o par (documento, usuário) — não sabe de
-      // comparações de OUTROS usuários no mesmo documento. Quem barra é o índice
-      // assignments_one_active_comparacao_per_doc (um revisor por documento).
-      // Traduzir em vez de vazar o texto do Postgres para o toast do coordenador.
-      if (error?.code === "23505") {
-        return { error: "Este documento já tem um revisor de comparação atribuído." };
-      }
-      if (error) throw new Error(error.message);
+      // codificacao → comparacao
+      const { error, conflict } = await promoteToComparison(supabase, pendingCod.id);
+      if (conflict) return { error };
+      if (error) throw new Error(error);
     } else if (pendingComp && !pendingCod) {
       // comparacao → vazio
       const { error } = await supabase.from("assignments").delete().eq("id", pendingComp.id);
@@ -189,10 +431,7 @@ interface LotteryData extends LotteryDocStatsResult {
     status: string;
     type: string;
   }[];
-  humanCoderRows: {
-    document_id: string;
-    respondent_id: string;
-  }[];
+  humanCoderRows: HumanCoderRow[];
 }
 
 /**
@@ -265,9 +504,15 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
       .eq("project_id", projectId),
     // Mesmo predicado do trigger enforce_comparison_assignment_actor
     // (20260716160100): resposta humana is_latest define quem codificou.
+    // Colunas de rodada e `updated_at` entram para o status inicial (#521); o
+    // jsonb `answers` continua FORA daqui — é o fetch bruto do projeto inteiro
+    // que a issue #182 tirou deste caminho, e só os pares efetivamente
+    // sorteados precisam dele (fase 2, em resolveInitialCodingStatuses).
     supabase
       .from("responses")
-      .select("document_id, respondent_id")
+      .select(
+        "id, document_id, respondent_id, updated_at, round_id, is_partial, schema_version_major, schema_version_minor, schema_version_patch",
+      )
       .eq("project_id", projectId)
       .eq("respondent_type", "humano")
       .eq("is_latest", true)
@@ -284,7 +529,19 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
     })),
     humanCoderRows: (humanCoders || []).flatMap((r) =>
       r.respondent_id
-        ? [{ document_id: r.document_id, respondent_id: r.respondent_id }]
+        ? [
+            {
+              id: r.id,
+              document_id: r.document_id,
+              respondent_id: r.respondent_id,
+              updated_at: r.updated_at,
+              round_id: r.round_id,
+              is_partial: r.is_partial,
+              schema_version_major: r.schema_version_major,
+              schema_version_minor: r.schema_version_minor,
+              schema_version_patch: r.schema_version_patch,
+            },
+          ]
         : [],
     ),
   };
@@ -318,6 +575,8 @@ async function computeLottery(params: LotteryParams): Promise<{
   batchData: Record<string, unknown>;
   /** tipo normalizado aqui — quem grava reusa em vez de renormalizar */
   assignmentType: "codificacao" | "comparacao";
+  /** fase 1 do status inicial (#521): responses humanas leves do projeto */
+  humanCoderRows: HumanCoderRow[];
 }> {
   const supabase = await createSupabaseServer();
   // Normaliza em vez de confiar no literal: o payload chega por HTTP e não passa
@@ -535,6 +794,7 @@ async function computeLottery(params: LotteryParams): Promise<{
     seed,
     batchData,
     assignmentType,
+    humanCoderRows: data.humanCoderRows,
   };
 }
 
@@ -585,8 +845,26 @@ export async function smartRandomize(
   // Operação crítica: computeLottery + registro do lote + RPC transacional. Só
   // um erro aqui (nada gravado, ou gravação abortada) deve virar { error }.
   try {
-    const { newAssignments, preservedCount, batchData, assignmentType } =
+    const { newAssignments, preservedCount, batchData, assignmentType, humanCoderRows } =
       await computeLottery(params);
+
+    // Status inicial por linha (#521): um documento já codificado por completo
+    // pelo próprio sorteado nasce 'concluido', não 'pendente'. Calculado ANTES
+    // do registro do lote — uma falha de leitura aqui aborta o sorteio sem
+    // deixar lote órfão. Só codificação: no sorteio de comparação o mapa fica
+    // vazio, as chaves não vão no payload e o COALESCE da RPC aplica o default.
+    const responsesByPair =
+      assignmentType === "codificacao"
+        ? new Map(humanCoderRows.map((r) => [pairKey(r.document_id, r.respondent_id), r]))
+        : new Map<string, HumanCoderRow>();
+    const initialStatuses = await resolveInitialCodingStatuses(
+      supabase,
+      params.projectId,
+      newAssignments.flatMap((a) => {
+        const response = responsesByPair.get(pairKey(a.document_id, a.user_id));
+        return response ? [response] : [];
+      }),
+    );
 
     // O batch é criado antes de qualquer mudança em assignments: se falhar
     // (ex.: migration ausente), nada foi deletado ainda
@@ -606,10 +884,16 @@ export async function smartRandomize(
     // transação única via RPC (issue #181): uma falha entre o delete e o insert
     // não perde mais as pendentes. SECURITY INVOKER — a RLS do coordenador vale
     // dentro da função. Dispensa o chunk de 100 (era limite de payload PostgREST).
-    const assignmentRows = newAssignments.map((a) => ({
-      document_id: a.document_id,
-      user_id: a.user_id,
-    }));
+    const assignmentRows = newAssignments.map((a) => {
+      const initial = initialStatuses.get(pairKey(a.document_id, a.user_id));
+      return {
+        document_id: a.document_id,
+        user_id: a.user_id,
+        ...(initial
+          ? { status: initial.status, completed_at: initial.completed_at }
+          : {}),
+      };
+    });
     const { data: inserted, error: rpcError } = await supabase.rpc(
       "apply_lottery_assignments",
       {

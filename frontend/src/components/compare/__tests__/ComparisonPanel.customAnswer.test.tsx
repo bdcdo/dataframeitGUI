@@ -15,6 +15,7 @@ vi.mock("@/components/stats/SuggestFieldDialog", () => ({
 
 import { ComparisonPanel } from "@/components/compare/ComparisonPanel";
 import type { PydanticField } from "@/lib/types";
+import { panelProps, panelResponse } from "./compare-test-helpers";
 
 afterEach(cleanup);
 
@@ -43,58 +44,38 @@ function renderPanel(
       );
     return (
       <ComparisonPanel
-        readOnly={readOnly}
-        projectId="p1"
-        documentId="d1"
-        documentTitle="Nota técnica 1"
-        fieldName="data_parecer"
-        fieldDescription="Data do parecer"
-        fieldType="date"
-        fieldOptions={null}
-        fields={[FIELD]}
-        fieldIndex={0}
-        totalFields={1}
-        responses={[
-          {
-            id: "r-llm",
-            respondent_type: "llm",
-            respondent_id: null,
-            respondent_name: "Robô",
-            answer: "2021-05-10",
-            is_latest: true,
-            isFieldStale: false,
+        {...panelProps({
+          readOnly,
+          documentTitle: "Nota técnica 1",
+          fieldName: "data_parecer",
+          fieldDescription: "Data do parecer",
+          fieldType: "date",
+          fields: [FIELD],
+          responses: [
+            panelResponse({
+              id: "r-llm",
+              respondent_type: "llm",
+              respondent_name: "Robô",
+              answer: "2021-05-10",
+            }),
+          ],
+          onVerdict,
+          // Estes três são o harness stateful deste arquivo: precisam do
+          // `pendingVerdict` local, então não vêm do builder compartilhado.
+          pendingVerdict,
+          onPrepareVerdict: setPendingVerdict,
+          onConfirmPendingVerdict: () => {
+            if (pendingVerdict) {
+              onVerdict(
+                pendingVerdict.verdict,
+                pendingVerdict.kind === "response"
+                  ? pendingVerdict.chosenResponseId
+                  : undefined,
+              );
+            }
           },
-        ]}
-        existingVerdict={null}
-        reviewed={[false]}
-        isDivergent={true}
-        docStatus={{ complete: false }}
-        onFieldNavigate={vi.fn()}
-        onVerdict={onVerdict}
-        pendingVerdict={pendingVerdict}
-        onPrepareVerdict={setPendingVerdict}
-        onConfirmPendingVerdict={() => {
-          if (pendingVerdict) {
-            onVerdict(
-              pendingVerdict.verdict,
-              pendingVerdict.kind === "response"
-                ? pendingVerdict.chosenResponseId
-                : undefined,
-            );
-          }
-        }}
-        onDiscardPendingVerdict={() => setPendingVerdict(null)}
-        isSavingVerdict={false}
-        onMarkReviewed={vi.fn()}
-        comment=""
-        onCommentChange={vi.fn()}
-        commentCount={0}
-        suggestionCount={0}
-        equivalence={{ allow: false, canManageAnyPair: false }}
-        equivalences={[]}
-        onConfirmEquivalent={vi.fn(async () => {})}
-        onUnmarkEquivalencePair={vi.fn(async () => {})}
-        currentUserId="u1"
+          onDiscardPendingVerdict: () => setPendingVerdict(null),
+        })}
         {...staticProps}
       />
     );
