@@ -5,10 +5,14 @@ O backend é internet-facing e usa a service key do Supabase (que bypassa RLS),
 então NÃO pode confiar no caller: toda rota que toca dados ou dispara compute
 precisa validar o JWT do Clerk e checar a autorização do usuário no projeto.
 
-O token é o mesmo que o frontend emite para o Supabase via
-`getToken({ template: "supabase" })`. O RLS identifica o usuário pela claim
-`supabase_uid` (ver migrations 20260401*_clerk_uid_rls.sql), então é ela —
-com fallback para `sub` — que usamos como user_id.
+O token é o mesmo session token que o frontend emite para o Supabase via
+`getToken()`. O RLS identifica o usuário pela claim `supabase_uid` (ver
+migrations 20260401*_clerk_uid_rls.sql), então é ela que usamos como user_id.
+
+O session token do Clerk NÃO emite `aud` (os claims default são azp, exp, fva,
+iat, iss, jti, nbf, sid, sub, v). Quem identifica o emissor — e, portanto,
+separa a instância de produção da de desenvolvimento — é `iss`, exigido sempre
+que o JWKS estiver configurado (ver `_require_issuer`).
 
 Fail-closed: sem configuração de verificação, ou com token/claim inválido, a
 request é rejeitada. Nunca passa.
@@ -61,21 +65,57 @@ def _allowed_algorithms() -> list[str]:
     return []
 
 
+def _require_issuer() -> None:
+    """Exige `clerk_jwt_issuer` quando a verificação é por JWKS (fail-closed).
+
+    Mesmo idioma de `_allowed_algorithms`: config incompleta é problema do
+    servidor, não do caller, então vira 503 — não 401 nem liberação.
+
+    Sem `iss` validado, o único sinal de que um token veio da instância errada
+    seria o `kid` ausente do JWKS, que `verify_jwt` traduz (corretamente, para
+    o caso de rede) em 503 "upstream indisponível". Um cutover de instância mal
+    configurado se apresentaria como indisponibilidade do Clerk.
+
+    Redundante com a guarda de boot em `main.py`, e de propósito — mas a
+    redundância só é justificável enquanto se souber QUANDO ela passa a valer.
+    Hoje: (a) nos testes, que monkeypatcham `settings` diretamente e portanto
+    nunca passam pelo lifespan; (b) em qualquer caminho futuro que importe as
+    rotas sem subir a app (script, worker, task fora do processo do uvicorn).
+    Se um dia o issuer virar validação de carga da config — o que tornaria o
+    estado inválido irrepresentável em vez de checado —, esta função e a guarda
+    do `main.py` saem juntas; enquanto não for o caso, nenhuma das duas sozinha
+    cobre os dois casos acima.
+    """
+    if settings.clerk_jwks_url and not settings.clerk_jwt_issuer:
+        raise HTTPException(
+            status_code=503,
+            detail="Autenticação mal configurada no servidor",
+        )
+
+
 def _decode_kwargs() -> dict:
     # require=["exp"]: rejeita token sem claim de expiração — sem isto, um token
     # sem `exp` jamais expiraria. Vale para HS256 e RS256 (defesa em profundidade).
     options: dict = {"require": ["exp"]}
-    # leeway absorve skew de relógio e expiração de borda: o token do template
-    # "supabase" expira em ~60s e é pollado por minutos, então uma diferença de
-    # alguns segundos entre Clerk e o backend não deve derrubar uma run em curso.
+    # O session token do Clerk não emite `aud`; o PyJWT exige desligar a checagem
+    # explicitamente, senão rejeita todo token por claim ausente. O papel que o
+    # `aud` cumpria (fechar token assinado pela mesma chave mas destinado a outro
+    # consumidor) fica com `iss` — ver `_require_issuer`. A parte que o `iss` não
+    # cobre (qual consumidor, dentro do mesmo emissor) seria papel de `azp`:
+    # avaliado depois do cutover, na issue #533.
+    options["verify_aud"] = False
+    # leeway absorve skew de relógio e expiração de borda: o session token expira
+    # em ~60s e é pollado por minutos, então uma diferença de alguns segundos
+    # entre Clerk e o backend não deve derrubar uma run em curso.
     kwargs: dict = {"leeway": settings.jwt_leeway_seconds}
-    # O template "supabase" costuma emitir aud="authenticated". Só validamos a
-    # audience se ela estiver configurada; caso contrário desligamos a checagem
-    # para não rejeitar tokens válidos.
-    if settings.clerk_jwt_audience:
-        kwargs["audience"] = settings.clerk_jwt_audience
-    else:
-        options["verify_aud"] = False
+    # `issuer` só entra se configurado. No caminho RS256 isso é sempre verdade
+    # (`_require_issuer` cobra antes), mas no de rollback HS256 o issuer segue
+    # opcional — escolha, não esquecimento: ali a chave é o Supabase JWT secret,
+    # que não é emitido pelo Clerk e não tem instância dev/prod para separar.
+    # O custo é que o rollback fica sem `iss` E sem `aud` (que este PR removeu).
+    # O único token HS256 que um terceiro possui assinado com esse secret é a
+    # anon key do Supabase, que não carrega `supabase_uid` e para no 503 abaixo.
+    # Ver test_verify_jwt_hs256_nao_exige_issuer, que fixa esta decisão.
     if settings.clerk_jwt_issuer:
         kwargs["issuer"] = settings.clerk_jwt_issuer
     kwargs["options"] = options
@@ -83,7 +123,7 @@ def _decode_kwargs() -> dict:
 
 
 def verify_jwt(token: str) -> AuthUser:
-    """Valida assinatura/exp/iss/aud do JWT e retorna o usuário.
+    """Valida assinatura/exp/iss do JWT e retorna o usuário.
 
     Agnóstico ao algoritmo: HS256 é validado com o Supabase JWT secret
     (integração legada Clerk↔Supabase); RS256 via JWKS do Clerk.
@@ -104,11 +144,15 @@ def verify_jwt(token: str) -> AuthUser:
             status_code=503, detail="Autenticação não configurada no servidor"
         )
     if alg not in allowed:
+        # Antes de `_require_issuer`: um algoritmo fora da allowlist é recusado
+        # independentemente da config de issuer — o token é inaceitável de
+        # qualquer forma, e o 401 não deve virar 503 conforme o issuer.
         raise HTTPException(
             status_code=401,
             detail=f"Algoritmo de token não aceito: {alg}",
             headers=_BEARER,
         )
+    _require_issuer()
 
     try:
         if alg == "HS256":
@@ -144,12 +188,24 @@ def verify_jwt(token: str) -> AuthUser:
             status_code=401, detail="Token inválido ou expirado", headers=_BEARER
         ) from e
 
-    user_id = claims.get("supabase_uid") or claims.get("sub")
+    user_id = claims.get("supabase_uid")
     if not user_id:
+        # Token válido e assinado pela nossa instância, mas sem a claim que o RLS
+        # usa como identidade. Não há fallback para `sub`: ele é o ID do Clerk
+        # (user_2xxx), que não casa nenhuma linha das tabelas — autorizar com ele
+        # renderia 403/404 "acesso negado" espalhados, escondendo a causa real
+        # (claim ausente na config do session token) atrás de um erro de permissão.
+        # 503, não 401: a credencial está boa; quem está quebrado é o servidor.
+        # Este ramo também pega o usuário recém-criado cujo vínculo ainda não foi
+        # gravado no metadata do Clerk — caso legítimo, que precisa ser resolvido
+        # no fluxo de pós-login e não aqui: ver issue #532.
+        logger.error(
+            "Token sem claim `supabase_uid` — verificar os custom claims do "
+            "session token na instância Clerk (iss=%s).",
+            claims.get("iss"),
+        )
         raise HTTPException(
-            status_code=401,
-            detail="Token sem identificação de usuário",
-            headers=_BEARER,
+            status_code=503, detail="Autenticação mal configurada no servidor"
         )
     return AuthUser(id=str(user_id))
 

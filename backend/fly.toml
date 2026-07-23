@@ -43,5 +43,28 @@ kill_timeout = "5m"
   CORS_ORIGINS = '["https://dataframeit.com.br", "https://gui-analise-sistematica-frontend.fly.dev", "https://ac.brunodcdo.com.br", "http://localhost:3000"]'
   LLM_RATE_LIMIT_REQUESTS = "5"
   LLM_RATE_LIMIT_WINDOW_SECONDS = "60"
+  # Identidade da instância Clerk. Não são secrets: o JWKS é um endpoint público
+  # e o issuer é a URL da Frontend API. Ficam aqui, e não em `fly secrets`, para
+  # que a troca de instância (dev -> produção) seja um diff revisável num PR em
+  # vez de dois `fly secrets set` fora de banda que podem divergir entre si.
+  # Os dois andam juntos: o boot falha se o JWKS estiver setado sem o issuer
+  # (main.py), porque é o issuer que distingue as instâncias.
+  #
+  # ATENÇÃO ao trocar de instância: um `fly secret` de mesmo nome SOMBREIA o
+  # valor daqui, silenciosamente (já aconteceu neste app com CORS_ORIGINS).
+  # Se o secret CLERK_JWKS_URL ainda existir, editar só este arquivo deixa o
+  # JWKS na instância antiga e o issuer na nova — e o par divergente é
+  # justamente o que a validação de `iss` existe para tornar diagnosticável.
+  # Conferir com `fly secrets list -a gui-analise-sistematica-api` e, se
+  # aparecer, `fly secrets unset CLERK_JWKS_URL -a gui-analise-sistematica-api`.
+  #
+  # O slug abaixo é da instância de DESENVOLVIMENTO do Clerk (o domínio
+  # `.clerk.accounts.dev` denuncia isso; produção seria `clerk.<domínio>`). É o
+  # estado corrente e correto: a troca para a instância de produção é a etapa B
+  # da #348, adiada porque exige um app OAuth próprio no Google Cloud Console.
+  # Quando ela acontecer, estas duas linhas mudam JUNTAS — e só valerão de fato
+  # depois do `fly secrets unset` acima.
+  CLERK_JWKS_URL = "https://innocent-foxhound-88.clerk.accounts.dev/.well-known/jwks.json"
+  CLERK_JWT_ISSUER = "https://innocent-foxhound-88.clerk.accounts.dev"
   # ENABLE_DOCS ausente de propósito: o default fail-safe (config.py) mantém
   # /docs, /redoc e /openapi.json fechados em produção. NÃO adicionar aqui.

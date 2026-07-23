@@ -95,11 +95,20 @@ cd backend
 fly secrets set SUPABASE_URL=https://xxx.supabase.co \
   SUPABASE_SERVICE_KEY=your-key \
   AUTO_REVIEW_RECONCILIATION_SECRET=the-same-long-random-secret \
-  CLERK_JWKS_URL='https://<slug>.clerk.accounts.dev/.well-known/jwks.json' \
   -a gui-analise-sistematica-api
-# CORS_ORIGINS fica em [env] no fly.toml (origens permitidas, JSON array).
+# CORS_ORIGINS, CLERK_JWKS_URL e CLERK_JWT_ISSUER ficam em [env] no fly.toml:
+# nenhum é secret (o JWKS é endpoint público, o issuer é a URL da Frontend API),
+# e mantê-los no toml faz da troca de instância Clerk um diff revisável.
 fly deploy -c fly.toml -a gui-analise-sistematica-api   # fallback; o normal é via CI
 ```
+
+`CLERK_JWKS_URL` já existiu como secret deste app. Enquanto o secret existir, ele **sombreia o `[env]` homônimo** do `fly.toml` — o valor versionado é ignorado em silêncio (o mesmo já aconteceu aqui com `CORS_ORIGINS`). Depois do primeiro deploy que traz a variável para o `[env]`, remover o secret:
+
+```bash
+fly secrets unset CLERK_JWKS_URL -a gui-analise-sistematica-api
+```
+
+Enquanto os dois valores forem idênticos a ordem deploy → unset não tem downtime; a inversa teria. O risco de deixar o secret para trás aparece na *próxima* troca de instância Clerk: o `fly.toml` apontaria para o JWKS novo, o secret continuaria servindo o antigo, e o par JWKS/issuer divergiria — exatamente o modo de falha que a validação de `iss` existe para tornar diagnosticável.
 
 Verificar: `curl https://gui-analise-sistematica-api.fly.dev/health`
 
@@ -127,7 +136,8 @@ Mudanças que dependem de RPCs, constraints ou colunas novas seguem ordem estrit
 |----------|------|-----------|
 | `SUPABASE_URL` | Backend (Fly.io) | URL do projeto Supabase |
 | `SUPABASE_SERVICE_KEY` | Backend (Fly.io) | Service role key |
-| `CLERK_JWKS_URL` | Backend (Fly.io) | URL do JWKS do Clerk (verificação RS256 do JWT) |
+| `CLERK_JWKS_URL` | Backend (`fly.toml [env]`) | URL do JWKS do Clerk (verificação RS256 do JWT) |
+| `CLERK_JWT_ISSUER` | Backend (`fly.toml [env]`) | Frontend API URL da instância Clerk; identifica o tenant. Obrigatório com `CLERK_JWKS_URL` — sem ele o backend não sobe |
 | `CORS_ORIGINS` | Backend (`fly.toml [env]`) | JSON array de origens permitidas |
 | `NEXT_PUBLIC_SUPABASE_URL` | Frontend (`fly.toml [build.args]`) | URL do projeto Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Frontend (`fly.toml [build.args]`) | Anon/publishable key |

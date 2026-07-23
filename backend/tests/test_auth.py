@@ -38,6 +38,12 @@ USER = "11111111-1111-1111-1111-111111111111"
 PROJECT = "22222222-2222-2222-2222-222222222222"
 JOB = "33333333-3333-3333-3333-333333333333"
 
+# Duas instâncias Clerk: a "de produção" (que o backend aceita) e a "de
+# desenvolvimento" (que ele deve recusar). É esse par que exercita o cutover —
+# ver test_verify_jwt_rs256_issuer_de_outra_instancia_rejeitado.
+ISSUER = "https://clerk.test-prod.example/"
+ISSUER_DEV = "https://test-dev.clerk.accounts.dev"
+
 
 def make_token(claims: dict | None = None, secret: str = SECRET) -> str:
     payload = {
@@ -55,19 +61,37 @@ def rsa_private_key():
 
 
 def make_rs256_token(private_key, claims: dict | None = None) -> str:
+    """Token RS256 com a forma real de um session token do Clerk.
+
+    Espelha os claims default do session token (azp, iat, jti, nbf, sid, sub, v)
+    mais os custom claims que a instância injeta (`supabase_uid` para o
+    `clerk_uid()` do RLS, `role` para o PostgREST). Note a **ausência de `aud`**:
+    o session token não emite essa claim, ao contrário do JWT template legado.
+    """
+    now = int(time.time())
     payload = {
+        "azp": "https://app.test",
+        "exp": now + 3600,
+        "iat": now,
+        "iss": ISSUER,
+        "jti": "abc123",
+        "nbf": now - 1,
+        "sid": "sess_test",
+        "sub": "user_2TestClerkId",
+        "v": 2,
+        "role": "authenticated",
         "supabase_uid": USER,
-        "exp": int(time.time()) + 3600,
         **(claims or {}),
     }
     return jwt.encode(payload, private_key, algorithm="RS256")
 
 
-def configure_rs256(monkeypatch, public_key):
+def configure_rs256(monkeypatch, public_key, issuer: str = ISSUER):
     # Liga o caminho RS256 e faz o PyJWKClient devolver a chave pública dada,
     # sem rede: substitui `_get_jwks_client`.
     monkeypatch.setattr(settings, "supabase_jwt_secret", "")
     monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", issuer)
     fake_client = SimpleNamespace(
         get_signing_key_from_jwt=lambda token: SimpleNamespace(key=public_key)
     )
@@ -147,7 +171,16 @@ def _configure_secret(monkeypatch):
     monkeypatch.setattr(settings, "supabase_jwt_secret", SECRET)
     monkeypatch.setattr(settings, "clerk_jwks_url", "")
     monkeypatch.setattr(settings, "clerk_jwt_issuer", "")
-    monkeypatch.setattr(settings, "clerk_jwt_audience", "")
+
+
+@pytest.fixture(autouse=True)
+def _reset_jwks_client():
+    # `_jwks_client` é global de módulo (auth.py): sem zerar entre testes, um
+    # cliente construído com a URL de um teste vaza para o seguinte e a falha
+    # aparece longe da causa.
+    auth_mod._jwks_client = None
+    yield
+    auth_mod._jwks_client = None
 
 
 def use_supabase(monkeypatch, fake):
@@ -162,9 +195,15 @@ def test_verify_jwt_valid_extracts_supabase_uid():
     assert user == AuthUser(id=USER)
 
 
-def test_verify_jwt_falls_back_to_sub():
-    token = make_token({"supabase_uid": None, "sub": "clerk-abc"})
-    assert verify_jwt(token).id == "clerk-abc"
+def test_verify_jwt_sem_supabase_uid_e_503_e_nao_usa_sub():
+    # Token bem assinado mas sem a claim que o RLS usa como identidade. Não há
+    # fallback para `sub` (o ID do Clerk, que não casa nenhuma linha): isso viraria
+    # 403/404 espalhados, escondendo a config quebrada atrás de "acesso negado".
+    # 503 porque a credencial está boa — quem está mal configurado é o servidor.
+    token = make_token({"supabase_uid": None, "sub": "user_2TestClerkId"})
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(token)
+    assert exc.value.status_code == 503
 
 
 def test_verify_jwt_wrong_signature_rejected():
@@ -264,6 +303,12 @@ def test_verify_jwt_hs256_rejected_when_jwks_configured(monkeypatch):
     # allowlist de algoritmos e é rejeitado (401), sem nem tentar decodificar.
     monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
     # supabase_jwt_secret continua setado (coexistência), mas HS256 não é aceito.
+    #
+    # Este teste também fixa a ORDENAÇÃO dentro de `verify_jwt`: a fixture
+    # autouse deixa o issuer vazio, então JWKS ligado sem issuer é justamente o
+    # estado em que `_require_issuer` responderia 503. O 401 asserido aqui só se
+    # mantém enquanto a allowlist de algoritmo for consultada ANTES do gate de
+    # issuer — inverter as duas linhas em auth.py quebra esta asserção.
     with pytest.raises(HTTPException) as exc:
         verify_jwt(make_token())
     assert exc.value.status_code == 401
@@ -276,8 +321,11 @@ def _raise_jwks_outage(token):
 def test_verify_jwt_rs256_jwks_outage_is_503(monkeypatch, rsa_private_key):
     # Indisponibilidade do JWKS (rede/5xx do Clerk) é fail-closed: 503, não 401.
     # Sem isto, um blip no upstream viraria invalidação de token em massa.
+    # O issuer é setado para que o 503 aqui prove a indisponibilidade — e não
+    # seja o 503 de `_require_issuer` passando por baixo.
     monkeypatch.setattr(settings, "supabase_jwt_secret", "")
     monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", ISSUER)
     fake_client = SimpleNamespace(get_signing_key_from_jwt=_raise_jwks_outage)
     monkeypatch.setattr(auth_mod, "_get_jwks_client", lambda: fake_client)
     with pytest.raises(HTTPException) as exc:
@@ -285,26 +333,103 @@ def test_verify_jwt_rs256_jwks_outage_is_503(monkeypatch, rsa_private_key):
     assert exc.value.status_code == 503
 
 
-def test_verify_jwt_valid_audience_accepted(monkeypatch):
-    monkeypatch.setattr(settings, "clerk_jwt_audience", "authenticated")
-    user = verify_jwt(make_token({"aud": "authenticated"}))
-    assert user.id == USER
+# ------------------- forma de produção: session token RS256 -------------------
+# Estes exercitam a configuração REAL do deploy (RS256 + JWKS + issuer), que
+# nenhum outro teste tocava: os demais rodam HS256 sem issuer. Era essa lacuna
+# que deixava a suíte verde enquanto produção rejeitaria todo token.
 
 
-def test_verify_jwt_wrong_audience_rejected(monkeypatch):
-    # aud configurada e diferente da do token → 401.
-    monkeypatch.setattr(settings, "clerk_jwt_audience", "authenticated")
+def test_verify_jwt_session_token_sem_aud_e_aceito(monkeypatch, rsa_private_key):
+    # O session token do Clerk não emite `aud`. Um token com a forma real de
+    # produção precisa passar — se este teste falhar com 401, a checagem de
+    # audience voltou e o cutover quebra inteiro.
+    configure_rs256(monkeypatch, rsa_private_key.public_key())
+    token = make_rs256_token(rsa_private_key)
+    assert "aud" not in jwt.decode(token, options={"verify_signature": False})
+    assert verify_jwt(token).id == USER
+
+
+def test_verify_jwt_rs256_issuer_de_outra_instancia_rejeitado(
+    monkeypatch, rsa_private_key
+):
+    # O cutover errado: token emitido pela instância de desenvolvimento chegando
+    # num backend configurado para a de produção. É o trabalho que o `aud` fingia
+    # fazer e que o `iss` faz de verdade — e a razão de o issuer ser obrigatório.
+    configure_rs256(monkeypatch, rsa_private_key.public_key())
+    token = make_rs256_token(rsa_private_key, {"iss": ISSUER_DEV})
     with pytest.raises(HTTPException) as exc:
-        verify_jwt(make_token({"aud": "outra-audiencia"}))
+        verify_jwt(token)
     assert exc.value.status_code == 401
 
 
-def test_verify_jwt_missing_audience_rejected_when_required(monkeypatch):
-    # aud configurada mas ausente no token → 401 (não passa batido).
-    monkeypatch.setattr(settings, "clerk_jwt_audience", "authenticated")
+def test_verify_jwt_rs256_sem_issuer_configurado_e_503(monkeypatch, rsa_private_key):
+    # JWKS ligado sem issuer é config incompleta: 503 (culpa do servidor), não
+    # 401 nem liberação. Espelha `_allowed_algorithms` vazio.
+    configure_rs256(monkeypatch, rsa_private_key.public_key())
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", "")
     with pytest.raises(HTTPException) as exc:
-        verify_jwt(make_token())
+        verify_jwt(make_rs256_token(rsa_private_key))
+    assert exc.value.status_code == 503
+
+
+def test_verify_jwt_hs256_nao_exige_issuer():
+    # Invariante inversa da anterior: a exigência de issuer é do caminho JWKS, e
+    # o rollback HS256 continua aceitando token sem `iss` (nem `aud`, que saiu
+    # deste PR). Não é esquecimento: ali a chave é o Supabase JWT secret, que não
+    # é emitido pelo Clerk e não tem instância dev/prod para separar. Sem este
+    # teste, transformar `_require_issuer` em "exige sempre" passaria verde e
+    # derrubaria o rollback justamente quando ele fosse necessário.
+    # As fixtures autouse já deixam HS256 ligado com jwks e issuer vazios.
+    # Cobre só a AUSÊNCIA da exigência; que o `iss` continua sendo conferido
+    # quando configurado — o estado real de um rollback, com o issuer ainda no
+    # `[env]` — é o teste seguinte.
+    token = make_token()
+    assert "iss" not in jwt.decode(token, options={"verify_signature": False})
+    assert verify_jwt(token).id == USER
+
+
+def test_verify_jwt_hs256_valida_issuer_quando_configurado(monkeypatch):
+    # A forma REAL do rollback, que o teste acima não exercita: sai o
+    # CLERK_JWKS_URL, entra o SUPABASE_JWT_SECRET — e o CLERK_JWT_ISSUER
+    # continua no `[env]` do fly.toml, porque ninguém edita o toml no meio de um
+    # incidente. Nesse estado `_decode_kwargs` passa `issuer` ao PyJWT
+    # independentemente do algoritmo, então o caminho HS256 *valida* `iss` mesmo
+    # sem `_require_issuer` cobrar. Não é contradição com o teste acima: "não
+    # exige a claim" e "confere a claim quando o issuer está configurado" são
+    # invariantes distintas, e é esta que o deploy de rollback executaria.
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", ISSUER)
+    assert verify_jwt(make_token({"iss": ISSUER})).id == USER
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_token({"iss": ISSUER_DEV}))
     assert exc.value.status_code == 401
+
+
+def test_verify_jwt_session_token_sem_supabase_uid_e_503(monkeypatch, rsa_private_key):
+    # O modo de falha silencioso do cutover: custom claim não replicado na
+    # instância nova. Sem isto, `clerk_uid()` vira NULL e o RLS nega tudo sem
+    # erro nenhum. Aqui, ao menos o backend fala alto.
+    configure_rs256(monkeypatch, rsa_private_key.public_key())
+    token = make_rs256_token(rsa_private_key, {"supabase_uid": None})
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(token)
+    assert exc.value.status_code == 503
+
+
+def test_lifespan_jwks_sem_issuer_derruba_o_boot(monkeypatch):
+    # Config incompleta mata o processo em vez de virar 503 difuso em produção:
+    # /health nunca fica verde e o Fly não transfere tráfego para a máquina nova.
+    monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", "")
+    with pytest.raises(RuntimeError, match="CLERK_JWT_ISSUER"):
+        with TestClient(main.app):
+            pass  # pragma: no cover — o boot levanta antes
+
+
+def test_lifespan_jwks_com_issuer_sobe(monkeypatch):
+    monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", ISSUER)
+    with TestClient(main.app) as client:
+        assert client.get("/health").status_code == 200
 
 
 # ---------------------- require_authenticated_user ----------------------

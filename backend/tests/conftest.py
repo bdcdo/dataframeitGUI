@@ -20,9 +20,10 @@ TEST_USER_ID = "00000000-0000-0000-0000-000000000001"
 @pytest.fixture(autouse=True)
 def _auth_secret(monkeypatch):
     monkeypatch.setattr(settings, "supabase_jwt_secret", TEST_JWT_SECRET)
+    # JWKS vazio mantém estes testes no caminho HS256, onde o issuer não é
+    # exigido (services/auth.py:_require_issuer só cobra com JWKS ligado).
     monkeypatch.setattr(settings, "clerk_jwks_url", "")
     monkeypatch.setattr(settings, "clerk_jwt_issuer", "")
-    monkeypatch.setattr(settings, "clerk_jwt_audience", "")
 
 
 @pytest.fixture
