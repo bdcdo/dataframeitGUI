@@ -16,15 +16,12 @@ const { toastSuccess, toastError } = vi.hoisted(() => ({
   toastError: vi.fn(),
 }));
 
-// requireSupabaseToken delega ao getToken passado (réplica do real): busca o
-// token do template "supabase" e lança se vier nulo.
-vi.mock("@/lib/api", () => ({
+// requireSupabaseToken real (via importOriginal): só a fronteira externa
+// (fetchFastAPI) é mockada; getToken já é dublê via o mock de @clerk/nextjs, então
+// o helper real roda contra ele e sua falha-fechada fica sob cobertura de verdade.
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   fetchFastAPI,
-  requireSupabaseToken: async (gt: () => Promise<string | null>) => {
-    const t = await gt();
-    if (!t) throw new Error("MissingAuthTokenError");
-    return t;
-  },
 }));
 vi.mock("@/actions/llm", () => ({ cleanupStaleLlmRuns, getRunningLlmJob }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));

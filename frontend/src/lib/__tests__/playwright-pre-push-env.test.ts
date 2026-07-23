@@ -1,8 +1,10 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
   assertRequiredPrePushEnv,
+  danglingEnvironmentLinks,
   requiredPrePushEnv,
 } from "../../../playwright-pre-push-env";
 import {
@@ -85,4 +87,56 @@ describe("assertRequiredPrePushEnv", () => {
       );
     },
   );
+
+  // Symlink de ambiente apontando para worktree removida era diagnosticado como
+  // "faltando 10 variáveis" — três saltos longe da causa. A mensagem agora
+  // nomeia o link e o alvo morto.
+  describe("diagnóstico de symlink de ambiente pendente", () => {
+    function withFixture(run: (frontend: string) => void) {
+      const root = mkdtempSync(join(tmpdir(), "pre-push-env-"));
+      try {
+        const frontend = join(root, "frontend");
+        mkdirSync(frontend, { recursive: true });
+        run(frontend);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    it("nomeia o arquivo e o alvo inexistente na mensagem", () => {
+      withFixture((frontend) => {
+        const removed = join(frontend, "..", "worktree-removida", ".env.local");
+        symlinkSync(removed, join(frontend, ".env.local"));
+
+        expect(() =>
+          assertRequiredPrePushEnv(
+            { ...completeRequiredEnv, CLERK_SECRET_KEY: undefined },
+            frontend,
+          ),
+        ).toThrow(/symlink de ambiente apontando para alvo inexistente/);
+        expect(danglingEnvironmentLinks(frontend)).toEqual([
+          { file: ".env.local", target: removed },
+        ]);
+      });
+    });
+
+    it("não acusa link pendente quando o alvo existe", () => {
+      withFixture((frontend) => {
+        const source = join(frontend, "..", "fonte");
+        mkdirSync(source, { recursive: true });
+        writeFileSync(join(source, ".env.local"), "X=1\n");
+        symlinkSync(join(source, ".env.local"), join(frontend, ".env.local"));
+
+        expect(danglingEnvironmentLinks(frontend)).toEqual([]);
+      });
+    });
+
+    it("não acusa link pendente quando o arquivo é real", () => {
+      withFixture((frontend) => {
+        writeFileSync(join(frontend, ".env.local"), "X=1\n");
+
+        expect(danglingEnvironmentLinks(frontend)).toEqual([]);
+      });
+    });
+  });
 });

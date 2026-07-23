@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { isCodingComplete } from "@/lib/coding-completeness";
+import { responseQualifiesForVersion } from "@/lib/compare-version";
+import type { VersionedResponse } from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 const drainAutoReviewReconciliationRequests = vi.hoisted(() => vi.fn(async () => ({
@@ -491,6 +493,53 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.responseInsertPayload?.pydantic_hash).toBe("hash-1");
     expect(state.responseInsertPayload?.schema_version_major).toBe(1);
     expect(state.responseInsertPayload?.version_inferred_from).toBe("live_save");
+  });
+
+  it("submit que recodifica a response legacy por completo a devolve à fila latest_major (#548)", async () => {
+    // Critério de aceite da #548, acoplando saveResponse a
+    // responseQualifiesForVersion: uma response legacy (sentinela) recodificada
+    // por inteiro num submit explícito precisa (a) estampar a proveniência
+    // corrente, (b) promover pydantic_hash + schema_version e (c) voltar a
+    // qualificar para o piso `latest_major`. Antes do #548 o mapa saía `{}`, as
+    // colunas eram omitidas e o gate curto-circuitava em `pydantic_hash === null`.
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: null,
+    };
+
+    const saveResponse = await loadSaveResponse();
+    // Submit explícito (isAutoSave default = false) completando o schema atual.
+    await saveResponse("proj-1", "doc-1", { q1: "b" });
+
+    // (a) proveniência corrente estampada — deixa de ser o sentinela.
+    expect(state.responseUpdatePayload?.answer_field_hashes).toEqual({ q1: "h1" });
+    // (b) colunas de versão promovidas.
+    expect(state.responseUpdatePayload?.pydantic_hash).toBe("hash-1");
+    expect(state.responseUpdatePayload?.schema_version_major).toBe(1);
+    expect(state.responseUpdatePayload?.version_inferred_from).toBe("live_save");
+
+    // (c) o payload gravado qualifica para o piso da major corrente.
+    const payload = state.responseUpdatePayload as Record<string, unknown>;
+    const versioned: VersionedResponse = {
+      respondent_type: "humano",
+      is_latest: true,
+      pydantic_hash: payload.pydantic_hash as string,
+      schema_version_major: payload.schema_version_major as number,
+      schema_version_minor: payload.schema_version_minor as number,
+      schema_version_patch: payload.schema_version_patch as number,
+    };
+    expect(
+      responseQualifiesForVersion(
+        versioned,
+        { major: 1, minor: 0, patch: 0 },
+        { pydanticHash: "hash-1", version: { major: 1, minor: 0, patch: 0 } },
+      ),
+    ).toBe(true);
   });
 
   it("auto-save com campo obrigatorio vazio mantem pendente em em_andamento", async () => {
