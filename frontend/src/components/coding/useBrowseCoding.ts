@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useBrowseDocuments } from "@/hooks/useBrowseDocuments";
 import { useDocumentForCoding } from "@/hooks/useDocumentForCoding";
 import { saveCodingResponse } from "@/lib/coding-autosave";
+import { notifySaved } from "@/lib/coding-save-feedback";
 import { type CodingDraft } from "./BrowseDocCoder";
 import type { AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import type { AssignedDoc } from "@/lib/types";
@@ -120,7 +121,7 @@ export function useBrowseCoding({
         });
         if (result.success) {
           markClean(browseDocId);
-          toast.success("Respostas salvas!");
+          notifySaved(result.missingRequired);
           markResponded(browseDocId);
           browseDraftRef.current = null;
           // Zera o ?doc= ANTES de invalidar: com browseDocId já null o hook não
