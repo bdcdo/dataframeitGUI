@@ -2,6 +2,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { unstable_rethrow } from "next/navigation";
 import { cache } from "react";
 import { getVerifiedPrimaryEmail } from "@/lib/clerk-primary-email";
+import { readSupabaseUidFromMetadata } from "@/lib/clerk-supabase-uid";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import type { Project, ProjectMember } from "@/lib/types";
@@ -100,7 +101,7 @@ async function resolveAuthUncached(): Promise<AuthResolution> {
   const user = await currentUser();
   if (!user) return { status: "signed-out" };
 
-  const metadataUid = user.publicMetadata.supabase_uid as string | undefined;
+  const metadataUid = readSupabaseUidFromMetadata(user);
   const email = getVerifiedPrimaryEmail(user);
 
   // AuthUser exige o e-mail primário verificado em qualquer estado do vínculo.

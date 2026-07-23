@@ -11,6 +11,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let token: string | null = null;
 const getTokenArgs: unknown[][] = [];
 
+// A metadata do Clerk decide se um token sem claim é config quebrada (uid
+// presente → cutover → lança) ou vínculo ainda pendente (uid ausente → deixa a
+// página redirecionar). Default: uid presente, o estado em que a ausência do
+// claim no token é o bug do cutover que a barreira existe para pegar.
+let metadataUid: string | undefined = "11111111-1111-1111-1111-111111111111";
 vi.mock("@clerk/nextjs/server", () => ({
   auth: async () => ({
     getToken: async (...args: unknown[]) => {
@@ -18,6 +23,7 @@ vi.mock("@clerk/nextjs/server", () => ({
       return token;
     },
   }),
+  currentUser: async () => ({ publicMetadata: { supabase_uid: metadataUid } }),
 }));
 
 const created: Array<{ headers: Record<string, string> }> = [];
@@ -49,6 +55,7 @@ beforeEach(() => {
   created.length = 0;
   getTokenArgs.length = 0;
   token = null;
+  metadataUid = "11111111-1111-1111-1111-111111111111";
 });
 
 describe("createSupabaseServer — contrato do session token", () => {
@@ -67,12 +74,34 @@ describe("createSupabaseServer — contrato do session token", () => {
     expect(getTokenArgs).toEqual([[]]);
   });
 
-  it("lança quando falta supabase_uid (clerk_uid() viraria NULL)", async () => {
+  it("lança quando falta supabase_uid E a metadata TEM o vínculo (cutover)", async () => {
     // O modo de falha de uma troca de instância: o custom claim não foi
-    // replicado no Dashboard novo. Sem esta barreira, a RLS negaria tudo em
+    // replicado no Dashboard novo. Metadata com uid + token sem claim = config
+    // quebrada, não vínculo pendente. Sem esta barreira, a RLS negaria tudo em
     // silêncio e o dashboard apareceria vazio, sem erro nenhum.
     token = jwtWith({ ...VALID, supabase_uid: undefined });
     await expect(createSupabaseServer()).rejects.toThrow(/supabase_uid/);
+  });
+
+  it("NÃO lança quando o vínculo ainda está pendente (link-pending)", async () => {
+    // O bloqueador que esta lógica corrige: um usuário recém-criado, com sessão
+    // Clerk mas sem `supabase_uid` na metadata, chegando por deep-link numa
+    // página protegida. Do token puro é idêntico ao cutover, mas a metadata
+    // ainda não tem o uid. Lançar aqui atropelaria o redirect gracioso da
+    // conclusão de acesso — e como toda página faz
+    // `Promise.all([requirePageAuthUser(), createSupabaseServer()])`, o crash
+    // venceria o redirect. Aqui a barreira se cala e devolve o cliente.
+    metadataUid = undefined;
+    token = jwtWith({ ...VALID, supabase_uid: undefined });
+    await expect(createSupabaseServer()).resolves.toBeDefined();
+  });
+
+  it("NÃO lança quando falta role mas a metadata não tem vínculo", async () => {
+    // Simetria do anterior no ramo do `role`: sem uid na metadata, a conta ainda
+    // está em reparo e a página redireciona; a barreira não atropela.
+    metadataUid = undefined;
+    token = jwtWith({ ...VALID, role: undefined });
+    await expect(createSupabaseServer()).resolves.toBeDefined();
   });
 
   it('lança quando role !== "authenticated" (PostgREST trataria como anon)', async () => {
