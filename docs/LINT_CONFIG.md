@@ -148,6 +148,15 @@ As três supressões abaixo têm uma característica em comum que vale registrar
 
 Os outros cinco errors da 0.7.8 eram defeito real e foram corrigidos, não suprimidos — os dois `no-effect-with-fresh-deps` de `ComparePage` (arrows inline no array de deps de `useCompareKeyboard` religavam o listener de `keydown` a cada render; viraram `useCallback`, o que também matou os dois `exhaustive-deps` das mesmas linhas), os dois `no-impure-state-updater` (`AutoReviewFooter`, `AgreementGroup`) e o `no-hydration-branch-on-browser-global` de `DocumentList`. Este último era divergência de hidratação de verdade: a URL do botão de copiar era montada no render com `window.location.origin`, que o servidor emite como `""`. A correção eliminou o estado em vez de sincronizá-lo — `CopyLinkButton` passou a resolver a URL absoluta **no clique**, via `new URL(url, window.location.href)`, o que serve tanto às URLs relativas do app quanto às absolutas de `parecerUrl` sem ramo por tipo.
 
+## `js-set-map-lookups` suprimida em `clerk-sync.ts` e `schema-utils.ts`
+
+A regra acusa `array.includes()` dentro de laço e pede um `Set`. Ela pressupõe que o array pesquisado é **compartilhado** entre as iterações — é aí que a troca paga. Dos 11 disparos da 0.7.8, oito eram desse tipo e viraram `Set` de fato. Os três suprimidos aqui não são:
+
+- `src/lib/clerk-sync.ts:450` — `getVerifiedEmailIdentity(user)?.verifiedEmails.includes(email)` roda dentro de `users.filter(...)`, mas `verifiedEmails` é a lista **daquele usuário**: um `Set` teria de ser construído por iteração, para uma única consulta, o que é estritamente pior que o `includes`. Some-se que o `getUserList` acima limita a busca a `limit: 2`.
+- `src/lib/schema-utils.ts:278,290` — `c.in.includes(removedOption)` e `c.not_in.includes(removedOption)` percorrem a condição **de cada campo**, procurando um único valor. Mesmo caso: array por item, uma consulta só.
+
+Se algum desses laços passar a consultar um array compartilhado, remover o override — a regra continua ativa no resto do projeto e pegou os oito casos legítimos sem ajuda.
+
 ## Regras que deixaram de ser FP
 
 `server-no-mutable-module-state` deixou de ser FP após o uso de `Object.freeze()` em `TAG_PROFILE` (ver `actions/documents.ts` e `actions/members.ts`) e em `AUTOMATION_MODE_VALUES` (`actions/projects.ts`).
