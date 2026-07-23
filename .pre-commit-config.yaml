@@ -76,13 +76,17 @@ repos:
       # pre-commit faz auto-stash dos unstaged, o
       # working tree fica == staged, entao enxerga o que vai ser commitado.
       #
-      # --blocking error bloqueia so diagnosticos error-level: codigo novo e
-      # barrado, o debito legado de warnings fica grandfathered. O hook invoca o
-      # binario pinado em frontend/node_modules/.bin — nao `npx`. Se ausente,
-      # falha fechado pedindo `npm install` em frontend/.
+      # --blocking warning bloqueia diagnosticos error E warning: agora que a
+      # contagem esta zerada (bump 0.7.8, ver docs/LINT_CONFIG.md), codigo novo
+      # com qualquer diagnostico e barrado; o debito legado fica grandfathered
+      # pelo escopo line-scoped. O hook invoca o binario pinado em
+      # frontend/node_modules/.bin — nao `npx` —, e uma guarda de versao no
+      # script falha fechado se o instalado divergir do pino (node_modules
+      # stale media com a ferramenta errada em silencio). Logica no script para
+      # evitar inferno de aspas no YAML.
       - id: react-doctor
-        name: react-doctor (changed lines, fail on new errors)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/react-doctor && exec ./node_modules/.bin/react-doctor . --scope changed --base HEAD --blocking error || { echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        name: react-doctor (changed lines, fail on new warnings/errors)
+        entry: bash frontend/scripts/react-doctor-gate.sh
         language: system
         files: ^frontend/.*\.(mts|ts|tsx)$
         pass_filenames: false
