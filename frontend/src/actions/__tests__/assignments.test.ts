@@ -44,6 +44,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import {
+  cycleAssignment,
   getLotteryDocStats,
   previewLottery,
   smartRandomize,
@@ -354,5 +355,225 @@ describe("sorteio de comparação: um revisor por documento (#490)", () => {
       (c) => c.table === "assignment_batches" && c.op === "insert",
     );
     expect(lote?.payload).toMatchObject({ researchers_per_doc: 1 });
+  });
+});
+
+// Regressão da issue #521: o assignment de codificação criado DEPOIS da response
+// (documento codificado pelo Explorar, antes de existir atribuição) nascia
+// 'pendente' e ficava eternamente pendente na fila — syncCodingAssignmentStatus
+// só roda no save, que já tinha acontecido.
+describe("status inicial do assignment de codificação (#521)", () => {
+  const FIELDS = [
+    { name: "q1", type: "single", options: ["a", "b"], description: "" },
+    { name: "q2", type: "single", options: ["a", "b"], description: "" },
+  ];
+  const PROJECT_ROW = {
+    min_responses_for_comparison: 2,
+    automation_mode: null,
+    pydantic_fields: FIELDS,
+    round_strategy: "schema_version",
+    current_round_id: null,
+    schema_version_major: 1,
+    schema_version_minor: 0,
+    schema_version_patch: 0,
+  };
+  const CURRENT_VERSION = {
+    schema_version_major: 1,
+    schema_version_minor: 0,
+    schema_version_patch: 0,
+  };
+  const CODED_AT = "2026-07-20T10:00:00.000Z";
+
+  // Um documento e um participante: o sorteio cria exatamente o par (d1, u1),
+  // o mesmo par que já tem response humana.
+  function codingFixture(responseRows: unknown[], answerRows: unknown[]): TableResults {
+    return {
+      project_members: { data: [{ user_id: "u1" }] },
+      lottery_doc_stats: {
+        data: [
+          {
+            id: "d1",
+            external_id: "EXT-1",
+            title: "Doc 1",
+            human_coding_count: 1,
+            has_llm_response: false,
+            active_codificacao: 0,
+            active_comparacao: 0,
+            has_any_assignment_ever: false,
+            batch_ids: [],
+          },
+        ],
+      },
+      // Fila: leitura da lista de lotes no computeLottery e, depois, o insert
+      // do lote deste sorteio.
+      assignment_batches: [{ data: [] }, { data: { id: "b1" } }],
+      projects: { data: PROJECT_ROW },
+      assignments: { data: [] },
+      // Fila: fase 1 (linhas leves, sem answers) e fase 2 (answers dos pares).
+      responses: [{ data: responseRows }, { data: answerRows }],
+    };
+  }
+
+  const lotteryParams: LotteryParams = {
+    projectId: "p1",
+    type: "codificacao",
+    mode: "append",
+    balancing: "round",
+    researchersPerDoc: 1,
+    participantIds: ["u1"],
+  };
+
+  function rpcRows() {
+    const rpc = rpcCalls.find((c) => c.fn === "apply_lottery_assignments");
+    return (rpc?.args as { p_assignments: Record<string, unknown>[] }).p_assignments;
+  }
+
+  beforeEach(() => {
+    rpcResults = { apply_lottery_assignments: { data: 1 } };
+  });
+
+  it("sorteio manda 'concluido' + completed_at quando o sorteado já codificou o documento", async () => {
+    serverTableResults = codingFixture(
+      [
+        {
+          id: "r1",
+          document_id: "d1",
+          respondent_id: "u1",
+          updated_at: CODED_AT,
+          round_id: null,
+          is_partial: false,
+          ...CURRENT_VERSION,
+        },
+      ],
+      [{ id: "r1", answers: { q1: "a", q2: "b" }, answer_field_hashes: {} }],
+    );
+
+    const result = await smartRandomize(lotteryParams);
+
+    expect(result.error).toBeUndefined();
+    expect(rpcRows()).toEqual([
+      { document_id: "d1", user_id: "u1", status: "concluido", completed_at: CODED_AT },
+    ]);
+  });
+
+  it("codificação parcial do sorteado vira 'em_andamento'", async () => {
+    serverTableResults = codingFixture(
+      [
+        {
+          id: "r1",
+          document_id: "d1",
+          respondent_id: "u1",
+          updated_at: CODED_AT,
+          round_id: null,
+          is_partial: true,
+          ...CURRENT_VERSION,
+        },
+      ],
+      [{ id: "r1", answers: { q1: "a" }, answer_field_hashes: {} }],
+    );
+
+    await smartRandomize(lotteryParams);
+
+    expect(rpcRows()).toEqual([
+      { document_id: "d1", user_id: "u1", status: "em_andamento", completed_at: null },
+    ]);
+  });
+
+  it("documento sem response do sorteado vai para a RPC sem status (default 'pendente')", async () => {
+    // Response de OUTRO pesquisador não promove o par sorteado.
+    serverTableResults = codingFixture(
+      [
+        {
+          id: "r9",
+          document_id: "d1",
+          respondent_id: "u9",
+          updated_at: CODED_AT,
+          round_id: null,
+          is_partial: false,
+          ...CURRENT_VERSION,
+        },
+      ],
+      [],
+    );
+
+    await smartRandomize(lotteryParams);
+
+    expect(rpcRows()).toEqual([{ document_id: "d1", user_id: "u1" }]);
+  });
+
+  it("falha ao ler o schema aborta o sorteio antes de registrar o lote", async () => {
+    // Degradar para 'pendente' em silêncio reintroduziria o próprio bug sem
+    // sinal nenhum; e o cálculo vem antes do lote justamente para o erro não
+    // deixar um assignment_batches órfão.
+    serverTableResults = {
+      ...codingFixture(
+        [
+          {
+            id: "r1",
+            document_id: "d1",
+            respondent_id: "u1",
+            updated_at: CODED_AT,
+            round_id: null,
+            is_partial: false,
+            ...CURRENT_VERSION,
+          },
+        ],
+        [{ id: "r1", answers: { q1: "a", q2: "b" }, answer_field_hashes: {} }],
+      ),
+      // 1ª leitura: a do computeLottery. 2ª: a do status inicial, que falha.
+      projects: [{ data: PROJECT_ROW }, { data: null, error: { message: "boom" } }],
+    };
+
+    const result = await smartRandomize(lotteryParams);
+
+    expect(result.error).toContain("status inicial");
+    expect(writeCalls.some((c) => c.table === "assignment_batches")).toBe(false);
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it("atribuição manual sobre documento já codificado nasce concluída", async () => {
+    serverTableResults = {
+      assignments: { data: [] },
+      projects: { data: PROJECT_ROW },
+      responses: [
+        {
+          data: {
+            id: "r1",
+            document_id: "d1",
+            respondent_id: "u1",
+            updated_at: CODED_AT,
+            round_id: null,
+            is_partial: false,
+            ...CURRENT_VERSION,
+          },
+        },
+        { data: [{ id: "r1", answers: { q1: "a", q2: "b" }, answer_field_hashes: {} }] },
+      ],
+    };
+
+    const result = await cycleAssignment("p1", "d1", "u1");
+
+    expect(result.error).toBeUndefined();
+    const insert = writeCalls.find((c) => c.table === "assignments" && c.op === "insert");
+    expect(insert?.payload).toMatchObject({
+      document_id: "d1",
+      user_id: "u1",
+      type: "codificacao",
+      status: "concluido",
+      completed_at: CODED_AT,
+    });
+  });
+
+  it("atribuição manual sobre documento nunca codificado nasce pendente", async () => {
+    serverTableResults = {
+      assignments: { data: [] },
+      projects: { data: PROJECT_ROW },
+      responses: [{ data: null }, { data: [] }],
+    };
+
+    await cycleAssignment("p1", "d1", "u1");
+
+    const insert = writeCalls.find((c) => c.table === "assignments" && c.op === "insert");
+    expect(insert?.payload).toMatchObject({ status: "pendente", completed_at: null });
   });
 });

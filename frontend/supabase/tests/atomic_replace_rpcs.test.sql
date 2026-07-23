@@ -180,4 +180,42 @@ BEGIN
   RAISE NOTICE 'OK #181: replace descartou a pendente antiga e inseriu a nova atomicamente';
 END $$;
 
+-- ----- #521: status/completed_at por linha, com default para quem os omite -----
+-- O par já codificado nasce concluído; a linha sem as chaves cai no COALESCE.
+-- Sem isto (a versão anterior da RPC), o documento codificado pelo Explorar
+-- ficava eternamente pendente na fila: nada promove um assignment criado DEPOIS
+-- da response.
+DO $$
+DECLARE r_status text; r_done timestamptz; r_default text; r_default_done timestamptz;
+BEGIN
+  -- Este DELETE limpa a fixture de assignments dos blocos anteriores, então
+  -- este bloco tem de continuar sendo o ÚLTIMO: um caso novo inserido abaixo
+  -- herdaria a tabela vazia e passaria por vácuo, sem sinal nenhum.
+  DELETE FROM public.assignments WHERE project_id = '11111111-1111-1111-1111-111111111111';
+  PERFORM public.apply_lottery_assignments(
+    '11111111-1111-1111-1111-111111111111'::uuid, 'codificacao', NULL,
+    '[{"document_id":"22222222-2222-2222-2222-222222222222","user_id":null,
+       "status":"concluido","completed_at":"2026-07-20T10:00:00Z"},
+      {"document_id":"33333333-3333-3333-3333-333333333333","user_id":null}]'::jsonb,
+    false
+  );
+
+  SELECT status, completed_at INTO r_status, r_done FROM public.assignments
+    WHERE document_id = '22222222-2222-2222-2222-222222222222' AND type = 'codificacao';
+  IF r_status IS DISTINCT FROM 'concluido' THEN
+    RAISE EXCEPTION 'FALHOU #521: esperava status concluido, achei %', r_status;
+  END IF;
+  IF r_done IS DISTINCT FROM '2026-07-20T10:00:00Z'::timestamptz THEN
+    RAISE EXCEPTION 'FALHOU #521: completed_at nao veio do payload (%)', r_done;
+  END IF;
+
+  SELECT status, completed_at INTO r_default, r_default_done FROM public.assignments
+    WHERE document_id = '33333333-3333-3333-3333-333333333333' AND type = 'codificacao';
+  IF r_default IS DISTINCT FROM 'pendente' OR r_default_done IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU #521: linha sem status deveria cair em pendente/NULL (%, %)',
+      r_default, r_default_done;
+  END IF;
+  RAISE NOTICE 'OK #521: status/completed_at por linha, com pendente como default';
+END $$;
+
 ROLLBACK;
