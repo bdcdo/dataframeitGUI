@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { revalidatePath, revalidateTag } from "next/cache";
+import { isCodingComplete } from "@/lib/coding-completeness";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 const drainAutoReviewReconciliationRequests = vi.hoisted(() => vi.fn(async () => ({
   processed: 1,
@@ -297,6 +299,165 @@ describe("saveResponse — auto-save vs submit explicito", () => {
       q_txt: "h-text",
     });
     expect(state.assignmentUpdatePayload?.status).toBe("em_andamento");
+  });
+
+  it("auto-save em doc codificado antes do bump NAO passa a dever o campo novo (#520)", async () => {
+    // Critério de aceite da #520: a codificação foi completa à época; o schema
+    // ganhou um obrigatório depois. Basta o pesquisador reabrir o doc e tocar
+    // qualquer coisa para o save reestampar o mapa — e a leitura retroativa
+    // (backlog, reconciliação) passar a considerar a codificação incompleta.
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+      { name: "q_novo", type: "single", required: true, options: ["x"], hash: "h-novo" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: { q1: "h1" },
+    };
+
+    const saveResponse = await loadSaveResponse();
+    const result = await saveResponse(
+      "proj-1",
+      "doc-1",
+      { q1: "b" },
+      { isAutoSave: true },
+    );
+
+    expect(result.success).toBe(true);
+    const gravado = state.responseUpdatePayload?.answer_field_hashes as AnswerFieldHashes;
+    expect(gravado).toEqual({ q1: "h1" });
+    // A leitura retroativa continua enxergando a codificação como completa.
+    expect(
+      isCodingComplete(
+        state.pydanticFields as PydanticField[],
+        state.responseUpdatePayload?.answers as Record<string, unknown>,
+        gravado,
+      ),
+    ).toBe(true);
+  });
+
+  it("campo criado depois entra no mapa quando o pesquisador o responde (#520)", async () => {
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+      { name: "q_novo", type: "single", required: true, options: ["x"], hash: "h-novo" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: { q1: "h1" },
+    };
+
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a", q_novo: "x" });
+
+    expect(state.responseUpdatePayload?.answer_field_hashes).toEqual({
+      q1: "h1",
+      q_novo: "h-novo",
+    });
+    expect(state.assignmentUpdatePayload?.status).toBe("concluido");
+  });
+
+  it("response legacy conserva o sentinela em vez de ganhar chaves (#520)", async () => {
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+      { name: "q_novo", type: "single", required: true, options: ["x"], hash: "h-novo" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: null,
+    };
+
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "b" }, { isAutoSave: true });
+
+    expect(state.responseUpdatePayload?.answer_field_hashes).toEqual({});
+  });
+
+  it("codificacao nova estampa o schema atual inteiro (INSERT)", async () => {
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+      { name: "q2", type: "text", required: true, hash: "h2" },
+    ];
+
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
+
+    expect(state.responseInsertPayload?.answer_field_hashes).toEqual({
+      q1: "h1",
+      q2: "h2",
+    });
+  });
+
+  it("response legacy preserva a proveniencia de schema ja gravada (#520)", async () => {
+    // Conservar o sentinela `{}` joga a leitura de staleness no fallback do
+    // schema inteiro (`isFieldStale`), que compara `pydantic_hash`. Promover a
+    // coluna no mesmo save tornaria esse fallback permissivo — a codificacao
+    // antiga passaria a ser lida como feita contra o schema de hoje, e nenhum
+    // campo apareceria stale. Omitir as colunas preserva o que esta na linha.
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: null,
+    };
+
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "b" }, { isAutoSave: true });
+
+    const payload = state.responseUpdatePayload ?? {};
+    expect(payload).not.toHaveProperty("pydantic_hash");
+    expect(payload).not.toHaveProperty("schema_version_major");
+    expect(payload).not.toHaveProperty("schema_version_minor");
+    expect(payload).not.toHaveProperty("schema_version_patch");
+    expect(payload).not.toHaveProperty("version_inferred_from");
+    // O resto do save segue normal.
+    expect(payload.answers).toEqual({ q1: "b" });
+  });
+
+  it("response com proveniencia per-campo promove as colunas de versao", async () => {
+    // Controle do guard acima: com o mapa herdado nao vazio, a leitura de
+    // staleness usa o snapshot per-campo e as colunas de versao devem
+    // acompanhar o schema de hoje como sempre.
+    state.pydanticFields = [
+      { name: "q1", type: "single", required: true, options: ["a", "b"], hash: "h1" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: { q1: "h1" },
+    };
+
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "b" }, { isAutoSave: true });
+
+    expect(state.responseUpdatePayload?.pydantic_hash).toBe("hash-1");
+    expect(state.responseUpdatePayload?.schema_version_major).toBe(1);
+    expect(state.responseUpdatePayload?.version_inferred_from).toBe("live_save");
+  });
+
+  it("codificacao nova com mapa vazio ainda promove as colunas de versao (INSERT)", async () => {
+    // O guard e so para response existente. Num projeto sem campos o mapa sai
+    // vazio sem que isso signifique "legacy": nao ha proveniencia anterior a
+    // preservar, e omitir as colunas gravaria a linha nova sem vinculo algum
+    // com o schema. Este e o unico cenario que distingue o `!!existing`.
+    state.pydanticFields = [];
+
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", {}, { isAutoSave: true });
+
+    expect(state.responseInsertPayload?.answer_field_hashes).toEqual({});
+    expect(state.responseInsertPayload?.pydantic_hash).toBe("hash-1");
+    expect(state.responseInsertPayload?.schema_version_major).toBe(1);
+    expect(state.responseInsertPayload?.version_inferred_from).toBe("live_save");
   });
 
   it("auto-save com campo obrigatorio vazio mantem pendente em em_andamento", async () => {

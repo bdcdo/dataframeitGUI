@@ -152,8 +152,9 @@ export function SchemaEditorDialogs({
               Percorre o histórico de mudanças em ordem cronológica, classifica cada
               entrada (MINOR em mudanças estruturais; PATCH em texto; MAJOR preservado)
               e reconstrói o schema em cada versão. Para atribuir versão a cada resposta,
-              tenta match por <strong>answer_field_hashes</strong> (hashes gravados a cada
-              save); se não bater, cai em <strong>created_at</strong>. Respostas salvas
+              tenta match por <strong>answer_field_hashes</strong> (proveniência herdada da
+              codificação, completada a cada save); se não bater, cai em{" "}
+              <strong>created_at</strong>. Respostas salvas
               diretamente na plataforma (live_save) preservam a versão original.
               Idempotente: pode rodar de novo sem problemas.
             </AlertDialogDescription>
