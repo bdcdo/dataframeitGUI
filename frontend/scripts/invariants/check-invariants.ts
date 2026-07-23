@@ -39,7 +39,24 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 });
 
 // Paginação manual: PostgREST corta em 1000 linhas por default; sem isso uma
-// tabela grande passaria "limpa" por truncamento silencioso.
+// tabela grande passaria "limpa" por truncamento silencioso. `responses`,
+// `assignments` e `reviews` já cruzam a página, então este caminho roda sempre.
+//
+// O `.order("id")` é requisito da paginação, não estética: sem ORDER BY o
+// Postgres não garante a mesma ordem entre a consulta da página 1 e a da
+// página 2, e as duas quebras conhecidas produzem FALSO POSITIVO, o pior
+// resultado possível aqui (a regra do framework é "FAIL vira issue no mesmo
+// dia"). Uma linha pulada entre páginas some do mapa `docOf` e vira
+// "chosen_response de doc INEXISTENTE"; uma linha lida duas vezes vira
+// "2 responses is_latest: X, X", com o mesmo id repetido. Medido em
+// 2026-07-23: 15 passadas sem ORDER BY devolveram o conjunto completo — hoje a
+// leitura cai em seq scan de tabela pequena e quiescente, cuja ordem física é
+// estável na prática. É hazard latente, não defeito ativo: passa a morder sob
+// UPDATE concorrente (que move a versão da linha) — justamente o cenário de
+// rodar o checker enquanto pesquisadores codificam — e quando a tabela crescer
+// o bastante para o synchronize_seqscans fazer varreduras concorrentes
+// começarem em posições diferentes.
+//
 // O builder fica `any` de propósito: o PostgrestFilterBuilder muda de tipo a
 // cada método encadeado e, num helper genérico por nome de tabela, o tsc
 // estoura em TS2589 (instanciação excessivamente profunda) antes de qualquer
@@ -55,7 +72,11 @@ async function fetchAll<T>(
   const PAGE = 1000;
   const rows: T[] = [];
   for (let from = 0; ; from += PAGE) {
-    let q: UntypedSelectBuilder = supabase.from(table).select(columns).range(from, from + PAGE - 1);
+    let q: UntypedSelectBuilder = supabase
+      .from(table)
+      .select(columns)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
     if (filter) q = filter(q);
     const { data, error } = await q;
     if (error) throw new Error(`${table}: ${error.message}`);
@@ -199,14 +220,30 @@ const invariants: Invariant[] = [
 
       // Fase 2 (campos pesados só dos candidatos): answers/hashes para o replay
       // da regra real de completude do produto — a mesma que gateia o submit.
-      const violations: Violation[] = [];
-      for (const c of candidates) {
+      // Em lote, não uma consulta por candidato. O bloco é pequeno porque o
+      // filtro `in` viaja na query string e cada id é um UUID de 36 caracteres:
+      // com 500 a URL passa de 18 mil chars e o fetch falha (medido em
+      // 2026-07-23, mutando o filtro de candidatos para exercitar este caminho).
+      // 100 ids ≈ 3,7 kB de URL, com folga confortável.
+      const CHUNK = 100;
+      const heavyOf = new Map<
+        string,
+        { answers: unknown; answer_field_hashes: unknown }
+      >();
+      for (let i = 0; i < candidates.length; i += CHUNK) {
+        const ids = candidates.slice(i, i + CHUNK).map((c) => c.id);
         const { data, error } = await supabase
           .from("responses")
-          .select("answers, answer_field_hashes")
-          .eq("id", c.id)
-          .single();
-        if (error) throw new Error(`responses(${c.id}): ${error.message}`);
+          .select("id, answers, answer_field_hashes")
+          .in("id", ids);
+        if (error) throw new Error(`responses(lote de ${ids.length}): ${error.message}`);
+        for (const row of data ?? []) heavyOf.set(row.id as string, row);
+      }
+
+      const violations: Violation[] = [];
+      for (const c of candidates) {
+        const data = heavyOf.get(c.id);
+        if (!data) throw new Error(`responses(${c.id}): sumiu entre as duas fases`);
         const fields = fieldsOf.get(c.project_id) ?? [];
         if (
           fields.length > 0 &&
