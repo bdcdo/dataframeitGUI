@@ -32,6 +32,16 @@ describe("versionamento do build do frontend", () => {
     );
   });
 
+  // `required=true` cobre o secret AUSENTE; nao cobre o secret vazio, que o
+  // Next trata como chave nao fornecida (volta a gerar uma por build). Os dois
+  // `test` sao o que faz esse caso falhar em vez de passar verde.
+  it("falha o build quando o SHA ou a chave chegam vazios", () => {
+    expect(dockerfile).toContain('test -n "$NEXT_DEPLOYMENT_ID"');
+    expect(dockerfile).toContain(
+      "test -s /run/secrets/NEXT_SERVER_ACTIONS_ENCRYPTION_KEY",
+    );
+  });
+
   it("nao declara a chave em diretivas ARG ou ENV do Dockerfile", () => {
     expect(dockerfile).not.toMatch(
       /^(?:ARG|ENV) NEXT_SERVER_ACTIONS_ENCRYPTION_KEY/m,
