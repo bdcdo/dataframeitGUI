@@ -380,15 +380,25 @@ const invariants: Invariant[] = [
   {
     name: "submetida-mas-incompleta",
     motivation:
-      "inversa fina de 'codificacao-completa-marcada-pendente' (causa (d) da auditoria de 2026-07-23): response submetida (is_partial=false) que NÃO passa na régua real do produto (isCodingComplete staleness-aware) indica canal de escrita que pulou o gate de submit — o guard existe desde 61412dc, mas nenhum estado o assere. Responses com proveniência legacy (answer_field_hashes null/{}) ficam fora: sem o mapa não dá para saber sob qual schema foram codificadas, e cobrá-las pelo schema atual fabricaria falso positivo",
+      "inversa fina de 'codificacao-completa-marcada-pendente' (causa (d) da auditoria de 2026-07-23): response submetida (is_partial=false) que NÃO passa na régua real do produto (isCodingComplete staleness-aware) indica canal de escrita que pulou o gate de submit — o guard existe desde 61412dc, mas nenhum estado o assere. Responses com proveniência legacy (answer_field_hashes null/{}) ficam fora: sem o mapa não dá para saber sob qual schema foram codificadas, e cobrá-las pelo schema atual fabricaria falso positivo. CORTE TEMPORAL DOCUMENTADO (#584): responses não tocadas desde 2026-07-24 ficam fora — são as 87 com mapa danificado pelo recarimbo #520 (triagem de 2026-07-23: 177/211 campos faltantes com hash==corrente sem chave), a reparar via #584; remover o corte após o reparo",
     run: async () => {
+      // Corte do legado recarimbado (#520/#584): o write path só herda mapas a
+      // partir do merge do #528 (2026-07-23); qualquer response tocada depois
+      // desta data tem que passar. Não é baseline silencioso: os 87 casos
+      // anteriores estão enumerados e rastreados na issue #584.
+      const LEGACY_CUTOFF = "2026-07-24T00:00:00Z";
       const active = await activeDocIds();
       const [projects, responses] = await Promise.all([
         fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
         fetchAll<{ id: string; project_id: string; document_id: string; respondent_id: string | null }>(
           "responses",
           "id, project_id, document_id, respondent_id",
-          (q) => q.eq("respondent_type", "humano").eq("is_latest", true).eq("is_partial", false),
+          (q) =>
+            q
+              .eq("respondent_type", "humano")
+              .eq("is_latest", true)
+              .eq("is_partial", false)
+              .gte("updated_at", LEGACY_CUTOFF),
         ),
       ]);
       const fieldsOf = new Map(projects.map((p) => [p.id, p.pydantic_fields ?? []]));
@@ -465,8 +475,19 @@ const invariants: Invariant[] = [
   {
     name: "answer-field-hashes-do-universo-do-projeto",
     motivation:
-      "versão fraca-mas-honesta da causa (c) (recarimbo #520): todo hash em answer_field_hashes deve ser derivável do schema do projeto — campos atuais ou qualquer versão registrada em schema_change_log (before/after). Hash fora do universo = mapa estampado com conteúdo que nunca existiu no projeto (corrupção, cruzamento de projeto, ou re-stamp com conteúdo errado). LIMITE DOCUMENTADO: o estado exato do #520 (recarimbo com hashes do schema corrente) é indistinguível de revisão per-campo legítima — a garantia contra ele é o write path (#528/#573/#575) e seus testes, não esta invariante. Também valida o shape (12 hex minúsculos)",
+      "versão fraca-mas-honesta da causa (c) (recarimbo #520): todo hash em answer_field_hashes deve ser derivável do schema do projeto — campos atuais ou qualquer versão registrada em schema_change_log (before/after). Hash fora do universo = mapa estampado com conteúdo que nunca existiu no projeto (corrupção, cruzamento de projeto, ou re-stamp com conteúdo errado). LIMITE DOCUMENTADO: o estado exato do #520 (recarimbo com hashes do schema corrente) é indistinguível de revisão per-campo legítima — a garantia contra ele é o write path (#528/#573/#575) e seus testes, não esta invariante. Também valida o shape (12 hex minúsculos). A allowlist enumera os 6 hashes de versões do Zolgensma anteriores à criação do schema_change_log (2026-04-01), fora do universo reconstruível por definição (triagem de 2026-07-23)",
     run: async () => {
+      // Versões de campo editadas antes de o schema_change_log existir não são
+      // reconstruíveis — allowlist explícita e datada, não baseline silencioso.
+      // Todos do projeto Zolgensma 0c6394da; campo ainda existe com hash novo.
+      const PRE_LOG_LEGACY_HASHES = new Set([
+        "ecbb97ef88f7", // q12_mencao_parecer_conitec (34 responses)
+        "0dba9f18145a", // q6_data_nascimento_paciente (30)
+        "06a656f50dcf", // q25_conclusao_evidencias (27)
+        "ed1026407a89", // q21_relatorio_recomenda (7)
+        "56e24ccd8992", // q25_conclusao_evidencias, outra versão (7)
+        "8ec4b5335e4a", // q9_indicacao_conforme_anvisa (7)
+      ]);
       const [projects, log] = await Promise.all([
         fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
         fetchAll<{
@@ -511,7 +532,7 @@ const invariants: Invariant[] = [
               key: r.id,
               detail: `hash malformado em '${field}': ${JSON.stringify(hash)}`,
             });
-          } else if (!known.has(hash)) {
+          } else if (!known.has(hash) && !PRE_LOG_LEGACY_HASHES.has(hash)) {
             violations.push({
               key: r.id,
               detail: `hash de '${field}' (${hash}) fora do universo do projeto ${r.project_id}`,
