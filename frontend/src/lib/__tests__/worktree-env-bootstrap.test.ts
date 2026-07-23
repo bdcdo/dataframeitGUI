@@ -66,7 +66,11 @@ describe("bootstrap de ambiente para worktrees", () => {
       resolve(trackedFrontend, "scripts/worktree-env/bootstrap.sh"),
       bootstrap,
     );
-    for (const filename of ["bootstrap.mjs", "env-contract.mjs"]) {
+    for (const filename of [
+      "bootstrap.mjs",
+      "env-contract.mjs",
+      "destination-state.mjs",
+    ]) {
       copyFileSync(
         resolve(trackedFrontend, "scripts/worktree-env", filename),
         join(fixtureFrontend, "scripts/worktree-env", filename),

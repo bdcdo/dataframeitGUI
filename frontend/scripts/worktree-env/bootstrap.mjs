@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import {
-  lstatSync,
   realpathSync,
   rmSync,
   statSync,
@@ -10,6 +9,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifyDestination } from "./destination-state.mjs";
 import {
   canonicalEnvironmentDirectory,
   canonicalEnvironmentHomeVariable,
@@ -63,49 +63,6 @@ function readSource(path, filename) {
   } catch (error) {
     fail(
       `não foi possível ler a fonte ${filename} (${filesystemErrorCode(error)})`,
-    );
-  }
-}
-
-/**
- * Estado de um destino, que decide a acao:
- *
- * - `missing`  — nao existe: criar o symlink;
- * - `linked`   — ja aponta para o arquivo da fonte: no-op (idempotencia);
- * - `relink`   — symlink para outro alvo, ou quebrado: refazer. Substituir um
- *                symlink nunca destroi conteudo, e e o unico jeito de REPARAR
- *                uma worktree cujo alvo foi removido — o caso que motivou tudo
- *                isto;
- * - `occupied` — arquivo ou diretorio real: recusar, pode ser a unica copia do
- *                segredo.
- *
- * @param {string} destination @param {string} source @param {string} filename
- * @returns {"missing" | "linked" | "relink" | "occupied"}
- */
-function classifyDestination(destination, source, filename) {
-  let entry;
-  try {
-    entry = lstatSync(destination);
-  } catch (error) {
-    if (isMissingPathError(error)) return "missing";
-    return fail(
-      `não foi possível validar o destino frontend/${filename} (${filesystemErrorCode(error)})`,
-    );
-  }
-
-  if (!entry.isSymbolicLink()) return "occupied";
-
-  try {
-    // realpath dos dois lados: um link que chega ao mesmo arquivo por outro
-    // caminho (relativo, ou via diretorio symlinkado) ja esta provisionado.
-    return realpathSync(destination) === realpathSync(source)
-      ? "linked"
-      : "relink";
-  } catch (error) {
-    // Link quebrado (o alvo sumiu) cai aqui — e e exatamente o que refazemos.
-    if (isMissingPathError(error)) return "relink";
-    return fail(
-      `não foi possível resolver o destino frontend/${filename} (${filesystemErrorCode(error)})`,
     );
   }
 }
@@ -172,10 +129,16 @@ for (const filename of environmentFiles) {
     );
   }
 
-  destinationStates.set(
-    filename,
-    classifyDestination(join(frontendDirectory, filename), source, filename),
-  );
+  try {
+    destinationStates.set(
+      filename,
+      classifyDestination(join(frontendDirectory, filename), source),
+    );
+  } catch (error) {
+    fail(
+      `não foi possível validar o destino frontend/${filename} (${filesystemErrorCode(error)})`,
+    );
+  }
 }
 
 const occupied = environmentFiles.filter(
