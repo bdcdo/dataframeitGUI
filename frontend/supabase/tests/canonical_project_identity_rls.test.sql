@@ -2386,13 +2386,20 @@ BEGIN
       AND status = 'concluido'
       AND completed_at = '2001-01-01T00:00:00Z'::timestamptz
   ) OR NOT EXISTS (
-    -- 012 (auto_revisao no doc 002) migra para o target. O status de
-    -- auto_revisao passou a ser DERIVADO dos field_reviews pela reconciliação
-    -- (trigger archive_review_dependencies_on_response_change, migration
-    -- 20260717120000): sem field_review pendente no doc 002, o assignment é
-    -- fechado — então esperar 'concluido', não 'pendente'. A precedência de
-    -- target segue verificada: 012 existe com user=target (distinto do 010,
-    -- que colidiu e foi deletado).
+    -- 012 (auto_revisao no doc 002) migra para o target e fica 'concluido'. O
+    -- status de auto_revisao é DERIVADO dos field_reviews pelo trigger
+    -- archive_review_dependencies_on_response_change (migration 20260717120000),
+    -- cujo NOT EXISTS de pendência é escopado POR REVISOR
+    -- (self_reviewer_id = assignment.user_id AND self_verdict IS NULL) — NÃO por
+    -- documento (há sim um field_review pendente no doc 002, o 43..002). O
+    -- 'concluido' vem da ORDEM intra-transação do unify: os assignments migram
+    -- para o target ANTES dos field_reviews, então quando o flip de is_latest da
+    -- resposta humana do doc 002 dispara o trigger, o assignment 012 já é do
+    -- target (..004) mas o field_review 43..002 ainda é do source (..00e) — o
+    -- NOT EXISTS por ..004 não acha pendência e fecha o assignment. O
+    -- field_review só reassume ..004 depois, sem redisparar o trigger; por isso
+    -- 'concluido', não 'pendente'. A precedência de target segue verificada: 012
+    -- existe com user=target (distinto do 010, que colidiu e foi deletado).
     SELECT 1 FROM public.assignments
     WHERE id = '41000000-0000-0000-0000-000000000012'
       AND user_id = '10000000-0000-0000-0000-000000000004'
