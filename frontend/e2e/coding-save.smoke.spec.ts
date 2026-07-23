@@ -63,6 +63,15 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
 
   // Resolve o profile do membro e o documento do fixture pelo título — o
   // reset e as asserções de banco precisam dos dois ids.
+  //
+  // O lookup por TÍTULO EXATO é o interlock de segurança deste spec, não uma
+  // conveniência: o reset abaixo apaga linhas de `responses` com a service key
+  // contra o banco de produção, a cada `git push`. Se E2E_CODING_PROJECT_ID
+  // apontar para um projeto real (id colado errado, .env.e2e copiado de outra
+  // máquina), nenhum documento se chama DOC_TITLE, o expect logo abaixo falha e
+  // o teste aborta ANTES de qualquer DELETE. Não trocar por lookup posicional
+  // (`.limit(1)`, primeiro doc do projeto): isso remove a trava e faz o raio do
+  // DELETE passar a ser "qualquer projeto que o id apontar".
   const [{ data: member }, { data: doc }] = await Promise.all([
     admin.from("profiles").select("id").eq("email", email!).single(),
     admin

@@ -3,11 +3,16 @@
   // CLI chamado pelo wrapper shell; declarar o entry point mantém o grafo
   // correto sem ignorar o arquivo nem fingir um import JavaScript inexistente.
   "entry": ["scripts/worktree-env/bootstrap.mjs"],
-  // scripts/comentarios-relatorio/* (skill local, ver #352) e
+  // scripts/comentarios-relatorio/* (skill local, ver #352),
   // scripts/invariants/* (checker de invariantes de banco, `npm run
-  // invariants`) rodam manualmente via `tsx`, nunca sao importados por um
-  // entry point do Next - falso-positivo de unused-files.
-  "ignorePatterns": ["scripts/comentarios-relatorio/**", "scripts/invariants/**"],
+  // invariants`) e scripts/e2e-fixtures/* (provisionamento dos projetos de
+  // teste do Playwright) rodam manualmente via `tsx`, nunca sao importados por
+  // um entry point do Next - falso-positivo de unused-files.
+  "ignorePatterns": [
+    "scripts/comentarios-relatorio/**",
+    "scripts/invariants/**",
+    "scripts/e2e-fixtures/**"
+  ],
   "ignoreExports": [
     // Primitivas shadcn/Radix exportam a API completa do primitive kit por
     // convencao do gerador shadcn; a maior parte nao tem consumidor hoje sem
