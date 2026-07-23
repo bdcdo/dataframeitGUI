@@ -57,6 +57,13 @@ kill_timeout = "5m"
   # justamente o que a validação de `iss` existe para tornar diagnosticável.
   # Conferir com `fly secrets list -a gui-analise-sistematica-api` e, se
   # aparecer, `fly secrets unset CLERK_JWKS_URL -a gui-analise-sistematica-api`.
+  #
+  # O slug abaixo é da instância de DESENVOLVIMENTO do Clerk (o domínio
+  # `.clerk.accounts.dev` denuncia isso; produção seria `clerk.<domínio>`). É o
+  # estado corrente e correto: a troca para a instância de produção é a etapa B
+  # da #348, adiada porque exige um app OAuth próprio no Google Cloud Console.
+  # Quando ela acontecer, estas duas linhas mudam JUNTAS — e só valerão de fato
+  # depois do `fly secrets unset` acima.
   CLERK_JWKS_URL = "https://innocent-foxhound-88.clerk.accounts.dev/.well-known/jwks.json"
   CLERK_JWT_ISSUER = "https://innocent-foxhound-88.clerk.accounts.dev"
   # ENABLE_DOCS ausente de propósito: o default fail-safe (config.py) mantém

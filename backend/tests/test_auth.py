@@ -303,6 +303,12 @@ def test_verify_jwt_hs256_rejected_when_jwks_configured(monkeypatch):
     # allowlist de algoritmos e é rejeitado (401), sem nem tentar decodificar.
     monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
     # supabase_jwt_secret continua setado (coexistência), mas HS256 não é aceito.
+    #
+    # Este teste também fixa a ORDENAÇÃO dentro de `verify_jwt`: a fixture
+    # autouse deixa o issuer vazio, então JWKS ligado sem issuer é justamente o
+    # estado em que `_require_issuer` responderia 503. O 401 asserido aqui só se
+    # mantém enquanto a allowlist de algoritmo for consultada ANTES do gate de
+    # issuer — inverter as duas linhas em auth.py quebra esta asserção.
     with pytest.raises(HTTPException) as exc:
         verify_jwt(make_token())
     assert exc.value.status_code == 401
@@ -374,9 +380,28 @@ def test_verify_jwt_hs256_nao_exige_issuer():
     # teste, transformar `_require_issuer` em "exige sempre" passaria verde e
     # derrubaria o rollback justamente quando ele fosse necessário.
     # As fixtures autouse já deixam HS256 ligado com jwks e issuer vazios.
+    # Cobre só a AUSÊNCIA da exigência; que o `iss` continua sendo conferido
+    # quando configurado — o estado real de um rollback, com o issuer ainda no
+    # `[env]` — é o teste seguinte.
     token = make_token()
     assert "iss" not in jwt.decode(token, options={"verify_signature": False})
     assert verify_jwt(token).id == USER
+
+
+def test_verify_jwt_hs256_valida_issuer_quando_configurado(monkeypatch):
+    # A forma REAL do rollback, que o teste acima não exercita: sai o
+    # CLERK_JWKS_URL, entra o SUPABASE_JWT_SECRET — e o CLERK_JWT_ISSUER
+    # continua no `[env]` do fly.toml, porque ninguém edita o toml no meio de um
+    # incidente. Nesse estado `_decode_kwargs` passa `issuer` ao PyJWT
+    # independentemente do algoritmo, então o caminho HS256 *valida* `iss` mesmo
+    # sem `_require_issuer` cobrar. Não é contradição com o teste acima: "não
+    # exige a claim" e "confere a claim quando o issuer está configurado" são
+    # invariantes distintas, e é esta que o deploy de rollback executaria.
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", ISSUER)
+    assert verify_jwt(make_token({"iss": ISSUER})).id == USER
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(make_token({"iss": ISSUER_DEV}))
+    assert exc.value.status_code == 401
 
 
 def test_verify_jwt_session_token_sem_supabase_uid_e_503(monkeypatch, rsa_private_key):
