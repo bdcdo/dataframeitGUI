@@ -103,4 +103,13 @@ describe("createSupabaseServer — contrato do session token", () => {
     token = "isto-nao-e-um-jwt";
     await expect(createSupabaseServer()).rejects.toThrow(/supabase_uid/);
   });
+
+  it("payload JSON válido mas não-objeto também vira erro nomeado", async () => {
+    // O buraco que o `try/catch` sozinho não fecha: `JSON.parse("null")` não
+    // lança, devolve `null`, e a destructuring das claims estouraria com um
+    // TypeError cru — o oposto do erro acionável que esta barreira existe para
+    // produzir.
+    token = jwtWith(null as unknown as Record<string, unknown>);
+    await expect(createSupabaseServer()).rejects.toThrow(/supabase_uid e role/);
+  });
 });

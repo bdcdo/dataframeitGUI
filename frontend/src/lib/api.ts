@@ -38,6 +38,11 @@ export async function fetchFastAPI<T>(
   token?: string
 ): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
+    // `...options` vem ANTES de `headers`: spread de objeto substitui a chave
+    // inteira, não faz merge. Na ordem inversa, um caller que passasse
+    // `options.headers` apagaria de uma vez o Content-Type e o Authorization
+    // montados aqui — o token sairia do request sem nenhum sinal.
+    ...options,
     headers: {
       "Content-Type": "application/json",
       ...options?.headers,
@@ -45,7 +50,6 @@ export async function fetchFastAPI<T>(
       // token explícito do caller nunca deve ser sobrescrito por um header solto.
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    ...options,
   });
 
   if (!res.ok) {

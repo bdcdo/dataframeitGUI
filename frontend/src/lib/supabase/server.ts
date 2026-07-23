@@ -18,7 +18,16 @@ function decodeClaims(token: string): TokenClaims {
   const payload = token.split(".")[1];
   if (!payload) return {};
   try {
-    return JSON.parse(Buffer.from(payload, "base64url").toString());
+    // O `catch` cobre base64/JSON inválido; o teste de tipo cobre o que ele não
+    // pega — JSON válido que não é objeto (`null`, número, string). Sem ele, um
+    // payload `null` passaria daqui e a destructuring em `assertTokenContract`
+    // lançaria um TypeError cru no lugar do erro nomeado.
+    const claims: unknown = JSON.parse(
+      Buffer.from(payload, "base64url").toString(),
+    );
+    return typeof claims === "object" && claims !== null
+      ? (claims as TokenClaims)
+      : {};
   } catch {
     return {};
   }
@@ -31,12 +40,20 @@ function decodeClaims(token: string): TokenClaims {
  * aplicação renderiza normalmente com todas as listas vazias — sem erro em lugar
  * nenhum. É o modo de falha mais provável de uma troca de instância Clerk, e o
  * único ponto do read path onde dá para pegá-lo: um SELECT que volta com zero
- * linhas é indistinguível de "este usuário não tem projeto". */
+ * linhas é indistinguível de "este usuário não tem projeto".
+ *
+ * Ressalva de alcance: `resolveProjectMemberIdentity` e `readProjectAccess`
+ * (`lib/auth.ts`) envolvem a criação do cliente em try/catch e traduzem qualquer
+ * exceção em `{ status: "unavailable" }`. Nesses dois call sites a causa nomeada
+ * sobrevive só no `console.error` deles — a tela mostra indisponibilidade
+ * genérica. Para os demais consumidores o erro sobe de verdade. */
 function assertTokenContract(token: string): void {
   const { supabase_uid, role } = decodeClaims(token);
+  // Não ecoar o valor recebido: ele vem de um token cuja assinatura não foi
+  // verificada aqui, e nomear a claim ausente já basta para agir.
   const missing = [
     !supabase_uid && "supabase_uid",
-    role !== "authenticated" && `role="authenticated" (veio ${JSON.stringify(role)})`,
+    role !== "authenticated" && 'role="authenticated"',
   ].filter(Boolean);
   if (missing.length > 0) {
     throw new Error(
