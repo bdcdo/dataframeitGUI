@@ -49,7 +49,7 @@ Quem abre o PR aplica o label (agentes inclusive); o revisor confere se a classi
 ## Regras operacionais
 
 - **Classificar antes de tocar**: mudança em tier 1 é anunciada como tal (na conversa da sessão e no PR) antes do primeiro edit, com as obrigações correspondentes.
-- **Verificação descartável vive fora do repositório**: nunca vira PR, nunca vai para `/tmp` (morre no reboot antes de servir de referência). No checkout do mantenedor há um diretório local `harness/` (gitignored) com o contrato completo; em worktree ou agente cloud, usar qualquer diretório fora do commit — o que importa é o destino final: apagável, não versionado.
+- **Verificação descartável vive fora do repositório**: nunca vira PR, nunca vai para `/tmp` (morre no reboot antes de servir de referência). O destino é `harness/`, ignorado pelo `.gitignore` versionado — logo o mesmo caminho vale em qualquer checkout, worktree ou agente cloud, sem depender de configuração local. O contrato completo e os gotchas de mecânica ficam num `harness/README.md` local.
 - **Reparo de dado nunca é automático**: achado do checker vira proposta com preflight embutido (o comando re-mede o estado antes de escrever), aprovada explicitamente antes do `--apply`. Scripts de reparo ficam fora do repo (ver "Scripts one-off" no CLAUDE.md).
 - **Spec E2E novo roda a suíte inteira** antes de declarar verde — mudança de ordem/timing pode expor hang pré-existente em spec vizinho (caso config-guard×coding-save no PR #522; o fix padrão para signOut travado em página de análise é `prepareSignOut` → `/dashboard`).
 - **Subagentes geram e rodam verificação; o agente principal responde pelo veredito** — relato de sucesso de subagente não é prova; inspecionar a evidência (diff, output, asserção).
