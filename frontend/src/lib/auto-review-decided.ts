@@ -16,9 +16,8 @@ export function verdictRequiresJustification(
 // obrigatoria estiver preenchida (espelha a validacao server-side de
 // submitAutoReview).
 //
-// Modulo separado de lib/auto-review.ts de proposito: aquele importa o
-// supabase admin client (server-only) e nao pode ser puxado para um client
-// component. Esta funcao e pura e client-safe.
+// Este módulo é puro e client-safe; a reconciliação server-only vive em
+// lib/auto-review-reconciler.ts.
 export function isAutoReviewFieldDecided(
   alreadyAnswered: boolean,
   choice: SelfVerdict | null | undefined,
@@ -30,11 +29,9 @@ export function isAutoReviewFieldDecided(
   return true;
 }
 
-// Chave de escolha/justificativa por (documento, campo). O fieldName se repete
-// entre documentos; sem o prefixo do docId, escolher "q1" no doc A
-// pre-selecionaria "q1" do doc B na navegacao. O composto garante isolamento.
-// Funcao de modulo (nao recriada a cada render) compartilhada entre
-// AutoReviewPage e AutoReviewPageContent.
-export function choiceKey(docId: string, fieldName: string): string {
-  return `${docId}::${fieldName}`;
+// O id identifica o ciclo, não apenas o campo. Quando uma edição rotaciona o
+// ciclo, a escolha incompleta da versão anterior não pode migrar para o novo
+// snapshot durante um refresh do RSC.
+export function choiceKey(fieldReviewId: string): string {
+  return fieldReviewId;
 }

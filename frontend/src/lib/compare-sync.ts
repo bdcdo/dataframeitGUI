@@ -3,13 +3,76 @@ import "server-only";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
-import { resolveCompareStatus } from "@/lib/compare-assignment-status";
+import {
+  resolveCompareStatus,
+  type CompareAssignmentStatus,
+} from "@/lib/compare-assignment-status";
 import {
   responseQualifiesForVersion,
   versionGate,
   type VersionedResponse,
 } from "@/lib/compare-version";
 import type { EquivalencePair } from "@/lib/equivalence";
+
+const PG_UNIQUE_VIOLATION = "23505";
+// O índice parcial criado pelo #490 (uma comparação ATIVA por documento;
+// concluídas ficam fora do predicado). É o único unique de `assignments`
+// alcançável por um UPDATE que só toca status/completed_at — a outra,
+// UNIQUE(document_id, user_id, type), tem colunas que este UPDATE não mexe.
+// Casar pelo nome mantém o skip preso a ESTA regra: um índice futuro sobre
+// `status` propaga em vez de ser engolido junto.
+const ACTIVE_COMPARACAO_INDEX = "assignments_one_active_comparacao_per_doc";
+
+interface UpdateCompareAssignmentStatusParams {
+  supabase: SupabaseServerClient;
+  projectId: string;
+  documentId: string;
+  userId: string;
+  assignment: { id: string; status: string };
+  next: CompareAssignmentStatus;
+}
+
+async function updateCompareAssignmentStatus({
+  supabase,
+  projectId,
+  documentId,
+  userId,
+  assignment,
+  next,
+}: UpdateCompareAssignmentStatusParams): Promise<void> {
+  const { error } = await supabase
+    .from("assignments")
+    .update({
+      status: next,
+      completed_at: next === "concluido" ? new Date().toISOString() : null,
+    })
+    .eq("id", assignment.id);
+
+  if (!error) return;
+
+  if (
+    error.code === PG_UNIQUE_VIOLATION &&
+    error.message.includes(ACTIVE_COMPARACAO_INDEX) &&
+    assignment.status === "concluido" &&
+    next !== "concluido"
+  ) {
+    console.warn(
+      `[compare-sync] ${JSON.stringify({
+        event: "regression_blocked_by_active_assignment",
+        projectId,
+        documentId,
+        assignmentId: assignment.id,
+        userId,
+        previousStatus: assignment.status,
+        intendedStatus: next,
+        errorCode: error.code,
+      })}`,
+    );
+    return;
+  }
+
+  throw new Error(error.message, { cause: error });
+}
 
 // Recomputes assignment status (pendente / em_andamento / concluido) for the
 // reviewer's "comparacao" assignment on this document, taking into account
@@ -59,9 +122,10 @@ export async function syncCompareAssignment(
       .eq("reviewer_id", userId),
     supabase
       .from("response_equivalences")
-      .select("field_name, response_a_id, response_b_id")
+      .select("field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot")
       .eq("project_id", projectId)
-      .eq("document_id", documentId),
+      .eq("document_id", documentId)
+      .is("superseded_at", null),
   ]);
 
   const reviewedFields = new Set((reviews ?? []).map((r) => r.field_name));
@@ -136,6 +200,8 @@ export async function syncCompareAssignment(
     equivalencesByField.get(eq.field_name)!.push({
       response_a_id: eq.response_a_id,
       response_b_id: eq.response_b_id,
+      response_a_answer_snapshot: eq.response_a_answer_snapshot,
+      response_b_answer_snapshot: eq.response_b_answer_snapshot,
     });
   }
 
@@ -149,14 +215,19 @@ export async function syncCompareAssignment(
   // todas as divergências fundidas por equivalência): vira `concluido` em vez de
   // ficar preso. Atualiza só quando o status muda, limpando `completed_at` em
   // qualquer regressão (ex.: desmarcar uma equivalência reabre a divergência).
+  // Uma comparação concluída pertence ao histórico da rodada. Se já houver
+  // outra comparação ativa para o documento, o índice parcial do banco impede
+  // atomicamente que a antiga seja reaberta; nesse caso preservamos a concluída
+  // de propósito e `updateCompareAssignmentStatus` registra o bloqueio (#497).
   const next = resolveCompareStatus(divergentFields, reviewedFields);
   if (assignment.status !== next) {
-    await supabase
-      .from("assignments")
-      .update({
-        status: next,
-        completed_at: next === "concluido" ? new Date().toISOString() : null,
-      })
-      .eq("id", assignment.id);
+    await updateCompareAssignmentStatus({
+      supabase,
+      projectId,
+      documentId,
+      userId,
+      assignment,
+      next,
+    });
   }
 }

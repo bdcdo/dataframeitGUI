@@ -1,82 +1,144 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-  makeSupabaseAdminModuleMock,
-  makeSupabaseServerModuleMock,
-} from "@/test-utils/supabase-mock";
+// Invariante "viewAs é somente leitura": o ?viewAsUser= da URL só troca a
+// identidade EXIBIDA pela fila (resolveProjectQueueIdentity, testada aqui na
+// forma pura) e nunca chega às Server Actions de escrita — elas nem aceitam um
+// parâmetro de identidade: resolvem o ator canônico via
+// resolveProjectMemberActor a partir da sessão autenticada. O segundo bloco
+// exercita uma action de escrita real (saveResponse) e prova que o valor
+// persistido é o membro canônico mesmo quando o chamador tenta injetar um
+// viewAsUser como argumento extra.
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ResolvedProjectAccessContext } from "@/lib/auth";
+import { createProjectIdentityActionHarness } from "@/actions/__tests__/project-identity-harness";
 
-// T024 (FR-006): viewAs/impersonação é escopo de LEITURA. resolveEffectiveUserId
-// devolve o par (effectiveUserId, isImpersonating): master + viewAsUser resolve
-// para a identidade visualizada com isImpersonating=true, e o efeito é restrito
-// a leitura/navegação/fila. O invariante de escrita é que as write surfaces
-// gravam como o ATOR real (user.id), nunca como effectiveUserId quando
-// isImpersonating — este teste trava a distinção que as actions consomem para
-// não conceder escrita em nome do usuário visualizado.
+const resolveMemberUserId = vi.hoisted(() =>
+  vi.fn(async () => "canonical-member"),
+);
+const harness = createProjectIdentityActionHarness(resolveMemberUserId);
 
-let aliasByProject: Record<string, { member_user_id: string } | null>;
-
-function makeClient() {
-  return {
-    from: (table: string) => {
-      let projectId: string | null = null;
-      const builder: Record<string, unknown> = {};
-      for (const m of ["select", "order", "limit"]) builder[m] = () => builder;
-      builder.eq = (col: string, value: string) => {
-        if (col === "project_id") projectId = value;
-        return builder;
-      };
-      builder.maybeSingle = async () =>
-        table === "member_email_links"
-          ? { data: projectId ? aliasByProject[projectId] ?? null : null, error: null }
-          : { data: null, error: null };
-      return builder;
-    },
-  };
-}
-
-vi.mock("@clerk/nextjs/server", () => ({
-  currentUser: async () => ({
-    id: "clerk_master",
-    publicMetadata: { supabase_uid: "master_1" },
-    emailAddresses: [{ emailAddress: "master@exemplo.com" }],
-    firstName: "Master",
-    lastName: "User",
-  }),
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+  revalidateTag: vi.fn(),
 }));
-
-vi.mock("@/lib/supabase/server", () => makeSupabaseServerModuleMock(makeClient));
-vi.mock("@/lib/supabase/admin", () => makeSupabaseAdminModuleMock(makeClient));
-
-async function loadResolveEffective() {
-  return (await import("@/lib/auth")).resolveEffectiveUserId;
-}
-
-beforeEach(() => {
-  vi.resetModules();
-  aliasByProject = {};
+// Clerk e supabase/admin são dependências transitivas do módulo real de auth
+// (importado via importOriginal abaixo para manter resolveProjectQueueIdentity
+// REAL); nunca devem ser alcançados pelos cenários deste arquivo.
+vi.mock("@clerk/nextjs/server", () => ({ currentUser: async () => null }));
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdmin: () => ({ from: () => ({}) }),
+}));
+vi.mock("@/lib/supabase/server", () => harness.supabaseServerModule);
+// Mantém a implementação real (resolveProjectQueueIdentity) e sobrepõe apenas
+// o ator autenticado das actions, como nos demais testes de Server Actions.
+vi.mock("@/lib/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/auth")>();
+  return { ...actual, ...harness.authModule };
 });
 
-describe("resolveEffectiveUserId — viewAs é leitura, não escrita", () => {
-  it("master + viewAsUser → effectiveUserId visualizado e isImpersonating=true", async () => {
-    aliasByProject = { pX: null };
-    const resolve = await loadResolveEffective();
-    const r = await resolve("pX", { id: "master_1", isMaster: true }, "membro_visto");
-    expect(r).toEqual({
-      effectiveUserId: "membro_visto",
+const access: ResolvedProjectAccessContext = {
+  status: "resolved",
+  accountUserId: "master-1",
+  memberUserId: "master-member",
+  project: { id: "p1", name: "Projeto", created_by: "owner" },
+  membershipRole: null,
+  isMaster: true,
+  isCoordinator: true,
+};
+
+describe("resolveProjectQueueIdentity — viewAs é somente leitura", () => {
+  it("troca a fila sem substituir a conta autenticada ou seu membro próprio", async () => {
+    const { resolveProjectQueueIdentity } = await import("@/lib/auth");
+
+    const result = resolveProjectQueueIdentity(access, "member-viewed");
+
+    expect(result).toEqual({
+      ownMemberUserId: "master-member",
+      queueUserId: "member-viewed",
       isImpersonating: true,
     });
-    // O ator real (master_1) permanece distinto do effectiveUserId — as write
-    // surfaces gravam como master_1, nunca como membro_visto.
-    expect(r.effectiveUserId).not.toBe("master_1");
+    expect(result.queueUserId).not.toBe(access.accountUserId);
   });
 
-  it("não-master ignora viewAsUser (não pode se passar por outro)", async () => {
-    // Sem alias, a identidade efetiva resolve para o próprio ator autenticado
-    // (getEffectiveMemberId → getAuthUser = master_1 no mock); viewAsUser é
-    // ignorado porque isMaster=false, então não há impersonação.
-    aliasByProject = { pY: null };
-    const resolve = await loadResolveEffective();
-    const r = await resolve("pY", { id: "master_1", isMaster: false }, "membro_visto");
-    expect(r.isImpersonating).toBe(false);
-    expect(r.effectiveUserId).toBe("master_1");
+  it("não-master não pode trocar a fila pela URL", async () => {
+    const { resolveProjectQueueIdentity } = await import("@/lib/auth");
+
+    expect(
+      resolveProjectQueueIdentity(
+        { ...access, isMaster: false, isCoordinator: false },
+        "member-viewed",
+      ),
+    ).toEqual({
+      ownMemberUserId: "master-member",
+      queueUserId: "master-member",
+      isImpersonating: false,
+    });
+  });
+});
+
+describe("saveResponse — escrita persiste o ator real, nunca o viewAs", () => {
+  beforeEach(() => {
+    harness.reset({
+      profiles: { data: { first_name: "Ana", last_name: "Souza" } },
+      responses: { data: null },
+      projects: {
+        data: {
+          pydantic_hash: null,
+          pydantic_fields: [],
+          schema_version_major: 1,
+          schema_version_minor: 0,
+          schema_version_patch: 0,
+          round_strategy: null,
+          current_round_id: null,
+          automation_mode: null,
+        },
+      },
+      documents: { data: null },
+    });
+    resolveMemberUserId.mockReset();
+    resolveMemberUserId.mockResolvedValue("canonical-member");
+  });
+
+  it("persiste respondent_id canônico mesmo com viewAsUser injetado como argumento extra", async () => {
+    const { saveResponse } = await import("@/actions/responses");
+
+    // A assinatura não tem parâmetro de identidade — o cast simula um caller
+    // malicioso empurrando um viewAsUser além dos parâmetros declarados.
+    const saveWithInjectedViewAs = saveResponse as unknown as (
+      ...args: unknown[]
+    ) => ReturnType<typeof saveResponse>;
+
+    const result = await saveWithInjectedViewAs(
+      "project-1",
+      "doc-1",
+      {},
+      {},
+      "member-viewed",
+    );
+
+    expect(result).toEqual({ success: true });
+    // A identidade veio do ator autenticado (por projectId), não de input do caller.
+    expect(resolveMemberUserId).toHaveBeenCalledWith("project-1");
+
+    const insert = harness.supabase.writeCalls.find(
+      (w) => w.table === "responses" && w.op === "insert",
+    );
+    expect(insert).toBeDefined();
+    const payload = insert!.payload as { respondent_id: string };
+    expect(payload.respondent_id).toBe("canonical-member");
+    expect(payload.respondent_id).not.toBe("member-viewed");
+  });
+
+  it("não grava quando a identidade canônica está indisponível", async () => {
+    resolveMemberUserId.mockRejectedValueOnce(
+      new Error("identity unavailable"),
+    );
+    const { saveResponse } = await import("@/actions/responses");
+
+    const result = await saveResponse("project-1", "doc-1", {});
+
+    expect(result).toEqual({
+      success: false,
+      error: "Não foi possível verificar sua identidade no projeto.",
+    });
+    expect(harness.supabase.writeCalls).toEqual([]);
   });
 });

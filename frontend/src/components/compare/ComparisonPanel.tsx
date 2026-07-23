@@ -10,7 +10,9 @@ import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { normalizeForComparison } from "@/lib/utils";
-import { buildResponseGroupKeys } from "@/lib/equivalence";
+import {
+  buildResponseGroupKeys,
+} from "@/lib/equivalence";
 import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { VerdictInfo } from "@/lib/compare-reviews";

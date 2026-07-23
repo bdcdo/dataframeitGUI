@@ -27,6 +27,9 @@ const hoisted = vi.hoisted(() => ({
     id: "userCoord",
   })),
   isCoord: vi.fn<() => Promise<boolean>>(async () => true),
+  resolveMemberUserId: vi.fn<(projectId: string) => Promise<string>>(
+    async () => "canonical-member",
+  ),
 }));
 
 vi.mock("next/cache", () => ({
@@ -35,14 +38,36 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
-  isProjectCoordinator: () => hoisted.isCoord(),
+  resolveProjectMemberActor: async (projectId: string) => {
+    const user = await hoisted.getUser();
+    if (!user) {
+      return { ok: false, code: "unauthenticated", error: "Não autenticado" };
+    }
+    try {
+      return {
+        ok: true,
+        user,
+        memberUserId: await hoisted.resolveMemberUserId(projectId),
+      };
+    } catch {
+      return {
+        ok: false,
+        code: "identity_unavailable",
+        error: "Não foi possível verificar sua identidade no projeto.",
+      };
+    }
+  },
   // Reimplementa a lógica real de requireCoordinator sobre os mesmos mocks
   // hoisted, para excludeDocuments/restoreDocuments/hardDeleteDocuments
-  // (que passaram a chamá-lo em vez de getAuthUser+isProjectCoordinator soltos).
+  // e mantém os mesmos estados discriminados do helper real.
   requireCoordinator: async (_projectId: string, deniedMessage: string) => {
     const user = await hoisted.getUser();
-    if (!user) return { ok: false, error: "Não autenticado" };
-    if (!(await hoisted.isCoord())) return { ok: false, error: deniedMessage };
+    if (!user) {
+      return { ok: false, code: "unauthenticated", error: "Não autenticado" };
+    }
+    if (!(await hoisted.isCoord())) {
+      return { ok: false, code: "forbidden", error: deniedMessage };
+    }
     return { ok: true, user };
   },
 }));
@@ -63,6 +88,8 @@ beforeEach(() => {
   serverRpcResults = undefined;
   hoisted.getUser.mockResolvedValue({ id: "userCoord" });
   hoisted.isCoord.mockResolvedValue(true);
+  hoisted.resolveMemberUserId.mockReset();
+  hoisted.resolveMemberUserId.mockResolvedValue("canonical-member");
 });
 
 async function loadUpload() {
@@ -89,6 +116,10 @@ async function loadHardDelete() {
   return (await import("@/actions/documents")).hardDeleteDocuments;
 }
 
+async function loadBrowse() {
+  return (await import("@/actions/documents")).getDocumentsForBrowse;
+}
+
 function insertedExternalIds(): (string | null)[] {
   const call = writeCalls.find(
     (c) => c.table === "documents" && c.op === "insert",
@@ -97,6 +128,34 @@ function insertedExternalIds(): (string | null)[] {
     (r) => r.external_id,
   );
 }
+
+describe("getDocumentsForBrowse — identidade canônica", () => {
+  it("reconhece como própria a resposta do membro canônico da conta-alias", async () => {
+    serverTableResults = {
+      documents: {
+        data: [
+          {
+            id: "doc-1",
+            external_id: "EXT-1",
+            title: "Documento",
+            created_at: "2026-07-15T00:00:00Z",
+            exclusion_pending_at: null,
+          },
+        ],
+      },
+      responses: {
+        data: [{ document_id: "doc-1", respondent_id: "canonical-member" }],
+      },
+      project_comments: { data: [] },
+    };
+    const browse = await loadBrowse();
+
+    const result = await browse("project-1");
+
+    expect(result[0]?.userAlreadyResponded).toBe(true);
+    expect(hoisted.resolveMemberUserId).toHaveBeenCalledWith("project-1");
+  });
+});
 
 function insertedRows(): { metadata: unknown; external_id: string | null }[] {
   const call = writeCalls.find(

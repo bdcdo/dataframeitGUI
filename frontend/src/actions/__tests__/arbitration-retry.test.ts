@@ -18,7 +18,7 @@ let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown>;
 
 const arbitrationCalls = () =>
-  rpcCalls.filter((call) => call.fn === "assign_arbitration_if_eligible");
+  rpcCalls.filter((call) => call.fn === "assign_arbitration_cycles_if_eligible");
 
 function makeClient() {
   return makeSimpleSupabaseMock({
@@ -46,7 +46,7 @@ beforeEach(() => {
   writeCalls = [];
   rpcCalls = [];
   rpcResults = {
-    assign_arbitration_if_eligible: { data: 1 },
+    assign_arbitration_cycles_if_eligible: { data: 1 },
   };
   tableData = {
     field_reviews: [],
@@ -87,8 +87,8 @@ describe("retryPendingArbitrations — guards", () => {
 describe("retryPendingArbitrations — agrupamento por (document_id, self_reviewer_id)", () => {
   it("dois fields do mesmo doc/self_reviewer → 1 commit atômico", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc1", field_name: "q2", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     // Pool com 1 árbitro elegível (assignArbitrator pode sortear)
     tableData.project_members = [
@@ -102,15 +102,15 @@ describe("retryPendingArbitrations — agrupamento por (document_id, self_review
       p_project_id: "p1",
       p_document_id: "doc1",
       p_user_id: "userB",
-      p_field_names: ["q1", "q2"],
+      p_field_review_ids: ["fr1", "fr2"],
     });
     expect(writeCalls).toHaveLength(0);
   });
 
   it("dois docs distintos → 2 commits atômicos", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc2", field_name: "q1", self_reviewer_id: "userC" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc2", self_reviewer_id: "userC" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
@@ -124,8 +124,8 @@ describe("retryPendingArbitrations — agrupamento por (document_id, self_review
 
   it("self_reviewers diferentes no mesmo doc → 2 grupos (caso raro mas suportado)", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc1", field_name: "q2", self_reviewer_id: "userC" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc1", self_reviewer_id: "userC" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
@@ -139,7 +139,7 @@ describe("retryPendingArbitrations — agrupamento por (document_id, self_review
 describe("retryPendingArbitrations — pool vazio", () => {
   it("nenhum membro elegível → stillNoPool incrementa, sem UPDATE", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [];
     const retry = await loadRetry();
@@ -152,12 +152,12 @@ describe("retryPendingArbitrations — pool vazio", () => {
 
   it("candidato desabilitado antes do commit → RPC não grava", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
     ];
-    rpcResults.assign_arbitration_if_eligible = { data: 0 };
+    rpcResults.assign_arbitration_cycles_if_eligible = { data: 0 };
 
     const retry = await loadRetry();
 
@@ -174,7 +174,7 @@ describe("retryPendingArbitrations — pool vazio", () => {
 describe("retryPendingArbitrations — exclui codificadores do documento", () => {
   it("membro que codificou o doc é excluído do pool", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
@@ -191,7 +191,7 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
 
   it("todos os elegíveis codificaram o doc → fallback para elegível != auto-revisor", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },
@@ -215,7 +215,7 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
 
   it("único elegível é o próprio auto-revisor → stillNoPool, sem UPDATE", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [{ user_id: "userA", role: "pesquisador" }];
     tableData.responses = [{ document_id: "doc1", respondent_id: "userA" }];
@@ -231,8 +231,8 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
 describe("retryPendingArbitrations — batch de responses agrupado por doc", () => {
   it("dois docs com codificadores distintos → cada assignArbitrator vê só o seu doc", async () => {
     tableData.field_reviews = [
-      { document_id: "doc1", field_name: "q1", self_reviewer_id: "userA" },
-      { document_id: "doc2", field_name: "q1", self_reviewer_id: "userA" },
+      { id: "fr1", document_id: "doc1", self_reviewer_id: "userA" },
+      { id: "fr2", document_id: "doc2", self_reviewer_id: "userA" },
     ];
     tableData.project_members = [
       { user_id: "userB", role: "pesquisador" },

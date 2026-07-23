@@ -8,8 +8,13 @@ import {
   diffFields,
   fieldDiffIsStructural,
   generatePydanticCode,
+  isProjectScopedLogEntry,
+  ORDER_LOG_FIELD_NAME,
+  planSchemaPersistence,
+  PROJECT_LOG_FIELD_NAME,
   stableStringify,
 } from "@/lib/schema-utils";
+import { pydanticFieldNameIssue } from "@/lib/pydantic-field";
 import type { FieldCondition, PydanticField } from "@/lib/types";
 
 const baseField = (over: Partial<PydanticField>): PydanticField => ({
@@ -105,6 +110,44 @@ describe("classifyChange", () => {
     ];
     expect(classifyChange(oldF, newF)).toBe("patch");
   });
+
+  // `subfield_rule` é a quarta propriedade cujo default é implícito, e a última a
+  // ganhar resolvedor. Um campo legado com subcampos e sem regra é o mesmo campo
+  // que um com `"all"` — e o EditFieldDialog promove o default a explícito ao
+  // salvar (`useEditFieldForm` inicializa o select com o default resolvido), então
+  // corrigir SÓ a descrição pela aba Comentários gravava `subfield_rule: "all"`.
+  // Sem o resolvedor, `null !== "all"` virava mudança estrutural: o save saía como
+  // MINOR, com entrada de auditoria de uma regra que ninguém tocou, enquanto o
+  // `pydantic_hash` ficava idêntico porque o gerador nunca emite o default.
+  const withSubfields = (over: Partial<PydanticField> = {}) =>
+    baseField({
+      name: "q1",
+      type: "text",
+      options: null,
+      subfields: [{ key: "a", label: "A" }],
+      ...over,
+    });
+
+  it("promover o default de subfield_rule a explícito não é mudança", () => {
+    const legado = [withSubfields()];
+    const salvoPeloDialogo = [withSubfields({ subfield_rule: "all" })];
+    expect(classifyChange(legado, salvoPeloDialogo)).toBeNull();
+  });
+
+  it("editar só a descrição de campo legado com subcampos é patch, não minor", () => {
+    const legado = [withSubfields({ description: "antes" })];
+    const salvoPeloDialogo = [
+      withSubfields({ description: "depois", subfield_rule: "all" }),
+    ];
+    expect(classifyChange(legado, salvoPeloDialogo)).toBe("patch");
+    expect(diffFields(legado, salvoPeloDialogo)).toHaveLength(1);
+  });
+
+  it("mudar a regra de verdade continua sendo minor", () => {
+    const legado = [withSubfields()];
+    const mudada = [withSubfields({ subfield_rule: "at_least_one" })];
+    expect(classifyChange(legado, mudada)).toBe("minor");
+  });
 });
 
 // O jsonb do Postgres normaliza a ordem das chaves; condition/subfields lidos
@@ -193,6 +236,107 @@ describe("snapshotOf", () => {
     expect(snap).toHaveProperty("condition");
     expect(snap).toHaveProperty("subfields");
   });
+
+  // snapshotOf define "campo igual" para o merge (sameFieldContent). Se ele
+  // resolvesse os defaults diferente de classifyChange, um campo sem `target` e
+  // um com `target: "all"` seriam o mesmo campo para o versionamento e campos
+  // diferentes para o merge — conflito fabricado sem edição.
+  it("resolve os defaults implícitos em vez de gravar null", () => {
+    const snap = snapshotOf(baseField({ name: "q1", options: ["A"] }));
+    expect(snap.target).toBe("all");
+    expect(snap.required).toBe(true);
+    expect(snap.allow_other).toBe(false);
+  });
+
+  it("um campo sem default explícito serializa igual a um com", () => {
+    const implicito = baseField({ name: "q1", options: ["A"] });
+    const explicito = baseField({
+      name: "q1",
+      options: ["A"],
+      target: "all",
+      required: true,
+      allow_other: false,
+    });
+    expect(snapshotOf(implicito)).toEqual(snapshotOf(explicito));
+  });
+});
+
+// classifyChange é derivado de diffFields + fieldDiffIsStructural. Estes casos
+// travam a concordância entre os três: uma tabela de propriedades que voltasse a
+// existir em classifyChange divergiria aqui.
+describe("classifyChange — concordância com diffFields", () => {
+  const derive = (o: PydanticField[], n: PydanticField[]) => {
+    const entries = diffFields(o, n);
+    if (entries.length === 0) return null;
+    return entries.some((e) => fieldDiffIsStructural(e.before_value, e.after_value))
+      ? "minor"
+      : "patch";
+  };
+
+  const q = (over: Partial<PydanticField> = {}) =>
+    baseField({ name: "q1", options: ["A", "B"], ...over });
+
+  const casos: Array<[string, PydanticField[], PydanticField[]]> = [
+    ["nada muda", [q()], [q()]],
+    ["descrição", [q()], [q({ description: "outra" })]],
+    ["tipo", [q()], [q({ type: "multi" })]],
+    ["alvo", [q()], [q({ target: "llm_only" })]],
+    ["obrigatoriedade", [q()], [q({ required: false })]],
+    ["permite outro", [q()], [q({ allow_other: true })]],
+    ["opções reordenadas", [q()], [q({ options: ["B", "A"] })]],
+    ["opção adicionada", [q()], [q({ options: ["A", "B", "C"] })]],
+    ["instruções", [q()], [q({ help_text: "ajuda" })]],
+    ["prompt de justificativa", [q()], [q({ justification_prompt: "cite" })]],
+    ["campo adicionado", [q()], [q(), baseField({ name: "q2", type: "text" })]],
+    ["campo removido", [q(), baseField({ name: "q2", type: "text" })], [q()]],
+    [
+      "reordenação pura",
+      [q(), baseField({ name: "q2", type: "text" })],
+      [baseField({ name: "q2", type: "text" }), q()],
+    ],
+    ["default implícito virou explícito", [q()], [q({ target: "all", required: true })]],
+  ];
+
+  for (const [nome, oldFields, newFields] of casos) {
+    it(`concorda com a derivação: ${nome}`, () => {
+      expect(classifyChange(oldFields, newFields)).toBe(derive(oldFields, newFields));
+    });
+  }
+
+  it("tornar o default explícito não é mudança alguma", () => {
+    expect(classifyChange([q()], [q({ target: "all", required: true, allow_other: false })])).toBeNull();
+  });
+
+  // A invariante que o save depende: a RPC recusa `p_log_entries` vazio, então
+  // toda mudança classificada precisa render pelo menos uma entrada.
+  it("classifyChange != null ⇒ diffFields != []", () => {
+    for (const [nome, oldFields, newFields] of casos) {
+      if (classifyChange(oldFields, newFields) !== null) {
+        expect(diffFields(oldFields, newFields), nome).not.toHaveLength(0);
+      }
+    }
+  });
+});
+
+describe("fieldDiffIsStructural — multiconjunto de opções", () => {
+  // Mesmo Set, contagens diferentes: some uma opção duplicada. Muda o que o
+  // respondente pode escolher, então é estrutural — e precisa bater com o que
+  // classifyChange decide, senão o backfill reclassifica o histórico divergindo
+  // do save que o gravou.
+  it("perder uma opção duplicada é estrutural", () => {
+    expect(
+      fieldDiffIsStructural(
+        { options: ["A", "A", "B"] },
+        { options: ["A", "B"] },
+      ),
+    ).toBe(true);
+  });
+
+  it("reordenar dentro do mesmo multiconjunto segue textual", () => {
+    expect(
+      fieldDiffIsStructural({ options: ["A", "B"] }, { options: ["B", "A"] }),
+    ).toBe(false);
+  });
 });
 
 describe("diffFields", () => {
@@ -214,6 +358,92 @@ describe("diffFields", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].change_summary).toContain("prompt de justificativa");
     expect(entries[0].after_value.justification_prompt).toBe("novo");
+  });
+});
+
+describe("sentinelas de entrada de escopo do projeto", () => {
+  // A segurança do sentinel vem de os parênteses serem rejeitados como
+  // identificador Python: nenhum campo real pode se chamar "(ordem)", então o
+  // replay do backfill nunca confunde a entrada com um campo.
+  it.each([PROJECT_LOG_FIELD_NAME, ORDER_LOG_FIELD_NAME])(
+    "%s não é um nome de campo válido",
+    (sentinel) => {
+      expect(pydanticFieldNameIssue(sentinel)).toBe("invalid");
+      expect(isProjectScopedLogEntry(sentinel)).toBe(true);
+    },
+  );
+
+  it("um nome de campo real não é tratado como escopo de projeto", () => {
+    expect(isProjectScopedLogEntry("ordem")).toBe(false);
+  });
+});
+
+describe("diffFields — reordenação", () => {
+  const a = baseField({ name: "a", options: ["A"] });
+  const b = baseField({ name: "b", options: ["A"] });
+  const c = baseField({ name: "c", options: ["A"] });
+
+  it("emite entrada (ordem) quando só a ordem muda", () => {
+    const entries = diffFields([a, b, c], [c, a, b]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      field_name: ORDER_LOG_FIELD_NAME,
+      change_summary: "ordem dos campos alterada",
+      before_value: { order: ["a", "b", "c"] },
+      after_value: { order: ["c", "a", "b"] },
+    });
+  });
+
+  it("não relata reordenação ao inserir um campo no meio", () => {
+    const entries = diffFields([a, c], [a, b, c]);
+    expect(entries.map((e) => e.field_name)).toEqual(["b"]);
+  });
+
+  it("não relata reordenação ao remover um campo do meio", () => {
+    const entries = diffFields([a, b, c], [a, c]);
+    expect(entries.map((e) => e.field_name)).toEqual(["b"]);
+  });
+
+  it("relata reordenação e adição quando as duas coisas acontecem", () => {
+    const entries = diffFields([a, c], [b, c, a]);
+    expect(entries.map((e) => e.field_name).sort()).toEqual([
+      ORDER_LOG_FIELD_NAME,
+      "b",
+    ]);
+  });
+});
+
+// A RPC `commit_project_schema` recusa uma mudança de versão sem histórico
+// (`p_log_entries must be a non-empty JSON array`). Antes da entrada (ordem),
+// reordenar campos produzia changeType="patch" com logEntries=[] e o save
+// quebrava com o erro cru do Postgres.
+describe("planSchemaPersistence — invariante de auditoria", () => {
+  const v = { major: 0, minor: 1, patch: 0 };
+  const q1 = baseField({ name: "q1", options: ["A", "B"] });
+  const q2 = baseField({ name: "q2", options: ["A"] });
+
+  const cases: Array<[string, PydanticField[], PydanticField[]]> = [
+    ["reordenação pura", [q1, q2], [q2, q1]],
+    ["campo adicionado", [q1], [q1, q2]],
+    ["campo removido", [q1, q2], [q1]],
+    ["descrição alterada", [q1], [{ ...q1, description: "outra" }]],
+    ["tipo alterado", [q1], [{ ...q1, type: "text", options: null }]],
+    ["opções reordenadas", [q1], [{ ...q1, options: ["B", "A"] }]],
+    ["alvo alterado", [q1], [{ ...q1, target: "llm_only" }]],
+    ["rename", [q1], [{ ...q1, name: "q9" }]],
+    ["reordenação + edição", [q1, q2], [{ ...q2, description: "x" }, q1]],
+  ];
+
+  it.each(cases)("%s: mudança classificada tem log", (_label, oldF, newF) => {
+    const plan = planSchemaPersistence(oldF, newF, v);
+    expect(plan.changeType).not.toBeNull();
+    expect(plan.logEntries.length).toBeGreaterThan(0);
+  });
+
+  it("sem mudança: nem classificação nem log", () => {
+    const plan = planSchemaPersistence([q1, q2], [q1, q2], v);
+    expect(plan.changeType).toBeNull();
+    expect(plan.logEntries).toEqual([]);
   });
 });
 
@@ -246,5 +476,29 @@ describe("generatePydanticCode round-trip surface", () => {
     expect(code).toContain(
       '"justification_prompt": "Cite o trecho do parecer."',
     );
+  });
+
+  it("emits required in json_schema_extra when the field is optional", () => {
+    const code = generatePydanticCode([
+      baseField({ name: "q1", options: ["A", "B"], required: false }),
+    ]);
+    expect(code).toContain('"required": False');
+  });
+
+  // `pydantic_hash` é sha256 do texto do código. Emitir a chave no caso default
+  // mudaria o texto de todo projeto no próximo save, e respostas LLM legadas
+  // (sem answer_field_hashes e sem semver) sairiam da fila de Comparação porque
+  // o hash é o único vínculo delas com o schema. O texto tem que ficar
+  // byte-idêntico para quem não usa campo opcional.
+  it("never emits required for the implicit default", () => {
+    const implicito = generatePydanticCode([
+      baseField({ name: "q1", options: ["A", "B"] }),
+    ]);
+    const explicito = generatePydanticCode([
+      baseField({ name: "q1", options: ["A", "B"], required: true }),
+    ]);
+    expect(implicito).not.toContain('"required"');
+    expect(explicito).not.toContain('"required"');
+    expect(explicito).toBe(implicito);
   });
 });

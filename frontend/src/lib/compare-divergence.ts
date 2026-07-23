@@ -1,6 +1,11 @@
 import { normalizeForComparison } from "@/lib/utils";
 import { isFieldVisible } from "@/lib/conditional";
-import { buildResponseGroupKeys, type EquivalencePair } from "@/lib/equivalence";
+import {
+  buildResponseGroupKeys,
+  filterCurrentEquivalencePairs,
+  type EquivalencePair,
+} from "@/lib/equivalence";
+import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 interface ResponseLike {
@@ -13,18 +18,6 @@ interface ResponseLike {
   // Ausente/null/{} = legacy: não dá para inferir, mantém comportamento antigo
   // de incluir a response.
   answerFieldHashes?: AnswerFieldHashes;
-}
-
-// True a menos que a response comprovadamente não tivesse o campo no schema
-// contra o qual foi codificada (answer_field_hashes presente, não-vazio e sem
-// a chave). Um objeto vazio é tratado como legacy: ou o projeto não tinha
-// campos, ou os PydanticFields não tinham `.hash` populado — em ambos os casos
-// não dá para inferir staleness, então a response permanece na comparação (não
-// excluir todos os campos silenciosamente).
-function responseHadField(r: ResponseLike, fieldName: string): boolean {
-  if (!r.answerFieldHashes) return true;
-  if (Object.keys(r.answerFieldHashes).length === 0) return true;
-  return Object.prototype.hasOwnProperty.call(r.answerFieldHashes, fieldName);
 }
 
 // Returns the names of fields whose responses diverge.
@@ -47,7 +40,7 @@ export function computeDivergentFieldNames(
       continue;
 
     const applicable = responses.filter((r) => {
-      if (!responseHadField(r, field.name)) return false;
+      if (!fieldExistedWhenCoded(r.answerFieldHashes, field.name)) return false;
       if (
         field.condition &&
         !isFieldVisible(field, (r.answers as Record<string, unknown>) ?? {})
@@ -88,11 +81,15 @@ export function computeDivergentFieldNames(
     // é equivalente a agrupar por resposta normalizada (comportamento antigo do
     // ramo scalar). multi tem seu próprio caminho (set de opções) acima, pois
     // sua UI de revisão (MultiOptionReview) não tem cards de equivalência.
-    const pairs = equivalencesByField?.get(field.name) ?? [];
     const items = applicable.map((r) => ({
       id: r.id,
       answer: (r.answers as Record<string, unknown>)?.[field.name],
     }));
+    const pairs = filterCurrentEquivalencePairs(
+      items,
+      equivalencesByField?.get(field.name) ?? [],
+      (item) => item.answer,
+    );
     const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
       normalizeForComparison(r.answer),
     );

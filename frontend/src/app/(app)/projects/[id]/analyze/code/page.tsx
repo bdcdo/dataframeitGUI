@@ -1,13 +1,13 @@
 import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
-  getAuthUser,
-  isProjectCoordinator,
-  resolveEffectiveUserId,
+  getProjectAccessContext,
+  resolveProjectQueueIdentity,
 } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requirePageAuthUser } from "@/lib/page-auth";
+import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { CodingPage } from "@/components/coding/CodingPage";
-import { dropHiddenConditionals } from "@/lib/conditional";
+import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type {
   Document,
   Assignment,
@@ -37,17 +37,18 @@ export default async function CodePage({
   const [{ id }, sp, user] = await Promise.all([
     params,
     searchParams,
-    getAuthUser(),
+    requirePageAuthUser(),
   ]);
-  if (!user) redirect("/auth/login");
 
   // Impersonação master (viewAsUser) tem precedência; sem ela, contas
   // vinculadas trabalham como o membro canônico do projeto (spec 002).
-  // resolveEffectiveUserId é a fonte única dessa precedência, compartilhada
+  // resolveProjectQueueIdentity é a fonte única dessa precedência, compartilhada
   // com Comparação e Arbitragem.
-  const { effectiveUserId, isImpersonating } = await resolveEffectiveUserId(
-    id,
-    user,
+  const access = requireResolvedProjectAccess(
+    await getProjectAccessContext(id, user),
+  );
+  const { queueUserId, isImpersonating } = resolveProjectQueueIdentity(
+    access,
     sp.viewAsUser,
   );
   const roundParam = sp.round ?? CURRENT_FILTER_VALUE;
@@ -59,7 +60,6 @@ export default async function CodePage({
     { data: assignments },
     { data: rounds },
     { data: pendingExclusions },
-    canRunLlm,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -72,7 +72,7 @@ export default async function CodePage({
       .from("assignments")
       .select("id, status, document_id, documents!inner(id, external_id, title, text)")
       .eq("project_id", id)
-      .eq("user_id", effectiveUserId)
+      .eq("user_id", queueUserId)
       .eq("type", "codificacao")
       .is("documents.excluded_at", null)
       .order("status", { ascending: true }),
@@ -91,16 +91,19 @@ export default async function CodePage({
       .eq("kind", "exclusion_request")
       .is("resolved_at", null)
       .is("rejected_at", null),
-    // Rodar LLM exige coordenador no backend (#195): só então mostrar o botão.
-    isProjectCoordinator(id, user),
   ]);
 
   const pendingExclusionByDoc: Record<string, string> = {};
   const pendingByOthers = new Set<string>();
   for (const pc of pendingExclusions ?? []) {
     if (!pc.document_id) continue;
-    // Autor pode ser a conta autenticada ou o membro canônico (spec 002).
-    if (pc.author_id === user.id || pc.author_id === effectiveUserId) {
+    // Pedidos preservam autoria da conta bruta, mas a fila é da identidade
+    // canônica: o pedido criado pela conta-irmã da MESMA fila (canônica vs.
+    // alias, ou o pesquisador visto sob viewAsUser) é "próprio" para efeito
+    // de exibição — sem o braço queueUserId, o doc sumia da única fila do
+    // membro em vez de aparecer bloqueado com opção de desfazer (regressão
+    // sobre o comportamento da main, que casava o effectiveUserId).
+    if (pc.author_id === user.id || pc.author_id === queueUserId) {
       pendingExclusionByDoc[pc.document_id] = pc.body as string;
     } else {
       pendingByOthers.add(pc.document_id);
@@ -119,7 +122,7 @@ export default async function CodePage({
     );
 
   // Responses incluem agora round_id e schema_version para classificacao por rodada.
-  // Filtra respondent_type=humano: respostas LLM têm respondent_id distinto, mas o
+  // Filtra respondent_type=humano: respostas LLM usam respondent_id NULL, mas o
   // filtro explícito alinha com saveResponse e protege contra colisões futuras.
   const docIds = allDocuments.map((d) => d.id);
   const { data: responses } = await supabase
@@ -128,7 +131,7 @@ export default async function CodePage({
       "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch, is_partial, updated_at",
     )
     .eq("project_id", id)
-    .eq("respondent_id", effectiveUserId)
+    .eq("respondent_id", queueUserId)
     .eq("respondent_type", "humano")
     .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
 
@@ -231,38 +234,14 @@ export default async function CodePage({
   const fields = allFields.filter(
     (f) => f.target !== "llm_only" && f.target !== "none",
   );
-  const fieldOptionSet = new Map<string, Set<string>>();
-  for (const field of fields) {
-    if ((field.type === "single" || field.type === "multi") && field.options) {
-      fieldOptionSet.set(field.name, new Set(field.options));
-    }
-  }
   const existingAnswers: Record<string, Record<string, unknown>> = {};
   const existingJustifications: Record<string, Record<string, unknown>> = {};
   for (const d of filteredDocuments) {
     const r = responseByDoc.get(d.id);
     if (!r) continue;
-    const clean: Record<string, unknown> = {};
-    for (const field of fields) {
-      const val = r.answers[field.name];
-      if (val === undefined || val === null) continue;
-      if (field.type === "single" && field.options) {
-        if (fieldOptionSet.get(field.name)!.has(val as string)) clean[field.name] = val;
-      } else if (field.type === "multi" && field.options) {
-        const allowed = fieldOptionSet.get(field.name)!;
-        const arr = Array.isArray(val)
-          ? val.filter((v: string) => allowed.has(v))
-          : [];
-        if (arr.length > 0) clean[field.name] = arr;
-      } else {
-        clean[field.name] = val;
-      }
-    }
-    // Remove condicionais órfãs na fronteira de leitura — mesma primitiva do
-    // saveResponse; evita que um documento orfanado por mudança de schema
-    // pós-codificação reapareça pré-preenchido no editor (ver #252). Conjunto
-    // COMPLETO de campos: uma condição pode referenciar qualquer campo.
-    existingAnswers[d.id] = dropHiddenConditionals(allFields, clean);
+    // Fronteira de leitura do modo Atribuídos — mesma primitiva do modo
+    // Explorar (getDocumentForCoding), que lê o mesmo dado por outro caminho.
+    existingAnswers[d.id] = sanitizeStoredAnswers(allFields, r.answers);
     if (r.justifications) {
       existingJustifications[d.id] = r.justifications;
     }
@@ -284,7 +263,7 @@ export default async function CodePage({
         existingAnswers={existingAnswers}
         existingJustifications={existingJustifications}
         hasAssignments={allDocuments.length > 0}
-        canRunLlm={canRunLlm}
+        canRunLlm={access.isCoordinator}
         outOfScopeEnabled={project?.out_of_scope_enabled ?? true}
         pendingExclusionByDoc={pendingExclusionByDoc}
         readOnly={isImpersonating || isViewingPreviousRound}

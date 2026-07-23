@@ -66,6 +66,8 @@ export interface EquivalenceRow {
   response_a_id: string;
   response_b_id: string;
   reviewer_id: string | null;
+  response_a_answer_snapshot: unknown;
+  response_b_answer_snapshot: unknown;
 }
 
 // Row solta o suficiente para aceitar o resultado do select do Supabase (que
@@ -138,6 +140,8 @@ export function buildEquivalenceMap(
       response_a_id: eq.response_a_id,
       response_b_id: eq.response_b_id,
       reviewer_id: eq.reviewer_id ?? null,
+      response_a_answer_snapshot: eq.response_a_answer_snapshot,
+      response_b_answer_snapshot: eq.response_b_answer_snapshot,
     });
   }
   return equivByDocField;

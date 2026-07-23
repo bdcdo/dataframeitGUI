@@ -59,7 +59,12 @@ describe("computeDivergentFieldNames", () => {
       { id: "2", answers: { a: "beta" } },
     ];
     const pairs: EquivalencePair[] = [
-      { response_a_id: "1", response_b_id: "2" },
+      {
+        response_a_id: "1",
+        response_b_id: "2",
+        response_a_answer_snapshot: "alpha",
+        response_b_answer_snapshot: "beta",
+      },
     ];
     const equivalencesByField = new Map<string, EquivalencePair[]>([
       ["a", pairs],
@@ -77,7 +82,12 @@ describe("computeDivergentFieldNames", () => {
       { id: "3", answers: { a: "gamma" } },
     ];
     const pairs: EquivalencePair[] = [
-      { response_a_id: "1", response_b_id: "2" },
+      {
+        response_a_id: "1",
+        response_b_id: "2",
+        response_a_answer_snapshot: "alpha",
+        response_b_answer_snapshot: "beta",
+      },
     ];
     const equivalencesByField = new Map<string, EquivalencePair[]>([
       ["a", pairs],
@@ -107,7 +117,12 @@ describe("computeDivergentFieldNames", () => {
       { id: "2", answers: { s: "N/A" } },
     ];
     const equivalencesByField = new Map<string, EquivalencePair[]>([
-      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+      ["s", [{
+        response_a_id: "1",
+        response_b_id: "2",
+        response_a_answer_snapshot: "NI",
+        response_b_answer_snapshot: "N/A",
+      }]],
     ]);
     expect(
       computeDivergentFieldNames(fields, responses, equivalencesByField),
@@ -124,7 +139,12 @@ describe("computeDivergentFieldNames", () => {
       { id: "3", answers: { s: "Sim" } },
     ];
     const equivalencesByField = new Map<string, EquivalencePair[]>([
-      ["s", [{ response_a_id: "1", response_b_id: "2" }]],
+      ["s", [{
+        response_a_id: "1",
+        response_b_id: "2",
+        response_a_answer_snapshot: "NI",
+        response_b_answer_snapshot: "N/A",
+      }]],
     ]);
     expect(
       computeDivergentFieldNames(fields, responses, equivalencesByField),

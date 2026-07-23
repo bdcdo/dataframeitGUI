@@ -88,10 +88,10 @@ describe("buildEquivalenceMap", () => {
 
   it("agrupa pares por (document_id, field_name)", () => {
     const map = buildEquivalenceMap([
-      { id: "e1", document_id: "d1", field_name: "a", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1" },
-      { id: "e2", document_id: "d1", field_name: "a", response_a_id: "r3", response_b_id: "r4", reviewer_id: null },
-      { id: "e3", document_id: "d1", field_name: "b", response_a_id: "r5", response_b_id: "r6", reviewer_id: "u1" },
-      { id: "e4", document_id: "d2", field_name: "a", response_a_id: "r7", response_b_id: "r8", reviewer_id: "u1" },
+      { id: "e1", document_id: "d1", field_name: "a", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
+      { id: "e2", document_id: "d1", field_name: "a", response_a_id: "r3", response_b_id: "r4", reviewer_id: null, response_a_answer_snapshot: null, response_b_answer_snapshot: null },
+      { id: "e3", document_id: "d1", field_name: "b", response_a_id: "r5", response_b_id: "r6", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
+      { id: "e4", document_id: "d2", field_name: "a", response_a_id: "r7", response_b_id: "r8", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
     ]);
     expect(map.get("d1")?.get("a")).toHaveLength(2);
     expect(map.get("d1")?.get("b")).toHaveLength(1);
@@ -461,13 +461,13 @@ describe("sortDocumentsByPendingDivergence", () => {
 describe("serializeEquivalencesForClient", () => {
   it("só serializa docs presentes em qualifiedDocIds", () => {
     const equivByDocField = buildEquivalenceMap([
-      { id: "e1", document_id: "doc1", field_name: "a", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1" },
-      { id: "e2", document_id: "doc2", field_name: "a", response_a_id: "r3", response_b_id: "r4", reviewer_id: "u1" },
+      { id: "e1", document_id: "doc1", field_name: "a", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
+      { id: "e2", document_id: "doc2", field_name: "a", response_a_id: "r3", response_b_id: "r4", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
     ]);
     const serialized = serializeEquivalencesForClient(equivByDocField, ["doc1"]);
     expect(Object.keys(serialized)).toEqual(["doc1"]);
     expect(serialized.doc1.a).toEqual([
-      { id: "e1", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1" },
+      { id: "e1", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
     ]);
   });
 });

@@ -1,6 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import {
   fetchReviewBaseData,
   computeReviewedDocuments,
@@ -13,12 +12,11 @@ export default async function GabaritoPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, user, supabase] = await Promise.all([
+  const [{ id }, supabase] = await Promise.all([
     params,
-    getAuthUser(),
     createSupabaseServer(),
+    requirePageAuthUser(),
   ]);
-  if (!user) redirect("/auth/login");
 
   const ctx = await fetchReviewBaseData(supabase, id);
   const reviewedDocuments = computeReviewedDocuments(ctx);

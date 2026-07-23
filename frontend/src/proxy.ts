@@ -12,6 +12,7 @@ const CANONICAL_HOST = "dataframeit.com.br";
 const isPublicRoute = createRouteMatcher([
   "/auth/(.*)",
   "/api/webhooks(.*)",
+  "/api/internal/auto-review/reconcile",
   "/api/health",
 ]);
 

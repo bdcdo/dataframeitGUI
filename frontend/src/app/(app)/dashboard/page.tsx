@@ -1,6 +1,5 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requirePageAuthUser } from "@/lib/page-auth";
 import { Header } from "@/components/shell/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,10 +8,10 @@ import Link from "next/link";
 import type { Project } from "@/lib/types";
 
 export default async function DashboardPage() {
-  const user = await getAuthUser();
-  if (!user) redirect("/auth/login");
-
-  const supabase = await createSupabaseServer();
+  const [user, supabase] = await Promise.all([
+    requirePageAuthUser(),
+    createSupabaseServer(),
+  ]);
 
   const profilePromise = supabase
     .from("profiles")
@@ -32,17 +31,32 @@ export default async function DashboardPage() {
           })) as (Project & { role: string })[],
           error,
         }))
-    : supabase
-        .from("project_members")
-        .select("project_id, role, projects(id, name, description)")
-        .eq("user_id", user.id)
-        .then(({ data, error }) => ({
-          projects: (data || []).map((m) => ({
-            ...(m.projects as unknown as Project),
-            role: m.role,
-          })) as (Project & { role: string })[],
-          error,
-        }));
+    : Promise.all([
+        supabase
+          .from("projects")
+          .select("id, name, description, created_by")
+          .order("created_at", { ascending: false }),
+        supabase.rpc("auth_user_coordinator_project_ids"),
+      ]).then(
+        ([
+          { data, error: projectsError },
+          { data: coordinatorProjectIds, error: coordinatorProjectsError },
+        ]) => {
+          const coordinatorIds = new Set(
+            (coordinatorProjectIds ?? []) as string[],
+          );
+          return {
+            projects: (data || []).map((project) => ({
+              ...(project as unknown as Project),
+              role:
+                project.created_by === user.id || coordinatorIds.has(project.id)
+                  ? "coordenador"
+                  : "pesquisador",
+            })) as (Project & { role: string })[],
+            error: projectsError ?? coordinatorProjectsError,
+          };
+        },
+      );
 
   const [
     { data: profile, error: profileError },

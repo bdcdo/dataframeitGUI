@@ -12,20 +12,23 @@ import {
 import { LinkEmailDialog } from "@/components/members/LinkEmailDialog";
 import { UnifyMembersDialog } from "@/components/members/UnifyMembersDialog";
 import { toast } from "sonner";
-import type { MemberEmailLink } from "@/lib/types";
 import { useMemberListDialogs } from "@/hooks/useMemberListDialogs";
 import { MemberRow } from "./MemberRow";
 import {
   memberDisplayName,
   groupLinksByMember,
+  type MemberEmailLinkView,
   type MemberRow as MemberRowData,
 } from "./member-list-utils";
-import { buildRetriableToggleMessage, useTogglePermission } from "./useTogglePermission";
+import {
+  buildRetriableToggleMessage,
+  useTogglePermission,
+} from "./useTogglePermission";
 
 interface MemberListProps {
   projectId: string;
   members: MemberRowData[];
-  emailLinks: MemberEmailLink[];
+  emailLinks: MemberEmailLinkView[];
   currentUserId: string;
 }
 
@@ -73,7 +76,9 @@ export function MemberList({
     if (result?.error) {
       toast.error(result.error);
     } else {
-      toast.success("E-mail desvinculado. Acessos futuros por ele cessam; o histórico permanece.");
+      toast.success(
+        "E-mail desvinculado. Acessos futuros por ele cessam; o histórico permanece.",
+      );
     }
   };
 
@@ -82,7 +87,12 @@ export function MemberList({
   // revalidatePath devolver — em conexão lenta parece que o clique não pegou.
   const [optimisticMembers, applyOptimistic] = useOptimistic<
     MemberRowData[],
-    { memberId: string; patch: Partial<Pick<MemberRowData, "can_arbitrate" | "can_resolve" | "can_compare">> }
+    {
+      memberId: string;
+      patch: Partial<
+        Pick<MemberRowData, "can_arbitrate" | "can_resolve" | "can_compare">
+      >;
+    }
   >(members, (current, update) =>
     current.map((m) =>
       m.id === update.memberId ? { ...m, ...update.patch } : m,
@@ -105,7 +115,9 @@ export function MemberList({
     setCanResolve,
     (value) => ({ can_resolve: value }),
     (value) =>
-      value ? "Permissão para resolver habilitada." : "Permissão para resolver desabilitada.",
+      value
+        ? "Permissão para resolver habilitada."
+        : "Permissão para resolver desabilitada.",
     applyOptimistic,
     startTransition,
   );

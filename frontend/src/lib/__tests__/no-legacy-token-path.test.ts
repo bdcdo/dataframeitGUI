@@ -20,16 +20,23 @@ describe("gate de regressão do render path autenticado", () => {
     expect(existsSync(join(SRC, "app/api/debug-token/route.ts"))).toBe(false);
   });
 
-  it("RC-002: layouts protegidos resolvem identidade só via resolveAuth", () => {
-    // Se um layout voltar a chamar currentUser()/auth() por conta própria, ele
-    // fura a resolução única cache()d e reintroduz o lookup por render.
+  it("RC-002: layouts protegidos delegam identidade ao page-auth", () => {
+    // A decisão de navegação fica em uma única fronteira: page-auth consome a
+    // resolução discriminada, enquanto layouts não projetam estados em null nem
+    // voltam a chamar currentUser()/auth() por conta própria.
+    const pageAuth = read("lib/page-auth.ts");
+    expect(pageAuth).toMatch(/\bresolveAuth\s*\(/);
+    expect(pageAuth).not.toMatch(/\b(?:currentUser|getAuthUser)\s*\(/);
+
     for (const layout of [
       "app/(app)/layout.tsx",
       "app/(app)/projects/[id]/layout.tsx",
     ]) {
       const code = read(layout);
-      expect(code).toContain("resolveAuth");
-      expect(code).not.toMatch(/\bcurrentUser\s*\(/);
+      expect(code).toMatch(/\brequirePageAuthUser\s*\(/);
+      expect(code).not.toMatch(
+        /\b(?:resolveAuth|currentUser|getAuthUser)\s*\(/,
+      );
     }
   });
 

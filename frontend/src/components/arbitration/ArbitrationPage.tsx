@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { usePinnedDoc, pinnedDocIndex } from "@/hooks/usePinnedDoc";
+import { useMemo } from "react";
 import { useArbitrationDoc } from "@/hooks/useArbitrationDoc";
+import { useReviewQueueNavigation } from "@/hooks/useReviewQueueNavigation";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 import { type ArbitrationDocListEntry } from "./ArbitrationDocList";
 import { ArbitrationEmptyState } from "./ArbitrationEmptyState";
@@ -49,31 +49,15 @@ export function ArbitrationPage({
   docs,
   arbitrationBlind,
 }: ArbitrationPageProps) {
-  const storageKey = `${STORAGE_KEY_PREFIX}${projectId}`;
-  const validDocIds = useMemo(() => docs.map((d) => d.docId), [docs]);
-  // Seleção persistida em sessionStorage (restore + limpeza de órfão) encapsulada
-  // em usePinnedDoc — o hook lê via useSyncExternalStore (sem effect de restore).
-  const [pinnedDocId, setPinnedDocId] = usePinnedDoc(storageKey, {
-    validIds: validDocIds,
-  });
-
-  const docIndex = useMemo(
-    () => pinnedDocIndex(validDocIds, pinnedDocId),
-    [validDocIds, pinnedDocId],
-  );
-
-  const [listCollapsed, setListCollapsed] = useState(false);
+  // Seleção persistida em sessionStorage e estado da lista vivem no hook
+  // compartilhado pelas filas pessoais de revisão.
+  const { docIndex, listCollapsed, navigate, toggleList } =
+    useReviewQueueNavigation(`${STORAGE_KEY_PREFIX}${projectId}`, docs);
 
   const fieldMeta = useMemo(
     () => new Map(fields.map((f) => [f.name, f])),
     [fields],
   );
-
-  function handleDocNavigate(newIndex: number) {
-    const clamped = Math.max(0, Math.min(newIndex, docs.length - 1));
-    const target = docs[clamped];
-    if (target) setPinnedDocId(target.docId);
-  }
 
   const doc = docs[docIndex];
   const arb = useArbitrationDoc({
@@ -81,7 +65,7 @@ export function ArbitrationPage({
     docIndex,
     docsLength: docs.length,
     projectId,
-    onNavigate: handleDocNavigate,
+    onNavigate: navigate,
   });
 
   const docListEntries: ArbitrationDocListEntry[] = useMemo(
@@ -115,7 +99,7 @@ export function ArbitrationPage({
         submitting={arb.submitting}
         allBlindChosen={arb.allBlindChosen}
         allFinalChosen={arb.allFinalChosen}
-        onNavigate={handleDocNavigate}
+        onNavigate={navigate}
         onBackToBlind={arb.onBackToBlind}
         onBlindSubmit={() => void arb.handleBlindSubmit()}
         onFinalSubmit={() => void arb.handleFinalSubmit()}
@@ -128,8 +112,8 @@ export function ArbitrationPage({
         docListEntries={docListEntries}
         docIndex={docIndex}
         listCollapsed={listCollapsed}
-        onSelectDoc={handleDocNavigate}
-        onToggleList={() => setListCollapsed((v) => !v)}
+        onSelectDoc={navigate}
+        onToggleList={toggleList}
         blindChoices={arb.blindChoices}
         finalChoices={arb.effectiveFinalChoices}
         suggestions={arb.suggestions}

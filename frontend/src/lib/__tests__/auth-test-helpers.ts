@@ -3,7 +3,7 @@
 // feature precisa distinguir, sem cada teste reescrever o mesmo mock de
 // `currentUser` + `createSupabaseAdmin`. O shape espelha o mínimo que
 // `resolveAuth`/`getAuthUser` leem: metadata `supabase_uid`, e-mail, e as
-// tabelas read-only `clerk_user_mapping`, `master_users`, `profiles`.
+// tabelas read-only `clerk_user_mapping` e `master_users`.
 
 export type LinkScenario =
   | "prepared" // metadata.supabase_uid presente e coerente com o mapping
@@ -15,9 +15,13 @@ export interface FakeSessionOptions {
   clerkUserId?: string;
   supabaseUid?: string;
   mappingUid?: string | null;
+  mappingSyncVersion?: number;
   email?: string | null;
+  primaryEmailAddressId?: string | null;
+  emailVerified?: boolean;
   isMaster?: boolean;
-  activatedAt?: string | null;
+  mappingError?: string;
+  masterError?: string;
   scenario?: LinkScenario;
 }
 
@@ -61,8 +65,15 @@ export function makeFakeSession(opts: FakeSessionOptions = {}): FakeSession {
   const base = resolveScenario(opts);
   // Overrides explícitos vencem o cenário nomeado, para casos de borda.
   const metadataUid = base.metadataUid;
-  const mappingUid = opts.mappingUid !== undefined ? opts.mappingUid : base.mappingUid;
+  const mappingUid =
+    opts.mappingUid !== undefined ? opts.mappingUid : base.mappingUid;
   const email = opts.email !== undefined ? opts.email : base.email;
+  const primaryEmailAddressId =
+    opts.primaryEmailAddressId !== undefined
+      ? opts.primaryEmailAddressId
+      : email
+        ? "email_primary"
+        : null;
 
   let lookups = 0;
 
@@ -71,7 +82,18 @@ export function makeFakeSession(opts: FakeSessionOptions = {}): FakeSession {
     return {
       id: clerkUserId,
       publicMetadata: metadataUid ? { supabase_uid: metadataUid } : {},
-      emailAddresses: email ? [{ emailAddress: email }] : [],
+      primaryEmailAddressId,
+      emailAddresses: email
+        ? [
+            {
+              id: "email_primary",
+              emailAddress: email,
+              verification: {
+                status: opts.emailVerified === false ? "unverified" : "verified",
+              },
+            },
+          ]
+        : [],
       firstName: "Nome",
       lastName: "Sobrenome",
     };
@@ -80,27 +102,34 @@ export function makeFakeSession(opts: FakeSessionOptions = {}): FakeSession {
   const admin = () => ({
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "is", "in", "order", "limit", "update"]) {
+      for (const m of [
+        "select",
+        "eq",
+        "is",
+        "in",
+        "order",
+        "limit",
+        "update",
+      ]) {
         builder[m] = () => builder;
       }
       const resolveData = () => {
         lookups++;
         if (table === "clerk_user_mapping") {
           return {
-            data: mappingUid ? { supabase_user_id: mappingUid } : null,
-            error: null,
+            data: mappingUid
+              ? {
+                  supabase_user_id: mappingUid,
+                  access_sync_version: opts.mappingSyncVersion ?? 1,
+                }
+              : null,
+            error: opts.mappingError ? { message: opts.mappingError } : null,
           };
         }
         if (table === "master_users") {
           return {
             data: opts.isMaster ? { user_id: supabaseUid } : null,
-            error: null,
-          };
-        }
-        if (table === "profiles") {
-          return {
-            data: { activated_at: opts.activatedAt ?? "2026-01-01" },
-            error: null,
+            error: opts.masterError ? { message: opts.masterError } : null,
           };
         }
         return { data: null, error: null };
@@ -122,4 +151,3 @@ export function makeFakeSession(opts: FakeSessionOptions = {}): FakeSession {
     lookupCount: () => lookups,
   };
 }
-

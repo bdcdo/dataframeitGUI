@@ -18,7 +18,7 @@ import { AutoReviewPageHeader } from "./AutoReviewPageHeader";
 import { AutoReviewPageContent } from "./AutoReviewPageContent";
 import type { PydanticField, SelfVerdict } from "@/lib/types";
 import { choiceKey, isAutoReviewFieldDecided } from "@/lib/auto-review-decided";
-import { usePinnedDoc, pinnedDocIndex } from "@/hooks/usePinnedDoc";
+import { useReviewQueueNavigation } from "@/hooks/useReviewQueueNavigation";
 
 export interface AutoReviewDoc {
   docId: string;
@@ -40,11 +40,11 @@ export interface AutoReviewPageProps {
   docs: AutoReviewDoc[];
   isCoordinator?: boolean;
   /** quando coordenador, vê a fila deste pesquisador (default = ele mesmo) */
-  viewAsUserId: string;
+  queueUserId: string;
   /** lista de pesquisadores do projeto, para o seletor do coordenador */
   reviewers: AutoReviewQueueOwner[];
-  /** id do usuário logado (não muda quando coord visualiza outra fila) */
-  currentUserId: string;
+  /** membro canônico dono da fila própria */
+  ownQueueUserId: string;
 }
 
 const STORAGE_KEY_PREFIX = "autoReview:docId:";
@@ -63,50 +63,35 @@ function AutoReviewPageInner({
   projectId,
   docs,
   isCoordinator = false,
-  viewAsUserId,
+  queueUserId,
   reviewers,
-  currentUserId,
+  ownQueueUserId,
 }: AutoReviewPageProps) {
   const { push } = useRouter();
   const searchParams = useSearchParams();
 
-  const isOwnQueue = viewAsUserId === currentUserId;
+  const isOwnQueue = queueUserId === ownQueueUserId;
   const readOnly = !isOwnQueue;
 
-  const storageKey = `${STORAGE_KEY_PREFIX}${projectId}:${viewAsUserId}`;
   // Seleção persistida em sessionStorage (restore + limpeza de órfão quando um
-  // doc resolvido sai da fila) encapsulada em usePinnedDoc — ver hook.
-  const validDocIds = useMemo(() => docs.map((d) => d.docId), [docs]);
-  const [pinnedDocId, setPinnedDocId] = usePinnedDoc(storageKey, {
-    validIds: validDocIds,
-  });
-
-  const docIndex = useMemo(
-    () => pinnedDocIndex(validDocIds, pinnedDocId),
-    [validDocIds, pinnedDocId],
-  );
-
-  const [listCollapsed, setListCollapsed] = useState(false);
+  // doc resolvido sai da fila) e estado da lista vivem no hook compartilhado.
+  const { docIndex, listCollapsed, navigate, toggleList } =
+    useReviewQueueNavigation(
+      `${STORAGE_KEY_PREFIX}${projectId}:${queueUserId}`,
+      docs,
+    );
   // Estado compartilhado entre a contagem de pendentes da sidebar
   // (docListEntries) e a interação de campo (AutoReviewPageContent); por isso
-  // vive aqui, no pai, e não no Content. Keyed por `${docId}::${fieldName}` —
-  // o composto isola escolha/justificativa por (documento, campo).
+  // vive aqui, no pai, e não no Content. A chave é fieldReviewId, portanto um
+  // ciclo novo nunca herda o rascunho mantido para o snapshot anterior.
   const [choices, setChoices] = useState<Record<string, SelfVerdict>>({});
   const [justifications, setJustifications] = useState<Record<string, string>>(
     {},
   );
 
-  function handleDocNavigate(newIndex: number) {
-    const clamped = Math.max(0, Math.min(newIndex, docs.length - 1));
-    const target = docs[clamped];
-    if (target) {
-      setPinnedDocId(target.docId);
-    }
-  }
-
   function handleViewAsChange(newUserId: string) {
     const params = new URLSearchParams(searchParams.toString());
-    if (newUserId === currentUserId) {
+    if (newUserId === ownQueueUserId) {
       params.delete("viewAs");
     } else {
       params.set("viewAs", newUserId);
@@ -122,8 +107,12 @@ function AutoReviewPageInner({
         // contesta_llm sem justificativa conta como pendente).
         const pending = d.fields.filter((f) => {
           if (f.alreadyAnswered) return false;
-          const k = choiceKey(d.docId, f.fieldName);
-          return !isAutoReviewFieldDecided(false, choices[k], justifications[k]);
+          const k = choiceKey(f.fieldReviewId);
+          return !isAutoReviewFieldDecided(
+            false,
+            choices[k],
+            justifications[k],
+          );
         }).length;
         return {
           id: d.docId,
@@ -142,17 +131,17 @@ function AutoReviewPageInner({
         readOnly={readOnly}
         isCoordinator={isCoordinator}
         reviewers={reviewers}
-        viewAsUserId={viewAsUserId}
-        currentUserId={currentUserId}
+        queueUserId={queueUserId}
+        ownQueueUserId={ownQueueUserId}
         onViewAsChange={handleViewAsChange}
       />
     );
   }
 
   const doc = docs[docIndex];
-  const currentReviewer = reviewers.find((r) => r.userId === viewAsUserId);
+  const currentReviewer = reviewers.find((r) => r.userId === queueUserId);
   const reviewerLabel =
-    currentReviewer?.name ?? currentReviewer?.email ?? viewAsUserId.slice(0, 8);
+    currentReviewer?.name ?? currentReviewer?.email ?? queueUserId.slice(0, 8);
 
   return (
     <div className="flex h-[calc(100vh-96px)] flex-col">
@@ -161,21 +150,21 @@ function AutoReviewPageInner({
         reviewerLabel={reviewerLabel}
         isCoordinator={isCoordinator}
         reviewers={reviewers}
-        viewAsUserId={viewAsUserId}
-        currentUserId={currentUserId}
+        queueUserId={queueUserId}
+        ownQueueUserId={ownQueueUserId}
         onViewAsChange={handleViewAsChange}
         docsCount={docs.length}
         docIndex={docIndex}
-        onNavigate={handleDocNavigate}
+        onNavigate={navigate}
       />
 
       <div className="flex flex-1 overflow-hidden">
         <AutoReviewDocList
           docs={docListEntries}
           currentIndex={docIndex}
-          onSelect={handleDocNavigate}
+          onSelect={navigate}
           collapsed={listCollapsed}
-          onToggle={() => setListCollapsed((v) => !v)}
+          onToggle={toggleList}
         />
         <ResizablePanelGroup className="flex-1">
           <ResizablePanel defaultSize={50} minSize={25}>

@@ -1,4 +1,5 @@
 import { normalizeForComparison } from "@/lib/utils";
+import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import type {
@@ -6,6 +7,7 @@ import type {
   ReviewedField,
   RespondentAnswer,
 } from "./types";
+import { buildReviewLookupMaps } from "./lookup-maps";
 
 /* ── Raw row shapes ── */
 
@@ -44,7 +46,7 @@ export interface ReviewComputationContext {
   fields: PydanticField[];
   comparableFields: PydanticField[];
   projectPydanticHash: string | null;
-  currentFieldHashes: Record<string, string>;
+  currentFieldHashes: Record<string, string | null>;
   fieldMap: Map<string, PydanticField>;
   docMap: Map<string, string>;
   responsesByDoc: Map<string, ResponseRow[]>;
@@ -57,21 +59,6 @@ export interface ReviewComputationContext {
 }
 
 /* ── Pure helpers ── */
-
-function isFieldStale(
-  answerFieldHashes: AnswerFieldHashes,
-  pydanticHash: string | null,
-  fieldName: string,
-  currentFieldHashes: Record<string, string>,
-  projectPydanticHash: string | null,
-): boolean {
-  if (answerFieldHashes) {
-    const saved = answerFieldHashes[fieldName];
-    const current = currentFieldHashes[fieldName];
-    return !saved || !current || saved !== current;
-  }
-  return !!projectPydanticHash && pydanticHash !== projectPydanticHash;
-}
 
 export function isAnswerCorrect(
   answer: unknown,
@@ -119,21 +106,21 @@ export function formatAnswer(val: unknown): string {
   return String(val);
 }
 
-// Resolve o respondente efetivo cujas respostas a aba "Meu Gabarito" exibe.
+// Resolve o respondente cujas respostas a aba "Meu Gabarito" exibe.
 // Só coordenador, criador ou master podem inspecionar as respostas de OUTRO
-// respondente (via ?viewAsUser=...); qualquer outro vê apenas as próprias.
+// respondente (via ?viewAsUser=...); qualquer outro vê as do próprio membro
+// canônico do projeto.
 // SEGURANÇA: a policy RLS "Members view responses" deixa qualquer membro ler
 // todas as responses do projeto (não filtra por respondent_id), então esta
 // checagem é a única barreira — por isso o `isCoordinator` que a alimenta é
-// fail-closed (não incorpora queryFailed). Ver reviews/my-verdicts/page.tsx.
-export function resolveEffectiveUserId(opts: {
-  selfId: string;
-  isMaster: boolean;
+// fail-closed. Ver reviews/my-verdicts/page.tsx.
+export function resolveViewedRespondentId(opts: {
+  ownMemberUserId: string;
   isCoordinator: boolean;
   viewAsUser: string | undefined;
 }): string {
-  const { selfId, isMaster, isCoordinator, viewAsUser } = opts;
-  return (isMaster || isCoordinator) && viewAsUser ? viewAsUser : selfId;
+  const { ownMemberUserId, isCoordinator, viewAsUser } = opts;
+  return isCoordinator && viewAsUser ? viewAsUser : ownMemberUserId;
 }
 
 function getRespondentKey(r: {
@@ -241,14 +228,8 @@ export async function fetchReviewBaseData(
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const projectPydanticHash = project?.pydantic_hash || null;
 
-  const fieldMap = new Map(fields.map((f) => [f.name, f]));
-  const docMap = new Map(
-    documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
-  );
-  const currentFieldHashes: Record<string, string> = {};
-  for (const f of fields) {
-    if (f.hash) currentFieldHashes[f.name] = f.hash;
-  }
+  const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
+  const currentFieldHashes = buildFieldHashMap(fields);
 
   // Fetch profile names
   const respondentIds = new Set<string>();
@@ -342,13 +323,13 @@ export function computeReviewedDocuments(
 
       const respondentAnswers: RespondentAnswer[] = docResponses.map((r) => {
         const answer = r.answers[review.field_name];
-        const stale = isFieldStale(
-          r.answer_field_hashes,
-          r.pydantic_hash,
-          review.field_name,
-          ctx.currentFieldHashes,
-          ctx.projectPydanticHash,
-        );
+        const stale = isFieldStale({
+          answerFieldHashes: r.answer_field_hashes,
+          pydanticHash: r.pydantic_hash,
+          fieldName: review.field_name,
+          currentFieldHashes: ctx.currentFieldHashes,
+          projectPydanticHash: ctx.projectPydanticHash,
+        });
         const correct = isAnswerCorrect(answer, review.verdict, field.type);
         return {
           respondentKey: getRespondentKey(r),

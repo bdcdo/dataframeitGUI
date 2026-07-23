@@ -68,8 +68,8 @@ describe("verdictRequiresJustification", () => {
 
 describe("choiceKey", () => {
   it("compõe docId e fieldName isolando por (documento, campo)", () => {
-    expect(choiceKey("docA", "q1")).toBe("docA::q1");
+    expect(choiceKey("review-a")).toBe("review-a");
     // mesmo fieldName em docs diferentes → chaves distintas (sem colisão)
-    expect(choiceKey("docA", "q1")).not.toBe(choiceKey("docB", "q1"));
+    expect(choiceKey("review-a")).not.toBe(choiceKey("review-b"));
   });
 });

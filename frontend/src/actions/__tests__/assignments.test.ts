@@ -236,6 +236,35 @@ describe("sorteio de comparação: um revisor por documento (#490)", () => {
     ).toHaveLength(1);
   });
 
+  it("comparação nunca sorteia o codificador do próprio documento", async () => {
+    // Espelho do trigger enforce_comparison_assignment_actor (20260716160100):
+    // resposta humana is_latest veta o par no sorteio manual — sem o veto, o
+    // RPC transacional abortaria o lote inteiro com 23514.
+    serverTableResults = {
+      ...comparisonFixture(),
+      responses: {
+        data: [
+          { document_id: "d1", respondent_id: "u1" },
+          { document_id: "d1", respondent_id: "u2" },
+        ],
+      },
+    };
+
+    const result = await previewLottery({
+      projectId: "p1",
+      type: "comparacao",
+      mode: "append",
+      balancing: "round",
+      participantIds: ["u1", "u2", "u3"],
+    } as unknown as LotteryParams);
+
+    expect(result.error).toBeUndefined();
+    expect(result.preview?.totalNew).toBe(1);
+    expect(
+      result.preview?.participants.find((p) => p.newDocs > 0)?.userId,
+    ).toBe("u3");
+  });
+
   it("codificação continua honrando dois pesquisadores por documento", async () => {
     serverTableResults = comparisonFixture();
 

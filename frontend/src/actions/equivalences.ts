@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
@@ -40,8 +40,9 @@ export async function confirmEquivalentVerdict({
     return { error: "Gabarito precisa estar na lista de respostas selecionadas." };
   }
 
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
 
@@ -67,18 +68,16 @@ export async function confirmEquivalentVerdict({
         field_name: fieldName,
         response_a_id: a,
         response_b_id: b,
-        reviewer_id: user.id,
+        reviewer_id: reviewerId,
       });
     }
   }
 
   try {
-    const { error: equivErr } = await supabase
-      .from("response_equivalences")
-      .upsert(rows, {
-        onConflict: "project_id,document_id,field_name,response_a_id,response_b_id",
-        ignoreDuplicates: true,
-      });
+    const { error: equivErr } = await supabase.rpc(
+      "record_response_equivalences",
+      { p_rows: rows },
+    );
     if (equivErr) throw new Error(equivErr.message);
 
     const { error: reviewErr } = await supabase.from("reviews").upsert(
@@ -86,7 +85,7 @@ export async function confirmEquivalentVerdict({
         project_id: projectId,
         document_id: documentId,
         field_name: fieldName,
-        reviewer_id: user.id,
+        reviewer_id: reviewerId,
         verdict: verdictDisplay,
         chosen_response_id: gabaritoId,
         comment: comment || null,
@@ -105,7 +104,7 @@ export async function confirmEquivalentVerdict({
   // falha do sync não deve virar { error } (o client refaria uma escrita já
   // persistida). Loga e segue para a revalidação.
   try {
-    await syncCompareAssignment(supabase, projectId, documentId, user.id);
+    await syncCompareAssignment(supabase, projectId, documentId, reviewerId);
   } catch (e) {
     console.error(
       `[confirmEquivalentVerdict] falha ao sincronizar o assignment: ${errorMessage(e)}`,
@@ -133,28 +132,24 @@ export async function markLlmEquivalent(
     return { error: "Respostas já são as mesmas." };
   }
 
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
   const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
 
   try {
-    const { error } = await supabase.from("response_equivalences").upsert(
-      {
+    const { error } = await supabase.rpc("record_response_equivalences", {
+      p_rows: [{
         project_id: projectId,
         document_id: documentId,
         field_name: fieldName,
         response_a_id: a,
         response_b_id: b,
-        reviewer_id: user.id,
-      },
-      {
-        onConflict:
-          "project_id,document_id,field_name,response_a_id,response_b_id",
-        ignoreDuplicates: true,
-      },
-    );
+        reviewer_id: reviewerId,
+      }],
+    });
     if (error) throw new Error(error.message);
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
@@ -173,30 +168,20 @@ export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
 ): Promise<{ error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+  const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
+  let syncDocumentId: string | null = null;
 
   try {
-    const { data: row } = await supabase
-      .from("response_equivalences")
-      .select("document_id, field_name")
-      .eq("id", equivalenceId)
-      .eq("project_id", projectId)
-      .maybeSingle();
-
-    // Ordem obrigatória, não awaits independentes: o select acima captura
-    // document_id/field_name ANTES de a linha ser apagada. Paralelizar com o
-    // delete criaria uma race read-after-delete (row viria null e a limpeza de
-    // reviews abaixo não rodaria).
-    // react-doctor-disable-next-line react-doctor/server-sequential-independent-await
-    const { error } = await supabase
-      .from("response_equivalences")
-      .delete()
-      .eq("id", equivalenceId)
-      .eq("project_id", projectId);
+    const { data, error } = await supabase.rpc("remove_response_equivalence", {
+      p_project_id: projectId,
+      p_equivalence_id: equivalenceId,
+    });
     if (error) throw new Error(error.message);
+    const row = data?.[0];
 
     if (row?.document_id && row.field_name) {
       await supabase
@@ -205,12 +190,31 @@ export async function unmarkEquivalencePair(
         .eq("project_id", projectId)
         .eq("document_id", row.document_id)
         .eq("field_name", row.field_name)
-        .eq("reviewer_id", user.id);
+        .eq("reviewer_id", reviewerId);
 
-      await syncCompareAssignment(supabase, projectId, row.document_id, user.id);
+      syncDocumentId = row.document_id;
     }
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
+  }
+
+  // Pós-commit best-effort: a equivalência e o review já foram apagados. Uma
+  // falha do sync não deve virar { error } — a revisora veria "falha ao
+  // desfazer" para uma operação já persistida e tentaria de novo, sobre uma
+  // linha que não existe mais. Loga e segue para a revalidação.
+  if (syncDocumentId) {
+    try {
+      await syncCompareAssignment(
+        supabase,
+        projectId,
+        syncDocumentId,
+        reviewerId,
+      );
+    } catch (e) {
+      console.error(
+        `[unmarkEquivalencePair] falha ao sincronizar o assignment: ${errorMessage(e)}`,
+      );
+    }
   }
 
   revalidatePath(`/projects/${projectId}/analyze/compare`);

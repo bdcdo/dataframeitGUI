@@ -1,72 +1,86 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, act, cleanup, waitFor } from "@testing-library/react";
-import { usePinnedDoc, pinnedDocIndex } from "../usePinnedDoc";
+import { pinnedDocIndex, usePinnedDocNavigation } from "../usePinnedDoc";
 
 beforeEach(() => {
   sessionStorage.clear();
 });
 afterEach(cleanup);
 
-describe("usePinnedDoc", () => {
+const DOCS = [{ docId: "d1" }, { docId: "d2" }, { docId: "d3" }];
+
+describe("usePinnedDocNavigation", () => {
   it("lê o valor do sessionStorage já no primeiro render", () => {
-    sessionStorage.setItem("k", "d1");
-    const { result } = renderHook(() => usePinnedDoc("k"));
+    sessionStorage.setItem("k", "d2");
+    const { result } = renderHook(() => usePinnedDocNavigation("k", DOCS));
     // Sem effect de restore → valor disponível no render inicial.
-    expect(result.current[0]).toBe("d1");
+    expect(result.current.docIndex).toBe(1);
   });
 
-  it("setter escreve no storage e atualiza o valor reativo", () => {
-    const { result } = renderHook(() => usePinnedDoc("k"));
-    expect(result.current[0]).toBeNull();
-    act(() => result.current[1]("d2"));
+  it("navegação escreve no storage e atualiza o índice reativo", () => {
+    const { result } = renderHook(() => usePinnedDocNavigation("k", DOCS));
+    expect(result.current.docIndex).toBe(0);
+    act(() => result.current.navigateToIndex(1));
     expect(sessionStorage.getItem("k")).toBe("d2");
-    expect(result.current[0]).toBe("d2");
+    expect(result.current.docIndex).toBe(1);
   });
 
-  it("setter null remove do storage", () => {
-    sessionStorage.setItem("k", "d1");
-    const { result } = renderHook(() => usePinnedDoc("k"));
-    act(() => result.current[1](null));
-    expect(sessionStorage.getItem("k")).toBeNull();
-    expect(result.current[0]).toBeNull();
-  });
-
-  it("limpa órfão quando o id fixado não está em validIds", async () => {
-    sessionStorage.setItem("k", "d1");
-    const { result } = renderHook(() =>
-      usePinnedDoc("k", { validIds: ["d2", "d3"] }),
+  it("limpa órfão quando o id fixado não está na fila", async () => {
+    sessionStorage.setItem("k", "orphan");
+    renderHook(() =>
+      usePinnedDocNavigation("k", [{ docId: "d2" }, { docId: "d3" }]),
     );
-    await waitFor(() => expect(result.current[0]).toBeNull());
-    expect(sessionStorage.getItem("k")).toBeNull();
+    await waitFor(() => expect(sessionStorage.getItem("k")).toBeNull());
   });
 
-  it("mantém o valor quando o id fixado está em validIds", () => {
+  it("mantém o valor quando o id fixado está na fila", () => {
     sessionStorage.setItem("k", "d2");
     const { result } = renderHook(() =>
-      usePinnedDoc("k", { validIds: ["d2", "d3"] }),
+      usePinnedDocNavigation("k", [{ docId: "d2" }, { docId: "d3" }]),
     );
-    expect(result.current[0]).toBe("d2");
+    expect(result.current.docIndex).toBe(0);
     expect(sessionStorage.getItem("k")).toBe("d2");
   });
 
   it("troca de storageKey re-lê o valor", () => {
-    sessionStorage.setItem("a", "da");
-    sessionStorage.setItem("b", "db");
-    const { result, rerender } = renderHook(({ k }) => usePinnedDoc(k), {
-      initialProps: { k: "a" },
-    });
-    expect(result.current[0]).toBe("da");
+    sessionStorage.setItem("a", "d2");
+    sessionStorage.setItem("b", "d3");
+    const { result, rerender } = renderHook(
+      ({ k }) => usePinnedDocNavigation(k, DOCS),
+      {
+        initialProps: { k: "a" },
+      },
+    );
+    expect(result.current.docIndex).toBe(1);
     rerender({ k: "b" });
-    expect(result.current[0]).toBe("db");
+    expect(result.current.docIndex).toBe(2);
   });
 
   it("propaga a mudança entre instâncias com a mesma chave", () => {
-    const a = renderHook(() => usePinnedDoc("shared"));
-    const b = renderHook(() => usePinnedDoc("shared"));
-    act(() => a.result.current[1]("dx"));
-    expect(a.result.current[0]).toBe("dx");
-    expect(b.result.current[0]).toBe("dx");
+    const a = renderHook(() => usePinnedDocNavigation("shared", DOCS));
+    const b = renderHook(() => usePinnedDocNavigation("shared", DOCS));
+    act(() => a.result.current.navigateToIndex(2));
+    expect(a.result.current.docIndex).toBe(2);
+    expect(b.result.current.docIndex).toBe(2);
+  });
+
+  it("navega por índice e limita as pontas da fila", () => {
+    const { result } = renderHook(() =>
+      usePinnedDocNavigation("queue", [
+        { docId: "a" },
+        { docId: "b" },
+        { docId: "c" },
+      ]),
+    );
+
+    act(() => result.current.navigateToIndex(2));
+    expect(result.current.docIndex).toBe(2);
+    expect(sessionStorage.getItem("queue")).toBe("c");
+
+    act(() => result.current.navigateToIndex(-1));
+    expect(result.current.docIndex).toBe(0);
+    expect(sessionStorage.getItem("queue")).toBe("a");
   });
 });
 

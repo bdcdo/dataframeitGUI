@@ -1,3 +1,5 @@
+import type { PydanticField } from "./pydantic-field";
+
 export interface Profile {
   id: string;
   email: string;
@@ -12,8 +14,8 @@ export type RoundStrategy = "schema_version" | "manual";
 
 // Modo de automação de revisão do projeto (projects.automation_mode). Define o
 // "mínimo necessário para liberar a revisão" + quem revê, e governa quais abas
-// de revisão aparecem. Mutuamente exclusivo. Ver lib/auto-review.ts (auto_review_llm)
-// e lib/auto-comparison.ts (compare_*).
+// de revisão aparecem. Mutuamente exclusivo. Ver lib/auto-review-reconciler.ts
+// (auto_review_llm) e lib/auto-comparison.ts (compare_*).
 export type AutomationMode =
   | "none"
   | "auto_review_llm"
@@ -89,39 +91,29 @@ export interface Project {
   out_of_scope_enabled: boolean;
 }
 
-export interface SubfieldDef {
-  key: string;
-  label: string;
-  required?: boolean;
+// Reexports exclusivamente de tipo mantem consumidores de `types.ts` livres
+// do parser Zod no bundle quando so precisam do contrato estatico.
+export type {
+  ConditionScalar,
+  FieldCondition,
+  PydanticField,
+  SubfieldDef,
+} from "./pydantic-field";
+
+export interface SchemaBaselineIdentity {
+  revision: number;
 }
 
-export type ConditionScalar = string | number | boolean;
-
-export type FieldCondition =
-  | { field: string; equals: ConditionScalar }
-  | { field: string; not_equals: ConditionScalar }
-  | { field: string; in: ConditionScalar[] }
-  | { field: string; not_in: ConditionScalar[] }
-  | { field: string; exists: boolean };
-
-export interface PydanticField {
-  name: string;
-  type: "single" | "multi" | "text" | "date";
-  options: string[] | null;
-  description: string;
-  help_text?: string;
-  target?: "all" | "llm_only" | "human_only" | "none";
-  required?: boolean;
-  hash?: string;
-  subfields?: SubfieldDef[];
-  subfield_rule?: "all" | "at_least_one";
-  allow_other?: boolean;
-  condition?: FieldCondition;
-  // Texto-base do prompt da justificativa do LLM para este campo. Quando
-  // ausente, o backend usa um default exigente (cita trecho do documento).
-  // Ver _extend_model_with_justifications em backend/services/llm_runner.py.
-  justification_prompt?: string;
+export interface SchemaSnapshot {
+  fields: PydanticField[];
+  version: string;
+  revision: number;
 }
+
+export type SchemaSaveResult =
+  | { status: "saved"; snapshot: SchemaSnapshot }
+  | { status: "conflict"; current: SchemaSnapshot }
+  | { status: "error"; message: string };
 
 export interface ProjectMember {
   id: string;
@@ -208,14 +200,11 @@ export type AssignedDoc = Document & {
   assignment?: Pick<Assignment, "id" | "status">;
 };
 
-// Snapshot por-campo do schema contra o qual a response foi codificada
-// (1 chave por campo existente na época, valor = field.hash). Gravado em
-// saveResponse iterando o schema completo (não os campos respondidos), então
-// "chave ausente" significa "campo não existia no schema na época" — base
-// para a heurística de staleness em compare-divergence e reviews/queries.
-// `null`/`{}` significam legacy (response pré-coluna ou schema sem hashes):
-// não dá para inferir staleness.
-export type AnswerFieldHashes = Record<string, string> | null;
+// Snapshot por campo do schema contra o qual cada resposta foi codificada.
+// String = hash conhecido; chave presente com null = o campo existia, mas sua
+// proveniência é desconhecida; chave ausente em mapa não vazio = o campo não
+// existia. `null`/`{}` são snapshots legacy sem informação por campo.
+export type AnswerFieldHashes = Record<string, string | null> | null;
 
 // Vereditos da auto-revisao. Todos resolvem o campo; só `contesta_llm` abre
 // arbitragem. `equivalente` registra o par humano↔LLM em response_equivalences;

@@ -6,8 +6,8 @@ Definir o estado de conclusão/reparo de acesso apresentado ao usuário quando h
 
 ## Inputs
 
-- Ator autenticado com e-mail conhecido.
-- Motivo classificado: `link-pending`, `link-divergent`, `sync-temporary-failure`, `no-project-access` ou `unknown-recoverable`.
+- Ator autenticado; o e-mail primário verificado é opcional porque a falha pode ocorrer antes de obtê-lo.
+- Motivo classificado: `link-pending`, `link-divergent`, `sync-temporary-failure` ou `unknown-recoverable`.
 - URL pretendida antes do bloqueio, quando segura para preservar.
 - Resultado da tentativa idempotente de reparo.
 
@@ -18,8 +18,9 @@ Definir o estado de conclusão/reparo de acesso apresentado ao usuário quando h
 | `link-pending` | A conta entrou, mas o acesso ainda está sendo preparado | Tentar novamente |
 | `link-divergent` | A plataforma precisa confirmar o vínculo correto da conta | Tentar reparar acesso |
 | `sync-temporary-failure` | Houve instabilidade temporária ao confirmar o acesso | Tentar novamente |
-| `no-project-access` | A conta está ativa, mas não tem projeto disponível | Voltar ao dashboard ou procurar coordenador |
 | `unknown-recoverable` | Não foi possível concluir o acesso agora | Tentar novamente e mostrar orientação de suporte se persistir |
+
+Uma conta ativa sem projeto não entra neste contrato: o dashboard mostra seu estado vazio normal.
 
 ## Guarantees
 
@@ -31,7 +32,6 @@ Definir o estado de conclusão/reparo de acesso apresentado ao usuário quando h
 ## Success transitions
 
 - Retry confirma vínculo ativo → redireciona para `nextUrl` seguro ou dashboard.
-- Retry confirma ausência de projeto → mostra estado de conta ativa sem projetos.
 - Retry falha por instabilidade → mantém estado recuperável e orienta nova tentativa.
 - Retry falha de forma persistente → mostra orientação curta para suporte, sem detalhes sensíveis.
 
@@ -40,3 +40,4 @@ Definir o estado de conclusão/reparo de acesso apresentado ao usuário quando h
 - Páginas protegidas não fazem reparo silencioso durante o render.
 - Usuário autenticado com link pendente não deve ser enviado de volta para login como se estivesse signed out.
 - Falha técnica não deve virar `notFound()` de projeto quando o problema é sincronização de identidade.
+- Ausência de primário verificado não deve escolher um endereço secundário; permanece `sync-temporary-failure` até o estado Clerk ser válido.

@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { linkMemberEmail, type UnificationPreview } from "@/actions/members";
 import { toast } from "sonner";
 
@@ -18,7 +19,7 @@ interface LinkEmailDialogProps {
   memberName: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // Caso 2 do contrato: o e-mail é o principal de outro membro — a decisão
+  // Caso 2 do contrato: o e-mail pertence à conta de outro membro — a decisão
   // passa para o UnifyMembersDialog com o preview retornado pela action.
   onRequiresUnification: (preview: UnificationPreview) => void;
 }
@@ -36,27 +37,31 @@ export function LinkEmailDialog({
 
   const handleLink = async () => {
     setLoading(true);
-    const result = await linkMemberEmail(projectId, memberUserId, email);
-    setLoading(false);
+    try {
+      const result = await linkMemberEmail(projectId, memberUserId, email);
 
-    if (result.error) {
-      toast.error(result.error);
-      return;
-    }
-    if (result.requiresUnification) {
-      onOpenChange(false);
-      setEmail("");
-      onRequiresUnification(result.requiresUnification);
-      return;
-    }
-    if (result.link) {
+      if (result.status === "error") {
+        toast.error(result.error);
+        return;
+      }
+      if (result.status === "requires-unification") {
+        onOpenChange(false);
+        setEmail("");
+        onRequiresUnification(result.preview);
+        return;
+      }
+
       toast.success(
-        result.link.linked_user_id
+        result.access === "ready"
           ? "E-mail vinculado. A conta passa a acessar o projeto como este membro."
           : "E-mail vinculado. Quando a conta for criada com este e-mail, ela entrará no projeto como este membro.",
       );
       setEmail("");
       onOpenChange(false);
+    } catch {
+      toast.error("Não foi possível vincular o e-mail. Tente novamente.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -72,12 +77,16 @@ export function LinkEmailDialog({
             mesmo membro, com as mesmas atribuições. O vínculo vale só para
             este projeto.
           </p>
-          <Input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="email-adicional@exemplo.com"
-          />
+          <div className="space-y-2">
+            <Label htmlFor="linked-member-email">E-mail adicional</Label>
+            <Input
+              id="linked-member-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="email-adicional@exemplo.com"
+            />
+          </div>
           <Button
             onClick={() => void handleLink()}
             disabled={loading || !email}

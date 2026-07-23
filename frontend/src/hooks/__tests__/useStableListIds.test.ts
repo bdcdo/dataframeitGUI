@@ -30,7 +30,11 @@ describe("useStableListIds", () => {
     });
     const before = [...result.current.ids];
     // Simula o fluxo do caller: appendId() junto do onChange que aumenta o length.
-    act(() => result.current.appendId());
+    // As chaves mantêm o callback como `void`: `appendId` devolve o id novo, e
+    // deixá-lo vazar escolhe a sobrecarga de `act` que devolve um Thenable.
+    act(() => {
+      result.current.appendId();
+    });
     rerender({ n: 3 });
     expect(result.current.ids).toHaveLength(3);
     expect(result.current.ids.slice(0, 2)).toEqual(before);
@@ -70,5 +74,65 @@ describe("useStableListIds", () => {
     const [id0, id1] = result.current.ids;
     rerender({ n: 2 });
     expect(result.current.ids).toEqual([id0, id1]);
+  });
+
+  it("appendId devolve o id criado", () => {
+    const { result, rerender } = renderHook(({ n }) => useStableListIds(n), {
+      initialProps: { n: 1 },
+    });
+    let devolvido = "";
+    act(() => {
+      devolvido = result.current.appendId();
+    });
+    rerender({ n: 2 });
+    // O caller precisa do id de forma síncrona para apontar seleção/expansão
+    // para a linha nova no mesmo handler que a cria.
+    expect(devolvido).not.toBe("");
+    expect(result.current.ids[1]).toBe(devolvido);
+  });
+
+  describe("moveId", () => {
+    it("o id viaja com o item, não fica na posição", () => {
+      const { result, rerender } = renderHook(({ n }) => useStableListIds(n), {
+        initialProps: { n: 3 },
+      });
+      const [id0, id1, id2] = result.current.ids;
+      act(() => result.current.moveId(0, 2));
+      rerender({ n: 3 });
+      expect(result.current.ids).toEqual([id1, id2, id0]);
+    });
+
+    it("mover para trás também preserva o conjunto", () => {
+      const { result, rerender } = renderHook(({ n }) => useStableListIds(n), {
+        initialProps: { n: 3 },
+      });
+      const [id0, id1, id2] = result.current.ids;
+      act(() => result.current.moveId(2, 0));
+      rerender({ n: 3 });
+      expect(result.current.ids).toEqual([id2, id0, id1]);
+    });
+
+    it("um move não perde nem duplica id", () => {
+      const { result, rerender } = renderHook(({ n }) => useStableListIds(n), {
+        initialProps: { n: 4 },
+      });
+      const antes = [...result.current.ids];
+      act(() => result.current.moveId(1, 3));
+      rerender({ n: 4 });
+      expect([...result.current.ids].sort()).toEqual([...antes].sort());
+    });
+
+    it("índice fora de faixa não embaralha a lista", () => {
+      const { result, rerender } = renderHook(({ n }) => useStableListIds(n), {
+        initialProps: { n: 2 },
+      });
+      const antes = [...result.current.ids];
+      // O reconcile é keyed em `length`, que um move não muda: um id perdido
+      // aqui não seria refeito por ele.
+      act(() => result.current.moveId(0, 5));
+      act(() => result.current.moveId(-1, 1));
+      rerender({ n: 2 });
+      expect(result.current.ids).toEqual(antes);
+    });
   });
 });

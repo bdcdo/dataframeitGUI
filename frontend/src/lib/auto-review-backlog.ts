@@ -23,26 +23,6 @@ export interface LlmResponseRow {
   answer_field_hashes: AnswerFieldHashes;
 }
 
-export interface ExistingFieldReviewRow {
-  id: string;
-  document_id: string;
-  field_name: string;
-  self_verdict: string | null;
-}
-
-// Local de propósito: é o payload de INSERT desta rodada de backlog (literais
-// estreitos), não um tipo de domínio. Nenhum módulo importa o nome — o shape
-// chega em `field-reviews.ts` por inferência, via o retorno de
-// `computeBacklogRows`. Exportá-lo colidia com o `AssignmentRow` homônimo de
-// `compare-queue.ts`, que é uma row de SELECT com outro shape.
-interface AssignmentRow {
-  project_id: string;
-  document_id: string;
-  user_id: string;
-  type: "auto_revisao";
-  status: "pendente";
-}
-
 export interface FieldReviewRow {
   project_id: string;
   document_id: string;
@@ -60,8 +40,7 @@ export function computeBacklogRows(
   llmByDocId: Map<string, LlmResponseRow>,
   equivByDoc: EquivalenceByDocField,
   fields: PydanticField[],
-): { assignmentRows: AssignmentRow[]; fieldReviewRows: FieldReviewRow[]; regenerated: number } {
-  const assignmentRows: AssignmentRow[] = [];
+): { fieldReviewRows: FieldReviewRow[]; regenerated: number } {
   const fieldReviewRows: FieldReviewRow[] = [];
   let regenerated = 0;
 
@@ -103,13 +82,6 @@ export function computeBacklogRows(
     if (divergent.length === 0) continue;
 
     regenerated++;
-    assignmentRows.push({
-      project_id: projectId,
-      document_id: human.document_id,
-      user_id: human.respondent_id,
-      type: "auto_revisao",
-      status: "pendente",
-    });
     for (const fieldName of divergent) {
       fieldReviewRows.push({
         project_id: projectId,
@@ -122,39 +94,5 @@ export function computeBacklogRows(
     }
   }
 
-  return { assignmentRows, fieldReviewRows, regenerated };
-}
-
-// Compartilhado entre diffReviewsToRemove e removeOrphanAssignments (na
-// action): as duas reconciliam uma coleção recém-computada contra uma
-// existente via chave composta document_id+algo. Puro.
-export function compositeKeySet<T>(rows: T[], keyFn: (row: T) => string): Set<string> {
-  return new Set(rows.map(keyFn));
-}
-
-// --- Reconcile: quais field_reviews não deveriam mais existir ---
-// O conjunto correto é o que acabou de ser computado em fieldReviewRows.
-// Linhas pendentes (self_verdict IS NULL) fora desse conjunto sao espurias
-// — tipicamente campos que ficaram "stale" apos edicao de schema — e podem
-// ser apagadas. Linhas ja resolvidas pelo pesquisador sao preservadas. Puro.
-export function diffReviewsToRemove(
-  existingReviews: ExistingFieldReviewRow[],
-  fieldReviewRows: FieldReviewRow[],
-): { idsToDelete: string[]; keptResolved: number } {
-  const correctKeys = compositeKeySet(
-    fieldReviewRows,
-    (r) => `${r.document_id}|${r.field_name}`,
-  );
-
-  const idsToDelete: string[] = [];
-  let keptResolved = 0;
-  for (const fr of existingReviews) {
-    if (correctKeys.has(`${fr.document_id}|${fr.field_name}`)) continue;
-    if (fr.self_verdict == null) {
-      idsToDelete.push(fr.id);
-    } else {
-      keptResolved++;
-    }
-  }
-  return { idsToDelete, keptResolved };
+  return { fieldReviewRows, regenerated };
 }

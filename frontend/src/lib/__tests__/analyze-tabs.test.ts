@@ -3,7 +3,7 @@ import { computeAnalyzeTabVisibility } from "@/lib/analyze-tabs";
 
 const base = {
   isCoordinator: false,
-  hasAutoRevisaoAssignment: false,
+  hasPendingAutoReview: false,
   hasArbitragemAssignment: false,
   hasComparacaoAssignment: false,
 };
@@ -59,8 +59,8 @@ describe("computeAnalyzeTabVisibility — coordenador segue o modo", () => {
   });
 });
 
-describe("computeAnalyzeTabVisibility — pesquisador vê o que tem assignment", () => {
-  it("sem assignments, qualquer modo → nada (não-coordenador)", () => {
+describe("computeAnalyzeTabVisibility — pesquisador vê o trabalho ativo", () => {
+  it("sem trabalho ativo, qualquer modo → nada (não-coordenador)", () => {
     const v = computeAnalyzeTabVisibility({ ...base, mode: "compare_humans" });
     expect(v).toEqual({
       showAutoReview: false,
@@ -78,11 +78,11 @@ describe("computeAnalyzeTabVisibility — pesquisador vê o que tem assignment",
     expect(v.showCompare).toBe(true);
   });
 
-  it("tem auto_revisao → vê Auto-revisão mesmo em modo de comparação", () => {
+  it("tem ciclo ativo de auto-revisão → vê a aba mesmo em modo de comparação", () => {
     const v = computeAnalyzeTabVisibility({
       ...base,
       mode: "compare_humans",
-      hasAutoRevisaoAssignment: true,
+      hasPendingAutoReview: true,
     });
     expect(v.showAutoReview).toBe(true);
   });

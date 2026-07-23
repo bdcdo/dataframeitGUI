@@ -3,6 +3,12 @@ import type {
   FieldCondition,
   PydanticField,
 } from "@/lib/types";
+import {
+  resolveAllowOther,
+  resolveRequired,
+  resolveSubfieldRule,
+  resolveTarget,
+} from "@/lib/pydantic-field";
 
 // ---------- Geração de código Pydantic (pure, client-safe) ----------
 
@@ -66,8 +72,19 @@ function conditionToPython(condition: FieldCondition): string {
 
 function fieldExtra(field: PydanticField): string {
   const extras: string[] = [];
-  if (field.target && field.target !== "all") {
+  if (resolveTarget(field.target) !== "all") {
     extras.push(`"target": "${field.target}"`);
+  }
+  // Só o caso não-default entra, como em `target` e `allowOther`. Emitir
+  // `"required": True` mudaria o texto do código de TODO projeto, e
+  // `pydantic_hash` é sha256 do texto: no save seguinte, as respostas LLM
+  // legadas — as sem `answer_field_hashes` e sem semver gravado, cujo único
+  // vínculo com o schema é esse hash — sairiam da fila de Comparação. É o
+  // estrago que a 20260505000001_revive_orphan_llm_responses.sql conserta.
+  // Omitindo no default, o texto fica byte-idêntico para quem não usa campo
+  // opcional, e o blast radius se limita a quem já perdia a propriedade aqui.
+  if (!resolveRequired(field.required)) {
+    extras.push(`"required": False`);
   }
   if (field.type === "date") {
     extras.push(`"field_type": "date"`);
@@ -84,13 +101,14 @@ function fieldExtra(field: PydanticField): string {
   if ((field.type === "single" || field.type === "multi") && field.allow_other) {
     extras.push(`"allowOther": True`);
   }
+  // A guarda de subcampos fica aqui, e não no resolvedor: quem decide se a chave
+  // existe no código é `_assemble_field_dict` (`if subfields:`), e é com ele que
+  // este emissor tem que concordar para o round-trip fechar.
   if (
-    field.subfields &&
-    field.subfields.length > 0 &&
-    field.subfield_rule &&
-    field.subfield_rule !== "all"
+    field.subfields?.length &&
+    resolveSubfieldRule(field.subfield_rule) === "at_least_one"
   ) {
-    extras.push(`"subfield_rule": "${field.subfield_rule}"`);
+    extras.push(`"subfield_rule": "at_least_one"`);
   }
   if (field.help_text?.trim()) {
     extras.push(`"help_text": "${escapeString(field.help_text.trim())}"`);
@@ -176,150 +194,8 @@ export function generatePydanticCode(
   return lines.join("\n") + "\n";
 }
 
-// ---------- Validação client-side ----------
-
-const PYTHON_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
-// Dunders estritos (ex.: __class__) são reservados pelo Python e rejeitados
-// pela allowlist do compilador backend; barrar aqui dá feedback imediato em
-// vez de gerar código que o `llm_runner` recusaria. "__" interno (my__field)
-// é permitido.
-//
-// Espelha EXATAMENTE o `_is_strict_dunder` do backend (startswith E endswith
-// "__"). A regex antiga `/^__.*__$/` exigia ≥4 chars e divergia: aceitava "__"
-// e "___" no front, mas o backend os rejeitava — gerando código que o run
-// recusaria. Usar startsWith/endsWith elimina a divergência.
-const isStrictDunder = (name: string): boolean =>
-  name.startsWith("__") && name.endsWith("__");
-
-export function validateGUIFields(fields: PydanticField[]): string[] {
-  const errors: string[] = [];
-
-  if (fields.length === 0) {
-    errors.push("Adicione pelo menos um campo.");
-    return errors;
-  }
-
-  const names = new Set<string>();
-  // Índice incremental name -> primeiro campo com esse nome já visto. Substitui
-  // o `earlier.find()` O(n²) na checagem de condition por um lookup O(1).
-  // Preserva a primeira ocorrência (só insere se ausente) para casar com a
-  // semântica de `earlier.find` em schemas com nomes duplicados.
-  const fieldByName = new Map<string, PydanticField>();
-  for (let i = 0; i < fields.length; i++) {
-    const f = fields[i];
-    const label = `Campo ${i + 1}`;
-
-    if (!f.name || !PYTHON_IDENTIFIER.test(f.name)) {
-      errors.push(
-        `${label}: nome inválido "${f.name}" (use letras minúsculas, números e _)`
-      );
-    } else if (isStrictDunder(f.name)) {
-      errors.push(
-        `${label}: nome "${f.name}" não pode começar e terminar com "__" (reservado pelo Python)`
-      );
-    }
-    if (names.has(f.name)) {
-      errors.push(`${label}: nome "${f.name}" duplicado`);
-    }
-    names.add(f.name);
-    if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
-
-    if (!f.description.trim()) {
-      errors.push(`${label}: descrição não pode ser vazia`);
-    }
-
-    if (f.subfields && f.subfields.length > 0) {
-      const sfKeys = new Set<string>();
-      for (let j = 0; j < f.subfields.length; j++) {
-        const sf = f.subfields[j];
-        if (!sf.key || !PYTHON_IDENTIFIER.test(sf.key)) {
-          errors.push(
-            `${label}: subcampo ${j + 1} tem chave inválida "${sf.key}"`
-          );
-        } else if (isStrictDunder(sf.key)) {
-          errors.push(
-            `${label}: subcampo "${sf.key}" não pode começar e terminar com "__" (reservado pelo Python)`
-          );
-        }
-        if (sfKeys.has(sf.key)) {
-          errors.push(`${label}: subcampo "${sf.key}" duplicado`);
-        }
-        sfKeys.add(sf.key);
-        if (!sf.label.trim()) {
-          errors.push(`${label}: subcampo ${j + 1} tem label vazio`);
-        }
-      }
-    }
-
-    if (
-      (f.type === "single" || f.type === "multi") &&
-      (!f.options || f.options.length === 0)
-    ) {
-      errors.push(
-        `${label}: campo de escolha precisa de pelo menos uma opção`
-      );
-    }
-
-    if (f.options) {
-      for (let j = 0; j < f.options.length; j++) {
-        if (!f.options[j].trim()) {
-          errors.push(`${label}: opção ${j + 1} está vazia`);
-        }
-      }
-    }
-
-    if (f.condition) {
-      const trigger = f.condition.field;
-      if (!trigger) {
-        errors.push(`${label}: condição sem campo gatilho`);
-      } else if (trigger === f.name) {
-        errors.push(`${label}: condição não pode referenciar o próprio campo`);
-      } else {
-        const triggerField = fieldByName.get(trigger);
-        // Set das opções do gatilho construído uma vez e reusado nos dois
-        // branches (equals/not_equals e in/not_in) para lookups O(1).
-        const triggerOptionSet = triggerField?.options
-          ? new Set(triggerField.options)
-          : null;
-        if (!triggerField) {
-          errors.push(
-            `${label}: campo gatilho "${trigger}" inexistente ou posterior ao campo condicional`,
-          );
-        } else if ("equals" in f.condition || "not_equals" in f.condition) {
-          const val =
-            "equals" in f.condition
-              ? f.condition.equals
-              : f.condition.not_equals;
-          if (
-            triggerOptionSet &&
-            typeof val === "string" &&
-            !triggerOptionSet.has(val)
-          ) {
-            errors.push(
-              `${label}: valor "${val}" não está nas opções de "${trigger}"`,
-            );
-          }
-        } else if ("in" in f.condition || "not_in" in f.condition) {
-          const vals =
-            "in" in f.condition ? f.condition.in : f.condition.not_in;
-          if (!Array.isArray(vals) || vals.length === 0) {
-            errors.push(`${label}: lista de valores da condição vazia`);
-          } else if (triggerOptionSet) {
-            for (const v of vals) {
-              if (typeof v === "string" && !triggerOptionSet.has(v)) {
-                errors.push(
-                  `${label}: valor "${v}" não está nas opções de "${trigger}"`,
-                );
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return errors;
-}
+// O schema Zod é a fonte única das regras estruturais e semânticas de campos.
+export { validatePydanticFields as validateGUIFields } from "./pydantic-field";
 
 // ---------- Detecção de conflito de condition ao remover opção ----------
 
@@ -580,78 +456,23 @@ export type ChangeType = "major" | "minor" | "patch";
 // - MINOR: adicionar/remover campo, adicionar/remover opção, mudar
 //   type/target/required/subfields/condition
 // - Retorna null quando não há mudança alguma.
+//
+// Derivado de `diffFields`, e não uma segunda enumeração das propriedades:
+// as duas precisam concordar por construção. A invariante que o save depende
+// (`classifyChange != null ⇒ diffFields != []`) vira tautologia aqui, em vez de
+// algo a manter à mão em duas listas — foi justamente a divergência entre elas
+// que quebrou o save ao reordenar campos (a reordenação classificava como patch
+// e não gerava entrada, e a RPC recusa log vazio).
 export function classifyChange(
   oldFields: PydanticField[],
   newFields: PydanticField[],
 ): ChangeType | null {
-  const oldNames = new Set(oldFields.map((f) => f.name));
-  const newNames = new Set(newFields.map((f) => f.name));
-
-  const addedOrRemoved =
-    newFields.some((f) => !oldNames.has(f.name)) ||
-    oldFields.some((f) => !newNames.has(f.name));
-
-  if (addedOrRemoved) return "minor";
-
-  let hasStructural = false;
-  let hasTextual = false;
-
-  const oldMap = new Map(oldFields.map((f) => [f.name, f]));
-  for (const n of newFields) {
-    const o = oldMap.get(n.name);
-    if (!o) continue;
-
-    if (o.type !== n.type) hasStructural = true;
-    if ((o.target ?? "all") !== (n.target ?? "all")) hasStructural = true;
-    if ((o.required ?? true) !== (n.required ?? true)) hasStructural = true;
-    if ((o.subfield_rule ?? null) !== (n.subfield_rule ?? null)) hasStructural = true;
-    if ((o.allow_other ?? false) !== (n.allow_other ?? false)) hasStructural = true;
-    if (stableStringify(o.subfields ?? null) !== stableStringify(n.subfields ?? null)) {
-      hasStructural = true;
-    }
-    if (stableStringify(o.condition ?? null) !== stableStringify(n.condition ?? null)) {
-      hasStructural = true;
-    }
-
-    const optsOld = o.options ?? [];
-    const optsNew = n.options ?? [];
-    const setOld = new Set(optsOld);
-    const setNew = new Set(optsNew);
-    const sameSet =
-      setOld.size === setNew.size && [...setOld].every((x) => setNew.has(x));
-    if (!sameSet) {
-      hasStructural = true;
-    } else if (optsOld.length !== optsNew.length) {
-      hasStructural = true;
-    } else {
-      for (let i = 0; i < optsOld.length; i++) {
-        if (optsOld[i] !== optsNew[i]) {
-          hasTextual = true;
-          break;
-        }
-      }
-    }
-
-    if (o.description !== n.description) hasTextual = true;
-    if ((o.help_text || "") !== (n.help_text || "")) hasTextual = true;
-    if ((o.justification_prompt || "") !== (n.justification_prompt || "")) {
-      hasTextual = true;
-    }
-  }
-
-  // Reordenação da lista de campos conta como PATCH
-  if (!hasStructural && !hasTextual) {
-    for (let i = 0; i < newFields.length; i++) {
-      if (newFields[i].name !== oldFields[i]?.name) {
-        hasTextual = true;
-        break;
-      }
-    }
-  }
-
-  if (hasStructural) return "minor";
-  if (hasTextual) return "patch";
-  return null;
+  const entries = diffFields(oldFields, newFields);
+  if (entries.length === 0) return null;
+  const structural = entries.some((entry) =>
+    fieldDiffIsStructural(entry.before_value, entry.after_value),
+  );
+  return structural ? "minor" : "patch";
 }
 
 export function bumpVersion(
@@ -669,6 +490,14 @@ export function bumpVersion(
 
 // Serializa um PydanticField para gravar em
 // schema_change_log.before_value / after_value.
+//
+// As quatro propriedades com default implicito passam pelos resolvedores
+// canonicos em vez de `?? null`: `snapshotOf` e a serializacao que `classifyChange`
+// classifica, que a deteccao de dirty compara e que `mergeSchemas` le propriedade
+// a propriedade, entao normalizar diferente em qualquer um deles fabrica conflito
+// de merge sem edicao nenhuma — foi o que `hash`, `target` e `subfield_rule` ja
+// causaram, um por rodada de revisao. Payloads gravados antes desta mudanca tem
+// `null` nessas chaves; o diff de historico resolve os dois para o mesmo default.
 export function snapshotOf(field: PydanticField): Record<string, unknown> {
   return {
     name: field.name,
@@ -676,14 +505,21 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     description: field.description,
     help_text: field.help_text ?? null,
     options: field.options ?? null,
-    target: field.target ?? null,
-    required: field.required ?? null,
+    target: resolveTarget(field.target),
+    required: resolveRequired(field.required),
     subfields: field.subfields ?? null,
-    subfield_rule: field.subfield_rule ?? null,
-    allow_other: field.allow_other ?? null,
+    subfield_rule: resolveSubfieldRule(field.subfield_rule),
+    allow_other: resolveAllowOther(field.allow_other),
     condition: field.condition ?? null,
     justification_prompt: field.justification_prompt ?? null,
   };
+}
+
+// Serialização canônica do estado editável. `hash` fica de fora porque é
+// metadado derivado no save; a comparação local não precisa recalcular um hash
+// criptográfico a cada tecla.
+export function serializeSchemaFields(fields: PydanticField[]): string {
+  return stableStringify(fields.map(snapshotOf));
 }
 
 // Classifica um diff de schema_change_log (before/after por campo) como
@@ -719,7 +555,13 @@ export function fieldDiffIsStructural(
     const bSet = new Set(bArr);
     const aSet = new Set(aArr);
     const sameSet = bSet.size === aSet.size && [...bSet].every((x) => aSet.has(x));
-    if (!sameSet) return true;
+    // Mesmo conjunto com contagens diferentes (uma opcao duplicada some) muda o
+    // que o respondente pode escolher, entao e estrutural — so reordenar dentro
+    // do mesmo multiconjunto e que e textual. Sem o teste de comprimento, esta
+    // funcao classificaria como patch o que `classifyChange` classifica como
+    // minor, e o backfill reclassificaria entradas historicas divergindo do
+    // save que as gravou.
+    if (!sameSet || bArr.length !== aArr.length) return true;
   }
   return false;
 }
@@ -731,8 +573,38 @@ export interface SchemaLogEntry {
   after_value: Record<string, unknown>;
 }
 
+// Sentinelas de `field_name` para entradas de auditoria cujo escopo é o projeto,
+// não um campo. `schema_change_log.field_name` é NOT NULL, então essas entradas
+// precisam de algum nome; os parênteses garantem que ele jamais colida com um
+// campo real, porque PYTHON_IDENTIFIER rejeita "(" (ver `pydanticFieldNameIssue`
+// em pydantic-field.ts). Quem reconstrói snapshots a partir do log precisa
+// pulá-las: elas não descrevem o estado de nenhum campo.
+export const PROJECT_LOG_FIELD_NAME = "(projeto)";
+export const ORDER_LOG_FIELD_NAME = "(ordem)";
+
+export function isProjectScopedLogEntry(fieldName: string): boolean {
+  return (
+    fieldName === PROJECT_LOG_FIELD_NAME || fieldName === ORDER_LOG_FIELD_NAME
+  );
+}
+
+// A ordem é comparada apenas entre os campos presentes nos dois lados: assim
+// adicionar ou remover um campo não é relatado como reordenação, e o que sobra
+// é a mudança de ordem propriamente dita.
+function commonFieldOrder(
+  fields: PydanticField[],
+  present: ReadonlyMap<string, PydanticField>,
+): string[] {
+  return fields.filter((f) => present.has(f.name)).map((f) => f.name);
+}
+
 // Monta as entradas de auditoria por campo (added / removed / modified)
 // comparando o estado antigo e o novo do schema.
+//
+// Reordenar campos também gera entrada: a ordem é auditável por si (define a
+// sequência em que o pesquisador responde as perguntas) e é o que sustenta a
+// invariante `classifyChange(...) != null ⇒ diffFields(...).length > 0`, exigida
+// por `commit_project_schema`, que recusa uma mudança de versão sem histórico.
 export function diffFields(
   oldFields: PydanticField[],
   newFields: PydanticField[],
@@ -793,25 +665,27 @@ export function diffFields(
       before.type = old.type;
       after.type = f.type;
     }
-    if ((old.target ?? "all") !== (f.target ?? "all")) {
+    if (resolveTarget(old.target) !== resolveTarget(f.target)) {
       diffs.push("alvo");
-      before.target = old.target ?? null;
-      after.target = f.target ?? null;
+      before.target = resolveTarget(old.target);
+      after.target = resolveTarget(f.target);
     }
-    if ((old.required ?? true) !== (f.required ?? true)) {
+    if (resolveRequired(old.required) !== resolveRequired(f.required)) {
       diffs.push("obrigatório");
-      before.required = old.required ?? null;
-      after.required = f.required ?? null;
+      before.required = resolveRequired(old.required);
+      after.required = resolveRequired(f.required);
     }
-    if ((old.subfield_rule ?? null) !== (f.subfield_rule ?? null)) {
+    const oldRule = resolveSubfieldRule(old.subfield_rule);
+    const newRule = resolveSubfieldRule(f.subfield_rule);
+    if (oldRule !== newRule) {
       diffs.push("regra de subcampos");
-      before.subfield_rule = old.subfield_rule ?? null;
-      after.subfield_rule = f.subfield_rule ?? null;
+      before.subfield_rule = oldRule;
+      after.subfield_rule = newRule;
     }
-    if ((old.allow_other ?? false) !== (f.allow_other ?? false)) {
+    if (resolveAllowOther(old.allow_other) !== resolveAllowOther(f.allow_other)) {
       diffs.push("permite outro");
-      before.allow_other = old.allow_other ?? false;
-      after.allow_other = f.allow_other ?? false;
+      before.allow_other = resolveAllowOther(old.allow_other);
+      after.allow_other = resolveAllowOther(f.allow_other);
     }
     const oldSubs = stableStringify(old.subfields ?? null);
     const newSubs = stableStringify(f.subfields ?? null);
@@ -841,6 +715,17 @@ export function diffFields(
         after_value: after,
       });
     }
+  }
+
+  const oldOrder = commonFieldOrder(oldFields, newMap);
+  const newOrder = commonFieldOrder(newFields, oldMap);
+  if (stableStringify(oldOrder) !== stableStringify(newOrder)) {
+    logEntries.push({
+      field_name: ORDER_LOG_FIELD_NAME,
+      change_summary: "ordem dos campos alterada",
+      before_value: { order: oldOrder },
+      after_value: { order: newOrder },
+    });
   }
 
   return logEntries;

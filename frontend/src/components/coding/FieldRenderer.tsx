@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Check, Info, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { OTHER_PREFIX } from "@/lib/other-option";
+import { OTHER_PREFIX, isOtherValue } from "@/lib/other-option";
 import {
   arePartsValid,
   buildDateValue,
@@ -31,8 +31,6 @@ interface FieldRendererProps {
 }
 
 const NOT_INFORMED = "Não informada";
-const isOtherValue = (v: unknown): v is string =>
-  typeof v === "string" && v.startsWith(OTHER_PREFIX);
 const otherText = (v: string) => v.slice(OTHER_PREFIX.length);
 
 // Pure handler: backspace on an empty date part jumps focus to the previous

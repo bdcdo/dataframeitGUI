@@ -3,11 +3,12 @@
 // só podem exportar funções async (regra do Next), então o que é puro e
 // testável vive aqui e a action importa.
 
-import type { PydanticField } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import {
   computeFieldHash,
   bumpVersion,
   fieldDiffIsStructural,
+  isProjectScopedLogEntry,
   type ChangeType,
 } from "@/lib/schema-utils";
 import type { SchemaVersion } from "@/lib/compare-version";
@@ -38,7 +39,7 @@ export type LogEntryRow = {
 export type ResponseRow = {
   id: string;
   created_at: string;
-  answer_field_hashes: Record<string, string> | null;
+  answer_field_hashes: AnswerFieldHashes;
   version_inferred_from: string | null;
 };
 
@@ -55,6 +56,11 @@ export type BackfillStats = {
     live_save: number;
   };
 };
+
+type InferenceMethod = "hashes" | "created_at" | "fallback_created_at";
+type VersionHashes = [key: string, hashes: Record<string, string>];
+type KnownHashEntry = [fieldName: string, hash: string];
+type VersionInference = { key: string; method: InferenceMethod };
 
 function cloneFieldSnapshot(f: FieldSnapshot): FieldSnapshot {
   return {
@@ -167,8 +173,10 @@ export function reconstructSnapshotsByVersion(
     // Revert all entries at this version
     const group = entriesByVersion.get(key)!;
     for (const e of group) {
-      // Skip project-level entries (publishMajorVersion)
-      if (e.field_name === "(projeto)") continue;
+      // Entradas de escopo do projeto (publicação MAJOR, reordenação) não
+      // descrevem o estado de nenhum campo — reverter uma delas inventaria um
+      // campo com o nome do sentinel no snapshot.
+      if (isProjectScopedLogEntry(e.field_name)) continue;
       const isAdd = Object.keys(e.before).length === 0;
       const isRemove = Object.keys(e.after).length === 0;
       if (isAdd) {
@@ -199,6 +207,91 @@ export function reconstructSnapshotsByVersion(
   return snapByVersion;
 }
 
+function findStructurallyCompatibleVersions(
+  hashEntries: [string, string | null][],
+  hashesByVersion: Map<string, Record<string, string>>,
+): VersionHashes[] {
+  return [...hashesByVersion.entries()].filter(([, versionHashes]) =>
+    hashEntries.every(([fieldName]) => Object.hasOwn(versionHashes, fieldName)),
+  );
+}
+
+function findBestHashMatch(
+  candidates: VersionHashes[],
+  knownHashEntries: KnownHashEntry[],
+  versionTs: Map<string, number>,
+  responseTs: number,
+): string | null {
+  const ranked = candidates
+    .map(([key, versionHashes]) => ({
+      key,
+      score: knownHashEntries.filter(([fieldName, hash]) => versionHashes[fieldName] === hash)
+        .length,
+      timestampDistance: Math.abs((versionTs.get(key) ?? 0) - responseTs),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.timestampDistance - b.timestampDistance);
+
+  return ranked[0]?.key ?? null;
+}
+
+function chooseVersionByTimestamp(
+  candidateKeys: Iterable<string>,
+  versionTs: Map<string, number>,
+  responseTs: number,
+): string | null {
+  const chronological = [...candidateKeys]
+    .map((key) => [key, versionTs.get(key) ?? 0] as const)
+    .sort((a, b) => a[1] - b[1]);
+  const latestNotAfterResponse = chronological.filter(([, timestamp]) => timestamp <= responseTs).at(-1);
+  return latestNotAfterResponse?.[0] ?? chronological[0]?.[0] ?? null;
+}
+
+function inferResponseVersion(
+  response: ResponseRow,
+  hashesByVersion: Map<string, Record<string, string>>,
+  versionTs: Map<string, number>,
+): VersionInference {
+  const hashEntries = Object.entries(response.answer_field_hashes ?? {});
+  const responseTs = new Date(response.created_at).getTime();
+
+  if (hashEntries.length === 0) {
+    return {
+      key:
+        chooseVersionByTimestamp(versionTs.keys(), versionTs, responseTs) ??
+        versionKey({ major: 0, minor: 1, patch: 0 }),
+      method: "created_at",
+    };
+  }
+
+  // Toda chave prova que o campo existia, mesmo quando o hash é null. Apenas
+  // hashes conhecidos pontuam as versões que contêm todos esses campos.
+  const compatibleVersions = findStructurallyCompatibleVersions(hashEntries, hashesByVersion);
+  const knownHashEntries = hashEntries.filter(
+    (entry): entry is KnownHashEntry => entry[1] !== null,
+  );
+  const hashMatch = findBestHashMatch(
+    compatibleVersions,
+    knownHashEntries,
+    versionTs,
+    responseTs,
+  );
+  if (hashMatch) return { key: hashMatch, method: "hashes" };
+
+  const compatibleTimestampMatch = chooseVersionByTimestamp(
+    compatibleVersions.map(([key]) => key),
+    versionTs,
+    responseTs,
+  );
+  return {
+    key:
+      compatibleTimestampMatch ??
+      chooseVersionByTimestamp(versionTs.keys(), versionTs, responseTs) ??
+      versionKey({ major: 0, minor: 1, patch: 0 }),
+    method: "fallback_created_at",
+  };
+}
+
 // Escolhe a versão de cada response (por hash de campos, com fallback em
 // created_at) e agrupa em buckets por (versão, método).
 export function matchResponsesToVersions(
@@ -219,81 +312,30 @@ export function matchResponsesToVersions(
   }
   versionTs.set(versionKey({ major: 0, minor: 1, patch: 0 }), 0);
 
-  // Bucket updates by (version, method)
   const updates = new Map<string, UpdateBucket>();
-  let countLiveSave = 0;
-  let countHashes = 0;
-  let countCreatedAt = 0;
-  let countFallback = 0;
+  const byMethod: BackfillStats["byMethod"] = {
+    hashes: 0,
+    created_at: 0,
+    fallback_created_at: 0,
+    live_save: 0,
+  };
 
   for (const r of responses) {
     // Preserve live_save entries as-is (precisão total)
     if (r.version_inferred_from === "live_save") {
-      countLiveSave++;
+      byMethod.live_save++;
       continue;
     }
 
-    const rHashes = r.answer_field_hashes ?? null;
-    const ts = new Date(r.created_at).getTime();
-
-    let chosenKey: string | null = null;
-    let chosenMethod: "hashes" | "created_at" | "fallback_created_at" = "created_at";
-
-    if (rHashes && Object.keys(rHashes).length > 0) {
-      // Score each version
-      let bestScore = -1;
-      let bestKey: string | null = null;
-      let bestTieTs = Infinity;
-      for (const [k, vHashes] of hashesByVersion) {
-        let score = 0;
-        for (const [fn, h] of Object.entries(rHashes)) {
-          if (vHashes[fn] === h) score++;
-        }
-        if (score === 0) continue;
-        const kTs = versionTs.get(k) ?? 0;
-        const tieMetric = Math.abs(kTs - ts);
-        if (score > bestScore || (score === bestScore && tieMetric < bestTieTs)) {
-          bestScore = score;
-          bestKey = k;
-          bestTieTs = tieMetric;
-        }
-      }
-      if (bestKey) {
-        chosenKey = bestKey;
-        chosenMethod = "hashes";
-      }
-    }
-
-    if (!chosenKey) {
-      // Fallback timestamp
-      const candidates = [...versionTs.entries()]
-        .filter(([, t]) => t <= ts)
-        .sort((a, b) => b[1] - a[1]);
-      chosenKey =
-        candidates.length > 0 ? candidates[0][0] : versionKey({ major: 0, minor: 1, patch: 0 });
-      chosenMethod =
-        rHashes && Object.keys(rHashes).length > 0 ? "fallback_created_at" : "created_at";
-    }
-
-    const v = versionByKey.get(chosenKey) ?? { major: 0, minor: 1, patch: 0 };
-    const bucketKey = `${chosenKey}|${chosenMethod}`;
+    const inference = inferResponseVersion(r, hashesByVersion, versionTs);
+    const v = versionByKey.get(inference.key) ?? { major: 0, minor: 1, patch: 0 };
+    const bucketKey = `${inference.key}|${inference.method}`;
     if (!updates.has(bucketKey)) {
-      updates.set(bucketKey, { version: v, method: chosenMethod, ids: [] });
+      updates.set(bucketKey, { version: v, method: inference.method, ids: [] });
     }
     updates.get(bucketKey)!.ids.push(r.id);
-
-    if (chosenMethod === "hashes") countHashes++;
-    else if (chosenMethod === "created_at") countCreatedAt++;
-    else if (chosenMethod === "fallback_created_at") countFallback++;
+    byMethod[inference.method]++;
   }
 
-  return {
-    updates,
-    byMethod: {
-      hashes: countHashes,
-      created_at: countCreatedAt,
-      fallback_created_at: countFallback,
-      live_save: countLiveSave,
-    },
-  };
+  return { updates, byMethod };
 }

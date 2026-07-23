@@ -13,6 +13,7 @@ function getNestedValue(
   let current: unknown = data;
   for (const part of parts) {
     if (current === null || typeof current !== "object") return undefined;
+    if (!Object.hasOwn(current, part)) return undefined;
     current = (current as Record<string, unknown>)[part];
     if (current === undefined) return undefined;
   }
@@ -95,7 +96,7 @@ function resolveHiddenConditionals(
       if (!f.condition) continue;
       if (cleared.has(f.name)) continue;
       if (isFieldVisible(f, view)) continue;
-      const v = view[f.name];
+      const v = Object.hasOwn(view, f.name) ? view[f.name] : undefined;
       if (v !== undefined && v !== null && v !== "") {
         if (view === answers) view = { ...answers };
         view[f.name] = null;
@@ -141,7 +142,7 @@ export function dropHiddenConditionals(
   const orphans: string[] = [];
   for (const f of fields) {
     if (!f.condition) continue;
-    if (!(f.name in answers)) continue;
+    if (!Object.hasOwn(answers, f.name)) continue;
     if (isFieldVisible(f, view)) continue;
     orphans.push(f.name);
   }
