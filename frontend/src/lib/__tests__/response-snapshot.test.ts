@@ -129,10 +129,8 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers,
-      storedHashes,
+      existing: { answers: storedAnswers, hashes: storedHashes },
       rawSubmittedAnswers,
-      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -167,10 +165,11 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: { gatilho: "sim", detalhe: "texto" },
-      storedHashes: { gatilho: "g-old", detalhe: "d-old" },
+      existing: {
+        answers: { gatilho: "sim", detalhe: "texto" },
+        hashes: { gatilho: "g-old", detalhe: "d-old" },
+      },
       rawSubmittedAnswers: { gatilho: "nao" },
-      isNewResponse: false,
     });
 
     // Só o gatilho foi revisado, então só ele ganha a proveniência de hoje. O
@@ -194,10 +193,11 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: { gatilho: "sim", detalhe: "antigo" },
-      storedHashes: { gatilho: "g-old", detalhe: "d-old" },
+      existing: {
+        answers: { gatilho: "sim", detalhe: "antigo" },
+        hashes: { gatilho: "g-old", detalhe: "d-old" },
+      },
       rawSubmittedAnswers: { gatilho: "nao" },
-      isNewResponse: false,
     });
 
     expect(result.submittedAnswers).toEqual({ gatilho: "nao" });
@@ -224,10 +224,11 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: { gatilho: "sim", filho: "antigo", neto: "texto" },
-      storedHashes: { gatilho: "g-old", filho: "f-old", neto: "n-old" },
+      existing: {
+        answers: { gatilho: "sim", filho: "antigo", neto: "texto" },
+        hashes: { gatilho: "g-old", filho: "f-old", neto: "n-old" },
+      },
       rawSubmittedAnswers: { gatilho: "nao" },
-      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
@@ -257,14 +258,15 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: {
-        gatilho: "A",
-        intermediario: "ocultar",
-        descendente: "preservado",
+      existing: {
+        answers: {
+          gatilho: "A",
+          intermediario: "ocultar",
+          descendente: "preservado",
+        },
+        hashes: { gatilho: "g-old", intermediario: "i-old", descendente: "d-old" },
       },
-      storedHashes: { gatilho: "g-old", intermediario: "i-old", descendente: "d-old" },
       rawSubmittedAnswers: { gatilho: "B", intermediario: "ocultar" },
-      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -288,10 +290,11 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: { gatilho: "sim", detalhe: "texto" },
-      storedHashes: { gatilho: "g-old", detalhe: "d-old" },
+      existing: {
+        answers: { gatilho: "sim", detalhe: "texto" },
+        hashes: { gatilho: "g-old", detalhe: "d-old" },
+      },
       rawSubmittedAnswers: { outro: "novo" },
-      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -321,10 +324,8 @@ describe("buildPersistedResponseSnapshot", () => {
 
       const result = buildPersistedResponseSnapshot({
         fields,
-        storedAnswers: { stale: "A" },
-        storedHashes,
+        existing: { answers: { stale: "A" }, hashes: storedHashes },
         rawSubmittedAnswers: { outro: "novo" },
-        isNewResponse: false,
       });
 
       expect(result.persistedAnswers).toEqual({ stale: "A", outro: "novo" });
@@ -343,10 +344,8 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: undefined,
-      storedHashes: undefined,
+      existing: null,
       rawSubmittedAnswers: { respondido: "x" },
-      isNewResponse: true,
     });
 
     expect(result.answerFieldHashes).toEqual({
@@ -367,10 +366,8 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: { antigo: "a" },
-      storedHashes: { antigo: "antigo-hash" },
+      existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
       rawSubmittedAnswers: { antigo: "b" },
-      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({ antigo: "b" });
@@ -385,10 +382,8 @@ describe("buildPersistedResponseSnapshot", () => {
 
     const result = buildPersistedResponseSnapshot({
       fields,
-      storedAnswers: { antigo: "a" },
-      storedHashes: { antigo: "antigo-hash" },
+      existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
       rawSubmittedAnswers: { antigo: "a", novo_obrigatorio: "resposta" },
-      isNewResponse: false,
     });
 
     expect(result.answerFieldHashes).toEqual({
@@ -400,10 +395,8 @@ describe("buildPersistedResponseSnapshot", () => {
   it("preserva o snapshot bruto quando não há controles no schema", () => {
     const result = buildPersistedResponseSnapshot({
       fields: [],
-      storedAnswers: { legado: "valor" },
-      storedHashes: { legado: "hash-antigo" },
+      existing: { answers: { legado: "valor" }, hashes: { legado: "hash-antigo" } },
       rawSubmittedAnswers: {},
-      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({ legado: "valor" });

@@ -59,17 +59,23 @@ export interface PersistedResponseSnapshot {
   answerFieldHashes: Exclude<AnswerFieldHashes, null>;
 }
 
+/**
+ * Snapshot da response anterior do mesmo respondente para o documento, ou
+ * `null` quando a codificação começa agora. Os dois dados vêm juntos num só
+ * campo porque a distinção "não existe response" × "existe sem proveniência
+ * (legacy)" decide qual mapa de hashes é gravado — e um par solto
+ * (`storedHashes` ausente + flag de codificação nova) permitiria representar a
+ * combinação impossível "codificação nova com snapshot anterior".
+ */
+interface ExistingResponseSnapshot {
+  answers: Record<string, unknown> | null | undefined;
+  hashes: AnswerFieldHashes;
+}
+
 interface BuildPersistedResponseSnapshotParams {
   fields: PydanticField[];
-  storedAnswers: Record<string, unknown> | null | undefined;
-  storedHashes: AnswerFieldHashes | undefined;
+  existing: ExistingResponseSnapshot | null;
   rawSubmittedAnswers: Record<string, unknown>;
-  /**
-   * True quando não existe response anterior deste respondente para o
-   * documento. Explícito porque `storedHashes` ausente é ambíguo: vale tanto
-   * para uma codificação que começa agora quanto para uma response legacy.
-   */
-  isNewResponse: boolean;
 }
 
 function samePresentedValue(
@@ -180,16 +186,16 @@ function withAnswerProvenanceFallback(
 // respondido — aí a chave é verdadeira e o hash atual é a proveniência correta.
 function buildReconciledFieldHashes(
   fields: PydanticField[],
-  storedHashes: AnswerFieldHashes | undefined,
+  existing: ExistingResponseSnapshot | null,
   persistedAnswers: Record<string, unknown>,
   changedFieldNames: Set<string>,
-  isNewResponse: boolean,
 ): Exclude<AnswerFieldHashes, null> {
   const currentHashes = buildFieldHashMap(fields);
 
   // Codificação nova: o schema de hoje É o schema da codificação, então todo
   // campo dele existia e nenhum obrigatório em branco deve ser perdoado.
-  if (isNewResponse) return withAnswerProvenanceFallback(currentHashes, persistedAnswers);
+  if (!existing) return withAnswerProvenanceFallback(currentHashes, persistedAnswers);
+  const storedHashes = existing.hashes;
 
   // `null`/`{}` são o sentinela legacy — "não dá para inferir quais campos
   // existiam", lido como "todos existiam". Herdar dele e acrescentar chaves
@@ -213,11 +219,10 @@ function buildReconciledFieldHashes(
 // produzidos juntos para não permitir proveniência incompatível com o valor.
 export function buildPersistedResponseSnapshot({
   fields,
-  storedAnswers,
-  storedHashes,
+  existing,
   rawSubmittedAnswers,
-  isNewResponse,
 }: BuildPersistedResponseSnapshotParams): PersistedResponseSnapshot {
+  const storedAnswers = existing?.answers;
   // A leitura sem schema expõe o JSON bruto por compatibilidade, mas não há
   // controles capazes de representar essas chaves no formulário. Portanto,
   // um submit vazio não pode ser interpretado como pedido para apagá-las.
@@ -236,10 +241,9 @@ export function buildPersistedResponseSnapshot({
   );
   const answerFieldHashes = buildReconciledFieldHashes(
     fields,
-    storedHashes,
+    existing,
     persistedAnswers,
     reconciled.changedFieldNames,
-    isNewResponse,
   );
 
   return { submittedAnswers, persistedAnswers, answerFieldHashes };
