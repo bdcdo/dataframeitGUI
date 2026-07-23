@@ -75,7 +75,14 @@ describe("RunLlmButton", () => {
 
     await userEvent.click(screen.getByRole("button"));
 
-    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    // Mensagem do MissingAuthTokenError real (via helper importOriginal) chega ao
+    // toast; fixá-la fecha regressão silenciosa na causa acionável mostrada ao
+    // usuário — não bastaria saber que "algum" toast de erro disparou.
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringContaining("Sessão indisponível"),
+      ),
+    );
     // Falha fechada antes do request: fetchFastAPI nem chega a ser chamado.
     expect(fetchFastAPI).not.toHaveBeenCalled();
   });
