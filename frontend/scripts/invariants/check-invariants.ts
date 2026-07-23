@@ -40,17 +40,22 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 
 // Paginação manual: PostgREST corta em 1000 linhas por default; sem isso uma
 // tabela grande passaria "limpa" por truncamento silencioso.
-type SelectBuilder = ReturnType<ReturnType<typeof supabase.from>["select"]>;
+// O builder fica `any` de propósito: o PostgrestFilterBuilder muda de tipo a
+// cada método encadeado e, num helper genérico por nome de tabela, o tsc
+// estoura em TS2589 (instanciação excessivamente profunda) antes de qualquer
+// checagem útil. A tipagem do resultado vem do parâmetro T de cada chamada.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type UntypedSelectBuilder = any;
 
 async function fetchAll<T>(
   table: string,
   columns: string,
-  filter?: (q: SelectBuilder) => SelectBuilder,
+  filter?: (q: UntypedSelectBuilder) => UntypedSelectBuilder,
 ): Promise<T[]> {
   const PAGE = 1000;
   const rows: T[] = [];
   for (let from = 0; ; from += PAGE) {
-    let q = supabase.from(table).select(columns).range(from, from + PAGE - 1);
+    let q: UntypedSelectBuilder = supabase.from(table).select(columns).range(from, from + PAGE - 1);
     if (filter) q = filter(q);
     const { data, error } = await q;
     if (error) throw new Error(`${table}: ${error.message}`);
