@@ -4,8 +4,16 @@ import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/
 import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { buildPersistedResponseSnapshot } from "@/lib/response-snapshot";
+import { isCodingComplete, missingRequiredHumanFields } from "@/lib/coding-completeness";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+
+export interface SaveResponseResult {
+  success: boolean;
+  error?: string;
+  /** Obrigatórias ainda em branco no conjunto gravado (0 = codificação completa). */
+  missingRequired?: number;
+}
 
 export interface SaveResponseOpts {
   notes?: string;
@@ -75,6 +83,7 @@ interface SaveResponseProjectFields {
 }
 
 interface BuildResponsePayloadParams {
+  fields: PydanticField[];
   answersToPersist: Record<string, unknown>;
   answerFieldHashes: Exclude<AnswerFieldHashes, null>;
   project: SaveResponseProjectFields | null | undefined;
@@ -84,6 +93,7 @@ interface BuildResponsePayloadParams {
 }
 
 function buildResponsePayload({
+  fields,
   answersToPersist,
   answerFieldHashes,
   project,
@@ -96,14 +106,24 @@ function buildResponsePayload({
   const roundIdToPersist =
     project?.round_strategy === "manual" ? (project?.current_round_id ?? null) : null;
 
-  // Para humanos is_partial e mutavel: auto-save grava true (segue como
-  // current_pending em classifyDocStatus) e submit explicito grava false.
-  // Excecao: auto-save em response ja submetida (is_partial=false) NAO
-  // rebaixa o sinal — combinado com o guard que preserva assignment.status
-  // = "concluido", esse rebaixamento faria um doc ja concluido reaparecer
-  // como pendente em classifyDocStatus. A imutabilidade descrita na migration
-  // 20260425000000 vale so para o fluxo LLM.
-  const isPartialToWrite = isAutoSave && existing?.is_partial !== false;
+  // Para humanos is_partial descreve O QUE FOI GRAVADO, não por qual canal a
+  // escrita chegou: uma resposta só deixa de ser parcial quando o pesquisador
+  // envia (submit explícito) E o conjunto gravado satisfaz a régua de
+  // completude. Enquanto o sinal era função apenas do canal, um auto-save
+  // herdava o `false` de um submit anterior e podia carimbar "submetida" um
+  // conjunto que já não estava completo — o estado que fazia o documento voltar
+  // à fila com aparência de concluído (#519).
+  //
+  // Staleness-aware de propósito: avaliar contra o carimbo per-campo da própria
+  // resposta impede que um campo obrigatório criado depois rebaixe uma
+  // codificação que estava completa quando foi feita.
+  // O auto-save continua sem promover nada por conta própria — quem nunca
+  // enviou segue parcial mesmo com tudo preenchido (o guard de assignment em
+  // coding-sync faz o espelho disso para `status`).
+  const submittedBefore = existing?.is_partial === false;
+  const isPartialToWrite =
+    !isCodingComplete(fields, answersToPersist, answerFieldHashes) ||
+    (isAutoSave && !submittedBefore);
 
   const payload = {
     answers: answersToPersist,
@@ -180,7 +200,7 @@ export async function saveResponse(
   documentId: string,
   answers: Record<string, unknown>,
   opts: SaveResponseOpts = {},
-): Promise<{ success: boolean; error?: string }> {
+): Promise<SaveResponseResult> {
   const { notes, isAutoSave = false } = opts;
   try {
     const actor = await resolveProjectMemberActor(projectId);
@@ -225,6 +245,7 @@ export async function saveResponse(
     });
 
     const payload = buildResponsePayload({
+      fields,
       answersToPersist: snapshot.persistedAnswers,
       answerFieldHashes: snapshot.answerFieldHashes,
       project,
@@ -259,7 +280,19 @@ export async function saveResponse(
     }
 
     revalidateAfterSave(projectId, isAutoSave);
-    return { success: true };
+    // Quantas obrigatórias o conjunto GRAVADO ainda deixa em aberto. Vai para o
+    // cliente porque o formulário decide o que exibir a partir do schema que ele
+    // carregou; se o schema mudou desde então, é esta contagem — a mesma que
+    // decide `is_partial` — que impede o feedback de sucesso de anunciar uma
+    // conclusão que não houve (#519).
+    return {
+      success: true,
+      missingRequired: missingRequiredHumanFields(
+        fields,
+        snapshot.persistedAnswers,
+        snapshot.answerFieldHashes,
+      ).length,
+    };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Erro desconhecido" };
   }

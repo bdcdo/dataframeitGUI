@@ -1,19 +1,12 @@
-import { useCallback, useState, type RefObject } from "react";
+import { useCallback, useMemo, useState, type RefObject } from "react";
 import { toast } from "sonner";
-import { isIncompleteOther } from "@/lib/other-option";
+import {
+  isAnsweredValue,
+  missingRequiredHumanFields,
+  requiredHumanFields,
+} from "@/lib/coding-completeness";
 import { getScrollBehavior } from "@/lib/scroll";
-import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
 import type { PydanticField } from "@/lib/types";
-
-const isAnsweredValue = (field: PydanticField, val: unknown): boolean => {
-  if (val === undefined || val === null || val === "") return false;
-  if (field.type === "single" && isIncompleteOther(val)) return false;
-  if (field.type === "multi" && Array.isArray(val)) {
-    if (val.length === 0) return false;
-    if (val.some(isIncompleteOther)) return false;
-  }
-  return true;
-};
 
 /**
  * Estado de destaque de obrigatórias faltantes + validação de envio. O
@@ -36,13 +29,21 @@ export function useQuestionValidation(
   handleSubmitWithValidation: () => void;
   requiredFields: PydanticField[];
   answeredRequiredCount: number;
+  missingRequiredCount: number;
 } {
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
-  const requiredFields = visibleFields.filter((f) => resolveRequired(f.required));
-  const answeredRequiredCount = requiredFields.filter((f) =>
-    isAnsweredValue(f, answers[f.name]),
-  ).length;
+  // Régua do servidor, avaliada no cliente: o que falta aqui é exatamente o que
+  // impede `isCodingComplete` de promover a codificação a concluída.
+  const requiredFields = useMemo(
+    () => requiredHumanFields(visibleFields, answers),
+    [visibleFields, answers],
+  );
+  const missingRequired = useMemo(
+    () => missingRequiredHumanFields(visibleFields, answers),
+    [visibleFields, answers],
+  );
+  const answeredRequiredCount = requiredFields.length - missingRequired.length;
 
   const isAnswered = useCallback(
     (field: PydanticField) => isAnsweredValue(field, answers[field.name]),
@@ -65,25 +66,21 @@ export function useQuestionValidation(
   const handleSubmitWithValidation = useCallback(() => {
     if (submitting || outOfScopeBlocked) return;
 
-    const unanswered = visibleFields
-      .filter(
-        (f) =>
-          resolveTarget(f.target) !== "llm_only" &&
-          resolveRequired(f.required) &&
-          !isAnswered(f),
-      )
-      .map((f) => f.name);
-
-    if (unanswered.length > 0) {
-      setHighlightedFields(new Set(unanswered));
-      const firstIdx = visibleFields.findIndex((f) => unanswered.includes(f.name));
+    if (missingRequired.length > 0) {
+      const unanswered = new Set(missingRequired.map((f) => f.name));
+      setHighlightedFields(unanswered);
+      const firstIdx = visibleFields.findIndex((f) => unanswered.has(f.name));
       questionRefs.current[firstIdx]?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
-      toast.warning("Preencha todas as perguntas obrigatórias");
+      toast.warning(
+        missingRequired.length === 1
+          ? "Falta 1 pergunta obrigatória para enviar"
+          : `Faltam ${missingRequired.length} perguntas obrigatórias para enviar`,
+      );
       return;
     }
 
     onSubmit();
-  }, [visibleFields, isAnswered, onSubmit, submitting, outOfScopeBlocked, questionRefs]);
+  }, [visibleFields, missingRequired, onSubmit, submitting, outOfScopeBlocked, questionRefs]);
 
   return {
     highlightedFields,
@@ -92,5 +89,6 @@ export function useQuestionValidation(
     handleSubmitWithValidation,
     requiredFields,
     answeredRequiredCount,
+    missingRequiredCount: missingRequired.length,
   };
 }

@@ -10,7 +10,7 @@ import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 // que já existiam no schema contra o qual a resposta foi codificada
 // (staleness-aware). Os defaults de `target` e `required` saem dos resolvedores
 // de pydantic-field, nunca de uma re-derivação local.
-function requiredHumanFields(
+export function requiredHumanFields(
   fields: PydanticField[],
   answers: Record<string, unknown>,
   answerFieldHashes?: AnswerFieldHashes,
@@ -22,6 +22,36 @@ function requiredHumanFields(
       resolveRequired(f.required) &&
       isFieldVisible(f, answers) &&
       fieldExistedWhenCoded(answerFieldHashes, f.name),
+  );
+}
+
+// Um campo conta como respondido quando tem valor e esse valor não é um
+// "Outro:" pela metade nem uma seleção múltipla vazia. Exportado porque a UI de
+// codificação marca pergunta a pergunta com a MESMA régua que decide completude
+// — duas cópias da regra é o que deixava "o que o botão exige" divergir de "o
+// que o servidor considera concluído" (#519).
+export function isAnsweredValue(field: PydanticField, value: unknown): boolean {
+  if (value === undefined || value === null || value === "") return false;
+  if (field.type === "single" && isIncompleteOther(value)) return false;
+  if (field.type === "multi" && Array.isArray(value)) {
+    if (value.length === 0) return false;
+    if (value.some(isIncompleteOther)) return false;
+  }
+  return true;
+}
+
+// Campos obrigatórios que ainda faltam — a régua de completude na forma que a UI
+// precisa (quantos e quais), com `isCodingComplete` derivado dela. A UI de
+// codificação consome esta primitiva em vez de reimplementar a regra: enquanto
+// existiam duas cópias, "o que o botão exige" e "o que o servidor considera
+// concluído" podiam divergir sem nenhum gate reclamar (ver #519).
+export function missingRequiredHumanFields(
+  fields: PydanticField[],
+  answers: Record<string, unknown>,
+  answerFieldHashes?: AnswerFieldHashes,
+): PydanticField[] {
+  return requiredHumanFields(fields, answers, answerFieldHashes).filter(
+    (f) => !isAnsweredValue(f, answers[f.name]),
   );
 }
 
@@ -44,15 +74,5 @@ export function isCodingComplete(
   answers: Record<string, unknown>,
   answerFieldHashes?: AnswerFieldHashes,
 ): boolean {
-  const required = requiredHumanFields(fields, answers, answerFieldHashes);
-  return required.every((f) => {
-    const v = answers[f.name];
-    if (v === undefined || v === null || v === "") return false;
-    if (f.type === "single" && isIncompleteOther(v)) return false;
-    if (f.type === "multi" && Array.isArray(v)) {
-      if (v.length === 0) return false;
-      if (v.some(isIncompleteOther)) return false;
-    }
-    return true;
-  });
+  return missingRequiredHumanFields(fields, answers, answerFieldHashes).length === 0;
 }

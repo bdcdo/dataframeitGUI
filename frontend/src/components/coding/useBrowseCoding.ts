@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef } from "react";
 import { saveResponse } from "@/actions/responses";
+import { notifySaved } from "@/lib/coding-save-feedback";
 import { toast } from "sonner";
 import { useBrowseDocuments } from "@/hooks/useBrowseDocuments";
 import { useDocumentForCoding } from "@/hooks/useDocumentForCoding";
@@ -120,7 +121,7 @@ export function useBrowseCoding({
         });
         if (result.success) {
           markClean(browseDocId);
-          toast.success("Respostas salvas!");
+          notifySaved(result.missingRequired);
           markResponded(browseDocId);
           browseDraftRef.current = null;
           // Zera o ?doc= ANTES de invalidar: com browseDocId já null o hook não
