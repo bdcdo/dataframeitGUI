@@ -221,6 +221,7 @@ export async function saveResponse(
       storedAnswers: existing?.answers,
       storedHashes: existing?.answer_field_hashes,
       rawSubmittedAnswers: answers,
+      isNewResponse: !existing,
     });
 
     const payload = buildResponsePayload({

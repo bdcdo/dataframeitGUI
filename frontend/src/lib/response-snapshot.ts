@@ -64,6 +64,12 @@ interface BuildPersistedResponseSnapshotParams {
   storedAnswers: Record<string, unknown> | null | undefined;
   storedHashes: AnswerFieldHashes | undefined;
   rawSubmittedAnswers: Record<string, unknown>;
+  /**
+   * True quando não existe response anterior deste respondente para o
+   * documento. Explícito porque `storedHashes` ausente é ambíguo: vale tanto
+   * para uma codificação que começa agora quanto para uma response legacy.
+   */
+  isNewResponse: boolean;
 }
 
 function samePresentedValue(
@@ -153,22 +159,53 @@ function dropConditionalsAffectedByChanges(
   return persistedAnswers;
 }
 
-function buildReconciledFieldHashes(
-  fields: PydanticField[],
-  storedAnswers: Record<string, unknown> | null | undefined,
-  storedHashes: AnswerFieldHashes | undefined,
+function withAnswerProvenanceFallback(
+  hashes: Exclude<AnswerFieldHashes, null>,
   persistedAnswers: Record<string, unknown>,
-  changedFieldNames: Set<string>,
 ): Exclude<AnswerFieldHashes, null> {
-  const hashes = buildFieldHashMap(fields);
-  for (const fieldName of Object.keys(storedAnswers ?? {})) {
-    if (changedFieldNames.has(fieldName) || !hasOwn(persistedAnswers, fieldName)) continue;
-    hashes[fieldName] = storedHashes && hasOwn(storedHashes, fieldName) ? storedHashes[fieldName] : null;
-  }
+  // Resposta preservada de um campo que saiu do schema: a chave prova que ele
+  // existia, o `null` admite que a proveniência não é mais reconstruível.
   for (const fieldName of Object.keys(persistedAnswers)) {
     if (!hasOwn(hashes, fieldName)) hashes[fieldName] = null;
   }
   return hashes;
+}
+
+// O conjunto de CHAVES responde "quais campos existiam quando esta codificação
+// foi feita" (`fieldExistedWhenCoded`); o VALOR responde "contra qual versão do
+// campo esta resposta foi dada" (`isFieldStale`). Por isso o mapa é herdado, não
+// recarimbado: partir do schema de hoje faria toda codificação anterior a um
+// bump "passar a dever" os campos novos e reaparecer como pendente sem o
+// pesquisador ter feito nada (#520). Um campo novo só entra quando é de fato
+// respondido — aí a chave é verdadeira e o hash atual é a proveniência correta.
+function buildReconciledFieldHashes(
+  fields: PydanticField[],
+  storedHashes: AnswerFieldHashes | undefined,
+  persistedAnswers: Record<string, unknown>,
+  changedFieldNames: Set<string>,
+  isNewResponse: boolean,
+): Exclude<AnswerFieldHashes, null> {
+  const currentHashes = buildFieldHashMap(fields);
+
+  // Codificação nova: o schema de hoje É o schema da codificação, então todo
+  // campo dele existia e nenhum obrigatório em branco deve ser perdoado.
+  if (isNewResponse) return withAnswerProvenanceFallback(currentHashes, persistedAnswers);
+
+  // `null`/`{}` são o sentinela legacy — "não dá para inferir quais campos
+  // existiam", lido como "todos existiam". Herdar dele e acrescentar chaves
+  // inverteria o sentinela em "só estes existiam", perdoando obrigatórios que
+  // ficaram em branco de verdade. Permanece grosseiro até que uma codificação
+  // nova estabeleça proveniência.
+  if (!storedHashes || Object.keys(storedHashes).length === 0) return {};
+
+  const hashes: Exclude<AnswerFieldHashes, null> = { ...storedHashes };
+  // Só o que o pesquisador revisou neste save ganha a proveniência de hoje;
+  // o resto conserva a versão contra a qual foi respondido.
+  for (const fieldName of changedFieldNames) {
+    if (!hasOwn(persistedAnswers, fieldName)) continue;
+    hashes[fieldName] = hasOwn(currentHashes, fieldName) ? currentHashes[fieldName] : null;
+  }
+  return withAnswerProvenanceFallback(hashes, persistedAnswers);
 }
 
 // Reconcilia o snapshot armazenado com o formulário atual sem confundir
@@ -179,6 +216,7 @@ export function buildPersistedResponseSnapshot({
   storedAnswers,
   storedHashes,
   rawSubmittedAnswers,
+  isNewResponse,
 }: BuildPersistedResponseSnapshotParams): PersistedResponseSnapshot {
   // A leitura sem schema expõe o JSON bruto por compatibilidade, mas não há
   // controles capazes de representar essas chaves no formulário. Portanto,
@@ -198,10 +236,10 @@ export function buildPersistedResponseSnapshot({
   );
   const answerFieldHashes = buildReconciledFieldHashes(
     fields,
-    storedAnswers,
     storedHashes,
     persistedAnswers,
     reconciled.changedFieldNames,
+    isNewResponse,
   );
 
   return { submittedAnswers, persistedAnswers, answerFieldHashes };

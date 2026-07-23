@@ -132,6 +132,7 @@ describe("buildPersistedResponseSnapshot", () => {
       storedAnswers,
       storedHashes,
       rawSubmittedAnswers,
+      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -169,10 +170,14 @@ describe("buildPersistedResponseSnapshot", () => {
       storedAnswers: { gatilho: "sim", detalhe: "texto" },
       storedHashes: { gatilho: "g-old", detalhe: "d-old" },
       rawSubmittedAnswers: { gatilho: "nao" },
+      isNewResponse: false,
     });
 
+    // Só o gatilho foi revisado, então só ele ganha a proveniência de hoje. O
+    // filho foi invalidado por consequência, com o formulário já o ocultando:
+    // carimbar `d-new` afirmaria que o pesquisador viu a versão nova do campo.
     expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
-    expect(result.answerFieldHashes).toEqual({ gatilho: "g-new", detalhe: "d-new" });
+    expect(result.answerFieldHashes).toEqual({ gatilho: "g-new", detalhe: "d-old" });
   });
 
   it("remove filho stale oculto da projeção quando o gatilho muda", () => {
@@ -192,11 +197,12 @@ describe("buildPersistedResponseSnapshot", () => {
       storedAnswers: { gatilho: "sim", detalhe: "antigo" },
       storedHashes: { gatilho: "g-old", detalhe: "d-old" },
       rawSubmittedAnswers: { gatilho: "nao" },
+      isNewResponse: false,
     });
 
     expect(result.submittedAnswers).toEqual({ gatilho: "nao" });
     expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
-    expect(result.answerFieldHashes).toEqual({ gatilho: "g-new", detalhe: "d-new" });
+    expect(result.answerFieldHashes).toEqual({ gatilho: "g-new", detalhe: "d-old" });
   });
 
   it("remove em cascata condicionais ocultadas pela mudança deliberada", () => {
@@ -221,13 +227,14 @@ describe("buildPersistedResponseSnapshot", () => {
       storedAnswers: { gatilho: "sim", filho: "antigo", neto: "texto" },
       storedHashes: { gatilho: "g-old", filho: "f-old", neto: "n-old" },
       rawSubmittedAnswers: { gatilho: "nao" },
+      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
     expect(result.answerFieldHashes).toEqual({
       gatilho: "g-new",
-      filho: "f-new",
-      neto: "n-new",
+      filho: "f-old",
+      neto: "n-old",
     });
   });
 
@@ -257,6 +264,7 @@ describe("buildPersistedResponseSnapshot", () => {
       },
       storedHashes: { gatilho: "g-old", intermediario: "i-old", descendente: "d-old" },
       rawSubmittedAnswers: { gatilho: "B", intermediario: "ocultar" },
+      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -283,6 +291,7 @@ describe("buildPersistedResponseSnapshot", () => {
       storedAnswers: { gatilho: "sim", detalhe: "texto" },
       storedHashes: { gatilho: "g-old", detalhe: "d-old" },
       rawSubmittedAnswers: { outro: "novo" },
+      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -298,8 +307,13 @@ describe("buildPersistedResponseSnapshot", () => {
   });
 
   it.each<AnswerFieldHashes>([null, {}])(
-    "representa proveniência legacy como null por campo (%j)",
+    "mantém o sentinela legacy de uma response já existente (%j)",
     (storedHashes) => {
+      // `null`/`{}` significam "não dá para inferir quais campos existiam" e
+      // `fieldExistedWhenCoded` os lê como "todos existiam". Estampar chaves aqui
+      // inverteria o sentinela em "só os campos que estampei existiam", tornando
+      // qualquer codificação antiga trivialmente completa — inclusive as que de
+      // fato ficaram com obrigatórios em branco. Ver #520.
       const fields = [
         field({ name: "stale", type: "single", options: ["X"], hash: "stale-new" }),
         field({ name: "outro", hash: "outro-new" }),
@@ -310,12 +324,78 @@ describe("buildPersistedResponseSnapshot", () => {
         storedAnswers: { stale: "A" },
         storedHashes,
         rawSubmittedAnswers: { outro: "novo" },
+        isNewResponse: false,
       });
 
       expect(result.persistedAnswers).toEqual({ stale: "A", outro: "novo" });
-      expect(result.answerFieldHashes).toEqual({ stale: null, outro: "outro-new" });
+      expect(result.answerFieldHashes).toEqual({});
     },
   );
+
+  it("codificação nova estampa o schema atual inteiro", () => {
+    // Não há response anterior: o schema de hoje É o schema da codificação, e
+    // todo campo obrigatório dele deve ser cobrado (nada a perdoar).
+    const fields = [
+      field({ name: "respondido", hash: "r-hash" }),
+      field({ name: "em_branco", hash: "b-hash" }),
+      field({ name: "sem_hash" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      storedAnswers: undefined,
+      storedHashes: undefined,
+      rawSubmittedAnswers: { respondido: "x" },
+      isNewResponse: true,
+    });
+
+    expect(result.answerFieldHashes).toEqual({
+      respondido: "r-hash",
+      em_branco: "b-hash",
+      sem_hash: null,
+    });
+  });
+
+  it("não estampa campo criado depois da codificação (#520)", () => {
+    // O pesquisador reabre um doc codificado antes do bump e toca um campo
+    // qualquer. O campo novo nunca foi respondido: estampá-lo faria a
+    // codificação antiga "passar a dever" e voltar para a fila de pendentes.
+    const fields = [
+      field({ name: "antigo", hash: "antigo-hash" }),
+      field({ name: "novo_obrigatorio", hash: "novo-hash" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      storedAnswers: { antigo: "a" },
+      storedHashes: { antigo: "antigo-hash" },
+      rawSubmittedAnswers: { antigo: "b" },
+      isNewResponse: false,
+    });
+
+    expect(result.persistedAnswers).toEqual({ antigo: "b" });
+    expect(result.answerFieldHashes).toEqual({ antigo: "antigo-hash" });
+  });
+
+  it("campo criado depois entra quando o pesquisador de fato o responde", () => {
+    const fields = [
+      field({ name: "antigo", hash: "antigo-hash" }),
+      field({ name: "novo_obrigatorio", hash: "novo-hash" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      storedAnswers: { antigo: "a" },
+      storedHashes: { antigo: "antigo-hash" },
+      rawSubmittedAnswers: { antigo: "a", novo_obrigatorio: "resposta" },
+      isNewResponse: false,
+    });
+
+    expect(result.answerFieldHashes).toEqual({
+      antigo: "antigo-hash",
+      novo_obrigatorio: "novo-hash",
+    });
+  });
 
   it("preserva o snapshot bruto quando não há controles no schema", () => {
     const result = buildPersistedResponseSnapshot({
@@ -323,6 +403,7 @@ describe("buildPersistedResponseSnapshot", () => {
       storedAnswers: { legado: "valor" },
       storedHashes: { legado: "hash-antigo" },
       rawSubmittedAnswers: {},
+      isNewResponse: false,
     });
 
     expect(result.persistedAnswers).toEqual({ legado: "valor" });
