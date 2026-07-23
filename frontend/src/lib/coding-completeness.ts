@@ -42,6 +42,21 @@ export function isFieldAnswered(field: PydanticField, value: unknown): boolean {
   return true;
 }
 
+// Campos obrigatórios que ainda faltam — a régua de completude na forma que a UI
+// precisa (quantos e quais), com `isCodingComplete` derivado dela. A UI de
+// codificação e o feedback de save consomem esta primitiva em vez de reimplementar
+// a regra: uma cópia paralela é o que deixava "o que o botão exige" divergir de "o
+// que o servidor considera concluído" sem nenhum gate reclamar (#519).
+export function missingRequiredHumanFields(
+  fields: PydanticField[],
+  answers: Record<string, unknown>,
+  answerFieldHashes?: AnswerFieldHashes,
+): PydanticField[] {
+  return requiredHumanFields(fields, answers, answerFieldHashes).filter(
+    (f) => !isFieldAnswered(f, answers[f.name]),
+  );
+}
+
 // True quando todos os campos obrigatórios e visíveis para o humano estão
 // respondidos. Fonte única da regra de "codificação completa", espelhada pelo
 // gate inline de saveResponse (promoção a "concluido") e pelo backlog de
@@ -50,17 +65,27 @@ export function isFieldAnswered(field: PydanticField, value: unknown): boolean {
 // apareciam como "(vazio)" em diversos campos. Puro/client-safe — usado tanto
 // em server actions quanto em testes Vitest.
 //
-// `answerFieldHashes` (opcional): quando avaliado RETROATIVAMENTE (backlog,
-// reconciliação da auto-revisão) contra o schema atual, passar o snapshot per-campo
-// da resposta evita que um campo obrigatório recém-adicionado torne codificações
-// antigas — completas à época — falsamente "incompletas". O gate inline de
-// saveResponse roda em save-time (schema = schema da codificação), então não
-// precisa passar e mantém o comportamento staleness-blind.
+// `answerFieldHashes` (opcional): passar o snapshot per-campo da resposta torna a
+// avaliação staleness-aware — um campo obrigatório recém-adicionado ao schema não
+// rebaixa uma codificação que estava completa à época, porque o carimbo prova
+// quais campos existiam (ver fieldExistedWhenCoded). Dois consumidores passam o
+// snapshot:
+//   • a avaliação RETROATIVA (backlog de auto-revisão, reconciliação) contra o
+//     schema atual, que sem isso marcaria toda codificação anterior a um bump de
+//     schema como falsamente incompleta;
+//   • o gate de `is_partial` em saveResponse, que avalia contra o snapshot da
+//     própria escrita (buildPersistedResponseSnapshot). Para uma codificação NOVA
+//     esse snapshot estampa o schema inteiro como chaves, então aware ≡ blind e
+//     nenhum obrigatório em branco é perdoado; a distinção só morde no auto-save de
+//     uma resposta JÁ submetida sob schema que cresceu — exatamente o caso que não
+//     deve rebaixar um doc concluído (#519/#520).
+// Quem permanece staleness-BLIND de propósito é a promoção a `concluido` em
+// syncCodingAssignmentStatus (coding-sync): lá é o guard de não-rebaixar um
+// assignment já concluído que sustenta a invariante, não o carimbo per-campo.
 export function isCodingComplete(
   fields: PydanticField[],
   answers: Record<string, unknown>,
   answerFieldHashes?: AnswerFieldHashes,
 ): boolean {
-  const required = requiredHumanFields(fields, answers, answerFieldHashes);
-  return required.every((f) => isFieldAnswered(f, answers[f.name]));
+  return missingRequiredHumanFields(fields, answers, answerFieldHashes).length === 0;
 }

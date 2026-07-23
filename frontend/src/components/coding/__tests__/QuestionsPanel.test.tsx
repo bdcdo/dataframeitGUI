@@ -195,8 +195,10 @@ describe("QuestionsPanel — pergunta fora do escopo", () => {
       />,
     );
     expect(screen.getByRole("switch")).toBeTruthy();
-    // Formulário não bloqueado: botão de envio normal.
-    expect(screen.getByRole("button", { name: /Enviar respostas/ })).toBeTruthy();
+    // Formulário não bloqueado: o botão reporta as pendências do próprio
+    // formulário, não o bloqueio por sinalização de fora do escopo.
+    expect(screen.queryByRole("button", { name: /Aguardando revisão/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Faltam 2 obrigatórias/ })).toBeTruthy();
   });
 
   it("pendente: perguntas inertes e envio substituído por aviso", () => {

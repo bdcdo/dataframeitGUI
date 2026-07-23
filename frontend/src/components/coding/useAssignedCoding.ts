@@ -7,6 +7,7 @@ import {
   saveCodingResponse,
 } from "@/lib/coding-autosave";
 import { clearHiddenConditionalAnswers } from "@/lib/conditional";
+import { notifySaved } from "@/lib/coding-save-feedback";
 import { toast } from "sonner";
 import type { AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import type { CodingSortMode } from "./CodingPage";
@@ -178,7 +179,7 @@ export function useAssignedCoding({
       });
       if (result.success) {
         markClean(currentDoc.id);
-        toast.success("Respostas salvas!");
+        notifySaved(result.missingRequired);
         if (docIndex < sortedDocuments.length - 1) {
           const nextIndex = docIndex + 1;
           dispatch({ type: "index", index: nextIndex });
