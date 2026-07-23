@@ -27,6 +27,18 @@ Cada uma ancorada no incidente que a motivou.
 6. **Invariantes de banco executáveis** — `npm run invariants` (`frontend/scripts/invariants/check-invariants.ts`): asserções read-only de consistência contra o banco; verificam ESTADO, não código, então pegam drift que nenhum gate estático vê, qualquer que seja o código que o causou. Rodar após mudança em write path, após migration aplicada e ao investigar dado estranho. Duas regras: **invariantes nascem em pares** (a inversa de "concluído tem response" foi quem achou os casos reais); **FAIL vira issue no mesmo dia e nunca é silenciado no script** — mascarar invariante embute o drift como novo normal, mesma lógica que proíbe abaixar threshold de cobertura. Agendamento automático: #516.
 7. **Hipóteses em paralelo** — bug com N teorias plausíveis: gerar N verificações descartáveis (uma por teoria, subagentes), cada uma devolvendo evidência; não escolher qual testar primeiro por intuição.
 
+## Labels de revisão por PR
+
+Todo PR recebe um label que declara o nível de revisão que ele exige, derivado do tier mais alto que o diff toca — a decisão de classificação fica visível e auditável, em vez de implícita:
+
+| Label | Tier | O revisor deve |
+|---|---|---|
+| `revisão: integral` | 1 — write path, RLS/RPC, migrations, auth | Ler o diff inteiro, linha a linha; conferir a prova do vermelho do teste; rodar `npm run invariants` após merge+migration |
+| `revisão: amostragem` | 2 — testes, specs, checker | Amostrar os testes e mutar os guards que protegem tier 1 (um guard mutado que não faça teste falhar reprova o PR) |
+| `revisão: leve` | 3 — UI, docs, formatação | Revisar assinaturas, contratos e textos; confiar nos gates para o corpo |
+
+Quem abre o PR aplica o label (agentes inclusive); o revisor confere se a classificação está certa antes de revisar — reclassificar para cima é sempre legítimo, para baixo exige justificativa no PR. Tier 4 não tem label: código descartável não vira PR.
+
 ## Regras operacionais
 
 - Spec E2E novo: rodar a suíte inteira antes de declarar verde — mudança de ordem/timing pode expor hang pré-existente em spec vizinho (caso config-guard×coding-save no PR #522; o fix padrão para signOut travado em página de análise é `prepareSignOut` → `/dashboard`).
