@@ -131,6 +131,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: { answers: storedAnswers, hashes: storedHashes },
       rawSubmittedAnswers,
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -170,6 +171,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", detalhe: "d-old" },
       },
       rawSubmittedAnswers: { gatilho: "nao" },
+      promoteLegacyIfComplete: false,
     });
 
     // Só o gatilho foi revisado, então só ele ganha a proveniência de hoje. O
@@ -198,6 +200,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", detalhe: "d-old" },
       },
       rawSubmittedAnswers: { gatilho: "nao" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.submittedAnswers).toEqual({ gatilho: "nao" });
@@ -229,6 +232,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", filho: "f-old", neto: "n-old" },
       },
       rawSubmittedAnswers: { gatilho: "nao" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({ gatilho: "nao" });
@@ -267,6 +271,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", intermediario: "i-old", descendente: "d-old" },
       },
       rawSubmittedAnswers: { gatilho: "B", intermediario: "ocultar" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -295,6 +300,7 @@ describe("buildPersistedResponseSnapshot", () => {
         hashes: { gatilho: "g-old", detalhe: "d-old" },
       },
       rawSubmittedAnswers: { outro: "novo" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({
@@ -326,12 +332,67 @@ describe("buildPersistedResponseSnapshot", () => {
         fields,
         existing: { answers: { stale: "A" }, hashes: storedHashes },
         rawSubmittedAnswers: { outro: "novo" },
+        promoteLegacyIfComplete: false,
       });
 
       expect(result.persistedAnswers).toEqual({ stale: "A", outro: "novo" });
       expect(result.answerFieldHashes).toEqual({});
     },
   );
+
+  it("submit explícito que recodifica a response legacy por completo estampa o schema atual (#548)", () => {
+    // Único momento em que dá para afirmar que todos os campos de hoje existiam:
+    // o submit está completo contra o schema atual. Estampar o mapa inteiro
+    // desliga o sentinela e habilita a promoção de versão em buildResponsePayload.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+      field({ name: "q2", hash: "h2" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a", q2: "velho" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b", q2: "novo" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.answerFieldHashes).toEqual({ q1: "h1", q2: "h2" });
+  });
+
+  it("submit incompleto de response legacy conserva o sentinela mesmo com promoção habilitada (#548)", () => {
+    // q2 é obrigatório e ficou em branco: a codificação NÃO está completa contra
+    // o schema atual, então não dá para afirmar proveniência — mantém `{}`.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+      field({ name: "q2", hash: "h2" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b" },
+      promoteLegacyIfComplete: true,
+    });
+
+    expect(result.answerFieldHashes).toEqual({});
+  });
+
+  it("auto-save de response legacy nunca promove, ainda que completa (#548)", () => {
+    // Auto-save não atesta a codificação inteira: mesmo com todos os obrigatórios
+    // respondidos, `promoteLegacyIfComplete: false` conserva o sentinela.
+    const fields = [
+      field({ name: "q1", type: "single", options: ["a", "b"], hash: "h1" }),
+    ];
+
+    const result = buildPersistedResponseSnapshot({
+      fields,
+      existing: { answers: { q1: "a" }, hashes: null },
+      rawSubmittedAnswers: { q1: "b" },
+      promoteLegacyIfComplete: false,
+    });
+
+    expect(result.answerFieldHashes).toEqual({});
+  });
 
   it("codificação nova estampa o schema atual inteiro", () => {
     // Não há response anterior: o schema de hoje É o schema da codificação, e
@@ -346,6 +407,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: null,
       rawSubmittedAnswers: { respondido: "x" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.answerFieldHashes).toEqual({
@@ -368,6 +430,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
       rawSubmittedAnswers: { antigo: "b" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({ antigo: "b" });
@@ -384,6 +447,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields,
       existing: { answers: { antigo: "a" }, hashes: { antigo: "antigo-hash" } },
       rawSubmittedAnswers: { antigo: "a", novo_obrigatorio: "resposta" },
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.answerFieldHashes).toEqual({
@@ -397,6 +461,7 @@ describe("buildPersistedResponseSnapshot", () => {
       fields: [],
       existing: { answers: { legado: "valor" }, hashes: { legado: "hash-antigo" } },
       rawSubmittedAnswers: {},
+      promoteLegacyIfComplete: false,
     });
 
     expect(result.persistedAnswers).toEqual({ legado: "valor" });
