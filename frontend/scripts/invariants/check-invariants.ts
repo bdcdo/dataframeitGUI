@@ -274,16 +274,19 @@ const invariants: Invariant[] = [
           "id, document_id, user_id",
           (q) => q.eq("type", "codificacao").eq("status", "concluido"),
         ),
-        fetchAll<{ document_id: string; respondent_id: string | null; is_partial: boolean }>(
+        fetchAll<{ document_id: string; respondent_id: string | null; is_partial: boolean | null }>(
           "responses",
           "document_id, respondent_id, is_partial",
           (q) => q.eq("respondent_type", "humano").eq("is_latest", true),
         ),
       ]);
       // is_partial da response is_latest do par (única por (doc, respondente),
-      // garantida por 'responses-is-latest-unica'). `undefined` = sem is_latest
-      // humana → caso de 'concluida-tem-response', não deste; `false` = submetida
-      // → saudável. Só `=== true` (rascunho, nunca enviado) é violação aqui.
+      // garantida por 'responses-is-latest-unica'). Quatro estados possíveis, só
+      // um é violação: `undefined` = sem is_latest humana no par → caso de
+      // 'concluida-tem-response', não deste; `false` = submetida → saudável;
+      // `null` = row legada sem o sinal (a coluna é nullable, ver responses.ts) →
+      // cai no ramo saudável por design, conservador para não falso-positivar sem
+      // prova de rascunho. Só `=== true` (rascunho, nunca enviado) é violação.
       const partialOf = new Map(
         responses.map((r) => [`${r.document_id}|${r.respondent_id}`, r.is_partial]),
       );
