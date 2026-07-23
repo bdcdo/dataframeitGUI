@@ -35,5 +35,13 @@ test("pesquisador é redirecionado de config/* para analyze/code", async ({
         new RegExp(`/projects/${projectId}/analyze/code`),
       );
     },
+    // signOut na própria página de análise trava no waitForFunction de
+    // window.Clerk.loaded (mesmo padrão do lottery.smoke). Passava por
+    // coincidência de timing enquanto este era o primeiro spec a compilar a
+    // rota; com o coding-save.smoke aquecendo /analyze/code antes, o hang
+    // ficou determinístico — voltar ao dashboard antes do signOut.
+    prepareSignOut: async () => {
+      await page.goto("/dashboard");
+    },
   });
 });
