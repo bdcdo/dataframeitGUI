@@ -95,13 +95,19 @@ export function AccessCompletionCard({
       const result = await completeAccess();
       if (result.ok) {
         // A action atualiza a metadata no backend do Clerk e o vínculo JÁ está
-        // gravado neste ponto. A renovação abaixo é best-effort, não um portão:
-        // a página de destino é renderizada no servidor e minta o próprio token
-        // por request (lib/supabase/server.ts), então quem depende deste cache
-        // é só o cliente ao chamar o FastAPI (lib/api.ts). Bloquear a navegação
-        // por um blip aqui anunciaria falha sobre um acesso concluído.
+        // gravado neste ponto. O token em cache, porém, foi emitido ANTES disso,
+        // e é dele que sai o claim `supabase_uid` — daí o `skipCache`, que a
+        // própria doc do Clerk indica para claims que "depend on data that can
+        // be updated (e.g. user fields)". Sem `template`: o JWT template saiu no
+        // #348 e o que se renova aqui é o session token.
+        //
+        // Best-effort, não um portão: a página de destino é renderizada no
+        // servidor e minta o próprio token por request (lib/supabase/server.ts),
+        // então quem depende deste cache é só o cliente ao chamar o FastAPI
+        // (lib/api.ts). Bloquear a navegação por um blip aqui anunciaria falha
+        // sobre um acesso que já foi concluído.
         try {
-          await getToken({ template: "supabase", skipCache: true });
+          await getToken({ skipCache: true });
         } catch (error) {
           console.error(
             "AccessCompletionCard: falha ao renovar token após concluir acesso",
@@ -109,6 +115,7 @@ export function AccessCompletionCard({
           );
         }
 
+        // Vínculo confirmado: segue para o destino pretendido ou dashboard.
         router.replace(nextUrl);
         router.refresh();
         return;

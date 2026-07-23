@@ -20,10 +20,8 @@ const { toastSuccess, toastError } = vi.hoisted(() => ({
 // token do template "supabase" e lança se vier nulo.
 vi.mock("@/lib/api", () => ({
   fetchFastAPI,
-  requireSupabaseToken: async (
-    gt: (opts: { template: string }) => Promise<string | null>,
-  ) => {
-    const t = await gt({ template: "supabase" });
+  requireSupabaseToken: async (gt: () => Promise<string | null>) => {
+    const t = await gt();
     if (!t) throw new Error("MissingAuthTokenError");
     return t;
   },
@@ -165,7 +163,7 @@ describe("useLlmRunProgress", () => {
         "test-token",
       ),
     );
-    // Token buscado com o template "supabase" (não o token de sessão default).
-    expect(getToken).toHaveBeenCalledWith({ template: "supabase" });
+    // Session token, sem template (o JWT template legado saiu — #348).
+    expect(getToken).toHaveBeenCalledWith();
   });
 });

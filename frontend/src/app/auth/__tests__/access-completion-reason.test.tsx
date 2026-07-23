@@ -69,10 +69,9 @@ describe("AccessCompletionCard — motivos apresentados", () => {
     await userEvent.click(screen.getByRole("button"));
 
     await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-    expect(getToken).toHaveBeenCalledWith({
-      template: "supabase",
-      skipCache: true,
-    });
+    // Sem `template`: o JWT template legado saiu no #348 e o que se renova aqui
+    // é o session token. `skipCache` continua sendo o que força a reemissão.
+    expect(getToken).toHaveBeenCalledWith({ skipCache: true });
     expect(replace).toHaveBeenCalledWith("/projects/abc");
     expect(completeAccess.mock.invocationCallOrder[0]).toBeLessThan(
       getToken.mock.invocationCallOrder[0],
@@ -109,10 +108,7 @@ describe("AccessCompletionCard — motivos apresentados", () => {
     expect(refresh).toHaveBeenCalled();
     // A renovação continua sendo tentada (aquece o cache que o cliente usa) e a
     // falha vai para o log — só não decide mais a navegação.
-    expect(getToken).toHaveBeenCalledWith({
-      template: "supabase",
-      skipCache: true,
-    });
+    expect(getToken).toHaveBeenCalledWith({ skipCache: true });
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
