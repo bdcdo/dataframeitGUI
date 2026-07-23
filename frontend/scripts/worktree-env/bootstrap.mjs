@@ -6,10 +6,13 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  canonicalEnvironmentDirectory,
+  canonicalEnvironmentHomeVariable,
   environmentFiles,
   hasConfiguredEnvironmentValue,
   readEnvironmentFile,
@@ -64,24 +67,97 @@ function readSource(path, filename) {
   }
 }
 
+/**
+ * Estado de um destino, que decide a acao:
+ *
+ * - `missing`  — nao existe: criar o symlink;
+ * - `linked`   — ja aponta para o arquivo da fonte: no-op (idempotencia);
+ * - `relink`   — symlink para outro alvo, ou quebrado: refazer. Substituir um
+ *                symlink nunca destroi conteudo, e e o unico jeito de REPARAR
+ *                uma worktree cujo alvo foi removido — o caso que motivou tudo
+ *                isto;
+ * - `occupied` — arquivo ou diretorio real: recusar, pode ser a unica copia do
+ *                segredo.
+ *
+ * @param {string} destination @param {string} source @param {string} filename
+ * @returns {"missing" | "linked" | "relink" | "occupied"}
+ */
+function classifyDestination(destination, source, filename) {
+  let entry;
+  try {
+    entry = lstatSync(destination);
+  } catch (error) {
+    if (isMissingPathError(error)) return "missing";
+    return fail(
+      `não foi possível validar o destino frontend/${filename} (${filesystemErrorCode(error)})`,
+    );
+  }
+
+  if (!entry.isSymbolicLink()) return "occupied";
+
+  try {
+    // realpath dos dois lados: um link que chega ao mesmo arquivo por outro
+    // caminho (relativo, ou via diretorio symlinkado) ja esta provisionado.
+    return realpathSync(destination) === realpathSync(source)
+      ? "linked"
+      : "relink";
+  } catch (error) {
+    // Link quebrado (o alvo sumiu) cai aqui — e e exatamente o que refazemos.
+    if (isMissingPathError(error)) return "relink";
+    return fail(
+      `não foi possível resolver o destino frontend/${filename} (${filesystemErrorCode(error)})`,
+    );
+  }
+}
+
+/** @type {Map<string, "missing" | "linked" | "relink" | "occupied">} */
+const destinationStates = new Map();
+
 const [, , option, sourceArgument, ...extraArguments] = process.argv;
-if (option !== "--source" || !sourceArgument || extraArguments.length > 0) {
+// `--source` continua aceito para quem mantem os segredos noutro lugar; sem ele
+// a fonte e a canonica. O default existe porque escolher a fonte a cada
+// invocacao era o que permitia apontar para uma worktree irma — que some no
+// `git worktree remove` e leva junto o ambiente de quem apontava para ela.
+const usesExplicitSource = option === "--source";
+const missingSourceArgument = usesExplicitSource && !sourceArgument;
+const unexpectedArguments =
+  extraArguments.length > 0 || (!usesExplicitSource && option !== undefined);
+
+if (missingSourceArgument || unexpectedArguments) {
   console.error(
-    "Uso: ./frontend/scripts/worktree-env/bootstrap.sh --source <diretorio-frontend-fonte>",
+    "Uso: ./frontend/scripts/worktree-env/bootstrap.sh [--source <diretorio-frontend-fonte>]",
+  );
+  console.error(
+    `Sem --source, a fonte e ${canonicalEnvironmentDirectory()} (ajustavel por ${canonicalEnvironmentHomeVariable}).`,
   );
   process.exit(2);
 }
 
+const requestedSource = usesExplicitSource
+  ? sourceArgument
+  : canonicalEnvironmentDirectory();
+
 let sourceDirectory;
 try {
-  sourceDirectory = realpathSync(sourceArgument);
+  sourceDirectory = realpathSync(requestedSource);
   if (!statSync(sourceDirectory).isDirectory()) {
-    fail(`fonte não é um diretório: ${sourceArgument}`);
+    fail(`fonte não é um diretório: ${requestedSource}`);
   }
 } catch (error) {
-  if (isMissingPathError(error)) fail(`fonte inexistente: ${sourceArgument}`);
+  if (isMissingPathError(error)) {
+    if (usesExplicitSource) fail(`fonte inexistente: ${requestedSource}`);
+    fail(
+      [
+        `fonte canônica inexistente: ${requestedSource}`,
+        "Crie-a uma única vez com os arquivos reais (fora de qualquer worktree):",
+        `  mkdir -p ${requestedSource}`,
+        `  cp frontend/.env.local.example ${requestedSource}/.env.local  # e preencha`,
+        `  cp frontend/.env.e2e.example ${requestedSource}/.env.e2e      # e preencha`,
+      ].join("\n"),
+    );
+  }
   fail(
-    `não foi possível acessar a fonte (${filesystemErrorCode(error)}): ${sourceArgument}`,
+    `não foi possível acessar a fonte (${filesystemErrorCode(error)}): ${requestedSource}`,
   );
 }
 
@@ -96,16 +172,26 @@ for (const filename of environmentFiles) {
     );
   }
 
-  try {
-    lstatSync(join(frontendDirectory, filename));
-    fail(`destino já existe: frontend/${filename}`);
-  } catch (error) {
-    if (!isMissingPathError(error)) {
-      fail(
-        `não foi possível validar o destino frontend/${filename} (${filesystemErrorCode(error)})`,
-      );
-    }
-  }
+  destinationStates.set(
+    filename,
+    classifyDestination(join(frontendDirectory, filename), source, filename),
+  );
+}
+
+const occupied = environmentFiles.filter(
+  (filename) => destinationStates.get(filename) === "occupied",
+);
+if (occupied.length > 0) {
+  // Arquivo real no destino nunca e sobrescrito: pode ser a unica copia de um
+  // segredo. O provisionamento e que cede, nao o dado.
+  fail(
+    [
+      `destino é arquivo real, não symlink: ${occupied
+        .map((filename) => `frontend/${filename}`)
+        .join(", ")}`,
+      "Mova-o para a fonte canônica (ou remova-o, se for cópia) antes de provisionar.",
+    ].join("\n"),
+  );
 }
 
 const missingNames = [];
@@ -134,7 +220,18 @@ let pendingFilename;
 try {
   for (const filename of environmentFiles) {
     pendingFilename = filename;
+    const state = destinationStates.get(filename);
+    if (state === "linked") continue;
+
     const destination = join(frontendDirectory, filename);
+    // `relink` remove só um symlink — nunca um arquivo real, que o guard de
+    // `occupied` já barrou acima.
+    //
+    // `unlinkSync`, e não `rmSync(..., { force: true })`: com `force`, o rm
+    // decide pela existência do ALVO (via stat), então num symlink pendente —
+    // exatamente o caso que estamos reparando — ele conclui "não existe" e vira
+    // no-op silencioso; o erro só aparece depois, como EEXIST no symlinkSync.
+    if (state === "relink") unlinkSync(destination);
     symlinkSync(join(sourceDirectory, filename), destination);
     createdDestinations.push(destination);
   }
@@ -144,6 +241,15 @@ try {
   }
   fail(
     `não foi possível criar frontend/${pendingFilename} (${filesystemErrorCode(error)}); nenhuma alteração foi mantida`,
+  );
+}
+
+const repaired = environmentFiles.filter(
+  (filename) => destinationStates.get(filename) === "relink",
+);
+if (repaired.length > 0) {
+  console.log(
+    `Ambiente reapontado para ${sourceDirectory}: ${repaired.join(", ")}`,
   );
 }
 

@@ -7,10 +7,11 @@
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, actionlint,
 #                                                deploy notifier, react-doctor
 #   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy
+#   post-checkout (informativo, nunca bloqueia):   worktree-env
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
 # .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
-default_install_hook_types: [pre-commit, pre-push]
+default_install_hook_types: [pre-commit, pre-push, post-checkout]
 # Hook sem `stages:` proprio roda so no pre-commit (os leves: gitleaks, ruff,
 # actionlint, deploy notifier, react-doctor). Os pesados sobrescrevem com
 # `stages: [pre-push]`. Sem este
@@ -137,6 +138,27 @@ repos:
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
+
+      # Provisiona .env.local/.env.e2e da worktree a partir da fonte canônica
+      # (~/.config/dataframeitGUI/frontend por default). `git worktree add` e
+      # `git checkout` disparam post-checkout, então uma worktree nova já nasce
+      # com o ambiente ligado — antes isso dependia de lembrar de rodar o
+      # bootstrap à mão, e o resultado era um parque com quatro estados
+      # diferentes (link ok, link quebrado apontando para worktree removida,
+      # ausente, e cópia real do arquivo com segredo dentro).
+      #
+      # NUNCA bloqueia: post-checkout roda depois de o checkout já ter ocorrido,
+      # então falhar aqui só produz ruído — quem barra de verdade é o
+      # assertRequiredPrePushEnv no e2e-smoke. Daí o `|| true`; o script
+      # imprime o motivo (ex.: fonte canônica inexistente) e segue.
+      - id: worktree-env
+        name: provisiona .env da worktree (post-checkout)
+        entry: bash -c './frontend/scripts/worktree-env/bootstrap.sh || true'
+        language: system
+        always_run: true
+        pass_filenames: false
+        require_serial: true
+        stages: [post-checkout]
 
       # typescript-eslint type-checked (no-floating-promises / no-misused-promises).
       # File-scoped via sed (strip do prefixo frontend/) → grandfathers os ~59

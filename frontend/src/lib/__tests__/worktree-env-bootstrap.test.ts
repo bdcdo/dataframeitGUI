@@ -3,12 +3,14 @@ import {
   appendFileSync,
   chmodSync,
   copyFileSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -159,14 +161,16 @@ describe("bootstrap de ambiente para worktrees", () => {
     },
   );
 
-  it("falha antes de criar o segundo destino quando um destino já existe", () => {
+  it("falha antes de criar o segundo destino quando um destino é arquivo real", () => {
     writeCompleteSource();
     writeFileSync(join(fixtureFrontend, ".env.local"), "original-local\n");
 
     const result = runBootstrap();
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("destino já existe: frontend/.env.local");
+    expect(result.stderr).toContain(
+      "destino é arquivo real, não symlink: frontend/.env.local",
+    );
     expect(readFileSync(join(fixtureFrontend, ".env.local"), "utf8")).toBe(
       "original-local\n",
     );
@@ -246,6 +250,112 @@ describe("bootstrap de ambiente para worktrees", () => {
     expect(readFileSync(join(fixtureFrontend, ".env.e2e"), "utf8")).toBe(
       "keep-e2e\n",
     );
+  });
+
+  // O provisionamento precisa ser seguro de repetir: e o hook de post-checkout
+  // que o dispara a cada `git worktree add`/`git checkout`.
+  it("é idempotente — repetir não altera os symlinks já corretos", () => {
+    writeCompleteSource();
+    expect(runBootstrap().status).toBe(0);
+    const before = envFiles.map((filename) =>
+      readlinkSync(join(fixtureFrontend, filename)),
+    );
+
+    const result = runBootstrap();
+
+    expect(result.status).toBe(0);
+    expect(
+      envFiles.map((filename) =>
+        readlinkSync(join(fixtureFrontend, filename)),
+      ),
+    ).toEqual(before);
+  });
+
+  // O bug que motivou a fonte canônica: o alvo era outra worktree, que foi
+  // removida. Antes, o bootstrap recusava ("destino já existe") e a worktree
+  // ficava sem conserto pelo próprio script; o sintoma só aparecia no pre-push,
+  // como "faltando 10 variáveis".
+  it("repara symlink quebrado, cujo alvo deixou de existir", () => {
+    writeCompleteSource();
+    const removedSource = join(temporaryRoot, "worktree-irma-removida");
+    mkdirSync(removedSource, { recursive: true });
+    for (const filename of envFiles) {
+      writeFileSync(join(removedSource, filename), "irrelevante\n");
+      symlinkSync(
+        join(removedSource, filename),
+        join(fixtureFrontend, filename),
+      );
+    }
+    rmSync(removedSource, { recursive: true, force: true });
+    for (const filename of envFiles) {
+      expect(existsSync(join(fixtureFrontend, filename))).toBe(false);
+      expect(lstatSync(join(fixtureFrontend, filename)).isSymbolicLink()).toBe(
+        true,
+      );
+    }
+
+    const result = runBootstrap();
+
+    expect(result.status).toBe(0);
+    for (const filename of envFiles) {
+      const destination = join(fixtureFrontend, filename);
+      expect(lstatSync(destination).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(destination)).toBe(join(sourceFrontend, filename));
+      expect(existsSync(destination)).toBe(true);
+    }
+  });
+
+  it("reaponta symlink que apontava para outra fonte válida", () => {
+    writeCompleteSource();
+    const otherSource = join(temporaryRoot, "outra-fonte");
+    mkdirSync(otherSource, { recursive: true });
+    for (const filename of envFiles) {
+      writeFileSync(join(otherSource, filename), "outra\n");
+      symlinkSync(join(otherSource, filename), join(fixtureFrontend, filename));
+    }
+
+    expect(runBootstrap().status).toBe(0);
+
+    for (const filename of envFiles) {
+      expect(readlinkSync(join(fixtureFrontend, filename))).toBe(
+        join(sourceFrontend, filename),
+      );
+    }
+    // A fonte antiga não é tocada: o bootstrap mexe em link, nunca em conteúdo.
+    expect(readFileSync(join(otherSource, ".env.local"), "utf8")).toBe(
+      "outra\n",
+    );
+  });
+
+  describe("fonte canônica (sem --source)", () => {
+    function runWithoutSource(environmentHome: string) {
+      return spawnSync("bash", [bootstrap], {
+        cwd: repository,
+        encoding: "utf8",
+        env: { ...process.env, DATAFRAMEITGUI_ENV_HOME: environmentHome },
+      });
+    }
+
+    it("provisiona a partir do diretório canônico", () => {
+      writeCompleteSource();
+
+      const result = runWithoutSource(sourceFrontend);
+
+      expect(result.status).toBe(0);
+      for (const filename of envFiles) {
+        expect(readlinkSync(join(fixtureFrontend, filename))).toBe(
+          join(sourceFrontend, filename),
+        );
+      }
+    });
+
+    it("explica como criar a fonte canônica quando ela não existe", () => {
+      const result = runWithoutSource(join(temporaryRoot, "inexistente"));
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("fonte canônica inexistente");
+      expectNoDestinations();
+    });
   });
 
   it("mantém o status do Git limpo após o provisionamento", () => {
