@@ -120,11 +120,13 @@ class Analysis(BaseModel):
 def test_subfield_required_round_trips_under_at_least_one():
     # Sob at_least_one a anotação é sempre Optional[str], então o `required`
     # individual do subcampo só sobrevive via json_schema_extra (issue #491).
+    # A chave é `subfield_required`: o subcampo é achatado para property do
+    # JSON Schema do provider, onde `required` é palavra reservada.
     code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 class _doc_fields(BaseModel):
-    part_a: Optional[str] = Field(default=None, description="Part A", json_schema_extra={"required": True})
+    part_a: Optional[str] = Field(default=None, description="Part A", json_schema_extra={"subfield_required": True})
     part_b: Optional[str] = Field(default=None, description="Part B")
 
 class Analysis(BaseModel):

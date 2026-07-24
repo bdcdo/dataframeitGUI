@@ -719,12 +719,18 @@ def _extract_subfields(annotation: type) -> list[dict] | None:
         # ela não consegue carregar o `required` individual — o gerador o
         # transporta em json_schema_extra e o extra prevalece sobre a anotação
         # (issue #491; mesmo padrão do `required` de campo, PR #454).
+        #
+        # A chave é `subfield_required` porque `_flatten_nested_basemodels`
+        # (services/llm_runner.py) reaproveita este FieldInfo inteiro ao achatar
+        # o modelo para o LLM: o extra vira uma *property* do JSON Schema
+        # mandado ao provider, e `required` ali é palavra reservada com outra
+        # semântica (array no nível do objeto). Ver generatePydanticCode.
         sf_extra = extract_json_schema_extra(sf_info)
         subfields.append(
             {
                 "key": sf_name,
                 "label": sf_info.description or sf_name,
-                "required": bool(sf_extra.get("required", not is_optional)),
+                "required": bool(sf_extra.get("subfield_required", not is_optional)),
             }
         )
     return subfields if subfields else None

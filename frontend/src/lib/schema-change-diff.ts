@@ -1,5 +1,6 @@
 import { stableStringify } from "./schema-utils";
 import {
+  normalizeSubfields,
   resolveAllowOther,
   resolveRequired,
   resolveSubfieldRule,
@@ -61,13 +62,20 @@ function arraysEqual<T>(a: T[] | null | undefined, b: T[] | null | undefined): b
 // cliente. Mesma correção de schema-utils.ts (classifyChange/diffFields),
 // aplicada aqui para o diff de histórico ficar em sincronia — ver CLAUDE.md
 // regra (d) e PR #352.
+// `normalizeSubfields` antes do stringify pela mesma razao que `snapshotOf` o
+// usa: o backend sempre grava `required` no subcampo e o dado legado pode nao
+// ter a chave, entao comparar cru acusaria mudanca onde so ha default
+// explicitado (issue #491).
 function subfieldsEqual(
   a: SubfieldDef[] | null | undefined,
   b: SubfieldDef[] | null | undefined,
 ): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return stableStringify(a) === stableStringify(b);
+  return (
+    stableStringify(normalizeSubfields(a)) ===
+    stableStringify(normalizeSubfields(b))
+  );
 }
 
 function conditionEqual(

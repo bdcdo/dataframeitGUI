@@ -307,8 +307,40 @@ export function resolveSubfieldRule(
 // `FieldRenderer` sempre trataram ausente como opcional; o `SubfieldsEditor`
 // cria subcampos com `required: true` explícito, então `undefined` só existe
 // em dado legado (issue #491).
-export function resolveSubfieldRequired(value: boolean | null | undefined): boolean {
+//
+// Diferente dos resolvedores de campo acima, este NÃO aceita `null`:
+// `subfieldDefSchema` declara `required` como `z.boolean().optional()`, então
+// um `null` vindo do jsonb já falha o parse fail-closed. Aceitá-lo aqui
+// resolveria em silêncio um payload que na verdade está corrompido.
+export function resolveSubfieldRequired(value: boolean | undefined): boolean {
   return value === true;
+}
+
+// Normalizacao canonica do array de subcampos, aplicada dentro de `snapshotOf`
+// (schema-utils.ts) e de `subfieldsEqual` (schema-change-diff.ts) — os dois
+// pontos que decidem se dois campos sao "o mesmo campo".
+//
+// Sem ela, `subfields` era a unica propriedade estrutural comparada crua,
+// enquanto `_extract_subfields` no backend SEMPRE grava a chave `required`:
+// um subcampo legado `{key,label}` no banco e o mesmo recuperado por
+// `compile_pydantic` (`{key,label,required:false}`) serializavam diferente,
+// gerando bump minor sem mudanca nenhuma e conflito de merge fabricado em
+// `mergeFieldProperties`, que indexa por `snapshotOf`. Mesma classe que
+// `hash`, `target` e `subfield_rule` ja causaram — a quarta rodada.
+// Spread em vez de projetar `{key,label,required}`: as comparacoes que chamam
+// isto rodam sobre payload cru de `schema_change_log`, onde uma propriedade que
+// o SubfieldDef ganhe no futuro ja aparece antes de existir aqui. Enumerar as
+// chaves conhecidas descartaria essa propriedade em silencio e a mudanca dela
+// sumiria do diff — e o teste "futureproof" de schema-change-diff.test.ts
+// existe exatamente para barrar isso. So o default implicito e resolvido.
+export function normalizeSubfields(
+  subfields: SubfieldDef[] | null | undefined,
+): SubfieldDef[] | null {
+  if (!subfields) return null;
+  return subfields.map((sf) => ({
+    ...sf,
+    required: resolveSubfieldRequired(sf.required),
+  }));
 }
 
 export const PYDANTIC_FIELD_PROPERTY_KEYS = Object.freeze(

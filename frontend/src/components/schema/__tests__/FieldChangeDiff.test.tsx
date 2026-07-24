@@ -63,3 +63,86 @@ describe("FieldChangeDiff — entradas de escopo de projeto", () => {
     expect(screen.getByText("Nova versão MAJOR publicada: 1.0.0")).toBeTruthy();
   });
 });
+
+// Mudar só a obrigatoriedade de um subcampo existente é a única alteração que o
+// particionamento kept/removed/added do SubfieldsDiff não enxergava: os dois
+// lados têm a mesma chave e o mesmo rótulo, então o badge saía idêntico ao de
+// antes. A entrada era gravada, o versionamento bumpava minor, e o histórico
+// não mostrava nada (issue #491, mesmo sintoma do `Boolean(null)` no `required`
+// de campo).
+describe("FieldChangeDiff — obrigatoriedade de subcampo", () => {
+  const comSubcampos = (subfields: unknown) => ({
+    name: "q1",
+    type: "text",
+    description: "Campo",
+    subfields,
+  });
+
+  it("mostra a transição quando o subcampo vira obrigatório", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          changeSummary: "subcampos",
+          beforeValue: comSubcampos([{ key: "cid", label: "CID" }]),
+          afterValue: comSubcampos([
+            { key: "cid", label: "CID", required: true },
+          ]),
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/CID: opcional/)).toBeTruthy();
+    expect(screen.getByText(/obrigatório/)).toBeTruthy();
+  });
+
+  it("mostra a transição inversa quando deixa de ser obrigatório", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          changeSummary: "subcampos",
+          beforeValue: comSubcampos([
+            { key: "cid", label: "CID", required: true },
+          ]),
+          afterValue: comSubcampos([{ key: "cid", label: "CID" }]),
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/CID: obrigatório/)).toBeTruthy();
+  });
+
+  // O par da invariante: promover o default a explícito NÃO é transição — sem
+  // isso, o teste acima passaria mesmo com a normalização desligada.
+  it("não trata `required` ausente e `false` como mudança", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          changeSummary: "descrição alterada",
+          beforeValue: comSubcampos([{ key: "cid", label: "CID" }]),
+          afterValue: comSubcampos([
+            { key: "cid", label: "CID", required: false },
+          ]),
+        })}
+      />,
+    );
+
+    expect(screen.queryByText(/CID: /)).toBeNull();
+  });
+
+  it("marca subcampo obrigatório com asterisco nos adicionados", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          changeSummary: "subcampos",
+          beforeValue: comSubcampos([{ key: "cid", label: "CID" }]),
+          afterValue: comSubcampos([
+            { key: "cid", label: "CID" },
+            { key: "doenca", label: "Doença", required: true },
+          ]),
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/\+ Doença \*/)).toBeTruthy();
+  });
+});

@@ -148,6 +148,29 @@ describe("classifyChange", () => {
     const mudada = [withSubfields({ subfield_rule: "at_least_one" })];
     expect(classifyChange(legado, mudada)).toBe("minor");
   });
+
+  // Um nível abaixo: o default implícito dentro do próprio subcampo. Quem
+  // produz o explícito é `_extract_subfields`, que sempre grava `required`
+  // (issue #491) — sem normalizar, recuperar um projeto legado pelo endpoint
+  // de recover bumpava minor e gravava auditoria de uma mudança que ninguém
+  // fez.
+  it("promover o default de required do subcampo a explícito não é mudança", () => {
+    const legado = [withSubfields()];
+    const recuperado = [
+      withSubfields({ subfields: [{ key: "a", label: "A", required: false }] }),
+    ];
+    expect(classifyChange(legado, recuperado)).toBeNull();
+    expect(diffFields(legado, recuperado)).toEqual([]);
+  });
+
+  it("tornar o subcampo obrigatório de verdade continua sendo minor", () => {
+    const legado = [withSubfields()];
+    const mudada = [
+      withSubfields({ subfields: [{ key: "a", label: "A", required: true }] }),
+    ];
+    expect(classifyChange(legado, mudada)).toBe("minor");
+    expect(diffFields(legado, mudada)).toHaveLength(1);
+  });
 });
 
 // O jsonb do Postgres normaliza a ordem das chaves; condition/subfields lidos
@@ -505,7 +528,9 @@ describe("generatePydanticCode round-trip surface", () => {
   // Issue #491: sob at_least_one a anotação é sempre Optional[str] e não
   // consegue carregar o `required` individual do subcampo — ele viaja em
   // json_schema_extra, só no caso não-default (o default de subcampo é
-  // `false`, o oposto do required de campo).
+  // `false`, o oposto do required de campo). A chave é `subfield_required`
+  // porque o backend achata o subcampo em property do JSON Schema do provider,
+  // onde `required` é palavra reservada — ver comentário em generatePydanticCode.
   const subfieldGroup = (
     subfields: PydanticField["subfields"],
     subfield_rule?: "all" | "at_least_one",
@@ -529,11 +554,14 @@ describe("generatePydanticCode round-trip surface", () => {
       ),
     ]);
     expect(code).toContain(
-      '    a: Optional[str] = Field(default=None, description="A", json_schema_extra={"required": True})',
+      '    a: Optional[str] = Field(default=None, description="A", json_schema_extra={"subfield_required": True})',
     );
     expect(code).toContain(
       '    b: Optional[str] = Field(default=None, description="B")',
     );
+    // `required` cru colidiria com a palavra reservada do JSON Schema quando o
+    // backend achata o subcampo para mandar ao provider.
+    expect(code).not.toContain('{"required"');
   });
 
   it("keeps subfield text byte-identical when required is default", () => {

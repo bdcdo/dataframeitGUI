@@ -23,7 +23,10 @@ import {
   padDatePart,
   parseDatePartsForUI,
 } from "@/lib/date-parts";
-import { resolveSubfieldRequired } from "@/lib/pydantic-field";
+import {
+  resolveSubfieldRequired,
+  resolveSubfieldRule,
+} from "@/lib/pydantic-field";
 
 interface FieldRendererProps {
   field: PydanticField;
@@ -449,9 +452,10 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
                 >
                   {sf.label}
                   {resolveSubfieldRequired(sf.required) &&
-                    field.subfield_rule !== "at_least_one" && (
-                    <span className="text-destructive ml-0.5">*</span>
-                  )}
+                    resolveSubfieldRule(field.subfield_rule) !==
+                      "at_least_one" && (
+                      <span className="text-destructive ml-0.5">*</span>
+                    )}
                 </label>
                 <Input
                   id={`${subfieldIdPrefix}-${sf.key}`}
