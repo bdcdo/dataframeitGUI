@@ -184,9 +184,28 @@ BEGIN
     RAISE EXCEPTION 'FALHOU contrato: grants de apply_lottery_assignments';
   END IF;
 
-  IF has_table_privilege('anon', 'public.final_answers', 'SELECT')
-     OR has_table_privilege('anon', 'public.lottery_doc_stats', 'SELECT') THEN
-    RAISE EXCEPTION 'FALHOU contrato: anon tem SELECT em view de public';
+  -- Varredura sobre TODAS as views e TODOS os privilégios, não sobre uma lista
+  -- de nomes com SELECT. A primeira versão desta asserção checava apenas SELECT
+  -- em `final_answers` e `lottery_doc_stats`, e por isso daria produção por
+  -- limpa: lá, `final_answers` tinha o SELECT revogado mas conservava
+  -- INSERT/UPDATE/DELETE para `anon` (ver 20260724140000).
+  --
+  -- Limitação conhecida: o Supabase local não reproduz os default privileges do
+  -- remoto, então esta asserção passa localmente mesmo quando o remoto viola.
+  -- Ela é uma rede contra regressão introduzida por migration, não substituto de
+  -- auditar o catálogo de produção.
+  SELECT relation.oid::regclass::text INTO achado
+  FROM pg_class AS relation
+  WHERE relation.relnamespace = 'public'::regnamespace
+    AND relation.relkind = 'v'
+    AND has_table_privilege(
+      'anon', relation.oid,
+      'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+    )
+  ORDER BY 1
+  LIMIT 1;
+  IF achado IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU contrato: anon tem privilégio em view de public: %', achado;
   END IF;
 
   -- RPC alcançável sem call site é superfície sem contrapartida.
