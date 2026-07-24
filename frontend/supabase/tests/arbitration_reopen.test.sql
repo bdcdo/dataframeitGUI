@@ -1,7 +1,9 @@
 -- Contrato da reabertura da fila de arbitragem (issue #582, migration
 -- 20260724110000): assignment 'concluido' reabre quando nova contestação é
 -- atribuída ao mesmo árbitro, e o fecho adquire o advisory lock por
--- (project, document).
+-- (project, document). O cenário 4 (caminho de retry) é garantido pela
+-- 20260724100100 — este contrato o cobre para que uma redefinição futura de
+-- assign_arbitration_cycles_if_eligible não regrida a reabertura de novo.
 --
 -- field_reviews tem UM ciclo operacional por (document, field_name)
 -- (field_reviews_unique); o cenário real da issue é uma contestação de OUTRO

@@ -8,14 +8,19 @@
 -- e a página de arbitragem (filtro status <> 'concluido') nunca carregava o
 -- field_review pendente: revisão gravada, mas invisível.
 --
--- As três funções abaixo são cópias byte a byte do outbox, mudando apenas:
---   1. submit_auto_review_verdicts / assign_arbitration_cycles_if_eligible:
---      ON CONFLICT ... DO NOTHING  ->  DO UPDATE SET status='pendente',
---      completed_at=NULL WHERE assignments.status='concluido' (espelho da
---      fila auto_revisao).
+-- As duas funções abaixo são cópias byte a byte do outbox, mudando apenas:
+--   1. submit_auto_review_verdicts: ON CONFLICT ... DO NOTHING  ->  DO UPDATE
+--      SET status='pendente', completed_at=NULL WHERE
+--      assignments.status='concluido' (espelho da fila auto_revisao).
 --   2. submit_final_review_verdicts: adquire o mesmo advisory lock por
 --      (project, document) que submit_auto_review_verdicts, serializando o
 --      fecho da arbitragem com a atribuição de nova arbitragem.
+--
+-- O terceiro site (assign_arbitration_cycles_if_eligible) já foi reaberto —
+-- com as guardas restauradas — pela 20260724100100; não o redefinimos aqui
+-- para não reverter aquelas guardas (lição do #557). Nota: aquele caminho usa
+-- outra chave de advisory lock ('arbitration-assignment:project:document:user'),
+-- então o lock do fecho abaixo NÃO serializa fecho × retry — ver issue #585.
 --
 -- Não filtramos superseded_at no NOT EXISTS do fecho: na tabela operacional o
 -- estado "contestado superseded" é inconstruível (snapshot_field_review_cycle
@@ -291,66 +296,6 @@ REVOKE ALL ON FUNCTION public.submit_final_review_verdicts(UUID, UUID, UUID, JSO
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_final_review_verdicts(UUID, UUID, UUID, JSONB)
   TO service_role;
-
-CREATE OR REPLACE FUNCTION public.assign_arbitration_cycles_if_eligible(
-  p_project_id UUID,
-  p_document_id UUID,
-  p_user_id UUID,
-  p_field_review_ids UUID[]
-) RETURNS INTEGER
-LANGUAGE plpgsql
-SECURITY INVOKER
-SET search_path = ''
-AS $$
-DECLARE
-  v_assigned INTEGER := 0;
-BEGIN
-  PERFORM 1
-  FROM public.project_members AS member
-  WHERE member.project_id = p_project_id
-    AND member.user_id = p_user_id
-    AND member.can_arbitrate = true
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RETURN 0;
-  END IF;
-
-  WITH assigned_reviews AS (
-    UPDATE public.field_reviews AS review
-    SET arbitrator_id = p_user_id
-    WHERE review.project_id = p_project_id
-      AND review.document_id = p_document_id
-      AND review.id = ANY(p_field_review_ids)
-      AND review.superseded_at IS NULL
-      AND review.self_verdict = 'contesta_llm'
-      AND review.arbitrator_id IS NULL
-    RETURNING review.id
-  )
-  SELECT count(*)::INTEGER INTO v_assigned FROM assigned_reviews;
-
-  IF v_assigned > 0 THEN
-    INSERT INTO public.assignments (
-      project_id, document_id, user_id, type, status
-    ) VALUES (
-      p_project_id, p_document_id, p_user_id, 'arbitragem', 'pendente'
-    )
-    ON CONFLICT (document_id, user_id, type) DO UPDATE
-    SET status = 'pendente',
-        completed_at = NULL
-    WHERE assignments.status = 'concluido';
-  END IF;
-
-  RETURN v_assigned;
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.assign_arbitration_cycles_if_eligible(
-  UUID, UUID, UUID, UUID[]
-) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.assign_arbitration_cycles_if_eligible(
-  UUID, UUID, UUID, UUID[]
-) TO service_role;
 
 -- Reparo medido (2026-07-23, produção): 0 assignments 'arbitragem' concluídos
 -- com field_review contestado pendente do mesmo árbitro (82 assignments de
