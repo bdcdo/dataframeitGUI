@@ -380,13 +380,8 @@ const invariants: Invariant[] = [
   {
     name: "submetida-mas-incompleta",
     motivation:
-      "inversa fina de 'codificacao-completa-marcada-pendente' (causa (d) da auditoria de 2026-07-23): response submetida (is_partial=false) que NÃO passa na régua real do produto (isCodingComplete staleness-aware) indica canal de escrita que pulou o gate de submit — o guard existe desde 61412dc, mas nenhum estado o assere. Responses com proveniência legacy (answer_field_hashes null/{}) ficam fora: sem o mapa não dá para saber sob qual schema foram codificadas, e cobrá-las pelo schema atual fabricaria falso positivo. CORTE TEMPORAL DOCUMENTADO (#584): responses não tocadas desde 2026-07-24 ficam fora — são as 87 com mapa danificado pelo recarimbo #520 (triagem de 2026-07-23: 177/211 campos faltantes com hash==corrente sem chave), a reparar via #584; remover o corte após o reparo",
+      "inversa fina de 'codificacao-completa-marcada-pendente' (causa (d) da auditoria de 2026-07-23): response submetida (is_partial=false) que NÃO passa na régua real do produto (isCodingComplete staleness-aware) indica canal de escrita que pulou o gate de submit — o guard existe desde 61412dc, mas nenhum estado o assere. Responses com proveniência legacy (answer_field_hashes null/{}) ficam fora: sem o mapa não dá para saber sob qual schema foram codificadas, e cobrá-las pelo schema atual fabricaria falso positivo. O corte temporal do legado recarimbado (#520) saiu em 2026-07-24, junto com o reparo que o justificava: chaves recarimbadas removidas por prova de nascimento no schema_change_log, parciais mal rotuladas rebaixadas a is_partial=true e codificações com valor perdido reabertas para recodificação — ver o desfecho da issue #584",
     run: async () => {
-      // Corte do legado recarimbado (#520/#584): o write path só herda mapas a
-      // partir do merge do #528 (2026-07-23); qualquer response tocada depois
-      // desta data tem que passar. Não é baseline silencioso: os 87 casos
-      // anteriores estão enumerados e rastreados na issue #584.
-      const LEGACY_CUTOFF = "2026-07-24T00:00:00Z";
       const active = await activeDocIds();
       const [projects, responses] = await Promise.all([
         fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
@@ -397,8 +392,7 @@ const invariants: Invariant[] = [
             q
               .eq("respondent_type", "humano")
               .eq("is_latest", true)
-              .eq("is_partial", false)
-              .gte("updated_at", LEGACY_CUTOFF),
+              .eq("is_partial", false),
         ),
       ]);
       const fieldsOf = new Map(projects.map((p) => [p.id, p.pydantic_fields ?? []]));
