@@ -1,6 +1,11 @@
 import type { MemberEmailLink, ProjectMember, Profile } from "@/lib/types";
 
-export type MemberRow = ProjectMember & {
+// `Omit` antes da interseção: ProjectMember declara `profiles?: Profile`, e
+// `Profile | undefined` interseccionado com `Profile | null` colapsa para
+// `Profile`. Sem o Omit o tipo afirmaria que o perfil sempre existe, enquanto o
+// join da página devolve null para membro sem profile — o caso que
+// memberDisplayName cobre com "Sem perfil".
+export type MemberRow = Omit<ProjectMember, "profiles"> & {
   profiles: Profile | null;
   accessState: MemberAccessState;
   isClaimable: boolean;

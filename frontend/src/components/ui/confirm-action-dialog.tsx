@@ -61,7 +61,15 @@ export function ConfirmActionDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
           <AlertDialogAction
-            onClick={onConfirm}
+            // AlertDialogAction fecha o diálogo por padrão. Quem confirma é que
+            // decide se o fluxo terminou: sem o preventDefault o diálogo sai de
+            // cena antes de `isPending` renderizar, e uma confirmação recusada
+            // (ExcludeDocumentsDialog sem motivo) descartaria o que já foi
+            // digitado em vez de deixar o usuário corrigir.
+            onClick={(event) => {
+              event.preventDefault();
+              onConfirm();
+            }}
             disabled={isPending || disabled}
             className={cn(
               destructive &&

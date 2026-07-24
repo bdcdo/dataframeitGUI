@@ -9,6 +9,7 @@ import {
   setCanCompare,
   unlinkMemberEmail,
 } from "@/actions/members";
+import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog";
 import { LinkEmailDialog } from "@/components/members/LinkEmailDialog";
 import { UnifyMembersDialog } from "@/components/members/UnifyMembersDialog";
 import { toast } from "sonner";
@@ -30,15 +31,6 @@ interface MemberListProps {
   members: MemberRowData[];
   emailLinks: MemberEmailLinkView[];
   currentUserId: string;
-}
-
-async function removeMemberWithToast(memberId: string) {
-  const result = await removeMember(memberId);
-  if (result?.error) {
-    toast.error(result.error);
-  } else {
-    toast.success("Membro removido");
-  }
 }
 
 async function changeRoleWithToast(
@@ -66,8 +58,11 @@ export function MemberList({
     setLinkingMember,
     unify,
     setUnify,
+    removingMember,
+    setRemovingMember,
   } = useMemberListDialogs();
   const [, startTransition] = useTransition();
+  const [isRemoving, startRemoving] = useTransition();
 
   const linksByMember = groupLinksByMember(emailLinks);
 
@@ -80,6 +75,28 @@ export function MemberList({
         "E-mail desvinculado. Acessos futuros por ele cessam; o histórico permanece.",
       );
     }
+  };
+
+  // A remoção é irreversível para o trabalho pendente do membro, então só o
+  // sucesso fecha o diálogo: erro e falha de rede mantêm a confirmação em cena
+  // para o coordenador tentar de novo sem reabrir e reencontrar a linha.
+  const confirmRemove = () => {
+    if (!removingMember) return;
+    const memberId = removingMember.id;
+    startRemoving(async () => {
+      try {
+        const result = await removeMember(memberId);
+        if (result?.error) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("Membro removido");
+        setRemovingMember(null);
+      } catch (error) {
+        console.error("[MemberList] erro ao remover membro", error);
+        toast.error("Não foi possível remover o membro. Tente novamente.");
+      }
+    });
   };
 
   // useOptimistic: o Switch reflete imediatamente o valor escolhido enquanto o
@@ -156,9 +173,33 @@ export function MemberList({
           onChangeRole={(memberId, newRole) =>
             void changeRoleWithToast(memberId, newRole)
           }
-          onRemove={(memberId) => void removeMemberWithToast(memberId)}
+          onRequestRemove={setRemovingMember}
         />
       ))}
+      <ConfirmActionDialog
+        open={!!removingMember}
+        onClose={() => setRemovingMember(null)}
+        title="Remover membro?"
+        description={
+          removingMember ? (
+            <>
+              Remover <strong>{memberDisplayName(removingMember)}</strong>
+              {removingMember.profiles?.email &&
+              removingMember.profiles.email !==
+                memberDisplayName(removingMember) ? (
+                <> ({removingMember.profiles.email})</>
+              ) : null}{" "}
+              deste projeto? As atribuições ainda não iniciadas voltam ao
+              conjunto disponível; o trabalho já feito permanece como histórico.
+            </>
+          ) : null
+        }
+        confirmLabel="Remover"
+        pendingLabel="Removendo…"
+        destructive
+        isPending={isRemoving}
+        onConfirm={confirmRemove}
+      />
       {linkingMember && (
         <LinkEmailDialog
           projectId={projectId}
