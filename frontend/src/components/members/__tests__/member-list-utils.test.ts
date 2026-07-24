@@ -4,7 +4,10 @@ import {
   activeAliasMemberIds,
   canEditPendingMemberEmail,
   isMemberEmailLinkAccessReady,
+  memberDisplayName,
+  memberSecondaryEmail,
   projectMemberAccessState,
+  type MemberRow,
 } from "@/components/members/member-list-utils";
 
 describe("project member activation", () => {
@@ -108,5 +111,52 @@ describe("project member activation", () => {
       }),
     ).toBe(false);
     expect(isMemberEmailLinkAccessReady(null, activeAt, undefined)).toBe(false);
+  });
+});
+
+describe("identificação do membro na confirmação de remoção", () => {
+  function memberWithProfile(profile: MemberRow["profiles"]): MemberRow {
+    return {
+      id: "member-1",
+      project_id: "project-1",
+      user_id: "user-1",
+      role: "pesquisador",
+      can_arbitrate: false,
+      can_resolve: false,
+      can_compare: false,
+      accessState: "ready",
+      isClaimable: false,
+      profiles: profile,
+    };
+  }
+
+  const baseProfile = {
+    id: "user-1",
+    email: "ana@example.com",
+    first_name: null,
+    last_name: null,
+    created_at: "2026-01-01T00:00:00Z",
+    activated_at: "2026-01-02T00:00:00Z",
+  };
+
+  it("omite o e-mail quando ele já é o nome exibido", () => {
+    const member = memberWithProfile(baseProfile);
+
+    expect(memberDisplayName(member)).toBe("ana@example.com");
+    expect(memberSecondaryEmail(member)).toBeNull();
+  });
+
+  it("mantém o e-mail quando ele desambigua o primeiro nome", () => {
+    const member = memberWithProfile({ ...baseProfile, first_name: "Ana" });
+
+    expect(memberDisplayName(member)).toBe("Ana");
+    expect(memberSecondaryEmail(member)).toBe("ana@example.com");
+  });
+
+  it("não inventa e-mail para membro sem perfil", () => {
+    const member = memberWithProfile(null);
+
+    expect(memberDisplayName(member)).toBe("Sem perfil");
+    expect(memberSecondaryEmail(member)).toBeNull();
   });
 });

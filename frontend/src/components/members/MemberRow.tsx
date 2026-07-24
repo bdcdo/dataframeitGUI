@@ -31,7 +31,7 @@ interface MemberRowProps {
     memberId: string,
     newRole: "coordenador" | "pesquisador",
   ) => void;
-  onRemove: (memberId: string) => void;
+  onRequestRemove: (member: MemberRowData) => void;
 }
 
 export function MemberRow({
@@ -50,7 +50,7 @@ export function MemberRow({
   onToggleResolve,
   onToggleCompare,
   onChangeRole,
-  onRemove,
+  onRequestRemove,
 }: MemberRowProps) {
   const isProjectPending = member.accessState === "pending";
   const isAccessUnavailable = member.accessState === "unavailable";
@@ -118,7 +118,7 @@ export function MemberRow({
           member={member}
           currentUserId={currentUserId}
           onChangeRole={onChangeRole}
-          onRemove={onRemove}
+          onRequestRemove={onRequestRemove}
         />
       </div>
     </div>

@@ -15,6 +15,9 @@ export function useMemberListDialogs() {
     preview: UnificationPreview;
     targetName: string;
   } | null>(null);
+  // Confirmação de remoção (#177): guarda o membro inteiro, não o id, porque a
+  // pergunta precisa nomeá-lo e a linha some da lista assim que a action volta.
+  const [removingMember, setRemovingMember] = useState<MemberRow | null>(null);
 
   return {
     editingEmailMemberId,
@@ -23,5 +26,7 @@ export function useMemberListDialogs() {
     setLinkingMember,
     unify,
     setUnify,
+    removingMember,
+    setRemovingMember,
   };
 }

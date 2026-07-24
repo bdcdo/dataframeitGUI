@@ -47,7 +47,12 @@ export function ConfirmActionDialog({
     <AlertDialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose();
+        // Enquanto a ação corre, o fechamento é do pai — mesma razão do
+        // Cancelar desabilitado. Radix fecha no Esc e no clique fora sem
+        // consultar o estado do footer; sem o !isPending, essas duas saídas
+        // descartariam a confirmação em voo e o erro que chegasse depois
+        // viraria só um toast, sem a confirmação em cena para tentar de novo.
+        if (!nextOpen && !isPending) onClose();
       }}
     >
       <AlertDialogContent>
@@ -61,7 +66,15 @@ export function ConfirmActionDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancelar</AlertDialogCancel>
           <AlertDialogAction
-            onClick={onConfirm}
+            // AlertDialogAction fecha o diálogo por padrão. Quem confirma é que
+            // decide se o fluxo terminou: sem o preventDefault o diálogo sai de
+            // cena antes de `isPending` renderizar, e uma confirmação recusada
+            // (ExcludeDocumentsDialog sem motivo) descartaria o que já foi
+            // digitado em vez de deixar o usuário corrigir.
+            onClick={(event) => {
+              event.preventDefault();
+              onConfirm();
+            }}
             disabled={isPending || disabled}
             className={cn(
               destructive &&

@@ -14,14 +14,14 @@ interface MemberRoleControlsProps {
   member: MemberRow;
   currentUserId: string;
   onChangeRole: (memberId: string, newRole: "coordenador" | "pesquisador") => void;
-  onRemove: (memberId: string) => void;
+  onRequestRemove: (member: MemberRow) => void;
 }
 
 export function MemberRoleControls({
   member,
   currentUserId,
   onChangeRole,
-  onRemove,
+  onRequestRemove,
 }: MemberRoleControlsProps) {
   return (
     <>
@@ -42,7 +42,7 @@ export function MemberRoleControls({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => onRemove(member.id)}
+          onClick={() => onRequestRemove(member)}
           className="text-destructive"
         >
           Remover
