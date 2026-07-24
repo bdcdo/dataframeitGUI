@@ -12,15 +12,14 @@
 --   1. submit_auto_review_verdicts: ON CONFLICT ... DO NOTHING  ->  DO UPDATE
 --      SET status='pendente', completed_at=NULL WHERE
 --      assignments.status='concluido' (espelho da fila auto_revisao).
---   2. submit_final_review_verdicts: adquire o mesmo advisory lock por
---      (project, document) que submit_auto_review_verdicts, serializando o
---      fecho da arbitragem com a atribuição de nova arbitragem.
+--   2. submit_final_review_verdicts: adquire os advisory locks dos DOIS
+--      criadores de contestação, serializando o fecho da arbitragem com a
+--      atribuição de nova arbitragem por qualquer caminho (ver o comentário
+--      no corpo da função).
 --
 -- O terceiro site (assign_arbitration_cycles_if_eligible) já foi reaberto —
 -- com as guardas restauradas — pela 20260724100100; não o redefinimos aqui
--- para não reverter aquelas guardas (lição do #557). Nota: aquele caminho usa
--- outra chave de advisory lock ('arbitration-assignment:project:document:user'),
--- então o lock do fecho abaixo NÃO serializa fecho × retry — ver issue #585.
+-- para não reverter aquelas guardas (lição do #557).
 --
 -- Não filtramos superseded_at no NOT EXISTS do fecho: na tabela operacional o
 -- estado "contestado superseded" é inconstruível (snapshot_field_review_cycle
@@ -217,15 +216,28 @@ BEGIN
     RAISE EXCEPTION 'p_rows must be a non-empty JSON array';
   END IF;
 
-  -- Mesmo lock de submit_auto_review_verdicts: serializa o fecho da
-  -- arbitragem com a atribuicao de nova arbitragem no mesmo documento
-  -- (issue #582). Sem ele, o fecho e o DO UPDATE de reabertura podem
-  -- intercalar e deixar o assignment 'concluido' com contestacao pendente.
+  -- O fecho le "nao resta contestacao pendente" e marca o assignment como
+  -- concluido; qualquer criador de contestacao que intercale entre a leitura e
+  -- a escrita reproduz o estado da #582 por corrida (contestacao gravada,
+  -- assignment 'concluido'). Sao DOIS criadores, e eles usam chaves de lock
+  -- diferentes -- logo o fecho precisa adquirir as DUAS:
+  --   1. submit_auto_review_verdicts: hashtextextended('project:document');
+  --   2. assign_arbitration_cycles_if_eligible (caminho do retry, via
+  --      lock_arbitration_assignment da 20260724100100):
+  --      hashtextextended('arbitration-assignment:project:document:user').
+  -- A ordem de aquisicao aqui (1 depois 2) e a unica no schema em que ambas
+  -- sao tomadas na mesma transacao -- os dois criadores tomam so a sua --,
+  -- entao nao ha ciclo de espera possivel entre elas.
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(
       p_project_id::TEXT || ':' || p_document_id::TEXT,
       0
     )
+  );
+  PERFORM public.lock_arbitration_assignment(
+    p_project_id,
+    p_document_id,
+    p_arbitrator_id
   );
 
   FOR v_row IN SELECT row FROM pg_catalog.jsonb_array_elements(p_rows) AS rows(row)

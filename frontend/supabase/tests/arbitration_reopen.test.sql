@@ -94,33 +94,50 @@ SELECT public.submit_final_review_verdicts(
 );
 
 DO $$
+DECLARE
+  v_key TEXT;
+  v_hash BIGINT;
 BEGIN
   IF (SELECT status FROM public.assignments
       WHERE id = '82e00000-0000-0000-0000-000000000001') <> 'concluido' THEN
     RAISE EXCEPTION 'FALHOU: fecho não concluiu o assignment de arbitragem';
   END IF;
   -- O lock é xact-scoped: dentro desta transação ele ainda aparece em
-  -- pg_locks. A chave precisa ser a MESMA de submit_auto_review_verdicts
-  -- (hashtextextended('project:document', 0), classid = 32 bits altos,
-  -- objid = 32 bits baixos); outros triggers da transação seguram advisory
-  -- locks próprios, então a asserção é pela chave, não por existência.
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_locks
-    WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted
-      AND classid = (
-        hashtextextended(
-          '82b00000-0000-0000-0000-000000000001:82c00000-0000-0000-0000-000000000001',
-          0) >> 32
-      )::oid
-      AND objid = (
-        hashtextextended(
-          '82b00000-0000-0000-0000-000000000001:82c00000-0000-0000-0000-000000000001',
-          0) & 4294967295
-      )::oid
-  ) THEN
-    RAISE EXCEPTION 'FALHOU: submit_final_review_verdicts não adquiriu o advisory lock por documento';
-  END IF;
-  RAISE NOTICE 'OK 1: fecho conclui o assignment sob advisory lock';
+  -- pg_locks. Os locks são identificados pela CHAVE (classid = 32 bits altos
+  -- do hash, objid = 32 bits baixos) e não por existência, porque outros
+  -- triggers da transação seguram advisory locks próprios.
+  --
+  -- São DUAS chaves porque há dois criadores de contestação com quem o fecho
+  -- precisa excluir-se mutuamente (ver o comentário na migration):
+  --   1. submit_auto_review_verdicts    -> 'project:document'
+  --   2. assign_arbitration_cycles_if_eligible (retry, via
+  --      lock_arbitration_assignment) -> 'arbitration-assignment:p:d:user'
+  -- Faltando qualquer uma, a corrida da #582 volta por aquele caminho.
+  FOREACH v_key IN ARRAY ARRAY[
+    '82b00000-0000-0000-0000-000000000001:82c00000-0000-0000-0000-000000000001',
+    'arbitration-assignment:82b00000-0000-0000-0000-000000000001'
+      || ':82c00000-0000-0000-0000-000000000001'
+      || ':82a00000-0000-0000-0000-000000000003'
+  ]
+  LOOP
+    v_hash := hashtextextended(v_key, 0);
+    -- O `& 4294967295` nos DOIS campos não é decorativo: hashtextextended
+    -- devolve bigint COM SINAL e pg_locks guarda classid/objid como uint32.
+    -- Para hash negativo, `>> 32` propaga o sinal e o cast estoura com "OID
+    -- out of range" — a asserção morreria com erro em vez de comparar. A chave
+    -- 'arbitration-assignment:...' cai justamente nesse caso.
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_locks
+      WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted
+        AND classid = ((v_hash >> 32) & 4294967295)::oid
+        AND objid = (v_hash & 4294967295)::oid
+    ) THEN
+      RAISE EXCEPTION
+        'FALHOU: submit_final_review_verdicts não adquiriu o advisory lock da chave %',
+        v_key;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'OK 1: fecho conclui o assignment sob os dois advisory locks';
 END $$;
 
 -- ========== 2. Nova contestação REABRE o assignment concluído ==========
