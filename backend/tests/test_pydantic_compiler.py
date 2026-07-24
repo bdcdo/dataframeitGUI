@@ -2,7 +2,11 @@
 
 from pydantic import BaseModel, Field
 
-from services.pydantic_compiler import compile_pydantic, find_root_model
+from services.pydantic_compiler import (
+    build_model_from_code,
+    compile_pydantic,
+    find_root_model,
+)
 
 
 def _field(result: dict, name: str) -> dict:
@@ -661,3 +665,24 @@ def test_duplicate_id_fails_even_on_recover():
         _code_with_ids(_ID_A, _ID_A), generate_missing_ids=True
     )
     assert not recovered["valid"]
+
+
+def test_legacy_code_without_id_still_builds_model_for_the_llm_run():
+    """O `llm_runner` reconstrói o modelo por `build_model_from_code`, que NÃO
+    passa pela validação de identidade — de propósito.
+
+    `projects.pydantic_code` histórico não tem `"id"` em `json_schema_extra`, e
+    a migration da #473 não reescreve código/hash (isso tiraria respostas LLM
+    legadas da fila de Comparação). Se a validação de id migrasse para cá, todo
+    projeto anterior à #473 pararia de rodar LLM até o coordenador salvar o
+    schema de novo — regressão silenciosa que este teste existe para pegar.
+    """
+    legacy = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    verdict: Literal["sim", "nao"] = Field(description="Houve provimento?")
+"""
+    model = build_model_from_code(legacy)
+    assert model is not None
+    assert list(model.model_fields) == ["verdict"]

@@ -8,6 +8,19 @@
 -- inválido irrepresentável daqui em diante (id ausente/ inválido/duplicado e
 -- nome duplicado são recusados na escrita).
 --
+-- ORDEM DE ROLLOUT — esta migration vai ANTES do deploy do frontend.
+-- Medido no remoto em 24/07/2026: dos 8 projetos, 3 têm pydantic_fields vazio,
+-- 5 precisam de backfill (Zolgensma 28 campos, Zolgensma-Judiciário 30, PIBIC 1
+-- e as 2 fixtures E2E) e NENHUM tem nome duplicado — a constraint entra limpa.
+--
+-- Se o deploy vier primeiro, a janela é fail-closed e contida: o editor de
+-- schema (`/config/schema`) recusa abrir com a copy de schema inválido e toda
+-- ESCRITA de schema falha em `loadSchemaSaveContext`, enquanto codificação,
+-- comparação, arbitragem, exportação e as rodadas de LLM seguem funcionando
+-- (leem por cast e nunca tocam `field.id`; o `llm_runner` reconstrói o modelo
+-- por `build_model_from_code`, que não valida identidade — há teste fixando
+-- isso). Nada renderiza com `key={undefined}`.
+--
 -- O que esta migration NÃO toca, de propósito: pydantic_code, pydantic_hash,
 -- semver e schema_change_log. Respostas LLM legadas têm no pydantic_hash seu
 -- único vínculo com o schema (ver 20260505000001_revive_orphan_llm_responses):
