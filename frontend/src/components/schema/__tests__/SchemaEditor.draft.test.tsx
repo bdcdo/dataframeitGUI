@@ -187,6 +187,80 @@ describe("SchemaEditor — ciclo do draft", () => {
     expect(screen.getByRole("button", { name: "Minha alteração" })).toBeTruthy();
     expect(screen.getByText("Versão 0.2.0")).toBeTruthy();
   });
+
+  // `origin` fica em "rebased" após o primeiro merge automático; o segundo
+  // rebase consecutivo substituía os campos no canvas sem anúncio (#501).
+  it("anuncia cada rebase automático, inclusive consecutivos", async () => {
+    const view = await renderEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Editar campo" }));
+
+    const remoteRevision = (help_text: string, revision: number) =>
+      view.rerender(
+        <SchemaEditorSession
+          projectId="project-1"
+          userId="user-1"
+          initialCode={null}
+          initialFields={[{ ...BASE_FIELDS[0], help_text }]}
+          currentVersion={`0.1.${revision}`}
+          currentRevision={revision}
+        />,
+      );
+
+    remoteRevision("Ajuda remota", 1);
+    await waitFor(() =>
+      expect(hoisted.toast.info).toHaveBeenCalledTimes(1),
+    );
+
+    remoteRevision("Ajuda remota revista", 2);
+    await waitFor(() =>
+      expect(hoisted.toast.info).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.getByText("Campo: Editada")).toBeTruthy();
+  });
+
+  // Um rebase anunciado é um rebase FECHADO. `stateAfterRemoteChange` preserva a
+  // proveniência no ramo de conflito (de propósito: quem decide é o usuário no
+  // diálogo), e a baseline de um estado em conflito já é o remoto novo — então a
+  // revisão sozinha anuncia "suas alterações foram mescladas" exatamente
+  // enquanto o diálogo pede que as colisões sejam resolvidas.
+  it("não anuncia rebase quando a revisão nova abre conflito", async () => {
+    const view = await renderEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Editar campo" }));
+
+    const remoteRevision = (field: PydanticField, revision: number) =>
+      view.rerender(
+        <SchemaEditorSession
+          projectId="project-1"
+          userId="user-1"
+          initialCode={null}
+          initialFields={[field]}
+          currentVersion={`0.1.${revision}`}
+          currentRevision={revision}
+        />,
+      );
+
+    // Primeiro rebase fecha limpo (o remoto tocou outra propriedade).
+    remoteRevision({ ...BASE_FIELDS[0], help_text: "Ajuda remota" }, 1);
+    await waitFor(() => expect(hoisted.toast.info).toHaveBeenCalledTimes(1));
+
+    // O segundo colide na propriedade que o usuário editou.
+    remoteRevision(
+      { ...BASE_FIELDS[0], help_text: "Ajuda remota", description: "Remota" },
+      2,
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Resolver alterações concorrentes" }),
+    ).toBeTruthy();
+    expect(hoisted.toast.info).toHaveBeenCalledTimes(1);
+
+    // Fechar o merge pela resolução manual é o rebase que faltava anunciar: a
+    // revisão não muda (a baseline já era o remoto), só o conflito é que zera.
+    await userEvent.click(screen.getByRole("button", { name: "Minha alteração" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Aplicar merge para revisar" }),
+    );
+    await waitFor(() => expect(hoisted.toast.info).toHaveBeenCalledTimes(2));
+  });
 });
 
 // O segmento /config não tem `error.tsx`, então lançar aqui trocava uma condição

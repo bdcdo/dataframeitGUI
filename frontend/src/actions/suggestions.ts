@@ -7,20 +7,12 @@ import { saveSchemaAndApproveSuggestion } from "./schema";
 import type {
   PydanticField,
   SchemaBaselineIdentity,
-  SchemaSaveResult,
+  SchemaSnapshot,
 } from "@/lib/types";
 import {
   schemaSuggestionChangesSchema,
   type SchemaSuggestionChanges,
 } from "@/lib/schema-suggestion";
-
-function schemaSaveError(result: SchemaSaveResult): string | null {
-  if (result.status === "saved") return null;
-  if (result.status === "conflict") {
-    return "O schema mudou enquanto a sugestão era revisada. Recarregue a página e reaplique a sugestão sobre a versão atual.";
-  }
-  return result.message;
-}
 
 export async function createSchemaSuggestion(
   projectId: string,
@@ -100,7 +92,7 @@ export async function approveSchemaSuggestionWithEdits(
   projectId: string,
   editedFields: PydanticField[],
   expectedBaseline: SchemaBaselineIdentity,
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; conflict?: SchemaSnapshot }> {
   const gate = await requireCoordinator(
     projectId,
     "Apenas coordenadores podem aprovar sugestões de schema.",
@@ -112,8 +104,11 @@ export async function approveSchemaSuggestionWithEdits(
     editedFields,
     expectedBaseline,
   );
-  const saveError = schemaSaveError(saved);
-  if (saveError) return { error: saveError };
+  // O conflito de CAS volta tipado, com o snapshot atual: o EditFieldDialog
+  // re-mescla a edição sobre ele e reenvia, em vez de descartar o trabalho do
+  // coordenador com "recarregue a página" (#501).
+  if (saved.status === "conflict") return { conflict: saved.current };
+  if (saved.status === "error") return { error: saved.message };
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   return {};
 }
