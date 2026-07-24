@@ -95,6 +95,11 @@ BEGIN
   -- predicado não é filtro de conveniência, É a autorização do DELETE, e
   -- `auth_user_member_identity_ids` é a mesma fonte de identidade de trabalho
   -- que as policies usam (conta própria e contas-alias do projeto).
+  --
+  -- `response_equivalences.reviewer_id` é NULLABLE (20260504000000): num par
+  -- sem dono `v_owner_id` fica NULL e a igualdade não casa linha alguma — o
+  -- braço some em vez de alargar o DELETE. Falha fechada de propósito: um par
+  -- órfão dissolve sem arrastar veredito de ninguém.
   DELETE FROM public.reviews AS review
   WHERE review.project_id = p_project_id
     AND review.document_id = v_document_id
