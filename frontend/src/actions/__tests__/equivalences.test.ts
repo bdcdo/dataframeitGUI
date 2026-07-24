@@ -42,11 +42,24 @@ vi.mock("@/lib/supabase/server", () => ({
 // é um vi.fn justamente para poder REJEITAR: enquanto era um `async () => {}`
 // fixo, o teste que dizia cobrir esse contrato era vácuo — nunca exercitou a
 // falha que o #499 tornou possível ao fazer o sync lançar.
-const { mockSyncCompareAssignment } = vi.hoisted(() => ({
+const {
+  mockSyncCompareAssignment,
+  mockSyncCompareAssignmentsForDocument,
+  adminClientSentinel,
+} = vi.hoisted(() => ({
   mockSyncCompareAssignment: vi.fn(async () => {}),
+  mockSyncCompareAssignmentsForDocument: vi.fn(async () => {}),
+  // Sentinel opaco: o teste assere que o sync documento-wide recebe ESTE
+  // client (o admin), não o do chamador — trocar o client passado quebraria
+  // a asserção de argumentos do caminho feliz.
+  adminClientSentinel: { __sentinel: "supabase-admin" },
 }));
 vi.mock("@/lib/compare-sync", () => ({
   syncCompareAssignment: mockSyncCompareAssignment,
+  syncCompareAssignmentsForDocument: mockSyncCompareAssignmentsForDocument,
+}));
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdmin: () => adminClientSentinel,
 }));
 
 beforeEach(() => {
@@ -55,6 +68,7 @@ beforeEach(() => {
   rpcResults = {};
   serverTableResults = undefined;
   mockSyncCompareAssignment.mockClear();
+  mockSyncCompareAssignmentsForDocument.mockClear();
 });
 
 async function loadActions() {
@@ -225,12 +239,16 @@ describe("unmarkEquivalencePair", () => {
     expect(
       writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
     ).toBe(false);
-    expect(mockSyncCompareAssignment).toHaveBeenCalledWith(
-      expect.anything(),
+    // Sync documento-wide com o ADMIN client: a RPC pode ter removido o
+    // veredito do dono do par (#545), então o recálculo cobre todos os
+    // revisores do documento — e a RLS do chamador não alcança assignments de
+    // peers, por isso o client precisa ser o admin.
+    expect(mockSyncCompareAssignmentsForDocument).toHaveBeenCalledExactlyOnceWith(
+      adminClientSentinel,
       "p1",
       "doc1",
-      "canonical-reviewer",
     );
+    expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
   });
 
   // Conjunto vazio é o que a RPC devolve tanto para linha inexistente quanto
@@ -246,7 +264,7 @@ describe("unmarkEquivalencePair", () => {
       error: "Equivalência não encontrada ou sem permissão para removê-la.",
     });
     expect(writeCalls).toEqual([]);
-    expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
+    expect(mockSyncCompareAssignmentsForDocument).not.toHaveBeenCalled();
   });
 
   it("RPC aborta a transação → retorna { error } e não sincroniza", async () => {
@@ -258,7 +276,7 @@ describe("unmarkEquivalencePair", () => {
     const result = await unmarkEquivalencePair("p1", "eq1");
 
     expect(result).toEqual({ error: "review delete boom" });
-    expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
+    expect(mockSyncCompareAssignmentsForDocument).not.toHaveBeenCalled();
   });
 
   // O sync roda DEPOIS do commit da RPC e fora do try que devolve `{ error }`.
@@ -267,7 +285,9 @@ describe("unmarkEquivalencePair", () => {
   // existe mais, e a revalidação nem roda.
   it("falha do sync pós-commit → retorna {} e só loga", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockSyncCompareAssignment.mockRejectedValueOnce(new Error("sync boom"));
+    mockSyncCompareAssignmentsForDocument.mockRejectedValueOnce(
+      new Error("sync boom"),
+    );
     rpcResults.remove_response_equivalence = {
       data: [{ document_id: "doc1", field_name: "q1" }],
       error: null,

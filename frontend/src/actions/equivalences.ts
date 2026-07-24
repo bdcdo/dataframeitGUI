@@ -1,9 +1,13 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
-import { syncCompareAssignment } from "@/lib/compare-sync";
+import {
+  syncCompareAssignment,
+  syncCompareAssignmentsForDocument,
+} from "@/lib/compare-sync";
 import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
 import { ZeroRowsError } from "@/lib/supabase/rls-guard";
@@ -162,18 +166,17 @@ export async function markLlmEquivalent(
   return {};
 }
 
-// Removes a single equivalence pair. The RPC also clears the calling
-// identity's verdict for the affected (doc, field) in the same transaction,
-// since the previously chosen gabarito no longer represents a fused group —
-// forcing a fresh vote. A coordinator undoing someone else's pair does not
-// erase that person's verdict.
+// Removes a single equivalence pair. Dissolving the pair is a document-level
+// event (#545): in the same transaction the RPC clears the verdicts of BOTH
+// the calling identity and the pair's owner — whose chosen gabarito pointed at
+// the now-dissolved group — forcing a fresh vote. Verdicts of other reviewers
+// on the same (doc, field) are never touched.
 export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
 ): Promise<{ error?: string }> {
   const actor = await resolveProjectMemberActor(projectId);
   if (!actor.ok) return { error: actor.error };
-  const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
   let syncDocumentId: string;
@@ -204,29 +207,26 @@ export async function unmarkEquivalencePair(
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
   }
 
-  // Pós-commit best-effort: a equivalência e o review já foram apagados. Uma
+  // Pós-commit best-effort: a equivalência e os reviews já foram apagados. Uma
   // falha do sync não deve virar { error } — a revisora veria "falha ao
   // desfazer" para uma operação já persistida e tentaria de novo, sobre uma
   // linha que não existe mais. Loga e segue para a revalidação.
   //
-  // `reviewerId` resolve a identidade de trabalho no Node
-  // (`resolveProjectMemberActor`) enquanto o DELETE dentro da RPC resolve a
-  // dele em SQL (`auth_user_member_identity_ids`): duas fontes que precisam
-  // concordar para o assignment recalculado ser o da identidade cujo veredito
-  // saiu. Eliminar a segunda por construção exigiria a RPC devolver o
-  // `reviewer_id` efetivo — o que muda o `RETURNS TABLE` e quebraria a
-  // compatibilidade de assinatura que permite aplicar a migration antes do
-  // merge do código. Fica como follow-up, não como fallback aqui.
+  // O sync é documento-wide: equivalências são compartilhadas entre revisores,
+  // então dissolver o par muda a divergência para todos — não só para quem
+  // clicou ou para o dono do par. Usa o admin client porque a RLS do chamador
+  // não alcança assignments de peers ("Researchers update own assignments"
+  // cobre só o próprio) — e a autorização já foi provada pela RPC acima: só
+  // chega aqui quem pôde remover o par.
   try {
-    await syncCompareAssignment(
-      supabase,
+    await syncCompareAssignmentsForDocument(
+      createSupabaseAdmin(),
       projectId,
       syncDocumentId,
-      reviewerId,
     );
   } catch (e) {
     console.error(
-      `[unmarkEquivalencePair] falha ao sincronizar o assignment: ${errorMessage(e)}`,
+      `[unmarkEquivalencePair] falha ao sincronizar os assignments: ${errorMessage(e)}`,
     );
   }
 

@@ -74,6 +74,42 @@ async function updateCompareAssignmentStatus({
   throw new Error(error.message, { cause: error });
 }
 
+// Recomputes assignment status for EVERY reviewer with a "comparacao"
+// assignment on the document. Equivalences are shared across reviewers
+// (computeDivergentFieldNames does not filter them by reviewer), so dissolving
+// or creating a pair changes divergence for everyone — syncing only the caller
+// leaves peers stale (#545). Caller must pass a client whose RLS reaches the
+// peers' assignments (in practice the admin client, after the mutation itself
+// proved authority); with the caller's client, peer updates would be silent
+// no-ops under "Researchers update own assignments". Per-reviewer failures are
+// logged and skipped so one broken sync doesn't block the rest.
+export async function syncCompareAssignmentsForDocument(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+): Promise<void> {
+  const { data: assignments, error } = await supabase
+    .from("assignments")
+    .select("user_id")
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("type", "comparacao");
+  if (error) throw new Error(error.message, { cause: error });
+
+  const userIds = [...new Set((assignments ?? []).map((a) => a.user_id))];
+  for (const userId of userIds) {
+    try {
+      await syncCompareAssignment(supabase, projectId, documentId, userId);
+    } catch (e) {
+      console.error(
+        `[compare-sync] falha ao sincronizar o assignment de ${userId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+}
+
 // Recomputes assignment status (pendente / em_andamento / concluido) for the
 // reviewer's "comparacao" assignment on this document, taking into account
 // any equivalences registered between responses for free-text fields.
