@@ -88,15 +88,19 @@ if (existingProject) {
       automation_mode: "none",
       pydantic_hash: "e2e-coding-save-schema-hash",
       pydantic_fields: [
+        // Hashes REAIS (computeFieldHash) e não placeholders: o save do app
+        // propaga field.hash para responses.answer_field_hashes, e um
+        // placeholder violaria a invariante de shape do checker
+        // ('answer-field-hashes-do-universo-do-projeto').
         {
-          hash: "e2e-coding-f1",
+          hash: "666b31814034",
           name: "resumo",
           type: "text",
           options: null,
           description: "Resumo do documento",
         },
         {
-          hash: "e2e-coding-f2",
+          hash: "0feea7dd6b3d",
           name: "observacao",
           type: "text",
           options: null,
