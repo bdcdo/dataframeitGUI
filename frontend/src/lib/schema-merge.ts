@@ -93,8 +93,19 @@ function fieldMap(fields: PydanticField[], source: string): Map<string, Pydantic
   return result;
 }
 
+// O id identifica a DISPUTA (endereço + valores em jogo), não só o endereço.
+// Uma resolução é a resposta do usuário a "Local × Remota"; se um re-merge
+// chega com outro valor remoto, o id muda e a resolução antiga vira órfã —
+// `resolutionFor` devolve null e o conflito é reapresentado, em vez de adotar
+// em silêncio um valor que o usuário nunca revisou (#501). Os valores entram
+// via `stableStringify` do snapshot, a mesma serialização canônica que decide
+// igualdade no merge — a disputa "muda" exatamente quando o merge a vê mudar.
 function conflictId(...parts: string[]): string {
   return parts.map(encodeURIComponent).join(":");
+}
+
+function fieldSnapshotKey(field: PydanticField): string {
+  return stableStringify(snapshotOf(field));
 }
 
 function resolutionFor(
@@ -130,7 +141,13 @@ function mergeAddedField(
     return { field: clone(remoteField ?? localField), conflicts: [] };
   }
 
-  const id = conflictId("field", name, "add-add");
+  const id = conflictId(
+    "field",
+    name,
+    "add-add",
+    fieldSnapshotKey(localField),
+    fieldSnapshotKey(remoteField),
+  );
   const resolution = resolutionFor(id, resolutions);
   return {
     field: clone(resolution === "local" ? localField : remoteField),
@@ -184,7 +201,13 @@ function mergeFieldProperties(
       continue;
     }
 
-    const id = conflictId("property", name, String(property));
+    const id = conflictId(
+      "property",
+      name,
+      String(property),
+      stableStringify(local),
+      stableStringify(remote),
+    );
     const resolution = resolutionFor(id, resolutions);
     conflicts.push({
       id,
@@ -208,7 +231,12 @@ function mergeLocalDeletion(
   resolutions: SchemaMergeResolutions,
 ): FieldMergeOutcome {
   if (sameFieldContent(remoteField, baseField)) return { field: null, conflicts: [] };
-  const id = conflictId("field", name, "delete-edit");
+  const id = conflictId(
+    "field",
+    name,
+    "delete-edit",
+    fieldSnapshotKey(remoteField),
+  );
   const resolution = resolutionFor(id, resolutions);
   return {
     field: resolution === "local" ? null : clone(remoteField),
@@ -232,7 +260,12 @@ function mergeRemoteDeletion(
   resolutions: SchemaMergeResolutions,
 ): FieldMergeOutcome {
   if (sameFieldContent(localField, baseField)) return { field: null, conflicts: [] };
-  const id = conflictId("field", name, "edit-delete");
+  const id = conflictId(
+    "field",
+    name,
+    "edit-delete",
+    fieldSnapshotKey(localField),
+  );
   const resolution = resolutionFor(id, resolutions);
   return {
     field: resolution === "local" ? clone(localField) : null,
@@ -468,7 +501,11 @@ export function mergeSchemas(
 
   let selectedOrder = mergedOrder ?? remoteOrder;
   if (!mergedOrder) {
-    const id = "order";
+    const id = conflictId(
+      "order",
+      stableStringify(localOrder),
+      stableStringify(remoteOrder),
+    );
     const resolution = resolutionFor(id, resolutions);
     conflicts.push({
       id,

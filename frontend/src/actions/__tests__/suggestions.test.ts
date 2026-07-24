@@ -227,7 +227,10 @@ describe("approveSchemaSuggestionWithEdits", () => {
         [FIELD],
         EMPTY_BASELINE,
       );
-      expect(r.error).toMatch(/O schema mudou enquanto a sugestão era revisada/);
+      // O conflito volta tipado com o snapshot atual, para o EditFieldDialog
+      // re-mesclar e reenviar em vez de descartar a edição (#501).
+      expect(r.error).toBeUndefined();
+      expect(r.conflict).toMatchObject({ revision: 7, fields: [FIELD] });
     });
 
     it("sugestão já resolvida volta com a copy pt-BR da RPC", async () => {

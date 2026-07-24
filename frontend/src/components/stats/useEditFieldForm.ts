@@ -36,31 +36,44 @@ function initialFromField(
 }
 
 export function useEditFieldForm(
-  field: PydanticField | undefined,
   fieldName: string,
   allFields: PydanticField[],
   pendingSuggestion?: PendingSuggestion | null,
 ) {
-  const initial = initialFromField(field, pendingSuggestion);
+  // O form congela na abertura por design (um refresh RSC não pode apagar a
+  // digitação), então o schema-base do qual ele foi semeado precisa congelar
+  // JUNTO: é ele o "base" do merge de três vias no save e a referência de
+  // exibição (descriptionChanged, opções removidas). Comparar o state do form
+  // com o `allFields` vivo mistura dois instantes e foi o que deixou o save
+  // sobrescrever edição concorrente em silêncio (#501).
+  const [baseFields, setBaseFields] = useState(allFields);
+  const baseField = baseFields.find((f) => f.name === fieldName);
+
+  const initial = initialFromField(baseField, pendingSuggestion);
   const [description, setDescription] = useState(initial.description);
   const [helpText, setHelpText] = useState(initial.helpText);
   const [options, setOptions] = useState<string[]>(initial.options);
   const [allowOther, setAllowOther] = useState<boolean>(() =>
-    resolveAllowOther(field?.allow_other),
+    resolveAllowOther(baseField?.allow_other),
   );
-  const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(field?.subfields);
+  const [subfields, setSubfields] = useState<SubfieldDef[] | undefined>(
+    baseField?.subfields,
+  );
   const [subfieldRule, setSubfieldRule] = useState(() =>
-    resolveSubfieldRule(field?.subfield_rule),
+    resolveSubfieldRule(baseField?.subfield_rule),
   );
-  const [condition, setCondition] = useState<FieldCondition | undefined>(field?.condition);
+  const [condition, setCondition] = useState<FieldCondition | undefined>(
+    baseField?.condition,
+  );
   const [justificationPrompt, setJustificationPrompt] = useState<string>(
-    field?.justification_prompt ?? "",
+    baseField?.justification_prompt ?? "",
   );
   const [isSaving, startSave] = useTransition();
 
   // Reset state when dialog opens with a different field or suggestion
   const resetKey = `${fieldName}::${pendingSuggestion?.id ?? ""}`;
   useResetOnKeyChange(resetKey, () => {
+    setBaseFields(allFields);
     const f = allFields.find((ff) => ff.name === fieldName);
     const init = initialFromField(f, pendingSuggestion);
     setDescription(init.description);
@@ -74,6 +87,8 @@ export function useEditFieldForm(
   });
 
   return {
+    baseFields,
+    baseField,
     description,
     setDescription,
     helpText,

@@ -187,6 +187,36 @@ describe("SchemaEditor — ciclo do draft", () => {
     expect(screen.getByRole("button", { name: "Minha alteração" })).toBeTruthy();
     expect(screen.getByText("Versão 0.2.0")).toBeTruthy();
   });
+
+  // `origin` fica em "rebased" após o primeiro merge automático; o segundo
+  // rebase consecutivo substituía os campos no canvas sem anúncio (#501).
+  it("anuncia cada rebase automático, inclusive consecutivos", async () => {
+    const view = await renderEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Editar campo" }));
+
+    const remoteRevision = (help_text: string, revision: number) =>
+      view.rerender(
+        <SchemaEditorSession
+          projectId="project-1"
+          userId="user-1"
+          initialCode={null}
+          initialFields={[{ ...BASE_FIELDS[0], help_text }]}
+          currentVersion={`0.1.${revision}`}
+          currentRevision={revision}
+        />,
+      );
+
+    remoteRevision("Ajuda remota", 1);
+    await waitFor(() =>
+      expect(hoisted.toast.info).toHaveBeenCalledTimes(1),
+    );
+
+    remoteRevision("Ajuda remota revista", 2);
+    await waitFor(() =>
+      expect(hoisted.toast.info).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.getByText("Campo: Editada")).toBeTruthy();
+  });
 });
 
 // O segmento /config não tem `error.tsx`, então lançar aqui trocava uma condição

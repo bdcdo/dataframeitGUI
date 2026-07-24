@@ -23,12 +23,22 @@ import { DateSentinelEditor } from "@/components/schema/DateSentinelEditor";
 import { useOptionRemovalGuard } from "@/components/schema/useOptionRemovalGuard";
 import { TYPE_LABELS } from "@/lib/field-labels";
 import { stripOptionFromConditions } from "@/lib/schema-utils";
+import { propertyLabel } from "@/lib/schema-change-format";
+import {
+  mergeSchemas,
+  unresolvedSchemaConflicts,
+  type SchemaMergeConflict,
+} from "@/lib/schema-merge";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
-import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
+import type {
+  PydanticField,
+  SchemaBaselineIdentity,
+  SchemaSnapshot,
+} from "@/lib/types";
 import { resolveTarget } from "@/lib/pydantic-field";
 
 export type { PendingSuggestion };
@@ -43,6 +53,26 @@ interface EditFieldDialogProps {
   schemaBaseline: SchemaBaselineIdentity;
 }
 
+// Um conflito aqui é colisão real: a mesma propriedade editada no diálogo e em
+// outra sessão. A UX mínima é bloquear sem perder a digitação — reconstruir o
+// diálogo de resoluções do SchemaEditor neste fluxo seria um segundo mecanismo
+// de conflito completo para um caso raro.
+function conflictBlockMessage(conflicts: SchemaMergeConflict[]): string {
+  const disputed = conflicts.map((conflict) => {
+    if (conflict.kind === "property") {
+      return `${propertyLabel(conflict.property)} de "${conflict.fieldName}"`;
+    }
+    if (conflict.kind === "field") return `o campo "${conflict.fieldName}"`;
+    return "a ordem dos campos";
+  });
+  return `Outra sessão editou ao mesmo tempo: ${[...new Set(disputed)].join(", ")}. Recarregue a página para rever a versão atual antes de salvar.`;
+}
+
+type SubmitOutcome =
+  | { status: "saved" }
+  | { status: "conflict"; current: SchemaSnapshot }
+  | { status: "error"; message: string };
+
 export function EditFieldDialog({
   projectId,
   fieldName,
@@ -53,8 +83,9 @@ export function EditFieldDialog({
   schemaBaseline,
 }: EditFieldDialogProps) {
   const { refresh } = useRouter();
-  const field = allFields.find((f) => f.name === fieldName);
   const {
+    baseFields,
+    baseField,
     description,
     setDescription,
     helpText,
@@ -73,7 +104,7 @@ export function EditFieldDialog({
     setJustificationPrompt,
     isSaving,
     startSave,
-  } = useEditFieldForm(field, fieldName, allFields, pendingSuggestion);
+  } = useEditFieldForm(fieldName, allFields, pendingSuggestion);
 
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
@@ -82,17 +113,43 @@ export function EditFieldDialog({
   const handleBeforeRemoveOption = async (opt: string): Promise<boolean> =>
     (await confirmRemoval(opt)).confirmed;
 
-  if (!field) return null;
+  // O campo pode ter sido deletado remotamente com o diálogo aberto; o form
+  // segue ancorado no base capturado e o merge do save expõe o edit-delete.
+  if (!baseField) return null;
 
-  const descriptionChanged = description !== field.description;
+  const descriptionChanged = description !== baseField.description;
   const hasSubfields = subfields && subfields.length > 0;
+
+  const submit = async (
+    fields: PydanticField[],
+    baseline: SchemaBaselineIdentity,
+  ): Promise<SubmitOutcome> => {
+    if (pendingSuggestion) {
+      const result = await approveSchemaSuggestionWithEdits(
+        pendingSuggestion.id,
+        projectId,
+        fields,
+        baseline,
+      );
+      if (result.conflict) {
+        return { status: "conflict", current: result.conflict };
+      }
+      if (result.error) return { status: "error", message: result.error };
+      return { status: "saved" };
+    }
+    return saveSchemaFromGUI(projectId, fields, baseline);
+  };
 
   const handleSave = () => {
     startSave(async () => {
-      const originalOpts = field.options ?? [];
+      // O diff local é form × BASE capturado na abertura — o que o usuário de
+      // fato mudou. Aplicá-lo direto sobre o `allFields` vivo reescreveria as
+      // propriedades geridas pelo form com valores congelados, revertendo em
+      // silêncio a edição concorrente que um refresh trouxe (#501).
+      const originalOpts = baseField.options ?? [];
       const optionSet = new Set(options);
       const removedOpts = originalOpts.filter((o) => !optionSet.has(o));
-      let updatedFields = allFields.map((f) =>
+      let localFields = baseFields.map((f) =>
         f.name === fieldName
           ? {
               ...f,
@@ -111,32 +168,49 @@ export function EditFieldDialog({
           : f,
       );
       for (const removed of removedOpts) {
-        updatedFields = stripOptionFromConditions(updatedFields, fieldName, removed);
+        localFields = stripOptionFromConditions(localFields, fieldName, removed);
       }
       try {
-        if (pendingSuggestion) {
-          const result = await approveSchemaSuggestionWithEdits(
-            pendingSuggestion.id,
-            projectId,
-            updatedFields,
-            schemaBaseline,
-          );
-          if (result.error) throw new Error(result.error);
-          toast.success("Sugestão aprovada e campo atualizado");
-        } else {
-          const result = await saveSchemaFromGUI(
-            projectId,
-            updatedFields,
-            schemaBaseline,
-          );
-          if (result.status === "error") throw new Error(result.message);
-          if (result.status === "conflict") {
-            throw new Error(
-              "O schema mudou em outra sessão. Recarregue a página e reaplique esta edição sobre a versão atual.",
-            );
-          }
-          toast.success("Campo atualizado");
+        // Merge de três vias: base capturado × edição do form × remoto vivo.
+        // Edições concorrentes em outras propriedades entram no payload;
+        // colisão na mesma propriedade bloqueia com a digitação intacta.
+        const merged = mergeSchemas(baseFields, localFields, allFields);
+        const blocked = unresolvedSchemaConflicts(merged);
+        if (blocked.length > 0) {
+          toast.error(conflictBlockMessage(blocked));
+          return;
         }
+
+        let result = await submit(merged.fields, schemaBaseline);
+        if (result.status === "conflict") {
+          // O CAS recusou porque o baseline da prop ficou atrás do banco. O
+          // `current` devolvido é o remoto real: re-mesclar e reenviar uma
+          // vez, em vez de descartar a edição com "recarregue a página".
+          const remerged = mergeSchemas(
+            baseFields,
+            localFields,
+            result.current.fields,
+          );
+          const reblocked = unresolvedSchemaConflicts(remerged);
+          if (reblocked.length > 0) {
+            toast.error(conflictBlockMessage(reblocked));
+            return;
+          }
+          result = await submit(remerged.fields, {
+            revision: result.current.revision,
+          });
+        }
+        if (result.status === "conflict") {
+          throw new Error(
+            "O schema mudou em outra sessão. Recarregue a página e reaplique esta edição sobre a versão atual.",
+          );
+        }
+        if (result.status === "error") throw new Error(result.message);
+        toast.success(
+          pendingSuggestion
+            ? "Sugestão aprovada e campo atualizado"
+            : "Campo atualizado",
+        );
         onOpenChange(false);
         refresh();
       } catch (e) {
@@ -173,7 +247,7 @@ export function EditFieldDialog({
           <div className="flex items-center gap-2">
             <Label className="text-xs">Tipo</Label>
             <Badge variant="outline" className="text-xs">
-              {TYPE_LABELS[field.type]}
+              {TYPE_LABELS[baseField.type]}
             </Badge>
           </div>
 
@@ -208,7 +282,7 @@ export function EditFieldDialog({
             />
           </div>
 
-          {(field.type === "single" || field.type === "multi") && (
+          {(baseField.type === "single" || baseField.type === "multi") && (
             <OptionsAllowOtherEditor
               options={options}
               onChange={setOptions}
@@ -218,7 +292,7 @@ export function EditFieldDialog({
             />
           )}
 
-          {field.type === "date" && (
+          {baseField.type === "date" && (
             <DateSentinelEditor
               options={options}
               onChange={setOptions}
@@ -226,7 +300,7 @@ export function EditFieldDialog({
             />
           )}
 
-          {field.type === "text" && (
+          {baseField.type === "text" && (
             <SubfieldsEditor
               subfields={subfields}
               subfieldRule={subfieldRule}
@@ -249,8 +323,8 @@ export function EditFieldDialog({
 
           {/* Prompt de justificativa do LLM — só faz sentido quando o campo
               é enviado ao LLM. Vazio = backend usa o default exigente. */}
-          {resolveTarget(field.target) !== "human_only" &&
-            resolveTarget(field.target) !== "none" && (
+          {resolveTarget(baseField.target) !== "human_only" &&
+            resolveTarget(baseField.target) !== "none" && (
               <JustificationPromptField
                 value={justificationPrompt}
                 onChange={setJustificationPrompt}

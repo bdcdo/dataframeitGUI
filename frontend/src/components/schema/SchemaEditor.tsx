@@ -208,12 +208,20 @@ function SchemaEditor({
         "Rascunho local recuperado. Revise e salve para confirmar as alterações.",
       );
     }
+  }, [origin]);
+
+  // O anúncio de rebase chaveia também na revisão: `origin` fica em "rebased"
+  // após o primeiro merge automático, e um segundo rebase consecutivo trocava
+  // os campos no canvas sem aviso (#501). A guarda anti-retrocesso do
+  // useSchemaDraft garante que todo rebase avança `baseline.revision`, então a
+  // revisão é o token de "aconteceu de novo".
+  useEffect(() => {
     if (origin === "rebased") {
       toast.info(
         "O schema mudou em outra sessão. Suas alterações foram mescladas com a versão mais recente.",
       );
     }
-  }, [origin]);
+  }, [origin, baseline.revision]);
 
   // --- Troca de modo ---
   // O modo "código" é só visualização da fonte de verdade. Alternar não
