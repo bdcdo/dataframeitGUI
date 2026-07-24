@@ -21,12 +21,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import {
-  reconstructSnapshotsByVersion,
-  computeHashesFromSnapshot,
-  type EnrichedEntry,
-  type Version,
+  buildTimelineFromPersistedVersions,
+  type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
-import { bumpVersion, fieldDiffIsStructural, type ChangeType } from "@/lib/schema-utils";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { loadEnv } from "../comentarios-relatorio/load-env";
 
@@ -312,101 +309,82 @@ const invariants: Invariant[] = [
   {
     name: "versao-carimbada-tem-hash-da-propria-epoca",
     motivation:
-      "família #529/#573 (medição #574/#579): antes do #573, o auto-save promovia schema_version_* sem revisão. Sob o critério do #573, carimbar a versão V exige revisão real sob V — que grava ao menos um hash de V em answer_field_hashes. Uma response cujo carimbo não é sustentado por NENHUM hash da própria época foi promovida por canal que pulou essa regra (ou o log de versões foi reescrito sob os pés dela — também vale investigação)",
+      "família #529/#573 (medição #574/#579): antes do #573, o auto-save promovia schema_version_* sem revisão. Sob o critério do #573, carimbar a versão V no save ao vivo exige revisão real sob V — que grava ao menos um hash de V em answer_field_hashes. Uma response live_save cujo carimbo não é sustentado por NENHUM hash da própria época foi promovida por canal que pulou essa regra (ou o log de versões foi reescrito sob os pés dela — também vale investigação)",
     run: async () => {
-      // Timeline de hashes por versão na ESCALA PERSISTIDA: usa as colunas
-      // version_* gravadas no schema_change_log — NÃO classifyLogEntries, que
-      // re-deriva o semver (reclassifica patch→minor e bumpa por entry em vez
-      // de por lote de save) e produz uma escala incomparável com a que as
-      // responses e o piso da fila carregam (medido no Zolgensma em
-      // 2026-07-24: 0.38.0 re-derivado contra 0.20.0 persistido). O prefixo
-      // pré-versionamento (entries com version_major NULL, anteriores à
-      // migration 20260420) é sintetizado replicando os bumps a partir de
-      // 0.1.0; entries com versão gravada reancoram a síntese.
-      const buildHashesByVersion = (
-        log: Array<{
-          id: string;
-          field_name: string;
-          before_value: Record<string, unknown> | null;
-          after_value: Record<string, unknown> | null;
-          created_at: string;
-          change_type: string | null;
-          version_major: number | null;
-          version_minor: number | null;
-          version_patch: number | null;
-        }>,
-        fields: PydanticField[],
-      ): Map<string, Record<string, string>> => {
-        let synth: Version = { major: 0, minor: 1, patch: 0 };
-        const enriched: EnrichedEntry[] = log.map((entry) => {
-          const before = entry.before_value ?? {};
-          const after = entry.after_value ?? {};
-          const changeType: ChangeType =
-            entry.change_type === "major" || entry.change_type === "minor" || entry.change_type === "patch"
-              ? entry.change_type
-              : fieldDiffIsStructural(before, after)
-                ? "minor"
-                : "patch";
-          let version: Version;
-          if (entry.version_major !== null) {
-            version = {
-              major: entry.version_major,
-              minor: entry.version_minor ?? 0,
-              patch: entry.version_patch ?? 0,
-            };
-            synth = version;
-          } else {
-            synth = bumpVersion(synth, changeType);
-            version = synth;
-          }
-          return {
-            id: entry.id,
-            field_name: entry.field_name,
-            before,
-            after,
-            createdAt: new Date(entry.created_at).getTime(),
-            changeType,
-            version,
-          };
-        });
-        const snapshots = reconstructSnapshotsByVersion(fields, enriched, enriched.at(-1)!.version);
-        const out = new Map<string, Record<string, string>>();
-        for (const [key, snap] of snapshots) out.set(key, computeHashesFromSnapshot(snap));
-        return out;
-      };
-
-      const projects = await fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>(
+      const activeDocs = await activeDocIds();
+      const projects = await fetchAll<{
+        id: string;
+        pydantic_fields: PydanticField[] | null;
+        schema_version_major: number | null;
+        schema_version_minor: number | null;
+        schema_version_patch: number | null;
+      }>(
         "projects",
-        "id, pydantic_fields",
+        "id, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
       );
       const violations: Violation[] = [];
       for (const p of projects) {
         const fields = p.pydantic_fields ?? [];
         if (fields.length === 0) continue;
-        const log = await fetchAll<Parameters<typeof buildHashesByVersion>[0][number]>(
+        const log = await fetchAll<PersistedLogEntryRow>(
           "schema_change_log",
           "id, field_name, before_value, after_value, created_at, change_type, version_major, version_minor, version_patch",
           (q) => q.eq("project_id", p.id),
         );
-        // fetchAll pagina por id; a síntese do prefixo exige ordem (created_at, id).
+        // fetchAll pagina por id; a auditoria de ordem e a síntese do prefixo
+        // em buildTimelineFromPersistedVersions exigem ordem (created_at, id).
         log.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
         if (log.length === 0) continue;
-        const hashesByVersion = buildHashesByVersion(log, fields);
+        const timeline = buildTimelineFromPersistedVersions(log, fields, {
+          major: p.schema_version_major ?? 0,
+          minor: p.schema_version_minor ?? 0,
+          patch: p.schema_version_patch ?? 0,
+        });
+        // A timeline inconsistente é achado do projeto, não das responses:
+        // reconstruir por cima dela produziria snapshots errados e marcaria em
+        // massa linhas honestas — falso positivo, que aqui é o pior resultado.
+        if (timeline.status !== "ok") {
+          violations.push({ key: p.id, detail: `${timeline.status}: ${timeline.detail}` });
+          continue;
+        }
+        const { hashesByVersion } = timeline;
 
+        // Só `live_save` (actions/responses.ts) carimba a versão como
+        // afirmação de revisão real sob ela — é o carimbo que o critério do
+        // #573 governa e o único sobre o qual esta invariante tem o que dizer.
+        // Os outros três valores de version_inferred_from são inferência
+        // retroativa do backfill, e dois deles tornariam a asserção degenerada:
+        // `hashes` escolhe a versão MAXIMIZANDO hashes que batem
+        // (findBestHashMatch exige score > 0), então nunca pode violar; e
+        // `fallback_created_at` é o ramo alcançado justamente porque NENHUMA
+        // versão compatível pontuou, então violaria por construção — a
+        // condição que ativaria esse falso positivo é rodar o Backfill pela UI
+        // num projeto com hashes legados que não batem com versão alguma.
+        // `created_at` foi atribuído em bloco pela migration 20260421 a tudo
+        // que era NULL, e também não afirma revisão.
         const rows = await fetchAll<{
           id: string;
+          document_id: string;
           answer_field_hashes: AnswerFieldHashes | null;
           schema_version_major: number;
           schema_version_minor: number | null;
           schema_version_patch: number | null;
-          version_inferred_from: string | null;
         }>(
           "responses",
-          "id, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, version_inferred_from",
-          (q) => q.eq("project_id", p.id).eq("is_latest", true).not("schema_version_major", "is", null),
+          "id, document_id, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch",
+          (q) =>
+            q
+              .eq("project_id", p.id)
+              .eq("is_latest", true)
+              .eq("version_inferred_from", "live_save")
+              .not("schema_version_major", "is", null),
         );
 
         for (const r of rows) {
+          // Mesma exclusão de documento soft-deletado das invariantes de
+          // fila/status: a cópia excluída do dedup de 2026-06 carrega carimbo e
+          // hashes da época e é inerte.
+          if (!activeDocs.has(r.document_id)) continue;
           // Sem hash não-nulo não há evidência de época — o sentinela {} das
           // linhas legadas (#528) e mapas só-null ficam fora, não são violação.
           const nonNull = Object.entries(r.answer_field_hashes ?? {}).filter(([, h]) => h !== null);
@@ -416,7 +394,7 @@ const invariants: Invariant[] = [
           if (!snap) {
             violations.push({
               key: r.id,
-              detail: `carimbo ${stampedKey} [${r.version_inferred_from}] não existe na timeline do schema_change_log`,
+              detail: `carimbo ${stampedKey} não existe na timeline do schema_change_log`,
             });
             continue;
           }
@@ -424,7 +402,7 @@ const invariants: Invariant[] = [
           if (epochHashes === 0) {
             violations.push({
               key: r.id,
-              detail: `carimbo ${stampedKey} [${r.version_inferred_from}] sem nenhum hash da própria época (0/${nonNull.length})`,
+              detail: `carimbo ${stampedKey} sem nenhum hash da própria época (0/${nonNull.length})`,
             });
           }
         }
