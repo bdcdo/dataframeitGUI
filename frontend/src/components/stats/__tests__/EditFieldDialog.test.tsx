@@ -150,6 +150,22 @@ describe("EditFieldDialog — remoto avança com o diálogo aberto", () => {
     expect(hoisted.toast.error).not.toHaveBeenCalled();
   });
 
+  it("erro do save mantém o diálogo aberto com a digitação", async () => {
+    hoisted.saveSchemaFromGUI.mockResolvedValue({
+      status: "error",
+      message: "Falha remota",
+    });
+    render(dialogAt([fieldA], 1));
+    await typeDescription("Descrição editada");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() =>
+      expect(hoisted.toast.error).toHaveBeenCalledWith("Falha remota"),
+    );
+    expect(hoisted.toast.success).not.toHaveBeenCalled();
+    expect(descriptionInput().value).toBe("Descrição editada");
+  });
+
   it("colisão na mesma propriedade bloqueia o save sem perder a digitação", async () => {
     const view = render(dialogAt([fieldA], 1));
     await typeDescription("Descrição editada");
@@ -163,5 +179,80 @@ describe("EditFieldDialog — remoto avança com o diálogo aberto", () => {
     expect(hoisted.saveSchemaFromGUI).not.toHaveBeenCalled();
     // O diálogo permanece aberto com o trabalho do usuário intacto.
     expect(descriptionInput().value).toBe("Descrição editada");
+  });
+});
+
+// A aprovação de sugestão é a via cujo contrato mais mudou: o conflito de CAS
+// deixou de sair achatado em `error` e passou a voltar tipado, com o snapshot
+// atual, para que o re-merge e o reenvio sejam possíveis (#501). Ela usa uma
+// Server Action distinta, então precisa do seu próprio par de testes.
+describe("EditFieldDialog — aprovação de sugestão", () => {
+  const SUGGESTION = {
+    id: "suggestion-1",
+    changes: { description: "Descrição sugerida" },
+  };
+
+  function suggestionDialogAt(fields: PydanticField[], revision: number) {
+    return (
+      <EditFieldDialog
+        projectId="project-1"
+        fieldName="a"
+        allFields={fields}
+        open
+        onOpenChange={vi.fn()}
+        schemaBaseline={{ revision }}
+        pendingSuggestion={SUGGESTION}
+      />
+    );
+  }
+
+  it("baseline stale re-mescla sobre o snapshot devolvido e reenvia uma vez", async () => {
+    hoisted.approveSchemaSuggestionWithEdits
+      .mockResolvedValueOnce({
+        conflict: {
+          fields: [{ ...fieldA, help_text: "Ajuda remota" }],
+          version: "0.1.4",
+          revision: 5,
+        },
+      })
+      .mockResolvedValueOnce({});
+    render(suggestionDialogAt([fieldA], 1));
+
+    // O form já vem semeado com a proposta; aprovar é salvar o que ela pede.
+    expect(descriptionInput().value).toBe("Descrição sugerida");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() =>
+      expect(hoisted.approveSchemaSuggestionWithEdits).toHaveBeenCalledTimes(2),
+    );
+    const [suggestionId, projectId, fields, baseline] =
+      hoisted.approveSchemaSuggestionWithEdits.mock.calls[1];
+    expect([suggestionId, projectId, baseline]).toEqual([
+      "suggestion-1",
+      "project-1",
+      { revision: 5 },
+    ]);
+    expect((fields as PydanticField[])[0]).toMatchObject({
+      description: "Descrição sugerida",
+      help_text: "Ajuda remota",
+    });
+    expect(hoisted.toast.success).toHaveBeenCalledWith(
+      "Sugestão aprovada e campo atualizado",
+    );
+  });
+
+  it("erro da action não é confundido com aprovação", async () => {
+    hoisted.approveSchemaSuggestionWithEdits.mockResolvedValue({
+      error: "Sugestão já resolvida por outro coordenador.",
+    });
+    render(suggestionDialogAt([fieldA], 1));
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() =>
+      expect(hoisted.toast.error).toHaveBeenCalledWith(
+        "Sugestão já resolvida por outro coordenador.",
+      ),
+    );
+    expect(hoisted.toast.success).not.toHaveBeenCalled();
   });
 });

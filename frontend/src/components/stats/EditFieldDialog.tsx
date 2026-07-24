@@ -50,8 +50,10 @@ interface EditFieldDialogProps {
 type EditFieldForm = ReturnType<typeof useEditFieldForm>;
 
 // Editores específicos do tipo do campo (e das propriedades que só alguns
-// tipos têm). Fora do componente principal para o shell do diálogo não
-// carregar os ramos por tipo junto do fluxo de save.
+// tipos têm). Vive fora do componente principal porque os ramos por tipo são
+// puramente declarativos e, somados ao fluxo de save, punham o `EditFieldDialog`
+// acima do limiar de complexidade cognitiva do gate do fallow. Não há
+// code-splitting envolvido: é o mesmo módulo e a mesma árvore renderizada.
 function FieldTypeEditors({
   form,
   baseField,
@@ -147,6 +149,17 @@ export function EditFieldDialog({
     startSave,
   } = form;
 
+  // A guarda de remoção é a única coisa aqui que fica no `allFields` VIVO, e é
+  // intencional: ela pergunta "quais condições quebram se esta opção sair", e a
+  // resposta útil é sobre as condições que existem AGORA — inclusive uma criada
+  // em outra sessão depois que o diálogo abriu. Ancorá-la no base capturado
+  // esconderia exatamente a dependência que o usuário não tem como ver.
+  //
+  // A contrapartida é que o strip de `applyFormEdits` roda sobre o base, então
+  // uma condição que só existe no remoto sobrevive apontando para a opção
+  // removida. O save recusa isso (`validateConditionValues` em pydantic-field),
+  // então é fail-closed e não schema inconsistente — mas a mensagem culpa o
+  // campo, não a concorrência. Ver issue de follow-up.
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
     fieldName,
@@ -196,7 +209,10 @@ export function EditFieldDialog({
           schemaBaseline,
           submit,
         );
-        if (saved.status === "blocked") {
+        // Bloqueio e erro chegam pelo mesmo canal e param o save do mesmo jeito:
+        // o diálogo fica aberto com a digitação intacta. O `catch` abaixo passa a
+        // cuidar só do inesperado (queda de rede, exceção de Server Action).
+        if (saved.status !== "saved") {
           toast.error(saved.message);
           return;
         }

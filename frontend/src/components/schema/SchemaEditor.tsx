@@ -210,18 +210,31 @@ function SchemaEditor({
     }
   }, [origin]);
 
-  // O anúncio de rebase chaveia também na revisão: `origin` fica em "rebased"
-  // após o primeiro merge automático, e um segundo rebase consecutivo trocava
-  // os campos no canvas sem aviso (#501). A guarda anti-retrocesso do
-  // useSchemaDraft garante que todo rebase avança `baseline.revision`, então a
-  // revisão é o token de "aconteceu de novo".
+  // Um rebase só é anunciável quando FECHOU, e os dois termos abaixo são o que
+  // distingue isso:
+  //
+  //  - `conflict === null` porque `stateAfterRemoteChange` preserva a
+  //    proveniência no ramo de conflito (de propósito: quem decide é o usuário
+  //    no diálogo) e a baseline de um estado em conflito já é o remoto novo.
+  //    Sem esse termo, uma revisão que colide anunciava "suas alterações foram
+  //    mescladas" enquanto o diálogo pedia a resolução. É o mesmo teste que o
+  //    `statusMessage` do rodapé faz: conflito primeiro, proveniência depois.
+  //  - `baseline.revision` nas deps porque `origin` fica em "rebased" após o
+  //    primeiro merge automático, e sem a revisão um segundo rebase consecutivo
+  //    trocava os campos no canvas sem aviso (#501). A guarda anti-retrocesso
+  //    do useSchemaDraft garante que todo rebase avança a revisão.
+  //
+  // O predicado ainda cobre o rebase que fecha por resolução manual, em que a
+  // revisão NÃO muda (a baseline já era o remoto) e só o conflito zera.
+  const mergeSettled = origin === "rebased" && conflict === null;
+
   useEffect(() => {
-    if (origin === "rebased") {
+    if (mergeSettled) {
       toast.info(
         "O schema mudou em outra sessão. Suas alterações foram mescladas com a versão mais recente.",
       );
     }
-  }, [origin, baseline.revision]);
+  }, [mergeSettled, baseline.revision]);
 
   // --- Troca de modo ---
   // O modo "código" é só visualização da fonte de verdade. Alternar não

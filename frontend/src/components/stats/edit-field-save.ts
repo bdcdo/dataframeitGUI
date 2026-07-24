@@ -104,9 +104,15 @@ export type SubmitOutcome =
   | { status: "conflict"; current: SchemaSnapshot }
   | { status: "error"; message: string };
 
+// Toda parada tem uma mensagem e sai pelo mesmo canal. `blocked` e `error` são
+// distintos porque só o primeiro preserva a digitação por design (a colisão é
+// resolúvel recarregando), mas nenhum dos dois é exceção: fazer a falha de save
+// sair por `throw` obrigava o `try/catch` do chamador a servir a erro de domínio
+// e a queda de rede ao mesmo tempo.
 export type SaveMergedEditResult =
   | { status: "saved" }
-  | { status: "blocked"; message: string };
+  | { status: "blocked"; message: string }
+  | { status: "error"; message: string };
 
 const STALE_RETRY_FAILED_MESSAGE =
   "O schema mudou em outra sessão. Recarregue a página e reaplique esta edição sobre a versão atual.";
@@ -115,8 +121,7 @@ const STALE_RETRY_FAILED_MESSAGE =
 // submeter: edições concorrentes em outras propriedades entram no payload;
 // colisão na mesma propriedade bloqueia com a digitação intacta. Um conflito
 // de CAS re-mescla sobre o snapshot devolvido e reenvia UMA vez, em vez de
-// descartar a edição com "recarregue a página". Erros de save continuam
-// lançados — o chamador já os trata.
+// descartar a edição com "recarregue a página".
 export async function saveMergedEdit(
   baseFields: PydanticField[],
   localFields: PydanticField[],
@@ -145,8 +150,10 @@ export async function saveMergedEdit(
     });
   }
   if (result.status === "conflict") {
-    throw new Error(STALE_RETRY_FAILED_MESSAGE);
+    return { status: "error", message: STALE_RETRY_FAILED_MESSAGE };
   }
-  if (result.status === "error") throw new Error(result.message);
+  if (result.status === "error") {
+    return { status: "error", message: result.message };
+  }
   return { status: "saved" };
 }
