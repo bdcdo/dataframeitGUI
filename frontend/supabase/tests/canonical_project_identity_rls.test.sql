@@ -2386,6 +2386,14 @@ BEGIN
       AND status = 'concluido'
       AND completed_at = '2001-01-01T00:00:00Z'::timestamptz
   ) OR NOT EXISTS (
+    -- Desde a 20260725120000 (issue #177) esta asserção também é o que segura a
+    -- ORDEM interna do unify contra o trigger BEFORE DELETE de project_members:
+    -- o 012 entra na fixture como 'pendente' do SOURCE, então, se a membership
+    -- do source saísse antes do UPDATE que repontou os assignments, o trigger o
+    -- apagaria como pendência de ex-membro e o NOT EXISTS abaixo cairia. Não há
+    -- asserção separada para isso de propósito — reforço de ordem
+    -- intra-transação é comentário, não uma segunda asserção que envelhece.
+    --
     -- 012 (auto_revisao no doc 002) migra para o target e fica 'concluido'. O
     -- status de auto_revisao é DERIVADO dos field_reviews pelo trigger
     -- archive_review_dependencies_on_response_change (migration 20260717120000),
@@ -2825,15 +2833,32 @@ BEGIN
       'FALHOU contrato: guard não usa exclusivamente a identidade canônica';
   END IF;
 
+  -- Cada efeito da remoção mora em exatamente um lugar. Aliases saem pela FK
+  -- composta (ON DELETE CASCADE) desde esta migration; pendências saíram da RPC
+  -- para o trigger BEFORE DELETE na 20260725120000 (issue #177), de modo que
+  -- também sejam liberadas por DELETE direto, e não só pela RPC. A RPC, então,
+  -- não pode conter nenhum dos dois DELETEs.
   SELECT pg_get_functiondef(
     'public.remove_project_member(uuid)'::regprocedure
   ) INTO definition;
   IF definition NOT ILIKE '%delete from public.project_members%'
-     OR definition NOT ILIKE '%delete from public.assignments%'
+     OR definition ILIKE '%delete from public.assignments%'
      OR definition ILIKE '%delete from public.member_email_links%'
   THEN
     RAISE EXCEPTION
       'FALHOU contrato: remoção duplica ou omite responsabilidades da FK';
+  END IF;
+
+  -- O lado positivo do mesmo contrato: a liberação existe, está no trigger e
+  -- alcança só o que é pendente — histórico iniciado/concluído sobrevive.
+  SELECT pg_get_functiondef(
+    'public.release_pending_assignments_on_member_delete()'::regprocedure
+  ) INTO definition;
+  IF definition NOT ILIKE '%delete from public.assignments%'
+     OR definition NOT ILIKE '%pendente%'
+  THEN
+    RAISE EXCEPTION
+      'FALHOU contrato: liberação de pendências não vive no trigger da membership';
   END IF;
 
   SELECT pg_get_functiondef(
