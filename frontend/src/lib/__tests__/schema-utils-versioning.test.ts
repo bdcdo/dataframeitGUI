@@ -17,7 +17,17 @@ import {
 import { pydanticFieldNameIssue } from "@/lib/pydantic-field";
 import type { FieldCondition, PydanticField } from "@/lib/types";
 
+// Ids determinísticos por chamada: a auditoria (`diffFields`/`classifyChange`)
+// segue chaveada por NOME e `snapshotOf` exclui o id, então ids distintos entre
+// arrays old/new não fabricam diff — o contador só garante unicidade dentro de
+// um mesmo array. Testes que exigem texto gerado byte-idêntico passam o id
+// explícito.
+let fieldIdCounter = 0;
+const nextFieldId = (): string =>
+  `00000000-0000-4000-8000-0000000000${String(++fieldIdCounter).padStart(2, "0")}`;
+
 const baseField = (over: Partial<PydanticField>): PydanticField => ({
+  id: nextFieldId(),
   name: "x",
   type: "single",
   description: "x",
@@ -491,14 +501,28 @@ describe("generatePydanticCode round-trip surface", () => {
   // o hash é o único vínculo delas com o schema. O texto tem que ficar
   // byte-idêntico para quem não usa campo opcional.
   it("never emits required for the implicit default", () => {
+    // Mesmo id explícito nos dois lados: `id` é sempre emitido, então a
+    // igualdade byte a byte só vale para o MESMO campo.
+    const id = "00000000-0000-4000-8000-0000000000aa";
     const implicito = generatePydanticCode([
-      baseField({ name: "q1", options: ["A", "B"] }),
+      baseField({ id, name: "q1", options: ["A", "B"] }),
     ]);
     const explicito = generatePydanticCode([
-      baseField({ name: "q1", options: ["A", "B"], required: true }),
+      baseField({ id, name: "q1", options: ["A", "B"], required: true }),
     ]);
     expect(implicito).not.toContain('"required"');
     expect(explicito).not.toContain('"required"');
     expect(explicito).toBe(implicito);
+  });
+
+  // `id` é identidade, não conteúdo com default: é emitido SEMPRE, como
+  // primeira chave do json_schema_extra, para o round-trip via
+  // `compile_pydantic` reconstruir o campo com a mesma identidade (#473).
+  it("always emits id as the first json_schema_extra key", () => {
+    const id = "00000000-0000-4000-8000-0000000000ab";
+    const code = generatePydanticCode([
+      baseField({ id, name: "q1", options: ["A", "B"] }),
+    ]);
+    expect(code).toContain(`json_schema_extra={"id": "${id}"`);
   });
 });

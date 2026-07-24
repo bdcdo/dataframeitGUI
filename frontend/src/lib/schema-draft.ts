@@ -4,6 +4,7 @@ import {
   generateFieldId,
   pydanticFieldSchema,
   pydanticFieldsSchema,
+  refineUniqueNames,
   type PydanticField,
 } from "@/lib/pydantic-field";
 
@@ -33,22 +34,12 @@ export type SchemaDraftEnvelope = z.infer<typeof schemaDraftEnvelopeSchema>;
 // silêncio quando o shape mudasse de novo.
 const pydanticFieldV4Schema = pydanticFieldSchema.omit({ id: true });
 
+// Sem `id`, nome ainda é a identidade — que é justamente a semântica que a
+// conversão precisa honrar. O refinamento é o MESMO de `pydanticFieldsSchema`,
+// importado em vez de copiado.
 const pydanticFieldsV4Schema = z
   .array(pydanticFieldV4Schema)
-  .superRefine((fields, context) => {
-    const names = new Set<string>();
-    for (let index = 0; index < fields.length; index += 1) {
-      const name = fields[index].name;
-      if (names.has(name)) {
-        context.addIssue({
-          code: "custom",
-          path: [index, "name"],
-          message: `Campo ${index + 1}: nome "${name}" duplicado`,
-        });
-      }
-      names.add(name);
-    }
-  });
+  .superRefine(refineUniqueNames);
 
 const schemaSnapshotV4Schema = z.strictObject({
   fields: pydanticFieldsV4Schema,
@@ -123,13 +114,18 @@ export function readSchemaDraft(raw: string | null): SchemaDraftRead {
   return { kind: "empty" };
 }
 
-// Converte um envelope v4 (campos sem id) para v5, reconstruindo a identidade:
-// a base do rascunho casa por NOME com o snapshot remoto (que já vem do banco
-// com ids pós-backfill) e reusa o id remoto; os campos do rascunho casam por
-// nome com a base já convertida. Nome que não existe do outro lado ganha UUID
-// novo — para o merge isso é um add/delete legítimo, que é exatamente o que um
-// campo criado ou removido durante a janela do deploy significa. `writeToken`
-// é preservado: o slot continua sendo da mesma aba.
+// Converte um envelope v4 (campos sem id) para v5, reconstruindo a identidade.
+//
+// O casamento é por NOME porque é essa a semântica sob a qual o envelope v4 foi
+// escrito: antes da #473, nome ERA a identidade. Honrá-la na conversão é o que
+// faz o rascunho atravessar o deploy significando a mesma coisa que significava
+// quando foi gravado. A baseline casa contra o snapshot remoto (que já vem do
+// banco com os ids do backfill); os campos do rascunho casam contra a baseline
+// já convertida e, se o nome não estiver lá, contra o remoto — senão um campo
+// adicionado dos dois lados durante a janela do deploy viraria DOIS campos de
+// mesmo nome, e o save ficaria bloqueado por uma duplicata que o usuário não
+// criou. Nome que não existe em nenhum dos dois é adição local de verdade e
+// ganha UUID novo. `writeToken` é preservado: o slot continua sendo da mesma aba.
 export function convertSchemaDraftV4(
   draft: SchemaDraftEnvelopeV4,
   remoteFields: PydanticField[],
@@ -146,7 +142,10 @@ export function convertSchemaDraftV4(
   );
   const draftFields = draft.fields.map((field) => ({
     ...field,
-    id: baseIdByName.get(field.name) ?? generateFieldId(),
+    id:
+      baseIdByName.get(field.name) ??
+      remoteIdByName.get(field.name) ??
+      generateFieldId(),
   }));
   return {
     formatVersion: SCHEMA_DRAFT_FORMAT_VERSION,

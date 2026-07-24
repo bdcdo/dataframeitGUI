@@ -6,7 +6,14 @@ import {
 } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
+let fieldIdSeq = 0;
+const nextFieldId = (): string => {
+  fieldIdSeq += 1;
+  return `00000000-0000-4000-8000-0000000000${String(fieldIdSeq).padStart(2, "0")}`;
+};
+
 const baseField = (over: Partial<PydanticField>): PydanticField => ({
+  id: nextFieldId(),
   name: "x",
   type: "single",
   description: "x",

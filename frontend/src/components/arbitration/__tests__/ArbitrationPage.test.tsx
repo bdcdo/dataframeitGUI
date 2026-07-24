@@ -72,6 +72,7 @@ function doc(docId: string, fields: ArbitrationField[], text: string): Arbitrati
 }
 
 const pydField: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "f1",
   type: "single",
   options: null,

@@ -63,27 +63,18 @@ export const pydanticFieldSchema = z.strictObject({
   justification_prompt: z.string().optional(),
 });
 
-type FieldsRefinement = (
-  fields: Array<z.infer<typeof pydanticFieldSchema>>,
-  context: z.RefinementCtx,
-) => void;
+// A checagem de nome duplicado só lê `name`, então tipar por essa propriedade
+// (e não por `PydanticField`) deixa o mesmo refinamento servir ao contrato
+// atual e ao shape v4 do envelope de rascunho, que não tem `id`. Sem isso, o
+// schema-draft mantinha uma cópia literal desta função — e cópia de regra de
+// validação é exatamente o que desanda em silêncio quando a mensagem ou o path
+// mudam de um lado só.
+type FieldsRefinement<T> = (fields: T[], context: z.RefinementCtx) => void;
 
-const refineUniqueIds: FieldsRefinement = (fields, context) => {
-  const ids = new Set<string>();
-  for (let index = 0; index < fields.length; index += 1) {
-    const id = fields[index].id;
-    if (ids.has(id)) {
-      context.addIssue({
-        code: "custom",
-        path: [index, "id"],
-        message: `Campo ${index + 1}: id "${id}" duplicado`,
-      });
-    }
-    ids.add(id);
-  }
-};
-
-const refineUniqueNames: FieldsRefinement = (fields, context) => {
+export const refineUniqueNames: FieldsRefinement<{ name: string }> = (
+  fields,
+  context,
+) => {
   const names = new Set<string>();
   for (let index = 0; index < fields.length; index += 1) {
     const name = fields[index].name;
@@ -95,6 +86,24 @@ const refineUniqueNames: FieldsRefinement = (fields, context) => {
       });
     }
     names.add(name);
+  }
+};
+
+const refineUniqueIds: FieldsRefinement<z.infer<typeof pydanticFieldSchema>> = (
+  fields,
+  context,
+) => {
+  const ids = new Set<string>();
+  for (let index = 0; index < fields.length; index += 1) {
+    const id = fields[index].id;
+    if (ids.has(id)) {
+      context.addIssue({
+        code: "custom",
+        path: [index, "id"],
+        message: `Campo ${index + 1}: id "${id}" duplicado`,
+      });
+    }
+    ids.add(id);
   }
 };
 
@@ -371,13 +380,6 @@ export function generateFieldId(): string {
     byte.toString(16).padStart(2, "0"),
   ).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-export function parseEditablePydanticFields(
-  value: unknown,
-): PydanticField[] | null {
-  const result = editablePydanticFieldsSchema.safeParse(value);
-  return result.success ? result.data : null;
 }
 
 export function parsePydanticFields(value: unknown): PydanticField[] | null {

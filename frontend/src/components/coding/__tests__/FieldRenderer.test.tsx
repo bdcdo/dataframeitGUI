@@ -8,6 +8,7 @@ import type { PydanticField } from "@/lib/types";
 afterEach(cleanup);
 
 const dateField: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "data_evento",
   type: "date",
   options: null,

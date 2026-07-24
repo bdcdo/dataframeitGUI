@@ -85,8 +85,22 @@ import type { PydanticField } from "@/lib/types";
 import type { CompareResponse } from "@/components/compare/compare-types";
 
 const fields: PydanticField[] = [
-  { name: "campoA", type: "text", options: null, description: "Pergunta A", hash: "hA" },
-  { name: "campoB", type: "text", options: null, description: "Pergunta B", hash: "hB" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "campoA",
+    type: "text",
+    options: null,
+    description: "Pergunta A",
+    hash: "hA",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000002",
+    name: "campoB",
+    type: "text",
+    options: null,
+    description: "Pergunta B",
+    hash: "hB",
+  },
 ];
 
 const documents = [
@@ -174,6 +188,9 @@ const renderMulti = () =>
         {...props}
         fields={[
           {
+            // Mesmo campo lógico "campoA" do array `fields` (variante multi):
+            // a identidade agora é o id, então ele fica estável.
+            id: "00000000-0000-4000-8000-000000000001",
             name: "campoA",
             type: "multi",
             options: ["Sim", "Não"],

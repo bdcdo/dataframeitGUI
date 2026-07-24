@@ -27,7 +27,16 @@ function field(over: Partial<ArbitrationField> = {}): ArbitrationField {
 }
 
 const meta = new Map<string, PydanticField>([
-  ["q1", { name: "q1", type: "single", options: null, description: "desc q1" }],
+  [
+    "q1",
+    {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "q1",
+      type: "single",
+      options: null,
+      description: "desc q1",
+    },
+  ],
 ]);
 
 function renderReveal(over: {

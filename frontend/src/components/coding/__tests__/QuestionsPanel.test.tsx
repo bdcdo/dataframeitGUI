@@ -17,12 +17,14 @@ vi.mock("next/navigation", () => ({
 afterEach(cleanup);
 
 const q1: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "q1",
   type: "single",
   options: ["sim", "não"],
   description: "Pergunta gatilho",
 };
 const q2Conditional: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000002",
   name: "q2",
   type: "single",
   options: ["a", "b"],
@@ -30,6 +32,7 @@ const q2Conditional: PydanticField = {
   condition: { field: "q1", equals: "sim" },
 };
 const q3: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000003",
   name: "q3",
   type: "text",
   options: null,
@@ -112,6 +115,7 @@ describe("QuestionsPanel — scroll automático em condicional (issue #71)", () 
     // Novo array de fields introduz outra condicional já satisfeita: como o
     // gatilho foi mudança de schema (não resposta do usuário), não deve rolar.
     const q4Conditional: PydanticField = {
+      id: "00000000-0000-4000-8000-000000000004",
       name: "q4",
       type: "text",
       options: null,
@@ -132,6 +136,7 @@ describe("QuestionsPanel — scroll automático em condicional (issue #71)", () 
 
   it("scrolla para a primeira condicional quando várias aparecem de uma vez", () => {
     const q2b: PydanticField = {
+      id: "00000000-0000-4000-8000-000000000005",
       name: "q2b",
       type: "text",
       options: null,
@@ -249,12 +254,14 @@ describe("QuestionsPanel — pergunta fora do escopo", () => {
 describe("QuestionsPanel — contagem de obrigatórias no header", () => {
   it("denominador exclui llm_only (mesma régua do servidor)", () => {
     const humano: PydanticField = {
+      id: "00000000-0000-4000-8000-000000000006",
       name: "humano",
       type: "single",
       options: ["a", "b"],
       description: "Pergunta humana",
     };
     const soLlm: PydanticField = {
+      id: "00000000-0000-4000-8000-000000000007",
       name: "so_llm",
       type: "single",
       options: ["a", "b"],

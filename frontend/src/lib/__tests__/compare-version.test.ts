@@ -273,13 +273,21 @@ describe("fecho espelha o filtro default da UI (#217/#218/#247)", () => {
 
   const fields: PydanticField[] = [
     {
+      id: "00000000-0000-4000-8000-000000000001",
       name: "decisao",
       type: "single",
       options: ["proc", "improc"],
       description: "",
       target: "all",
     },
-    { name: "obs", type: "text", options: null, description: "", target: "all" },
+    {
+      id: "00000000-0000-4000-8000-000000000002",
+      name: "obs",
+      type: "text",
+      options: null,
+      description: "",
+      target: "all",
+    },
   ];
 
   const active = rows.filter((r) =>
