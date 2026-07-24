@@ -51,6 +51,9 @@ const GENERATED_DIRECTORIES = new Set([
 ]);
 
 const EXPECTED_RUNTIME_IMPORTERS = [
+  // Sync documento-wide pós-unmark (#545): a RLS do chamador não alcança
+  // assignments de peers; o privilégio roda só depois de a RPC autorizar.
+  "actions/equivalences.ts",
   "actions/field-reviews.ts",
   "actions/members.ts",
   "app/(app)/projects/[id]/analyze/assignments/page.tsx",
@@ -416,7 +419,9 @@ describe("fronteira do Supabase admin client", () => {
     // assign_comparison_if_eligible é executável somente por service_role;
     // todas as leituras do retry continuam no client autenticado. O
     // reconciliador interno acrescenta o uso necessário para drenar a outbox.
-    expect(countAdminFactoryCalls(files)).toBe(19);
+    // A #545 acrescenta 1: o sync documento-wide pós-unmark precisa alcançar
+    // assignments de peers, fora da RLS do chamador.
+    expect(countAdminFactoryCalls(files)).toBe(20);
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {

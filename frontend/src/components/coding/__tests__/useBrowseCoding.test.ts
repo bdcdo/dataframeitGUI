@@ -14,7 +14,7 @@ import { useBrowseCoding } from "../useBrowseCoding";
 vi.mock("@/hooks/useBrowseDocuments", () => ({ useBrowseDocuments: vi.fn() }));
 vi.mock("@/hooks/useDocumentForCoding", () => ({ useDocumentForCoding: vi.fn() }));
 vi.mock("@/actions/responses", () => ({ saveResponse: vi.fn() }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
 const mockUseBrowseDocuments = vi.mocked(useBrowseDocuments);
 const mockUseDocumentForCoding = vi.mocked(useDocumentForCoding);
@@ -107,6 +107,25 @@ describe("useBrowseCoding", () => {
     expect(markResponded).toHaveBeenCalledWith("b1");
     expect(invalidate).toHaveBeenCalledWith("b1");
     expect(params.updateDocParam).toHaveBeenCalledWith(null);
+  });
+
+  it("submit com obrigatórias em aberto mantém o documento ABERTO e invalida", async () => {
+    // Espelha o modo Atribuídos: o save teve sucesso (markClean/markResponded
+    // rodam), mas fechar o doc tiraria a tela de baixo do aviso que pediu para
+    // completá-lo (#519). A invalidação vem SEM o `updateDocParam(null)` que a
+    // precede no caminho normal — aqui o refetch é desejado, para reassentar o
+    // formulário no que acabou de ser gravado.
+    mockSave.mockResolvedValue({ success: true, missingRequired: 2 });
+    const { view, params } = setup("b1");
+
+    await act(async () => {
+      await view.result.current.handleBrowseSubmit({ answers: { q: "sim" }, notes: "n" });
+    });
+
+    expect(params.markClean).toHaveBeenCalledWith("b1");
+    expect(markResponded).toHaveBeenCalledWith("b1");
+    expect(invalidate).toHaveBeenCalledWith("b1");
+    expect(params.updateDocParam).not.toHaveBeenCalled();
   });
 
   it("submit mantém rascunho e seleção, e permite retry após rejeição de transporte", async () => {

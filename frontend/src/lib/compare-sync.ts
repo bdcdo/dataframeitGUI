@@ -74,6 +74,82 @@ async function updateCompareAssignmentStatus({
   throw new Error(error.message, { cause: error });
 }
 
+interface ReopenCandidate {
+  user_id: string;
+  status: string | null;
+  completed_at: string | null;
+}
+
+// Ordem de reabertura: ativa primeiro, depois concluídas da mais recente para
+// a mais antiga, com `user_id` como desempate para o resultado não depender da
+// ordem em que o Postgres devolveu as linhas. "Ativa" usa o MESMO predicado do
+// índice parcial (status IS DISTINCT FROM 'concluido'), incluindo o status
+// nulo — a coluna é NULLABLE desde o 001_initial_schema.
+function sortByReopenPriority<T extends ReopenCandidate>(rows: T[]): T[] {
+  const isConcluded = (r: T) => (r.status === "concluido" ? 1 : 0);
+  return [...rows].sort((a, b) => {
+    const byActive = isConcluded(a) - isConcluded(b);
+    if (byActive !== 0) return byActive;
+    // Mais recente primeiro; `completed_at` nulo vai para o fim (não há como
+    // afirmar que é a rodada corrente). Comparação lexicográfica basta: a
+    // coluna é timestamptz serializada em ISO 8601 pelo PostgREST.
+    const at = a.completed_at ?? "";
+    const bt = b.completed_at ?? "";
+    if (at !== bt) return at < bt ? 1 : -1;
+    return a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : 0;
+  });
+}
+
+// Recomputes assignment status for EVERY reviewer with a "comparacao"
+// assignment on the document. Equivalences are shared across reviewers
+// (computeDivergentFieldNames does not filter them by reviewer), so dissolving
+// or creating a pair changes divergence for everyone — syncing only the caller
+// leaves peers stale (#545). Caller must pass a client whose RLS reaches the
+// peers' assignments (in practice the admin client, after the mutation itself
+// proved authority); with the caller's client, peer updates would be silent
+// no-ops under "Researchers update own assignments". Per-reviewer failures are
+// logged and skipped so one broken sync doesn't block the rest.
+//
+// A ORDEM da iteração é significativa, e por isso é fixada aqui em vez de
+// herdada do SELECT. O documento pode ter comparações CONCLUÍDAS de rodadas
+// anteriores (o índice parcial assignments_one_active_comparacao_per_doc as
+// mantém fora do predicado de propósito), e uma dissolução reabre divergência
+// para todas elas. Como só UMA pode voltar a ser ativa, quem regride primeiro
+// ocupa a vaga e as seguintes batem no 23505 e são preservadas — logo a ordem
+// decide qual rodada reabre. `sortByReopenPriority` torna essa escolha
+// determinística e semanticamente correta: a comparação ativa primeiro (é a
+// rodada em curso), depois as concluídas da mais recente para a mais antiga.
+// Sem isso, a ordem de retorno do Postgres poderia ressuscitar a rodada
+// arquivada e deixar a corrente indevidamente fechada.
+export async function syncCompareAssignmentsForDocument(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+): Promise<void> {
+  const { data: assignments, error } = await supabase
+    .from("assignments")
+    .select("user_id, status, completed_at")
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("type", "comparacao");
+  if (error) throw new Error(error.message, { cause: error });
+
+  const userIds = [
+    ...new Set(sortByReopenPriority(assignments ?? []).map((a) => a.user_id)),
+  ];
+  for (const userId of userIds) {
+    try {
+      await syncCompareAssignment(supabase, projectId, documentId, userId);
+    } catch (e) {
+      console.error(
+        `[compare-sync] falha ao sincronizar o assignment de ${userId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+}
+
 // Recomputes assignment status (pendente / em_andamento / concluido) for the
 // reviewer's "comparacao" assignment on this document, taking into account
 // any equivalences registered between responses for free-text fields.

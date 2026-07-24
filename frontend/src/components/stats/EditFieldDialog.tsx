@@ -22,12 +22,16 @@ import { OptionsAllowOtherEditor } from "@/components/schema/OptionsAllowOtherEd
 import { DateSentinelEditor } from "@/components/schema/DateSentinelEditor";
 import { useOptionRemovalGuard } from "@/components/schema/useOptionRemovalGuard";
 import { TYPE_LABELS } from "@/lib/field-labels";
-import { stripOptionFromConditions } from "@/lib/schema-utils";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
+import {
+  applyFormEdits,
+  saveMergedEdit,
+  type SubmitOutcome,
+} from "./edit-field-save";
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 import { resolveTarget } from "@/lib/pydantic-field";
 
@@ -43,6 +47,80 @@ interface EditFieldDialogProps {
   schemaBaseline: SchemaBaselineIdentity;
 }
 
+type EditFieldForm = ReturnType<typeof useEditFieldForm>;
+
+// Editores específicos do tipo do campo (e das propriedades que só alguns
+// tipos têm). Vive fora do componente principal porque os ramos por tipo são
+// puramente declarativos e, somados ao fluxo de save, punham o `EditFieldDialog`
+// acima do limiar de complexidade cognitiva do gate do fallow. Não há
+// code-splitting envolvido: é o mesmo módulo e a mesma árvore renderizada.
+function FieldTypeEditors({
+  form,
+  baseField,
+  fieldName,
+  allFields,
+  onBeforeRemoveOption,
+}: {
+  form: EditFieldForm;
+  baseField: PydanticField;
+  fieldName: string;
+  allFields: PydanticField[];
+  onBeforeRemoveOption: (opt: string) => Promise<boolean>;
+}) {
+  return (
+    <>
+      {(baseField.type === "single" || baseField.type === "multi") && (
+        <OptionsAllowOtherEditor
+          options={form.options}
+          onChange={form.setOptions}
+          onBeforeRemoveOption={onBeforeRemoveOption}
+          allowOther={form.allowOther}
+          onAllowOtherChange={form.setAllowOther}
+        />
+      )}
+
+      {baseField.type === "date" && (
+        <DateSentinelEditor
+          options={form.options}
+          onChange={form.setOptions}
+          onBeforeRemoveOption={onBeforeRemoveOption}
+        />
+      )}
+
+      {baseField.type === "text" && (
+        <SubfieldsEditor
+          subfields={form.subfields}
+          subfieldRule={form.subfieldRule}
+          options={form.options}
+          onChange={(patch) => {
+            form.setSubfields(patch.subfields);
+            form.setSubfieldRule(patch.subfield_rule ?? "all");
+            form.setOptions(patch.options ?? []);
+          }}
+          onBeforeRemoveOption={onBeforeRemoveOption}
+        />
+      )}
+
+      <ConditionEditor
+        fieldName={fieldName}
+        condition={form.condition}
+        candidateTriggers={candidateTriggersFor(allFields, fieldName)}
+        onChange={form.setCondition}
+      />
+
+      {/* Prompt de justificativa do LLM — só faz sentido quando o campo
+          é enviado ao LLM. Vazio = backend usa o default exigente. */}
+      {resolveTarget(baseField.target) !== "human_only" &&
+        resolveTarget(baseField.target) !== "none" && (
+          <JustificationPromptField
+            value={form.justificationPrompt}
+            onChange={form.setJustificationPrompt}
+          />
+        )}
+    </>
+  );
+}
+
 export function EditFieldDialog({
   projectId,
   fieldName,
@@ -53,28 +131,35 @@ export function EditFieldDialog({
   schemaBaseline,
 }: EditFieldDialogProps) {
   const { refresh } = useRouter();
-  const field = allFields.find((f) => f.name === fieldName);
+  const form = useEditFieldForm(fieldName, allFields, pendingSuggestion);
   const {
+    baseFields,
+    baseField,
     description,
     setDescription,
     helpText,
     setHelpText,
     options,
-    setOptions,
     allowOther,
-    setAllowOther,
     subfields,
-    setSubfields,
     subfieldRule,
-    setSubfieldRule,
     condition,
-    setCondition,
     justificationPrompt,
-    setJustificationPrompt,
     isSaving,
     startSave,
-  } = useEditFieldForm(field, fieldName, allFields, pendingSuggestion);
+  } = form;
 
+  // A guarda de remoção é a única coisa aqui que fica no `allFields` VIVO, e é
+  // intencional: ela pergunta "quais condições quebram se esta opção sair", e a
+  // resposta útil é sobre as condições que existem AGORA — inclusive uma criada
+  // em outra sessão depois que o diálogo abriu. Ancorá-la no base capturado
+  // esconderia exatamente a dependência que o usuário não tem como ver.
+  //
+  // A contrapartida é que o strip de `applyFormEdits` roda sobre o base, então
+  // uma condição que só existe no remoto sobrevive apontando para a opção
+  // removida. O save recusa isso (`validateConditionValues` em pydantic-field),
+  // então é fail-closed e não schema inconsistente — mas a mensagem culpa o
+  // campo, não a concorrência. Ver issue #599.
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
     fieldName,
@@ -82,61 +167,60 @@ export function EditFieldDialog({
   const handleBeforeRemoveOption = async (opt: string): Promise<boolean> =>
     (await confirmRemoval(opt)).confirmed;
 
-  if (!field) return null;
+  // O campo pode ter sido deletado remotamente com o diálogo aberto; o form
+  // segue ancorado no base capturado e o merge do save expõe o edit-delete.
+  if (!baseField) return null;
 
-  const descriptionChanged = description !== field.description;
-  const hasSubfields = subfields && subfields.length > 0;
+  const descriptionChanged = description !== baseField.description;
+
+  const submit = async (
+    fields: PydanticField[],
+    baseline: SchemaBaselineIdentity,
+  ): Promise<SubmitOutcome> => {
+    if (!pendingSuggestion) return saveSchemaFromGUI(projectId, fields, baseline);
+    const result = await approveSchemaSuggestionWithEdits(
+      pendingSuggestion.id,
+      projectId,
+      fields,
+      baseline,
+    );
+    if (result.conflict) return { status: "conflict", current: result.conflict };
+    if (result.error) return { status: "error", message: result.error };
+    return { status: "saved" };
+  };
 
   const handleSave = () => {
     startSave(async () => {
-      const originalOpts = field.options ?? [];
-      const optionSet = new Set(options);
-      const removedOpts = originalOpts.filter((o) => !optionSet.has(o));
-      let updatedFields = allFields.map((f) =>
-        f.name === fieldName
-          ? {
-              ...f,
-              description,
-              help_text: helpText.trim() || undefined,
-              options: hasSubfields ? null : (options.length > 0 ? options : null),
-              subfields: hasSubfields ? subfields : undefined,
-              subfield_rule: hasSubfields ? subfieldRule : undefined,
-              allow_other:
-                (f.type === "single" || f.type === "multi") && allowOther
-                  ? true
-                  : undefined,
-              condition,
-              justification_prompt: justificationPrompt.trim() || undefined,
-            }
-          : f,
-      );
-      for (const removed of removedOpts) {
-        updatedFields = stripOptionFromConditions(updatedFields, fieldName, removed);
-      }
       try {
-        if (pendingSuggestion) {
-          const result = await approveSchemaSuggestionWithEdits(
-            pendingSuggestion.id,
-            projectId,
-            updatedFields,
-            schemaBaseline,
-          );
-          if (result.error) throw new Error(result.error);
-          toast.success("Sugestão aprovada e campo atualizado");
-        } else {
-          const result = await saveSchemaFromGUI(
-            projectId,
-            updatedFields,
-            schemaBaseline,
-          );
-          if (result.status === "error") throw new Error(result.message);
-          if (result.status === "conflict") {
-            throw new Error(
-              "O schema mudou em outra sessão. Recarregue a página e reaplique esta edição sobre a versão atual.",
-            );
-          }
-          toast.success("Campo atualizado");
+        const localFields = applyFormEdits(baseFields, fieldName, {
+          description,
+          helpText,
+          options,
+          allowOther,
+          subfields,
+          subfieldRule,
+          condition,
+          justificationPrompt,
+        });
+        const saved = await saveMergedEdit(
+          baseFields,
+          localFields,
+          allFields,
+          schemaBaseline,
+          submit,
+        );
+        // Bloqueio e erro chegam pelo mesmo canal e param o save do mesmo jeito:
+        // o diálogo fica aberto com a digitação intacta. O `catch` abaixo passa a
+        // cuidar só do inesperado (queda de rede, exceção de Server Action).
+        if (saved.status !== "saved") {
+          toast.error(saved.message);
+          return;
         }
+        toast.success(
+          pendingSuggestion
+            ? "Sugestão aprovada e campo atualizado"
+            : "Campo atualizado",
+        );
         onOpenChange(false);
         refresh();
       } catch (e) {
@@ -173,7 +257,7 @@ export function EditFieldDialog({
           <div className="flex items-center gap-2">
             <Label className="text-xs">Tipo</Label>
             <Badge variant="outline" className="text-xs">
-              {TYPE_LABELS[field.type]}
+              {TYPE_LABELS[baseField.type]}
             </Badge>
           </div>
 
@@ -208,54 +292,13 @@ export function EditFieldDialog({
             />
           </div>
 
-          {(field.type === "single" || field.type === "multi") && (
-            <OptionsAllowOtherEditor
-              options={options}
-              onChange={setOptions}
-              onBeforeRemoveOption={handleBeforeRemoveOption}
-              allowOther={allowOther}
-              onAllowOtherChange={setAllowOther}
-            />
-          )}
-
-          {field.type === "date" && (
-            <DateSentinelEditor
-              options={options}
-              onChange={setOptions}
-              onBeforeRemoveOption={handleBeforeRemoveOption}
-            />
-          )}
-
-          {field.type === "text" && (
-            <SubfieldsEditor
-              subfields={subfields}
-              subfieldRule={subfieldRule}
-              options={options}
-              onChange={(patch) => {
-                setSubfields(patch.subfields);
-                setSubfieldRule(patch.subfield_rule ?? "all");
-                setOptions(patch.options ?? []);
-              }}
-              onBeforeRemoveOption={handleBeforeRemoveOption}
-            />
-          )}
-
-          <ConditionEditor
+          <FieldTypeEditors
+            form={form}
+            baseField={baseField}
             fieldName={fieldName}
-            condition={condition}
-            candidateTriggers={candidateTriggersFor(allFields, fieldName)}
-            onChange={setCondition}
+            allFields={allFields}
+            onBeforeRemoveOption={handleBeforeRemoveOption}
           />
-
-          {/* Prompt de justificativa do LLM — só faz sentido quando o campo
-              é enviado ao LLM. Vazio = backend usa o default exigente. */}
-          {resolveTarget(field.target) !== "human_only" &&
-            resolveTarget(field.target) !== "none" && (
-              <JustificationPromptField
-                value={justificationPrompt}
-                onChange={setJustificationPrompt}
-              />
-            )}
         </div>
 
         <DialogFooter>

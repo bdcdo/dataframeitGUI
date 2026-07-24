@@ -225,7 +225,7 @@ describe("mergeSchemas", () => {
   it("expõe reorder incompatível e permite escolher a ordem local", () => {
     const initial = mergeSchemas([q1, q2, q3], [q2, q1, q3], [q1, q3, q2]);
     expect(initial.conflicts).toContainEqual(
-      expect.objectContaining({ id: "order", kind: "order", resolution: null }),
+      expect.objectContaining({ kind: "order", resolution: null }),
     );
     expect(initial.fields.map(({ name }) => name)).toEqual(["q1", "q3", "q2"]);
 
@@ -233,7 +233,7 @@ describe("mergeSchemas", () => {
       [q1, q2, q3],
       [q2, q1, q3],
       [q1, q3, q2],
-      { order: "local" },
+      { [initial.conflicts[0].id]: "local" },
     );
     expect(resolved.fields.map(({ name }) => name)).toEqual(["q2", "q1", "q3"]);
   });
@@ -387,5 +387,62 @@ describe("mergeSchemas — default implícito não é edição", () => {
       [{ ...semTarget, target: "llm_only" }],
     );
     expect(unresolvedSchemaConflicts(merge)).toHaveLength(1);
+  });
+});
+
+// Uma resolução é a resposta a UMA disputa concreta ("Local" × "Remota"), não ao
+// endereço campo+propriedade. Se o remoto avança para um terceiro valor com o
+// diálogo de conflito aberto, reaplicar a escolha antiga adota um valor que o
+// usuário nunca viu — o id precisa carregar os valores em disputa para que o
+// re-merge deixe a resolução antiga órfã e reapresente o conflito (#501).
+describe("mergeSchemas — resolução pertence à disputa, não ao endereço", () => {
+  const local = [{ ...q1, description: "Local" }];
+  const remote = [{ ...q1, description: "Remota" }];
+
+  it("resolução de propriedade não se reaplica quando o valor remoto mudou", () => {
+    const id = mergeSchemas([q1], local, remote).conflicts[0].id;
+    const remerge = mergeSchemas(
+      [q1],
+      local,
+      [{ ...q1, description: "Remota v2" }],
+      { [id]: "remote" },
+    );
+    expect(unresolvedSchemaConflicts(remerge)).toHaveLength(1);
+  });
+
+  it("resolução de propriedade continua valendo enquanto a disputa é a mesma", () => {
+    const id = mergeSchemas([q1], local, remote).conflicts[0].id;
+    const remerge = mergeSchemas([q1], local, remote, { [id]: "local" });
+    expect(unresolvedSchemaConflicts(remerge)).toEqual([]);
+    expect(remerge.fields[0].description).toBe("Local");
+  });
+
+  it("resolução de add-add não se reaplica quando o campo remoto mudou", () => {
+    const localAdd = [q1, { ...q2, description: "Local" }];
+    const id = mergeSchemas(
+      [q1],
+      localAdd,
+      [q1, { ...q2, description: "Remota" }],
+    ).conflicts[0].id;
+    const remerge = mergeSchemas(
+      [q1],
+      localAdd,
+      [q1, { ...q2, description: "Remota v2" }],
+      { [id]: "local" },
+    );
+    expect(unresolvedSchemaConflicts(remerge)).toHaveLength(1);
+  });
+
+  it("resolução de ordem não se reaplica quando a ordem remota mudou", () => {
+    // Ambas as ordens remotas ciclam contra o local (q1<q3<q2<q1 e
+    // q1<q4<q2<q1), mas são disputas diferentes — a resolução da primeira não
+    // pode fechar a segunda.
+    const base = [q1, q2, q3, q4];
+    const local = [q2, q1, q3, q4];
+    const id = mergeSchemas(base, local, [q1, q3, q2, q4]).conflicts[0].id;
+    const remerge = mergeSchemas(base, local, [q1, q4, q2, q3], {
+      [id]: "local",
+    });
+    expect(unresolvedSchemaConflicts(remerge)).toHaveLength(1);
   });
 });

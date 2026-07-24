@@ -618,6 +618,38 @@ describe("useSchemaDraft", () => {
     }]);
   });
 
+  // A resolução responde a uma disputa concreta. Se o remoto avança para um
+  // TERCEIRO valor na mesma propriedade com o diálogo aberto, reaplicar a
+  // escolha antiga adotaria um valor que o usuário nunca revisou (#501) — o
+  // conflito precisa ser reapresentado sem resolução.
+  it("revisão nova na mesma propriedade invalida a resolução pendente", () => {
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot([{ ...BASE_FIELDS[0], description: "Pergunta remota" }], "0.1.1", 2),
+      ),
+    );
+
+    const [conflict] = unresolvedSchemaConflicts(
+      view.result.current.conflict!.merge,
+    );
+    act(() => view.result.current.resolveConflict(conflict.id, "remote"));
+    expect(unresolvedSchemaConflicts(view.result.current.conflict!.merge)).toEqual([]);
+
+    // Antes de aplicar, chega outra revisão com um 3º valor na MESMA propriedade.
+    act(() =>
+      view.result.current.registerRemoteConflict(
+        snapshot([{ ...BASE_FIELDS[0], description: "Terceira versão" }], "0.1.2", 3),
+      ),
+    );
+
+    expect(view.result.current.conflict).not.toBeNull();
+    expect(
+      unresolvedSchemaConflicts(view.result.current.conflict!.merge),
+    ).toHaveLength(1);
+  });
+
   it("ignora snapshot atrasado com revisão menor", () => {
     const view = renderDraft();
     const revision3 = [{ ...BASE_FIELDS[0], help_text: "Revisão 3" }];

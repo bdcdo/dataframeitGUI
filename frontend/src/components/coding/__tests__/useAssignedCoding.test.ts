@@ -8,7 +8,7 @@ import { useAssignedCoding } from "../useAssignedCoding";
 import type { Document, Assignment, PydanticField } from "@/lib/types";
 
 vi.mock("@/actions/responses", () => ({ saveResponse: vi.fn() }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 // sortByRecent é testado em outro lugar; aqui usamos a ordem como vem.
 vi.mock("@/lib/coding-sort", () => ({
   sortByRecent: (docs: unknown[]) => docs,
@@ -94,6 +94,48 @@ describe("useAssignedCoding", () => {
     expect(params.markClean).toHaveBeenCalledWith("d1");
     expect(view.result.current.currentDoc?.id).toBe("d2");
     expect(params.updateDocParam).toHaveBeenCalledWith("d2");
+  });
+
+  it("save com obrigatórias em aberto NÃO avança de documento", async () => {
+    // Avançar tiraria a tela de baixo do aviso que acabou de pedir para
+    // completar o documento — e ele reapareceria na fila depois, o sintoma
+    // relatado como "minha codificação não salvou" (#519). O save em si teve
+    // sucesso: markClean roda, só a navegação é que fica retida.
+    mockSave.mockResolvedValue({ success: true, missingRequired: 2 });
+    const { view, params } = setup();
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+    await act(async () => {
+      await view.result.current.handleSubmit();
+    });
+    expect(params.markClean).toHaveBeenCalledWith("d1");
+    expect(view.result.current.currentDoc?.id).toBe("d1");
+    expect(params.updateDocParam).not.toHaveBeenCalled();
+    expect(view.result.current.allDone).toBe(false);
+  });
+
+  it("save sem pendência (missingRequired 0) avança normalmente", async () => {
+    // Boundary com o teste acima: é 0 — e não a mera presença da chave — que
+    // libera a navegação.
+    mockSave.mockResolvedValue({ success: true, missingRequired: 0 });
+    const { view, params } = setup();
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+    await act(async () => {
+      await view.result.current.handleSubmit();
+    });
+    expect(view.result.current.currentDoc?.id).toBe("d2");
+    expect(params.updateDocParam).toHaveBeenCalledWith("d2");
+  });
+
+  it("pendência no último documento não marca allDone", async () => {
+    mockSave.mockResolvedValue({ success: true, missingRequired: 1 });
+    const { view } = setup();
+    act(() => view.result.current.handleDocNavigate(2)); // vai para d3 (último)
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+    await act(async () => {
+      await view.result.current.handleSubmit();
+    });
+    expect(view.result.current.allDone).toBe(false);
+    expect(view.result.current.currentDoc?.id).toBe("d3");
   });
 
   it("mantém respostas e documento atual, e permite retry após rejeição de transporte", async () => {

@@ -11,7 +11,7 @@ import {
   isProjectScopedLogEntry,
   type ChangeType,
 } from "@/lib/schema-utils";
-import type { SchemaVersion } from "@/lib/compare-version";
+import { formatVersion, versionGte, type SchemaVersion } from "@/lib/compare-version";
 
 export type FieldSnapshot = Partial<PydanticField> & { name: string };
 
@@ -127,6 +127,169 @@ export function classifyLogEntries(log: LogEntryRow[]): {
   }
 
   return { enriched, finalVersion: current };
+}
+
+export type PersistedLogEntryRow = LogEntryRow & {
+  version_major: number | null;
+  version_minor: number | null;
+  version_patch: number | null;
+};
+
+// `non_monotonic` e `current_behind_log` não são erros de leitura: são estados
+// do banco que quebram a premissa da reconstrução (ver
+// buildTimelineFromPersistedVersions). Voltam como resultado nomeado em vez de
+// exceção ou de um Map incompleto porque quem chama precisa poder reportá-los
+// como achado próprio — reconstruir por cima deles produz snapshot errado, que
+// vira falso positivo silencioso.
+export type PersistedTimeline =
+  | { status: "ok"; hashesByVersion: Map<string, Record<string, string>> }
+  | { status: "non_monotonic"; detail: string }
+  | { status: "current_behind_log"; detail: string };
+
+type TimelineCursor = { key: string; version: Version };
+
+function asChangeType(value: string | null): ChangeType | null {
+  return value === "major" || value === "minor" || value === "patch" ? value : null;
+}
+
+// Devolve a descrição da quebra de ordem, ou null se a entry pode entrar na
+// timeline. Versões iguais em sequência são o normal — um lote de save grava
+// várias entries na mesma versão — então o critério é não-decrescente, não
+// estritamente crescente.
+//
+// Uma única comparação basta para as DUAS quebras que a reconstrução não
+// tolera. O reaparecimento de uma versão já vista (que fundiria num grupo só
+// entries de épocas distintas) não precisa de checagem própria: como a
+// sequência é não-decrescente até aqui, a última versão é também a maior vista,
+// logo qualquer chave já vista e diferente dela é menor — isto é, reaparecer
+// implica retroceder. Uma segunda guarda com um Set de chaves vistas seria
+// inalcançável; medido por mutação em 2026-07-24 (desativá-la mantinha a suíte
+// verde).
+function timelineOrderViolation(
+  entryId: string,
+  key: string,
+  version: Version,
+  prev: TimelineCursor | null,
+): string | null {
+  if (!prev) return null;
+  if (!versionGte(version, prev.version)) {
+    return `entry ${entryId} carrega versão ${key}, anterior à ${prev.key} da entry precedente em (created_at, id)`;
+  }
+  return null;
+}
+
+// Timeline de hashes por versão na ESCALA PERSISTIDA: usa as colunas version_*
+// gravadas no schema_change_log, e não a reclassificação de
+// `classifyLogEntries`.
+//
+// A distinção importa porque as duas são réguas diferentes. `classifyLogEntries`
+// re-deriva o semver do zero (reclassifica patch→minor por fieldDiffIsStructural
+// e bumpa por entry, não por lote de save), então recalcular hoje um log que
+// cresceu desde o último backfill dá uma escala inflada — medido no Zolgensma em
+// 2026-07-24: 0.38.0 re-derivado contra 0.20.0 persistido. Já o valor
+// persistido é o mesmo que `runBackfill` gravou no log e no carimbo das
+// responses dentro da MESMA transação (ver apply_schema_backfill): comparar
+// response contra coluna persistida compara dois lados congelados juntos.
+//
+// O prefixo pré-versionamento (entries com version_major NULL, anteriores à
+// migration 20260420) é sintetizado replicando os bumps a partir de 0.1.0, e
+// cada entry com versão gravada reancora a síntese.
+//
+// PREMISSA VERIFICADA, NÃO ASSUMIDA: `reconstructSnapshotsByVersion` agrupa por
+// versão e reverte os grupos em ordem numérica decrescente, ou seja, trata
+// ordem numérica como ordem cronológica. A síntese por entry pode inflar acima
+// da primeira versão persistida e furar isso de dois modos — interleaving (os
+// grupos revertem fora de ordem e TODOS os snapshots saem errados) e colisão de
+// chave (uma chave sintetizada igual a uma persistida funde grupos
+// cronologicamente distantes). Por isso o log é auditado antes de reconstruir:
+// não-decrescente em (created_at, id) e cada versão contígua. O `log` precisa
+// chegar ordenado por (created_at, id).
+// Resolve a versão de uma entry: a gravada, quando existe, ou a síntese
+// acumulada do prefixo pré-versionamento. `changeType` só governa essa síntese
+// — `reconstructSnapshotsByVersion` não o lê — então para entries que já trazem
+// versão gravada ele apenas registra o que o log diz, sem re-derivar por
+// fieldDiffIsStructural.
+function resolveEntryVersion(
+  entry: PersistedLogEntryRow,
+  synth: Version,
+): { version: Version; changeType: ChangeType } {
+  if (entry.version_major !== null) {
+    return {
+      version: {
+        major: entry.version_major,
+        minor: entry.version_minor ?? 0,
+        patch: entry.version_patch ?? 0,
+      },
+      changeType: asChangeType(entry.change_type) ?? "patch",
+    };
+  }
+  const changeType =
+    asChangeType(entry.change_type) ??
+    (fieldDiffIsStructural(entry.before_value ?? {}, entry.after_value ?? {}) ? "minor" : "patch");
+  return { version: bumpVersion(synth, changeType), changeType };
+}
+
+function enrichWithPersistedVersions(
+  log: PersistedLogEntryRow[],
+):
+  | { status: "ok"; enriched: EnrichedEntry[]; last: TimelineCursor | null }
+  | { status: "non_monotonic"; detail: string } {
+  const enriched: EnrichedEntry[] = [];
+  let previous: TimelineCursor | null = null;
+
+  for (const entry of log) {
+    const { version, changeType } = resolveEntryVersion(entry, previous?.version ?? {
+      major: 0,
+      minor: 1,
+      patch: 0,
+    });
+    const key = formatVersion(version);
+    const orderProblem = timelineOrderViolation(entry.id, key, version, previous);
+    if (orderProblem) return { status: "non_monotonic", detail: orderProblem };
+    previous = { key, version };
+
+    enriched.push({
+      id: entry.id,
+      field_name: entry.field_name,
+      before: entry.before_value ?? {},
+      after: entry.after_value ?? {},
+      createdAt: new Date(entry.created_at).getTime(),
+      changeType,
+      version,
+    });
+  }
+
+  return { status: "ok", enriched, last: previous };
+}
+
+export function buildTimelineFromPersistedVersions(
+  log: PersistedLogEntryRow[],
+  fields: PydanticField[],
+  currentVersion: Version,
+): PersistedTimeline {
+  const audited = enrichWithPersistedVersions(log);
+  if (audited.status !== "ok") return audited;
+
+  // A âncora da reconstrução é a versão CORRENTE do projeto, não a da última
+  // entry: `fields` é o estado de agora, então é sob a versão de agora que ele
+  // deve ser registrado. Quando as duas coincidem o resultado é o mesmo; quando
+  // o projeto está à frente (versão avançada sem diff de campo), ancorar na
+  // última entry atribuiria o snapshot atual à chave errada e as responses da
+  // versão corrente cairiam em "não existe na timeline". O projeto atrás do log
+  // é estado impossível — o commit grava os dois na mesma transação — e por
+  // isso volta como achado em vez de ser acomodado.
+  const last = audited.last;
+  if (last && !versionGte(currentVersion, last.version)) {
+    return {
+      status: "current_behind_log",
+      detail: `versão corrente do projeto ${formatVersion(currentVersion)} é anterior à ${last.key} da última entry do schema_change_log`,
+    };
+  }
+
+  const snapshots = reconstructSnapshotsByVersion(fields, audited.enriched, currentVersion);
+  const hashesByVersion = new Map<string, Record<string, string>>();
+  for (const [key, snap] of snapshots) hashesByVersion.set(key, computeHashesFromSnapshot(snap));
+  return { status: "ok", hashesByVersion };
 }
 
 // Reconstrói o snapshot de campos em cada versão, andando o log de trás para

@@ -3,10 +3,13 @@ import {
   classifyLogEntries,
   reconstructSnapshotsByVersion,
   matchResponsesToVersions,
+  buildTimelineFromPersistedVersions,
   type LogEntryRow,
   type EnrichedEntry,
+  type PersistedLogEntryRow,
   type ResponseRow,
 } from "@/lib/schema-backfill";
+import { computeFieldHash } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
 // Testes das funções puras extraídas de runBackfill (issue #392) — sem
@@ -136,6 +139,211 @@ describe("reconstructSnapshotsByVersion", () => {
     });
     expect(snapByVersion.size).toBe(1);
     expect(snapByVersion.get("0.1.0")?.get("campo1")?.description).toBe("v1");
+  });
+});
+
+describe("buildTimelineFromPersistedVersions", () => {
+  // Campo em dois estados: "v1" foi adicionado numa versão e virou "v2" na
+  // seguinte. Os hashes por versão distinguem as duas épocas.
+  const currentFields: PydanticField[] = [
+    {
+      id: "00000000-0000-4000-8000-000000000003",
+      name: "campo1",
+      type: "text",
+      options: null,
+      description: "v2",
+    },
+  ];
+  const hashV1 = computeFieldHash("campo1", "text", null, "v1");
+  const hashV2 = computeFieldHash("campo1", "text", null, "v2");
+
+  function persistedRow(overrides: Partial<PersistedLogEntryRow>): PersistedLogEntryRow {
+    return {
+      ...logRow({}),
+      version_major: null,
+      version_minor: null,
+      version_patch: null,
+      ...overrides,
+    };
+  }
+
+  const addV1 = persistedRow({
+    id: "e1",
+    before_value: {},
+    after_value: { type: "text", description: "v1" },
+    created_at: "2026-05-01T00:00:00.000Z",
+    change_type: "minor",
+    version_major: 0,
+    version_minor: 11,
+    version_patch: 0,
+  });
+  const patchV2 = persistedRow({
+    id: "e2",
+    before_value: { description: "v1" },
+    after_value: { description: "v2" },
+    created_at: "2026-05-02T00:00:00.000Z",
+    change_type: "patch",
+    version_major: 0,
+    version_minor: 11,
+    version_patch: 1,
+  });
+
+  it("usa a escala PERSISTIDA, não a re-derivada por classifyLogEntries", () => {
+    const timeline = buildTimelineFromPersistedVersions([addV1, patchV2], currentFields, {
+      major: 0,
+      minor: 11,
+      patch: 1,
+    });
+    expect(timeline.status).toBe("ok");
+    if (timeline.status !== "ok") return;
+    expect(timeline.hashesByVersion.get("0.11.1")?.campo1).toBe(hashV2);
+    expect(timeline.hashesByVersion.get("0.11.0")?.campo1).toBe(hashV1);
+    // A régua re-derivada daria 0.2.0/0.2.1 para as MESMAS entries: é o
+    // descasamento que faria o carimbo de uma response nunca encontrar época.
+    const rederived = classifyLogEntries([addV1, patchV2]);
+    expect(rederived.finalVersion).toEqual({ major: 0, minor: 2, patch: 1 });
+    expect(timeline.hashesByVersion.has("0.2.1")).toBe(false);
+  });
+
+  it("sintetiza o prefixo pré-versionamento e reancora na primeira versão gravada", () => {
+    const legacyAdd = persistedRow({
+      id: "e0",
+      before_value: {},
+      after_value: { type: "text", description: "v0" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      change_type: null,
+    });
+    const timeline = buildTimelineFromPersistedVersions(
+      [legacyAdd, addV1, patchV2],
+      currentFields,
+      { major: 0, minor: 11, patch: 1 },
+    );
+    expect(timeline.status).toBe("ok");
+    if (timeline.status !== "ok") return;
+    // Entry NULL sintetiza 0.2.0 (bump minor sobre 0.1.0); as gravadas mandam.
+    expect(timeline.hashesByVersion.has("0.2.0")).toBe(true);
+    expect(timeline.hashesByVersion.get("0.11.0")?.campo1).toBe(hashV1);
+    expect(timeline.hashesByVersion.get("0.11.1")?.campo1).toBe(hashV2);
+  });
+
+  // Duas propriedades da síntese que um prefixo de uma só entry não distingue:
+  // ela ACUMULA ao longo do prefixo (não recomeça de 0.1.0 a cada entry) e
+  // REANCORA na última versão vista, de modo que uma entry NULL depois de uma
+  // gravada continua de lá. Sem isso a síntese voltaria para a casa dos 0.2.x
+  // depois de uma persistida 0.11.0 e a própria auditoria de ordem acusaria
+  // retrocesso — a timeline inteira do projeto viraria achado.
+  it("a síntese acumula ao longo do prefixo e reancora na última versão gravada", () => {
+    const rows: PersistedLogEntryRow[] = [
+      persistedRow({
+        id: "a",
+        before_value: {},
+        after_value: { type: "text", description: "v0" },
+        created_at: "2026-01-01T00:00:00.000Z",
+        change_type: "minor",
+      }),
+      persistedRow({
+        id: "b",
+        before_value: { description: "v0" },
+        after_value: { description: "v1" },
+        created_at: "2026-01-02T00:00:00.000Z",
+        change_type: "patch",
+      }),
+      persistedRow({
+        id: "c",
+        before_value: { description: "v1" },
+        after_value: { description: "v2" },
+        created_at: "2026-05-01T00:00:00.000Z",
+        change_type: "patch",
+        version_major: 0,
+        version_minor: 11,
+        version_patch: 0,
+      }),
+      persistedRow({
+        id: "d",
+        field_name: "campo2",
+        before_value: { description: "x" },
+        after_value: { description: "y" },
+        created_at: "2026-05-02T00:00:00.000Z",
+        change_type: "patch",
+      }),
+    ];
+    const timeline = buildTimelineFromPersistedVersions(rows, currentFields, {
+      major: 0,
+      minor: 11,
+      patch: 1,
+    });
+    expect(timeline.status).toBe("ok");
+    if (timeline.status !== "ok") return;
+    // Prefixo acumulado: minor → 0.2.0, patch → 0.2.1.
+    expect([...timeline.hashesByVersion.keys()]).toEqual(
+      expect.arrayContaining(["0.2.0", "0.2.1", "0.11.0"]),
+    );
+    // A entry NULL após a gravada continua de 0.11.0, não de 0.2.1.
+    expect(timeline.hashesByVersion.has("0.11.1")).toBe(true);
+    expect(timeline.hashesByVersion.has("0.2.2")).toBe(false);
+  });
+
+  it("acusa versão que retrocede em (created_at, id) em vez de reconstruir", () => {
+    const retrocede = persistedRow({
+      id: "e3",
+      before_value: { description: "v2" },
+      after_value: { description: "v3" },
+      created_at: "2026-05-03T00:00:00.000Z",
+      version_major: 0,
+      version_minor: 10,
+      version_patch: 0,
+    });
+    const timeline = buildTimelineFromPersistedVersions(
+      [addV1, patchV2, retrocede],
+      currentFields,
+      { major: 0, minor: 11, patch: 1 },
+    );
+    expect(timeline.status).toBe("non_monotonic");
+  });
+
+  // O critério é não-decrescente, não estritamente crescente: um lote de save
+  // grava várias entries na MESMA versão e isso é o caso normal. Sem este
+  // teste, endurecer a guarda para "estritamente crescente" passaria batido e
+  // reprovaria todo projeto que salva mais de um campo por vez.
+  it("aceita várias entries na mesma versão (lote de um save)", () => {
+    const mesmoLote = persistedRow({
+      id: "e2b",
+      field_name: "campo2",
+      before_value: {},
+      after_value: { type: "text", description: "outro" },
+      created_at: "2026-05-02T00:00:00.000Z",
+      change_type: "patch",
+      version_major: 0,
+      version_minor: 11,
+      version_patch: 1,
+    });
+    const timeline = buildTimelineFromPersistedVersions(
+      [addV1, patchV2, mesmoLote],
+      currentFields,
+      { major: 0, minor: 11, patch: 1 },
+    );
+    expect(timeline.status).toBe("ok");
+  });
+
+  it("acusa projeto cuja versão corrente está atrás da última entry do log", () => {
+    const timeline = buildTimelineFromPersistedVersions([addV1, patchV2], currentFields, {
+      major: 0,
+      minor: 10,
+      patch: 0,
+    });
+    expect(timeline.status).toBe("current_behind_log");
+  });
+
+  it("ancora o snapshot atual na versão do projeto quando ela está à frente do log", () => {
+    const timeline = buildTimelineFromPersistedVersions([addV1, patchV2], currentFields, {
+      major: 1,
+      minor: 0,
+      patch: 0,
+    });
+    expect(timeline.status).toBe("ok");
+    if (timeline.status !== "ok") return;
+    expect(timeline.hashesByVersion.get("1.0.0")?.campo1).toBe(hashV2);
+    expect(timeline.hashesByVersion.get("0.11.0")?.campo1).toBe(hashV1);
   });
 });
 
