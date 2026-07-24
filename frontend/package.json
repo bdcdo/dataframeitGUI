@@ -29,6 +29,7 @@
     "test:db:member-permissions": "npm run test:db:psql -- supabase/tests/member_permission_rpcs.test.sql",
     "test:db:column-guard": "npm run test:db:psql -- supabase/tests/project_members_column_guard.test.sql",
     "test:db:unmark-equivalence": "npm run test:db:psql -- supabase/tests/unmark_equivalence_atomic.test.sql",
+    "test:db:rls-audit": "npm run test:db:psql -- supabase/tests/rls_audit.test.sql",
     "test:db:psql": "bash scripts/run-sql-test.sh",
     "test:watch": "vitest",
     "test:e2e": "playwright test",

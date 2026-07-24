@@ -54,6 +54,7 @@ GATE_SUITES=(
   auto_review_assignment_concurrency
   unmark_equivalence_atomic
   auto_review_reconciliation_outbox
+  rls_audit
 )
 
 # Órfãs quebradas pela era da migration 20260717120000 (índice único one-latest
