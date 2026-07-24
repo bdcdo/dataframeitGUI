@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useBrowseDocuments } from "@/hooks/useBrowseDocuments";
 import { useDocumentForCoding } from "@/hooks/useDocumentForCoding";
 import { saveCodingResponse } from "@/lib/coding-autosave";
+import { notifySaved } from "@/lib/coding-save-feedback";
 import { type CodingDraft } from "./BrowseDocCoder";
 import type { AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import type { AssignedDoc } from "@/lib/types";
@@ -120,9 +121,19 @@ export function useBrowseCoding({
         });
         if (result.success) {
           markClean(browseDocId);
-          toast.success("Respostas salvas!");
+          notifySaved(result.missingRequired);
           markResponded(browseDocId);
           browseDraftRef.current = null;
+          // Save com obrigatórias em aberto mantém o doc ABERTO, pelo mesmo
+          // motivo do modo Atribuídos (ver useAssignedCoding): fechá-lo tiraria a
+          // tela de baixo do aviso que acabou de pedir para completá-lo. Aqui a
+          // invalidação vem sem o `updateDocParam(null)` que a precede no caminho
+          // normal — o refetch é desejado, porque reassenta o formulário no que
+          // acabou de ser gravado em vez de num seed stale.
+          if (result.missingRequired) {
+            invalidateBrowseDoc(browseDocId);
+            return;
+          }
           // Zera o ?doc= ANTES de invalidar: com browseDocId já null o hook não
           // refetcha o doc que estamos deixando (evita refetch/flicker). A
           // invalidação garante que reabri-lo na sessão reflita o que foi salvo

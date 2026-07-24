@@ -66,6 +66,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
     handleSubmitWithValidation,
     requiredFields,
     answeredRequiredCount,
+    missingRequiredCount,
   } = useQuestionValidation(
     visibleFields,
     answers,
@@ -185,6 +186,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         outOfScopeBlocked={outOfScopeBlocked}
         readOnly={readOnly}
         submitting={submitting}
+        missingRequiredCount={missingRequiredCount}
         onClick={handleSubmitWithValidation}
       />
     </div>
