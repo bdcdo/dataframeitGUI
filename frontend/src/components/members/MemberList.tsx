@@ -17,6 +17,7 @@ import { useMemberListDialogs } from "@/hooks/useMemberListDialogs";
 import { MemberRow } from "./MemberRow";
 import {
   memberDisplayName,
+  memberSecondaryEmail,
   groupLinksByMember,
   type MemberEmailLinkView,
   type MemberRow as MemberRowData,
@@ -151,6 +152,11 @@ export function MemberList({
     startTransition,
   );
 
+  const removalName = removingMember ? memberDisplayName(removingMember) : null;
+  const removalEmail = removingMember
+    ? memberSecondaryEmail(removingMember)
+    : null;
+
   return (
     <div className="space-y-2">
       {optimisticMembers.map((m) => (
@@ -181,16 +187,12 @@ export function MemberList({
         onClose={() => setRemovingMember(null)}
         title="Remover membro?"
         description={
-          removingMember ? (
+          removalName ? (
             <>
-              Remover <strong>{memberDisplayName(removingMember)}</strong>
-              {removingMember.profiles?.email &&
-              removingMember.profiles.email !==
-                memberDisplayName(removingMember) ? (
-                <> ({removingMember.profiles.email})</>
-              ) : null}{" "}
-              deste projeto? As atribuições ainda não iniciadas voltam ao
-              conjunto disponível; o trabalho já feito permanece como histórico.
+              Remover <strong>{removalName}</strong>
+              {removalEmail ? <> ({removalEmail})</> : null} deste projeto? As
+              atribuições ainda não iniciadas voltam ao conjunto disponível; o
+              trabalho já feito permanece como histórico.
             </>
           ) : null
         }

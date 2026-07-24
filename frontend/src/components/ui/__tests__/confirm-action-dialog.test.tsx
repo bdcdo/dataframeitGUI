@@ -64,4 +64,25 @@ describe("ConfirmActionDialog", () => {
       screen.getByRole("button", { name: "Cancelar" }).hasAttribute("disabled"),
     ).toBe(true);
   });
+
+  // Este par fixa a guarda dos dois lados: o primeiro caso prova que a ação em
+  // voo não é descartável pelo teclado; o segundo prova que a guarda é
+  // condicional, e não um diálogo que deixou de fechar no Esc.
+  it("ignora Esc enquanto a ação está em curso", async () => {
+    const user = userEvent.setup();
+    render(<Harness onConfirm={() => {}} isPending />);
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
+  it("fecha no Esc quando não há ação em curso", async () => {
+    const user = userEvent.setup();
+    render(<Harness onConfirm={() => {}} />);
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
 });

@@ -47,7 +47,12 @@ export function ConfirmActionDialog({
     <AlertDialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose();
+        // Enquanto a ação corre, o fechamento é do pai — mesma razão do
+        // Cancelar desabilitado. Radix fecha no Esc e no clique fora sem
+        // consultar o estado do footer; sem o !isPending, essas duas saídas
+        // descartariam a confirmação em voo e o erro que chegasse depois
+        // viraria só um toast, sem a confirmação em cena para tentar de novo.
+        if (!nextOpen && !isPending) onClose();
       }}
     >
       <AlertDialogContent>

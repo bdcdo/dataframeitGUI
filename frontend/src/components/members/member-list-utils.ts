@@ -107,6 +107,15 @@ export function memberDisplayName(m: MemberRow): string {
   return m.profiles?.first_name || m.profiles?.email || "Sem perfil";
 }
 
+// E-mail que desambigua o nome exibido, quando acrescenta informação.
+// memberDisplayName já cai no e-mail quando não há first_name, então repeti-lo
+// entre parênteses duplicaria o mesmo texto na mesma frase.
+export function memberSecondaryEmail(m: MemberRow): string | null {
+  const email = m.profiles?.email;
+  if (!email || email === memberDisplayName(m)) return null;
+  return email;
+}
+
 export function groupLinksByMember(
   emailLinks: MemberEmailLinkView[],
 ): Map<string, MemberEmailLinkView[]> {
