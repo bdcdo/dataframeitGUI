@@ -159,7 +159,7 @@ export function EditFieldDialog({
   // uma condição que só existe no remoto sobrevive apontando para a opção
   // removida. O save recusa isso (`validateConditionValues` em pydantic-field),
   // então é fail-closed e não schema inconsistente — mas a mensagem culpa o
-  // campo, não a concorrência. Ver issue de follow-up.
+  // campo, não a concorrência. Ver issue #599.
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
     fieldName,
