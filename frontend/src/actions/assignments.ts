@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
+import { fetchAllPaged } from "@/lib/supabase/paginate";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import {
@@ -596,10 +597,14 @@ async function computeLottery(params: LotteryParams): Promise<{
   }
 
   const [{ data: members }, data] = await Promise.all([
-    supabase
-      .from("project_members")
-      .select("user_id")
-      .eq("project_id", params.projectId),
+    // Paginado: a lista valida os participantes escolhidos. Truncada, um
+    // participante legítimo seria recusado como se não fosse membro.
+    fetchAllPaged<{ user_id: string }>(() =>
+      supabase
+        .from("project_members")
+        .select("user_id")
+        .eq("project_id", params.projectId),
+    ),
     fetchLotteryData(params.projectId),
   ]);
 

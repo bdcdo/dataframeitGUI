@@ -105,6 +105,8 @@ export function makeFilterAwareSupabaseMock(state: {
   rpcCalls?: RpcCall[];
   rpcResults?: Record<string, RpcResult>;
   queryErrors?: Record<string, QueryError | null>;
+  // Teto de linhas por resposta (PostgREST `max_rows`). Default: sem teto.
+  maxRows?: number;
 }) {
   return {
     rpc: makeRpc(state),
@@ -114,6 +116,8 @@ export function makeFilterAwareSupabaseMock(state: {
       const ins: Array<[string, unknown[]]> = [];
       const opRef: OpRef = { current: "select" };
       let limitN: number | null = null;
+      let rangeFrom: number | null = null;
+      let rangeTo: number | null = null;
       const builder: Record<string, unknown> = {};
       builder.select = () => builder;
       builder.eq = (c: string, v: unknown) => {
@@ -136,6 +140,11 @@ export function makeFilterAwareSupabaseMock(state: {
         limitN = n;
         return builder;
       };
+      builder.range = (from: number, to: number) => {
+        rangeFrom = from;
+        rangeTo = to;
+        return builder;
+      };
       attachWriteOps(builder, table, state.writeCalls, opRef);
       const rows = () => {
         const data = (state.tableData[table] ?? []) as Array<
@@ -147,7 +156,15 @@ export function makeFilterAwareSupabaseMock(state: {
           for (const [c, vals] of ins) if (!vals.includes(r[c])) return false;
           return true;
         });
-        return limitN != null ? filtered.slice(0, limitN) : filtered;
+        const limited = limitN != null ? filtered.slice(0, limitN) : filtered;
+        // `maxRows` reproduz o teto do PostgREST, que vale mesmo sem .range():
+        // sem ele o mock devolveria o conjunto inteiro e nenhum teste
+        // conseguiria distinguir uma leitura paginada de uma truncada. Default
+        // Infinity para não impor fixtures gigantes a quem não testa isso.
+        const maxRows = state.maxRows ?? Infinity;
+        const from = rangeFrom ?? 0;
+        const to = rangeTo != null ? rangeTo + 1 : Infinity;
+        return limited.slice(from, Math.min(to, from + maxRows));
       };
       const err = () => state.queryErrors?.[`${table}:${opRef.current}`] ?? null;
       builder.single = () =>
