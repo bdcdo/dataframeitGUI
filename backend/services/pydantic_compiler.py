@@ -73,10 +73,14 @@ def compile_pydantic(code: str, *, generate_missing_ids: bool = False) -> dict:
 def _parse_field_id(field_name: str, raw: object, generate_missing_ids: bool) -> str:
     """Valida o `id` declarado em `json_schema_extra`, sem regeneração silenciosa.
 
-    Aceita apenas a forma canônica com hífens (a mesma que o frontend valida
-    com `z.uuid()` e que a CHECK constraint de `projects.pydantic_fields`
-    exige) — `uuid.UUID` sozinho aceitaria formas sem hífen/URN que o resto do
-    contrato rejeita.
+    Aceita apenas a forma canônica com hífens e em MINÚSCULAS — `uuid.UUID`
+    sozinho aceitaria formas sem hífen/URN que o resto do contrato rejeita.
+
+    A caixa importa porque as fronteiras não desempatam igual: o Postgres
+    desduplica por `lower(id)` na CHECK, enquanto o merge no frontend compara
+    string exata. Um mesmo UUID gravado em caixas diferentes seria UM campo
+    para o banco e DOIS para o editor. Recusar aqui é o que mantém uma única
+    forma canônica em circulação, em vez de deixar a divergência representável.
     """
     if raw is None:
         if generate_missing_ids:
@@ -92,17 +96,22 @@ def _parse_field_id(field_name: str, raw: object, generate_missing_ids: bool) ->
         parsed = uuid.UUID(raw)
     except ValueError:
         raise ValueError(f'Campo "{field_name}": "id" não é um UUID válido.') from None
-    if str(parsed) != raw.lower():
+    if str(parsed) != raw:
         raise ValueError(
-            f'Campo "{field_name}": "id" deve estar na forma canônica com hífens.'
+            f'Campo "{field_name}": "id" deve estar na forma canônica '
+            "(minúsculas, com hífens)."
         )
     return raw
 
 
 def _reject_duplicate_ids(fields: list[dict]) -> None:
+    # Comparação direta, sem `lower()`: `_parse_field_id` já recusou qualquer
+    # forma que não seja a canônica minúscula, então normalizar aqui seria uma
+    # segunda regra de caixa — e duas regras de caixa é como as fronteiras
+    # passam a discordar sobre o que é o mesmo id.
     seen: set[str] = set()
     for field in fields:
-        field_id = field["id"].lower()
+        field_id = field["id"]
         if field_id in seen:
             raise ValueError(f'Campo "{field["name"]}": "id" duplicado no schema.')
         seen.add(field_id)

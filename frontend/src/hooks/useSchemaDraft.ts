@@ -157,10 +157,21 @@ function readStoredDraft(
     if (read.kind === "draft") return { available: true, draft: read.draft };
     if (read.kind === "convertible") {
       const converted = convertSchemaDraftV4(read.draft, remoteFields);
-      window.localStorage.setItem(
-        schemaDraftStorageKey(scope),
-        JSON.stringify(converted),
-      );
+      // A persistência do envelope convertido é oportunista, e por isso tem
+      // `try` PRÓPRIO: com o storage cheio, o `setItem` lança e o `catch` de
+      // fora devolveria "não havia rascunho" — descartando em silêncio um
+      // rascunho que acabamos de ler e converter com sucesso. O envelope volta
+      // de qualquer forma; quem não conseguiu gravar é o slot, não a leitura.
+      try {
+        window.localStorage.setItem(
+          schemaDraftStorageKey(scope),
+          JSON.stringify(converted),
+        );
+      } catch {
+        // Sem persistir, o slot no disco segue em v4 — e continua sendo nosso,
+        // porque `writeDraftIfTokenMatches` aceita `convertible` com o mesmo
+        // writeToken (que a conversão preserva).
+      }
       return { available: true, draft: converted };
     }
     return { available: true, draft: null };

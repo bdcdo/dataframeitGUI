@@ -656,6 +656,43 @@ class Analysis(BaseModel):
     assert "forma canônica" in result["errors"][0]
 
 
+def test_uppercase_id_fails():
+    # `uuid.UUID` aceita as duas caixas, e as fronteiras desempatam diferente: o
+    # Postgres desduplicava por lower() e o merge no frontend compara string
+    # exata, então o mesmo UUID em caixa alta seria UM campo para o banco e DOIS
+    # para o editor. Uma única forma canônica em circulação é o que fecha isso.
+    # `_ID_A` é só dígitos e hífens, então `.upper()` nele não mudaria nada e o
+    # teste passaria por vacuidade: a caixa só existe nos dígitos hexadecimais
+    # a-f, e é por isso que este id tem letras.
+    lowercase = "abcdef01-2345-4678-8abc-def012345678"
+    code = f"""from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: str = Field(description="Topic", json_schema_extra={{"id": "{lowercase.upper()}"}})
+"""
+    result = compile_pydantic(code)
+    assert not result["valid"]
+    assert "forma canônica" in result["errors"][0]
+
+    # E o mesmo id em minúsculas passa — a recusa é da caixa, não do valor.
+    assert compile_pydantic(code.replace(lowercase.upper(), lowercase))["valid"]
+
+
+def test_urn_id_fails():
+    # Outra forma que `uuid.UUID` aceita sozinho e que nenhuma das outras
+    # fronteiras aceita.
+    code = f"""from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: str = Field(description="Topic", json_schema_extra={{"id": "urn:uuid:{_ID_A}"}})
+"""
+    result = compile_pydantic(code)
+    assert not result["valid"]
+    assert "forma canônica" in result["errors"][0]
+
+
 def test_duplicate_id_fails_even_on_recover():
     result = compile_pydantic(_code_with_ids(_ID_A, _ID_A))
     assert not result["valid"]

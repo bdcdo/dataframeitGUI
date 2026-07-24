@@ -225,7 +225,14 @@ describe("saveMergedEdit — a mensagem nomeia a disputa", () => {
   });
 
   it("ordem incompatível nomeia a ordem", async () => {
-    const q3: PydanticField = { ...q2, name: "q3", condition: undefined };
+    // Campo distinto, logo identidade própria: sob a #473 herdar o id de `q2`
+    // num spread faria o merge ver o mesmo campo duas vezes.
+    const q3: PydanticField = {
+      ...q2,
+      id: "00000000-0000-4000-8000-000000000003",
+      name: "q3",
+      condition: undefined,
+    };
     const message = await blockedMessage(
       [q1, q2, q3],
       [q2, q1, q3],

@@ -30,8 +30,14 @@
 
 -- Parte 2: o estado ruim vira inconstruível. A função é IMMUTABLE sobre o
 -- input (só funções jsonb do pg_catalog), o que a torna usável em CHECK.
--- A regex é a mesma forma canônica com hífens que o frontend valida com
--- z.uuid() e que compile_pydantic exige.
+-- A regex é a mesma forma canônica que o frontend valida com z.uuid() e que
+-- compile_pydantic exige: hífens e MINÚSCULAS, casadas com `~` (não `~*`).
+-- A caixa entra na constraint porque as fronteiras não desempatam igual — o
+-- merge no frontend compara id por string exata, então aceitar as duas caixas
+-- aqui deixaria o mesmo UUID valer como UM campo para o banco e DOIS para o
+-- editor. Pelo mesmo motivo a contagem de distintos abaixo não usa lower():
+-- normalizar na desduplicação seria admitir a divergência que a regex acabou
+-- de tornar irrepresentável.
 CREATE OR REPLACE FUNCTION public.pydantic_fields_shape_valid(fields jsonb)
 RETURNS boolean
 LANGUAGE sql
@@ -44,11 +50,11 @@ AS $$
        FROM jsonb_array_elements(fields) AS f(value)
        WHERE jsonb_typeof(f.value) <> 'object'
           OR jsonb_typeof(f.value->'id') IS DISTINCT FROM 'string'
-          OR f.value->>'id' !~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$'
+          OR f.value->>'id' !~ '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$'
           OR jsonb_typeof(f.value->'name') IS DISTINCT FROM 'string'
      )
      AND (SELECT count(*) FROM jsonb_array_elements(fields)) =
-         (SELECT count(DISTINCT lower(f.value->>'id'))
+         (SELECT count(DISTINCT f.value->>'id')
           FROM jsonb_array_elements(fields) AS f(value))
      AND (SELECT count(*) FROM jsonb_array_elements(fields)) =
          (SELECT count(DISTINCT f.value->>'name')

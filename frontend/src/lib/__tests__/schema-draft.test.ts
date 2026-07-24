@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   SCHEMA_DRAFT_FORMAT_VERSION,
   convertSchemaDraftV4,
@@ -303,7 +304,11 @@ describe("convertSchemaDraftV4", () => {
   it("gera id novo para campo da baseline que sumiu do remoto", () => {
     const converted = convertSchemaDraftV4(draftV4(), []);
 
-    expect(converted.base.fields[0].id).toMatch(/^[0-9a-f-]{36}$/);
+    // Canônico, não "36 caracteres do alfabeto certo": o id nascido aqui vai
+    // parar na CHECK do banco, que exige a forma exata.
+    expect(
+      z.uuid().safeParse(converted.base.fields[0].id).success,
+    ).toBe(true);
     expect(converted.fields[0].id).toBe(converted.base.fields[0].id);
   });
 

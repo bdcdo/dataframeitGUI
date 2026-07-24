@@ -746,6 +746,27 @@ describe("rascunho no formato v4 (pré-#473)", () => {
     expect(stored?.fields[0].id).toBe(BASE_FIELDS[0].id);
   });
 
+  // A persistência do envelope convertido é oportunista: se o storage está
+  // cheio, o rascunho já foi lido e convertido em memória, e perdê-lo por causa
+  // da gravação seria descartar trabalho por um motivo que não é "não consegui
+  // ler". Foi assim que o `catch` único da leitura transformava quota em
+  // rascunho zerado, sem sequer marcar `staleDraftDiscarded`.
+  it("mantém o rascunho v4 convertido quando a gravação falha por quota", () => {
+    writeDraftV4([
+      { name: "q1", type: "text", options: null, description: "Pergunta editada" },
+    ]);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota", "QuotaExceededError");
+    });
+
+    const { result } = renderDraft();
+
+    expect(result.current.isDirty).toBe(true);
+    expect(result.current.fields).toEqual([
+      { ...BASE_FIELDS[0], description: "Pergunta editada" },
+    ]);
+  });
+
   it("descarta rascunho v4 que já coincide com o remoto", () => {
     writeDraftV4([
       { name: "q1", type: "text", options: null, description: "Pergunta" },

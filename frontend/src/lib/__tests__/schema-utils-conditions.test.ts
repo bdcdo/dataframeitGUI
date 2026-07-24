@@ -160,6 +160,45 @@ describe("after strip, validateGUIFields should pass", () => {
   });
 });
 
+// Esta é a fronteira em que o PR da #473 se apoiou ao soltar o bloqueio de
+// tecla do `FieldNameInput`: nome duplicado passou a ser estado transitório
+// legítimo do editor (é o que torna "q2" -> "q10" possível com "q1" presente),
+// e quem recusa é o save. Sem este teste a premissa da mudança fica só no
+// comentário — e o editor teria soltado a trava contra uma garantia não medida.
+describe("validateGUIFields — unicidade de nome no save", () => {
+  it("rejeita dois campos com o mesmo nome, apontando o índice do segundo", () => {
+    const fields = [
+      baseField({ name: "q1", type: "text" }),
+      baseField({ name: "q1", type: "text" }),
+    ];
+    expect(validateGUIFields(fields)).toContain(
+      'Campo 2: nome "q1" duplicado',
+    );
+  });
+
+  it("aceita os mesmos campos assim que o nome deixa de colidir", () => {
+    const fields = [
+      baseField({ name: "q1", type: "text" }),
+      baseField({ name: "q10", type: "text" }),
+    ];
+    expect(validateGUIFields(fields)).toEqual([]);
+  });
+
+  // Ids distintos são o que separa "dois campos disputando um nome" de "o mesmo
+  // campo duas vezes". O save recusa o primeiro caso pelo NOME; o id duplicado
+  // é recusado por outra regra, e as duas mensagens não podem se confundir.
+  it("rejeita id duplicado mesmo com nomes distintos", () => {
+    const id = "00000000-0000-4000-8000-0000000000ff";
+    const fields = [
+      { ...baseField({ name: "q1", type: "text" }), id },
+      { ...baseField({ name: "q2", type: "text" }), id },
+    ];
+    expect(validateGUIFields(fields)).toContain(
+      `Campo 2: id "${id}" duplicado`,
+    );
+  });
+});
+
 describe("validateGUIFields — nomes dunder", () => {
   it("rejeita nome de campo que começa e termina com __", () => {
     const fields = [

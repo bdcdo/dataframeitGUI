@@ -58,8 +58,12 @@ describe("mergeSchemas", () => {
     );
     const conflict = initial.conflicts[0];
 
+    // O endereço do conflito é o ID do campo (#473) e o sufixo é a assinatura
+    // do conteúdo em disputa (#590) — por isso prefixo, não igualdade: a
+    // afirmação aqui é sobre COMO o conflito é endereçado, e ela sobrevive a um
+    // rename justamente por não conter o nome.
+    expect(conflict.id.startsWith(`property:${q1.id}:description:`)).toBe(true);
     expect(conflict).toMatchObject({
-      id: `property:${q1.id}:description`,
       kind: "property",
       fieldId: q1.id,
       fieldName: "q1",
@@ -121,7 +125,9 @@ describe("mergeSchemas", () => {
 
     expect(result.conflicts).toContainEqual(
       expect.objectContaining({
-        id: `field:${q2.id}:add-add`,
+        id: expect.stringMatching(
+          new RegExp(`^field:${q2.id}:add-add:`),
+        ) as unknown as string,
         kind: "field",
         reason: "add-add",
         fieldId: q2.id,
@@ -173,8 +179,9 @@ describe("mergeSchemas", () => {
     );
 
     const conflict = result.conflicts[0];
+    // O id do conflito não muda com o rename: ele é endereçado pelo id do campo.
+    expect(conflict.id.startsWith(`property:${q1.id}:name:`)).toBe(true);
     expect(conflict).toMatchObject({
-      id: `property:${q1.id}:name`,
       kind: "property",
       fieldId: q1.id,
       property: "name",
@@ -186,10 +193,69 @@ describe("mergeSchemas", () => {
     expect(result.fields[0].name).toBe("remote_name");
   });
 
-  it("campos com ids distintos e o mesmo nome coexistem no resultado", () => {
+  // Duas abas adicionam "duplicado" na mesma janela. Antes da #473 isto era
+  // add-add (o nome era a chave); com a identidade no id, o merge junta os dois
+  // sem enxergar colisão — e o estado resultante é IRRECUSÁVEL no save, contra
+  // uma duplicata que nenhum dos dois usuários criou. A disputa tem que sair
+  // explícita aqui.
+  it("expõe disputa de nome entre campos adicionados nos dois lados", () => {
     const localAdd = { ...q2, id: id5, name: "duplicado" };
     const remoteAdd = { ...q3, id: id6, name: "duplicado" };
     const result = mergeSchemas([q1], [q1, localAdd], [q1, remoteAdd]);
+
+    expect(result.conflicts).toEqual([
+      expect.objectContaining({
+        kind: "name",
+        name: "duplicado",
+        localField: localAdd,
+        remoteField: remoteAdd,
+        resolution: null,
+      }),
+    ]);
+    // Sem resolução vale a convenção de preview do merge: fica o remoto, e o
+    // resultado nunca sai com o nome duplicado.
+    expect(result.fields.map(({ name }) => name)).toEqual(["q1", "duplicado"]);
+    expect(result.fields.map(({ id }) => id)).toEqual([q1.id, id6]);
+  });
+
+  it("resolver a disputa de nome escolhe qual campo fica", () => {
+    const localAdd = { ...q2, id: id5, name: "duplicado" };
+    const remoteAdd = { ...q3, id: id6, name: "duplicado" };
+    const conflict = mergeSchemas([q1], [q1, localAdd], [q1, remoteAdd])
+      .conflicts[0];
+
+    const resolved = mergeSchemas([q1], [q1, localAdd], [q1, remoteAdd], {
+      [conflict.id]: "local",
+    });
+
+    expect(resolved.fields.map(({ id }) => id)).toEqual([q1.id, id5]);
+    expect(unresolvedSchemaConflicts(resolved)).toEqual([]);
+  });
+
+  // Rename local para um nome que o remoto acabou de criar: mesma disputa, e o
+  // campo renomeado é quem afirma o nome do lado local.
+  it("expõe disputa entre rename local e adição remota do mesmo nome", () => {
+    const result = mergeSchemas(
+      [q1, q2],
+      [q1, { ...q2, name: "novo" }],
+      [q1, q2, { ...q3, id: id5, name: "novo" }],
+    );
+
+    expect(result.conflicts).toContainEqual(
+      expect.objectContaining({ kind: "name", name: "novo" }),
+    );
+    expect(new Set(result.fields.map(({ name }) => name)).size).toBe(
+      result.fields.length,
+    );
+  });
+
+  // A duplicata que o próprio usuário está digitando não é disputa entre lados:
+  // ela já veio no `local`, e barrá-la aqui abriria diálogo de conflito no meio
+  // da digitação. Quem barra é o save.
+  it("não fabrica conflito para duplicata que já vem do lado local", () => {
+    const localA = { ...q2, id: id5, name: "duplicado" };
+    const localB = { ...q3, id: id6, name: "duplicado" };
+    const result = mergeSchemas([q1], [q1, localA, localB], [q1]);
 
     expect(result.conflicts).toEqual([]);
     expect(result.fields.map(({ name }) => name)).toEqual([

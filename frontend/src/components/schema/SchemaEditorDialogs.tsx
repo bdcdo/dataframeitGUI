@@ -56,6 +56,9 @@ function conflictTitle(conflict: SchemaMergeConflict): string {
     return `${conflict.fieldName}: ${propertyLabel(conflict.property)}`;
   }
   if (conflict.kind === "order") return "Ordem dos campos";
+  if (conflict.kind === "name") {
+    return `${conflict.name}: nome disputado por dois campos`;
+  }
   const reason = {
     "add-add": "campo adicionado nas duas versões",
     "delete-edit": "campo removido localmente e editado remotamente",
@@ -94,7 +97,7 @@ function conflictChoiceValue(
   if (conflict.kind === "property") {
     return choice === "local" ? conflict.localValue : conflict.remoteValue;
   }
-  if (conflict.kind === "field") {
+  if (conflict.kind === "field" || conflict.kind === "name") {
     return choice === "local" ? conflict.localField : conflict.remoteField;
   }
   return choice === "local" ? conflict.localOrder : conflict.remoteOrder;
