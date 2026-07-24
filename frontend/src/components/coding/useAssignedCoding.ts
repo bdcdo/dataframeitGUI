@@ -177,21 +177,28 @@ export function useAssignedCoding({
       const result = await saveCodingResponse(projectId, currentDoc.id, docAnswers, {
         notes: docNotes,
       });
-      if (result.success) {
-        markClean(currentDoc.id);
-        notifySaved(result.missingRequired);
-        if (docIndex < sortedDocuments.length - 1) {
-          const nextIndex = docIndex + 1;
-          dispatch({ type: "index", index: nextIndex });
-          // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
-          // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
-          // o topo da lista), nao no proximo.
-          updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
-        } else {
-          dispatch({ type: "allDone", value: true });
-        }
-      } else {
+      if (!result.success) {
         toast.error(result.error);
+        return;
+      }
+      markClean(currentDoc.id);
+      notifySaved(result.missingRequired);
+      // Save com obrigatórias em aberto mantém o pesquisador NO documento:
+      // avançar tiraria a tela de baixo do aviso que acabou de pedir para
+      // completá-lo, e o doc reapareceria na fila depois — o sintoma que o #519
+      // descreve. Só alcançável quando o schema cresceu entre o carregamento do
+      // formulário e o envio; fora disso o SubmitBar já cobra a pendência antes
+      // do clique, pela mesma régua.
+      if (result.missingRequired) return;
+      if (docIndex < sortedDocuments.length - 1) {
+        const nextIndex = docIndex + 1;
+        dispatch({ type: "index", index: nextIndex });
+        // Mantem a URL em sincronia com o doc exibido — sem isso, um refresh
+        // apos enviar cai no doc recem-enviado (que no modo "recent" pula para
+        // o topo da lista), nao no proximo.
+        updateDocParam(sortedDocuments[nextIndex]?.id ?? null);
+      } else {
+        dispatch({ type: "allDone", value: true });
       }
     } finally {
       // O `finally` garante que `submitting`/o ref não fiquem presos `true` se

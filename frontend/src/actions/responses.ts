@@ -4,7 +4,7 @@ import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/
 import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { buildPersistedResponseSnapshot } from "@/lib/response-snapshot";
-import { isCodingComplete, missingRequiredHumanFields } from "@/lib/coding-completeness";
+import { missingRequiredHumanFields } from "@/lib/coding-completeness";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import { deriveProjectVersionContext } from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
@@ -88,7 +88,8 @@ interface SaveResponseProjectFields {
 }
 
 interface BuildResponsePayloadParams {
-  fields: PydanticField[];
+  /** Régua de completude já aplicada ao conjunto a gravar — ver `saveResponse`. */
+  codingIsComplete: boolean;
   answersToPersist: Record<string, unknown>;
   answerFieldHashes: Exclude<AnswerFieldHashes, null>;
   stampsCurrentSchema: boolean;
@@ -155,7 +156,7 @@ function resolveSchemaProvenance({
 }
 
 function buildResponsePayload({
-  fields,
+  codingIsComplete,
   answersToPersist,
   answerFieldHashes,
   stampsCurrentSchema,
@@ -178,19 +179,22 @@ function buildResponsePayload({
   // já não estava completo — o estado que fazia o documento voltar à fila com
   // aparência de concluído (#519).
   //
-  // Staleness-aware de propósito: avaliar contra o carimbo per-campo da própria
-  // resposta (`answerFieldHashes`) impede que um campo obrigatório criado depois
-  // rebaixe uma codificação que estava completa quando foi feita. O auto-save
-  // continua sem promover nada por conta própria — quem nunca enviou segue
-  // parcial mesmo com tudo preenchido; combinado com o guard que preserva
+  // `codingIsComplete` chega pronto de `saveResponse`, do MESMO cálculo que
+  // produz o `missingRequired` devolvido ao cliente: o sinal gravado no banco e o
+  // que o pesquisador lê no toast não podem discordar, e derivá-los de uma
+  // avaliação só torna isso verdade por construção, não por acordo entre dois
+  // call sites. A régua (staleness-aware contra o carimbo per-campo, para que um
+  // campo obrigatório criado depois não rebaixe codificação completa à época)
+  // vive em coding-completeness, onde está documentada.
+  //
+  // O auto-save continua sem promover nada por conta própria — quem nunca enviou
+  // segue parcial mesmo com tudo preenchido; combinado com o guard que preserva
   // assignment.status = "concluido" em coding-sync, um auto-save posterior a um
   // submit também não rebaixa um doc já concluído (salvo se o conjunto encolheu e
   // deixou de estar completo). A imutabilidade descrita na migration
   // 20260425000000 vale so para o fluxo LLM.
   const submittedBefore = existing?.is_partial === false;
-  const isPartialToWrite =
-    !isCodingComplete(fields, answersToPersist, answerFieldHashes) ||
-    (isAutoSave && !submittedBefore);
+  const isPartialToWrite = !codingIsComplete || (isAutoSave && !submittedBefore);
 
   const payload = {
     answers: answersToPersist,
@@ -311,8 +315,20 @@ export async function saveResponse(
       promoteLegacyIfComplete: !isAutoSave,
     });
 
-    const payload = buildResponsePayload({
+    // Régua de completude aplicada UMA vez, ao conjunto que vai ser gravado
+    // (`snapshot.persistedAnswers`) e com o carimbo per-campo da própria escrita —
+    // não ao que a tela mostrava. Dela saem os dois consumidores: o `is_partial`
+    // gravado e o `missingRequired` devolvido ao cliente. Se o schema mudou desde
+    // o carregamento do formulário, é esta contagem que impede o feedback de
+    // sucesso de anunciar uma conclusão que não houve (#519).
+    const missingRequired = missingRequiredHumanFields(
       fields,
+      snapshot.persistedAnswers,
+      snapshot.answerFieldHashes,
+    ).length;
+
+    const payload = buildResponsePayload({
+      codingIsComplete: missingRequired === 0,
       answersToPersist: snapshot.persistedAnswers,
       answerFieldHashes: snapshot.answerFieldHashes,
       stampsCurrentSchema: snapshot.stampsCurrentSchema,
@@ -348,18 +364,7 @@ export async function saveResponse(
     }
 
     revalidateAfterSave(projectId, isAutoSave);
-    // Contagem no conjunto GRAVADO (`snapshot.persistedAnswers`), com o mesmo
-    // carimbo staleness-aware que decidiu `is_partial` — não no que a tela
-    // mostrava. Se o schema mudou desde o carregamento do formulário, é ela que
-    // impede o feedback de sucesso de anunciar uma conclusão que não houve (#519).
-    return {
-      success: true,
-      missingRequired: missingRequiredHumanFields(
-        fields,
-        snapshot.persistedAnswers,
-        snapshot.answerFieldHashes,
-      ).length,
-    };
+    return { success: true, missingRequired };
   } catch (e) {
     return {
       success: false,
