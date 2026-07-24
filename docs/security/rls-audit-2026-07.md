@@ -24,7 +24,7 @@ Optei por invariantes **estruturais** em vez de listas de nomes. A asserção n�
 
 ## Gaps encontrados e corrigidos
 
-A auditoria partiu de sete invariantes. Cinco já estavam limpas: RLS habilitada em toda tabela, nenhuma tabela com RLS e sem policy exposta a papel de cliente, nenhuma policy literalmente permissiva (`USING (true)`), todas as views com `security_invoker=true` e `anon` sem SELECT em view. As outras duas acusaram quatro gaps, corrigidos pela migration `20260724120000_rls_audit_hardening.sql`.
+A auditoria partiu de sete invariantes. Quatro já estavam limpas nos dois catálogos: RLS habilitada em toda tabela, nenhuma tabela com RLS e sem policy exposta a papel de cliente, nenhuma policy literalmente permissiva (`USING (true)`) e todas as views com `security_invoker=true`. Duas acusaram quatro gaps, corrigidos pela migration `20260724120000_rls_audit_hardening.sql`. A sétima — privilégios de `anon` sobre views — estava limpa no catálogo local e **violada em produção**; ver a seção "O que só produção revelou".
 
 Em primeiro lugar, **`handle_new_user()` era `SECURITY DEFINER` sem `search_path` fixado**. Numa função DEFINER, `search_path` mutável permite que o chamador escolha em que schema os nomes não qualificados resolvem, e a função grava lá com os privilégios do owner. O corpo já qualificava `public.profiles`, então fixar o path não alterou comportamento algum — apenas fechou o vetor.
 
@@ -33,6 +33,23 @@ Em segundo lugar, **sete funções de trigger eram executáveis por papel de cli
 Em terceiro lugar, **`replace_and_add_documents` e `apply_lottery_assignments` eram executáveis por `anon`**, também por herança de PUBLIC. Confirmei por varredura que as duas são chamadas exclusivamente pelo client de sessão (`createSupabaseServer()` em `actions/documents.ts` e `actions/assignments.ts`), nunca pelo admin client nem pelo backend Python. `authenticated` é, portanto, o único papel que precisa de EXECUTE. Manter `anon` significaria aceitar que uma requisição sem sessão chegasse ao corpo da RPC e dependesse apenas do que ela própria valida — defesa em uma camada só.
 
 Por fim, **`remove_answer_key(uuid,text)` sobrevivia sem nenhum call site** em `frontend/src` ou `backend`. RPC alcançável que ninguém chama é superfície de ataque sem contrapartida; foi removida.
+
+## O que só produção revelou
+
+As correções acima foram aplicadas no remoto em 24/07/2026 e a auditoria foi então rodada **contra o catálogo de produção**, não apenas contra o local. Foi aí que apareceu o gap que o ambiente local não é capaz de mostrar: o Supabase remoto concede DML por default no schema `public`, e o local não.
+
+```
+lottery_doc_stats  ->  anon=arwdDxtm   (inclui SELECT)
+final_answers      ->  anon=awdDxtm    (sem SELECT, mas com INSERT/UPDATE/DELETE)
+```
+
+`final_answers` é o caso instrutivo, e por dois motivos. Primeiro, porque mostra um reparo pela metade: alguém revogou o SELECT em algum momento e deixou os bits de escrita para trás. Segundo, porque a primeira versão da minha própria invariante checava apenas SELECT em duas views nomeadas — ela teria dado produção por limpa. A asserção foi generalizada para varrer todas as views e todos os privilégios, e a correção (`20260724140000_revoke_anon_from_public_views.sql`) revoga de `anon` em todas as views mais os default privileges do schema, para que uma view futura nasça fechada.
+
+A exposição efetiva era pequena, porque as quatro views têm `security_invoker = true` e uma leitura de `anon` esbarra na RLS das tabelas de base. Isso é o que tornou a correção barata, não o que a tornaria dispensável: a garantia não deve depender de duas camadas estarem simultaneamente certas.
+
+Fica a lição de método, que vale além deste caso: **a suíte local é rede contra regressão introduzida por migration, não substituto de auditar o catálogo de produção.** Os grants divergem entre os dois ambientes por construção, e nenhuma quantidade de verde local prova o estado do remoto. A ressalva está escrita dentro do próprio teste.
+
+Após as duas migrations, as sete invariantes foram remedidas contra produção e todas estão em zero.
 
 ## Contrato de autoria para contas-alias (issue #474)
 
