@@ -97,13 +97,17 @@ export function makeSupabaseMock(opts?: {
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
       let rangeFrom: number | null = null;
+      let rangeTo: number | null = null;
       for (const m of ["select", "single", "maybeSingle", "order", "limit"]) {
         builder[m] = () => builder;
       }
-      // range() precisa recortar de verdade: um mock que devolve o conjunto
-      // inteiro a cada página faz um leitor paginado nunca alcançar o fim.
-      builder.range = (from: number) => {
+      // range() precisa recortar de verdade, com os DOIS limites: um mock que
+      // devolve o conjunto inteiro a cada página faz um leitor paginado nunca
+      // alcançar o fim, e um que ignora o limite superior nunca deixa uma
+      // leitura truncada se distinguir de uma completa.
+      builder.range = (from: number, to: number) => {
         rangeFrom = from;
+        rangeTo = to;
         return builder;
       };
       for (const method of ["eq", "is", "in", "neq", "match"] as const) {
@@ -144,7 +148,7 @@ export function makeSupabaseMock(opts?: {
         // inteira: sem o recorte, um leitor paginado nunca veria o fim.
         const paginated =
           !queued && rangeFrom !== null && Array.isArray(data)
-            ? data.slice(rangeFrom)
+            ? data.slice(rangeFrom, rangeTo !== null ? rangeTo + 1 : undefined)
             : data;
         return resolve({
           data: paginated,

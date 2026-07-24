@@ -122,11 +122,13 @@ async function eligibleHumanResponses(
   // Paginado: este Set é o universo de quem ainda é membro. Truncado no teto do
   // PostgREST, um membro legítimo seria lido como ex-membro e sua resposta
   // sairia da reconciliação sem erro nenhum.
-  const membersResult = await fetchAllPaged<{ user_id: string }>(() =>
-    admin
-      .from("project_members")
-      .select("user_id")
-      .eq("project_id", request.project_id),
+  const membersResult = await fetchAllPaged<{ user_id: string }>(
+    () =>
+      admin
+        .from("project_members")
+        .select("user_id")
+        .eq("project_id", request.project_id),
+    "user_id",
   );
   if (membersResult.error) throw new Error(membersResult.error.message);
   const memberIds = new Set(

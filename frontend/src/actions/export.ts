@@ -51,25 +51,32 @@ export async function getExportDataset(
     // Base exportada: documentos não excluídos. Exclusão apenas pendente
     // (exclusion_pending_at) continua na base até ser confirmada. Paginado para
     // não truncar em projetos grandes (ver fetchAllPaged).
-    fetchAllPaged<ExportDocument>(() =>
-      supabase
-        .from("documents")
-        .select("id, external_id, title, created_at, metadata")
-        .eq("project_id", projectId)
-        .is("excluded_at", null)
+    fetchAllPaged<ExportDocument>(
+      () =>
+        supabase
+          .from("documents")
+          .select("id, external_id, title, created_at, metadata")
+          .eq("project_id", projectId)
+          .is("excluded_at", null),
+      "id"
     ),
-    fetchAllPaged<ExportResponse>(() =>
-      supabase
-        .from("responses")
-        .select("document_id, respondent_name, respondent_type, answers")
-        .eq("project_id", projectId)
-        .eq("is_latest", true)
+    fetchAllPaged<ExportResponse>(
+      () =>
+        supabase
+          .from("responses")
+          .select("document_id, respondent_name, respondent_type, answers")
+          .eq("project_id", projectId)
+          .eq("is_latest", true),
+      // A PK basta como ordem total; não precisa estar no select.
+      "id"
     ),
-    fetchAllPaged<ExportReview>(() =>
-      supabase
-        .from("reviews")
-        .select("document_id, field_name, verdict, comment")
-        .eq("project_id", projectId)
+    fetchAllPaged<ExportReview>(
+      () =>
+        supabase
+          .from("reviews")
+          .select("document_id, field_name, verdict, comment")
+          .eq("project_id", projectId),
+      "id"
     ),
   ]);
 

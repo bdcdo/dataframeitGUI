@@ -148,12 +148,14 @@ async function loadEligibleReviewerIds(
   const [membersResult, previousAssignmentsResult] = await Promise.all([
     // Paginado: o pool elegível é um universo. Truncado, um revisor apto ficaria
     // permanentemente fora do sorteio de comparação, sem erro.
-    fetchAllPaged<{ user_id: string }>(() =>
-      admin
-        .from("project_members")
-        .select("user_id")
-        .eq("project_id", projectId)
-        .eq("can_compare", true),
+    fetchAllPaged<{ user_id: string }>(
+      () =>
+        admin
+          .from("project_members")
+          .select("user_id")
+          .eq("project_id", projectId)
+          .eq("can_compare", true),
+      "user_id",
     ),
     admin
       .from("assignments")
