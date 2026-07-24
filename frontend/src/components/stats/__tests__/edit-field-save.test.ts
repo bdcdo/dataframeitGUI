@@ -8,6 +8,7 @@ import {
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 
 const q1: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "q1",
   type: "single",
   options: ["Sim", "Não"],
@@ -16,6 +17,7 @@ const q1: PydanticField = {
 // Depende de uma opção de q1: é o campo que o strip precisa alcançar quando a
 // opção que dispara a condição é removida no diálogo.
 const q2: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000002",
   name: "q2",
   type: "text",
   options: null,
@@ -223,7 +225,14 @@ describe("saveMergedEdit — a mensagem nomeia a disputa", () => {
   });
 
   it("ordem incompatível nomeia a ordem", async () => {
-    const q3: PydanticField = { ...q2, name: "q3", condition: undefined };
+    // Campo distinto, logo identidade própria: sob a #473 herdar o id de `q2`
+    // num spread faria o merge ver o mesmo campo duas vezes.
+    const q3: PydanticField = {
+      ...q2,
+      id: "00000000-0000-4000-8000-000000000003",
+      name: "q3",
+      condition: undefined,
+    };
     const message = await blockedMessage(
       [q1, q2, q3],
       [q2, q1, q3],

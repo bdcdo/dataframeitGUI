@@ -10,7 +10,7 @@ import {
 } from "react";
 import {
   SCHEMA_DRAFT_FORMAT_VERSION,
-  parseSchemaDraft,
+  convertSchemaDraftV4,
   readSchemaDraft,
   type SchemaDraftEnvelope,
 } from "@/lib/schema-draft";
@@ -140,15 +140,41 @@ function stateBaseline(state: SchemaDraftState): SchemaSnapshot {
   return state.conflict.remote;
 }
 
-function readStoredDraft(scope: SchemaDraftScope): StorageRead {
+// `remoteFields` alimenta a conversão v4→v5: um envelope do formato anterior
+// (campos sem id) não é descartado — a identidade é reconstruída casando por
+// nome com o snapshot remoto, e o envelope convertido é persistido na hora,
+// para que o slot volte a ser legível por `writeDraftIfTokenMatches` e pelas
+// leituras seguintes sem depender de estado em memória.
+function readStoredDraft(
+  scope: SchemaDraftScope,
+  remoteFields: PydanticField[],
+): StorageRead {
   if (typeof window === "undefined") return { available: false, draft: null };
   try {
-    return {
-      available: true,
-      draft: parseSchemaDraft(
-        window.localStorage.getItem(schemaDraftStorageKey(scope)),
-      ),
-    };
+    const read = readSchemaDraft(
+      window.localStorage.getItem(schemaDraftStorageKey(scope)),
+    );
+    if (read.kind === "draft") return { available: true, draft: read.draft };
+    if (read.kind === "convertible") {
+      const converted = convertSchemaDraftV4(read.draft, remoteFields);
+      // A persistência do envelope convertido é oportunista, e por isso tem
+      // `try` PRÓPRIO: com o storage cheio, o `setItem` lança e o `catch` de
+      // fora devolveria "não havia rascunho" — descartando em silêncio um
+      // rascunho que acabamos de ler e converter com sucesso. O envelope volta
+      // de qualquer forma; quem não conseguiu gravar é o slot, não a leitura.
+      try {
+        window.localStorage.setItem(
+          schemaDraftStorageKey(scope),
+          JSON.stringify(converted),
+        );
+      } catch {
+        // Sem persistir, o slot no disco segue em v4 — e continua sendo nosso,
+        // porque `writeDraftIfTokenMatches` aceita `convertible` com o mesmo
+        // writeToken (que a conversão preserva).
+      }
+      return { available: true, draft: converted };
+    }
+    return { available: true, draft: null };
   } catch {
     return { available: false, draft: null };
   }
@@ -183,7 +209,13 @@ function writeDraftIfTokenMatches(
     // Um envelope que este build não sabe ler pertence a uma aba mais nova, e
     // sobrescrevê-lo apagaria trabalho que não temos como recuperar.
     if (stored.kind === "newer-format") return { status: "blocked" };
-    const storedToken = stored.kind === "draft" ? stored.draft.writeToken : null;
+    // Um v4 ainda não convertido conta como nosso se o token bater: a conversão
+    // preserva o writeToken, então o dono é o mesmo — bloquear aqui travaria a
+    // primeira escrita logo após o deploy que bumpou o formato.
+    const storedToken =
+      stored.kind === "draft" || stored.kind === "convertible"
+        ? stored.draft.writeToken
+        : null;
     if (storedToken !== expectedToken) {
       return { status: "blocked" };
     }
@@ -207,7 +239,11 @@ function deleteDraftIfTokenMatches(
     const stored = readSchemaDraft(
       window.localStorage.getItem(schemaDraftStorageKey(scope)),
     );
-    if (stored.kind !== "draft" || stored.draft.writeToken !== writeToken) {
+    const storedToken =
+      stored.kind === "draft" || stored.kind === "convertible"
+        ? stored.draft.writeToken
+        : null;
+    if (storedToken !== writeToken) {
       return { available: true, deleted: false };
     }
     window.localStorage.removeItem(schemaDraftStorageKey(scope));
@@ -290,7 +326,7 @@ function initialState({
     version: currentVersion,
     revision: currentRevision,
   };
-  const stored = readStoredDraft(scope);
+  const stored = readStoredDraft(scope, remote.fields);
   if (!stored.draft) return cleanState(remote, stored.available);
 
   const draft = stored.draft;
@@ -450,7 +486,7 @@ function stateAfterRemoteChange(
       ),
     );
   }
-  const stored = readStoredDraft(scope);
+  const stored = readStoredDraft(scope, remote.fields);
   const expectedToken = current.storage.persistedToken;
   const storedToken = stored.draft?.writeToken ?? null;
   const expectedDraftStillStored = storedToken === expectedToken;

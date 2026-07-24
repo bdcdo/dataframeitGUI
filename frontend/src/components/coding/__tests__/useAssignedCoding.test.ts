@@ -229,8 +229,15 @@ describe("useAssignedCoding", () => {
   // CodingPage.handleAnswer) é reaplicada no reducer do modo Atribuídos.
   it("handleAnswer limpa a resposta de condicional órfã ao ocultar o pai (#252)", () => {
     const fields: PydanticField[] = [
-      { name: "q1", type: "single", options: ["sim", "não"], description: "" },
       {
+        id: "00000000-0000-4000-8000-000000000001",
+        name: "q1",
+        type: "single",
+        options: ["sim", "não"],
+        description: "",
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000002",
         name: "q2",
         type: "text",
         options: null,

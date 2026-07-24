@@ -33,7 +33,7 @@ VALUES (
   '7b000000-0000-0000-0000-000000000001',
   'auto review concurrency',
   '7a000000-0000-0000-0000-000000000001',
-  '[{"name":"q1"},{"name":"q2"}]'
+  '[{"id":"00000000-0000-4000-8000-0000000000b1","name":"q1"},{"id":"00000000-0000-4000-8000-0000000000b2","name":"q2"}]'
 );
 
 INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES

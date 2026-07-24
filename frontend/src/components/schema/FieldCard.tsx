@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -53,29 +52,21 @@ function FieldNameInput({
   allFields: PydanticField[];
   onChange: (name: string) => void;
 }) {
-  const [duplicateName, setDuplicateName] = useState(false);
   const nameIssue = pydanticFieldNameIssue(field.name);
-  // Recusar o rename em vez de propagá-lo sustenta a unicidade de nome que
-  // `mergeSchemas` exige (seu `fieldMap` lança em duplicata, porque o nome é a
-  // identidade do campo no merge). O custo é real e conhecido: um nome que passe
-  // por um nome existente fica intransponível — com "q1" presente, "q2" -> "q10"
-  // trava no "q1" intermediário. Soltar o bloqueio aqui, sozinho, troca isso por
-  // um crash: a duplicata seria gravada no rascunho e o merge explodiria no
-  // reload seguinte. A correção é dar identidade própria ao campo — ver issue #473.
-  const handleChange = (name: string) => {
-    const duplicate = allFields.some(
-      (candidate) => candidate !== field && candidate.name === name,
-    );
-    setDuplicateName(duplicate);
-    if (!duplicate) onChange(name);
-  };
+  // Toda tecla propaga (#473): com a identidade no `field.id`, nome duplicado
+  // é estado transitório legítimo do editor — "q2" -> "q10" passa por "q1" sem
+  // travar. O aviso é derivado do estado no render, e a duplicata real só é
+  // barrada na fronteira de save (`saveablePydanticFieldsSchema`).
+  const duplicateName = allFields.some(
+    (candidate) => candidate.id !== field.id && candidate.name === field.name,
+  );
 
   return (
     <div className="space-y-1.5">
       <Label className="text-xs">Nome do campo</Label>
       <Input
         value={field.name}
-        onChange={(event) => handleChange(event.target.value)}
+        onChange={(event) => onChange(event.target.value)}
         placeholder="nome_do_campo"
         className={cn(
           "font-mono text-sm h-8",

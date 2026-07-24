@@ -20,8 +20,15 @@ import type { CompareFiltersValue } from "@/lib/compare-filters";
 import type { ProjectVersionContext } from "@/lib/compare-version";
 import type { PydanticField } from "@/lib/types";
 
+let fieldIdSeq = 0;
+function nextFieldId(): string {
+  fieldIdSeq += 1;
+  return `00000000-0000-4000-8000-0000000000${String(fieldIdSeq).padStart(2, "0")}`;
+}
+
 function field(overrides: Partial<PydanticField>): PydanticField {
   return {
+    id: nextFieldId(),
     name: "x",
     type: "text",
     options: null,

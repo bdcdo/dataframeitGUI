@@ -24,6 +24,7 @@ function makeClient() {
 
 const FIELDS: PydanticField[] = [
   {
+    id: "00000000-0000-4000-8000-000000000001",
     name: "decisao",
     type: "single",
     options: ["proc", "improc"],
@@ -326,6 +327,7 @@ describe("syncCompareAssignmentsForDocument (#545)", () => {
   const TWO_FIELDS: PydanticField[] = [
     ...FIELDS,
     {
+      id: "00000000-0000-4000-8000-000000000002",
       name: "fundamento",
       type: "text",
       options: null,

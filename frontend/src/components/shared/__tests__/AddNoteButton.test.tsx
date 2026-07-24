@@ -52,7 +52,15 @@ describe("AddNoteButton — fixed field", () => {
         documentTitle="Documento X"
         fieldName="tipo_decisao"
         fieldLabel="Tipo de decisão"
-        fields={[{ name: "tipo_decisao", type: "text", options: null, description: "Tipo de decisão" }]}
+        fields={[
+          {
+            id: "00000000-0000-4000-8000-000000000001",
+            name: "tipo_decisao",
+            type: "text",
+            options: null,
+            description: "Tipo de decisão",
+          },
+        ]}
       />,
     );
 

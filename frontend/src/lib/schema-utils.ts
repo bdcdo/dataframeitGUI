@@ -72,6 +72,15 @@ function conditionToPython(condition: FieldCondition): string {
 
 function fieldExtra(field: PydanticField): string {
   const extras: string[] = [];
+  // `id` nao tem default e e identidade, nao conteudo: e emitido sempre, para
+  // que o round-trip UI -> pydantic_code -> compile_pydantic -> UI preserve a
+  // identidade do campo (regra do CLAUDE.md: pydantic_code e fonte de verdade
+  // reconstruivel). O texto do codigo de todo projeto muda no proximo save —
+  // aceitavel porque save ja muda `pydantic_hash`; o que nao pode acontecer e
+  // reescrever codigo/hash historicos em massa fora de um save (ver
+  // 20260505000001_revive_orphan_llm_responses.sql), e o backfill da #473 nao
+  // os toca.
+  extras.push(`"id": "${escapeString(field.id)}"`);
   if (resolveTarget(field.target) !== "all") {
     extras.push(`"target": "${field.target}"`);
   }
@@ -490,6 +499,11 @@ export function bumpVersion(
 
 // Serializa um PydanticField para gravar em
 // schema_change_log.before_value / after_value.
+//
+// `id` fica de fora como `hash`: e identidade, nao conteudo. O snapshot e a
+// nocao canonica de "campo igual" (dirty, `sameFieldContent`, merge
+// propriedade a propriedade) e a auditoria continua chaveada por nome — um id
+// no snapshot faria todo rebase de rascunho legado acusar edicao inexistente.
 //
 // As quatro propriedades com default implicito passam pelos resolvedores
 // canonicos em vez de `?? null`: `snapshotOf` e a serializacao que `classifyChange`

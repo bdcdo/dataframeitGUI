@@ -76,7 +76,7 @@ INSERT INTO public.projects (
   '86000000-0000-0000-0000-000000000001',
   'schema serialization test',
   '86000000-0000-0000-0000-000000000002',
-  '[{"name":"base_field"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000901","name":"base_field"}]',
   'class Analysis: base',
   'hash-base'
 );
@@ -120,7 +120,7 @@ SELECT * FROM dblink(
   FROM public.commit_project_schema(
     '86000000-0000-0000-0000-000000000001',
     0,
-    '[{"name":"field_from_t1"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000911","name":"field_from_t1"}]',
     'class Analysis: t1',
     0,
     2,
@@ -163,7 +163,7 @@ SELECT dblink_send_query(
   FROM public.commit_project_schema(
     '86000000-0000-0000-0000-000000000001',
     0,
-    '[{"name":"field_from_t2"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000912","name":"field_from_t2"}]',
     'class Analysis: t2',
     0,
     2,
@@ -261,7 +261,7 @@ BEGIN
   FROM public.schema_change_log
   WHERE project_id = '86000000-0000-0000-0000-000000000001';
 
-  IF v_revision <> 1 OR v_fields <> '[{"name":"field_from_t1"}]'::jsonb THEN
+  IF v_revision <> 1 OR v_fields <> '[{"id":"00000000-0000-4000-8000-000000000911","name":"field_from_t1"}]'::jsonb THEN
     RAISE EXCEPTION
       'FALHOU serialização: estado final é revisão % / %, esperado 1 / T1',
       v_revision, v_fields;

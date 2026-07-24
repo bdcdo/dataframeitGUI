@@ -2,7 +2,11 @@
 
 from pydantic import BaseModel, Field
 
-from services.pydantic_compiler import compile_pydantic, find_root_model
+from services.pydantic_compiler import (
+    build_model_from_code,
+    compile_pydantic,
+    find_root_model,
+)
 
 
 def _field(result: dict, name: str) -> dict:
@@ -21,7 +25,7 @@ from typing import Literal, Optional
 class Analysis(BaseModel):
     topic: Literal["a", "b"] = Field(description="Topic of the decision")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "topic")
     assert f["type"] == "single"
@@ -38,7 +42,7 @@ from typing import Literal, Optional
 class Analysis(BaseModel):
     tags: list[Literal["x", "y", "z"]] = Field(description="Tags")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "tags")
     assert f["type"] == "multi"
@@ -55,7 +59,7 @@ class Analysis(BaseModel):
         json_schema_extra={"help_text": "Considere apenas o dispositivo"},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "verdict")
     assert f["description"] == "Outcome"
     assert f["help_text"] == "Considere apenas o dispositivo"
@@ -71,7 +75,7 @@ class Analysis(BaseModel):
         json_schema_extra={"help_text": "   "},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "verdict")
     assert f["description"] == "Outcome"
     assert "help_text" not in f
@@ -88,7 +92,7 @@ class _doc_fields(BaseModel):
 class Analysis(BaseModel):
     doc: _doc_fields = Field(description="Document breakdown")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "doc")
     assert f["type"] == "text"
     assert f["subfields"] == [
@@ -112,7 +116,7 @@ class Analysis(BaseModel):
         json_schema_extra={"subfield_rule": "at_least_one"},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "doc")
     assert f["subfield_rule"] == "at_least_one"
 
@@ -127,7 +131,7 @@ class Analysis(BaseModel):
         json_schema_extra={"allowOther": True},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "court")
     assert f.get("allow_other") is True
 
@@ -142,7 +146,7 @@ class Analysis(BaseModel):
         json_schema_extra={"field_type": "date"},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "judged_on")
     assert f["type"] == "date"
 
@@ -157,7 +161,7 @@ class Analysis(BaseModel):
         json_schema_extra={"target": "ementa"},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "headline")
     assert f["target"] == "ementa"
 
@@ -180,8 +184,8 @@ class Analysis(BaseModel):
         json_schema_extra={"help_text": "   "},
     )
 """
-    h1 = _field(compile_pydantic(plain), "x")["hash"]
-    h2 = _field(compile_pydantic(whitespace), "x")["hash"]
+    h1 = _field(compile_pydantic(plain, generate_missing_ids=True), "x")["hash"]
+    h2 = _field(compile_pydantic(whitespace, generate_missing_ids=True), "x")["hash"]
     assert h1 == h2
 
 
@@ -203,8 +207,8 @@ from typing import Literal
 class Analysis(BaseModel):
     x: Literal["a"] = Field(description="Pure")
 """
-    h1 = _field(compile_pydantic(with_help), "x")["hash"]
-    h2 = _field(compile_pydantic(without_help), "x")["hash"]
+    h1 = _field(compile_pydantic(with_help, generate_missing_ids=True), "x")["hash"]
+    h2 = _field(compile_pydantic(without_help, generate_missing_ids=True), "x")["hash"]
     assert h1 == h2
 
 
@@ -294,7 +298,7 @@ class Analysis(BaseModel):
         json_schema_extra={"condition": {"field": "houve_provimento", "equals": "sim"}},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "provimento_parcial")
     assert f["condition"] == {"field": "houve_provimento", "equals": "sim"}
@@ -311,7 +315,7 @@ class Analysis(BaseModel):
         json_schema_extra={"condition": {"field": "tipo", "in": ["a", "b"]}},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "follow")
     assert f["condition"] == {"field": "tipo", "in": ["a", "b"]}
 
@@ -327,7 +331,7 @@ class Analysis(BaseModel):
         json_schema_extra={"condition": {"field": "note", "exists": True}},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "extra")
     assert f["condition"] == {"field": "note", "exists": True}
 
@@ -350,8 +354,8 @@ class Analysis(BaseModel):
         json_schema_extra={"condition": {"field": "other", "equals": "a"}},
     )
 """
-    h1 = _field(compile_pydantic(without), "x")["hash"]
-    h2 = _field(compile_pydantic(with_cond), "x")["hash"]
+    h1 = _field(compile_pydantic(without, generate_missing_ids=True), "x")["hash"]
+    h2 = _field(compile_pydantic(with_cond, generate_missing_ids=True), "x")["hash"]
     assert h1 == h2
 
 
@@ -365,7 +369,7 @@ class Analysis(BaseModel):
         json_schema_extra={"condition": {"wrong": "shape"}},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "x")
     assert "condition" not in f
 
@@ -382,7 +386,7 @@ def test_multiline_help_text_round_trips():
         '        json_schema_extra={"help_text": "ins1\\nins2"},\n'
         "    )\n"
     )
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "x")
     assert f["description"] == "linha1\nlinha2"
     assert f["help_text"] == "ins1\nins2"
@@ -402,7 +406,7 @@ class Analysis(BaseModel):
     )
     visible: Literal["x"] = Field(description="Visible")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     hidden = _field(result, "hidden_field")
     assert hidden["target"] == "none"
@@ -422,7 +426,7 @@ class Analysis(BaseModel):
         json_schema_extra={"justification_prompt": "Cite o dispositivo do acórdão."},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "verdict")
     assert f["justification_prompt"] == "Cite o dispositivo do acórdão."
@@ -435,7 +439,7 @@ from typing import Literal
 class Analysis(BaseModel):
     verdict: Literal["sim", "nao"] = Field(description="Houve provimento?")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "verdict")
     assert "justification_prompt" not in f
 
@@ -453,7 +457,7 @@ class Analysis(BaseModel):
         json_schema_extra={"required": False},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "verdict")
     assert f["required"] is False
@@ -469,7 +473,7 @@ from typing import Literal
 class Analysis(BaseModel):
     verdict: Literal["sim", "nao"] = Field(description="Houve provimento?")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "verdict")
     assert "required" not in f
 
@@ -486,9 +490,10 @@ class Analysis(BaseModel):
         description="Houve provimento?"{extra}
     )
 """
-    obrigatorio = compile_pydantic(base.format(extra=""))
+    obrigatorio = compile_pydantic(base.format(extra=""), generate_missing_ids=True)
     opcional = compile_pydantic(
-        base.format(extra=',\n        json_schema_extra={"required": False}')
+        base.format(extra=',\n        json_schema_extra={"required": False}'),
+        generate_missing_ids=True,
     )
     assert opcional["valid"], opcional["errors"]
     assert _field(opcional, "verdict")["required"] is False
@@ -510,7 +515,7 @@ class Analysis(BaseModel):
         },
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "birth_date")
     assert f["type"] == "date"
@@ -532,7 +537,7 @@ class Analysis(BaseModel):
         json_schema_extra={"field_type": "date"},
     )
 """
-    result = compile_pydantic(code_no_opts)
+    result = compile_pydantic(code_no_opts, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "d")
     assert f["description"] == "Data da decisão"
@@ -550,7 +555,7 @@ class Analysis(BaseModel):
         },
     )
 """
-    result = compile_pydantic(code_with_opts)
+    result = compile_pydantic(code_with_opts, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "d")
     assert f["description"] == "Data da decisão"
@@ -569,9 +574,152 @@ class Analysis(BaseModel):
         },
     )
 """
-    result = compile_pydantic(code_full)
+    result = compile_pydantic(code_full, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     f = _field(result, "d")
     assert f["description"] == "Data da decisão"
     assert f["help_text"] == "Use a data da publicação"
     assert f["options"] == ["Não identificável"]
+
+
+# ---------- Identidade de campo (#473): id em json_schema_extra ----------
+
+_ID_A = "11111111-1111-4111-8111-111111111111"
+_ID_B = "22222222-2222-4222-8222-222222222222"
+
+
+def _code_with_ids(id_a: str, id_b: str) -> str:
+    return f"""from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: Literal["a", "b"] = Field(description="Topic", json_schema_extra={{"id": "{id_a}"}})
+    notes: str = Field(description="Notes", json_schema_extra={{"id": "{id_b}"}})
+"""
+
+
+def test_field_id_round_trips_and_stays_out_of_hash():
+    result = compile_pydantic(_code_with_ids(_ID_A, _ID_B))
+    assert result["valid"], result["errors"]
+    assert _field(result, "topic")["id"] == _ID_A
+    assert _field(result, "notes")["id"] == _ID_B
+
+    # id é identidade, não conteúdo: trocar o id não muda o hash do campo.
+    other = compile_pydantic(_code_with_ids(_ID_B, _ID_A))
+    assert _field(result, "topic")["hash"] == _field(other, "topic")["hash"]
+
+
+def test_missing_id_fails_without_recover_flag():
+    code = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: str = Field(description="Topic")
+"""
+    result = compile_pydantic(code)
+    assert not result["valid"]
+    assert 'sem "id"' in result["errors"][0]
+
+    # O fluxo explícito de recuperação é o único que gera identidade nova.
+    recovered = compile_pydantic(code, generate_missing_ids=True)
+    assert recovered["valid"], recovered["errors"]
+    generated = _field(recovered, "topic")["id"]
+    import uuid as _uuid
+
+    assert str(_uuid.UUID(generated)) == generated
+
+
+def test_malformed_id_fails_even_on_recover():
+    code = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: str = Field(description="Topic", json_schema_extra={"id": "nao-e-uuid"})
+"""
+    for flag in (False, True):
+        result = compile_pydantic(code, generate_missing_ids=flag)
+        assert not result["valid"]
+        assert "não é um UUID válido" in result["errors"][0]
+
+
+def test_non_canonical_id_fails():
+    # uuid.UUID aceitaria a forma sem hífens; o contrato (z.uuid() no frontend
+    # e a CHECK constraint) não — o compiler tem que concordar com eles.
+    code = f"""from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: str = Field(description="Topic", json_schema_extra={{"id": "{_ID_A.replace("-", "")}"}})
+"""
+    result = compile_pydantic(code)
+    assert not result["valid"]
+    assert "forma canônica" in result["errors"][0]
+
+
+def test_uppercase_id_fails():
+    # `uuid.UUID` aceita as duas caixas, e as fronteiras desempatam diferente: o
+    # Postgres desduplicava por lower() e o merge no frontend compara string
+    # exata, então o mesmo UUID em caixa alta seria UM campo para o banco e DOIS
+    # para o editor. Uma única forma canônica em circulação é o que fecha isso.
+    # `_ID_A` é só dígitos e hífens, então `.upper()` nele não mudaria nada e o
+    # teste passaria por vacuidade: a caixa só existe nos dígitos hexadecimais
+    # a-f, e é por isso que este id tem letras.
+    lowercase = "abcdef01-2345-4678-8abc-def012345678"
+    code = f"""from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: str = Field(description="Topic", json_schema_extra={{"id": "{lowercase.upper()}"}})
+"""
+    result = compile_pydantic(code)
+    assert not result["valid"]
+    assert "forma canônica" in result["errors"][0]
+
+    # E o mesmo id em minúsculas passa — a recusa é da caixa, não do valor.
+    assert compile_pydantic(code.replace(lowercase.upper(), lowercase))["valid"]
+
+
+def test_urn_id_fails():
+    # Outra forma que `uuid.UUID` aceita sozinho e que nenhuma das outras
+    # fronteiras aceita.
+    code = f"""from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    topic: str = Field(description="Topic", json_schema_extra={{"id": "urn:uuid:{_ID_A}"}})
+"""
+    result = compile_pydantic(code)
+    assert not result["valid"]
+    assert "forma canônica" in result["errors"][0]
+
+
+def test_duplicate_id_fails_even_on_recover():
+    result = compile_pydantic(_code_with_ids(_ID_A, _ID_A))
+    assert not result["valid"]
+    assert "duplicado" in result["errors"][0]
+
+    recovered = compile_pydantic(
+        _code_with_ids(_ID_A, _ID_A), generate_missing_ids=True
+    )
+    assert not recovered["valid"]
+
+
+def test_legacy_code_without_id_still_builds_model_for_the_llm_run():
+    """O `llm_runner` reconstrói o modelo por `build_model_from_code`, que NÃO
+    passa pela validação de identidade — de propósito.
+
+    `projects.pydantic_code` histórico não tem `"id"` em `json_schema_extra`, e
+    a migration da #473 não reescreve código/hash (isso tiraria respostas LLM
+    legadas da fila de Comparação). Se a validação de id migrasse para cá, todo
+    projeto anterior à #473 pararia de rodar LLM até o coordenador salvar o
+    schema de novo — regressão silenciosa que este teste existe para pegar.
+    """
+    legacy = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    verdict: Literal["sim", "nao"] = Field(description="Houve provimento?")
+"""
+    model = build_model_from_code(legacy)
+    assert model is not None
+    assert list(model.model_fields) == ["verdict"]

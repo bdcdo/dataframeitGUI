@@ -84,6 +84,7 @@ describe("reconstructSnapshotsByVersion", () => {
   it("reverte add + patch e reconstrói os 3 snapshots intermediários", () => {
     const currentFields: PydanticField[] = [
       {
+        id: "00000000-0000-4000-8000-000000000001",
         name: "campo1",
         type: "text",
         options: null,
@@ -123,7 +124,13 @@ describe("reconstructSnapshotsByVersion", () => {
 
   it("sem entries, o único snapshot é o estado atual na versão inicial", () => {
     const currentFields: PydanticField[] = [
-      { name: "campo1", type: "text", options: null, description: "v1" },
+      {
+        id: "00000000-0000-4000-8000-000000000002",
+        name: "campo1",
+        type: "text",
+        options: null,
+        description: "v1",
+      },
     ];
     const snapByVersion = reconstructSnapshotsByVersion(currentFields, [], {
       major: 0,
@@ -139,7 +146,13 @@ describe("buildTimelineFromPersistedVersions", () => {
   // Campo em dois estados: "v1" foi adicionado numa versão e virou "v2" na
   // seguinte. Os hashes por versão distinguem as duas épocas.
   const currentFields: PydanticField[] = [
-    { name: "campo1", type: "text", options: null, description: "v2" },
+    {
+      id: "00000000-0000-4000-8000-000000000003",
+      name: "campo1",
+      type: "text",
+      options: null,
+      description: "v2",
+    },
   ];
   const hashV1 = computeFieldHash("campo1", "text", null, "v1");
   const hashV2 = computeFieldHash("campo1", "text", null, "v2");

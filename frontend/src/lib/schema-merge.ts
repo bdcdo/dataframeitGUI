@@ -10,19 +10,25 @@ interface ConflictBase {
   resolution: SchemaMergeChoice | null;
 }
 
-// `name` é a identidade do campo no merge, não uma propriedade a mesclar, e
-// `hash` é metadado derivado que só o servidor escreve e que o save recalcula.
-// Nenhum dos dois é conteúdo editável pelo usuário, então nenhum dos dois pode
-// virar conflito para ele resolver — o tipo abaixo é o que garante isso.
-const NON_MERGEABLE_PROPERTIES = new Set<string>(["name", "hash"]);
+// `id` é a identidade do campo no merge (#473), não uma propriedade a mesclar,
+// e `hash` é metadado derivado que só o servidor escreve e que o save
+// recalcula. Nenhum dos dois é conteúdo editável pelo usuário, então nenhum
+// dos dois pode virar conflito para ele resolver — o tipo abaixo é o que
+// garante isso. `name` saiu daqui: com a identidade no `id`, renomear é edição
+// de conteúdo como outra qualquer, e rename concorrente vira conflito de
+// propriedade normal.
+const NON_MERGEABLE_PROPERTIES = new Set<string>(["id", "hash"]);
 
 export type MergeableFieldProperty = Exclude<
   keyof PydanticField,
-  "name" | "hash"
+  "id" | "hash"
 >;
 
+// `fieldId` é a chave estável do conflito (sobrevive a rename); `fieldName` é
+// só rótulo de exibição, derivado do lado mais recente disponível.
 export interface SchemaPropertyConflict extends ConflictBase {
   kind: "property";
+  fieldId: string;
   fieldName: string;
   property: MergeableFieldProperty;
   baseValue: unknown;
@@ -32,6 +38,7 @@ export interface SchemaPropertyConflict extends ConflictBase {
 
 export interface SchemaFieldConflict extends ConflictBase {
   kind: "field";
+  fieldId: string;
   fieldName: string;
   reason: "add-add" | "delete-edit" | "edit-delete";
   baseField: PydanticField | null;
@@ -39,6 +46,27 @@ export interface SchemaFieldConflict extends ConflictBase {
   remoteField: PydanticField | null;
 }
 
+// Dois campos DIFERENTES (ids distintos) que chegam disputando o mesmo nome,
+// um afirmado de cada lado. Com a identidade no `id` (#473), o merge junta os
+// dois sem enxergar colisão alguma — e o resultado só falharia no save, contra
+// `refineUniqueNames`, num estado que o usuário não construiu: basta que duas
+// abas adicionem "q3" na mesma janela, que é justamente o cenário para o qual
+// o merge existe. Antes da #473 isso aparecia como `add-add`, porque o nome era
+// a chave; publicar a disputa aqui é o que devolve essa propriedade.
+//
+// `localField`/`remoteField` são os dois campos em disputa, não dois estados do
+// mesmo campo — resolver escolhe QUAL deles fica com o nome; o outro sai do
+// resultado.
+export interface SchemaNameConflict extends ConflictBase {
+  kind: "name";
+  name: string;
+  localField: PydanticField;
+  remoteField: PydanticField;
+}
+
+// As ordens ficam em NOMES porque este objeto é contrato de exibição (o
+// diálogo lista as duas ordens para o usuário escolher); o merge interno de
+// ordem roda por id e converte na hora de publicar o conflito.
 export interface SchemaOrderConflict extends ConflictBase {
   kind: "order";
   baseOrder: string[];
@@ -49,6 +77,7 @@ export interface SchemaOrderConflict extends ConflictBase {
 export type SchemaMergeConflict =
   | SchemaPropertyConflict
   | SchemaFieldConflict
+  | SchemaNameConflict
   | SchemaOrderConflict;
 
 export interface SchemaMergeResult {
@@ -85,10 +114,12 @@ function clone<T>(value: T): T {
 function fieldMap(fields: PydanticField[], source: string): Map<string, PydanticField> {
   const result = new Map<string, PydanticField>();
   for (const field of fields) {
-    if (result.has(field.name)) {
-      throw new Error(`O schema ${source} contém o campo duplicado "${field.name}".`);
+    if (result.has(field.id)) {
+      throw new Error(
+        `O schema ${source} contém o campo "${field.name}" com id duplicado.`,
+      );
     }
-    result.set(field.name, field);
+    result.set(field.id, field);
   }
   return result;
 }
@@ -131,7 +162,8 @@ interface FieldMergeOutcome {
 }
 
 function mergeAddedField(
-  name: string,
+  fieldId: string,
+  label: string,
   localField: PydanticField | undefined,
   remoteField: PydanticField | undefined,
   resolutions: SchemaMergeResolutions,
@@ -143,7 +175,7 @@ function mergeAddedField(
 
   const id = conflictId(
     "field",
-    name,
+    fieldId,
     "add-add",
     fieldSnapshotKey(localField),
     fieldSnapshotKey(remoteField),
@@ -154,7 +186,8 @@ function mergeAddedField(
     conflicts: [{
       id,
       kind: "field",
-      fieldName: name,
+      fieldId,
+      fieldName: label,
       reason: "add-add",
       baseField: null,
       localField: clone(localField),
@@ -165,7 +198,8 @@ function mergeAddedField(
 }
 
 function mergeFieldProperties(
-  name: string,
+  fieldId: string,
+  label: string,
   baseField: PydanticField,
   localField: PydanticField,
   remoteField: PydanticField,
@@ -203,7 +237,7 @@ function mergeFieldProperties(
 
     const id = conflictId(
       "property",
-      name,
+      fieldId,
       String(property),
       stableStringify(local),
       stableStringify(remote),
@@ -212,7 +246,8 @@ function mergeFieldProperties(
     conflicts.push({
       id,
       kind: "property",
-      fieldName: name,
+      fieldId,
+      fieldName: label,
       property,
       baseValue: clone(baseValue),
       localValue: clone(localValue),
@@ -225,7 +260,8 @@ function mergeFieldProperties(
 }
 
 function mergeLocalDeletion(
-  name: string,
+  fieldId: string,
+  label: string,
   baseField: PydanticField,
   remoteField: PydanticField,
   resolutions: SchemaMergeResolutions,
@@ -233,7 +269,7 @@ function mergeLocalDeletion(
   if (sameFieldContent(remoteField, baseField)) return { field: null, conflicts: [] };
   const id = conflictId(
     "field",
-    name,
+    fieldId,
     "delete-edit",
     fieldSnapshotKey(remoteField),
   );
@@ -243,7 +279,8 @@ function mergeLocalDeletion(
     conflicts: [{
       id,
       kind: "field",
-      fieldName: name,
+      fieldId,
+      fieldName: label,
       reason: "delete-edit",
       baseField: clone(baseField),
       localField: null,
@@ -254,7 +291,8 @@ function mergeLocalDeletion(
 }
 
 function mergeRemoteDeletion(
-  name: string,
+  fieldId: string,
+  label: string,
   baseField: PydanticField,
   localField: PydanticField,
   resolutions: SchemaMergeResolutions,
@@ -262,7 +300,7 @@ function mergeRemoteDeletion(
   if (sameFieldContent(localField, baseField)) return { field: null, conflicts: [] };
   const id = conflictId(
     "field",
-    name,
+    fieldId,
     "edit-delete",
     fieldSnapshotKey(localField),
   );
@@ -272,7 +310,8 @@ function mergeRemoteDeletion(
     conflicts: [{
       id,
       kind: "field",
-      fieldName: name,
+      fieldId,
+      fieldName: label,
       reason: "edit-delete",
       baseField: clone(baseField),
       localField: clone(localField),
@@ -283,17 +322,23 @@ function mergeRemoteDeletion(
 }
 
 function mergeExistingField(
-  name: string,
+  fieldId: string,
+  label: string,
   baseField: PydanticField,
   localField: PydanticField | undefined,
   remoteField: PydanticField | undefined,
   resolutions: SchemaMergeResolutions,
 ): FieldMergeOutcome {
   if (!localField && !remoteField) return { field: null, conflicts: [] };
-  if (!localField) return mergeLocalDeletion(name, baseField, remoteField!, resolutions);
-  if (!remoteField) return mergeRemoteDeletion(name, baseField, localField, resolutions);
+  if (!localField) {
+    return mergeLocalDeletion(fieldId, label, baseField, remoteField!, resolutions);
+  }
+  if (!remoteField) {
+    return mergeRemoteDeletion(fieldId, label, baseField, localField, resolutions);
+  }
   return mergeFieldProperties(
-    name,
+    fieldId,
+    label,
     baseField,
     localField,
     remoteField,
@@ -431,6 +476,68 @@ function topologicalOrder(
   return merged.length === names.size ? merged : null;
 }
 
+// Um campo "afirma" um nome de um lado quando é COM esse nome que ele aparece
+// naquele lado. É o que distingue a disputa real (dois campos, um nome, um de
+// cada lado) da duplicata que o próprio usuário está digitando: se os dois
+// campos afirmam o nome localmente, o estado já veio duplicado no `local` — é
+// transitório do editor, e barrá-lo aqui abriria um diálogo de conflito no meio
+// da digitação. Essa duplicata continua sendo problema do save, como projetado.
+function assertsName(
+  side: Map<string, PydanticField>,
+  field: PydanticField,
+): boolean {
+  return side.get(field.id)?.name === field.name;
+}
+
+// Resolve as colisões de nome ENTRE LADOS, mutando `mergedById`: o perdedor sai
+// do resultado. Sem resolução, quem fica é o remoto — a mesma convenção de
+// preview do resto do merge (`add-add`), e `unresolvedSchemaConflicts` bloqueia
+// o save enquanto a escolha não vier.
+function resolveNameCollisions(
+  mergedById: Map<string, PydanticField>,
+  localById: Map<string, PydanticField>,
+  remoteById: Map<string, PydanticField>,
+  resolutions: SchemaMergeResolutions,
+): SchemaNameConflict[] {
+  const byName = new Map<string, PydanticField[]>();
+  for (const field of mergedById.values()) {
+    const group = byName.get(field.name);
+    if (group) group.push(field);
+    else byName.set(field.name, [field]);
+  }
+
+  const conflicts: SchemaNameConflict[] = [];
+  for (const [name, group] of byName) {
+    if (group.length < 2) continue;
+    const localField = group.find(
+      (field) =>
+        assertsName(localById, field) && !assertsName(remoteById, field),
+    );
+    const remoteField = group.find(
+      (field) =>
+        assertsName(remoteById, field) && !assertsName(localById, field),
+    );
+    if (!localField || !remoteField) continue;
+
+    // A disputa é "qual destes dois campos fica com este nome": ela é descrita
+    // pelo nome e pelo par de ids, e não muda quando o conteúdo de um dos lados
+    // avança — diferente das colisões de conteúdo, cujo id carrega a assinatura
+    // do valor em jogo (#590).
+    const id = conflictId("name", name, localField.id, remoteField.id);
+    const resolution = resolutionFor(id, resolutions);
+    mergedById.delete(resolution === "local" ? remoteField.id : localField.id);
+    conflicts.push({
+      id,
+      kind: "name",
+      name,
+      localField: clone(localField),
+      remoteField: clone(remoteField),
+      resolution,
+    });
+  }
+  return conflicts;
+}
+
 function mergeOrderByPrecedence({
   baseOrder,
   localOrder,
@@ -449,9 +556,14 @@ function mergeOrderByPrecedence({
 }
 
 /**
- * Mescla base, rascunho local e snapshot remoto por nome de campo. Alteracoes
- * independentes entram automaticamente; toda colisao permanece explicita e
- * usa o remoto apenas como preview ate receber uma resolucao.
+ * Mescla base, rascunho local e snapshot remoto por ID de campo (#473).
+ * Alteracoes independentes entram automaticamente; toda colisao permanece
+ * explicita e usa o remoto apenas como preview ate receber uma resolucao.
+ * Rename e edicao de conteudo como outra qualquer. Quando dois campos distintos
+ * chegam disputando o mesmo nome — um afirmado de cada lado —, a disputa vira
+ * conflito `name` e so um deles fica: o merge nao INTRODUZ nome duplicado. A
+ * duplicata que ja vem no `local` (o usuario digitando) atravessa intacta, e
+ * continua sendo barrada no save.
  */
 export function mergeSchemas(
   base: PydanticField[],
@@ -459,44 +571,60 @@ export function mergeSchemas(
   remote: PydanticField[],
   resolutions: SchemaMergeResolutions = {},
 ): SchemaMergeResult {
-  const baseByName = fieldMap(base, "base");
-  const localByName = fieldMap(local, "local");
-  const remoteByName = fieldMap(remote, "remoto");
-  const allNames = new Set([
-    ...baseByName.keys(),
-    ...localByName.keys(),
-    ...remoteByName.keys(),
+  const baseById = fieldMap(base, "base");
+  const localById = fieldMap(local, "local");
+  const remoteById = fieldMap(remote, "remoto");
+  const allIds = new Set([
+    ...baseById.keys(),
+    ...localById.keys(),
+    ...remoteById.keys(),
   ]);
-  const mergedByName = new Map<string, PydanticField>();
+  const mergedById = new Map<string, PydanticField>();
   const conflicts: SchemaMergeConflict[] = [];
 
-  for (const name of allNames) {
-    const baseField = baseByName.get(name);
-    const localField = localByName.get(name);
-    const remoteField = remoteByName.get(name);
+  for (const fieldId of allIds) {
+    const baseField = baseById.get(fieldId);
+    const localField = localById.get(fieldId);
+    const remoteField = remoteById.get(fieldId);
+    // O rotulo prefere o lado que o usuario ve na tela (local), depois o
+    // remoto e por fim a base — importa so para exibicao do conflito.
+    const label = (localField ?? remoteField ?? baseField)!.name;
     const merged = baseField
-      ? mergeExistingField(name, baseField, localField, remoteField, resolutions)
-      : mergeAddedField(name, localField, remoteField, resolutions);
-    if (merged.field) mergedByName.set(name, merged.field);
+      ? mergeExistingField(
+          fieldId,
+          label,
+          baseField,
+          localField,
+          remoteField,
+          resolutions,
+        )
+      : mergeAddedField(fieldId, label, localField, remoteField, resolutions);
+    if (merged.field) mergedById.set(fieldId, merged.field);
     conflicts.push(...merged.conflicts);
   }
 
-  const mergedNames = new Set(mergedByName.keys());
+  // Antes de calcular a ordem: o campo que perde a disputa de nome sai do
+  // resultado, e a ordem precisa ser computada sobre o conjunto final.
+  conflicts.push(
+    ...resolveNameCollisions(mergedById, localById, remoteById, resolutions),
+  );
+
+  const mergedIds = new Set(mergedById.keys());
   const localOrder = completeOrder(
-    local.map((field) => field.name),
-    remote.map((field) => field.name),
-    mergedNames,
+    local.map((field) => field.id),
+    remote.map((field) => field.id),
+    mergedIds,
   );
   const remoteOrder = completeOrder(
-    remote.map((field) => field.name),
-    local.map((field) => field.name),
-    mergedNames,
+    remote.map((field) => field.id),
+    local.map((field) => field.id),
+    mergedIds,
   );
   const mergedOrder = mergeOrderByPrecedence({
-    baseOrder: base.map((field) => field.name),
-    localOrder: local.map((field) => field.name),
-    remoteOrder: remote.map((field) => field.name),
-    names: mergedNames,
+    baseOrder: base.map((field) => field.id),
+    localOrder: local.map((field) => field.id),
+    remoteOrder: remote.map((field) => field.id),
+    names: mergedIds,
   });
 
   let selectedOrder = mergedOrder ?? remoteOrder;
@@ -507,19 +635,29 @@ export function mergeSchemas(
       stableStringify(remoteOrder),
     );
     const resolution = resolutionFor(id, resolutions);
+    // O conflito de ordem e contrato de exibicao: publica NOMES, resolvidos
+    // contra o campo ja mesclado (que carrega o nome pos-merge) com fallback
+    // nos tres lados para ids que sairam do resultado.
+    const displayName = (fieldId: string): string =>
+      (
+        mergedById.get(fieldId) ??
+        localById.get(fieldId) ??
+        remoteById.get(fieldId) ??
+        baseById.get(fieldId)
+      )?.name ?? fieldId;
     conflicts.push({
       id,
       kind: "order",
       baseOrder: base.map((field) => field.name),
-      localOrder,
-      remoteOrder,
+      localOrder: localOrder.map(displayName),
+      remoteOrder: remoteOrder.map(displayName),
       resolution,
     });
     if (resolution === "local") selectedOrder = localOrder;
   }
 
   return {
-    fields: selectedOrder.map((name) => clone(mergedByName.get(name)!)),
+    fields: selectedOrder.map((fieldId) => clone(mergedById.get(fieldId)!)),
     conflicts,
   };
 }

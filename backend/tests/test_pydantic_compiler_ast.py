@@ -57,7 +57,7 @@ class A(BaseModel):
 
 @pytest.mark.parametrize("code", MALICIOUS, ids=range(len(MALICIOUS)))
 def test_malicious_payload_rejected(code):
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
     assert result["fields"] == []
@@ -67,7 +67,7 @@ def test_strix_poc_does_not_write_file(tmp_path):
     """O PoC do strix escrevia um arquivo via pathlib; aqui ele nem importa."""
     marker = tmp_path / "PWNED"
     code = f"import pathlib\npathlib.Path({str(marker)!r}).write_text('owned')\n"
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert not marker.exists()
 
@@ -79,7 +79,7 @@ def test_field_default_call_rejected(tmp_path):
         "class Analysis(BaseModel):\n"
         f"    x: str = Field(default=open({str(marker)!r}, 'w'))\n"
     )
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert not marker.exists()
 
@@ -126,7 +126,7 @@ def test_union_pipe_syntax_rejected():
 class Analysis(BaseModel):
     x: str | None = Field(default=None, description="X")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
 
@@ -154,7 +154,7 @@ def test_field_name_with_internal_double_underscore_accepted():
 class Analysis(BaseModel):
     my__field: str = Field(description="X")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
     assert result["fields"][0]["name"] == "my__field"
 
@@ -170,7 +170,7 @@ class _doc__fields(BaseModel):
 class Analysis(BaseModel):
     doc_: _doc__fields = Field(description="Doc")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"], result["errors"]
 
 
@@ -181,7 +181,7 @@ def test_strict_dunder_field_name_rejected():
 class Analysis(BaseModel):
     __class__: str = Field(description="X")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
 
@@ -194,7 +194,7 @@ def test_deeply_nested_annotation_rejected_with_message():
         "class Analysis(BaseModel):\n"
         f'    x: {ann} = Field(description="X")\n'
     )
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert any("aninhada" in e for e in result["errors"])
 
@@ -222,7 +222,7 @@ def test_unsupported_type_constructors_rejected_cleanly(annotation):
         "class Analysis(BaseModel):\n"
         f'    x: {annotation} = Field(description="X")\n'
     )
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
 
@@ -251,7 +251,7 @@ class Mixin(BaseModel):
 class Analysis(Mixin, BaseModel):
     x: str = Field(description="x")
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
 
@@ -266,7 +266,7 @@ class __reduce__(BaseModel):
 class Analysis(BaseModel):
     x: int = Field(default=1)
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
 
@@ -278,7 +278,7 @@ def test_strict_dunder_field_kwarg_rejected():
 class Analysis(BaseModel):
     x: int = Field(__class__=1, default=1)
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
 
@@ -292,7 +292,7 @@ def test_all_underscore_field_names_rejected(name):
         "class Analysis(BaseModel):\n"
         f'    {name}: str = Field(description="X")\n'
     )
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     assert result["valid"] is False
     assert result["errors"]
 
@@ -320,8 +320,10 @@ def test_type_depth_boundary():
 
     # Profundidade no limite é aceita (str na base conta como nível extra,
     # então usamos _MAX_TYPE_DEPTH wrappers de list).
-    ok = compile_pydantic(code_for(_MAX_TYPE_DEPTH - 1))
+    ok = compile_pydantic(code_for(_MAX_TYPE_DEPTH - 1), generate_missing_ids=True)
     assert ok["valid"], ok["errors"]
-    too_deep = compile_pydantic(code_for(_MAX_TYPE_DEPTH + 5))
+    too_deep = compile_pydantic(
+        code_for(_MAX_TYPE_DEPTH + 5), generate_missing_ids=True
+    )
     assert too_deep["valid"] is False
     assert any("aninhada" in e for e in too_deep["errors"])

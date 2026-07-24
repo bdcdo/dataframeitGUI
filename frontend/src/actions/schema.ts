@@ -19,6 +19,7 @@ import {
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { errorMessage } from "@/lib/utils";
 import {
+  generateFieldId,
   parsePydanticFields,
   parseSaveablePydanticFields,
 } from "@/lib/pydantic-field";
@@ -814,7 +815,7 @@ export async function publishMajorVersion(
 
 export async function toggleLlmField(
   projectId: string,
-  fieldDef: PydanticField,
+  fieldDef: Omit<PydanticField, "id">,
   enabled: boolean,
   expectedBaseline: SchemaBaselineIdentity,
 ): Promise<SchemaSaveResult> {
@@ -824,7 +825,9 @@ export async function toggleLlmField(
 
   if (enabled) {
     if (!fields.some((f) => f.name === fieldDef.name)) {
-      fields = [...fields, fieldDef];
+      // A definição padrão não carrega identidade: o id nasce aqui, quando o
+      // campo entra no schema deste projeto.
+      fields = [...fields, { ...fieldDef, id: generateFieldId() }];
     }
   } else {
     fields = fields.filter((f) => f.name !== fieldDef.name);
