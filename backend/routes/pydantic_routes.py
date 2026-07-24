@@ -71,4 +71,7 @@ async def recover_fields(
         raise HTTPException(
             status_code=404, detail="Projeto não possui código Pydantic armazenado"
         )
-    return compile_pydantic(code)
+    # Único caminho autorizado a gerar id para campo legado sem identidade:
+    # a recuperação é explícita (o coordenador pediu) e o resultado passa pelo
+    # save normal, que persiste os ids recém-nascidos.
+    return compile_pydantic(code, generate_missing_ids=True)

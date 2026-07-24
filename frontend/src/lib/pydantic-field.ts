@@ -39,7 +39,15 @@ const pydanticSubfieldRuleSchema = z.enum(["all", "at_least_one"]);
 // Este schema e a fonte runtime e estatica unica de PydanticField.
 // `strictObject` faz a recuperacao de rascunhos falhar fechada quando surgir
 // uma propriedade que ainda nao tenha contrato explicito.
-const pydanticFieldSchema = z.strictObject({
+//
+// `id` e a identidade do campo (chave de merge, React key, unicidade do
+// rascunho); `name` e conteudo editavel e identidade de auditoria
+// (`diffFields`/`schema_change_log` seguem chaveando por nome). Separar os dois
+// e o que permite nome duplicado transitorio no editor sem quebrar o merge —
+// ver issue #473. Exportado para o schema de draft legado (v4) derivar a
+// variante sem `id` via `.omit()` em vez de duplicar o shape.
+export const pydanticFieldSchema = z.strictObject({
+  id: z.uuid(),
   name: z.string(),
   type: pydanticFieldTypeSchema,
   options: z.array(z.string()).nullable(),
@@ -55,22 +63,55 @@ const pydanticFieldSchema = z.strictObject({
   justification_prompt: z.string().optional(),
 });
 
-export const pydanticFieldsSchema = z.array(pydanticFieldSchema).superRefine(
-  (fields, context) => {
-    const names = new Set<string>();
-    for (let index = 0; index < fields.length; index += 1) {
-      const name = fields[index].name;
-      if (names.has(name)) {
-        context.addIssue({
-          code: "custom",
-          path: [index, "name"],
-          message: `Campo ${index + 1}: nome "${name}" duplicado`,
-        });
-      }
-      names.add(name);
+type FieldsRefinement = (
+  fields: Array<z.infer<typeof pydanticFieldSchema>>,
+  context: z.RefinementCtx,
+) => void;
+
+const refineUniqueIds: FieldsRefinement = (fields, context) => {
+  const ids = new Set<string>();
+  for (let index = 0; index < fields.length; index += 1) {
+    const id = fields[index].id;
+    if (ids.has(id)) {
+      context.addIssue({
+        code: "custom",
+        path: [index, "id"],
+        message: `Campo ${index + 1}: id "${id}" duplicado`,
+      });
     }
-  },
-);
+    ids.add(id);
+  }
+};
+
+const refineUniqueNames: FieldsRefinement = (fields, context) => {
+  const names = new Set<string>();
+  for (let index = 0; index < fields.length; index += 1) {
+    const name = fields[index].name;
+    if (names.has(name)) {
+      context.addIssue({
+        code: "custom",
+        path: [index, "name"],
+        message: `Campo ${index + 1}: nome "${name}" duplicado`,
+      });
+    }
+    names.add(name);
+  }
+};
+
+// Fronteira do estado EDITAVEL (GUI e rascunho local): ids unicos sao
+// invariante dura — sao a identidade que o merge e as React keys usam — mas
+// nome duplicado e estado transitorio legitimo (renomear q2 -> q10 passa por
+// "q1" quando q1 existe). A duplicata de nome so e barrada na fronteira de
+// save (`saveablePydanticFieldsSchema`) e na de persistencia.
+export const editablePydanticFieldsSchema = z
+  .array(pydanticFieldSchema)
+  .superRefine(refineUniqueIds);
+
+// Fronteira do estado PERSISTIDO (`projects.pydantic_fields`, snapshot base do
+// rascunho, retorno do recover): alem de ids unicos, nomes unicos — o banco
+// nunca guarda duplicata.
+export const pydanticFieldsSchema =
+  editablePydanticFieldsSchema.superRefine(refineUniqueNames);
 
 const PYTHON_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const isStrictDunder = (name: string): boolean =>
@@ -305,6 +346,39 @@ export function resolveSubfieldRule(
 export const PYDANTIC_FIELD_PROPERTY_KEYS = Object.freeze(
   Object.keys(pydanticFieldSchema.shape).sort(),
 );
+
+// Identidade de campo nova. `crypto.randomUUID` so existe em contexto seguro
+// (HTTPS/localhost — mesmo motivo do fallback de `makeId` em utils.ts), mas
+// aqui o fallback nao pode ser um id com prefixo arbitrario: o contrato
+// (`z.uuid()` acima e a CHECK constraint em `projects.pydantic_fields`) exige
+// UUID, entao o fallback monta um v4 valido com `getRandomValues`, que e
+// disponivel tambem em contexto inseguro.
+export function generateFieldId(): string {
+  const cryptoApi = globalThis.crypto;
+  const native = cryptoApi?.randomUUID?.();
+  if (native) return native;
+  const bytes = new Uint8Array(16);
+  if (cryptoApi?.getRandomValues) {
+    cryptoApi.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function parseEditablePydanticFields(
+  value: unknown,
+): PydanticField[] | null {
+  const result = editablePydanticFieldsSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
 
 export function parsePydanticFields(value: unknown): PydanticField[] | null {
   const result = pydanticFieldsSchema.safeParse(value);

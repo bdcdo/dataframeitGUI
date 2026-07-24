@@ -12,16 +12,24 @@ lambda, comprehension ou decorador é aceito.
 import ast
 import hashlib
 import typing
+import uuid
 from typing import Literal, Optional, get_args, get_origin
 
 
-def compile_pydantic(code: str) -> dict:
+def compile_pydantic(code: str, *, generate_missing_ids: bool = False) -> dict:
     """
     Compiles Pydantic code and extracts typed fields.
     Returns: { valid: bool, fields: list, model_name: str | None, errors: list }
 
     A classe é construída a partir do AST validado (sem exec); a extração de
     metadata abaixo opera sobre a classe reconstruída, igual a antes.
+
+    `generate_missing_ids` existe só para o fluxo explícito de recuperação
+    (`/api/pydantic/recover-fields`): código legado, gerado antes da #473, não
+    carrega `id` em `json_schema_extra`, e é ali — e apenas ali — que um UUID
+    novo pode nascer. Nos demais caminhos, id ausente é erro: regenerar em
+    silêncio trocaria a identidade do campo e quebraria merge e rascunhos.
+    Id malformado ou duplicado é erro sempre.
     """
     errors: list[str] = []
 
@@ -38,10 +46,21 @@ def compile_pydantic(code: str) -> dict:
             "errors": ["Nenhuma classe BaseModel encontrada"],
         }
 
-    fields = [
-        _build_field_dict(field_name, field_info)
-        for field_name, field_info in model_class.model_fields.items()
-    ]
+    try:
+        fields = [
+            _build_field_dict(
+                field_name, field_info, generate_missing_ids=generate_missing_ids
+            )
+            for field_name, field_info in model_class.model_fields.items()
+        ]
+        _reject_duplicate_ids(fields)
+    except ValueError as e:
+        return {
+            "valid": False,
+            "fields": [],
+            "model_name": model_class.__name__,
+            "errors": [str(e)],
+        }
 
     return {
         "valid": True,
@@ -49,6 +68,44 @@ def compile_pydantic(code: str) -> dict:
         "model_name": model_class.__name__,
         "errors": errors,
     }
+
+
+def _parse_field_id(field_name: str, raw: object, generate_missing_ids: bool) -> str:
+    """Valida o `id` declarado em `json_schema_extra`, sem regeneração silenciosa.
+
+    Aceita apenas a forma canônica com hífens (a mesma que o frontend valida
+    com `z.uuid()` e que a CHECK constraint de `projects.pydantic_fields`
+    exige) — `uuid.UUID` sozinho aceitaria formas sem hífen/URN que o resto do
+    contrato rejeita.
+    """
+    if raw is None:
+        if generate_missing_ids:
+            return str(uuid.uuid4())
+        raise ValueError(
+            f'Campo "{field_name}": json_schema_extra sem "id". '
+            "Código gerado antes da identidade de campo (#473) só pode ser "
+            "reconstruído pelo fluxo de recuperação."
+        )
+    if not isinstance(raw, str):
+        raise ValueError(f'Campo "{field_name}": "id" deve ser string UUID.')
+    try:
+        parsed = uuid.UUID(raw)
+    except ValueError:
+        raise ValueError(f'Campo "{field_name}": "id" não é um UUID válido.') from None
+    if str(parsed) != raw.lower():
+        raise ValueError(
+            f'Campo "{field_name}": "id" deve estar na forma canônica com hífens.'
+        )
+    return raw
+
+
+def _reject_duplicate_ids(fields: list[dict]) -> None:
+    seen: set[str] = set()
+    for field in fields:
+        field_id = field["id"].lower()
+        if field_id in seen:
+            raise ValueError(f'Campo "{field["name"]}": "id" duplicado no schema.')
+        seen.add(field_id)
 
 
 def extract_json_schema_extra(field_info) -> dict:
@@ -116,6 +173,7 @@ def _strip_description_suffixes(
 
 
 def _assemble_field_dict(
+    field_id: str,
     field_name: str,
     field_type: str,
     options: list[str] | None,
@@ -129,7 +187,9 @@ def _assemble_field_dict(
     condition: dict | None,
     justification_prompt: str | None,
 ) -> dict:
+    # `id` é identidade, não conteúdo: fica fora de `_field_hash` (como target).
     field_dict: dict = {
+        "id": field_id,
         "name": field_name,
         "type": field_type,
         "options": options,
@@ -164,7 +224,9 @@ def _assemble_field_dict(
     return field_dict
 
 
-def _build_field_dict(field_name: str, field_info) -> dict:
+def _build_field_dict(
+    field_name: str, field_info, *, generate_missing_ids: bool = False
+) -> dict:
     """Reconstitui o dict de metadata de `PydanticField` para um campo compilado."""
     annotation = field_info.annotation
     parsed_type, parsed_options = _parse_annotation(annotation)
@@ -180,6 +242,7 @@ def _build_field_dict(field_name: str, field_info) -> dict:
     )
 
     return _assemble_field_dict(
+        field_id=_parse_field_id(field_name, extra.get("id"), generate_missing_ids),
         field_name=field_name,
         field_type=field_type,
         options=options,
