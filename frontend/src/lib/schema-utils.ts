@@ -2,10 +2,13 @@ import type {
   ConditionScalar,
   FieldCondition,
   PydanticField,
+  SubfieldDef,
 } from "@/lib/types";
 import {
+  normalizeSubfields,
   resolveAllowOther,
   resolveRequired,
+  resolveSubfieldRequired,
   resolveSubfieldRule,
   resolveTarget,
 } from "@/lib/pydantic-field";
@@ -144,12 +147,31 @@ export function generatePydanticCode(
     if (field.subfields && field.subfields.length > 0) {
       lines.push("");
       lines.push(`class ${subfieldClassName(field.name)}(BaseModel):`);
+      const rule = resolveSubfieldRule(field.subfield_rule);
       for (const sf of field.subfields) {
-        const ann = sf.required && field.subfield_rule !== "at_least_one"
-          ? "str"
-          : "Optional[str]";
+        const required = resolveSubfieldRequired(sf.required);
+        const ann = required && rule !== "at_least_one" ? "str" : "Optional[str]";
+        // Sob at_least_one a anotação é sempre Optional e não consegue carregar
+        // o `required` individual — ele viaja em json_schema_extra, só no caso
+        // não-default (`True`; o default de subcampo é `false`), para manter o
+        // texto — e portanto o pydantic_hash — byte-idêntico para quem não usa
+        // a propriedade (issue #491; mesmo racional do `required` de campo em
+        // `fieldExtra`).
+        //
+        // A chave é `subfield_required`, e não `required`, porque
+        // `_flatten_nested_basemodels` (backend/services/llm_runner.py)
+        // reaproveita o FieldInfo do subcampo inteiro ao achatar o modelo: o
+        // extra sobe para uma *property* do JSON Schema enviado ao provider, e
+        // `required` ali é palavra reservada (posição válida é no nível do
+        // objeto, valor é array de strings). Nome inerte evita depender de o
+        // conversor do provider descartar a chave — o do google_genai descarta,
+        // um provider em strict mode recusaria.
+        const extra =
+          rule === "at_least_one" && required
+            ? `, json_schema_extra={"subfield_required": True}`
+            : "";
         lines.push(
-          `    ${sf.key}: ${ann} = Field(${ann === "Optional[str]" ? "default=None, " : ""}description="${escapeString(sf.label)}")`
+          `    ${sf.key}: ${ann} = Field(${ann === "Optional[str]" ? "default=None, " : ""}description="${escapeString(sf.label)}"${extra})`
         );
       }
     }
@@ -491,13 +513,18 @@ export function bumpVersion(
 // Serializa um PydanticField para gravar em
 // schema_change_log.before_value / after_value.
 //
-// As quatro propriedades com default implicito passam pelos resolvedores
-// canonicos em vez de `?? null`: `snapshotOf` e a serializacao que `classifyChange`
+// As propriedades com default implicito passam pelos resolvedores canonicos em
+// vez de `?? null`: `snapshotOf` e a serializacao que `classifyChange`
 // classifica, que a deteccao de dirty compara e que `mergeSchemas` le propriedade
 // a propriedade, entao normalizar diferente em qualquer um deles fabrica conflito
 // de merge sem edicao nenhuma — foi o que `hash`, `target` e `subfield_rule` ja
 // causaram, um por rodada de revisao. Payloads gravados antes desta mudanca tem
 // `null` nessas chaves; o diff de historico resolve os dois para o mesmo default.
+//
+// `subfields` era a excecao — comparado cru, com o default de `required` de
+// cada subcampo por resolver — e por isso repetia o mesmo sintoma um nivel
+// abaixo (issue #491). `normalizeSubfields` fecha isso; a normalizacao mora
+// dentro do resolvedor, nao numa tabela paralela propriedade→default.
 export function snapshotOf(field: PydanticField): Record<string, unknown> {
   return {
     name: field.name,
@@ -507,7 +534,7 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     options: field.options ?? null,
     target: resolveTarget(field.target),
     required: resolveRequired(field.required),
-    subfields: field.subfields ?? null,
+    subfields: normalizeSubfields(field.subfields),
     subfield_rule: resolveSubfieldRule(field.subfield_rule),
     allow_other: resolveAllowOther(field.allow_other),
     condition: field.condition ?? null,
@@ -536,7 +563,12 @@ export function fieldDiffIsStructural(
   }
 
   if (before.subfields !== undefined || after.subfields !== undefined) {
-    if (stableStringify(before.subfields ?? null) !== stableStringify(after.subfields ?? null)) {
+    // Normalizado como em `snapshotOf`/`diffFields`: payloads gravados antes
+    // do #491 tem subcampo sem a chave `required`, e o backfill nao pode
+    // reclassificar como estrutural um default que so virou explicito.
+    const b = normalizeSubfields(before.subfields as SubfieldDef[] | null);
+    const a = normalizeSubfields(after.subfields as SubfieldDef[] | null);
+    if (stableStringify(b) !== stableStringify(a)) {
       return true;
     }
   }
@@ -687,12 +719,12 @@ export function diffFields(
       before.allow_other = resolveAllowOther(old.allow_other);
       after.allow_other = resolveAllowOther(f.allow_other);
     }
-    const oldSubs = stableStringify(old.subfields ?? null);
-    const newSubs = stableStringify(f.subfields ?? null);
-    if (oldSubs !== newSubs) {
+    const oldSubs = normalizeSubfields(old.subfields);
+    const newSubs = normalizeSubfields(f.subfields);
+    if (stableStringify(oldSubs) !== stableStringify(newSubs)) {
       diffs.push("subcampos");
-      before.subfields = old.subfields ?? null;
-      after.subfields = f.subfields ?? null;
+      before.subfields = oldSubs;
+      after.subfields = newSubs;
     }
     const oldCond = stableStringify(old.condition ?? null);
     const newCond = stableStringify(f.condition ?? null);

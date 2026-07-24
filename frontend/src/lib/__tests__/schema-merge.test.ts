@@ -327,6 +327,60 @@ describe("mergeSchemas — default implícito não é edição", () => {
     );
     expect(unresolvedSchemaConflicts(merge)).toHaveLength(1);
   });
+
+  // A quinta, um nível abaixo das outras: o default implícito vive DENTRO de
+  // `subfields`, e o produtor do explícito é `_extract_subfields`, que sempre
+  // grava `required` no subcampo. Um campo legado com `{key,label}` e o mesmo
+  // campo recuperado por `compile_pydantic` descrevem o mesmo grupo (#491).
+  const semRequired: PydanticField = {
+    ...q1,
+    subfields: [{ key: "a", label: "A" }],
+    subfield_rule: "at_least_one",
+  };
+  const comRequiredFalse: PydanticField = {
+    ...semRequired,
+    subfields: [{ key: "a", label: "A", required: false }],
+  };
+
+  it("required de subcampo implícito não conflita com o explícito", () => {
+    expect(
+      mergeSchemas([], [semRequired], [comRequiredFalse]).conflicts,
+    ).toEqual([]);
+  });
+
+  it("edição local do subcampo não conflita com remoto que só explicitou o default", () => {
+    const merge = mergeSchemas(
+      [semRequired],
+      [
+        {
+          ...semRequired,
+          subfields: [{ key: "a", label: "A", required: true }],
+        },
+      ],
+      [comRequiredFalse],
+    );
+    expect(unresolvedSchemaConflicts(merge)).toEqual([]);
+    expect(merge.fields[0].subfields?.[0].required).toBe(true);
+  });
+
+  it("tornar um subcampo obrigatório de verdade continua conflitando", () => {
+    const merge = mergeSchemas(
+      [semRequired],
+      [
+        {
+          ...semRequired,
+          subfields: [{ key: "a", label: "A", required: true }],
+        },
+      ],
+      [
+        {
+          ...semRequired,
+          subfields: [{ key: "a", label: "Rótulo remoto" }],
+        },
+      ],
+    );
+    expect(unresolvedSchemaConflicts(merge)).toHaveLength(1);
+  });
 });
 
 // Uma resolução é a resposta a UMA disputa concreta ("Local" × "Remota"), não ao

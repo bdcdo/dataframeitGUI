@@ -148,6 +148,29 @@ describe("classifyChange", () => {
     const mudada = [withSubfields({ subfield_rule: "at_least_one" })];
     expect(classifyChange(legado, mudada)).toBe("minor");
   });
+
+  // Um nível abaixo: o default implícito dentro do próprio subcampo. Quem
+  // produz o explícito é `_extract_subfields`, que sempre grava `required`
+  // (issue #491) — sem normalizar, recuperar um projeto legado pelo endpoint
+  // de recover bumpava minor e gravava auditoria de uma mudança que ninguém
+  // fez.
+  it("promover o default de required do subcampo a explícito não é mudança", () => {
+    const legado = [withSubfields()];
+    const recuperado = [
+      withSubfields({ subfields: [{ key: "a", label: "A", required: false }] }),
+    ];
+    expect(classifyChange(legado, recuperado)).toBeNull();
+    expect(diffFields(legado, recuperado)).toEqual([]);
+  });
+
+  it("tornar o subcampo obrigatório de verdade continua sendo minor", () => {
+    const legado = [withSubfields()];
+    const mudada = [
+      withSubfields({ subfields: [{ key: "a", label: "A", required: true }] }),
+    ];
+    expect(classifyChange(legado, mudada)).toBe("minor");
+    expect(diffFields(legado, mudada)).toHaveLength(1);
+  });
 });
 
 // O jsonb do Postgres normaliza a ordem das chaves; condition/subfields lidos
@@ -500,5 +523,70 @@ describe("generatePydanticCode round-trip surface", () => {
     expect(implicito).not.toContain('"required"');
     expect(explicito).not.toContain('"required"');
     expect(explicito).toBe(implicito);
+  });
+
+  // Issue #491: sob at_least_one a anotação é sempre Optional[str] e não
+  // consegue carregar o `required` individual do subcampo — ele viaja em
+  // json_schema_extra, só no caso não-default (o default de subcampo é
+  // `false`, o oposto do required de campo). A chave é `subfield_required`
+  // porque o backend achata o subcampo em property do JSON Schema do provider,
+  // onde `required` é palavra reservada — ver comentário em generatePydanticCode.
+  const subfieldGroup = (
+    subfields: PydanticField["subfields"],
+    subfield_rule?: "all" | "at_least_one",
+  ) =>
+    baseField({
+      name: "doc",
+      type: "text",
+      options: null,
+      subfields,
+      subfield_rule,
+    });
+
+  it("emits subfield required in json_schema_extra under at_least_one", () => {
+    const code = generatePydanticCode([
+      subfieldGroup(
+        [
+          { key: "a", label: "A", required: true },
+          { key: "b", label: "B", required: false },
+        ],
+        "at_least_one",
+      ),
+    ]);
+    expect(code).toContain(
+      '    a: Optional[str] = Field(default=None, description="A", json_schema_extra={"subfield_required": True})',
+    );
+    expect(code).toContain(
+      '    b: Optional[str] = Field(default=None, description="B")',
+    );
+    // `required` cru colidiria com a palavra reservada do JSON Schema quando o
+    // backend achata o subcampo para mandar ao provider.
+    expect(code).not.toContain('{"required"');
+  });
+
+  it("keeps subfield text byte-identical when required is default", () => {
+    // Sob "all" a anotação já carrega o required (str vs Optional[str]);
+    // sob at_least_one sem subcampo obrigatório não há o que emitir. Nos
+    // dois casos o texto — e portanto o pydantic_hash — não pode mudar.
+    const all = generatePydanticCode([
+      subfieldGroup([
+        { key: "a", label: "A", required: true },
+        { key: "b", label: "B", required: false },
+      ]),
+    ]);
+    expect(all).toContain('    a: str = Field(description="A")');
+    expect(all).toContain(
+      '    b: Optional[str] = Field(default=None, description="B")',
+    );
+    expect(all).not.toContain('"required"');
+
+    const explicito = generatePydanticCode([
+      subfieldGroup([{ key: "a", label: "A", required: false }], "at_least_one"),
+    ]);
+    const legado = generatePydanticCode([
+      subfieldGroup([{ key: "a", label: "A" }], "at_least_one"),
+    ]);
+    expect(explicito).not.toContain('"required"');
+    expect(legado).toBe(explicito);
   });
 });
