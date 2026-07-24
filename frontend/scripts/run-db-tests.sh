@@ -54,6 +54,7 @@ GATE_SUITES=(
   auto_review_assignment_concurrency
   unmark_equivalence_atomic
   auto_review_reconciliation_outbox
+  arbitration_reopen
   rls_audit
 )
 

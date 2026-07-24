@@ -1,7 +1,8 @@
--- Contrato de `remove_response_equivalence`: o par e o veredito da identidade
--- de trabalho de quem chama saem na MESMA transação, e o veredito de terceiros
--- nunca sai junto. Fixtures derivadas das que o PR #446 montou para a issue
--- #427.
+-- Contrato de `remove_response_equivalence`: o par, o veredito da identidade
+-- de trabalho de quem chama E o veredito do DONO do par saem na MESMA
+-- transação (#545 — dissolver o par é evento do documento, e o gabarito do
+-- dono apontava o grupo dissolvido); vereditos de outros revisores nunca saem
+-- junto. Fixtures derivadas das que o PR #446 montou para a issue #427.
 --
 -- Um cenário por braço do predicado de autoridade — dona, conta-alias,
 -- coordenadora, criadora não-membro, master —, mais outsider (nenhum braço) e
@@ -25,6 +26,7 @@ INSERT INTO auth.users (id, email) VALUES
   ('11111111-1111-1111-1111-111111111111', 'dona-427@example.test'),
   ('22222222-2222-2222-2222-222222222222', 'dona-alias-427@example.test'),
   ('77777777-7777-7777-7777-777777777777', 'coordenadora-427@example.test'),
+  ('88888888-8888-8888-8888-888888888888', 'terceiro-427@example.test'),
   ('99999999-9999-9999-9999-999999999999', 'outsider-427@example.test'),
   ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'criadora-427@example.test'),
   ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'master-427@example.test');
@@ -60,6 +62,11 @@ INSERT INTO public.project_members (project_id, user_id, role) VALUES
     '33333333-3333-3333-3333-333333333333',
     '77777777-7777-7777-7777-777777777777',
     'coordenador'
+  ),
+  (
+    '33333333-3333-3333-3333-333333333333',
+    '88888888-8888-8888-8888-888888888888',
+    'pesquisador'
   );
 
 -- A conta-alias trabalha como a pesquisadora canônica.
@@ -128,8 +135,9 @@ FROM (VALUES
   (7, 'campo-master')
 ) AS cenario(n, campo);
 
--- Veredito da pesquisadora em cada campo, mais um veredito da coordenadora
--- em 'campo-coord' (o cenário que separa "meu review" de "review alheio").
+-- Veredito da pesquisadora em cada campo, mais dois vereditos em 'campo-coord':
+-- o da coordenadora (chamadora do cenário) e o de um TERCEIRO revisor — nem
+-- dono nem chamador —, a fronteira nova do #545: só chamador + dono saem.
 INSERT INTO public.reviews
   (project_id, document_id, field_name, reviewer_id, verdict)
 SELECT
@@ -151,6 +159,13 @@ VALUES (
   '44444444-4444-4444-4444-444444444444',
   'campo-coord',
   '77777777-7777-7777-7777-777777777777',
+  'resposta fundida'
+),
+(
+  '33333333-3333-3333-3333-333333333333',
+  '44444444-4444-4444-4444-444444444444',
+  'campo-coord',
+  '88888888-8888-8888-8888-888888888888',
   'resposta fundida'
 );
 
@@ -238,7 +253,7 @@ BEGIN
   END IF;
 END $$;
 
--- ========== Coordenadora desfaz par alheio: não apaga trabalho de terceiro ==
+-- ========== Coordenadora desfaz par alheio: veredito do dono sai junto ======
 SELECT set_config(
   'request.jwt.claims',
   '{"sub":"77777777-7777-7777-7777-777777777777","supabase_uid":"77777777-7777-7777-7777-777777777777"}',
@@ -278,15 +293,33 @@ BEGIN
     RAISE EXCEPTION 'FALHOU coordenadora: o próprio veredito não foi removido';
   END IF;
 
-  -- Decisão de produto travada aqui: o veredito da pesquisadora permanece.
-  -- Trocar o predicado do DELETE por `equivalence.reviewer_id` faria este
-  -- teste falhar — é a fronteira entre desfazer um par e apagar trabalho
-  -- alheio.
+  -- Decisão de produto do #545: dissolver o par é evento do documento, e o
+  -- veredito da DONA — cujo gabarito apontava o grupo dissolvido — sai junto,
+  -- forçando novo voto. (Inverte a fronteira que o #542 travava aqui.)
   SELECT count(*) INTO n FROM public.reviews
   WHERE field_name = 'campo-coord'
     AND reviewer_id = '11111111-1111-1111-1111-111111111111';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FALHOU coordenadora: o veredito da dona do par sobreviveu';
+  END IF;
+
+  -- A fronteira que PERMANECE: o veredito de um terceiro revisor — nem dono
+  -- nem chamador — no mesmo (documento, campo) nunca sai. Trocar o DELETE
+  -- para varrer todos os reviewers do campo faria este teste falhar.
+  SELECT count(*) INTO n FROM public.reviews
+  WHERE field_name = 'campo-coord'
+    AND reviewer_id = '88888888-8888-8888-8888-888888888888';
   IF n <> 1 THEN
-    RAISE EXCEPTION 'FALHOU coordenadora: apagou o veredito da pesquisadora';
+    RAISE EXCEPTION 'FALHOU coordenadora: apagou o veredito de terceiro revisor';
+  END IF;
+
+  -- E o alcance é por CAMPO: vereditos da própria dona em outros campos do
+  -- documento não são tocados pela dissolução deste par.
+  SELECT count(*) INTO n FROM public.reviews
+  WHERE field_name = 'campo-outsider'
+    AND reviewer_id = '11111111-1111-1111-1111-111111111111';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'FALHOU coordenadora: apagou veredito da dona em outro campo';
   END IF;
 END $$;
 
@@ -369,14 +402,14 @@ BEGIN
     RAISE EXCEPTION 'FALHOU criadora: o par não foi removido';
   END IF;
 
-  -- Sem membership não há identidade de trabalho no projeto:
-  -- `auth_user_member_identity_ids` volta vazio e o DELETE de `reviews` não
-  -- casa nada. O par sai, nenhum veredito sai — nem o da pesquisadora.
+  -- Sem membership não há identidade de trabalho no projeto — o braço do
+  -- chamador não casa nada —, mas o braço do DONO (#545) casa: o veredito da
+  -- pesquisadora sai porque o grupo que ele apontava foi dissolvido.
   SELECT count(*) INTO n FROM public.reviews
   WHERE field_name = 'campo-criadora'
     AND reviewer_id = '11111111-1111-1111-1111-111111111111';
-  IF n <> 1 THEN
-    RAISE EXCEPTION 'FALHOU criadora: apagou o veredito da pesquisadora';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FALHOU criadora: o veredito da dona do par sobreviveu';
   END IF;
 END $$;
 
@@ -413,11 +446,13 @@ BEGIN
     RAISE EXCEPTION 'FALHOU master: o par não foi removido';
   END IF;
 
+  -- Mesma inversão do #545: master não tem identidade de trabalho no projeto,
+  -- mas o veredito da dona sai pelo braço do dono do par.
   SELECT count(*) INTO n FROM public.reviews
   WHERE field_name = 'campo-master'
     AND reviewer_id = '11111111-1111-1111-1111-111111111111';
-  IF n <> 1 THEN
-    RAISE EXCEPTION 'FALHOU master: apagou o veredito da pesquisadora';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FALHOU master: o veredito da dona do par sobreviveu';
   END IF;
 END $$;
 
