@@ -199,3 +199,115 @@ describe("requiredHumanFields", () => {
     expect(requiredHumanFields(fields, {}, { q1: "h1" }).map((f) => f.name)).toEqual(["q1"]);
   });
 });
+
+// Um campo com subcampos guarda um objeto, e `isFieldAnswered` só checava se o
+// valor era vazio: qualquer objeto não-vazio passava, inclusive um em que o
+// subcampo obrigatório está em branco. O asterisco do FieldRenderer e o texto
+// "pelo menos um" da UI não tinham contrapartida em régua nenhuma — nem aqui,
+// nem no gate inline do saveResponse, nem no backlog de auto-revisão (#491).
+describe("isFieldAnswered — grupos de subcampos", () => {
+  const grupo = (
+    subfields: { key: string; label: string; required?: boolean }[],
+    subfield_rule?: "all" | "at_least_one",
+  ) =>
+    field({
+      name: "q5",
+      type: "text",
+      options: null,
+      subfields,
+      subfield_rule,
+    });
+
+  describe('regra "at_least_one"', () => {
+    const f = grupo(
+      [
+        { key: "doenca", label: "Doença", required: true },
+        { key: "cid", label: "CID", required: true },
+      ],
+      "at_least_one",
+    );
+
+    it("um subcampo preenchido basta", () => {
+      expect(isFieldAnswered(f, { doenca: "AME tipo 1", cid: "" })).toBe(true);
+    });
+
+    it("nenhum subcampo preenchido → não respondido", () => {
+      expect(isFieldAnswered(f, { doenca: "", cid: "" })).toBe(false);
+    });
+
+    it("objeto vazio → não respondido", () => {
+      expect(isFieldAnswered(f, {})).toBe(false);
+    });
+
+    it("só espaço em branco não conta como preenchido", () => {
+      expect(isFieldAnswered(f, { doenca: "   ", cid: "" })).toBe(false);
+    });
+  });
+
+  describe('regra "all" (default)', () => {
+    const f = grupo([
+      { key: "ano", label: "Ano", required: true },
+      { key: "meses", label: "Meses" },
+    ]);
+
+    it("subcampo obrigatório preenchido basta — o opcional não é exigido", () => {
+      expect(isFieldAnswered(f, { ano: "2019", meses: "" })).toBe(true);
+    });
+
+    it("subcampo obrigatório em branco → não respondido", () => {
+      expect(isFieldAnswered(f, { ano: "", meses: "3" })).toBe(false);
+    });
+
+    // O par que impede a régua de virar "todo subcampo é obrigatório": um grupo
+    // sem nenhum subcampo obrigatório continua valendo por presença, como antes.
+    it("grupo sem subcampo obrigatório continua valendo por presença", () => {
+      const semObrigatorio = grupo([{ key: "obs", label: "Observação" }]);
+      expect(isFieldAnswered(semObrigatorio, { obs: "" })).toBe(true);
+    });
+
+    // `required` ausente é opcional (resolveSubfieldRequired), o oposto do
+    // default de campo — não pode ser lido como obrigatório aqui.
+    it("subcampo legado sem a chave `required` não é exigido", () => {
+      const legado = grupo([{ key: "cid", label: "CID" }]);
+      expect(isFieldAnswered(legado, { cid: "" })).toBe(true);
+    });
+  });
+
+  it("a régua sobe para isCodingComplete", () => {
+    const f = grupo([{ key: "cid", label: "CID", required: true }]);
+    expect(isCodingComplete([f], { q5: { cid: "" } })).toBe(false);
+    expect(isCodingComplete([f], { q5: { cid: "G12.0" } })).toBe(true);
+  });
+});
+
+// A fronteira da régua, achada pelo replay com dados de produção: 125
+// codificações concluídas do Zolgensma guardam `q7_idade_paciente` como string
+// porque o campo era texto simples quando foram coletadas e virou grupo depois.
+// `computeFieldHash` exclui as propriedades estruturais de propósito — mexer
+// nelas não invalida resposta já coletada —, então a régua de subcampo não pode
+// ser a peça que rebaixa essas codificações.
+describe("isFieldAnswered — grupo cujo valor foi coletado em outra forma", () => {
+  const grupo = field({
+    name: "q7",
+    type: "text",
+    options: null,
+    subfields: [
+      { key: "ano", label: "Ano", required: true },
+      { key: "meses", label: "Meses", required: true },
+    ],
+    subfield_rule: "at_least_one",
+  });
+
+  it("valor string de antes do grupo continua respondido", () => {
+    expect(isFieldAnswered(grupo, "01 ano")).toBe(true);
+  });
+
+  it("string vazia continua não respondida", () => {
+    expect(isFieldAnswered(grupo, "")).toBe(false);
+  });
+
+  // O par: a tolerância é à FORMA antiga, não ao grupo vazio na forma nova.
+  it("objeto vazio na forma do grupo continua não respondido", () => {
+    expect(isFieldAnswered(grupo, { ano: "", meses: "" })).toBe(false);
+  });
+});
