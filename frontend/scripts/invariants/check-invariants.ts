@@ -20,6 +20,10 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { isCodingComplete } from "@/lib/coding-completeness";
+import {
+  buildTimelineFromPersistedVersions,
+  type PersistedLogEntryRow,
+} from "@/lib/schema-backfill";
 import { computeFieldHash } from "@/lib/schema-utils";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { loadEnv } from "../comentarios-relatorio/load-env";
@@ -301,6 +305,110 @@ const invariants: Invariant[] = [
           key: a.id,
           detail: `assignment concluído cuja response is_latest é rascunho, nunca submetida (doc ${a.document_id}, user ${a.user_id})`,
         }));
+    },
+  },
+  {
+    name: "versao-carimbada-tem-hash-da-propria-epoca",
+    motivation:
+      "família #529/#573 (medição #574/#579): antes do #573, o auto-save promovia schema_version_* sem revisão. Sob o critério do #573, carimbar a versão V no save ao vivo exige revisão real sob V — que grava ao menos um hash de V em answer_field_hashes. Uma response live_save cujo carimbo não é sustentado por NENHUM hash da própria época foi promovida por canal que pulou essa regra (ou o log de versões foi reescrito sob os pés dela — também vale investigação)",
+    run: async () => {
+      const activeDocs = await activeDocIds();
+      const projects = await fetchAll<{
+        id: string;
+        pydantic_fields: PydanticField[] | null;
+        schema_version_major: number | null;
+        schema_version_minor: number | null;
+        schema_version_patch: number | null;
+      }>(
+        "projects",
+        "id, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch",
+      );
+      const violations: Violation[] = [];
+      for (const p of projects) {
+        const fields = p.pydantic_fields ?? [];
+        if (fields.length === 0) continue;
+        const log = await fetchAll<PersistedLogEntryRow>(
+          "schema_change_log",
+          "id, field_name, before_value, after_value, created_at, change_type, version_major, version_minor, version_patch",
+          (q) => q.eq("project_id", p.id),
+        );
+        // fetchAll pagina por id; a auditoria de ordem e a síntese do prefixo
+        // em buildTimelineFromPersistedVersions exigem ordem (created_at, id).
+        log.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+        if (log.length === 0) continue;
+        const timeline = buildTimelineFromPersistedVersions(log, fields, {
+          major: p.schema_version_major ?? 0,
+          minor: p.schema_version_minor ?? 0,
+          patch: p.schema_version_patch ?? 0,
+        });
+        // A timeline inconsistente é achado do projeto, não das responses:
+        // reconstruir por cima dela produziria snapshots errados e marcaria em
+        // massa linhas honestas — falso positivo, que aqui é o pior resultado.
+        if (timeline.status !== "ok") {
+          violations.push({ key: p.id, detail: `${timeline.status}: ${timeline.detail}` });
+          continue;
+        }
+        const { hashesByVersion } = timeline;
+
+        // Só `live_save` (actions/responses.ts) carimba a versão como
+        // afirmação de revisão real sob ela — é o carimbo que o critério do
+        // #573 governa e o único sobre o qual esta invariante tem o que dizer.
+        // Os outros três valores de version_inferred_from são inferência
+        // retroativa do backfill, e dois deles tornariam a asserção degenerada:
+        // `hashes` escolhe a versão MAXIMIZANDO hashes que batem
+        // (findBestHashMatch exige score > 0), então nunca pode violar; e
+        // `fallback_created_at` é o ramo alcançado justamente porque NENHUMA
+        // versão compatível pontuou, então violaria por construção — a
+        // condição que ativaria esse falso positivo é rodar o Backfill pela UI
+        // num projeto com hashes legados que não batem com versão alguma.
+        // `created_at` foi atribuído em bloco pela migration 20260421 a tudo
+        // que era NULL, e também não afirma revisão.
+        const rows = await fetchAll<{
+          id: string;
+          document_id: string;
+          answer_field_hashes: AnswerFieldHashes | null;
+          schema_version_major: number;
+          schema_version_minor: number | null;
+          schema_version_patch: number | null;
+        }>(
+          "responses",
+          "id, document_id, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch",
+          (q) =>
+            q
+              .eq("project_id", p.id)
+              .eq("is_latest", true)
+              .eq("version_inferred_from", "live_save")
+              .not("schema_version_major", "is", null),
+        );
+
+        for (const r of rows) {
+          // Mesma exclusão de documento soft-deletado das invariantes de
+          // fila/status: a cópia excluída do dedup de 2026-06 carrega carimbo e
+          // hashes da época e é inerte.
+          if (!activeDocs.has(r.document_id)) continue;
+          // Sem hash não-nulo não há evidência de época — o sentinela {} das
+          // linhas legadas (#528) e mapas só-null ficam fora, não são violação.
+          const nonNull = Object.entries(r.answer_field_hashes ?? {}).filter(([, h]) => h !== null);
+          if (nonNull.length === 0) continue;
+          const stampedKey = `${r.schema_version_major}.${r.schema_version_minor ?? 0}.${r.schema_version_patch ?? 0}`;
+          const snap = hashesByVersion.get(stampedKey);
+          if (!snap) {
+            violations.push({
+              key: r.id,
+              detail: `carimbo ${stampedKey} não existe na timeline do schema_change_log`,
+            });
+            continue;
+          }
+          const epochHashes = nonNull.filter(([name, h]) => snap[name] === h).length;
+          if (epochHashes === 0) {
+            violations.push({
+              key: r.id,
+              detail: `carimbo ${stampedKey} sem nenhum hash da própria época (0/${nonNull.length})`,
+            });
+          }
+        }
+      }
+      return violations;
     },
   },
   {
