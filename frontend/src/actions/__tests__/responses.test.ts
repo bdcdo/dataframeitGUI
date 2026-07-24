@@ -270,6 +270,60 @@ describe("saveResponse — auto-save vs submit explicito", () => {
     expect(state.assignmentUpdatePayload?.status).toBe("concluido");
   });
 
+  it("submit explicito com obrigatoria em branco grava is_partial=true e devolve a contagem", async () => {
+    // O sinal descreve o conjunto GRAVADO, nao o canal da escrita: sem isso, um
+    // envio incompleto ficava indistinguivel de uma conclusao — o documento
+    // voltava a fila e o pesquisador lia como "nao salvou" (#519).
+    state.pydanticFields = [
+      { name: "q1", type: "text", required: true, hash: "h-q1" },
+      { name: "q2", type: "text", required: true, hash: "h-q2" },
+    ];
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
+    expect(state.responseInsertPayload?.is_partial).toBe(true);
+    // E o cliente recebe a contagem para diferenciar o feedback.
+    expect(r.success && r.missingRequired).toBe(1);
+  });
+
+  it("auto-save que ENCOLHE uma response submetida devolve is_partial=true", async () => {
+    // A heranca do sinal ("ja foi submetida uma vez") sobrevivia a uma escrita
+    // posterior com menos respostas, carimbando de submetido um conjunto
+    // incompleto. Distinto do caso vizinho, onde o conjunto continua completo.
+    state.pydanticFields = [
+      { name: "q1", type: "text", required: true, hash: "h-q1" },
+      { name: "q2", type: "text", required: true, hash: "h-q2" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a", q2: "b" },
+      answer_field_hashes: { q1: "h-q1", q2: "h-q2" },
+    };
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
+    expect(state.responseUpdatePayload?.answers).toEqual({ q1: "a" });
+    expect(state.responseUpdatePayload?.is_partial).toBe(true);
+  });
+
+  it("campo obrigatorio criado depois NAO rebaixa codificacao antiga em auto-save", async () => {
+    // Espelho do caso real: a codificacao estava completa contra o schema da
+    // epoca; o campo novo so entra na regua se o carimbo provar que ele existia.
+    state.pydanticFields = [
+      { name: "q1", type: "text", required: true, hash: "h-q1" },
+      { name: "q_novo", type: "text", required: true, hash: "h-novo" },
+    ];
+    state.existingResponse = {
+      id: "resp-1",
+      is_partial: false,
+      answers: { q1: "a" },
+      answer_field_hashes: { q1: "h-q1" },
+    };
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" }, { isAutoSave: true });
+    expect(state.responseUpdatePayload?.is_partial).toBe(false);
+    expect(state.responseUpdatePayload?.answer_field_hashes).toEqual({ q1: "h-q1" });
+  });
+
   it("preserva resposta stale e seu hash sem usá-la para concluir a codificação", async () => {
     state.pydanticFields = [
       {

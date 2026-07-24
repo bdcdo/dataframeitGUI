@@ -25,6 +25,7 @@ export function useQuestionValidation(
   handleSubmitWithValidation: () => void;
   requiredFields: PydanticField[];
   answeredRequiredCount: number;
+  missingRequiredCount: number;
 } {
   const [highlightedFields, setHighlightedFields] = useState<Set<string>>(new Set());
 
@@ -36,6 +37,12 @@ export function useQuestionValidation(
   // header mostrar "N-1/N" para sempre com o submit liberado.
   // Memoizado para estabilizar a identidade de `requiredFields` (dep de
   // `handleSubmitWithValidation`) entre renders sem mudança de campos/respostas.
+  //
+  // O cliente ser staleness-blind é de propósito: opera sempre contra o schema
+  // atual carregado no formulário, não contra o carimbo de uma escrita anterior.
+  // A assimetria com o gate de `is_partial` (staleness-aware, ver
+  // coding-completeness) é intencional — ao reeditar um doc cujo schema cresceu, o
+  // botão cobra o campo novo, o comportamento correto para uma re-submissão.
   const requiredFields = useMemo(
     () => requiredHumanFields(visibleFields, answers),
     [visibleFields, answers],
@@ -44,6 +51,7 @@ export function useQuestionValidation(
     () => requiredFields.filter((f) => isFieldAnswered(f, answers[f.name])).length,
     [requiredFields, answers],
   );
+  const missingRequiredCount = requiredFields.length - answeredRequiredCount;
 
   const isAnswered = useCallback(
     (field: PydanticField) => isFieldAnswered(field, answers[field.name]),
@@ -103,5 +111,6 @@ export function useQuestionValidation(
     handleSubmitWithValidation,
     requiredFields,
     answeredRequiredCount,
+    missingRequiredCount,
   };
 }
