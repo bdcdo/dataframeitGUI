@@ -204,38 +204,45 @@ function timelineOrderViolation(
 // cronologicamente distantes). Por isso o log é auditado antes de reconstruir:
 // não-decrescente em (created_at, id) e cada versão contígua. O `log` precisa
 // chegar ordenado por (created_at, id).
-export function buildTimelineFromPersistedVersions(
+// Resolve a versão de uma entry: a gravada, quando existe, ou a síntese
+// acumulada do prefixo pré-versionamento. `changeType` só governa essa síntese
+// — `reconstructSnapshotsByVersion` não o lê — então para entries que já trazem
+// versão gravada ele apenas registra o que o log diz, sem re-derivar por
+// fieldDiffIsStructural.
+function resolveEntryVersion(
+  entry: PersistedLogEntryRow,
+  synth: Version,
+): { version: Version; changeType: ChangeType } {
+  if (entry.version_major !== null) {
+    return {
+      version: {
+        major: entry.version_major,
+        minor: entry.version_minor ?? 0,
+        patch: entry.version_patch ?? 0,
+      },
+      changeType: asChangeType(entry.change_type) ?? "patch",
+    };
+  }
+  const changeType =
+    asChangeType(entry.change_type) ??
+    (fieldDiffIsStructural(entry.before_value ?? {}, entry.after_value ?? {}) ? "minor" : "patch");
+  return { version: bumpVersion(synth, changeType), changeType };
+}
+
+function enrichWithPersistedVersions(
   log: PersistedLogEntryRow[],
-  fields: PydanticField[],
-  currentVersion: Version,
-): PersistedTimeline {
-  let synth: Version = { major: 0, minor: 1, patch: 0 };
+):
+  | { status: "ok"; enriched: EnrichedEntry[]; last: TimelineCursor | null }
+  | { status: "non_monotonic"; detail: string } {
   const enriched: EnrichedEntry[] = [];
   let previous: TimelineCursor | null = null;
 
   for (const entry of log) {
-    const before = entry.before_value ?? {};
-    const after = entry.after_value ?? {};
-    // `changeType` só governa a síntese do prefixo — `reconstructSnapshotsByVersion`
-    // não o lê. Para entries que já trazem versão gravada ele registra o que o
-    // log diz, sem re-derivar por fieldDiffIsStructural.
-    let changeType: ChangeType;
-    let version: Version;
-    if (entry.version_major !== null) {
-      version = {
-        major: entry.version_major,
-        minor: entry.version_minor ?? 0,
-        patch: entry.version_patch ?? 0,
-      };
-      synth = version;
-      changeType = asChangeType(entry.change_type) ?? "patch";
-    } else {
-      changeType =
-        asChangeType(entry.change_type) ?? (fieldDiffIsStructural(before, after) ? "minor" : "patch");
-      synth = bumpVersion(synth, changeType);
-      version = synth;
-    }
-
+    const { version, changeType } = resolveEntryVersion(entry, previous?.version ?? {
+      major: 0,
+      minor: 1,
+      patch: 0,
+    });
     const key = formatVersion(version);
     const orderProblem = timelineOrderViolation(entry.id, key, version, previous);
     if (orderProblem) return { status: "non_monotonic", detail: orderProblem };
@@ -244,13 +251,24 @@ export function buildTimelineFromPersistedVersions(
     enriched.push({
       id: entry.id,
       field_name: entry.field_name,
-      before,
-      after,
+      before: entry.before_value ?? {},
+      after: entry.after_value ?? {},
       createdAt: new Date(entry.created_at).getTime(),
       changeType,
       version,
     });
   }
+
+  return { status: "ok", enriched, last: previous };
+}
+
+export function buildTimelineFromPersistedVersions(
+  log: PersistedLogEntryRow[],
+  fields: PydanticField[],
+  currentVersion: Version,
+): PersistedTimeline {
+  const audited = enrichWithPersistedVersions(log);
+  if (audited.status !== "ok") return audited;
 
   // A âncora da reconstrução é a versão CORRENTE do projeto, não a da última
   // entry: `fields` é o estado de agora, então é sob a versão de agora que ele
@@ -260,14 +278,15 @@ export function buildTimelineFromPersistedVersions(
   // versão corrente cairiam em "não existe na timeline". O projeto atrás do log
   // é estado impossível — o commit grava os dois na mesma transação — e por
   // isso volta como achado em vez de ser acomodado.
-  if (previous && !versionGte(currentVersion, previous.version)) {
+  const last = audited.last;
+  if (last && !versionGte(currentVersion, last.version)) {
     return {
       status: "current_behind_log",
-      detail: `versão corrente do projeto ${formatVersion(currentVersion)} é anterior à ${previous.key} da última entry do schema_change_log`,
+      detail: `versão corrente do projeto ${formatVersion(currentVersion)} é anterior à ${last.key} da última entry do schema_change_log`,
     };
   }
 
-  const snapshots = reconstructSnapshotsByVersion(fields, enriched, currentVersion);
+  const snapshots = reconstructSnapshotsByVersion(fields, audited.enriched, currentVersion);
   const hashesByVersion = new Map<string, Record<string, string>>();
   for (const [key, snap] of snapshots) hashesByVersion.set(key, computeHashesFromSnapshot(snap));
   return { status: "ok", hashesByVersion };

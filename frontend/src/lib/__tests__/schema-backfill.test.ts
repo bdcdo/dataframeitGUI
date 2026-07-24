@@ -213,6 +213,63 @@ describe("buildTimelineFromPersistedVersions", () => {
     expect(timeline.hashesByVersion.get("0.11.1")?.campo1).toBe(hashV2);
   });
 
+  // Duas propriedades da síntese que um prefixo de uma só entry não distingue:
+  // ela ACUMULA ao longo do prefixo (não recomeça de 0.1.0 a cada entry) e
+  // REANCORA na última versão vista, de modo que uma entry NULL depois de uma
+  // gravada continua de lá. Sem isso a síntese voltaria para a casa dos 0.2.x
+  // depois de uma persistida 0.11.0 e a própria auditoria de ordem acusaria
+  // retrocesso — a timeline inteira do projeto viraria achado.
+  it("a síntese acumula ao longo do prefixo e reancora na última versão gravada", () => {
+    const rows: PersistedLogEntryRow[] = [
+      persistedRow({
+        id: "a",
+        before_value: {},
+        after_value: { type: "text", description: "v0" },
+        created_at: "2026-01-01T00:00:00.000Z",
+        change_type: "minor",
+      }),
+      persistedRow({
+        id: "b",
+        before_value: { description: "v0" },
+        after_value: { description: "v1" },
+        created_at: "2026-01-02T00:00:00.000Z",
+        change_type: "patch",
+      }),
+      persistedRow({
+        id: "c",
+        before_value: { description: "v1" },
+        after_value: { description: "v2" },
+        created_at: "2026-05-01T00:00:00.000Z",
+        change_type: "patch",
+        version_major: 0,
+        version_minor: 11,
+        version_patch: 0,
+      }),
+      persistedRow({
+        id: "d",
+        field_name: "campo2",
+        before_value: { description: "x" },
+        after_value: { description: "y" },
+        created_at: "2026-05-02T00:00:00.000Z",
+        change_type: "patch",
+      }),
+    ];
+    const timeline = buildTimelineFromPersistedVersions(rows, currentFields, {
+      major: 0,
+      minor: 11,
+      patch: 1,
+    });
+    expect(timeline.status).toBe("ok");
+    if (timeline.status !== "ok") return;
+    // Prefixo acumulado: minor → 0.2.0, patch → 0.2.1.
+    expect([...timeline.hashesByVersion.keys()]).toEqual(
+      expect.arrayContaining(["0.2.0", "0.2.1", "0.11.0"]),
+    );
+    // A entry NULL após a gravada continua de 0.11.0, não de 0.2.1.
+    expect(timeline.hashesByVersion.has("0.11.1")).toBe(true);
+    expect(timeline.hashesByVersion.has("0.2.2")).toBe(false);
+  });
+
   it("acusa versão que retrocede em (created_at, id) em vez de reconstruir", () => {
     const retrocede = persistedRow({
       id: "e3",
