@@ -117,6 +117,30 @@ class Analysis(BaseModel):
     assert f["subfield_rule"] == "at_least_one"
 
 
+def test_subfield_required_round_trips_under_at_least_one():
+    # Sob at_least_one a anotação é sempre Optional[str], então o `required`
+    # individual do subcampo só sobrevive via json_schema_extra (issue #491).
+    code = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class _doc_fields(BaseModel):
+    part_a: Optional[str] = Field(default=None, description="Part A", json_schema_extra={"required": True})
+    part_b: Optional[str] = Field(default=None, description="Part B")
+
+class Analysis(BaseModel):
+    doc: _doc_fields = Field(
+        description="Doc",
+        json_schema_extra={"subfield_rule": "at_least_one"},
+    )
+"""
+    result = compile_pydantic(code)
+    f = _field(result, "doc")
+    assert f["subfields"] == [
+        {"key": "part_a", "label": "Part A", "required": True},
+        {"key": "part_b", "label": "Part B", "required": False},
+    ]
+
+
 def test_allow_other_preserved_for_single():
     code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional

@@ -715,11 +715,16 @@ def _extract_subfields(annotation: type) -> list[dict] | None:
         if sf_origin is typing.Union:
             sf_args = get_args(sf_ann)
             is_optional = type(None) in sf_args
+        # Sob subfield_rule="at_least_one" a anotação é sempre Optional, então
+        # ela não consegue carregar o `required` individual — o gerador o
+        # transporta em json_schema_extra e o extra prevalece sobre a anotação
+        # (issue #491; mesmo padrão do `required` de campo, PR #454).
+        sf_extra = extract_json_schema_extra(sf_info)
         subfields.append(
             {
                 "key": sf_name,
                 "label": sf_info.description or sf_name,
-                "required": not is_optional,
+                "required": bool(sf_extra.get("required", not is_optional)),
             }
         )
     return subfields if subfields else None

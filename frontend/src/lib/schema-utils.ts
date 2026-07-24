@@ -6,6 +6,7 @@ import type {
 import {
   resolveAllowOther,
   resolveRequired,
+  resolveSubfieldRequired,
   resolveSubfieldRule,
   resolveTarget,
 } from "@/lib/pydantic-field";
@@ -144,12 +145,22 @@ export function generatePydanticCode(
     if (field.subfields && field.subfields.length > 0) {
       lines.push("");
       lines.push(`class ${subfieldClassName(field.name)}(BaseModel):`);
+      const rule = resolveSubfieldRule(field.subfield_rule);
       for (const sf of field.subfields) {
-        const ann = sf.required && field.subfield_rule !== "at_least_one"
-          ? "str"
-          : "Optional[str]";
+        const required = resolveSubfieldRequired(sf.required);
+        const ann = required && rule !== "at_least_one" ? "str" : "Optional[str]";
+        // Sob at_least_one a anotação é sempre Optional e não consegue carregar
+        // o `required` individual — ele viaja em json_schema_extra, só no caso
+        // não-default (`True`; o default de subcampo é `false`), para manter o
+        // texto — e portanto o pydantic_hash — byte-idêntico para quem não usa
+        // a propriedade (issue #491; mesmo racional do `required` de campo em
+        // `fieldExtra`).
+        const extra =
+          rule === "at_least_one" && required
+            ? `, json_schema_extra={"required": True}`
+            : "";
         lines.push(
-          `    ${sf.key}: ${ann} = Field(${ann === "Optional[str]" ? "default=None, " : ""}description="${escapeString(sf.label)}")`
+          `    ${sf.key}: ${ann} = Field(${ann === "Optional[str]" ? "default=None, " : ""}description="${escapeString(sf.label)}"${extra})`
         );
       }
     }

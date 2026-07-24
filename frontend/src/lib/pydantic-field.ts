@@ -302,6 +302,15 @@ export function resolveSubfieldRule(
   return value ?? "all";
 }
 
+// Default de subcampo é `false` — o OPOSTO do `required` de campo
+// (`resolveRequired`, acima, resolve para `true`). O gerador e o
+// `FieldRenderer` sempre trataram ausente como opcional; o `SubfieldsEditor`
+// cria subcampos com `required: true` explícito, então `undefined` só existe
+// em dado legado (issue #491).
+export function resolveSubfieldRequired(value: boolean | null | undefined): boolean {
+  return value === true;
+}
+
 export const PYDANTIC_FIELD_PROPERTY_KEYS = Object.freeze(
   Object.keys(pydanticFieldSchema.shape).sort(),
 );
