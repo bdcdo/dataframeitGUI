@@ -14,25 +14,40 @@ export interface PendingSuggestion {
   };
 }
 
+interface FormSeed {
+  description: string;
+  helpText: string;
+  options: string[];
+}
+
+function seedFromField(field: PydanticField | undefined): FormSeed {
+  return {
+    description: field?.description ?? "",
+    helpText: field?.help_text ?? "",
+    options: field?.options ?? [],
+  };
+}
+
+// Distinguish "no change" (undefined) from "clear" (null) in suggestions:
+// null in suggested_changes means the suggestion explicitly wants to empty
+// the field, so ?? against the current field value would mask that intent.
+function seedWithSuggestion(
+  seed: FormSeed,
+  ch: PendingSuggestion["changes"],
+): FormSeed {
+  return {
+    description: ch.description ?? seed.description,
+    helpText: ch.help_text !== undefined ? (ch.help_text ?? "") : seed.helpText,
+    options: ch.options !== undefined ? (ch.options ?? []) : seed.options,
+  };
+}
+
 function initialFromField(
   field: PydanticField | undefined,
   suggestion?: PendingSuggestion | null,
-) {
-  const ch = suggestion?.changes ?? {};
-  // Distinguish "no change" (undefined) from "clear" (null) in suggestions:
-  // null in suggested_changes means the suggestion explicitly wants to empty
-  // the field, so ?? against the current field value would mask that intent.
-  return {
-    description: ch.description ?? field?.description ?? "",
-    helpText:
-      ch.help_text !== undefined
-        ? (ch.help_text ?? "")
-        : (field?.help_text ?? ""),
-    options:
-      ch.options !== undefined
-        ? (ch.options ?? [])
-        : (field?.options ?? []),
-  };
+): FormSeed {
+  const seed = seedFromField(field);
+  return suggestion ? seedWithSuggestion(seed, suggestion.changes) : seed;
 }
 
 export function useEditFieldForm(
