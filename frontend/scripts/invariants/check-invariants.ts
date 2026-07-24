@@ -20,6 +20,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { isCodingComplete } from "@/lib/coding-completeness";
+import { computeFieldHash } from "@/lib/schema-utils";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { loadEnv } from "../comentarios-relatorio/load-env";
 
@@ -300,6 +301,246 @@ const invariants: Invariant[] = [
           key: a.id,
           detail: `assignment concluído cuja response is_latest é rascunho, nunca submetida (doc ${a.document_id}, user ${a.user_id})`,
         }));
+    },
+  },
+  {
+    name: "arbitragem-contestada-tem-assignment-aberto",
+    motivation:
+      "a brecha #582: contestação pendente (contesta_llm, final_verdict NULL, superseded NULL) com árbitro designado exige assignment de arbitragem NÃO-concluído do mesmo par — o outbox trocou o DO UPDATE de reabertura por DO NOTHING e a contestação nova ficava gravada mas invisível na fila (a página filtra status <> 'concluido')",
+    run: async () => {
+      const active = await activeDocIds();
+      const [pending, assignments] = await Promise.all([
+        fetchAll<{ id: string; document_id: string; arbitrator_id: string }>(
+          "field_reviews",
+          "id, document_id, arbitrator_id",
+          (q) =>
+            q
+              .eq("self_verdict", "contesta_llm")
+              .is("final_verdict", null)
+              .is("superseded_at", null)
+              .not("arbitrator_id", "is", null),
+        ),
+        fetchAll<{ document_id: string; user_id: string; status: string | null }>(
+          "assignments",
+          "document_id, user_id, status",
+          (q) => q.eq("type", "arbitragem"),
+        ),
+      ]);
+      const statusOf = new Map(assignments.map((a) => [`${a.document_id}|${a.user_id}`, a.status]));
+      return pending
+        .filter((fr) => {
+          if (!active.has(fr.document_id)) return false;
+          const st = statusOf.get(`${fr.document_id}|${fr.arbitrator_id}`);
+          return st === undefined || st === "concluido";
+        })
+        .map((fr) => ({
+          key: fr.id,
+          detail: `contestação pendente com assignment ${statusOf.get(`${fr.document_id}|${fr.arbitrator_id}`) === "concluido" ? "'concluido'" : "INEXISTENTE"} (doc ${fr.document_id}, árbitro ${fr.arbitrator_id})`,
+        }));
+    },
+  },
+  {
+    name: "arbitragem-aberta-tem-contestacao-pendente",
+    motivation:
+      "inversa da anterior (invariantes nascem em pares): assignment de arbitragem aberto em doc ativo sem NENHUMA contestação pendente daquele árbitro é fila fantasma — o árbitro vê o doc na fila, abre, e não há nada a decidir; denunciaria fecho perdido ou rotação de ciclo que resetou arbitrator_id sem sincronizar o assignment",
+    run: async () => {
+      const active = await activeDocIds();
+      const [assignments, pending] = await Promise.all([
+        fetchAll<{ id: string; document_id: string; user_id: string; status: string | null }>(
+          "assignments",
+          "id, document_id, user_id, status",
+          (q) => q.eq("type", "arbitragem"),
+        ),
+        fetchAll<{ document_id: string; arbitrator_id: string }>(
+          "field_reviews",
+          "document_id, arbitrator_id",
+          (q) =>
+            q
+              .eq("self_verdict", "contesta_llm")
+              .is("final_verdict", null)
+              .is("superseded_at", null)
+              .not("arbitrator_id", "is", null),
+        ),
+      ]);
+      const hasPending = new Set(pending.map((fr) => `${fr.document_id}|${fr.arbitrator_id}`));
+      // inclui status NULL, como a invariante de comparação ativa
+      return assignments
+        .filter(
+          (a) =>
+            a.status !== "concluido" &&
+            active.has(a.document_id) &&
+            !hasPending.has(`${a.document_id}|${a.user_id}`),
+        )
+        .map((a) => ({
+          key: a.id,
+          detail: `assignment de arbitragem aberto sem contestação pendente (doc ${a.document_id}, árbitro ${a.user_id})`,
+        }));
+    },
+  },
+  {
+    name: "submetida-mas-incompleta",
+    motivation:
+      "inversa fina de 'codificacao-completa-marcada-pendente' (causa (d) da auditoria de 2026-07-23): response submetida (is_partial=false) que NÃO passa na régua real do produto (isCodingComplete staleness-aware) indica canal de escrita que pulou o gate de submit — o guard existe desde 61412dc, mas nenhum estado o assere. Responses com proveniência legacy (answer_field_hashes null/{}) ficam fora: sem o mapa não dá para saber sob qual schema foram codificadas, e cobrá-las pelo schema atual fabricaria falso positivo. CORTE TEMPORAL DOCUMENTADO (#584): responses não tocadas desde 2026-07-24 ficam fora — são as 87 com mapa danificado pelo recarimbo #520 (triagem de 2026-07-23: 177/211 campos faltantes com hash==corrente sem chave), a reparar via #584; remover o corte após o reparo",
+    run: async () => {
+      // Corte do legado recarimbado (#520/#584): o write path só herda mapas a
+      // partir do merge do #528 (2026-07-23); qualquer response tocada depois
+      // desta data tem que passar. Não é baseline silencioso: os 87 casos
+      // anteriores estão enumerados e rastreados na issue #584.
+      const LEGACY_CUTOFF = "2026-07-24T00:00:00Z";
+      const active = await activeDocIds();
+      const [projects, responses] = await Promise.all([
+        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+        fetchAll<{ id: string; project_id: string; document_id: string; respondent_id: string | null }>(
+          "responses",
+          "id, project_id, document_id, respondent_id",
+          (q) =>
+            q
+              .eq("respondent_type", "humano")
+              .eq("is_latest", true)
+              .eq("is_partial", false)
+              .gte("updated_at", LEGACY_CUTOFF),
+        ),
+      ]);
+      const fieldsOf = new Map(projects.map((p) => [p.id, p.pydantic_fields ?? []]));
+      const candidates = responses.filter(
+        (r) => active.has(r.document_id) && (fieldsOf.get(r.project_id) ?? []).length > 0,
+      );
+
+      // Mesmo fetch em 2 fases (e mesmo teto de 100 ids/lote) da invariante
+      // 'codificacao-completa-marcada-pendente' — ver o comentário de lá.
+      const CHUNK = 100;
+      const violations: Violation[] = [];
+      for (let i = 0; i < candidates.length; i += CHUNK) {
+        const ids = candidates.slice(i, i + CHUNK).map((c) => c.id);
+        const { data, error } = await supabase
+          .from("responses")
+          .select("id, project_id, document_id, respondent_id, answers, answer_field_hashes")
+          .in("id", ids);
+        if (error) throw new Error(`responses(lote de ${ids.length}): ${error.message}`);
+        for (const row of data ?? []) {
+          const hashes = row.answer_field_hashes as AnswerFieldHashes | null;
+          if (!hashes || Object.keys(hashes).length === 0) continue; // sentinela legacy
+          const fields = fieldsOf.get(row.project_id as string) ?? [];
+          if (
+            !isCodingComplete(fields, (row.answers ?? {}) as Record<string, unknown>, hashes)
+          ) {
+            violations.push({
+              key: row.id as string,
+              detail: `submetida (is_partial=false) mas incompleta pela régua do produto (doc ${row.document_id}, user ${row.respondent_id})`,
+            });
+          }
+        }
+      }
+      return violations;
+    },
+  },
+  {
+    name: "equivalencia-do-mesmo-documento-e-canonica",
+    motivation:
+      "espelho de 'review-chosen-response-do-mesmo-documento' para a família da causa (e): par de equivalência cujas responses não pertencem ao documento do par é identidade trocada; par fora da ordem canônica (a < b) escapa do UNIQUE e permite duplicata invertida. Hoje o banco torna os dois estados inconstruíveis (CHECK response_equivalences_check + trigger snapshot_response_equivalence_answers, sem isenção para postgres) — como na invariante do índice de comparação, FAIL aqui = guarda dropada por migration futura ou dado anterior às guardas. As direções par↔veredito NÃO são invariantes: auto-revisão e markLlmEquivalent criam par sem review, e review é voto independente de par — a atomicidade do desfazer é garantida pela RPC do #542 e seu teste SQL, não por estado",
+    run: async () => {
+      const [pairs, responses] = await Promise.all([
+        fetchAll<{
+          id: string;
+          document_id: string;
+          response_a_id: string;
+          response_b_id: string;
+        }>(
+          "response_equivalences",
+          "id, document_id, response_a_id, response_b_id",
+          (q) => q.is("superseded_at", null),
+        ),
+        fetchAll<{ id: string; document_id: string }>("responses", "id, document_id"),
+      ]);
+      const docOf = new Map(responses.map((r) => [r.id, r.document_id]));
+      const violations: Violation[] = [];
+      for (const p of pairs) {
+        const docA = docOf.get(p.response_a_id);
+        const docB = docOf.get(p.response_b_id);
+        if (docA !== p.document_id || docB !== p.document_id) {
+          violations.push({
+            key: p.id,
+            detail: `par do doc ${p.document_id} referencia responses dos docs ${docA ?? "INEXISTENTE"} e ${docB ?? "INEXISTENTE"}`,
+          });
+        } else if (p.response_a_id >= p.response_b_id) {
+          violations.push({
+            key: p.id,
+            detail: `par fora da ordem canônica (a=${p.response_a_id} >= b=${p.response_b_id})`,
+          });
+        }
+      }
+      return violations;
+    },
+  },
+  {
+    name: "answer-field-hashes-do-universo-do-projeto",
+    motivation:
+      "versão fraca-mas-honesta da causa (c) (recarimbo #520): todo hash em answer_field_hashes deve ser derivável do schema do projeto — campos atuais ou qualquer versão registrada em schema_change_log (before/after). Hash fora do universo = mapa estampado com conteúdo que nunca existiu no projeto (corrupção, cruzamento de projeto, ou re-stamp com conteúdo errado). LIMITE DOCUMENTADO: o estado exato do #520 (recarimbo com hashes do schema corrente) é indistinguível de revisão per-campo legítima — a garantia contra ele é o write path (#528/#573/#575) e seus testes, não esta invariante. Também valida o shape (12 hex minúsculos). A allowlist enumera os 6 hashes de versões do Zolgensma anteriores à criação do schema_change_log (2026-04-01), fora do universo reconstruível por definição (triagem de 2026-07-23)",
+    run: async () => {
+      // Versões de campo editadas antes de o schema_change_log existir não são
+      // reconstruíveis — allowlist explícita e datada, não baseline silencioso.
+      // Todos do projeto Zolgensma 0c6394da; campo ainda existe com hash novo.
+      const PRE_LOG_LEGACY_HASHES = new Set([
+        "ecbb97ef88f7", // q12_mencao_parecer_conitec (34 responses)
+        "0dba9f18145a", // q6_data_nascimento_paciente (30)
+        "06a656f50dcf", // q25_conclusao_evidencias (27)
+        "ed1026407a89", // q21_relatorio_recomenda (7)
+        "56e24ccd8992", // q25_conclusao_evidencias, outra versão (7)
+        "8ec4b5335e4a", // q9_indicacao_conforme_anvisa (7)
+      ]);
+      const [projects, log] = await Promise.all([
+        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+        fetchAll<{
+          project_id: string;
+          before_value: Partial<PydanticField> | null;
+          after_value: Partial<PydanticField> | null;
+        }>("schema_change_log", "project_id, before_value, after_value"),
+      ]);
+
+      const hashOf = (f: Partial<PydanticField> | null): string | null => {
+        if (!f || typeof f.name !== "string" || typeof f.type !== "string") return null;
+        return computeFieldHash(f.name, f.type, f.options ?? null, f.description ?? "");
+      };
+      const universe = new Map<string, Set<string>>();
+      const add = (projectId: string, hash: string | null) => {
+        if (!hash) return;
+        universe.set(projectId, (universe.get(projectId) ?? new Set()).add(hash));
+      };
+      for (const p of projects) for (const f of p.pydantic_fields ?? []) add(p.id, hashOf(f));
+      for (const entry of log) {
+        add(entry.project_id, hashOf(entry.before_value));
+        add(entry.project_id, hashOf(entry.after_value));
+      }
+
+      const responses = await fetchAll<{
+        id: string;
+        project_id: string;
+        answer_field_hashes: Record<string, unknown> | null;
+      }>(
+        "responses",
+        "id, project_id, answer_field_hashes",
+        (q) => q.eq("is_latest", true).not("answer_field_hashes", "is", null),
+      );
+      const violations: Violation[] = [];
+      for (const r of responses) {
+        const entries = Object.entries(r.answer_field_hashes ?? {});
+        if (entries.length === 0) continue; // sentinela legacy {}
+        const known = universe.get(r.project_id) ?? new Set();
+        for (const [field, hash] of entries) {
+          if (typeof hash !== "string" || !/^[0-9a-f]{12}$/.test(hash)) {
+            violations.push({
+              key: r.id,
+              detail: `hash malformado em '${field}': ${JSON.stringify(hash)}`,
+            });
+          } else if (!known.has(hash) && !PRE_LOG_LEGACY_HASHES.has(hash)) {
+            violations.push({
+              key: r.id,
+              detail: `hash de '${field}' (${hash}) fora do universo do projeto ${r.project_id}`,
+            });
+          }
+        }
+      }
+      return violations;
     },
   },
   {
