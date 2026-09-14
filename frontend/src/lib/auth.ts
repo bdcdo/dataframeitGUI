@@ -318,11 +318,12 @@ async function readProjectAccess(
       return { status: "unavailable" };
     }
 
+    const membership = membershipResult.data ?? { role: null, can_resolve: false };
     return {
       status: "resolved",
       project: projectResult.data ?? null,
-      membershipRole: membershipResult.data?.role ?? null,
-      membershipCanResolve: membershipResult.data?.can_resolve === true,
+      membershipRole: membership.role ?? null,
+      membershipCanResolve: membership.can_resolve === true,
     };
   } catch (error) {
     console.error("getProjectAccessContext: access queries failed", {

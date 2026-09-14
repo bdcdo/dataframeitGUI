@@ -41,6 +41,25 @@ interface LlmInsightsViewProps {
   };
 }
 
+function preferredHumanId(choices: NonNullable<LlmError["humanChoices"]>, chosenId: string | null): string | undefined {
+  const chosen = choices.find((choice) => choice.id === chosenId);
+  if (chosen) return chosen.id;
+  return choices.length === 1 ? choices[0].id : undefined;
+}
+
+async function persistDecision(projectId: string, pending: PendingErrorDecision, note: string) {
+  const { error, decision, context } = pending;
+  if (decision && context) {
+    return resolveError(projectId, error.documentId, error.fieldName, {
+      decision, context, expected: error.resolution ?? null, note,
+    });
+  }
+  if (decision === null && error.resolution) {
+    return reopenError(projectId, error.documentId, error.fieldName, error.resolution);
+  }
+  return { success: false, error: "Confira a resposta antes de confirmar." };
+}
+
 export function LlmInsightsView({
   projectId,
   errors,
@@ -89,6 +108,8 @@ export function LlmInsightsView({
   // Error filters + derivation (filtered population, rate, sorting, counts)
   const filtering = useLlmErrorFiltering(errors, reviewedEntries);
   const { measuredErrorCount, filteredErrorRate, sortedErrors } = filtering;
+  const regenerateLabel = regenerating ? "Regenerando…" : "Regenerar backlog";
+  const emptyMessage = errors.length === 0 ? "Nenhum erro do LLM encontrado." : "Nenhum erro corresponde aos filtros.";
 
   const prepareDecision = (error: LlmError, decision: ErrorDecision, selectedHumanId?: string) => {
     if (!canResolve || !error.sourceId) return;
@@ -97,8 +118,7 @@ export function LlmInsightsView({
       toast.error("Não há resposta humana ativa para este campo. Refaça a revisão antes de decidir.");
       return;
     }
-    const humanId = selectedHumanId ?? choices.find((c) => c.id === error.chosenResponseId)?.id
-      ?? (choices.length === 1 ? choices[0].id : undefined);
+    const humanId = selectedHumanId ?? preferredHumanId(choices, error.chosenResponseId);
     if (!humanId) {
       setPendingDecision({ error, decision, context: null });
       return;
@@ -118,18 +138,11 @@ export function LlmInsightsView({
 
   const confirmDecision = (note: string) => {
     if (!canResolve || !pendingDecision) return;
-    const { error, context, decision } = pendingDecision;
     startTransition(async () => {
       try {
-        const result = decision && context
-          ? await resolveError(projectId, error.documentId, error.fieldName, {
-            decision, context, expected: error.resolution ?? null, note,
-          })
-          : !decision && error.resolution
-            ? await reopenError(projectId, error.documentId, error.fieldName, error.resolution)
-            : { success: false, error: "Confira a resposta antes de confirmar." };
+        const result = await persistDecision(projectId, pendingDecision, note);
         if (!result.success) { toast.error(result.error ?? "Falha ao salvar."); return; }
-        toast.success(decision ? "Decisão salva" : "Caso reaberto");
+        toast.success(pendingDecision.decision ? "Decisão salva" : "Caso reaberto");
         setPendingDecision(null);
         refresh();
       } catch {
@@ -179,7 +192,7 @@ export function LlmInsightsView({
             onClick={() => void handleRegenerateBacklog()}
             disabled={regenerating}
           >
-            {regenerating ? "Regenerando…" : "Regenerar backlog"}
+            {regenerateLabel}
           </Button>
         </div>
       ) : null}
@@ -195,9 +208,7 @@ export function LlmInsightsView({
 
       {sortedErrors.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          {errors.length === 0
-            ? "Nenhum erro do LLM encontrado."
-            : "Nenhum erro corresponde aos filtros."}
+          {emptyMessage}
         </p>
       ) : (
         <div className="space-y-3">
@@ -222,15 +233,12 @@ export function LlmInsightsView({
       )}
     </div>
 
-    {pendingDecision && (
-      <ErrorDecisionDialog
-        key={`${pendingDecision.error.documentId}:${pendingDecision.error.fieldName}:${pendingDecision.decision}`}
-        pending={pendingDecision} isPending={isPending}
-        onClose={() => setPendingDecision(null)}
-        onPrepare={(humanId) => { if (pendingDecision.decision) prepareDecision(pendingDecision.error, pendingDecision.decision, humanId); }}
-        onConfirm={confirmDecision}
-      />
-    )}
+    <ErrorDecisionDialog
+      pending={pendingDecision} isPending={isPending}
+      onClose={() => setPendingDecision(null)}
+      onPrepare={prepareDecision}
+      onConfirm={confirmDecision}
+    />
     {isCoordinator && editingField && schemaEditor && (
       <EditFieldDialog
         projectId={projectId}

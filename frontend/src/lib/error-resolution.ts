@@ -19,6 +19,14 @@ export const errorResolutionContextSchema = z.object({
 });
 export type ErrorResolutionContext = z.infer<typeof errorResolutionContextSchema>;
 
+export const errorResolutionInputSchema = z.object({
+  decision: errorDecisionSchema,
+  context: errorResolutionContextSchema,
+  expected: z.object({ id: z.string(), resolved_at: z.string() }).nullable(),
+  note: z.string().optional(),
+});
+export type ErrorResolutionInput = z.infer<typeof errorResolutionInputSchema>;
+
 export interface ErrorResolutionRow {
   id: string;
   project_id: string;

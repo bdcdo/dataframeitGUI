@@ -311,18 +311,21 @@ export async function fetchReviewBaseData(
 
 /* ── Computation: Reviewed Documents ── */
 
-export function computeReviewedDocuments(
-  ctx: ReviewComputationContext,
-): ReviewedDocument[] {
+function resolutionVerdict(resolution: NonNullable<ReviewRow["resolution"]>, fieldType: PydanticField["type"]): string {
+  if (resolution.status === "discussion") return "ambiguo";
+  if (fieldType === "multi" && Array.isArray(resolution.value)) {
+    return JSON.stringify(Object.fromEntries(resolution.value.map((value) => [String(value), true])));
+  }
+  return formatAnswer(resolution.value);
+}
+
+function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, ReviewRow> {
   const effectiveReviews = new Map(ctx.uniqueReviews.map((r) => [`${r.document_id}:${r.field_name}`, r]));
   for (const row of ctx.errorResolutions ?? []) {
     const resolution = effectiveErrorResolution(row);
     const field = ctx.fieldMap.get(row.field_name);
     if (!field || !ctx.docMap.has(row.document_id) || (resolution.status !== "approved" && resolution.status !== "discussion")) continue;
-    const verdict = resolution.status === "discussion" ? "ambiguo"
-      : field.type === "multi" && Array.isArray(resolution.value)
-        ? JSON.stringify(Object.fromEntries(resolution.value.map((value) => [String(value), true])))
-        : formatAnswer(resolution.value);
+    const verdict = resolutionVerdict(resolution, field.type);
     effectiveReviews.set(`${row.document_id}:${row.field_name}`, {
       id: row.id, document_id: row.document_id, field_name: row.field_name, verdict,
       chosen_response_id: null, comment: errorResolutionComment(row), reviewer_id: row.resolved_by,
@@ -330,8 +333,23 @@ export function computeReviewedDocuments(
       resolution,
     });
   }
+  return effectiveReviews;
+}
+
+function isReviewedAnswerCorrect(answer: unknown, review: ReviewRow, fieldType: PydanticField["type"]): boolean {
+  const { resolution } = review;
+  if (!resolution) return isAnswerCorrect(answer, review.verdict, fieldType);
+  if (resolution.status === "discussion") return false;
+  if (fieldType === "multi") return isAnswerCorrect(answer, review.verdict, fieldType);
+  const value = resolution.value;
+  return typeof value === "object" || typeof answer === "object"
+    ? stableStringify(answer) === stableStringify(value)
+    : normalizeForComparison(answer) === normalizeForComparison(value);
+}
+
+export function computeReviewedDocuments(ctx: ReviewComputationContext): ReviewedDocument[] {
   const reviewsByDoc = new Map<string, ReviewRow[]>();
-  effectiveReviews.forEach((r) => {
+  reviewsWithResolutions(ctx).forEach((r) => {
     const list = reviewsByDoc.get(r.document_id) || [];
     list.push(r);
     reviewsByDoc.set(r.document_id, list);
@@ -357,16 +375,7 @@ export function computeReviewedDocuments(
           currentFieldHashes: ctx.currentFieldHashes,
           projectPydanticHash: ctx.projectPydanticHash,
         });
-        let correct = isAnswerCorrect(answer, review.verdict, field.type);
-        if (resolution?.status === "discussion") correct = false;
-        if (resolution?.status === "approved") {
-          const value = resolution.value;
-          correct = field.type === "multi"
-            ? isAnswerCorrect(answer, review.verdict, field.type)
-            : typeof value === "object" || typeof answer === "object"
-              ? stableStringify(answer) === stableStringify(value)
-              : normalizeForComparison(answer) === normalizeForComparison(value);
-        }
+        const correct = isReviewedAnswerCorrect(answer, review, field.type);
         return {
           respondentKey: getRespondentKey(r),
           respondentName: getRespondentDisplayName(r, ctx.profileMap),

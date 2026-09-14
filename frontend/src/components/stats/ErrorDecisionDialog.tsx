@@ -16,67 +16,99 @@ export interface PendingErrorDecision {
   context: ErrorResolutionContext | null;
 }
 
-export function ErrorDecisionDialog({ pending, isPending, onClose, onPrepare, onConfirm }: {
-  pending: PendingErrorDecision;
+interface DecisionControls {
   isPending: boolean;
   onClose: () => void;
-  onPrepare: (humanId: string) => void;
+  onPrepare: (error: LlmError, decision: ErrorDecision, humanId: string) => void;
   onConfirm: (note: string) => void;
+}
+
+function decisionDescription(pending: PendingErrorDecision): string {
+  const definition = pending.context?.field_definition;
+  if (definition && typeof definition === "object" && "description" in definition && typeof definition.description === "string") {
+    return definition.description || pending.error.fieldName;
+  }
+  return pending.error.fieldDescription || pending.error.fieldName;
+}
+
+function DecisionFooter({ isPending, onClose, onAction, label, disabled = false }: {
+  isPending: boolean; onClose: () => void; onAction: () => void; label: string; disabled?: boolean;
 }) {
+  return <DialogFooter>
+    <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
+    <Button onClick={onAction} disabled={isPending || disabled}>{label}</Button>
+  </DialogFooter>;
+}
+
+function HumanChoice({ error, decision, isPending, onClose, onPrepare }: {
+  error: LlmError; decision: ErrorDecision;
+} & Pick<DecisionControls, "isPending" | "onClose" | "onPrepare">) {
   const [humanId, setHumanId] = useState("");
+  const choiceId = useId();
+  return <>
+    <div className="space-y-2">
+      <Label htmlFor={choiceId}>Qual resposta humana está sendo examinada?</Label>
+      <Select value={humanId} onValueChange={setHumanId} disabled={isPending}>
+        <SelectTrigger id={choiceId}><SelectValue placeholder="Selecione uma resposta" /></SelectTrigger>
+        <SelectContent>{error.humanChoices?.map((choice) => (
+          <SelectItem key={choice.id} value={choice.id}>{choice.label}</SelectItem>
+        ))}</SelectContent>
+      </Select>
+    </div>
+    <DecisionFooter isPending={isPending} onClose={onClose} disabled={!humanId}
+      onAction={() => onPrepare(error, decision, humanId)} label="Conferir resposta" />
+  </>;
+}
+
+function DecisionPreview({ decision, answer }: {
+  decision: ErrorDecision; answer: ErrorResolutionContext["llm_value"];
+}) {
+  if (decision === "discussion") return <div className="rounded-md border p-3 text-sm">Este campo ficará sem valor final aprovado até uma nova decisão.</div>;
+  const value = answer.present ? formatAnswer(answer.value) || "(vazio)" : "Resposta ausente: não é possível aprovar.";
+  return <div className="rounded-md border p-3 text-sm">
+    <p className="font-medium">Valor que irá para o gabarito</p>
+    <p className="mt-1 whitespace-pre-wrap">{value}</p>
+  </div>;
+}
+
+function ConfirmDecision({ pending, decision, context, isPending, onClose, onConfirm }: {
+  pending: PendingErrorDecision; decision: ErrorDecision; context: ErrorResolutionContext;
+} & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
   const noteId = useId();
-  const choiceId = useId();
-  const { context, decision, error } = pending;
-  const definition = context?.field_definition;
-  const description = definition && typeof definition === "object" && "description" in definition && typeof definition.description === "string"
-    ? definition.description : error.fieldDescription;
-  const needsHuman = decision !== null && context === null;
-  const answer = context && (decision === "llm_correct" ? context.llm_value : context.human_value);
+  const answer = decision === "llm_correct" ? context.llm_value : context.human_value;
+  return <>
+    <DecisionPreview decision={decision} answer={answer} />
+    <div className="space-y-2">
+      <Label htmlFor={noteId}>Nota opcional</Label>
+      <Textarea id={noteId} value={note} onChange={(e) => setNote(e.target.value)} disabled={isPending} />
+    </div>
+    <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note)}
+      disabled={decision !== "discussion" && !answer.present} label={isPending ? "Salvando…" : "Confirmar decisão"} />
+  </>;
+}
 
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open && !isPending) onClose(); }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{decision ? ERROR_DECISION_LABELS[decision] : "Reabrir caso"}</DialogTitle>
-          <DialogDescription>{error.documentTitle} · {description || error.fieldName}</DialogDescription>
-        </DialogHeader>
-        {needsHuman ? (
-          <div className="space-y-2">
-            <Label htmlFor={choiceId}>Qual resposta humana está sendo examinada?</Label>
-            <Select value={humanId} onValueChange={setHumanId} disabled={isPending}>
-              <SelectTrigger id={choiceId}><SelectValue placeholder="Selecione uma resposta" /></SelectTrigger>
-              <SelectContent>{error.humanChoices?.map((choice) => (
-                <SelectItem key={choice.id} value={choice.id}>{choice.label}</SelectItem>
-              ))}</SelectContent>
-            </Select>
-          </div>
-        ) : decision === null ? (
-          <p className="text-sm">Remover a decisão deste caso? O gabarito anterior volta a valer. As respostas originais não serão alteradas.</p>
-        ) : (
-          <>
-            <div className="rounded-md border p-3 text-sm">
-              {decision === "discussion" ? "Este campo ficará sem valor final aprovado até uma nova decisão." : (
-                <><p className="font-medium">Valor que irá para o gabarito</p><p className="mt-1 whitespace-pre-wrap">{answer?.present ? formatAnswer(answer.value) || "(vazio)" : "Resposta ausente: não é possível aprovar."}</p></>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor={noteId}>Nota opcional</Label>
-              <Textarea id={noteId} value={note} onChange={(e) => setNote(e.target.value)} disabled={isPending} />
-            </div>
-          </>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={isPending}>Cancelar</Button>
-          {needsHuman ? (
-            <Button onClick={() => onPrepare(humanId)} disabled={!humanId || isPending}>Conferir resposta</Button>
-          ) : (
-            <Button onClick={() => onConfirm(note)} disabled={isPending || (decision !== null && decision !== "discussion" && !answer?.present)}>
-              {isPending ? "Salvando…" : decision === null ? "Confirmar reabertura" : "Confirmar decisão"}
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+function DecisionForm({ pending, ...controls }: { pending: PendingErrorDecision } & DecisionControls) {
+  const { decision, context, error } = pending;
+  if (decision === null) return <>
+    <p className="text-sm">Remover a decisão deste caso? O gabarito anterior volta a valer. As respostas originais não serão alteradas.</p>
+    <DecisionFooter isPending={controls.isPending} onClose={controls.onClose} onAction={() => controls.onConfirm("")}
+      label={controls.isPending ? "Salvando…" : "Confirmar reabertura"} />
+  </>;
+  if (context === null) return <HumanChoice error={error} decision={decision} {...controls} />;
+  return <ConfirmDecision pending={pending} decision={decision} context={context} {...controls} />;
+}
+
+export function ErrorDecisionDialog({ pending, ...controls }: { pending: PendingErrorDecision | null } & DecisionControls) {
+  if (!pending) return null;
+  const title = pending.decision ? ERROR_DECISION_LABELS[pending.decision] : "Reabrir caso";
+  return <Dialog open onOpenChange={(open) => { if (!open && !controls.isPending) controls.onClose(); }}>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>{pending.error.documentTitle} · {decisionDescription(pending)}</DialogDescription>
+      </DialogHeader>
+      <DecisionForm key={`${pending.error.documentId}:${pending.error.fieldName}:${pending.decision}`} pending={pending} {...controls} />
+    </DialogContent>
+  </Dialog>;
 }

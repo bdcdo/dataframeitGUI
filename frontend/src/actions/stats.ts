@@ -4,7 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
-import { errorDecisionSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionContext } from "@/lib/error-resolution";
+import { errorResolutionInputSchema, errorResolutionContextSchema, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 async function withResolutionAction(
   projectId: string,
@@ -235,10 +235,7 @@ export async function fetchGabaritoForComment(
   }
 }
 
-export interface ErrorResolutionIdentity {
-  id: string;
-  resolved_at: string;
-}
+type ErrorResolutionIdentity = NonNullable<ErrorResolutionInput["expected"]>;
 
 export async function prepareErrorResolution(input: {
   projectId: string; documentId: string; fieldName: string;
@@ -268,17 +265,18 @@ function revalidateErrorResults(projectId: string) {
 
 export async function resolveError(
   projectId: string, documentId: string, fieldName: string,
-  input: { decision: ErrorDecision; context: ErrorResolutionContext; expected: ErrorResolutionIdentity | null; note?: string },
+  input: ErrorResolutionInput,
 ): Promise<{ success: boolean; error?: string }> {
   return withResolutionAction(projectId, async (_user, supabase) => {
-    const decision = errorDecisionSchema.safeParse(input?.decision);
-    const context = errorResolutionContextSchema.safeParse(input?.context);
-    if (!decision.success || !context.success) return { success: false, error: "Decisão ou contexto inválido." };
+    const parsed = errorResolutionInputSchema.safeParse(input);
+    if (!parsed.success) return { success: false, error: "Decisão ou contexto inválido." };
+    const { decision, context, expected, note } = parsed.data;
+    const identity = expected ?? { id: null, resolved_at: null };
     const { data, error } = await supabase.rpc("set_error_resolution", {
       p_project_id: projectId, p_document_id: documentId, p_field_name: fieldName,
-      p_decision: decision.data, p_expected_context: context.data,
-      p_expected_id: input.expected?.id ?? null,
-      p_expected_resolved_at: input.expected?.resolved_at ?? null, p_note: input.note ?? null,
+      p_decision: decision, p_expected_context: context,
+      p_expected_id: identity.id,
+      p_expected_resolved_at: identity.resolved_at, p_note: note ?? null,
     });
     if (error) return { success: false, error: error.message };
     if (!data?.id) return { success: false, error: "O banco não confirmou a gravação." };

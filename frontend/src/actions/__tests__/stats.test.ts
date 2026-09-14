@@ -210,6 +210,12 @@ describe("resolveError / reopenError", () => {
     expect(hoisted.revalidate).not.toHaveBeenCalled();
   });
 
+  it.each([null, { ...input, decision: "invalid" }, { ...input, context: null }])("recusa entrada inválida antes da RPC: %j", async (invalid) => {
+    const { resolveError } = await loadStats();
+    expect(await resolveError("p1", "doc1", "x", invalid as unknown as typeof input)).toEqual({ success: false, error: "Decisão ou contexto inválido." });
+    expect(hoisted.rpc).not.toHaveBeenCalled();
+  });
+
   it("sem confirmação do banco não assume que salvou", async () => {
     hoisted.rpc.mockResolvedValue({ data: null, error: null });
     const { resolveError } = await loadStats();
