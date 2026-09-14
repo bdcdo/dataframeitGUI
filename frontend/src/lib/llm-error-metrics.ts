@@ -1,8 +1,4 @@
-// Métrica de erro do LLM exibida em LLM Insights: numerador (`errors`) e
-// denominador (`reviewedEntries`) de "taxa de erro".
-//
-// Puro e sem Supabase — recebe linhas cruas e devolve as duas listas — para
-// ser testável fora do runtime do Next, no molde de `compare-divergence.ts`.
+// A fila conserva decisões para reabertura; numerador e denominador vêm de reviewedEntries.
 //
 // Há DUAS fontes de veredito sobre acerto/erro do LLM, e as duas contam:
 //
@@ -34,6 +30,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+import { effectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -53,6 +50,9 @@ export interface LlmError {
   llmResponseId: string;
   chosenResponseId: string | null;
   source: LlmErrorSource;
+  sourceId?: string | null;
+  resolution?: ErrorResolutionRow;
+  humanChoices?: { id: string; label: string }[];
 }
 
 // Todo (doc, campo) que o LLM respondeu e que já tem veredito humano — de
@@ -65,12 +65,14 @@ export interface ReviewedEntry {
   schemaVersion: string | null;
   reviewedAt: string;
   isError: boolean;
+  isPending?: boolean;
 }
 
 /* ── Formatos crus de entrada (colunas do banco, snake_case) ── */
 
 export interface MetricsResponse {
   id: string;
+  respondent_name?: string | null;
   document_id: string;
   respondent_type: "humano" | "llm";
   is_latest: boolean;
@@ -84,6 +86,7 @@ export interface MetricsResponse {
 }
 
 export interface MetricsReview {
+  id?: string;
   document_id: string;
   field_name: string;
   verdict: string;
@@ -109,6 +112,7 @@ export type AutoReviewProvenance =
 
 // Linha da view `final_answers` (uma por documento com LLM × campo do schema).
 export interface MetricsFinalAnswer {
+  field_review_id?: string | null;
   document_id: string;
   field_name: string;
   provenance: AutoReviewProvenance;
@@ -150,8 +154,7 @@ export interface LlmErrorMetricsInput {
   finalAnswers: MetricsFinalAnswer[];
   /** Já filtradas por `superseded_at IS NULL`, COM as colunas de snapshot. */
   equivalences: MetricsEquivalence[];
-  /** "documentId:fieldName" -> resolved_at */
-  errorResolutions: Map<string, string | null>;
+  errorResolutions: Map<string, ErrorResolutionRow>;
 }
 
 // Candidato antes da deduplicação entre as duas fontes.
@@ -343,7 +346,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     isActiveDocument: (docId) => documentTitles.has(docId),
     titleOf: (docId) => documentTitles.get(docId) || docId,
     resolvedAtOf: (docId, fieldName) =>
-      errorResolutions.get(`${docId}:${fieldName}`) ?? null,
+      errorResolutions.get(`${docId}:${fieldName}`)?.resolved_at ?? null,
     responsesByDoc,
     responseById,
     llmLatestByDoc,
@@ -487,6 +490,7 @@ function buildComparisonCandidate(
           llmResponseId: llmResponse.id,
           chosenResponseId: review.chosen_response_id,
           source: "comparacao",
+          sourceId: review.id,
         }
       : null,
     entry: { ...shared, isError },
@@ -563,6 +567,7 @@ function buildAutoReviewError(
     llmResponseId: arbitratedLlm.id,
     chosenResponseId: row.human_response_id,
     source: "auto_revisao",
+    sourceId: row.field_review_id,
   };
 }
 
@@ -700,8 +705,38 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
       : a.documentId.localeCompare(b.documentId),
   );
 
+  const cases = new Map<string, LlmError>(sorted.flatMap((c) => c.error ? [[`${c.documentId}:${c.fieldName}`, c.error] as const] : []));
+  for (const [key, resolution] of input.errorResolutions) {
+    const saved = resolution.context;
+    const field = ctx.fieldMap.get(resolution.field_name);
+    if (cases.has(key) || !saved || !isMeasurableField(field) || !ctx.isActiveDocument(resolution.document_id)) continue;
+    cases.set(key, {
+      documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
+      fieldName: resolution.field_name, fieldDescription: field.description,
+      llmAnswer: formatAnswer(saved.llm_value.value), chosenVerdict: formatAnswer(saved.human_value.value),
+      llmJustification: null, reviewerComment: null, resolvedAt: resolution.resolved_at,
+      reviewedAt: resolution.resolved_at, schemaVersion: null,
+      llmResponseId: saved.llm_response_id, chosenResponseId: saved.human_response_id,
+      source: saved.source.kind === "auto_revisao" ? "auto_revisao" : "comparacao",
+      sourceId: typeof saved.source.id === "string" ? saved.source.id : null,
+    });
+  }
   return {
-    errors: sorted.flatMap((c) => (c.error ? [c.error] : [])),
-    reviewedEntries: sorted.map((c) => c.entry),
+    errors: [...cases.entries()].map(([key, error]) => ({
+      ...error,
+      resolution: input.errorResolutions.get(key),
+      humanChoices: (ctx.responsesByDoc.get(error.documentId) ?? [])
+        .filter((r) => r.respondent_type === "humano" && r.is_latest &&
+          (error.source === "comparacao" || r.id === error.chosenResponseId))
+        .map((r) => ({ id: r.id, label: `${r.respondent_name || "Pesquisador"}: ${formatAnswer(r.answers?.[error.fieldName]) || "(vazio)"}` })),
+    })),
+    reviewedEntries: sorted.map((c) => {
+      const resolution = effectiveErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`));
+      return {
+        ...c.entry,
+        isError: resolution.status === "approved" ? resolution.isLlmError : c.entry.isError,
+        isPending: resolution.status === "discussion",
+      };
+    }),
   };
 }

@@ -21,11 +21,7 @@ interface DocumentRow {
   external_id: string | null;
 }
 
-interface ErrorResolutionRow {
-  document_id: string;
-  field_name: string;
-  resolved_at: string | null;
-}
+import type { ErrorResolutionRow } from "@/lib/error-resolution";
 
 // Carga de dados da página. Fora do componente porque o RSC fica ilegível com
 // sete queries inline — e porque a lista de colunas é o contrato real com
@@ -57,7 +53,7 @@ function fetchMetricsSources(
         supabase
           .from("responses")
           .select(
-            "id, document_id, respondent_type, is_latest, answers, justifications, answer_field_hashes, created_at, schema_version_major, schema_version_minor, schema_version_patch",
+            "id, document_id, respondent_type, respondent_name, is_latest, answers, justifications, answer_field_hashes, created_at, schema_version_major, schema_version_minor, schema_version_patch",
           )
           .eq("project_id", id),
       ["id"],
@@ -67,7 +63,7 @@ function fetchMetricsSources(
         supabase
           .from("reviews")
           .select(
-            "document_id, field_name, verdict, chosen_response_id, comment, created_at",
+            "id, document_id, field_name, verdict, chosen_response_id, comment, created_at",
           )
           .eq("project_id", id)
           .not("chosen_response_id", "is", null),
@@ -89,10 +85,7 @@ function fetchMetricsSources(
     ),
     fetchAllPaged<ErrorResolutionRow>(
       () =>
-        supabase
-          .from("error_resolutions")
-          .select("document_id, field_name, resolved_at")
-          .eq("project_id", id),
+        supabase.rpc("read_error_resolutions", { p_project_id: id }),
       ["id"],
     ),
     // As colunas de snapshot são obrigatórias: `filterCurrentEquivalencePairs`
@@ -120,7 +113,7 @@ function fetchMetricsSources(
             supabase
               .from("final_answers")
               .select(
-                "document_id, field_name, provenance, final_verdict, self_reviewed_at, final_decided_at, human_response_id, llm_response_id, human_answer_snapshot, llm_answer_snapshot, arbitrator_comment",
+                "field_review_id, document_id, field_name, provenance, final_verdict, self_reviewed_at, final_decided_at, human_response_id, llm_response_id, human_answer_snapshot, llm_answer_snapshot, arbitrator_comment",
               )
               .eq("project_id", id),
           ["document_id", "field_name"],
@@ -287,7 +280,7 @@ export default async function LlmInsightsPage({
     errorResolutions: new Map(
       errorResolutions.map((r) => [
         `${r.document_id}:${r.field_name}`,
-        r.resolved_at,
+        r,
       ]),
     ),
   });
@@ -308,6 +301,7 @@ export default async function LlmInsightsPage({
         fields={visibleFields}
         schemaEditor={{ fields: allFields, baseline: schemaBaseline }}
         isCoordinator={isCoordinator}
+        canResolve={accessResult.status === "resolved" && accessResult.canResolve}
         summary={summary}
       />
     </div>

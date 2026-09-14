@@ -6,10 +6,13 @@ import { LlmErrorCard } from "./LlmErrorCard";
 import { EditFieldDialog } from "./EditFieldDialog";
 import { ErrorStatsCards } from "./ErrorStatsCards";
 import { ErrorFiltersToolbar } from "./ErrorFiltersToolbar";
+import { ErrorDecisionDialog, type PendingErrorDecision } from "./ErrorDecisionDialog";
+import type { ErrorDecision } from "@/lib/error-resolution";
 import { useLlmErrorFiltering } from "@/hooks/useLlmErrorFiltering";
 import {
   resolveError,
   reopenError,
+  prepareErrorResolution,
 } from "@/actions/stats";
 import { regenerateAutoReviewBacklog } from "@/actions/field-reviews";
 import { markLlmEquivalent } from "@/actions/equivalences";
@@ -31,6 +34,7 @@ interface LlmInsightsViewProps {
     baseline: SchemaBaselineIdentity;
   };
   isCoordinator?: boolean;
+  canResolve?: boolean;
   summary: {
     totalLlmDocs: number;
     unreviewedLlmDocs?: number;
@@ -44,12 +48,14 @@ export function LlmInsightsView({
   fields,
   schemaEditor,
   isCoordinator,
+  canResolve,
   summary,
 }: LlmInsightsViewProps) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editingField, setEditingField] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [pendingDecision, setPendingDecision] = useState<PendingErrorDecision | null>(null);
 
   async function handleRegenerateBacklog() {
     setRegenerating(true);
@@ -82,29 +88,52 @@ export function LlmInsightsView({
 
   // Error filters + derivation (filtered population, rate, sorting, counts)
   const filtering = useLlmErrorFiltering(errors, reviewedEntries);
-  const { filteredErrors, filteredErrorRate, sortedErrors } = filtering;
+  const { measuredErrorCount, filteredErrorRate, sortedErrors } = filtering;
 
-  // Error handlers
-  const handleResolveError = (documentId: string, fieldName: string) => {
+  const prepareDecision = (error: LlmError, decision: ErrorDecision, selectedHumanId?: string) => {
+    if (!canResolve || !error.sourceId) return;
+    const choices = error.humanChoices ?? [];
+    if (choices.length === 0) {
+      toast.error("Não há resposta humana ativa para este campo. Refaça a revisão antes de decidir.");
+      return;
+    }
+    const humanId = selectedHumanId ?? choices.find((c) => c.id === error.chosenResponseId)?.id
+      ?? (choices.length === 1 ? choices[0].id : undefined);
+    if (!humanId) {
+      setPendingDecision({ error, decision, context: null });
+      return;
+    }
     startTransition(async () => {
-      const result = await resolveError(projectId, documentId, fieldName);
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Erro resolvido");
-        refresh();
+      try {
+        const result = await prepareErrorResolution({ projectId, documentId: error.documentId,
+          fieldName: error.fieldName, llmResponseId: error.llmResponseId,
+          humanResponseId: humanId, sourceKind: error.source, sourceId: error.sourceId! });
+        if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
+        setPendingDecision({ error, decision, context: result.context });
+      } catch {
+        toast.error("Não foi possível conferir as respostas.");
       }
     });
   };
 
-  const handleReopenError = (documentId: string, fieldName: string) => {
+  const confirmDecision = (note: string) => {
+    if (!canResolve || !pendingDecision) return;
+    const { error, context, decision } = pendingDecision;
     startTransition(async () => {
-      const result = await reopenError(projectId, documentId, fieldName);
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Erro reaberto");
+      try {
+        const result = decision && context
+          ? await resolveError(projectId, error.documentId, error.fieldName, {
+            decision, context, expected: error.resolution ?? null, note,
+          })
+          : !decision && error.resolution
+            ? await reopenError(projectId, error.documentId, error.fieldName, error.resolution)
+            : { success: false, error: "Confira a resposta antes de confirmar." };
+        if (!result.success) { toast.error(result.error ?? "Falha ao salvar."); return; }
+        toast.success(decision ? "Decisão salva" : "Caso reaberto");
+        setPendingDecision(null);
         refresh();
+      } catch {
+        toast.error("Não foi possível confirmar a gravação. Recarregue antes de tentar novamente.");
       }
     });
   };
@@ -157,7 +186,7 @@ export function LlmInsightsView({
 
       <ErrorStatsCards
         totalLlmDocs={summary.totalLlmDocs}
-        errorCount={filteredErrors.length}
+        errorCount={measuredErrorCount}
         errorRatePct={filteredErrorRate}
         unreviewedLlmDocs={summary.unreviewedLlmDocs}
       />
@@ -182,8 +211,9 @@ export function LlmInsightsView({
               projectId={projectId}
               isPending={isPending}
               isCoordinator={isCoordinator}
-              onResolve={() => handleResolveError(e.documentId, e.fieldName)}
-              onReopen={() => handleReopenError(e.documentId, e.fieldName)}
+              canResolve={canResolve}
+              onDecide={(decision) => prepareDecision(e, decision)}
+              onReopen={() => setPendingDecision({ error: e, decision: null, context: null })}
               onEditField={() => setEditingField(e.fieldName)}
               onMarkEquivalent={() => handleMarkEquivalent(e)}
             />
@@ -192,6 +222,15 @@ export function LlmInsightsView({
       )}
     </div>
 
+    {pendingDecision && (
+      <ErrorDecisionDialog
+        key={`${pendingDecision.error.documentId}:${pendingDecision.error.fieldName}:${pendingDecision.decision}`}
+        pending={pendingDecision} isPending={isPending}
+        onClose={() => setPendingDecision(null)}
+        onPrepare={(humanId) => { if (pendingDecision.decision) prepareDecision(pendingDecision.error, pendingDecision.decision, humanId); }}
+        onConfirm={confirmDecision}
+      />
+    )}
     {isCoordinator && editingField && schemaEditor && (
       <EditFieldDialog
         projectId={projectId}

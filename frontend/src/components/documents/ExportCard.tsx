@@ -14,6 +14,7 @@ import type { ExportDataset, ExportSheet } from "@/lib/export/assemble";
 // BOM + escaping manual herdados do antigo ExportPanel (comportamento validado
 // em produção): garante acentuação correta ao abrir o CSV no Excel.
 function escapeCsvField(val: string): string {
+  if (/^\s*[=+@-]|^[\t\r\n]/u.test(val) && !/^[+-]?\d+(\.\d+)?$/u.test(val)) val = "'" + val;
   if (val.includes(",") || val.includes('"') || val.includes("\n")) {
     return `"${val.replace(/"/g, '""')}"`;
   }
@@ -225,9 +226,9 @@ export function ExportCard({ projectId }: { projectId: string }) {
     downloadBlob(blob, `${base}.xlsx`);
   };
 
-  // Se ainda não há dataset, carrega antes de baixar; senão baixa direto.
+  // Uma decisão em outra aba pode ter tornado a prévia obsoleta.
   const handleDownload = async () => {
-    const data = dataset ?? (await loadDataset());
+    const data = await loadDataset();
     if (!data) return;
     // Guarda o clique em base vazia (baixar sem prévia num projeto sem
     // documentos): evita gerar um arquivo só com cabeçalhos.

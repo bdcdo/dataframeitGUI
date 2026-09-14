@@ -12,6 +12,7 @@ const resolved = {
   membershipRole: null,
   isMaster: false,
   isCoordinator: false,
+  canResolve: false,
 };
 
 const unavailable = { status: "unavailable" as const };

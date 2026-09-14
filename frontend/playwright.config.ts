@@ -4,6 +4,7 @@ import { assertRequiredPrePushEnv } from "./playwright-pre-push-env";
 import {
   applyEnvironment,
   readOptionalEnvironmentFile,
+  readEnvironmentFile,
 } from "./scripts/worktree-env/env-contract.mjs";
 
 // E2E lê as mesmas credenciais Clerk/Supabase de .env.local; .env.e2e (não
@@ -21,7 +22,9 @@ applyEnvironment(
 );
 applyEnvironment(
   process.env,
-  readOptionalEnvironmentFile(join(__dirname, ".env.e2e")),
+  process.env.E2E_ENV_PATH
+    ? readEnvironmentFile(process.env.E2E_ENV_PATH)
+    : readOptionalEnvironmentFile(join(__dirname, ".env.e2e")),
   { override: true },
 );
 

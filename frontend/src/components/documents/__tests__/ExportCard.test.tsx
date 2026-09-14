@@ -74,6 +74,50 @@ describe("ExportCard", () => {
     expect(screen.queryByText(/Prévia \(/)).toBeNull();
   });
 
+  it("não baixa a prévia antiga quando a atualização do download falha", async () => {
+    const download = vi.fn(() => "blob:export");
+    vi.stubGlobal("URL", { createObjectURL: download, revokeObjectURL: vi.fn() });
+    hoisted.getExportDataset
+      .mockResolvedValueOnce(makeDataset())
+      .mockResolvedValueOnce({ error: "Não foi possível atualizar as decisões." });
+    try {
+      render(<ExportCard projectId="p1" />);
+      await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+      await screen.findByText(/Prévia \(1 linha\)/);
+      await userEvent.click(screen.getByRole("button", { name: /Baixar CSV/ }));
+      expect(hoisted.getExportDataset).toHaveBeenCalledTimes(2);
+      expect((await screen.findByRole("alert")).textContent).toContain("atualizar as decisões");
+      expect(download).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("neutraliza fórmula no CSV sem alterar um número negativo", async () => {
+    let downloaded: Blob | undefined;
+    vi.stubGlobal("URL", {
+      createObjectURL: (blob: Blob) => { downloaded = blob; return "blob:export"; },
+      revokeObjectURL: vi.fn(),
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    hoisted.getExportDataset.mockResolvedValue(makeDataset({ csv: { headers: ["formula", "numero"], rows: [["=1+1", "-12.5"]] } }));
+    try {
+      render(<ExportCard projectId="p1" />);
+      await userEvent.click(screen.getByRole("button", { name: /Baixar CSV/ }));
+      await waitFor(() => expect(downloaded).toBeTruthy());
+      const text = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(downloaded!);
+      });
+      expect(text).toContain("\n'=1+1,-12.5");
+    } finally {
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("dataset vazio mostra estado vazio e desabilita o download", async () => {
     hoisted.getExportDataset.mockResolvedValue(
       makeDataset({ csv: { headers: ["document_id"], rows: [] } }),

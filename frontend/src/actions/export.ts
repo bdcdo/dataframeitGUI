@@ -7,6 +7,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import type { PydanticField } from "@/lib/types";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import type { ErrorResolutionRow } from "@/lib/error-resolution";
 import {
   assembleExport,
   type ExportDataset,
@@ -37,6 +38,7 @@ export async function getExportDataset(
     { data: documents, error: documentsError },
     { data: responses, error: responsesError },
     { data: reviews, error: reviewsError },
+    { data: errorResolutions, error: resolutionsError },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -69,6 +71,7 @@ export async function getExportDataset(
         .eq("project_id", projectId),
       ["id"],
     ),
+    fetchAllPaged<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId }), ["id"]),
   ]);
 
   const error = [
@@ -76,6 +79,7 @@ export async function getExportDataset(
     documentsError,
     responsesError,
     reviewsError,
+    resolutionsError,
   ].find(Boolean);
   if (error) return { error: error.message };
   if (!project) return { error: "Projeto não encontrado." };
@@ -88,5 +92,6 @@ export async function getExportDataset(
     documents,
     responses,
     reviews,
+    errorResolutions,
   });
 }

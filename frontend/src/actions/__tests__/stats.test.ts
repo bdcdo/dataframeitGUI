@@ -8,25 +8,30 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // funções ganham 1 teste de fumaça de caminho feliz cada, o suficiente para
 // pegar regressão na migração pro wrapper.
 import { createSupabaseMockState } from "./supabase-mock";
+import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
 
 const supabaseState = createSupabaseMockState();
 
 const hoisted = vi.hoisted(() => ({
+  rpc: vi.fn(),
+  revalidate: vi.fn(),
   getUser: vi.fn<() => Promise<{ id: string } | null>>(async () => ({
     id: "user1",
   })),
 }));
 
-vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/cache", () => ({ revalidatePath: (...args: unknown[]) => hoisted.revalidate(...args) }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => supabaseState.createClient(),
+  createSupabaseServer: async () => ({ ...supabaseState.createClient(), rpc: hoisted.rpc }),
 }));
 
 beforeEach(() => {
   supabaseState.reset();
+  hoisted.rpc.mockReset();
+  hoisted.revalidate.mockReset();
   hoisted.getUser.mockResolvedValue({ id: "user1" });
 });
 
@@ -181,23 +186,52 @@ describe("resolveDifficulty / reopenDifficulty — smoke", () => {
   });
 });
 
-describe("resolveError / reopenError — smoke", () => {
-  it("resolveError: sucesso", async () => {
+describe("resolveError / reopenError", () => {
+  const row = resolutionFixture();
+  const input = { decision: "llm_correct" as const, context: row.context!, expected: null, note: "Conferido" };
+
+  it("salva contexto e escolha pela RPC, sem gravar diretamente a tabela", async () => {
+    hoisted.rpc.mockResolvedValue({ data: row, error: null });
     const { resolveError } = await loadStats();
-
-    const r = await resolveError("p1", "doc1", "campo1", "nota");
-
-    expect(r).toEqual({ success: true });
+    expect(await resolveError("p1", "doc1", "x", input)).toEqual({ success: true });
+    expect(hoisted.rpc).toHaveBeenCalledWith("set_error_resolution", {
+      p_project_id: "p1", p_document_id: "doc1", p_field_name: "x",
+      p_decision: "llm_correct", p_expected_context: row.context,
+      p_expected_id: null, p_expected_resolved_at: null, p_note: "Conferido",
+    });
+    expect(supabaseState.writeCalls).toHaveLength(0);
+    expect(hoisted.revalidate).toHaveBeenCalledWith("/projects/p1/reviews/gabarito");
   });
 
-  it("reopenError: sucesso", async () => {
-    supabaseState.tableResults = {
-      error_resolutions: [{ data: [{ document_id: "doc1" }] }],
-    };
+  it.each(["Sem permissão", "As respostas mudaram", "A decisão mudou"])("não anuncia sucesso para %s", async (message) => {
+    hoisted.rpc.mockResolvedValue({ data: null, error: { message } });
+    const { resolveError } = await loadStats();
+    expect(await resolveError("p1", "doc1", "x", input)).toEqual({ success: false, error: message });
+    expect(hoisted.revalidate).not.toHaveBeenCalled();
+  });
+
+  it("sem confirmação do banco não assume que salvou", async () => {
+    hoisted.rpc.mockResolvedValue({ data: null, error: null });
+    const { resolveError } = await loadStats();
+    expect((await resolveError("p1", "doc1", "x", input)).success).toBe(false);
+  });
+
+  it("reabertura exige a identidade e a data que a pessoa examinou", async () => {
+    hoisted.rpc.mockResolvedValue({ data: { reopened: true }, error: null });
     const { reopenError } = await loadStats();
+    expect(await reopenError("p1", "doc1", "x", row)).toEqual({ success: true });
+    expect(hoisted.rpc).toHaveBeenCalledWith("set_error_resolution", expect.objectContaining({
+      p_decision: null, p_expected_id: row.id, p_expected_resolved_at: row.resolved_at,
+    }));
+    expect(supabaseState.writeCalls).toHaveLength(0);
+  });
 
-    const r = await reopenError("p1", "doc1", "campo1");
-
-    expect(r).toEqual({ success: true });
+  it("preparar a confirmação lê contexto sem gravar decisão", async () => {
+    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
+    const { prepareErrorResolution } = await loadStats();
+    expect(await prepareErrorResolution({ projectId: "p1", documentId: "doc1", fieldName: "x", llmResponseId: "rllm", humanResponseId: "rh", sourceKind: "comparacao", sourceId: "review1" })).toEqual({ context: row.context });
+    expect(hoisted.rpc).toHaveBeenCalledTimes(1);
+    expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.any(Object));
+    expect(supabaseState.writeCalls).toHaveLength(0);
   });
 });
