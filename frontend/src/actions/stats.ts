@@ -4,12 +4,8 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
+import { errorResolutionInputSchema, errorResolutionContextSchema, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
-// As 10 funções resolve/reopen abaixo (5 pares, sobre 5 tabelas) compartilhavam
-// o mesmo esqueleto: auth → supabase → mutação específica → revalidatePath só
-// no sucesso → catch genérico. withResolutionAction absorve esse esqueleto sem
-// tocar a query em si — cada callback monta seu próprio `.from(tabela)...`
-// com tipagem completa do client Supabase, sem genéricos por string de tabela.
 async function withResolutionAction(
   projectId: string,
   action: (
@@ -239,43 +235,69 @@ export async function fetchGabaritoForComment(
   }
 }
 
-export async function resolveError(
-  projectId: string,
-  documentId: string,
-  fieldName: string,
-  note?: string,
-): Promise<{ success: boolean; error?: string }> {
-  return withResolutionAction(projectId, async (user, supabase) => {
-    const { error } = await supabase.from("error_resolutions").insert({
-      project_id: projectId,
-      document_id: documentId,
-      field_name: fieldName,
-      resolved_by: user.id,
-      note: note || null,
-    });
+type ErrorResolutionIdentity = NonNullable<ErrorResolutionInput["expected"]>;
 
+export async function prepareErrorResolution(input: {
+  projectId: string; documentId: string; fieldName: string;
+  llmResponseId: string; humanResponseId: string; sourceKind: string; sourceId: string;
+}): Promise<{ context?: ErrorResolutionContext; error?: string }> {
+  try {
+    if (!await getAuthUser()) return { error: "Não autenticado" };
+    const supabase = await createSupabaseServer();
+    const { data, error } = await supabase.rpc("llm_error_context", {
+      p_project_id: input.projectId, p_document_id: input.documentId, p_field_name: input.fieldName,
+      p_llm_response_id: input.llmResponseId, p_human_response_id: input.humanResponseId,
+      p_source_kind: input.sourceKind, p_source_id: input.sourceId,
+    });
+    if (error) return { error: error.message };
+    const parsed = errorResolutionContextSchema.safeParse(data);
+    return parsed.success ? { context: parsed.data } : { error: "As fontes mudaram ou não estão disponíveis. Recarregue a página." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+function revalidateErrorResults(projectId: string) {
+  revalidatePath(`/projects/${projectId}/reviews/llm-insights`);
+  revalidatePath(`/projects/${projectId}/reviews/gabarito`);
+  revalidatePath(`/projects/${projectId}/config/documents`);
+}
+
+export async function resolveError(
+  projectId: string, documentId: string, fieldName: string,
+  input: ErrorResolutionInput,
+): Promise<{ success: boolean; error?: string }> {
+  return withResolutionAction(projectId, async (_user, supabase) => {
+    const parsed = errorResolutionInputSchema.safeParse(input);
+    if (!parsed.success) return { success: false, error: "Decisão ou contexto inválido." };
+    const { decision, context, expected, note } = parsed.data;
+    const identity = expected ?? { id: null, resolved_at: null };
+    const { data, error } = await supabase.rpc("set_error_resolution", {
+      p_project_id: projectId, p_document_id: documentId, p_field_name: fieldName,
+      p_decision: decision, p_expected_context: context,
+      p_expected_id: identity.id,
+      p_expected_resolved_at: identity.resolved_at, p_note: note ?? null,
+    });
     if (error) return { success: false, error: error.message };
+    if (!data?.id) return { success: false, error: "O banco não confirmou a gravação." };
+    revalidateErrorResults(projectId);
     return { success: true };
   });
 }
 
 export async function reopenError(
-  projectId: string,
-  documentId: string,
-  fieldName: string,
+  projectId: string, documentId: string, fieldName: string,
+  expected: ErrorResolutionIdentity,
 ): Promise<{ success: boolean; error?: string }> {
   return withResolutionAction(projectId, async (_user, supabase) => {
-    const { data, error } = await supabase
-      .from("error_resolutions")
-      .delete()
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("field_name", fieldName)
-      .select("document_id");
-
+    const { data, error } = await supabase.rpc("set_error_resolution", {
+      p_project_id: projectId, p_document_id: documentId, p_field_name: fieldName,
+      p_decision: null, p_expected_context: null,
+      p_expected_id: expected.id, p_expected_resolved_at: expected.resolved_at, p_note: null,
+    });
     if (error) return { success: false, error: error.message };
-    if (!data || data.length === 0)
-      return { success: false, error: "Nada reaberto: sem permissão ou erro já reaberto" };
+    if (data?.reopened !== true) return { success: false, error: "O banco não confirmou a reabertura." };
+    revalidateErrorResults(projectId);
     return { success: true };
   });
 }

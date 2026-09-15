@@ -17,6 +17,7 @@ import {
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import { formatExportValue, formatVerdict } from "./format";
+import { effectiveErrorResolution, errorResolutionComment, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 export interface ExportSheet {
   headers: string[];
@@ -60,6 +61,7 @@ export interface AssembleInput {
   documents: ExportDocument[];
   responses: ExportResponse[];
   reviews: ExportReview[];
+  errorResolutions?: ErrorResolutionRow[];
 }
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
@@ -187,6 +189,23 @@ function fieldAgreementValue(
   return unique.size === 1 ? formatExportValue(answers[0]) : null;
 }
 
+function applyExportResolutions(
+  verdicts: Map<string, VerdictEntry>,
+  rows: ErrorResolutionRow[],
+  documents: ReadonlyMap<string, DocIdentity>,
+  fieldNames: ReadonlySet<string>,
+): void {
+  for (const row of rows) {
+    if (!documents.has(row.document_id) || !fieldNames.has(row.field_name)) continue;
+    const resolution = effectiveErrorResolution(row);
+    if (resolution.status !== "approved" && resolution.status !== "discussion") continue;
+    const entry = verdicts.get(row.document_id) ?? { fields: new Map<string, string>(), comments: [] };
+    entry.fields.set(row.field_name, resolution.status === "approved" ? formatExportValue(resolution.value) : "");
+    entry.comments.push(errorResolutionComment(row));
+    verdicts.set(row.document_id, entry);
+  }
+}
+
 // Campos concordantes de UM documento que o revisor não marcou explicitamente.
 function docAgreements(
   docResponses: ExportResponse[],
@@ -245,6 +264,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     (f) => f.target !== "llm_only" && f.target !== "none"
   );
   const fieldNames = exportableFields.map((f) => f.name);
+  const fieldNameSet = new Set(fieldNames);
 
   // Base ordenada de forma determinística (created_at asc, id como desempate).
   const baseDocs = [...documents].sort((a, b) => {
@@ -302,6 +322,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const baseReviews = reviews.filter((r) => identity.has(r.document_id));
 
   const verdictsByDoc = buildVerdictsByDoc(baseReviews);
+  applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
   const fieldByName = new Map<string, PydanticField>();
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
   const agreementByDoc = buildAgreementByDoc(

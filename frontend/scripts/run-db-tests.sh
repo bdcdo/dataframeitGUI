@@ -52,6 +52,8 @@ GATE_SUITES=(
   round_write_maintenance
   llm_rate_limit
   llm_runs_round
+  llm_error_decisions
+  llm_error_decisions_concurrency
   member_permission_rpcs
   project_members_column_guard
   responses_one_latest_human
@@ -111,7 +113,18 @@ LOG_DIR="$(mktemp -d)"
 trap 'rm -rf "${LOG_DIR}"' EXIT
 
 run_pgtap() {
-  npx supabase test db "${TESTS_DIR}/$1.test.sql" --local >"${LOG_DIR}/$1.log" 2>&1
+  if [[ -n "${SUPABASE_DB_NAME:-}${SUPABASE_DB_CONTAINER:-}" ]]; then
+    local port
+    port="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "${CONTAINER}")"
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+      echo "container sem porta PostgreSQL publicada" >"${LOG_DIR}/$1.log"
+      return 2
+    fi
+    PGPASSWORD=postgres npx supabase test db "${TESTS_DIR}/$1.test.sql" \
+      --db-url "postgresql://postgres@127.0.0.1:${port}/${SUPABASE_DB_NAME:-postgres}" >"${LOG_DIR}/$1.log" 2>&1
+  else
+    npx supabase test db "${TESTS_DIR}/$1.test.sql" --local >"${LOG_DIR}/$1.log" 2>&1
+  fi
 }
 
 run_psql() {

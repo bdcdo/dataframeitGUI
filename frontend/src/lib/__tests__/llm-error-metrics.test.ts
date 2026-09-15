@@ -700,7 +700,7 @@ describe("computeLlmErrorMetrics — metadados para os filtros da UI", () => {
     const { errors } = run({
       responses: [llmResp, humanResp],
       reviews: [review({ verdict: "N/A" })],
-      errorResolutions: new Map([["doc1:x", "2026-04-01T00:00:00Z"]]),
+      errorResolutions: new Map([["doc1:x", { id: "resolution", project_id: "p1", document_id: "doc1", field_name: "x", resolved_at: "2026-04-01T00:00:00Z", resolved_by: "user", note: null, decision: null, context: null, current_context: null }]]),
     });
 
     expect(errors[0].resolvedAt).toBe("2026-04-01T00:00:00Z");

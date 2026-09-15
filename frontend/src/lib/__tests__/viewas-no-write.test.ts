@@ -42,6 +42,7 @@ const access: ResolvedProjectAccessContext = {
   membershipRole: null,
   isMaster: true,
   isCoordinator: true,
+  canResolve: true,
 };
 
 describe("resolveProjectQueueIdentity — viewAs é somente leitura", () => {

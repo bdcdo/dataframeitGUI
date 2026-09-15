@@ -29,7 +29,7 @@ function renderCard(source: LlmErrorSource) {
       error={llmError(source)}
       projectId="proj1"
       isPending={false}
-      onResolve={vi.fn()}
+      onDecide={vi.fn()}
       onReopen={vi.fn()}
       onMarkEquivalent={vi.fn()}
     />,

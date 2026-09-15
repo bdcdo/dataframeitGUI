@@ -8,6 +8,9 @@ import type {
   RespondentAnswer,
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
+import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
+import { stableStringify } from "@/lib/schema-utils";
 
 /* ── Raw row shapes ── */
 
@@ -32,6 +35,8 @@ interface ReviewRow {
   chosen_response_id: string | null;
   comment: string | null;
   reviewer_id: string | null;
+  resolutionLabel?: string;
+  resolution?: Extract<EffectiveErrorResolution, { status: "approved" | "discussion" }>;
 }
 
 /* ── Context shared across computations ── */
@@ -51,6 +56,7 @@ export interface ReviewComputationContext {
   docMap: Map<string, string>;
   responsesByDoc: Map<string, ResponseRow[]>;
   uniqueReviews: ReviewRow[];
+  errorResolutions?: ErrorResolutionRow[];
   profileMap: Map<string, string>;
   // true para cada tabela cuja query atingiu REVIEW_BASE_DATA_LIMIT — os
   // dados agregados podem estar silenciosamente errados. As paginas de
@@ -193,6 +199,7 @@ export async function fetchReviewBaseData(
     { data: responses },
     { data: reviews },
     { data: documents },
+    { data: errorResolutions, error: resolutionsError },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -214,7 +221,9 @@ export async function fetchReviewBaseData(
       .is("excluded_at", null)
       .is("exclusion_pending_at", null)
       .limit(REVIEW_BASE_DATA_LIMIT),
+    fetchAllPaged<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId }), ["id"]),
   ]);
+  if (resolutionsError) throw new Error(`Não foi possível carregar as decisões: ${resolutionsError.message}`);
 
   const truncated = computeTruncation(responses, reviews, documents);
   for (const [name, isTruncated] of Object.entries(truncated)) {
@@ -294,6 +303,7 @@ export async function fetchReviewBaseData(
     docMap,
     responsesByDoc,
     uniqueReviews,
+    errorResolutions,
     profileMap,
     truncated,
   };
@@ -301,11 +311,45 @@ export async function fetchReviewBaseData(
 
 /* ── Computation: Reviewed Documents ── */
 
-export function computeReviewedDocuments(
-  ctx: ReviewComputationContext,
-): ReviewedDocument[] {
+function resolutionVerdict(resolution: NonNullable<ReviewRow["resolution"]>, fieldType: PydanticField["type"]): string {
+  if (resolution.status === "discussion") return "ambiguo";
+  if (fieldType === "multi" && Array.isArray(resolution.value)) {
+    return JSON.stringify(Object.fromEntries(resolution.value.map((value) => [String(value), true])));
+  }
+  return formatAnswer(resolution.value);
+}
+
+function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, ReviewRow> {
+  const effectiveReviews = new Map(ctx.uniqueReviews.map((r) => [`${r.document_id}:${r.field_name}`, r]));
+  for (const row of ctx.errorResolutions ?? []) {
+    const resolution = effectiveErrorResolution(row);
+    const field = ctx.fieldMap.get(row.field_name);
+    if (!field || !ctx.docMap.has(row.document_id) || (resolution.status !== "approved" && resolution.status !== "discussion")) continue;
+    const verdict = resolutionVerdict(resolution, field.type);
+    effectiveReviews.set(`${row.document_id}:${row.field_name}`, {
+      id: row.id, document_id: row.document_id, field_name: row.field_name, verdict,
+      chosen_response_id: null, comment: errorResolutionComment(row), reviewer_id: row.resolved_by,
+      resolutionLabel: ERROR_DECISION_LABELS[row.decision!],
+      resolution,
+    });
+  }
+  return effectiveReviews;
+}
+
+function isReviewedAnswerCorrect(answer: unknown, review: ReviewRow, fieldType: PydanticField["type"]): boolean {
+  const { resolution } = review;
+  if (!resolution) return isAnswerCorrect(answer, review.verdict, fieldType);
+  if (resolution.status === "discussion") return false;
+  if (fieldType === "multi") return isAnswerCorrect(answer, review.verdict, fieldType);
+  const value = resolution.value;
+  return typeof value === "object" || typeof answer === "object"
+    ? stableStringify(answer) === stableStringify(value)
+    : normalizeForComparison(answer) === normalizeForComparison(value);
+}
+
+export function computeReviewedDocuments(ctx: ReviewComputationContext): ReviewedDocument[] {
   const reviewsByDoc = new Map<string, ReviewRow[]>();
-  ctx.uniqueReviews.forEach((r) => {
+  reviewsWithResolutions(ctx).forEach((r) => {
     const list = reviewsByDoc.get(r.document_id) || [];
     list.push(r);
     reviewsByDoc.set(r.document_id, list);
@@ -318,6 +362,7 @@ export function computeReviewedDocuments(
     const reviewedFields: ReviewedField[] = [];
 
     for (const review of docReviews) {
+      const { resolution } = review;
       const field = ctx.fieldMap.get(review.field_name);
       if (!field) continue;
 
@@ -330,7 +375,7 @@ export function computeReviewedDocuments(
           currentFieldHashes: ctx.currentFieldHashes,
           projectPydanticHash: ctx.projectPydanticHash,
         });
-        const correct = isAnswerCorrect(answer, review.verdict, field.type);
+        const correct = isReviewedAnswerCorrect(answer, review, field.type);
         return {
           respondentKey: getRespondentKey(r),
           respondentName: getRespondentDisplayName(r, ctx.profileMap),
@@ -347,6 +392,8 @@ export function computeReviewedDocuments(
         fieldDescription: field.description,
         fieldType: field.type,
         verdict: review.verdict,
+        resolutionLabel: review.resolutionLabel,
+        resolutionStatus: resolution?.status,
         respondentAnswers,
       });
     }
