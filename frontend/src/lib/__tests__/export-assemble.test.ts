@@ -7,6 +7,7 @@ import {
   type ExportSheet,
 } from "@/lib/export/assemble";
 import type { PydanticField } from "@/lib/types";
+import { resolutionFixture } from "./error-resolution-fixture";
 
 // --- Fixtures helpers ---
 
@@ -49,6 +50,7 @@ function run(overrides: Partial<AssembleInput> = {}) {
     projectName: "Proj",
     fields: [],
     minResponses: 2,
+    currentRoundId: "round1",
     documents: [],
     responses: [],
     reviews: [],
@@ -100,6 +102,7 @@ describe("assembleExport — união ordenada das colunas originais", () => {
       projectName: "P",
       fields: [],
       minResponses: 2,
+      currentRoundId: "round1",
       documents: [
         doc("B", { created_at: "2024-02-01", columns: ["b", "c"] }),
         doc("A", { created_at: "2024-01-01", columns: ["a", "b"] }),
@@ -222,7 +225,7 @@ describe("assembleExport — prioridade do veredicto sobre a concordância", () 
         { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "concordado" } },
       ],
       reviews: [
-        { document_id: "A", field_name: "campo", verdict: "pular", comment: "nota do revisor" },
+        { document_id: "A", field_name: "campo", round_id: "round1", verdict: "pular", comment: "nota do revisor" },
       ],
     });
     const row = d.verdicts.rows[0];
@@ -355,7 +358,7 @@ describe("assembleExport — filtra à base exportada (achado C1)", () => {
         { document_id: "ghost", respondent_name: "RX", respondent_type: "llm", answers: { campo: "x" } },
       ],
       reviews: [
-        { document_id: "ghost", field_name: "campo", verdict: "ambiguo", comment: null },
+        { document_id: "ghost", field_name: "campo", round_id: "round1", verdict: "ambiguo", comment: null },
       ],
     });
     const allIds = new Set([
@@ -487,5 +490,52 @@ describe("assembleExport — inteiro teor só na aba Documentos", () => {
     ]);
     expect(d.documents.headers).not.toContain("document_text");
     expect(d.csv.headers).toContain("texto");
+  });
+});
+
+// --- Rodada corrente (#733) ---
+
+describe("assembleExport — rodada corrente (#733)", () => {
+  const base = {
+    fields: [field("campo")],
+    documents: [doc("A")],
+    responses: [
+      { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
+      { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
+    ],
+  };
+
+  it("veredito de rodada anterior não entra no gabarito: a célula cai para a concordância", () => {
+    const d = run({
+      ...base,
+      reviews: [{ document_id: "A", field_name: "campo", verdict: "não", comment: "antigo", round_id: "round0" }],
+    });
+    const row = d.verdicts.rows[0];
+    expect(row[idx(d.verdicts, "campo")]).toBe("sim");
+    expect(row[idx(d.verdicts, "reviewer_comments")]).toBe("");
+  });
+
+  it("o mesmo veredito na rodada corrente prevalece sobre a concordância", () => {
+    const d = run({
+      ...base,
+      reviews: [{ document_id: "A", field_name: "campo", verdict: "não", comment: null, round_id: "round1" }],
+    });
+    expect(d.verdicts.rows[0][idx(d.verdicts, "campo")]).toBe("não");
+  });
+
+  it("decisão gravada sobre célula de rodada antiga continua no gabarito", () => {
+    const resolution = resolutionFixture("researchers_correct");
+    const d = run({
+      fields: [field("x")],
+      documents: [doc("doc1")],
+      responses: [
+        { document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { x: "LLM" } },
+        { document_id: "doc1", respondent_name: "R1", respondent_type: "codificacao", answers: { x: "Humano" } },
+      ],
+      reviews: [{ document_id: "doc1", field_name: "x", verdict: "Humano", comment: null, round_id: "round0" }],
+      errorResolutions: [resolution],
+    });
+    expect(d.verdicts.rows).toHaveLength(1);
+    expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("Humano");
   });
 });

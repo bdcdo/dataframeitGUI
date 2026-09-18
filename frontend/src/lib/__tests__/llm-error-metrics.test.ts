@@ -9,6 +9,7 @@ import {
   type MetricsReview,
 } from "@/lib/llm-error-metrics";
 import type { PydanticField } from "@/lib/types";
+import { resolutionFixture } from "./error-resolution-fixture";
 
 function field(overrides: Partial<PydanticField> = {}): PydanticField {
   return {
@@ -46,6 +47,7 @@ function review(overrides: Partial<MetricsReview> = {}): MetricsReview {
     chosen_response_id: "rh",
     comment: null,
     created_at: "2026-02-01T00:00:00Z",
+    round_id: "round1",
     ...overrides,
   };
 }
@@ -91,6 +93,7 @@ function run(overrides: Partial<LlmErrorMetricsInput> = {}) {
   return computeLlmErrorMetrics({
     fields: [field()],
     automationMode: "auto_review_llm",
+    currentRoundId: "round1",
     documentTitles: new Map([["doc1", "Documento 1"]]),
     responses: [],
     reviews: [],
@@ -704,5 +707,54 @@ describe("computeLlmErrorMetrics — metadados para os filtros da UI", () => {
     });
 
     expect(errors[0].resolvedAt).toBe("2026-04-01T00:00:00Z");
+  });
+});
+
+describe("rodada corrente (#733)", () => {
+  const llm = response({ id: "rllm", respondent_type: "llm", answers: { x: "LLM" } });
+  const human = response({ id: "rh", respondent_type: "humano", answers: { x: "Humano" } });
+
+  it("arbitragem de rodada anterior sai da fila e do denominador", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano", round_id: "round0" })],
+    });
+    expect(out.errors).toEqual([]);
+    expect(out.reviewedEntries).toEqual([]);
+  });
+
+  it("a mesma arbitragem na rodada corrente conta como erro do LLM", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano", round_id: "round1" })],
+    });
+    expect(out.errors).toHaveLength(1);
+    expect(out.reviewedEntries).toHaveLength(1);
+    expect(out.reviewedEntries[0].isError).toBe(true);
+  });
+
+  it("sem rodada corrente, nenhuma arbitragem conta", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      currentRoundId: null,
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano" })],
+    });
+    expect(out.errors).toEqual([]);
+    expect(out.reviewedEntries).toEqual([]);
+  });
+
+  it("decisão gravada sobre célula de rodada antiga continua na fila", () => {
+    const row = resolutionFixture("researchers_correct");
+    const out = run({
+      automationMode: "compare_llm",
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano", round_id: "round0" })],
+      errorResolutions: new Map([["doc1:x", row]]),
+    });
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]).toMatchObject({ documentId: "doc1", fieldName: "x", resolution: row });
   });
 });

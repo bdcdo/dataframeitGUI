@@ -93,6 +93,8 @@ export interface MetricsReview {
   chosen_response_id: string | null;
   comment: string | null;
   created_at: string;
+  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
+  round_id: string;
 }
 
 // Os valores que o `CASE` de `final_answers` emite, e nada além deles. União
@@ -141,6 +143,14 @@ export interface LlmErrorMetricsInput {
    * usa auto-revisão" — para todo campo de todo documento.
    */
   automationMode: string | null;
+  /**
+   * `projects.current_round_id`. Só a arbitragem feita na rodada corrente
+   * conta como veredito: a fila compara o LLM da rodada corrente, e um
+   * veredito dado sobre respostas de rodada anterior pode nem ser opção do
+   * formulário atual (#733). Decisão já gravada em `errorResolutions` sobre
+   * célula de rodada antiga continua entrando pela ressurreição abaixo.
+   */
+  currentRoundId: string | null;
   /**
    * Só os documentos ATIVOS do projeto. As chaves, e não só os valores, são
    * consumidas: elas definem o conjunto de documentos que a métrica mede.
@@ -435,11 +445,16 @@ function groupedIsError(
 /* ── Fonte A: Comparação (`reviews`) ── */
 function comparisonCandidates(
   reviews: MetricsReview[],
+  currentRoundId: string | null,
   ctx: MetricsContext,
 ): Candidate[] {
   const candidates: Candidate[] = [];
 
   for (const review of reviews) {
+    // Arbitragem de rodada anterior não é veredito sobre o LLM corrente: sai
+    // do numerador e do denominador. Sem rodada corrente, nada conta.
+    if (review.round_id !== currentRoundId) continue;
+
     // Documento excluído (soft delete) sai da métrica inteira, não só do
     // título: medir o acerto do LLM sobre um documento que o coordenador tirou
     // do projeto é ruído em ambos os sentidos.
@@ -678,7 +693,7 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
   const autoReviewEnabled = usesAutoReviewSource(input.automationMode);
 
   const candidates = [
-    ...comparisonCandidates(input.reviews, ctx),
+    ...comparisonCandidates(input.reviews, input.currentRoundId, ctx),
     ...(autoReviewEnabled ? autoReviewCandidates(input.finalAnswers, ctx) : []),
   ];
 
