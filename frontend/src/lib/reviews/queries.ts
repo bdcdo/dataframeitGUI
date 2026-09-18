@@ -183,8 +183,9 @@ export function computeTruncation(
  * corrente contam (#733), porque arbitragem de rodada anterior foi dada sobre
  * respostas que a rodada corrente substituiu. Decisão gravada em
  * `errorResolutions` sobre célula antiga continua entrando por
- * `reviewsWithResolutions`. Entre reviews da mesma célula e rodada, desempate
- * por id descendente, como sempre foi.
+ * `reviewsWithResolutions` enquanto o contexto dela seguir válido (a decisão
+ * é da rodada em que foi tomada). Entre reviews da mesma célula e rodada,
+ * desempate por id descendente, como sempre foi.
  */
 export function currentRoundReviews(
   reviews: ReviewRow[] | null,
@@ -304,10 +305,16 @@ export async function fetchReviewBaseData(
     responsesByDoc.set(r.document_id, list);
   });
 
-  const uniqueReviews = currentRoundReviews(
-    reviews as ReviewRow[] | null,
-    (project?.current_round_id as string | null) ?? null,
-  );
+  const currentRoundId = (project?.current_round_id as string | null) ?? null;
+  // Estado representável (ver o cabeçalho de 20260811120000): sem rodada
+  // corrente nenhuma review conta, e o Gabarito fica vazio embora existam
+  // reviews. Fail-closed de propósito, mas anunciado, como o truncamento acima.
+  if (currentRoundId === null && (reviews?.length ?? 0) > 0) {
+    console.warn(
+      `fetchReviewBaseData: projeto ${projectId} sem rodada corrente; ${reviews?.length} reviews ficam fora do Gabarito.`,
+    );
+  }
+  const uniqueReviews = currentRoundReviews(reviews as ReviewRow[] | null, currentRoundId);
 
   const comparableFields = fields.filter(
     (f) => !f.target || f.target === "all",

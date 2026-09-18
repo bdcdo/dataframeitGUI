@@ -148,7 +148,10 @@ export interface LlmErrorMetricsInput {
    * conta como veredito: a fila compara o LLM da rodada corrente, e um
    * veredito dado sobre respostas de rodada anterior pode nem ser opção do
    * formulário atual (#733). Decisão já gravada em `errorResolutions` sobre
-   * célula de rodada antiga continua entrando pela ressurreição abaixo.
+   * célula de rodada antiga continua entrando pela ressurreição abaixo,
+   * enquanto o contexto dela seguir válido (a decisão é da rodada em que foi
+   * tomada). A fonte de auto-revisão (`final_answers`) não filtra rodada:
+   * `field_reviews` não tem a coluna.
    */
   currentRoundId: string | null;
   /**

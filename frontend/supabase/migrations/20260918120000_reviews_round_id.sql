@@ -27,7 +27,7 @@
 -- recarimba a rodada corrente quando o conteudo da arbitragem muda (`verdict`,
 -- `chosen_response_id`, `response_snapshot`) e deixa a rodada quieta quando so
 -- `resolved_at`/`resolved_by`/`comment` mudam. O UPDATE importa porque
--- `submitVerdict` e `markLlmEquivalent` gravam por upsert em
+-- `submitVerdict` e `confirmEquivalentVerdict` gravam por upsert em
 -- UNIQUE(project_id, document_id, field_name, reviewer_id), sem rodada na
 -- chave: rearbitrar na rodada nova atualiza a linha antiga, e sem o recarimbo
 -- ela continuaria carimbada com a rodada anterior e fora da fila. A isencao do

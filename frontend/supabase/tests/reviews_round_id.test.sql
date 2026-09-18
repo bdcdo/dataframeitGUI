@@ -1,13 +1,17 @@
 -- Contrato de `reviews.round_id` (#733): a arbitragem pertence a uma rodada.
 --
--- (b) e (c) sao replay do write real de `submitVerdict`
+-- (b), (c) e (c4) sao replay do write real de `submitVerdict`
 -- (frontend/src/actions/reviews.ts): um upsert em
 -- UNIQUE(project_id, document_id, field_name, reviewer_id) cujo ON CONFLICT
 -- atualiza a linha existente. E esse UPDATE que precisa recarimbar a rodada:
 -- sem ele, rearbitrar na rodada nova deixaria a review na rodada antiga e fora
 -- da fila. (c2) e a metade que discrimina: a rodada corrente muda de novo e um
 -- update de manutencao (resolved_at) NAO pode mover a review, senao resolver o
--- comentario de uma review antiga a traria para a rodada atual.
+-- comentario de uma review antiga a traria para a rodada atual. (c4) e o caso
+-- que a revisao do PR achou: payload IDENTICO ao da linha (mesma resposta,
+-- mesmo veredito) tambem recarimba, porque a trigger dispara pela coluna
+-- mencionada no SET, nao pela mudanca de valor. (e2) fixa que so o servidor
+-- carimba: cliente nao move a review de rodada nem dentro do projeto.
 --
 -- Roda numa transacao e nao deixa fixture no banco local.
 
@@ -53,24 +57,27 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: reviews nao ancora (project_id, round_id) em rounds';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1
+  -- Tres gatilhos: INSERT preenche (funcao das tabelas irmas), UPDATE guarda a
+  -- imutabilidade e UPDATE OF (colunas de conteudo) recarimba.
+  IF (
+    SELECT count(*)
     FROM pg_catalog.pg_trigger AS trigger_row
     JOIN pg_catalog.pg_proc AS proc ON proc.oid = trigger_row.tgfoid
     WHERE trigger_row.tgrelid = 'public.reviews'::regclass
       AND NOT trigger_row.tgisinternal
-      AND proc.proname = 'stamp_review_round'
-  ) THEN
-    RAISE EXCEPTION 'FALHOU: reviews nao carimba a rodada no INSERT/UPDATE';
+      AND proc.proname IN ('fill_current_round_id', 'enforce_review_round_immutable', 'stamp_review_round')
+  ) <> 3 THEN
+    RAISE EXCEPTION 'FALHOU: reviews nao tem os tres gatilhos de rodada';
   END IF;
 
   IF has_function_privilege('anon', 'public.stamp_review_round()', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.stamp_review_round()', 'EXECUTE')
-     OR has_function_privilege('service_role', 'public.stamp_review_round()', 'EXECUTE') THEN
-    RAISE EXCEPTION 'FALHOU: stamp_review_round executavel por cliente';
+     OR has_function_privilege('service_role', 'public.stamp_review_round()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.enforce_review_round_immutable()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'FALHOU: funcao de trigger de rodada executavel por cliente';
   END IF;
 
-  RAISE NOTICE 'OK: catalogo tem round_id NOT NULL, FK composta e trigger fechada';
+  RAISE NOTICE 'OK: catalogo tem round_id NOT NULL, FK composta e gatilhos fechados';
 END;
 $$;
 
@@ -203,7 +210,7 @@ END;
 $$;
 
 -- (c3) Mudar so o snapshot da resposta escolhida conta como conteudo: e o que
--- `markLlmEquivalent` grava ao confirmar um veredito equivalente.
+-- `confirmEquivalentVerdict` grava ao confirmar um veredito equivalente.
 UPDATE public.reviews
 SET response_snapshot = '{"q":"LLM"}'::jsonb
 WHERE id = '7d400000-0000-0000-0000-000000000001';
@@ -218,6 +225,48 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: mudanca de response_snapshot nao recarimbou a rodada';
   END IF;
   RAISE NOTICE 'OK: snapshot novo move a review para a rodada corrente';
+END;
+$$;
+
+-- (c4) Quarta rodada corrente e o upsert de `submitVerdict` com payload
+-- IDENTICO ao da linha: rodada nova em que o documento nao foi recodificado e o
+-- revisor confirma a mesma resposta com o mesmo veredito. Nada muda de valor,
+-- e mesmo assim a review tem que ir para a rodada corrente, senao some da
+-- fila sem conserto pela UI.
+INSERT INTO public.rounds (id, project_id, label) VALUES
+  ('7d500000-0000-0000-0000-000000000004',
+   '7d100000-0000-0000-0000-000000000001', 'Rodada 4');
+UPDATE public.projects
+SET current_round_id = '7d500000-0000-0000-0000-000000000004'
+WHERE id = '7d100000-0000-0000-0000-000000000001';
+
+INSERT INTO public.reviews (project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id, comment, response_snapshot)
+VALUES (
+  '7d100000-0000-0000-0000-000000000001',
+  '7d200000-0000-0000-0000-000000000001',
+  'q', '7d000000-0000-0000-0000-000000000002', 'LLM',
+  '7d300000-0000-0000-0000-000000000001', 'Conferido', '{"q":"LLM"}'::jsonb
+)
+ON CONFLICT (project_id, document_id, field_name, reviewer_id) DO UPDATE SET
+  project_id = EXCLUDED.project_id,
+  document_id = EXCLUDED.document_id,
+  field_name = EXCLUDED.field_name,
+  reviewer_id = EXCLUDED.reviewer_id,
+  verdict = EXCLUDED.verdict,
+  chosen_response_id = EXCLUDED.chosen_response_id,
+  comment = EXCLUDED.comment,
+  response_snapshot = EXCLUDED.response_snapshot;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.reviews
+    WHERE id = '7d400000-0000-0000-0000-000000000001'
+      AND round_id = '7d500000-0000-0000-0000-000000000004'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU: upsert com payload identico nao recarimbou a rodada';
+  END IF;
+  RAISE NOTICE 'OK: rearbitrar com o mesmo conteudo tambem move a review para a rodada corrente';
 END;
 $$;
 
@@ -244,8 +293,11 @@ BEGIN
 END;
 $$;
 
--- (e) A FK composta recusa rodada de outro projeto; projeto sem rodada corrente
--- e irrepresentavel no INSERT; e o cascade de `projects` sobrevive a FK NO ACTION.
+-- (e) A FK composta recusa rodada de outro projeto no INSERT; projeto sem
+-- rodada corrente e irrepresentavel no INSERT; e o cascade de `projects`
+-- sobrevive a FK NO ACTION.
+-- (e2) No UPDATE, `round_id` e do servidor: o cliente nao move a review nem
+-- para outra rodada do proprio projeto (23514, como em `responses`).
 UPDATE public.projects
 SET current_round_id = NULL
 WHERE id = '7d100000-0000-0000-0000-000000000003';
@@ -258,12 +310,22 @@ BEGIN
   FROM public.projects WHERE id = '7d100000-0000-0000-0000-000000000002';
 
   BEGIN
-    UPDATE public.reviews
-    SET round_id = v_foreign_round
-    WHERE id = '7d400000-0000-0000-0000-000000000002';
+    INSERT INTO public.reviews (project_id, document_id, field_name, reviewer_id, verdict, round_id)
+    VALUES ('7d100000-0000-0000-0000-000000000001', '7d200000-0000-0000-0000-000000000001',
+            'q', '7d000000-0000-0000-0000-000000000001', 'ambiguo', v_foreign_round);
     RAISE EXCEPTION 'TESTE FALHOU: review aceitou rodada de outro projeto';
   EXCEPTION
     WHEN foreign_key_violation THEN
+      NULL;
+  END;
+
+  BEGIN
+    UPDATE public.reviews
+    SET round_id = '7d500000-0000-0000-0000-000000000003'
+    WHERE id = '7d400000-0000-0000-0000-000000000002';
+    RAISE EXCEPTION 'TESTE FALHOU: cliente moveu a review de rodada dentro do projeto';
+  EXCEPTION
+    WHEN check_violation THEN
       NULL;
   END;
 
