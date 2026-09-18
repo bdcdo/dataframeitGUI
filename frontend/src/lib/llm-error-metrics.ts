@@ -43,6 +43,16 @@ export interface LlmError {
   llmAnswer: string;
   llmJustification: string | null;
   chosenVerdict: string;
+  /**
+   * A forma crua do veredito em `responses.answers`, para o seletor de
+   * "Erro do LLM" quando o texto de `chosenVerdict` não casa com as opções:
+   * na Comparação, a resposta que a arbitragem escolheu (um voto em card
+   * grava `multi` como "A, C", que não se reconstrói do texto); na
+   * auto-revisão, o snapshot humano. Ausente na ressurreição de decisão da
+   * Comparação: ali o contexto só tem a resposta de um codificador, que não
+   * é o veredito (#733).
+   */
+  chosenValue?: unknown;
   reviewerComment: string | null;
   resolvedAt: string | null;
   reviewedAt: string;
@@ -52,7 +62,6 @@ export interface LlmError {
   source: LlmErrorSource;
   sourceId?: string | null;
   resolution?: ErrorResolutionRow;
-  humanChoices?: { id: string; label: string }[];
 }
 
 // Todo (doc, campo) que o LLM respondeu e que já tem veredito humano — de
@@ -503,6 +512,8 @@ function buildComparisonCandidate(
           llmJustification:
             llmResponse.justifications?.[review.field_name] || null,
           chosenVerdict: review.verdict,
+          chosenValue: (ctx.responsesByDoc.get(review.document_id) ?? [])
+            .find((r) => r.id === review.chosen_response_id)?.answers?.[review.field_name],
           reviewerComment: review.comment,
           resolvedAt: ctx.resolvedAtOf(review.document_id, review.field_name),
           llmResponseId: llmResponse.id,
@@ -580,6 +591,7 @@ function buildAutoReviewError(
     ),
     llmJustification: arbitratedLlm.justifications?.[row.field_name] || null,
     chosenVerdict: formatAnswer(row.human_answer_snapshot),
+    chosenValue: row.human_answer_snapshot,
     reviewerComment: row.arbitrator_comment,
     resolvedAt: ctx.resolvedAtOf(row.document_id, row.field_name),
     llmResponseId: arbitratedLlm.id,
@@ -687,6 +699,30 @@ export function usesAutoReviewSource(automationMode: string | null): boolean {
   return automationMode === "auto_review_llm";
 }
 
+// Caso que saiu da lista de divergências (o LLM corrente concorda, a review foi
+// substituída) mas tem decisão gravada: volta à fila a partir do contexto
+// salvo, para a decisão continuar visível e reabrível.
+function revivedCase(resolution: ErrorResolutionRow, ctx: MetricsContext): LlmError | null {
+  const saved = resolution.context;
+  const field = ctx.fieldMap.get(resolution.field_name);
+  if (!saved || !isMeasurableField(field) || !ctx.isActiveDocument(resolution.document_id)) return null;
+  const autoReview = saved.source.kind === "auto_revisao";
+  return {
+    documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
+    fieldName: resolution.field_name, fieldDescription: field.description,
+    llmAnswer: formatAnswer(saved.llm_value.value),
+    // Na Comparação o veredito é o da review gravada na fonte; a resposta
+    // humana do contexto é a de um codificador e não vira "veredito".
+    chosenVerdict: autoReview ? formatAnswer(saved.human_value.value) : String(saved.source.verdict ?? ""),
+    ...(autoReview ? { chosenValue: saved.human_value.value } : {}),
+    llmJustification: null, reviewerComment: null, resolvedAt: resolution.resolved_at,
+    reviewedAt: resolution.resolved_at, schemaVersion: null,
+    llmResponseId: saved.llm_response_id, chosenResponseId: saved.human_response_id,
+    source: autoReview ? "auto_revisao" : "comparacao",
+    sourceId: typeof saved.source.id === "string" ? saved.source.id : null,
+  };
+}
+
 export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
   errors: LlmError[];
   reviewedEntries: ReviewedEntry[];
@@ -725,28 +761,14 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
 
   const cases = new Map<string, LlmError>(sorted.flatMap((c) => c.error ? [[`${c.documentId}:${c.fieldName}`, c.error] as const] : []));
   for (const [key, resolution] of input.errorResolutions) {
-    const saved = resolution.context;
-    const field = ctx.fieldMap.get(resolution.field_name);
-    if (cases.has(key) || !saved || !isMeasurableField(field) || !ctx.isActiveDocument(resolution.document_id)) continue;
-    cases.set(key, {
-      documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
-      fieldName: resolution.field_name, fieldDescription: field.description,
-      llmAnswer: formatAnswer(saved.llm_value.value), chosenVerdict: formatAnswer(saved.human_value.value),
-      llmJustification: null, reviewerComment: null, resolvedAt: resolution.resolved_at,
-      reviewedAt: resolution.resolved_at, schemaVersion: null,
-      llmResponseId: saved.llm_response_id, chosenResponseId: saved.human_response_id,
-      source: saved.source.kind === "auto_revisao" ? "auto_revisao" : "comparacao",
-      sourceId: typeof saved.source.id === "string" ? saved.source.id : null,
-    });
+    if (cases.has(key)) continue;
+    const revived = revivedCase(resolution, ctx);
+    if (revived) cases.set(key, revived);
   }
   return {
     errors: [...cases.entries()].map(([key, error]) => ({
       ...error,
       resolution: input.errorResolutions.get(key),
-      humanChoices: (ctx.responsesByDoc.get(error.documentId) ?? [])
-        .filter((r) => r.respondent_type === "humano" && r.is_latest &&
-          (error.source === "comparacao" || r.id === error.chosenResponseId))
-        .map((r) => ({ id: r.id, label: `${r.respondent_name || "Pesquisador"}: ${formatAnswer(r.answers?.[error.fieldName]) || "(vazio)"}` })),
     })),
     reviewedEntries: sorted.map((c) => {
       const resolution = effectiveErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`));

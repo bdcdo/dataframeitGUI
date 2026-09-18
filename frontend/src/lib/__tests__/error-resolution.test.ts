@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { effectiveErrorResolution, type ErrorResolutionRow, type ErrorResolutionContext } from "@/lib/error-resolution";
+import {
+  effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict,
+  type ErrorResolutionRow, type ErrorResolutionContext,
+} from "@/lib/error-resolution";
+import type { PydanticField } from "@/lib/types";
 
 const context: ErrorResolutionContext = {
   project_id: "p", document_id: "d", field_name: "q", round_id: "round",
@@ -12,7 +16,8 @@ const context: ErrorResolutionContext = {
 function row(decision: ErrorResolutionRow["decision"]): ErrorResolutionRow {
   return { id: "resolution", project_id: "p", document_id: "d", field_name: "q",
     resolved_at: "2026-09-14T12:00:00Z", resolved_by: "user", note: null,
-    decision, context: structuredClone(context), current_context: structuredClone(context) };
+    decision, context: structuredClone(context), current_context: structuredClone(context),
+    approved_value: decision === "researchers_correct" ? "humano" : null };
 }
 
 describe("resolução explícita de divergência", () => {
@@ -61,5 +66,94 @@ describe("resolução explícita de divergência", () => {
     r.current_context = structuredClone(r.context);
     r.current_context!.source.verdict = "outro";
     expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+  });
+});
+
+describe("Erro do LLM leva o valor escolhido, não a resposta do codificador (#733)", () => {
+  it("aprova approved_value mesmo quando a resposta humana do contexto é outra", () => {
+    const r = row("researchers_correct");
+    r.context!.human_value.value = "codificador";
+    r.current_context = structuredClone(r.context);
+    expect(effectiveErrorResolution(r)).toMatchObject({ status: "approved", value: "humano", isLlmError: true });
+  });
+  it("resposta humana sem o campo não invalida: ela é só âncora do contexto", () => {
+    const r = row("researchers_correct");
+    r.context!.human_value = { present: false, value: null };
+    r.current_context = structuredClone(r.context);
+    expect(effectiveErrorResolution(r).status).toBe("approved");
+  });
+  it("linha anterior à coluna pede confirmação de novo em vez de inventar valor", () => {
+    expect(effectiveErrorResolution({ ...row("researchers_correct"), approved_value: null })).toEqual({ status: "stale" });
+    expect(effectiveErrorResolution({ ...row("researchers_correct"), approved_value: undefined })).toEqual({ status: "stale" });
+  });
+  it.each([["a", "b"], { anos: "2" }, 0, false])("preserva o valor tipado %j de approved_value", (value) => {
+    expect(effectiveErrorResolution({ ...row("researchers_correct"), approved_value: value })).toMatchObject({ status: "approved", value });
+  });
+});
+
+const single: PydanticField = { name: "s", type: "single", options: ["A", "B "], description: "" };
+const singleOther: PydanticField = { ...single, allow_other: true };
+const multi: PydanticField = { name: "m", type: "multi", options: ["A", "B", "C"], description: "" };
+const multiOther: PydanticField = { ...multi, allow_other: true };
+const text: PydanticField = { name: "t", type: "text", options: null, description: "" };
+const group: PydanticField = { ...text, name: "g", subfields: [{ key: "anos", label: "Anos" }] };
+
+describe("prefillFromVerdict — o veredito anterior nas opções atuais", () => {
+  it("single: casa por trim; opção que saiu do formulário não pré-marca", () => {
+    expect(prefillFromVerdict(single, "B")).toBe("B ");
+    expect(prefillFromVerdict(single, " A ")).toBe("A");
+    expect(prefillFromVerdict(single, "C")).toBeUndefined();
+  });
+  it("multi: chaves true do JSON do veredito que ainda são opções, como array", () => {
+    expect(prefillFromVerdict(multi, '{"C":true,"A":true,"B":false}')).toEqual(["A", "C"]);
+    expect(prefillFromVerdict(multi, '{"Z":true}')).toBeUndefined();
+    expect(prefillFromVerdict(multi, "não é json")).toBeUndefined();
+  });
+  it("texto e data: o próprio veredito; vazio não pré-preenche", () => {
+    expect(prefillFromVerdict(text, "livre")).toBe("livre");
+    expect(prefillFromVerdict(text, "  ")).toBeUndefined();
+    expect(prefillFromVerdict({ ...text, type: "date" }, "01/02/2026")).toBe("01/02/2026");
+  });
+  it("subcampos: o veredito é texto renderizado; só a sentinela é reconhecível", () => {
+    expect(prefillFromVerdict(group, "anos: 2")).toBeUndefined();
+    expect(prefillFromVerdict(group, "Não informada")).toBe("Não informada");
+  });
+  it("os marcadores da Comparação nunca viram resposta", () => {
+    expect(prefillFromVerdict(text, "ambiguo")).toBeUndefined();
+    expect(prefillFromVerdict(single, "pular")).toBeUndefined();
+    expect(prefillFromVerdict({ ...text, type: "date" }, "ambiguo")).toBeUndefined();
+  });
+});
+
+describe("prefillFromValue — valor já na forma da resposta", () => {
+  it("single e multi casam por trim contra as opções atuais", () => {
+    expect(prefillFromValue(single, "B")).toBe("B ");
+    expect(prefillFromValue(single, "C")).toBeUndefined();
+    expect(prefillFromValue(single, ["A"])).toBeUndefined();
+    expect(prefillFromValue(multi, ["C", "Z", "A"])).toEqual(["A", "C"]);
+    expect(prefillFromValue(multi, "A, C")).toBeUndefined();
+  });
+  it("texto e grupo levam o valor quando ele tem a forma certa", () => {
+    expect(prefillFromValue(text, "livre")).toBe("livre");
+    expect(prefillFromValue(text, " ")).toBeUndefined();
+    expect(prefillFromValue(group, { anos: "2" })).toEqual({ anos: "2" });
+    expect(prefillFromValue(group, "anos: 2")).toBeUndefined();
+  });
+});
+
+describe("hasResolutionValue — o que basta para confirmar", () => {
+  it.each<[PydanticField, unknown, boolean]>([
+    [single, "A", true], [single, "", false], [single, undefined, false], [single, "Z", false],
+    [single, "Outro: x", false], [singleOther, "Outro: x", true], [singleOther, "Outro: ", false], [singleOther, "Outro:  ", false],
+    [multi, ["A"], true], [multi, [], false], [multi, ["Z"], false], [multi, "A", false],
+    [multiOther, ["A", "Outro: y"], true], [multiOther, ["Outro: "], false],
+    [group, { anos: "2" }, true], [group, { anos: "" }, false], [group, {}, false], [group, "Não informada", true],
+    [group, { desconhecido: "x" }, false], [group, { anos: 5 }, false],
+    [text, "x", true], [text, " ", false],
+    [{ ...text, type: "date" }, "01/02/2026", true], [{ ...text, type: "date" }, "XX/03/2024", true],
+    [{ ...text, type: "date" }, "ambiguo", false], [{ ...text, type: "date" }, "32/01/2026", false],
+    [{ ...text, type: "date" }, "Não informada", true], [{ ...text, type: "date", options: ["Sem data"] }, "Sem data", true],
+  ])("%s com %j → %s", (field, value, expected) => {
+    expect(hasResolutionValue(field, value)).toBe(expected);
   });
 });

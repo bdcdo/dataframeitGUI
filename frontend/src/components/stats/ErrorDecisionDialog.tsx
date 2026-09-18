@@ -5,22 +5,28 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ERROR_DECISION_LABELS, type ErrorDecision, type ErrorResolutionContext } from "@/lib/error-resolution";
+import { FieldRenderer } from "@/components/coding/FieldRenderer";
+import {
+  ERROR_DECISION_LABELS, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict,
+  type ErrorDecision, type ErrorResolutionContext,
+} from "@/lib/error-resolution";
+import { parsePydanticFields } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
+import { formatVerdictDisplay } from "@/lib/verdict-display";
 import type { LlmError } from "@/lib/llm-error-metrics";
+import type { PydanticField } from "@/lib/types";
 
-export interface PendingErrorDecision {
-  error: LlmError;
-  decision: ErrorDecision | null;
-  context: ErrorResolutionContext | null;
-}
+// Reabrir não tem contexto; decidir só abre depois que o servidor devolveu o
+// contexto conferido (LlmInsightsView), então os dois estados são exclusivos.
+export type PendingErrorDecision =
+  | { error: LlmError; decision: null; context: null }
+  | { error: LlmError; decision: ErrorDecision; context: ErrorResolutionContext };
 
 interface DecisionControls {
   isPending: boolean;
   onClose: () => void;
-  onPrepare: (error: LlmError, decision: ErrorDecision, humanId: string) => void;
-  onConfirm: (note: string) => void;
+  /** `value` só acompanha `researchers_correct`: o que o revisor escolheu no seletor. */
+  onConfirm: (note: string, value?: unknown) => void;
 }
 
 function decisionDescription(pending: PendingErrorDecision): string {
@@ -40,24 +46,12 @@ function DecisionFooter({ isPending, onClose, onAction, label, disabled = false 
   </DialogFooter>;
 }
 
-function HumanChoice({ error, decision, isPending, onClose, onPrepare }: {
-  error: LlmError; decision: ErrorDecision;
-} & Pick<DecisionControls, "isPending" | "onClose" | "onPrepare">) {
-  const [humanId, setHumanId] = useState("");
-  const choiceId = useId();
-  return <>
-    <div className="space-y-2">
-      <Label htmlFor={choiceId}>Qual resposta humana está sendo examinada?</Label>
-      <Select value={humanId} onValueChange={setHumanId} disabled={isPending}>
-        <SelectTrigger id={choiceId}><SelectValue placeholder="Selecione uma resposta" /></SelectTrigger>
-        <SelectContent>{error.humanChoices?.map((choice) => (
-          <SelectItem key={choice.id} value={choice.id}>{choice.label}</SelectItem>
-        ))}</SelectContent>
-      </Select>
-    </div>
-    <DecisionFooter isPending={isPending} onClose={onClose} disabled={!humanId}
-      onAction={() => onPrepare(error, decision, humanId)} label="Conferir resposta" />
-  </>;
+function NoteField({ note, onChange, isPending }: { note: string; onChange: (note: string) => void; isPending: boolean }) {
+  const noteId = useId();
+  return <div className="space-y-2">
+    <Label htmlFor={noteId}>Nota opcional</Label>
+    <Textarea id={noteId} value={note} onChange={(e) => onChange(e.target.value)} disabled={isPending} />
+  </div>;
 }
 
 function DecisionPreview({ decision, answer }: {
@@ -71,31 +65,80 @@ function DecisionPreview({ decision, answer }: {
   </div>;
 }
 
+// "Erro do LLM": o veredito anterior está certo, e o revisor o expressa nas
+// opções atuais da pergunta (#733). O controle é o mesmo da codificação
+// (`FieldRenderer`, fonte única do mapeamento tipo → controle), pré-marcado
+// quando o veredito ainda é opção do formulário; quando não é, o revisor
+// escolhe a equivalente. Nada fora do formulário entra em pergunta de opções.
+// De onde sai o valor inicial, na ordem: o valor já aprovado numa decisão
+// "Erro do LLM" anterior desta célula (redecidir para acrescentar uma nota não
+// pode descartá-lo); o texto do veredito, que é a verdade da arbitragem; e,
+// quando esse texto não se traduz em opção atual (um `multi` votado em card é
+// "A, C"; o snapshot humano da auto-revisão vem renderizado), a forma crua
+// que a fonte guardou.
+function initialValue(field: PydanticField, error: LlmError): unknown {
+  const existing = effectiveErrorResolution(error.resolution);
+  if (existing.status === "approved" && existing.isLlmError) return prefillFromValue(field, existing.value);
+  return prefillFromVerdict(field, error.chosenVerdict)
+    ?? (error.chosenValue !== undefined ? prefillFromValue(field, error.chosenValue) : undefined);
+}
+
+function PreviousVerdict({ verdict, matched }: { verdict: string; matched: boolean }) {
+  return <div className="rounded-md border border-brand/40 bg-brand-muted px-3 py-2 text-sm">
+    <p className="text-xs font-medium">Veredito anterior</p>
+    <p className="mt-0.5 whitespace-pre-wrap">{formatVerdictDisplay(verdict) || "(vazio)"}</p>
+    {!matched && (
+      // Instrução, não decoração: herda a cor do corpo (o token apagado fica
+      // abaixo de 4,5:1 sobre `bg-brand-muted` no tema claro).
+      <p className="mt-1 text-xs">Essa resposta saiu do formulário; escolha a opção equivalente.</p>
+    )}
+  </div>;
+}
+
+function VerdictPicker({ pending, context, isPending, onClose, onConfirm }: {
+  pending: PendingErrorDecision; context: ErrorResolutionContext;
+} & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
+  const field = parsePydanticFields([context.field_definition])?.[0] ?? null;
+  const prefill = field ? initialValue(field, pending.error) : undefined;
+  const [value, setValue] = useState<unknown>(prefill);
+  const [note, setNote] = useState(pending.error.resolution?.note ?? "");
+  const confirmLabel = isPending ? "Salvando…" : "Confirmar decisão";
+  if (!field) return <>
+    <p className="text-sm text-destructive">A definição desta pergunta não pôde ser lida. Recarregue a página e tente de novo.</p>
+    <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => {}} disabled label={confirmLabel} />
+  </>;
+  return <>
+    <PreviousVerdict verdict={pending.error.chosenVerdict} matched={prefill !== undefined} />
+    <fieldset className="space-y-2">
+      <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
+      <FieldRenderer field={field} value={value} onChange={setValue} />
+    </fieldset>
+    <NoteField note={note} onChange={setNote} isPending={isPending} />
+    <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note, value)}
+      disabled={!hasResolutionValue(field, value)} label={confirmLabel} />
+  </>;
+}
+
 function ConfirmDecision({ pending, decision, context, isPending, onClose, onConfirm }: {
-  pending: PendingErrorDecision; decision: ErrorDecision; context: ErrorResolutionContext;
+  pending: PendingErrorDecision; decision: Exclude<ErrorDecision, "researchers_correct">; context: ErrorResolutionContext;
 } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
-  const noteId = useId();
-  const answer = decision === "llm_correct" ? context.llm_value : context.human_value;
   return <>
-    <DecisionPreview decision={decision} answer={answer} />
-    <div className="space-y-2">
-      <Label htmlFor={noteId}>Nota opcional</Label>
-      <Textarea id={noteId} value={note} onChange={(e) => setNote(e.target.value)} disabled={isPending} />
-    </div>
+    <DecisionPreview decision={decision} answer={context.llm_value} />
+    <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note)}
-      disabled={decision !== "discussion" && !answer.present} label={isPending ? "Salvando…" : "Confirmar decisão"} />
+      disabled={decision === "llm_correct" && !context.llm_value.present} label={isPending ? "Salvando…" : "Confirmar decisão"} />
   </>;
 }
 
 function DecisionForm({ pending, ...controls }: { pending: PendingErrorDecision } & DecisionControls) {
-  const { decision, context, error } = pending;
-  if (decision === null) return <>
+  if (pending.decision === null) return <>
     <p className="text-sm">Remover a decisão deste caso? O gabarito anterior volta a valer. As respostas originais não serão alteradas.</p>
     <DecisionFooter isPending={controls.isPending} onClose={controls.onClose} onAction={() => controls.onConfirm("")}
       label={controls.isPending ? "Salvando…" : "Confirmar reabertura"} />
   </>;
-  if (context === null) return <HumanChoice error={error} decision={decision} {...controls} />;
+  const { decision, context } = pending;
+  if (decision === "researchers_correct") return <VerdictPicker pending={pending} context={context} {...controls} />;
   return <ConfirmDecision pending={pending} decision={decision} context={context} {...controls} />;
 }
 

@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { stableStringify } from "@/lib/schema-utils";
+import { OTHER_PREFIX, isOtherValue } from "@/lib/other-option";
+import { resolveAllowOther } from "@/lib/pydantic-field";
+import { NOT_INFORMED } from "@/lib/sentinels";
+import { isSubfieldRecord } from "@/lib/subfield-value";
+import { arePartsValid, parseDatePartsForUI } from "@/lib/date-parts";
+import type { PydanticField } from "@/lib/types";
 
 export const errorDecisionSchema = z.enum(["llm_correct", "researchers_correct", "discussion"]);
 export type ErrorDecision = z.infer<typeof errorDecisionSchema>;
@@ -24,6 +30,11 @@ export const errorResolutionInputSchema = z.object({
   context: errorResolutionContextSchema,
   expected: z.object({ id: z.string(), resolved_at: z.string() }).nullable(),
   note: z.string().optional(),
+  /**
+   * O valor que vai ao gabarito em `researchers_correct`, escolhido pelo
+   * revisor nas opções atuais do campo (#733). A RPC valida o domínio.
+   */
+  value: z.json().optional(),
 });
 export type ErrorResolutionInput = z.infer<typeof errorResolutionInputSchema>;
 
@@ -38,6 +49,8 @@ export interface ErrorResolutionRow {
   resolved_at: string;
   resolved_by: string;
   note: string | null;
+  /** Coluna `approved_value`: só em `researchers_correct` (CHECK no banco). */
+  approved_value?: unknown;
 }
 
 export type EffectiveErrorResolution =
@@ -58,9 +71,126 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
     return { status: "stale" };
   }
   if (row.decision === "discussion") return { status: "discussion" };
-  const answer = row.decision === "llm_correct" ? context.llm_value : context.human_value;
-  if (!answer.present) return { status: "stale" };
-  return { status: "approved", value: answer.value, isLlmError: row.decision === "researchers_correct" };
+  if (row.decision === "researchers_correct") {
+    // "Erro do LLM" aprova o valor que o revisor escolheu, não a resposta de
+    // um codificador: `human_value` fica no contexto só como âncora de
+    // invalidação (#733). Linha sem coluna é anterior à migration e não é
+    // aprovável até ser confirmada de novo.
+    if (row.approved_value === undefined || row.approved_value === null) return { status: "stale" };
+    return { status: "approved", value: row.approved_value, isLlmError: true };
+  }
+  if (!context.llm_value.present) return { status: "stale" };
+  return { status: "approved", value: context.llm_value.value, isLlmError: false };
+}
+
+function hasSubfields(field: PydanticField): boolean {
+  return field.type === "text" && (field.subfields?.length ?? 0) > 0;
+}
+
+/**
+ * Valor inicial do seletor de "Erro do LLM" a partir de um valor já na forma
+ * de `responses.answers` (snapshot humano da auto-revisão, valor aprovado de
+ * uma decisão anterior): o que ainda cabe nas opções atuais da pergunta, ou
+ * `undefined`.
+ */
+export function prefillFromValue(field: PydanticField, value: unknown): unknown {
+  if (field.type === "single") return prefillSingle(field, value);
+  if (field.type === "multi") return prefillMulti(field, value);
+  if (hasSubfields(field)) return prefillGroup(value);
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+// Opção de formulário carrega espaço final; o valor gravado nem sempre.
+function prefillSingle(field: PydanticField, value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return field.options?.find((option) => option.trim() === value.trim());
+}
+
+function prefillMulti(field: PydanticField, value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const marked = new Set(value.filter((v): v is string => typeof v === "string").map((v) => v.trim()));
+  const chosen = (field.options ?? []).filter((option) => marked.has(option.trim()));
+  return chosen.length > 0 ? chosen : undefined;
+}
+
+function prefillGroup(value: unknown): unknown {
+  if (value === NOT_INFORMED) return NOT_INFORMED;
+  return isSubfieldRecord(value) ? value : undefined;
+}
+
+/**
+ * Valor inicial do seletor a partir do veredito da Comparação (`reviews.verdict`,
+ * texto): traduzido para a forma da resposta quando ainda é opção atual da
+ * pergunta; `undefined` quando não é (opção que saiu do formulário, JSON
+ * ilegível, texto renderizado de subcampos) ou quando o veredito é um dos
+ * marcadores da Comparação (`ambiguo`, `pular`, ver compare-types.ts), que
+ * nunca são resposta.
+ */
+export function prefillFromVerdict(field: PydanticField, verdict: string): unknown {
+  const text = verdict.trim();
+  if (text === "ambiguo" || text === "pular") return undefined;
+  if (field.type === "multi") {
+    // O veredito de `multi` é o JSON `{opção: bool}` (ver `formatVerdict` e
+    // `resolutionVerdict`); a resposta é o array das opções marcadas.
+    let parsed: unknown;
+    try { parsed = JSON.parse(verdict); } catch { return undefined; }
+    if (!isSubfieldRecord(parsed)) return undefined;
+    return prefillFromValue(field, Object.entries(parsed).filter(([, v]) => v === true).map(([k]) => k));
+  }
+  if (hasSubfields(field)) {
+    // O veredito é o texto renderizado dos subcampos; reconstruir o objeto
+    // seria inventar evidência. A sentinela é a única forma reconhecível.
+    return text === NOT_INFORMED ? NOT_INFORMED : undefined;
+  }
+  return prefillFromValue(field, text === "" ? undefined : verdict);
+}
+
+// "Outro: " só com espaços é o prefixo sem complemento: o input de "Outro" do
+// FieldRenderer grava `OTHER_PREFIX + texto`, e a RPC exige complemento.
+function isFilledText(value: unknown): boolean {
+  if (typeof value !== "string" || value.trim() === "") return false;
+  return !isOtherValue(value) || value.slice(OTHER_PREFIX.length).trim() !== "";
+}
+
+// Uma opção da pergunta, ou "Outro: <texto>" quando ela permite: o mesmo
+// domínio que `set_error_resolution` aceita em `single` e em cada item de `multi`.
+function isAllowedOption(field: PydanticField, value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  if (field.options?.includes(value)) return true;
+  return resolveAllowOther(field.allow_other) && isOtherValue(value) && isFilledText(value);
+}
+
+/**
+ * Se o valor do seletor basta para ir ao gabarito. Espelha, na fronteira do
+ * cliente, a validação de `set_error_resolution`, regra a regra: o botão só
+ * habilita o que a RPC aceita.
+ */
+export function hasResolutionValue(field: PydanticField, value: unknown): boolean {
+  if (field.type === "single") return isAllowedOption(field, value);
+  if (field.type === "multi") {
+    return Array.isArray(value) && value.length > 0 && value.every((v) => isAllowedOption(field, v));
+  }
+  if (hasSubfields(field)) return hasGroupValue(field, value);
+  if (field.type === "date") return hasDateValue(field, value);
+  return isFilledText(value);
+}
+
+function hasGroupValue(field: PydanticField, value: unknown): boolean {
+  if (value === NOT_INFORMED) return true;
+  if (!isSubfieldRecord(value)) return false;
+  const known = new Set((field.subfields ?? []).map((sf) => sf.key));
+  return Object.keys(value).every((k) => known.has(k))
+    && Object.values(value).some((v) => typeof v === "string" && v.trim() !== "");
+}
+
+// O controle de data mostra vazio o que não parseia, então uma string solta
+// ("ambiguo") passaria invisível ao banco. Só o formato parcial `DD/MM/AAAA`
+// com alguma parte, ou uma sentinela do campo.
+function hasDateValue(field: PydanticField, value: unknown): boolean {
+  if (typeof value !== "string" || value.trim() === "") return false;
+  if (value === NOT_INFORMED || (field.options ?? []).includes(value)) return true;
+  const parts = parseDatePartsForUI(value);
+  return value.split("/").length === 3 && parts.some((p) => p !== "") && arePartsValid(parts);
 }
 
 export function errorResolutionComment(row: ErrorResolutionRow): string {

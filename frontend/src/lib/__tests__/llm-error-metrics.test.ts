@@ -746,6 +746,25 @@ describe("rodada corrente (#733)", () => {
     expect(out.reviewedEntries).toEqual([]);
   });
 
+  it("a fila carrega a forma crua da resposta escolhida, para o seletor de Erro do LLM", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      fields: [field({ type: "multi", options: ["A", "B", "C"] })],
+      responses: [response({ id: "rllm", respondent_type: "llm", answers: { x: ["B"] } }), response({ id: "rh", answers: { x: ["A", "C"] } })],
+      reviews: [review({ verdict: "A, C", chosen_response_id: "rh" })],
+    });
+    expect(out.errors[0]).toMatchObject({ chosenVerdict: "A, C", chosenValue: ["A", "C"] });
+  });
+
+  it("decisão ressuscitada da Comparação mostra o veredito da fonte, não a resposta do codificador", () => {
+    const row = resolutionFixture("researchers_correct");
+    row.context!.source = { kind: "comparacao", id: "review1", verdict: "Veredito da arbitragem" };
+    row.current_context = structuredClone(row.context);
+    const out = run({ automationMode: "compare_llm", responses: [llm, human], reviews: [], errorResolutions: new Map([["doc1:x", row]]) });
+    expect(out.errors[0].chosenVerdict).toBe("Veredito da arbitragem");
+    expect(out.errors[0].chosenValue).toBeUndefined();
+  });
+
   it("decisão gravada sobre célula de rodada antiga continua na fila", () => {
     const row = resolutionFixture("researchers_correct");
     const out = run({
