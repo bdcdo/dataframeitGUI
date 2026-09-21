@@ -113,6 +113,22 @@ const llmResp = response({
 const humanResp = response({ id: "rh", answers: { x: "N/A" } });
 
 describe("computeLlmErrorMetrics — fonte Comparação", () => {
+  // A FK de `chosen_response_id` não escopa o documento, então a busca por id
+  // precisa conferi-lo: usar a resposta de outro documento como gabarito
+  // silenciaria um erro real e pré-marcaria o seletor com dado alheio.
+  it("resposta escolhida de outro documento não vale como gabarito", () => {
+    const { errors } = run({
+      responses: [
+        llmResp,
+        response({ id: "rh", document_id: "doc2", answers: { x: "NI" } }),
+      ],
+      reviews: [review({ chosen_response_id: "rh", verdict: "N/A" })],
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].chosenValue).toBeUndefined();
+  });
+
   it("conta erro quando o gabarito escolhido difere da resposta do LLM", () => {
     const { errors, reviewedEntries } = run({
       responses: [llmResp, humanResp],

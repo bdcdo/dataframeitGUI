@@ -377,6 +377,16 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
   };
 }
 
+// A response que a arbitragem escolheu, por id e no documento da própria
+// review. A FK de `chosen_response_id` é só `REFERENCES responses(id)`: nada no
+// banco impede que ela aponte para response de outro documento, e comparar (ou
+// exibir) a resposta de outro documento seria pior que não ter nenhuma.
+function chosenResponseOf(review: MetricsReview, ctx: MetricsContext): MetricsResponse | undefined {
+  if (!review.chosen_response_id) return undefined;
+  const response = ctx.responseById.get(review.chosen_response_id);
+  return response?.document_id === review.document_id ? response : undefined;
+}
+
 // O LLM errou este campo, na leitura da Comparação? Para tudo que não é `multi`,
 // uma única noção de "mesma resposta": as classes do union-find já fundem tanto
 // pares marcados como equivalentes pelo revisor quanto respostas de texto
@@ -414,9 +424,7 @@ function multiIsError(
   llmResponse: MetricsResponse,
   ctx: MetricsContext,
 ): boolean {
-  const chosen = review.chosen_response_id
-    ? ctx.responseById.get(review.chosen_response_id)
-    : undefined;
+  const chosen = chosenResponseOf(review, ctx);
   // Sem a response escolhida não há conjunto com que comparar: o texto do
   // veredito de multi é um JSON de opção→marcada, de outra forma que a resposta.
   if (!chosen) return true;
@@ -512,8 +520,7 @@ function buildComparisonCandidate(
           llmJustification:
             llmResponse.justifications?.[review.field_name] || null,
           chosenVerdict: review.verdict,
-          chosenValue: (ctx.responsesByDoc.get(review.document_id) ?? [])
-            .find((r) => r.id === review.chosen_response_id)?.answers?.[review.field_name],
+          chosenValue: chosenResponseOf(review, ctx)?.answers?.[review.field_name],
           reviewerComment: review.comment,
           resolvedAt: ctx.resolvedAtOf(review.document_id, review.field_name),
           llmResponseId: llmResponse.id,
