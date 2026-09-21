@@ -81,31 +81,38 @@ export type EffectiveErrorResolution =
   | { status: "upheld"; llmValue: unknown; verdictValue?: unknown }
   | { status: "approved"; value: unknown; isLlmError: boolean };
 
+// A decisão só vale enquanto as fontes em que ela se apoiou seguem iguais.
+function contextIsCurrent(row: ErrorResolutionRow, context: ErrorResolutionContext): boolean {
+  return !!row.current_context &&
+    context.project_id === row.project_id && context.document_id === row.document_id &&
+    context.field_name === row.field_name &&
+    stableStringify(context) === stableStringify(row.current_context);
+}
+
+function upheldResolution(context: ErrorResolutionContext): EffectiveErrorResolution {
+  if (!context.llm_value.present) return { status: "stale" };
+  const fromAutoReview = context.source.kind === "auto_revisao" && context.human_value.present;
+  return { status: "upheld", llmValue: context.llm_value.value,
+    ...(fromAutoReview ? { verdictValue: context.human_value.value } : {}) };
+}
+
+// "Erro do LLM" e "Todos errados" aprovam o valor que o revisor escolheu, não
+// a resposta de um codificador: `human_value` fica no contexto só como âncora
+// de invalidação (#733). Linha sem coluna é anterior à migration e não é
+// aprovável até ser confirmada de novo.
+function chosenValueResolution(row: ErrorResolutionRow): EffectiveErrorResolution {
+  if (row.approved_value === undefined || row.approved_value === null) return { status: "stale" };
+  return { status: "approved", value: row.approved_value, isLlmError: true };
+}
+
 export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): EffectiveErrorResolution {
   if (!row) return { status: "open" };
   if (row.decision === null) return { status: "legacy" };
   const context = row.context;
-  if (!context || !row.current_context ||
-      context.project_id !== row.project_id || context.document_id !== row.document_id ||
-      context.field_name !== row.field_name ||
-      stableStringify(context) !== stableStringify(row.current_context)) {
-    return { status: "stale" };
-  }
+  if (!context || !contextIsCurrent(row, context)) return { status: "stale" };
   if (row.decision === "discussion") return { status: "discussion" };
-  if (row.decision === "both_correct") {
-    if (!context.llm_value.present) return { status: "stale" };
-    const fromAutoReview = context.source.kind === "auto_revisao" && context.human_value.present;
-    return { status: "upheld", llmValue: context.llm_value.value,
-      ...(fromAutoReview ? { verdictValue: context.human_value.value } : {}) };
-  }
-  if (choosesValue(row.decision)) {
-    // "Erro do LLM" e "Todos errados" aprovam o valor que o revisor escolheu, não a resposta de
-    // um codificador: `human_value` fica no contexto só como âncora de
-    // invalidação (#733). Linha sem coluna é anterior à migration e não é
-    // aprovável até ser confirmada de novo.
-    if (row.approved_value === undefined || row.approved_value === null) return { status: "stale" };
-    return { status: "approved", value: row.approved_value, isLlmError: true };
-  }
+  if (row.decision === "both_correct") return upheldResolution(context);
+  if (choosesValue(row.decision)) return chosenValueResolution(row);
   if (!context.llm_value.present) return { status: "stale" };
   return { status: "approved", value: context.llm_value.value, isLlmError: false };
 }

@@ -346,38 +346,50 @@ function resolutionVerdict(resolution: NonNullable<ReviewRow["resolution"]>, fie
   return formatAnswer(value);
 }
 
+type AppliedResolution = NonNullable<ReviewRow["resolution"]>;
+
+// A linha que a decisão põe no Gabarito, ou `null` quando ela não tem o que
+// mostrar ali.
+function resolvedReview(
+  row: ErrorResolutionRow, resolution: AppliedResolution, fieldType: PydanticField["type"], current: ReviewRow | undefined,
+): ReviewRow | null {
+  const resolutionLabel = ERROR_DECISION_LABELS[row.decision!];
+  if (resolution.status === "upheld" && current) {
+    // "Ambos corretos" mantém o veredito da arbitragem como gabarito e só o anota.
+    const comment = [current.comment, errorResolutionComment(row)].filter(Boolean).join("\n");
+    return { ...current, comment, resolutionLabel, resolution };
+  }
+  // Sem review na célula, "Ambos corretos" só tem veredito a mostrar quando
+  // o contexto o guarda (auto-revisão). Na Comparação isso é a decisão sobre
+  // arbitragem de rodada anterior: ela fica visível na fila LLM Insights e
+  // no comentário do export, mas não vira linha aqui, porque a linha exigiria
+  // um veredito e inventar um é pior que omitir a célula.
+  if (resolution.status === "upheld" && resolution.verdictValue === undefined) return null;
+  return {
+    id: row.id, document_id: row.document_id, field_name: row.field_name,
+    verdict: resolutionVerdict(resolution, fieldType),
+    chosen_response_id: null, comment: errorResolutionComment(row), reviewer_id: row.resolved_by,
+    // Rodada em que a decisão foi tomada. A decisão explícita vale mesmo
+    // sobre célula de rodada antiga, então o filtro de rodada já ficou para
+    // trás (em `currentRoundReviews`) e este carimbo é só descritivo.
+    round_id: row.context?.round_id ?? "",
+    resolutionLabel, resolution,
+  };
+}
+
+function appliesToGabarito(resolution: EffectiveErrorResolution): resolution is AppliedResolution {
+  return resolution.status === "approved" || resolution.status === "discussion" || resolution.status === "upheld";
+}
+
 function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, ReviewRow> {
   const effectiveReviews = new Map(ctx.uniqueReviews.map((r) => [`${r.document_id}:${r.field_name}`, r]));
   for (const row of ctx.errorResolutions ?? []) {
     const resolution = effectiveErrorResolution(row);
     const field = ctx.fieldMap.get(row.field_name);
-    if (!field || !ctx.docMap.has(row.document_id)) continue;
-    if (resolution.status !== "approved" && resolution.status !== "discussion" && resolution.status !== "upheld") continue;
-    const upheld = resolution.status === "upheld" ? effectiveReviews.get(`${row.document_id}:${row.field_name}`) : undefined;
-    if (upheld) {
-      // "Ambos corretos" mantém o veredito da arbitragem como gabarito e só o anota.
-      const comment = [upheld.comment, errorResolutionComment(row)].filter(Boolean).join("\n");
-      effectiveReviews.set(`${row.document_id}:${row.field_name}`,
-        { ...upheld, comment, resolutionLabel: ERROR_DECISION_LABELS[row.decision!], resolution });
-      continue;
-    }
-    // Sem review na célula, "Ambos corretos" só tem veredito a mostrar quando
-    // o contexto o guarda (auto-revisão). Na Comparação isso é a decisão sobre
-    // arbitragem de rodada anterior: ela fica visível na fila LLM Insights e
-    // no comentário do export, mas não vira linha aqui, porque a linha exigiria
-    // um veredito e inventar um é pior que omitir a célula.
-    if (resolution.status === "upheld" && resolution.verdictValue === undefined) continue;
-    const verdict = resolutionVerdict(resolution, field.type);
-    effectiveReviews.set(`${row.document_id}:${row.field_name}`, {
-      id: row.id, document_id: row.document_id, field_name: row.field_name, verdict,
-      chosen_response_id: null, comment: errorResolutionComment(row), reviewer_id: row.resolved_by,
-      // Rodada em que a decisão foi tomada. A decisão explícita vale mesmo
-      // sobre célula de rodada antiga, então o filtro de rodada já ficou para
-      // trás (em `currentRoundReviews`) e este carimbo é só descritivo.
-      round_id: row.context?.round_id ?? "",
-      resolutionLabel: ERROR_DECISION_LABELS[row.decision!],
-      resolution,
-    });
+    if (!field || !ctx.docMap.has(row.document_id) || !appliesToGabarito(resolution)) continue;
+    const key = `${row.document_id}:${row.field_name}`;
+    const review = resolvedReview(row, resolution, field.type, effectiveReviews.get(key));
+    if (review) effectiveReviews.set(key, review);
   }
   return effectiveReviews;
 }

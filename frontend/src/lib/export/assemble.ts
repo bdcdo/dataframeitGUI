@@ -17,7 +17,7 @@ import {
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import { formatExportValue, formatVerdict } from "./format";
-import { effectiveErrorResolution, errorResolutionComment, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 export interface ExportSheet {
   headers: string[];
@@ -205,6 +205,19 @@ function fieldAgreementValue(
   return unique.size === 1 ? formatExportValue(answers[0]) : null;
 }
 
+// O que a decisão escreve na célula, ou `undefined` para deixá-la como está.
+// "Ambos corretos" não aprova valor: o campo fica com o que o veredito ou a
+// concordância já puseram ali, e só recebe o veredito guardado no contexto
+// (auto-revisão) quando nada chegou por outra via.
+function exportResolutionValue(
+  resolution: Extract<EffectiveErrorResolution, { status: "approved" | "discussion" | "upheld" }>,
+  cellHasValue: boolean,
+): string | undefined {
+  if (resolution.status === "approved") return formatExportValue(resolution.value);
+  if (resolution.status === "discussion") return "";
+  return cellHasValue || resolution.verdictValue === undefined ? undefined : formatExportValue(resolution.verdictValue);
+}
+
 function applyExportResolutions(
   verdicts: Map<string, VerdictEntry>,
   rows: ErrorResolutionRow[],
@@ -216,13 +229,8 @@ function applyExportResolutions(
     const resolution = effectiveErrorResolution(row);
     if (resolution.status !== "approved" && resolution.status !== "discussion" && resolution.status !== "upheld") continue;
     const entry = verdicts.get(row.document_id) ?? { fields: new Map<string, string>(), comments: [] };
-    // "Ambos corretos" não aprova valor: o campo fica com o que o veredito ou
-    // a concordância já puseram ali, e a decisão entra só como comentário.
-    if (resolution.status !== "upheld") {
-      entry.fields.set(row.field_name, resolution.status === "approved" ? formatExportValue(resolution.value) : "");
-    } else if (!entry.fields.has(row.field_name) && resolution.verdictValue !== undefined) {
-      entry.fields.set(row.field_name, formatExportValue(resolution.verdictValue));
-    }
+    const value = exportResolutionValue(resolution, entry.fields.has(row.field_name));
+    if (value !== undefined) entry.fields.set(row.field_name, value);
     entry.comments.push(errorResolutionComment(row));
     verdicts.set(row.document_id, entry);
   }
