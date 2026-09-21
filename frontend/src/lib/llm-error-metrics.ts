@@ -381,7 +381,11 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
 // uma única noção de "mesma resposta": as classes do union-find já fundem tanto
 // pares marcados como equivalentes pelo revisor quanto respostas de texto
 // idêntico, e propagam por transitividade (A≡B, B≡C ⇒ A≡C). É a mesma primitiva
-// que a tela de Comparação usa para decidir divergência.
+// que a tela de Comparação usa para decidir divergência. Em `multi` as duas
+// telas se separam num ponto, de propósito: aqui o par marcado pelo revisor
+// vence a comparação de conjuntos (ver `multiIsError`), e em
+// `computeDivergentFieldNames` não, porque a Comparação não oferece par em
+// campo `multi` e lá o campo segue divergente até ser arbitrado.
 function comparisonIsError(
   review: MetricsReview,
   field: PydanticField,

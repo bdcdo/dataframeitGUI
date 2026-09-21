@@ -362,7 +362,10 @@ function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, Revi
       continue;
     }
     // Sem review na célula, "Ambos corretos" só tem veredito a mostrar quando
-    // o contexto o guarda (auto-revisão).
+    // o contexto o guarda (auto-revisão). Na Comparação isso é a decisão sobre
+    // arbitragem de rodada anterior: ela fica visível na fila LLM Insights e
+    // no comentário do export, mas não vira linha aqui, porque a linha exigiria
+    // um veredito e inventar um é pior que omitir a célula.
     if (resolution.status === "upheld" && resolution.verdictValue === undefined) continue;
     const verdict = resolutionVerdict(resolution, field.type);
     effectiveReviews.set(`${row.document_id}:${row.field_name}`, {
@@ -384,6 +387,9 @@ function isReviewedAnswerCorrect(answer: unknown, review: ReviewRow, fieldType: 
   if (!resolution) return isAnswerCorrect(answer, review.verdict, fieldType);
   if (resolution.status === "discussion") return false;
   if (resolution.status === "upheld") {
+    // `llmValue` é a própria resposta do LLM, e a decisão invalida assim que
+    // essa resposta muda (`current_context`), então a igualdade literal basta
+    // também em `multi`: não há ordem de array diferente a tolerar.
     return isAnswerCorrect(answer, review.verdict, fieldType) || sameAnswer(answer, resolution.llmValue);
   }
   if (fieldType === "multi") return isAnswerCorrect(answer, review.verdict, fieldType);
