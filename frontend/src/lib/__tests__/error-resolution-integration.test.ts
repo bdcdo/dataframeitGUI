@@ -96,8 +96,8 @@ describe("precedência e contexto", () => {
   it("ambos corretos sobre célula de rodada antiga na Comparação não inventa gabarito", () => {
     const r = results([resolutionFixture("both_correct")], false, "LLM", "round0");
     expect(r.gabarito).toEqual([]);
-    const cell = r.exported.verdicts.rows[0]?.[r.exported.verdicts.headers.indexOf("x")];
-    expect(cell ?? "").toBe("");
+    // Nem linha só com o comentário: o export acompanha a tela.
+    expect(r.exported.verdicts.rows).toEqual([]);
   });
   it("discussão bloqueia o gabarito original; reabrir o restaura", () => {
     expect(results([resolutionFixture("discussion")]).exported.verdicts.rows[0][3]).toBe("");
