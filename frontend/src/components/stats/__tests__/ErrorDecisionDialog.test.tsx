@@ -41,6 +41,35 @@ describe("ErrorDecisionDialog — Erro do LLM leva o veredito nas opções atuai
     expect(onConfirm).toHaveBeenCalledWith("", ["A", "C", "B"]);
   });
 
+  it("multi: opção do veredito que saiu do formulário avisa, em vez de sumir calada", () => {
+    show({ name: "x", type: "multi", options: ["A", "B", "C"], description: "P" }, '{"A":true,"Z":true}');
+    expect(checked("checkbox", "A")).toBe(true);
+    expect(screen.getByText(/Parte dessa resposta saiu do formulário/)).toBeTruthy();
+  });
+
+  it("multi com Outro: o complemento do veredito chega ao seletor e ao valor confirmado", async () => {
+    const onConfirm = show({ name: "x", type: "multi", options: ["A", "B"], description: "P", allow_other: true },
+      '{"A":true,"Outro: livre":true}');
+    expect(checked("checkbox", "A")).toBe(true);
+    expect(screen.queryByText(/saiu do formulário/)).toBeNull();
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("", ["A", "Outro: livre"]);
+  });
+
+  it("single com Outro: o veredito 'Outro: <texto>' não é tratado como resposta que saiu do formulário", async () => {
+    const onConfirm = show({ name: "x", type: "single", options: ["A"], description: "P", allow_other: true }, "Outro: livre");
+    expect(screen.queryByText(/saiu do formulário/)).toBeNull();
+    expect(confirmButton().disabled).toBe(false);
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("", "Outro: livre");
+  });
+
+  it("single sem allow_other: 'Outro: <texto>' segue fora do formulário", () => {
+    show({ name: "x", type: "single", options: ["A"], description: "P" }, "Outro: livre");
+    expect(screen.getByText(/Essa resposta saiu do formulário/)).toBeTruthy();
+    expect(confirmButton().disabled).toBe(true);
+  });
+
   it("multi: veredito sem opção atual não pré-marca e bloqueia até marcar", async () => {
     const onConfirm = show({ name: "x", type: "multi", options: ["A", "B"], description: "P" }, '{"Z":true}');
     expect(screen.getByText(/saiu do formulário/)).toBeTruthy();

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
-  ERROR_DECISION_LABELS, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict,
+  ERROR_DECISION_LABELS, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict, verdictLosesItems,
   type ErrorDecision, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
 import { parsePydanticFields } from "@/lib/pydantic-field";
@@ -83,16 +83,27 @@ function initialValue(field: PydanticField, error: LlmError): unknown {
     ?? (error.chosenValue !== undefined ? prefillFromValue(field, error.chosenValue) : undefined);
 }
 
-function PreviousVerdict({ verdict, matched }: { verdict: string; matched: boolean }) {
+function PreviousVerdict({ verdict, hint }: { verdict: string; hint: string | null }) {
   return <div className="rounded-md border border-brand/40 bg-brand-muted px-3 py-2 text-sm">
     <p className="text-xs font-medium">Veredito anterior</p>
     <p className="mt-0.5 whitespace-pre-wrap">{formatVerdictDisplay(verdict) || "(vazio)"}</p>
-    {!matched && (
+    {hint && (
       // Instrução, não decoração: herda a cor do corpo (o token apagado fica
       // abaixo de 4,5:1 sobre `bg-brand-muted` no tema claro).
-      <p className="mt-1 text-xs">Essa resposta saiu do formulário; escolha a opção equivalente.</p>
+      <p className="mt-1 text-xs">{hint}</p>
     )}
   </div>;
+}
+
+// O aviso fala do veredito, então só vale quando o valor inicial veio dele:
+// ao redecidir, o seletor parte do valor já aprovado, que o revisor escolheu.
+function verdictHint(field: PydanticField, error: LlmError, matched: boolean): string | null {
+  if (!matched) return "Essa resposta saiu do formulário; escolha a opção equivalente.";
+  const existing = effectiveErrorResolution(error.resolution);
+  if (existing.status === "approved" && existing.isLlmError) return null;
+  return verdictLosesItems(field, error.chosenVerdict)
+    ? "Parte dessa resposta saiu do formulário; confira as opções marcadas antes de confirmar."
+    : null;
 }
 
 function VerdictPicker({ pending, context, isPending, onClose, onConfirm }: {
@@ -108,7 +119,7 @@ function VerdictPicker({ pending, context, isPending, onClose, onConfirm }: {
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => {}} disabled label={confirmLabel} />
   </>;
   return <>
-    <PreviousVerdict verdict={pending.error.chosenVerdict} matched={prefill !== undefined} />
+    <PreviousVerdict verdict={pending.error.chosenVerdict} hint={verdictHint(field, pending.error, prefill !== undefined)} />
     <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />
