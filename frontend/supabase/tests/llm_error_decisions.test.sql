@@ -255,6 +255,35 @@ BEGIN
   PERFORM public.set_error_resolution(P, D, 's', 'llm_correct', c, item.id, item.resolved_at, NULL, '"B "'::JSONB);
   SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
   IF item.approved_value IS NOT NULL THEN RAISE EXCEPTION 'FALHOU: llm_correct gravou approved_value'; END IF;
+  -- Ambos corretos: nao aprova valor, mesmo que o chamador mande um.
+  PERFORM public.set_error_resolution(P, D, 's', 'both_correct', c, item.id, item.resolved_at, 'Sinonimos', '"B "'::JSONB);
+  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
+  IF item.decision <> 'both_correct' OR item.approved_value IS NOT NULL OR item.note <> 'Sinonimos'
+    OR item.current_context IS DISTINCT FROM item.context THEN
+    RAISE EXCEPTION 'FALHOU: both_correct não gravou decisão sem valor';
+  END IF;
+  -- Todos errados: exige valor, com a mesma validacao por tipo de Erro do LLM.
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'all_wrong', c, item.id, item.resolved_at, NULL, NULL);
+    RAISE EXCEPTION 'FALHOU: Todos errados sem valor foi aceito';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'all_wrong', c, item.id, item.resolved_at, NULL, '"C"'::JSONB);
+    RAISE EXCEPTION 'FALHOU: Todos errados aceitou valor fora das opções';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  PERFORM public.set_error_resolution(P, D, 's', 'all_wrong', c, item.id, item.resolved_at, NULL, '"A"'::JSONB);
+  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
+  IF item.decision <> 'all_wrong' OR item.approved_value IS DISTINCT FROM '"A"'::JSONB THEN
+    RAISE EXCEPTION 'FALHOU: all_wrong não gravou o valor escolhido';
+  END IF;
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'nobody_knows', c, item.id, item.resolved_at, NULL, NULL);
+    RAISE EXCEPTION 'FALHOU: decisão desconhecida foi aceita';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  RAISE NOTICE 'OK: both_correct sem valor, all_wrong com valor validado';
   -- e volta a Erro do LLM, para os blocos de invalidacao abaixo.
   PERFORM public.set_error_resolution(P, D, 's', 'researchers_correct', c, item.id, item.resolved_at, NULL, '"B "'::JSONB);
 
@@ -399,7 +428,8 @@ BEGIN
   RAISE NOTICE 'OK: a regra de reabertura só afirma divergência quando pode prová-la';
 END $$;
 
--- CHECK: approved_value existe se, e somente se, a decisao e Erro do LLM.
+-- CHECK: approved_value existe se, e somente se, a decisao escolhe valor
+-- (Erro do LLM e Todos errados).
 DO $$
 BEGIN
   BEGIN
@@ -416,7 +446,28 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: discussão com approved_value passou no CHECK';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
-  RAISE NOTICE 'OK: CHECK amarra approved_value à decisão Erro do LLM';
+  BEGIN
+    INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context)
+    VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',
+            'a9a00000-0000-0000-0000-000000000001', 'all_wrong', '{}'::jsonb);
+    RAISE EXCEPTION 'FALHOU: Todos errados sem approved_value passou no CHECK';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context, approved_value)
+    VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',
+            'a9a00000-0000-0000-0000-000000000001', 'both_correct', '{}'::jsonb, '"x"'::jsonb);
+    RAISE EXCEPTION 'FALHOU: Ambos corretos com approved_value passou no CHECK';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context)
+    VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',
+            'a9a00000-0000-0000-0000-000000000001', 'nobody_knows', '{}'::jsonb);
+    RAISE EXCEPTION 'FALHOU: decisão desconhecida passou no CHECK';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK: CHECK amarra approved_value às decisões que escolhem valor';
 END $$;
 
 ROLLBACK;

@@ -214,9 +214,15 @@ function applyExportResolutions(
   for (const row of rows) {
     if (!documents.has(row.document_id) || !fieldNames.has(row.field_name)) continue;
     const resolution = effectiveErrorResolution(row);
-    if (resolution.status !== "approved" && resolution.status !== "discussion") continue;
+    if (resolution.status !== "approved" && resolution.status !== "discussion" && resolution.status !== "upheld") continue;
     const entry = verdicts.get(row.document_id) ?? { fields: new Map<string, string>(), comments: [] };
-    entry.fields.set(row.field_name, resolution.status === "approved" ? formatExportValue(resolution.value) : "");
+    // "Ambos corretos" não aprova valor: o campo fica com o que o veredito ou
+    // a concordância já puseram ali, e a decisão entra só como comentário.
+    if (resolution.status !== "upheld") {
+      entry.fields.set(row.field_name, resolution.status === "approved" ? formatExportValue(resolution.value) : "");
+    } else if (!entry.fields.has(row.field_name) && resolution.verdictValue !== undefined) {
+      entry.fields.set(row.field_name, formatExportValue(resolution.verdictValue));
+    }
     entry.comments.push(errorResolutionComment(row));
     verdicts.set(row.document_id, entry);
   }

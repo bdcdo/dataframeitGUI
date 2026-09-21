@@ -38,7 +38,7 @@ export interface ReviewRow {
   /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
   round_id: string;
   resolutionLabel?: string;
-  resolution?: Extract<EffectiveErrorResolution, { status: "approved" | "discussion" }>;
+  resolution?: Extract<EffectiveErrorResolution, { status: "approved" | "discussion" | "upheld" }>;
 }
 
 /* ── Context shared across computations ── */
@@ -339,10 +339,11 @@ export async function fetchReviewBaseData(
 
 function resolutionVerdict(resolution: NonNullable<ReviewRow["resolution"]>, fieldType: PydanticField["type"]): string {
   if (resolution.status === "discussion") return "ambiguo";
-  if (fieldType === "multi" && Array.isArray(resolution.value)) {
-    return JSON.stringify(Object.fromEntries(resolution.value.map((value) => [String(value), true])));
+  const value = resolution.status === "upheld" ? resolution.verdictValue : resolution.value;
+  if (fieldType === "multi" && Array.isArray(value)) {
+    return JSON.stringify(Object.fromEntries(value.map((item) => [String(item), true])));
   }
-  return formatAnswer(resolution.value);
+  return formatAnswer(value);
 }
 
 function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, ReviewRow> {
@@ -350,7 +351,19 @@ function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, Revi
   for (const row of ctx.errorResolutions ?? []) {
     const resolution = effectiveErrorResolution(row);
     const field = ctx.fieldMap.get(row.field_name);
-    if (!field || !ctx.docMap.has(row.document_id) || (resolution.status !== "approved" && resolution.status !== "discussion")) continue;
+    if (!field || !ctx.docMap.has(row.document_id)) continue;
+    if (resolution.status !== "approved" && resolution.status !== "discussion" && resolution.status !== "upheld") continue;
+    const upheld = resolution.status === "upheld" ? effectiveReviews.get(`${row.document_id}:${row.field_name}`) : undefined;
+    if (upheld) {
+      // "Ambos corretos" mantém o veredito da arbitragem como gabarito e só o anota.
+      const comment = [upheld.comment, errorResolutionComment(row)].filter(Boolean).join("\n");
+      effectiveReviews.set(`${row.document_id}:${row.field_name}`,
+        { ...upheld, comment, resolutionLabel: ERROR_DECISION_LABELS[row.decision!], resolution });
+      continue;
+    }
+    // Sem review na célula, "Ambos corretos" só tem veredito a mostrar quando
+    // o contexto o guarda (auto-revisão).
+    if (resolution.status === "upheld" && resolution.verdictValue === undefined) continue;
     const verdict = resolutionVerdict(resolution, field.type);
     effectiveReviews.set(`${row.document_id}:${row.field_name}`, {
       id: row.id, document_id: row.document_id, field_name: row.field_name, verdict,
@@ -370,8 +383,15 @@ function isReviewedAnswerCorrect(answer: unknown, review: ReviewRow, fieldType: 
   const { resolution } = review;
   if (!resolution) return isAnswerCorrect(answer, review.verdict, fieldType);
   if (resolution.status === "discussion") return false;
+  if (resolution.status === "upheld") {
+    return isAnswerCorrect(answer, review.verdict, fieldType) || sameAnswer(answer, resolution.llmValue);
+  }
   if (fieldType === "multi") return isAnswerCorrect(answer, review.verdict, fieldType);
   const value = resolution.value;
+  return sameAnswer(answer, value);
+}
+
+function sameAnswer(answer: unknown, value: unknown): boolean {
   return typeof value === "object" || typeof answer === "object"
     ? stableStringify(answer) === stableStringify(value)
     : normalizeForComparison(answer) === normalizeForComparison(value);
@@ -423,7 +443,9 @@ export function computeReviewedDocuments(ctx: ReviewComputationContext): Reviewe
         fieldType: field.type,
         verdict: review.verdict,
         resolutionLabel: review.resolutionLabel,
-        resolutionStatus: resolution?.status,
+        // Em "Ambos corretos" o veredito da arbitragem segue valendo, então a
+        // tela o lê como qualquer veredito, sem status de resolução.
+        resolutionStatus: resolution?.status === "upheld" ? undefined : resolution?.status,
         respondentAnswers,
       });
     }

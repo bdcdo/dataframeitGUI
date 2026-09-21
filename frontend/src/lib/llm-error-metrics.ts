@@ -30,7 +30,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { effectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { effectiveErrorResolution, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -399,15 +399,16 @@ function comparisonIsError(
 // `multi` tem semântica de CONJUNTO de opções, e é assim que
 // `computeDivergentFieldNames` o compara — enquanto `normalizeForComparison`
 // serializa o array na ordem em que veio, e faria de ["a","b"] vs ["b","a"] um
-// erro do LLM que a tela de Comparação exibe como concordância. Fica de fora do
-// union-find pelo mesmo motivo que lá: a UI de revisão de multi
-// (MultiOptionReview) não tem cards de equivalência, não há par a fundir.
+// erro do LLM que a tela de Comparação exibe como concordância. Por isso a
+// comparação de valores fica fora do union-find.
 //
-// Hoje o caminho é defensivo: `MultiOptionReview` submete sem
-// `chosenResponseId`, e a página filtra `chosen_response_id IS NOT NULL`, de
-// modo que nenhum review de `multi` chega até aqui. Ele existe para que a
-// afirmação "esta métrica usa as primitivas da Comparação" seja verdadeira por
-// construção, e não por acidente da UI atual.
+// Os pares que o revisor marcou, porém, valem aqui também. A UI de revisão de
+// multi (MultiOptionReview) submete sem `chosenResponseId`, e a página filtra
+// `chosen_response_id IS NOT NULL`, então review FEITA em campo multi não chega
+// a esta função. Chega a review feita quando a pergunta ainda era `single` e
+// que depois virou `multi`: ela tem resposta escolhida, o card oferece o "="
+// e o par gravado precisa suprimir o erro. Sem a consulta abaixo o botão
+// confirmava sucesso e o card continuava na fila.
 function multiIsError(
   review: MetricsReview,
   field: PydanticField,
@@ -420,6 +421,10 @@ function multiIsError(
   // Sem a response escolhida não há conjunto com que comparar: o texto do
   // veredito de multi é um JSON de opção→marcada, de outra forma que a resposta.
   if (!chosen) return true;
+
+  const groupKeys = ctx.groupKeysFor(review.document_id, review.field_name);
+  const llmKey = groupKeys.get(llmResponse.id);
+  if (llmKey !== undefined && llmKey === groupKeys.get(chosen.id)) return false;
 
   return !multiSelectionsAgree(
     field.options ?? [],
@@ -452,6 +457,14 @@ function groupedIsError(
     normalizeForComparison(llmResponse.answers?.[review.field_name]) !==
     normalizeForComparison(review.verdict)
   );
+}
+
+// A decisão explícita do revisor vence a classificação automática: "Ambos
+// corretos" tira o erro do LLM sem aprovar valor; as decisões que aprovam
+// valor dizem de quem foi o erro.
+function resolutionIsError(resolution: EffectiveErrorResolution, measured: boolean): boolean {
+  if (resolution.status === "upheld") return false;
+  return resolution.status === "approved" ? resolution.isLlmError : measured;
 }
 
 /* ── Fonte A: Comparação (`reviews`) ── */
@@ -774,7 +787,7 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
       const resolution = effectiveErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`));
       return {
         ...c.entry,
-        isError: resolution.status === "approved" ? resolution.isLlmError : c.entry.isError,
+        isError: resolutionIsError(resolution, c.entry.isError),
         isPending: resolution.status === "discussion",
       };
     }),

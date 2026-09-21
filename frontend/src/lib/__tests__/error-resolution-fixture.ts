@@ -14,5 +14,6 @@ export function resolutionFixture(decision: ErrorDecision = "llm_correct"): Erro
     // Coluna `approved_value` (#733): só "Erro do LLM" tem valor, o veredito nas opções atuais.
     // Diferente de `human_value.value` de propósito: um consumidor que lesse a
     // resposta do codificador em vez da coluna passaria despercebido.
-    approved_value: decision === "researchers_correct" ? "Veredito" : null };
+    // "Todos errados" leva um terceiro valor, distinto do LLM e do veredito.
+    approved_value: decision === "researchers_correct" ? "Veredito" : decision === "all_wrong" ? "Terceira" : null };
 }

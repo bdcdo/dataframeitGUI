@@ -29,6 +29,14 @@ describe("filtros de triagem e taxa", () => {
     expect(result.current.filteredErrors).toHaveLength(4);
     expect(result.current.filteredErrorRate).toBe(40);
   });
+  it("Ambos corretos e Todos errados saem de abertos e entram em decididos", () => {
+    const errors = (["both_correct", "all_wrong"] as const)
+      .map((decision) => ({ ...scope, fieldDescription: "Pergunta", resolution: resolutionFixture(decision) }));
+    const { result } = renderHook(() => useLlmErrorFiltering(errors, []));
+    expect(result.current.filteredErrors).toHaveLength(0);
+    act(() => result.current.setErrorStatusFilter("resolved"));
+    expect(result.current.filteredErrors).toHaveLength(2);
+  });
   it("sem casos decididos não fabrica taxa zero", () => {
     const { result } = renderHook(() => useLlmErrorFiltering([], [{ ...scope, isError: true, isPending: true }]));
     expect(result.current.filteredErrorRate).toBeNull();

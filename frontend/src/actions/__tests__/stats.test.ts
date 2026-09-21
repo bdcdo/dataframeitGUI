@@ -212,6 +212,15 @@ describe("resolveError / reopenError", () => {
     }));
   });
 
+  it("Todos errados envia o valor escolhido; Ambos corretos manda p_value nulo mesmo que venha", async () => {
+    hoisted.rpc.mockResolvedValue({ data: row, error: null });
+    const { resolveError } = await loadStats();
+    await resolveError("p1", "doc1", "x", { ...input, decision: "all_wrong", value: "Terceira" });
+    expect(hoisted.rpc).toHaveBeenLastCalledWith("set_error_resolution", expect.objectContaining({ p_decision: "all_wrong", p_value: "Terceira" }));
+    await resolveError("p1", "doc1", "x", { ...input, decision: "both_correct", value: "ignorado" });
+    expect(hoisted.rpc).toHaveBeenLastCalledWith("set_error_resolution", expect.objectContaining({ p_decision: "both_correct", p_value: null }));
+  });
+
   it("valor só acompanha Erro do LLM: Erro humano manda p_value nulo mesmo que venha", async () => {
     hoisted.rpc.mockResolvedValue({ data: row, error: null });
     const { resolveError } = await loadStats();

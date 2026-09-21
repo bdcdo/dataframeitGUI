@@ -7,8 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
-  ERROR_DECISION_LABELS, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict,
-  type ErrorDecision, type ErrorResolutionContext,
+  ERROR_DECISION_LABELS, choosesValue, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict,
+  type ErrorDecision, type ErrorResolutionContext, type ValueChoosingDecision,
 } from "@/lib/error-resolution";
 import { parsePydanticFields } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
@@ -25,7 +25,7 @@ export type PendingErrorDecision =
 interface DecisionControls {
   isPending: boolean;
   onClose: () => void;
-  /** `value` só acompanha `researchers_correct`: o que o revisor escolheu no seletor. */
+  /** `value` só acompanha as decisões de `choosesValue`: o que o revisor escolheu no seletor. */
   onConfirm: (note: string, value?: unknown) => void;
 }
 
@@ -54,10 +54,15 @@ function NoteField({ note, onChange, isPending }: { note: string; onChange: (not
   </div>;
 }
 
-function DecisionPreview({ decision, answer }: {
-  decision: ErrorDecision; answer: ErrorResolutionContext["llm_value"];
+function DecisionPreview({ decision, answer, verdict }: {
+  decision: Exclude<ErrorDecision, ValueChoosingDecision>; answer: ErrorResolutionContext["llm_value"]; verdict: string;
 }) {
   if (decision === "discussion") return <div className="rounded-md border p-3 text-sm">Este campo ficará sem valor final aprovado até uma nova decisão.</div>;
+  if (decision === "both_correct") return <div className="rounded-md border p-3 text-sm">
+    <p className="font-medium">O gabarito continua sendo o veredito anterior</p>
+    <p className="mt-1 whitespace-pre-wrap">{formatVerdictDisplay(verdict) || "(vazio)"}</p>
+    <p className="mt-2 text-xs">A resposta do LLM deixa de contar como erro.</p>
+  </div>;
   const value = answer.present ? formatAnswer(answer.value) || "(vazio)" : "Resposta ausente: não é possível aprovar.";
   return <div className="rounded-md border p-3 text-sm">
     <p className="font-medium">Valor que irá para o gabarito</p>
@@ -76,30 +81,42 @@ function DecisionPreview({ decision, answer }: {
 // quando esse texto não se traduz em opção atual (um `multi` votado em card é
 // "A, C"; o snapshot humano da auto-revisão vem renderizado), a forma crua
 // que a fonte guardou.
-function initialValue(field: PydanticField, error: LlmError): unknown {
+//
+// Em "Todos errados" o veredito é justamente o que o revisor está rejeitando,
+// então ele não pré-marca nada: só o valor de uma decisão "Todos errados"
+// anterior da célula volta ao seletor.
+function initialValue(field: PydanticField, error: LlmError, decision: ValueChoosingDecision): unknown {
   const existing = effectiveErrorResolution(error.resolution);
-  if (existing.status === "approved" && existing.isLlmError) return prefillFromValue(field, existing.value);
+  if (existing.status === "approved" && existing.isLlmError && error.resolution?.decision === decision) {
+    return prefillFromValue(field, existing.value);
+  }
+  if (decision === "all_wrong") return undefined;
   return prefillFromVerdict(field, error.chosenVerdict)
     ?? (error.chosenValue !== undefined ? prefillFromValue(field, error.chosenValue) : undefined);
 }
 
-function PreviousVerdict({ verdict, matched }: { verdict: string; matched: boolean }) {
+function PreviousVerdict({ verdict, hint }: { verdict: string; hint: string | null }) {
   return <div className="rounded-md border border-brand/40 bg-brand-muted px-3 py-2 text-sm">
     <p className="text-xs font-medium">Veredito anterior</p>
     <p className="mt-0.5 whitespace-pre-wrap">{formatVerdictDisplay(verdict) || "(vazio)"}</p>
-    {!matched && (
+    {hint && (
       // Instrução, não decoração: herda a cor do corpo (o token apagado fica
       // abaixo de 4,5:1 sobre `bg-brand-muted` no tema claro).
-      <p className="mt-1 text-xs">Essa resposta saiu do formulário; escolha a opção equivalente.</p>
+      <p className="mt-1 text-xs">{hint}</p>
     )}
   </div>;
 }
 
-function VerdictPicker({ pending, context, isPending, onClose, onConfirm }: {
-  pending: PendingErrorDecision; context: ErrorResolutionContext;
+function pickerHint(decision: ValueChoosingDecision, matched: boolean): string | null {
+  if (decision === "all_wrong") return "Nem esta resposta nem a do LLM vão ao gabarito; escolha abaixo a correta.";
+  return matched ? null : "Essa resposta saiu do formulário; escolha a opção equivalente.";
+}
+
+function VerdictPicker({ pending, decision, context, isPending, onClose, onConfirm }: {
+  pending: PendingErrorDecision; decision: ValueChoosingDecision; context: ErrorResolutionContext;
 } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
   const field = parsePydanticFields([context.field_definition])?.[0] ?? null;
-  const prefill = field ? initialValue(field, pending.error) : undefined;
+  const prefill = field ? initialValue(field, pending.error, decision) : undefined;
   const [value, setValue] = useState<unknown>(prefill);
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
   const confirmLabel = isPending ? "Salvando…" : "Confirmar decisão";
@@ -108,7 +125,7 @@ function VerdictPicker({ pending, context, isPending, onClose, onConfirm }: {
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => {}} disabled label={confirmLabel} />
   </>;
   return <>
-    <PreviousVerdict verdict={pending.error.chosenVerdict} matched={prefill !== undefined} />
+    <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, prefill !== undefined)} />
     <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />
@@ -120,14 +137,14 @@ function VerdictPicker({ pending, context, isPending, onClose, onConfirm }: {
 }
 
 function ConfirmDecision({ pending, decision, context, isPending, onClose, onConfirm }: {
-  pending: PendingErrorDecision; decision: Exclude<ErrorDecision, "researchers_correct">; context: ErrorResolutionContext;
+  pending: PendingErrorDecision; decision: Exclude<ErrorDecision, ValueChoosingDecision>; context: ErrorResolutionContext;
 } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
   return <>
-    <DecisionPreview decision={decision} answer={context.llm_value} />
+    <DecisionPreview decision={decision} answer={context.llm_value} verdict={pending.error.chosenVerdict} />
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note)}
-      disabled={decision === "llm_correct" && !context.llm_value.present} label={isPending ? "Salvando…" : "Confirmar decisão"} />
+      disabled={decision !== "discussion" && !context.llm_value.present} label={isPending ? "Salvando…" : "Confirmar decisão"} />
   </>;
 }
 
@@ -138,7 +155,7 @@ function DecisionForm({ pending, ...controls }: { pending: PendingErrorDecision 
       label={controls.isPending ? "Salvando…" : "Confirmar reabertura"} />
   </>;
   const { decision, context } = pending;
-  if (decision === "researchers_correct") return <VerdictPicker pending={pending} context={context} {...controls} />;
+  if (choosesValue(decision)) return <VerdictPicker pending={pending} decision={decision} context={context} {...controls} />;
   return <ConfirmDecision pending={pending} decision={decision} context={context} {...controls} />;
 }
 

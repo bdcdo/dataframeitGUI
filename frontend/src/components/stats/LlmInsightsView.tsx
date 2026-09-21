@@ -7,7 +7,7 @@ import { EditFieldDialog } from "./EditFieldDialog";
 import { ErrorStatsCards } from "./ErrorStatsCards";
 import { ErrorFiltersToolbar } from "./ErrorFiltersToolbar";
 import { ErrorDecisionDialog, type PendingErrorDecision } from "./ErrorDecisionDialog";
-import type { ErrorDecision, ErrorResolutionInput } from "@/lib/error-resolution";
+import { choosesValue, type ErrorDecision, type ErrorResolutionInput } from "@/lib/error-resolution";
 import { useLlmErrorFiltering } from "@/hooks/useLlmErrorFiltering";
 import {
   resolveError,
@@ -46,8 +46,8 @@ async function persistDecision(projectId: string, pending: PendingErrorDecision,
   if (decision && context) {
     return resolveError(projectId, error.documentId, error.fieldName, {
       decision, context, expected: error.resolution ?? null, note,
-      // Só "Erro do LLM" leva valor: é o que o revisor escolheu no seletor (#733).
-      ...(decision === "researchers_correct" ? { value: value as ErrorResolutionInput["value"] } : {}),
+      // Só as decisões com seletor levam valor: o que o revisor escolheu (#733).
+      ...(choosesValue(decision) ? { value: value as ErrorResolutionInput["value"] } : {}),
     });
   }
   if (decision === null && error.resolution) {
