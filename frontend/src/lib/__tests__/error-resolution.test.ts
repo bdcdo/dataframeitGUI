@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  choosesValue, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, prefillFromValue, prefillFromVerdict,
+  choosesValue, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, prefillLosesItems, prefillFromValue, prefillFromVerdict,
   type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
@@ -172,6 +172,28 @@ describe("prefillFromValue — valor já na forma da resposta", () => {
     expect(prefillFromValue(text, " ")).toBeUndefined();
     expect(prefillFromValue(group, { anos: "2" })).toEqual({ anos: "2" });
     expect(prefillFromValue(group, "anos: 2")).toBeUndefined();
+  });
+});
+
+describe("prefillLosesItems — quando o seletor abre com menos do que a fonte marcava", () => {
+  it("veredito JSON: acusa opção que saiu, ignora chave false e opção com espaço a mais", () => {
+    expect(prefillLosesItems(multi, '{"A":true,"Z":true}')).toBe(true);
+    expect(prefillLosesItems(multi, '{"A":true,"Z":false}')).toBe(false);
+    expect(prefillLosesItems(multi, '{"A ":true,"C":true}')).toBe(false);
+  });
+  it("veredito em texto: mede pela forma crua, que é de onde o valor inicial vem", () => {
+    expect(prefillLosesItems(multi, "A, Z", ["A", "Z"])).toBe(true);
+    expect(prefillLosesItems(multi, "A, C", ["A", "C"])).toBe(false);
+    expect(prefillLosesItems(multi, "A, C")).toBe(false);
+  });
+  it("Outro: cabe quando o campo permite, e só o primeiro entra no seletor", () => {
+    expect(prefillLosesItems(multiOther, '{"A":true,"Outro: x":true}')).toBe(false);
+    expect(prefillLosesItems(multi, '{"A":true,"Outro: x":true}')).toBe(true);
+    expect(prefillFromValue(multiOther, ["Outro: x", "A", "Outro: y"])).toEqual(["A", "Outro: x"]);
+    expect(prefillLosesItems(multiOther, "", ["Outro: x", "A", "Outro: y"])).toBe(true);
+  });
+  it("não se aplica fora de multi", () => {
+    expect(prefillLosesItems(single, "Z")).toBe(false);
   });
 });
 

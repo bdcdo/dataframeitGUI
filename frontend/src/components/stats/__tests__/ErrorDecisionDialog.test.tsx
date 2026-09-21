@@ -47,10 +47,20 @@ describe("ErrorDecisionDialog — Erro do LLM leva o veredito nas opções atuai
     expect(screen.getByText(/Parte dessa resposta saiu do formulário/)).toBeTruthy();
   });
 
+  it("auto-revisão: item do snapshot humano que saiu do formulário também avisa", () => {
+    // Aqui o veredito exibido é texto ("A, Z"), e o valor inicial vem da forma crua.
+    show({ name: "x", type: "multi", options: ["A", "B", "C"], description: "P" }, "A, Z", { source: "auto_revisao", chosenValue: ["A", "Z"] });
+    expect(checked("checkbox", "A")).toBe(true);
+    expect(screen.getByText(/Parte dessa resposta saiu do formulário/)).toBeTruthy();
+  });
+
   it("multi com Outro: o complemento do veredito chega ao seletor e ao valor confirmado", async () => {
     const onConfirm = show({ name: "x", type: "multi", options: ["A", "B"], description: "P", allow_other: true },
       '{"A":true,"Outro: livre":true}');
     expect(checked("checkbox", "A")).toBe(true);
+    // O revisor vê o complemento que vai confirmar: o estado sozinho não prova isso.
+    expect(checked("checkbox", "Outro:")).toBe(true);
+    expect((screen.getByPlaceholderText("Digite o valor...") as HTMLInputElement).value).toBe("livre");
     expect(screen.queryByText(/saiu do formulário/)).toBeNull();
     await userEvent.click(confirmButton());
     expect(onConfirm).toHaveBeenCalledWith("", ["A", "Outro: livre"]);
@@ -59,6 +69,8 @@ describe("ErrorDecisionDialog — Erro do LLM leva o veredito nas opções atuai
   it("single com Outro: o veredito 'Outro: <texto>' não é tratado como resposta que saiu do formulário", async () => {
     const onConfirm = show({ name: "x", type: "single", options: ["A"], description: "P", allow_other: true }, "Outro: livre");
     expect(screen.queryByText(/saiu do formulário/)).toBeNull();
+    expect(checked("radio", "Outro:")).toBe(true);
+    expect((screen.getByPlaceholderText("Digite o valor...") as HTMLInputElement).value).toBe("livre");
     expect(confirmButton().disabled).toBe(false);
     await userEvent.click(confirmButton());
     expect(onConfirm).toHaveBeenCalledWith("", "Outro: livre");
