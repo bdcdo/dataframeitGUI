@@ -281,6 +281,23 @@ describe("resolveError / reopenError", () => {
     expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_human_response_id: "rh2" }));
   });
 
+  it("auto-revisão não troca de humana: sem a do field_reviews na rodada, explica e não chama a RPC", async () => {
+    humansInRound(["rh2", "rh3"]);
+    const { prepareErrorResolution } = await loadStats();
+    const result = await prepareErrorResolution({ ...prepareInput, sourceKind: "auto_revisao", sourceId: "fr" });
+    expect(result.context).toBeUndefined();
+    expect(result.error).toContain("auto-revisão não está mais ativa");
+    expect(hoisted.rpc).not.toHaveBeenCalled();
+  });
+
+  it("auto-revisão com a humana do field_reviews ainda corrente segue normalmente", async () => {
+    humansInRound(["rh2", "rh"]);
+    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
+    const { prepareErrorResolution } = await loadStats();
+    await prepareErrorResolution({ ...prepareInput, sourceKind: "auto_revisao", sourceId: "fr" });
+    expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_human_response_id: "rh" }));
+  });
+
   it.each([["sem humana na rodada", () => humansInRound([])], ["sem rodada corrente", () => humansInRound(["rh"], null)]])("%s explica o bloqueio sem chamar a RPC", async (_name, arrange) => {
     arrange();
     const { prepareErrorResolution } = await loadStats();

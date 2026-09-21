@@ -240,9 +240,12 @@ type ErrorResolutionIdentity = NonNullable<ErrorResolutionInput["expected"]>;
 // arbitragem escolheu, se ainda é humana `is_latest` da rodada corrente; senão
 // a humana `is_latest` mais antiga do documento na rodada. É o mesmo domínio
 // que `llm_error_context` aceita, então uma escolha fora dele devolveria NULL.
+// Na auto-revisão não há escolha: a RPC só aceita a humana que o `field_reviews`
+// registra. Trocar por outra devolveria NULL com a mensagem de "fontes
+// mudaram", que manda recarregar uma página que não vai mudar.
 async function pickHumanResponse(
   supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
-  input: { projectId: string; documentId: string; preferredHumanResponseId?: string | null },
+  input: { projectId: string; documentId: string; preferredHumanResponseId?: string | null; sourceKind: string },
 ): Promise<string | null> {
   const { data: project } = await supabase
     .from("projects").select("current_round_id").eq("id", input.projectId).single();
@@ -255,7 +258,7 @@ async function pickHumanResponse(
     .order("created_at", { ascending: true }).limit(50);
   const ids = (humans ?? []).map((r) => r.id as string);
   if (input.preferredHumanResponseId && ids.includes(input.preferredHumanResponseId)) return input.preferredHumanResponseId;
-  return ids[0] ?? null;
+  return input.sourceKind === "auto_revisao" ? null : ids[0] ?? null;
 }
 
 export async function prepareErrorResolution(input: {
@@ -266,7 +269,11 @@ export async function prepareErrorResolution(input: {
     if (!await getAuthUser()) return { error: "Não autenticado" };
     const supabase = await createSupabaseServer();
     const humanResponseId = await pickHumanResponse(supabase, input);
-    if (!humanResponseId) return { error: "Nenhuma resposta humana ativa nesta rodada. Refaça a revisão antes de decidir." };
+    if (!humanResponseId) {
+      return { error: input.sourceKind === "auto_revisao"
+        ? "A resposta humana desta auto-revisão não está mais ativa na rodada. Refaça a auto-revisão antes de decidir."
+        : "Nenhuma resposta humana ativa nesta rodada. Refaça a revisão antes de decidir." };
+    }
     const { data, error } = await supabase.rpc("llm_error_context", {
       p_project_id: input.projectId, p_document_id: input.documentId, p_field_name: input.fieldName,
       p_llm_response_id: input.llmResponseId, p_human_response_id: humanResponseId,

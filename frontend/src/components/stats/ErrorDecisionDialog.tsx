@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
-  ERROR_DECISION_LABELS, choosesValue, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict,
+  ERROR_DECISION_LABELS, choosesValue, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict, verdictLosesItems,
   type ErrorDecision, type ErrorResolutionContext, type ValueChoosingDecision,
 } from "@/lib/error-resolution";
 import { parsePydanticFields } from "@/lib/pydantic-field";
@@ -107,9 +107,17 @@ function PreviousVerdict({ verdict, hint }: { verdict: string; hint: string | nu
   </div>;
 }
 
-function pickerHint(decision: ValueChoosingDecision, matched: boolean): string | null {
+// O aviso fala do veredito, então só vale quando o valor inicial veio dele:
+// ao redecidir "Erro do LLM", o seletor parte do valor já aprovado, que o
+// revisor escolheu. Em "Todos errados" o veredito nunca pré-marca nada.
+function pickerHint(decision: ValueChoosingDecision, field: PydanticField, error: LlmError, matched: boolean): string | null {
   if (decision === "all_wrong") return "Nem esta resposta nem a do LLM vão ao gabarito; escolha abaixo a correta.";
-  return matched ? null : "Essa resposta saiu do formulário; escolha a opção equivalente.";
+  if (!matched) return "Essa resposta saiu do formulário; escolha a opção equivalente.";
+  const existing = effectiveErrorResolution(error.resolution);
+  if (existing.status === "approved" && existing.isLlmError && error.resolution?.decision === decision) return null;
+  return verdictLosesItems(field, error.chosenVerdict)
+    ? "Parte dessa resposta saiu do formulário; confira as opções marcadas antes de confirmar."
+    : null;
 }
 
 function VerdictPicker({ pending, decision, context, isPending, onClose, onConfirm }: {
@@ -125,7 +133,7 @@ function VerdictPicker({ pending, decision, context, isPending, onClose, onConfi
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => {}} disabled label={confirmLabel} />
   </>;
   return <>
-    <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, prefill !== undefined)} />
+    <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, field, pending.error, prefill !== undefined)} />
     <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />

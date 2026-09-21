@@ -134,17 +134,46 @@ export function prefillFromValue(field: PydanticField, value: unknown): unknown 
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-// Opção de formulário carrega espaço final; o valor gravado nem sempre.
-function prefillSingle(field: PydanticField, value: unknown): string | undefined {
+// Opção de formulário carrega espaço final; o valor gravado nem sempre. Fora
+// das opções só cabe o "Outro: <texto>" de campo que o permite, o mesmo
+// domínio de `isAllowedOption`: sem isso o seletor abria sem o complemento que
+// o veredito trazia, e confirmar gravava a resposta pela metade.
+function currentOption(field: PydanticField, value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  return field.options?.find((option) => option.trim() === value.trim());
+  const option = field.options?.find((candidate) => candidate.trim() === value.trim());
+  return option ?? (isAllowedOption(field, value) ? value : undefined);
 }
 
+function prefillSingle(field: PydanticField, value: unknown): string | undefined {
+  return currentOption(field, value);
+}
+
+// Na ordem das opções do formulário, com os "Outro" ao fim.
 function prefillMulti(field: PydanticField, value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const marked = new Set(value.filter((v): v is string => typeof v === "string").map((v) => v.trim()));
-  const chosen = (field.options ?? []).filter((option) => marked.has(option.trim()));
+  const kept = new Set(value.map((item) => currentOption(field, item)).filter((item): item is string => item !== undefined));
+  const chosen = [...(field.options ?? []).filter((option) => kept.has(option)),
+    ...[...kept].filter((item) => !field.options?.includes(item))];
   return chosen.length > 0 ? chosen : undefined;
+}
+
+// As opções que um veredito de `multi` marca: chaves `true` do JSON
+// `{opção: bool}` (ver `formatVerdict` e `resolutionVerdict`).
+function verdictMultiItems(verdict: string): string[] | undefined {
+  let parsed: unknown;
+  try { parsed = JSON.parse(verdict); } catch { return undefined; }
+  if (!isSubfieldRecord(parsed)) return undefined;
+  return Object.entries(parsed).filter(([, v]) => v === true).map(([k]) => k);
+}
+
+/**
+ * Se o veredito de um `multi` marca alguma opção que não cabe mais no
+ * formulário. O seletor pré-marca só as que cabem, e sem este aviso o revisor
+ * confirmaria um subconjunto achando que ratifica o veredito inteiro.
+ */
+export function verdictLosesItems(field: PydanticField, verdict: string): boolean {
+  if (field.type !== "multi") return false;
+  return (verdictMultiItems(verdict) ?? []).some((item) => currentOption(field, item) === undefined);
 }
 
 function prefillGroup(value: unknown): unknown {
@@ -164,12 +193,9 @@ export function prefillFromVerdict(field: PydanticField, verdict: string): unkno
   const text = verdict.trim();
   if (text === "ambiguo" || text === "pular") return undefined;
   if (field.type === "multi") {
-    // O veredito de `multi` é o JSON `{opção: bool}` (ver `formatVerdict` e
-    // `resolutionVerdict`); a resposta é o array das opções marcadas.
-    let parsed: unknown;
-    try { parsed = JSON.parse(verdict); } catch { return undefined; }
-    if (!isSubfieldRecord(parsed)) return undefined;
-    return prefillFromValue(field, Object.entries(parsed).filter(([, v]) => v === true).map(([k]) => k));
+    // A resposta é o array das opções que o veredito marca.
+    const items = verdictMultiItems(verdict);
+    return items ? prefillFromValue(field, items) : undefined;
   }
   if (hasSubfields(field)) {
     // O veredito é o texto renderizado dos subcampos; reconstruir o objeto
