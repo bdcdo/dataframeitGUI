@@ -129,6 +129,26 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
     expect(errors[0].chosenValue).toBeUndefined();
   });
 
+  // O mesmo ponteiro cruzado em campo `multi`, que tem caminho próprio: sem a
+  // guarda, os conjuntos da response alheia coincidiriam com os do LLM e o
+  // erro sumiria. O par de controle, no mesmo documento, é quem separa isso da
+  // simples ausência de response escolhida.
+  it.each([
+    ["de outro documento, não silencia o erro", "doc2", 1],
+    ["do mesmo documento, concorda e não é erro", "doc1", 0],
+  ])("multi: resposta escolhida %s", (_nome, documentId, esperado) => {
+    const { errors } = run({
+      fields: [field({ name: "x", type: "multi", options: ["a", "b"] })],
+      responses: [
+        response({ id: "rllm", respondent_type: "llm", answers: { x: ["a"] } }),
+        response({ id: "rh", document_id: documentId, answers: { x: ["a"] } }),
+      ],
+      reviews: [review({ chosen_response_id: "rh", verdict: '{"a":true}' })],
+    });
+
+    expect(errors).toHaveLength(esperado);
+  });
+
   it("conta erro quando o gabarito escolhido difere da resposta do LLM", () => {
     const { errors, reviewedEntries } = run({
       responses: [llmResp, humanResp],

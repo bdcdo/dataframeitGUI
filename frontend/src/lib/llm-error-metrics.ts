@@ -380,7 +380,10 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
 // A response que a arbitragem escolheu, por id e no documento da própria
 // review. A FK de `chosen_response_id` é só `REFERENCES responses(id)`: nada no
 // banco impede que ela aponte para response de outro documento, e comparar (ou
-// exibir) a resposta de outro documento seria pior que não ter nenhuma.
+// exibir) a resposta de outro documento seria pior que não ter nenhuma. O
+// `llm_response_id` de `field_reviews` não precisa da mesma guarda: lá o
+// escopo é garantido na escrita, pelo enfileiramento e pelo trigger de
+// reconciliação, enquanto `chosen_response_id` chega cru do cliente.
 function chosenResponseOf(review: MetricsReview, ctx: MetricsContext): MetricsResponse | undefined {
   if (!review.chosen_response_id) return undefined;
   const response = ctx.responseById.get(review.chosen_response_id);
