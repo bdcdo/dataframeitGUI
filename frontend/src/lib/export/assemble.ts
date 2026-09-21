@@ -148,7 +148,10 @@ function unionOriginalColumns(baseDocs: ExportDocument[]): string[] {
 // Agrupa os veredictos do revisor por documento (valor formatado + comentários).
 // Arbitragem de rodada anterior não é veredito do gabarito corrente, e o
 // comentário dela sai junto, de propósito: foi escrito sobre respostas que a
-// rodada corrente substituiu. A aba Comentários continua a mostrá-lo.
+// rodada corrente substituiu. Sai do arquivo inteiro, não só da célula: o
+// texto do revisor só aparece na coluna `reviewer_comments`, alimentada por
+// estas entradas, e o export não tem aba de comentários (ver o `return` de
+// `assembleExport`). Quem precisar dele lê a tela de Comentários do app.
 function buildVerdictsByDoc(
   reviews: ExportReview[],
   currentRoundId: string | null,
