@@ -248,7 +248,7 @@ describe("resolveError / reopenError", () => {
     expect(supabaseState.writeCalls).toHaveLength(0);
   });
 
-  const prepareInput = { projectId: "p1", documentId: "doc1", fieldName: "x", llmResponseId: "rllm", preferredHumanResponseId: "rh", sourceKind: "comparacao", sourceId: "review1" };
+  const prepareInput = { projectId: "p1", documentId: "doc1", fieldName: "x", llmResponseId: "rllm", preferredHumanResponseId: "rh", sourceKind: "comparacao" as const, sourceId: "review1" };
   function humansInRound(ids: string[], currentRoundId: string | null = "round1") {
     supabaseState.reset({ projects: { data: { current_round_id: currentRoundId } }, responses: { data: ids.map((id) => ({ id })) } });
   }
@@ -275,7 +275,7 @@ describe("resolveError / reopenError", () => {
   it("auto-revisão não troca de humana: sem a do field_reviews na rodada, explica e não chama a RPC", async () => {
     humansInRound(["rh2", "rh3"]);
     const { prepareErrorResolution } = await loadStats();
-    const result = await prepareErrorResolution({ ...prepareInput, sourceKind: "auto_revisao", sourceId: "fr" });
+    const result = await prepareErrorResolution({ ...prepareInput, sourceKind: "auto_revisao" as const, sourceId: "fr" });
     expect(result.context).toBeUndefined();
     expect(result.error).toContain("auto-revisão não está mais ativa");
     expect(hoisted.rpc).not.toHaveBeenCalled();
@@ -285,16 +285,21 @@ describe("resolveError / reopenError", () => {
     humansInRound(["rh2", "rh"]);
     hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
     const { prepareErrorResolution } = await loadStats();
-    await prepareErrorResolution({ ...prepareInput, sourceKind: "auto_revisao", sourceId: "fr" });
+    await prepareErrorResolution({ ...prepareInput, sourceKind: "auto_revisao" as const, sourceId: "fr" });
     expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_human_response_id: "rh" }));
   });
 
-  it.each([["sem humana na rodada", () => humansInRound([])], ["sem rodada corrente", () => humansInRound(["rh"], null)]])("%s explica o bloqueio sem chamar a RPC", async (_name, arrange) => {
+  it.each<[string, () => void, "comparacao" | "auto_revisao", string]>([
+    ["sem humana na rodada", () => humansInRound([]), "comparacao", "Nenhuma resposta humana ativa"],
+    // Sem rodada não adianta refazer revisão nenhuma: a mensagem aponta a causa.
+    ["sem rodada corrente", () => humansInRound(["rh"], null), "comparacao", "sem rodada corrente"],
+    ["auto-revisão sem rodada corrente", () => humansInRound(["rh"], null), "auto_revisao", "sem rodada corrente"],
+  ])("%s explica o bloqueio sem chamar a RPC", async (_name, arrange, sourceKind, message) => {
     arrange();
     const { prepareErrorResolution } = await loadStats();
-    const result = await prepareErrorResolution(prepareInput);
+    const result = await prepareErrorResolution({ ...prepareInput, sourceKind });
     expect(result.context).toBeUndefined();
-    expect(result.error).toContain("Nenhuma resposta humana ativa");
+    expect(result.error).toContain(message);
     expect(hoisted.rpc).not.toHaveBeenCalled();
   });
 });

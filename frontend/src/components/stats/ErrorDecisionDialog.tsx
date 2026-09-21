@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
-  ERROR_DECISION_LABELS, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict, verdictLosesItems,
+  ERROR_DECISION_LABELS, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict, prefillLosesItems,
   type ErrorDecision, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
 import { parsePydanticFields } from "@/lib/pydantic-field";
@@ -101,7 +101,7 @@ function verdictHint(field: PydanticField, error: LlmError, matched: boolean): s
   if (!matched) return "Essa resposta saiu do formulário; escolha a opção equivalente.";
   const existing = effectiveErrorResolution(error.resolution);
   if (existing.status === "approved" && existing.isLlmError) return null;
-  return verdictLosesItems(field, error.chosenVerdict)
+  return prefillLosesItems(field, error.chosenVerdict, error.chosenValue)
     ? "Parte dessa resposta saiu do formulário; confira as opções marcadas antes de confirmar."
     : null;
 }

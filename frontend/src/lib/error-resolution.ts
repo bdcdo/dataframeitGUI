@@ -118,8 +118,10 @@ function prefillSingle(field: PydanticField, value: unknown): string | undefined
 function prefillMulti(field: PydanticField, value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const kept = new Set(value.map((item) => currentOption(field, item)).filter((item): item is string => item !== undefined));
+  // No máximo um "Outro": o controle só exibe o primeiro, e um segundo iria
+  // ao gabarito sem nunca ter aparecido na tela.
   const chosen = [...(field.options ?? []).filter((option) => kept.has(option)),
-    ...[...kept].filter((item) => !field.options?.includes(item))];
+    ...[...kept].filter((item) => !field.options?.includes(item)).slice(0, 1)];
   return chosen.length > 0 ? chosen : undefined;
 }
 
@@ -133,13 +135,18 @@ function verdictMultiItems(verdict: string): string[] | undefined {
 }
 
 /**
- * Se o veredito de um `multi` marca alguma opção que não cabe mais no
- * formulário. O seletor pré-marca só as que cabem, e sem este aviso o revisor
- * confirmaria um subconjunto achando que ratifica o veredito inteiro.
+ * Se a fonte do valor inicial de um `multi` marca algo que não cabe mais no
+ * formulário. O seletor pré-marca só o que cabe, e sem este aviso o revisor
+ * confirmaria um subconjunto achando que ratifica a resposta inteira. A fonte
+ * é a mesma de `prefillFromVerdict` e do seu fallback, na mesma ordem: os
+ * itens do JSON do veredito; quando o veredito é texto renderizado (um `multi`
+ * votado em card, o snapshot humano da auto-revisão), a forma crua.
  */
-export function verdictLosesItems(field: PydanticField, verdict: string): boolean {
+export function prefillLosesItems(field: PydanticField, verdict: string, rawValue?: unknown): boolean {
   if (field.type !== "multi") return false;
-  return (verdictMultiItems(verdict) ?? []).some((item) => currentOption(field, item) === undefined);
+  const items = verdictMultiItems(verdict) ?? (Array.isArray(rawValue) ? rawValue : []);
+  const kept = prefillMulti(field, items) ?? [];
+  return kept.length < new Set(items.map((item) => (typeof item === "string" ? item.trim() : item))).size;
 }
 
 function prefillGroup(value: unknown): unknown {

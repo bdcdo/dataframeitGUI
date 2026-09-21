@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
+import type { LlmErrorSource } from "@/lib/llm-error-metrics";
 import { errorResolutionInputSchema, errorResolutionContextSchema, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 async function withResolutionAction(
@@ -245,12 +246,12 @@ type ErrorResolutionIdentity = NonNullable<ErrorResolutionInput["expected"]>;
 // mudaram", que manda recarregar uma página que não vai mudar.
 async function pickHumanResponse(
   supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
-  input: { projectId: string; documentId: string; preferredHumanResponseId?: string | null; sourceKind: string },
-): Promise<string | null> {
+  input: { projectId: string; documentId: string; preferredHumanResponseId?: string | null; sourceKind: LlmErrorSource },
+): Promise<string | "no-round" | null> {
   const { data: project } = await supabase
     .from("projects").select("current_round_id").eq("id", input.projectId).single();
   const currentRoundId = (project?.current_round_id as string | null) ?? null;
-  if (!currentRoundId) return null;
+  if (!currentRoundId) return "no-round";
   const { data: humans } = await supabase
     .from("responses").select("id")
     .eq("project_id", input.projectId).eq("document_id", input.documentId)
@@ -263,12 +264,13 @@ async function pickHumanResponse(
 
 export async function prepareErrorResolution(input: {
   projectId: string; documentId: string; fieldName: string;
-  llmResponseId: string; preferredHumanResponseId?: string | null; sourceKind: string; sourceId: string;
+  llmResponseId: string; preferredHumanResponseId?: string | null; sourceKind: LlmErrorSource; sourceId: string;
 }): Promise<{ context?: ErrorResolutionContext; error?: string }> {
   try {
     if (!await getAuthUser()) return { error: "Não autenticado" };
     const supabase = await createSupabaseServer();
     const humanResponseId = await pickHumanResponse(supabase, input);
+    if (humanResponseId === "no-round") return { error: "O projeto está sem rodada corrente. Abra uma rodada antes de decidir." };
     if (!humanResponseId) {
       return { error: input.sourceKind === "auto_revisao"
         ? "A resposta humana desta auto-revisão não está mais ativa na rodada. Refaça a auto-revisão antes de decidir."
