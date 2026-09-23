@@ -1,19 +1,21 @@
--- #678: `lottery_doc_stats.human_coding_count` contava rascunho nunca
--- submetido como codificação.
+-- #678: `lottery_doc_stats.human_coding_count` contava codificação parcial
+-- como codificação.
 --
 -- `is_partial` tem duas semânticas conforme o respondente. Para humano
--- significa "nunca submetida": o valor sai do botão, não do preenchimento
--- (`actions/responses.ts`, `isAutoSave`), com cliquet — uma vez enviada,
--- auto-save posterior não rebaixa o sinal. Para LLM significa "cobertura
--- abaixo do limiar da run", e a CHECK `responses_partial_llm_not_latest` já
--- garante que uma resposta LLM parcial nunca seja `is_latest`.
+-- registra o veredito da régua de completude sobre o conjunto gravado, no
+-- momento da escrita (`buildSaveWrite` em `actions/responses.ts`); linhas do
+-- auto-save, removido no #608, também carregam `true`. Para LLM significa
+-- "cobertura abaixo do limiar da run", e a CHECK
+-- `responses_partial_llm_not_latest` já garante que uma resposta LLM parcial
+-- nunca seja `is_latest`.
 --
 -- Daí a assimetria que produziu o defeito: `is_latest` equivale a "publicada"
--- para LLM, mas para humano significa apenas "a mais recente", submetida ou
--- não. A LATERAL abaixo usava `is_latest` como proxy de "codificou", então um
--- auto-save bastava para o documento sair da fila de codificação (o sorteio o
--- considerava coberto) e entrar na de comparação. Medido em 2026-08-10 sobre
--- dump de produção: 21 dos 194 documentos ativos do projeto Zolgensma.
+-- para LLM, mas para humano significa apenas "a mais recente", completa ou
+-- não. A LATERAL abaixo usava `is_latest` como proxy de "codificou", então uma
+-- gravação parcial bastava para o documento sair da fila de codificação (o
+-- sorteio o considerava coberto) e entrar na de comparação. Medido em
+-- 2026-08-10 sobre dump de produção: 21 dos 194 documentos ativos do projeto
+-- Zolgensma.
 --
 -- A regra correta já existia no projeto — a auto-revisão exige
 -- `is_partial = false` em seis camadas independentes. Era a comparação/sorteio

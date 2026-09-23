@@ -371,7 +371,7 @@ const invariants: Invariant[] = [
   {
     name: "comparacao-apoiada-so-em-rascunho",
     motivation:
-      "#678: `is_partial` humano significa 'nunca submetida', mas sorteio e comparação usavam `is_latest` como proxy de 'codificou' — 21 dos 194 documentos ativos do Zolgensma entraram na fila de comparação apoiados numa codificação que o pesquisador nunca enviou. Corrigido em duas fronteiras (view lottery_doc_stats e regra 2 de responseQualifiesForVersion); FAIL aqui = alguma delas voltou a contar rascunho, ou um canal de escrita novo criou comparação sem checar submissão",
+      "#678: `is_partial` humano é o veredito da régua de completude sobre o conjunto gravado (true também nas linhas do auto-save removido no #608), mas sorteio e comparação usavam `is_latest` como proxy de 'codificou' — 21 dos 194 documentos ativos do Zolgensma entraram na fila de comparação apoiados numa codificação parcial. Corrigido em duas fronteiras (view lottery_doc_stats e regra 2 de responseQualifiesForVersion); FAIL aqui = alguma delas voltou a contar rascunho, ou um canal de escrita novo criou comparação sem checar submissão",
     run: async () => {
       const active = await activeDocIds();
       const [assignments, responses] = await Promise.all([

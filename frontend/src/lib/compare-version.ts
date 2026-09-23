@@ -182,18 +182,18 @@ export function versionGate(project: ProjectVersionRow): {
 //      mais recente no dedup de documentos, ou após unificação de membros) tem
 //      is_latest=false e não deve reaparecer como segundo card / inflar a
 //      contagem. Antes a cláusula mantinha humano por engano;
-//   2. rascunhos (is_partial=true) ficam de fora. Para humano, `is_partial`
-//      significa "nunca submetida" — o valor sai do botão, não do
-//      preenchimento (`actions/responses.ts`, `isAutoSave`), com cliquet: uma
-//      vez enviada, auto-save posterior não rebaixa o sinal. Para LLM
-//      significa "cobertura abaixo do limiar", e a CHECK
-//      `responses_partial_llm_not_latest` já garante que parcial nunca seja
-//      is_latest — logo esta regra é redundante para LLM e load-bearing para
-//      humano. Sem ela, `is_latest` virava proxy de "codificou" e um rascunho
-//      auto-salvo tirava o documento da fila do próprio pesquisador e o
-//      empurrava para a Comparação (#678). A auto-revisão já exigia
-//      `is_partial = false` em seis camadas; a comparação era a metade do
-//      sistema que não aplicava a regra;
+//   2. codificações parciais (is_partial=true) ficam de fora. Para humano,
+//      `is_partial` registra o veredito da régua de completude sobre o
+//      conjunto gravado, no momento da escrita (`buildSaveWrite` em
+//      actions/responses.ts), contra o carimbo per-campo: uma obrigatória
+//      criada depois não rebaixa a codificação. É a mesma avaliação que diz ao
+//      pesquisador quais perguntas faltam, então contar aqui o que ela
+//      reprovou faria a comparação discordar da tela de codificação. Linhas
+//      gravadas pelo auto-save, removido no #608, também carregam `true` e
+//      seguem de fora. Para LLM significa "cobertura abaixo do limiar", e a
+//      CHECK `responses_partial_llm_not_latest` já garante que parcial nunca
+//      seja is_latest, logo a regra só pesa para humano. Sem ela, `is_latest`
+//      virava proxy de "codificou" (#678);
 //   3. sem filtro de versão (minVersion null = filtro "all"), qualifica;
 //   4. respostas pré-versionamento (pydantic_hash NULL, gravadas antes da
 //      migration 20260420) são descartadas com filtro ativo — não há como
