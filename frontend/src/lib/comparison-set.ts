@@ -90,6 +90,23 @@ export function minimumHumansToTrigger(rule: Omit<TriggerRule, "comparisonInclud
   return rule.mode === "compare_humans" ? (rule.minResponsesForComparison ?? 2) : 1;
 }
 
+function llmEntersTrigger(rule: TriggerRule): boolean {
+  return rule.mode === "compare_llm" || rule.comparisonIncludesLlm === true;
+}
+
+function insufficientReason(
+  rule: TriggerRule,
+  humans: number,
+  minHumans: number,
+  hasLlm: boolean,
+  triggeringCount: number,
+): Extract<TriggerVerdict, { kind: "insufficient" }>["reason"] | null {
+  if (humans < minHumans) return "few_humans";
+  if (rule.mode === "compare_llm" && !hasLlm) return "no_llm";
+  if (triggeringCount < 2) return "needs_two_responses";
+  return null;
+}
+
 function divergence(
   fields: PydanticField[],
   responses: readonly ComparisonCandidate[],
@@ -131,23 +148,14 @@ export function comparisonSet<R extends ComparisonCandidate>(
     },
     trigger(rule) {
       const minHumans = minimumHumansToTrigger(rule);
-      const base = { humans: humanRespondentCount, minHumans };
-      if (humanRespondentCount < minHumans) {
-        return { kind: "insufficient", reason: "few_humans", ...base };
-      }
-      if (rule.mode === "compare_llm" && !llm) {
-        return { kind: "insufficient", reason: "no_llm", ...base };
-      }
-      const llmTriggers = rule.mode === "compare_llm" || rule.comparisonIncludesLlm === true;
-      const triggering = llmTriggers || !llm ? counted : humans;
-      if (triggering.length < 2) {
-        return { kind: "insufficient", reason: "needs_two_responses", ...base };
-      }
+      const triggering = llmEntersTrigger(rule) ? counted : humans;
+      const reason = insufficientReason(rule, humanRespondentCount, minHumans, llm !== null, triggering.length);
+      if (reason) return { kind: "insufficient", reason, humans: humanRespondentCount, minHumans };
+      // Mesmo tamanho = mesmo conjunto (sem LLM, ou LLM no disparo): reaproveita
+      // a divergência a resolver em vez de recalcular.
       const divergentFields =
-        triggering === counted ? resolve() : divergence(fields, triggering, equivalencesByField);
-      return divergentFields.length === 0
-        ? { kind: "consensus" }
-        : { kind: "divergent", divergentFields };
+        triggering.length === counted.length ? resolve() : divergence(fields, triggering, equivalencesByField);
+      return divergentFields.length === 0 ? { kind: "consensus" } : { kind: "divergent", divergentFields };
     },
   };
 }
