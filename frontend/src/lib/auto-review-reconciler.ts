@@ -1,7 +1,7 @@
 import "server-only";
 
 import { computeBacklogRows, type HumanResponseRow, type LlmResponseRow } from "@/lib/auto-review-backlog";
-import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-queue";
+import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-divergence";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { PydanticField } from "@/lib/types";
 

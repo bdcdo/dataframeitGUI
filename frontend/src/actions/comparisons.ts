@@ -8,8 +8,8 @@ import {
   scanComparisonBacklog,
   assignComparisonReviewer,
   loadOpenComparisonLoad,
-  type ComparisonMode,
 } from "@/lib/auto-comparison";
+import type { ComparisonMode } from "@/lib/comparison-set";
 
 // Re-sorteia revisores para todo documento divergente sem comparação ativa
 // (o "backlog" sem revisor). Disparada por setCanCompare ao habilitar/desabilitar

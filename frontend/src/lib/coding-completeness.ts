@@ -136,6 +136,8 @@ export function missingRequiredHumanFields(
 // Quem permanece staleness-BLIND de propósito é a promoção a `concluido` em
 // syncCodingAssignmentStatus (coding-sync): lá é o guard de não-rebaixar um
 // assignment já concluído que sustenta a invariante, não o carimbo per-campo.
+// A comparação (fila, fecho, gatilho) não chama esta função: lê o veredito
+// gravado em `is_partial`, ver comparison-set.ts.
 export function isCodingComplete(
   fields: PydanticField[],
   answers: Record<string, unknown>,

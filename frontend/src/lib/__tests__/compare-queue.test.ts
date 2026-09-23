@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { buildEquivalenceMap } from "@/lib/compare-divergence";
 import {
-  buildEquivalenceMap,
   indexResponsesByDoc,
   extractRespondentNames,
   buildAvailableVersions,
@@ -244,6 +244,31 @@ describe("qualifyDocumentsForCompare", () => {
       response({ id: "r2", respondent_id: "u2", answers: { a: "alpha" } }),
     );
     const result = qualifyDocumentsForCompare(responsesByDoc, doc1Meta(), baseCtx());
+    expect(result.qualifiedDocIds).toEqual([]);
+  });
+
+  it("divergência fundida por equivalência registrada tira o doc da fila", () => {
+    const responsesByDoc = doc1Responses(
+      response({ id: "r1", answers: { a: "alpha" } }),
+      response({ id: "r2", respondent_id: "u2", answers: { a: "beta" } }),
+    );
+    const equivByDocField = buildEquivalenceMap([
+      {
+        id: "eq1",
+        document_id: "doc1",
+        field_name: "a",
+        response_a_id: "r1",
+        response_b_id: "r2",
+        reviewer_id: "rev",
+        response_a_answer_snapshot: "alpha",
+        response_b_answer_snapshot: "beta",
+      },
+    ]);
+    const result = qualifyDocumentsForCompare(
+      responsesByDoc,
+      doc1Meta(),
+      baseCtx({ equivByDocField }),
+    );
     expect(result.qualifiedDocIds).toEqual([]);
   });
 

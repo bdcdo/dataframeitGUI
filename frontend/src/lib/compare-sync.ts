@@ -1,18 +1,14 @@
 import "server-only";
 
 import type { SupabaseServerClient } from "@/lib/supabase/server";
-import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import type { PydanticField } from "@/lib/types";
+import { buildEquivalenceMap } from "@/lib/compare-divergence";
+import { comparisonSet, type ComparisonCandidate } from "@/lib/comparison-set";
 import {
   resolveCompareStatus,
   type CompareAssignmentStatus,
 } from "@/lib/compare-assignment-status";
-import {
-  responseQualifiesForVersion,
-  versionGate,
-  type VersionedResponse,
-} from "@/lib/compare-version";
-import type { EquivalencePair } from "@/lib/equivalence";
+import { versionGate } from "@/lib/compare-version";
 
 const PG_UNIQUE_VIOLATION = "23505";
 // O índice parcial criado pelo #490 (uma comparação ATIVA por documento;
@@ -186,7 +182,7 @@ export async function syncCompareAssignment(
     supabase
       .from("responses")
       .select(
-        "id, respondent_type, is_latest, is_partial, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, answers, answer_field_hashes",
+        "id, respondent_type, respondent_id, is_latest, is_partial, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, answers, answer_field_hashes",
       )
       .eq("project_id", projectId)
       .eq("document_id", documentId),
@@ -198,7 +194,9 @@ export async function syncCompareAssignment(
       .eq("reviewer_id", userId),
     supabase
       .from("response_equivalences")
-      .select("field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot")
+      .select(
+        "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot",
+      )
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .is("superseded_at", null),
@@ -208,84 +206,26 @@ export async function syncCompareAssignment(
 
   const fields = (project?.pydantic_fields as PydanticField[]) || [];
 
-  // Conclusão usa o MESMO predicado (`responseQualifiesForVersion`, anti-drift
-  // #217) e o MESMO piso de versão que a página aplica no estado DEFAULT da UI
-  // — derivado de `COMPARE_DEFAULT_VERSION` (compare-filters.ts) via
-  // `resolveMinVersion`, a mesma constante e função que `compare/page.tsx` usa
-  // através de `compareDefaultsForMode`. O default vivo é "latest_major" (#247),
-  // então `minVersion` é o `latestMajorAnchor` do projeto: o fecho considera só
-  // as respostas `is_latest` da MAJOR corrente — exatamente o que a revisora vê
-  // na fila default. Por construção, no estado default a visão e o fecho
-  // coincidem: resolver as divergências visíveis sempre fecha o parecer.
-  //
-  // Codificações de majors anteriores (`is_latest`, schema antigo) e as
-  // pré-versionamento (`pydantic_hash` NULL) ficam de fora do fecho E da fila —
-  // "deixam de contar por padrão" (#247). Isso restaura o acoplamento
-  // visão==fecho que o #218 garantia: antes, com piso `all`, o fecho contava
-  // rodadas antigas que a fila `latest_major` escondia, e o parecer não fechava
-  // apesar de a revisora ter resolvido tudo o que via (regressão do #217).
-  // Codificações SUPERSEDED (`is_latest=false`) seguem fora, como sempre.
-  //
-  // Filtros efêmeros (versão manual mais larga/estreita, `since`, `respondent`)
-  // são lentes de inspeção: NÃO redefinem "concluído". Se a revisora escolher
-  // uma lente mais estreita que o default, a tela pode mostrar menos do que o
-  // fecho exige — comportamento esperado de uma lente, fora do fluxo "default".
-  // Piso `latest_major` + contexto do helper compartilhado `versionGate`
-  // (compare-version.ts) — a MESMA fonte, fallback {0,1,0} e constante
-  // COMPARE_DEFAULT_VERSION que o gatilho (auto-comparison.ts) usa; a página
-  // deriva o contexto da mesma origem mas resolve o piso a partir da URL.
-  const { minVersion, ctx: projectVersionCtx } = versionGate(project ?? {});
-
-  type ActiveResponse = {
-    id: string;
-    answers: Record<string, unknown>;
-    answerFieldHashes: AnswerFieldHashes;
-  };
-  const activeResponses: ActiveResponse[] = (responses ?? [])
-    .filter((r) =>
-      responseQualifiesForVersion(
-        r as unknown as VersionedResponse,
-        minVersion,
-        projectVersionCtx,
-      ),
-    )
-    .map((r) => ({
-      id: r.id,
-      answers: (r.answers ?? {}) as Record<string, unknown>,
-      answerFieldHashes: r.answer_field_hashes as AnswerFieldHashes,
-    }));
-
-  // Sem ao menos 2 respostas qualificadas sob o piso corrente não há PAR a
-  // comparar — então não há divergência a "resolver". Aqui o conjunto vazio/único
-  // faria `computeDivergentFieldNames` devolver [] e o status virar "concluido",
-  // marcando como revisado um doc que ninguém comparou na versão corrente (ex.:
-  // doc só com codificações pré-versionamento, ou cujas rodadas antigas caíram
-  // abaixo do piso após um bump estrutural). Preserva o status atual: a fila
-  // default também não mostra o doc (filtro de mín. humanos), então o assignment
-  // fica fora de vista sem fechar à toa. "concluido" continua reservado para o
-  // caso legítimo de ≥2 respostas cujas divergências foram todas resolvidas/fundidas
-  // (#217). Não regride um assignment já concluído nem reabre — só evita o fecho
-  // espúrio.
-  if (activeResponses.length < 2) return;
-
-  const equivalencesByField = new Map<string, EquivalencePair[]>();
-  for (const eq of equivalences ?? []) {
-    if (!equivalencesByField.has(eq.field_name)) {
-      equivalencesByField.set(eq.field_name, []);
-    }
-    equivalencesByField.get(eq.field_name)!.push({
-      response_a_id: eq.response_a_id,
-      response_b_id: eq.response_b_id,
-      response_a_answer_snapshot: eq.response_a_answer_snapshot,
-      response_b_answer_snapshot: eq.response_b_answer_snapshot,
-    });
-  }
-
-  const divergentFields = computeDivergentFieldNames(
+  // O fecho lê a divergência a resolver do conjunto de comparação
+  // (comparison-set.ts), a mesma que a fila mostra no estado default: resolver
+  // tudo o que a tela mostra fecha o parecer (#217/#218). O piso é o
+  // `versionGate`, o mesmo do gatilho; lentes da URL não redefinem "concluído".
+  const { minVersion, ctx: versionCtx } = versionGate(project ?? {});
+  const set = comparisonSet({
     fields,
-    activeResponses,
-    equivalencesByField,
-  );
+    responses: (responses ?? []) as unknown as ComparisonCandidate[],
+    minVersion,
+    versionCtx,
+    equivalencesByField: buildEquivalenceMap(equivalences).get(documentId),
+  });
+
+  // Sem ao menos 2 respostas que contam não há par a comparar, e a divergência
+  // vazia viraria "concluido" num documento que ninguém comparou na versão
+  // corrente (ex.: só codificações pré-versionamento, ou rodadas abaixo do piso
+  // depois de um bump estrutural). Preserva o status atual; "concluido" fica
+  // para o caso de >= 2 respostas com toda divergência resolvida ou fundida.
+  if (set.counted.length < 2) return;
+  const divergentFields = set.toResolve;
 
   // `resolveCompareStatus` trata o caso `divergentFields.length === 0` (ex.:
   // todas as divergências fundidas por equivalência): vira `concluido` em vez de

@@ -8,21 +8,17 @@
 // A página fica responsável só por buscar dados no Supabase, chamar estas
 // funções em sequência e montar as props de <ComparePage>.
 
-import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import type { EquivalenceByDocField, EquivalencePairRow } from "@/lib/compare-divergence";
+import { comparisonSet, type ComparisonSet } from "@/lib/comparison-set";
 import type { CompareFiltersValue } from "@/lib/compare-filters";
 import {
-  responseQualifiesForVersion,
   type ProjectVersionContext,
   type SchemaVersion,
   parseVersionStr,
 } from "@/lib/compare-version";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
-import type { EquivalencePair } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
-import {
-  respondentKey,
-  type CompareResponse,
-} from "@/components/compare/compare-types";
+import type { CompareResponse } from "@/components/compare/compare-types";
 
 export interface CompareDoc {
   id: string;
@@ -53,21 +49,6 @@ export interface DocCoverage {
   divergentCount: number;
   reviewedCount: number;
   assignmentStatus: "pendente" | "em_andamento" | "concluido" | null;
-}
-
-type EquivalencePairRow = EquivalencePair & { id: string; reviewer_id: string | null };
-
-export type EquivalenceByDocField = Map<string, Map<string, EquivalencePairRow[]>>;
-
-export interface EquivalenceRow {
-  id: string;
-  document_id: string;
-  field_name: string;
-  response_a_id: string;
-  response_b_id: string;
-  reviewer_id: string | null;
-  response_a_answer_snapshot: unknown;
-  response_b_answer_snapshot: unknown;
 }
 
 // Row solta o suficiente para aceitar o resultado do select do Supabase (que
@@ -121,30 +102,6 @@ export interface CommentCountRow {
 
 export interface SuggestionCountRow {
   field_name: string;
-}
-
-// Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
-// detection on the server and for fusing answer cards on the client.
-export function buildEquivalenceMap(
-  allEquivalences: readonly EquivalenceRow[] | null,
-): EquivalenceByDocField {
-  const equivByDocField: EquivalenceByDocField = new Map();
-  for (const eq of allEquivalences ?? []) {
-    if (!equivByDocField.has(eq.document_id)) {
-      equivByDocField.set(eq.document_id, new Map());
-    }
-    const fieldMap = equivByDocField.get(eq.document_id)!;
-    if (!fieldMap.has(eq.field_name)) fieldMap.set(eq.field_name, []);
-    fieldMap.get(eq.field_name)!.push({
-      id: eq.id,
-      response_a_id: eq.response_a_id,
-      response_b_id: eq.response_b_id,
-      reviewer_id: eq.reviewer_id ?? null,
-      response_a_answer_snapshot: eq.response_a_answer_snapshot,
-      response_b_answer_snapshot: eq.response_b_answer_snapshot,
-    });
-  }
-  return equivByDocField;
 }
 
 export function indexResponsesByDoc(allResponses: readonly RawResponseRow[] | null): {
@@ -268,28 +225,17 @@ export interface QualifiedDocumentsResult {
   coverageByDoc: Record<string, DocCoverage>;
 }
 
-// Apply version + since + respondent filters per response. A regra de versão
-// (is_latest/humano, pré-versionamento, piso) é compartilhada com
-// compare-sync.ts via responseQualifiesForVersion; aqui adicionamos só os
-// filtros efêmeros de UI (since/respondent).
-interface ResponseFilterParams {
-  minVersion: SchemaVersion | null;
-  projectVersionCtx: ProjectVersionContext;
-  sinceMs: number | null;
-  respondentFilter: string;
-}
-
-function filterQualifiedResponses(
+// Lentes efêmeras da URL (since/respondent). Aplicadas antes do conjunto de
+// comparação, que decide versão, completude e divergência; ver
+// comparison-set.ts.
+function applyQueueLens(
   docResponses: CompareQueueResponse[],
-  params: ResponseFilterParams,
+  sinceMs: number | null,
+  respondentFilter: string,
 ): CompareQueueResponse[] {
   return docResponses.filter((r) => {
-    if (!responseQualifiesForVersion(r, params.minVersion, params.projectVersionCtx)) return false;
-    if (params.sinceMs !== null && new Date(r.created_at).getTime() < params.sinceMs) return false;
-    if (params.respondentFilter !== "all" && r.respondent_name !== params.respondentFilter) {
-      return false;
-    }
-    return true;
+    if (sinceMs !== null && new Date(r.created_at).getTime() < sinceMs) return false;
+    return respondentFilter === "all" || r.respondent_name === respondentFilter;
   });
 }
 
@@ -302,14 +248,11 @@ interface CoverageMetrics {
 }
 
 function computeCoverageMetrics(
-  qualifiedResponses: CompareQueueResponse[],
+  set: ComparisonSet<CompareQueueResponse>,
   assignedUsers: Set<string>,
 ): CoverageMetrics {
-  // Conta respondentes humanos DISTINTOS (não linhas) — `respondentKey`
-  // compartilha a regra de dedup com o aviso "não preencheu" do painel.
-  const humanCount = new Set(
-    qualifiedResponses.filter((r) => r.respondent_type === "humano").map(respondentKey),
-  ).size;
+  const qualifiedResponses = set.counted;
+  const humanCount = set.humanRespondentCount;
   const totalCount = qualifiedResponses.length;
   const assignedCodingCount = assignedUsers.size;
   const humansFromAssigned = new Set(
@@ -353,34 +296,23 @@ function qualifyDocument(
   docResponses: CompareQueueResponse[],
   ctx: QualifyDocumentsContext,
 ): QualifiedDocument | null {
-  const qualifiedResponses = filterQualifiedResponses(docResponses, {
+  const set = comparisonSet({
+    fields: ctx.fields,
+    responses: applyQueueLens(docResponses, ctx.sinceMs, ctx.filters.respondent),
     minVersion: ctx.minVersion,
-    projectVersionCtx: ctx.projectVersionCtx,
-    sinceMs: ctx.sinceMs,
-    respondentFilter: ctx.filters.respondent,
+    versionCtx: ctx.projectVersionCtx,
+    equivalencesByField: ctx.equivByDocField.get(docId),
   });
   const assignedUsers = ctx.codingAssignedByDoc.get(docId) ?? new Set<string>();
-  const metrics = computeCoverageMetrics(qualifiedResponses, assignedUsers);
+  const metrics = computeCoverageMetrics(set, assignedUsers);
 
   if (!meetsCoverageThresholds(metrics, ctx.filters)) return null;
 
-  // Equivalence-aware divergence detection (free-text fields can have
-  // responses fused via the reviewer's "marcar como equivalentes" action).
-  // `answerFieldHashes` torna a comparação consciente de staleness: campos
-  // adicionados ao schema depois de uma codificação não geram falso "(vazio)".
-  const divergent = computeDivergentFieldNames(
-    ctx.fields,
-    qualifiedResponses.map((r) => ({
-      id: r.id,
-      answers: r.answers,
-      answerFieldHashes: r.answer_field_hashes,
-    })),
-    ctx.equivByDocField.get(docId),
-  );
+  const divergent = set.toResolve;
   if (divergent.length === 0) return null;
 
   return {
-    qualifiedResponses,
+    qualifiedResponses: set.counted,
     divergent,
     coverage: {
       docId,

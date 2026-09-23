@@ -1,7 +1,13 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { buildLoadMap } from "@/lib/load-balancing";
-import { computeDivergentFieldNames } from "@/lib/compare-divergence";
-import { isCodingComplete } from "@/lib/coding-completeness";
+import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-divergence";
+import {
+  comparisonSet,
+  minimumHumansToTrigger,
+  type ComparisonCandidate,
+  type ComparisonMode,
+  type TriggerVerdict,
+} from "@/lib/comparison-set";
 import {
   responseQualifiesForVersion,
   versionGate,
@@ -25,10 +31,6 @@ function queryData<T>(result: QueryResult<T>): T {
   return result.data;
 }
 
-// Modos de automação que materializam uma comparação (assignment type=comparacao)
-// para um revisor terceiro. auto_review_llm e none não passam por aqui.
-export type ComparisonMode = "compare_humans" | "compare_llm";
-
 // Log estruturado JSON com prefixo "[auto-compare]" — pesquisavel em logs
 // Vercel/Fly via `grep '[auto-compare]'`. Espelha o logger de lib/auto-review.ts.
 function log(
@@ -51,7 +53,7 @@ interface ResponseRow {
   // Campos de versão: necessários para aplicar o piso `latest_major` (#247),
   // o MESMO que a fila (compare/page.tsx) e o fecho (compare-sync.ts) usam.
   is_latest?: boolean;
-  // Rascunho nunca submetido; entra na regra 2 de `responseQualifiesForVersion`
+  // Codificação parcial; entra na regra 2 de `responseQualifiesForVersion`
   // (#678). Opcional aqui porque o shape descreve a linha crua vinda do
   // PostgREST; `toVersioned` é quem normaliza para o campo obrigatório de
   // `VersionedResponse`.
@@ -62,14 +64,6 @@ interface ResponseRow {
   schema_version_patch?: number | null;
 }
 
-function toResponseLike(r: ResponseRow) {
-  return {
-    id: r.id,
-    answers: (r.answers as Record<string, unknown>) ?? {},
-    answerFieldHashes: r.answer_field_hashes as AnswerFieldHashes,
-  };
-}
-
 // Colunas SELECT comuns para as queries de `responses` do gatilho: além de
 // answers/hashes, traz os campos de versão para o piso `latest_major` E
 // `is_latest`. O `is_latest` é redundante com o filtro `.eq("is_latest", true)`
@@ -78,7 +72,7 @@ function toResponseLike(r: ResponseRow) {
 // WHERE: se um caller futuro relaxar/copiar a query sem o filtro, o predicado
 // ainda exclui superseded em vez de contá-los (regressão #213).
 // `is_partial` entra pelo mesmo motivo que `is_latest`: a regra 2 do predicado
-// (rascunho → fora) precisa decidir sobre o dado, e nenhuma das queries abaixo
+// (parcial → fora) precisa decidir sobre o dado, e nenhuma das queries abaixo
 // filtra por ela no WHERE. Trazê-la aqui é o que faz o #678 ficar corrigido nas
 // cinco queries de uma vez, em vez de exigir a cláusula repetida em cada uma.
 const RESPONSE_VERSION_COLS =
@@ -117,28 +111,22 @@ function toVersioned(
   };
 }
 
-function buildEquivByField(
-  rows: Array<{
-    field_name: string;
-    response_a_id: string;
-    response_b_id: string;
-    response_a_answer_snapshot: unknown;
-    response_b_answer_snapshot: unknown;
-  }> | null,
-): Map<string, EquivalencePair[]> {
-  const map = new Map<string, EquivalencePair[]>();
-  for (const eq of rows ?? []) {
-    const list = map.get(eq.field_name) ?? [];
-    list.push({
-      response_a_id: eq.response_a_id,
-      response_b_id: eq.response_b_id,
-      response_a_answer_snapshot: eq.response_a_answer_snapshot,
-      response_b_answer_snapshot: eq.response_b_answer_snapshot,
-    });
-    map.set(eq.field_name, list);
-  }
-  return map;
+function toCandidate(
+  r: ResponseRow,
+  respondentType: "humano" | "llm",
+): ComparisonCandidate {
+  return {
+    ...toVersioned(r, respondentType),
+    id: r.id,
+    respondent_id: r.respondent_id ?? null,
+    answers: r.answers,
+    answer_field_hashes: r.answer_field_hashes,
+  };
 }
+
+// Colunas de `response_equivalences` que `buildEquivalenceMap` espera.
+const EQUIVALENCE_COLS =
+  "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot";
 
 export async function loadOpenComparisonLoad(
   admin: SupabaseDataClient,
@@ -279,76 +267,9 @@ interface ComparisonAnalysisInput {
   mode: ComparisonMode;
 }
 
-type ComparisonAnalysis =
-  | {
-      kind: "insufficient";
-      logFields: Record<string, unknown>;
-    }
-  | {
-      kind: "consensus";
-    }
-  | {
-      kind: "divergent";
-      divergentFields: string[];
-      coderIds: Set<string>;
-    };
-
-function collectRespondentIds(responses: ResponseRow[]): Set<string> {
-  const ids = responses
-    .map((response) => response.respondent_id)
-    .filter((id): id is string => Boolean(id));
-  return new Set(ids);
-}
-
-type ComparisonVersionGate = ReturnType<typeof versionGate>;
-
-function completeQualifyingHumans(
-  fields: PydanticField[],
-  responses: ResponseRow[],
-  gate: ComparisonVersionGate,
-): ResponseRow[] {
-  return responses
-    .filter((response) => isCodingComplete(fields, response.answers ?? {}))
-    .filter((response) =>
-      responseQualifiesForVersion(
-        toVersioned(response, "humano"),
-        gate.minVersion,
-        gate.ctx,
-      ),
-    );
-}
-
-function qualifyingLlmResponse(
-  response: ResponseRow | null | undefined,
-  gate: ComparisonVersionGate,
-): ResponseRow | null {
-  if (!response) return null;
-  return responseQualifiesForVersion(
-    toVersioned(response, "llm"),
-    gate.minVersion,
-    gate.ctx,
-  )
-    ? response
-    : null;
-}
-
-function minimumHumanResponses(
-  mode: ComparisonMode,
-  configuredMinimum: number | null | undefined,
-): number {
-  return mode === "compare_humans" ? (configuredMinimum ?? 2) : 1;
-}
-
-function divergenceResponses(
-  completeHumans: ResponseRow[],
-  llmResponse: ResponseRow | null,
-  includeLlm: boolean,
-) {
-  const responses = completeHumans.map(toResponseLike);
-  if (includeLlm && llmResponse) responses.push(toResponseLike(llmResponse));
-  return responses;
-}
-
+// Regra do disparo: comparison-set.ts. `coderIds` sai de TODAS as humanas
+// do documento, inclusive as que não contam (parciais ou abaixo do piso):
+// quem codificou não revisa o próprio documento.
 function analyzeComparison({
   fields,
   project,
@@ -356,54 +277,27 @@ function analyzeComparison({
   llmResponse,
   equivalencesByField,
   mode,
-}: ComparisonAnalysisInput): ComparisonAnalysis {
-  const gate = versionGate(project);
-
-  // Só codificações humanas completas e no piso `latest_major` contam para o
-  // mínimo e para a divergência. Todos os respondentes continuam excluídos do
-  // pool, inclusive quando a resposta está incompleta ou abaixo desse piso.
-  const completeHumans = completeQualifyingHumans(fields, humanResponses, gate);
-  const minHumans = minimumHumanResponses(
-    mode,
-    project.min_responses_for_comparison,
-  );
-  if (completeHumans.length < minHumans) {
-    return {
-      kind: "insufficient",
-      logFields: { completeHumans: completeHumans.length, minHumans },
-    };
-  }
-
-  // LLM também passa pelo piso de versão: uma resposta de schema antigo não
-  // conta para comparação nem para o mínimo do modo compare_llm.
-  const qualifyingLlm = qualifyingLlmResponse(llmResponse, gate);
-  if (mode === "compare_llm" && !qualifyingLlm) {
-    return { kind: "insufficient", logFields: { reason: "no_llm" } };
-  }
-
-  const responsesForDivergence = divergenceResponses(
-    completeHumans,
-    qualifyingLlm,
-    mode === "compare_llm" || project.comparison_includes_llm === true,
-  );
-  if (responsesForDivergence.length < 2) {
-    return {
-      kind: "insufficient",
-      logFields: { reason: "needs_two_responses" },
-    };
-  }
-
-  const divergentFields = computeDivergentFieldNames(
+}: ComparisonAnalysisInput): { verdict: TriggerVerdict; coderIds: Set<string> } {
+  const { minVersion, ctx } = versionGate(project);
+  const responses = humanResponses.map((r) => toCandidate(r, "humano"));
+  if (llmResponse) responses.push(toCandidate(llmResponse, "llm"));
+  const verdict = comparisonSet({
     fields,
-    responsesForDivergence,
+    responses,
+    minVersion,
+    versionCtx: ctx,
     equivalencesByField,
+  }).trigger({
+    mode,
+    minResponsesForComparison: project.min_responses_for_comparison,
+    comparisonIncludesLlm: project.comparison_includes_llm,
+  });
+  const coderIds = new Set(
+    humanResponses
+      .map((response) => response.respondent_id)
+      .filter((id): id is string => Boolean(id)),
   );
-  if (divergentFields.length === 0) return { kind: "consensus" };
-  return {
-    kind: "divergent",
-    divergentFields,
-    coderIds: collectRespondentIds(humanResponses),
-  };
+  return { verdict, coderIds };
 }
 
 async function loadAutoComparisonContext(
@@ -449,14 +343,12 @@ async function loadAutoComparisonContext(
       .eq("respondent_type", "llm")
       .eq("is_latest", true)
       .maybeSingle(),
-      admin
-        .from("response_equivalences")
-        .select(
-          "field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot",
-        )
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .is("superseded_at", null),
+    admin
+      .from("response_equivalences")
+      .select(EQUIVALENCE_COLS)
+      .eq("project_id", projectId)
+      .eq("document_id", documentId)
+      .is("superseded_at", null),
     admin
       .from("assignments")
       .select("id")
@@ -472,7 +364,7 @@ async function loadAutoComparisonContext(
     document: queryData(documentResult),
     humanResponses: (queryData(humanResponsesResult) ?? []) as ResponseRow[],
     llmResponse: queryData(llmResponseResult) as ResponseRow | null,
-    equivalences: queryData(equivalencesResult),
+    equivalences: queryData(equivalencesResult) as EquivalenceRow[] | null,
     activeAssignments: queryData(activeAssignmentsResult) ?? [],
   };
 }
@@ -482,11 +374,8 @@ async function loadAutoComparisonContext(
 // codificacao virar "concluido". Usa admin client porque a policy de assignments
 // restringe INSERT a coordenadores; aqui o pesquisador precisa criar a fila.
 //
-// "o minimo necessario para liberar a revisao":
-//   compare_humans → >= min_responses_for_comparison humanos completos
-//   compare_llm    → >= 1 humano completo + resposta LLM
-// comparison_includes_llm (so compare_humans) decide se o LLM entra no calculo
-// de divergencia que dispara.
+// O que libera a revisão (mínimo de humanos, papel do LLM por modo) é a
+// divergência que dispara, definida em comparison-set.ts.
 export async function createAutoComparisonIfDiverges(
   projectId: string,
   documentId: string,
@@ -518,24 +407,26 @@ export async function createAutoComparisonIfDiverges(
     return { assigned: false, noPool: false };
   }
 
-  const analysis = analyzeComparison({
+  const { verdict, coderIds } = analyzeComparison({
     fields,
     project: context.project,
     humanResponses: context.humanResponses,
     llmResponse: context.llmResponse,
-    equivalencesByField: buildEquivByField(context.equivalences),
+    equivalencesByField: buildEquivalenceMap(context.equivalences).get(documentId),
     mode,
   });
-  if (analysis.kind === "insufficient") {
+  if (verdict.kind === "insufficient") {
     log("skip_insufficient", {
       projectId,
       documentId,
       mode,
-      ...analysis.logFields,
+      reason: verdict.reason,
+      humans: verdict.humans,
+      minHumans: verdict.minHumans,
     });
     return { assigned: false, noPool: false };
   }
-  if (analysis.kind === "consensus") {
+  if (verdict.kind === "consensus") {
     log("consensus", {
       projectId,
       documentId,
@@ -549,7 +440,7 @@ export async function createAutoComparisonIfDiverges(
     admin,
     projectId,
     documentId,
-    analysis.coderIds,
+    coderIds,
     undefined,
     admin,
   );
@@ -557,8 +448,8 @@ export async function createAutoComparisonIfDiverges(
     projectId,
     documentId,
     mode,
-    divergentCount: analysis.divergentFields.length,
-    divergentFields: analysis.divergentFields,
+    divergentCount: verdict.divergentFields.length,
+    divergentFields: verdict.divergentFields,
   });
   return result;
 }
@@ -582,15 +473,6 @@ interface HumanResponseMeta extends Pick<
 
 interface DocumentResponseRow extends ResponseRow {
   document_id: string;
-}
-
-interface DocumentEquivalenceRow {
-  document_id: string;
-  field_name: string;
-  response_a_id: string;
-  response_b_id: string;
-  response_a_answer_snapshot: unknown;
-  response_b_answer_snapshot: unknown;
 }
 
 function candidateDocumentIds(
@@ -618,10 +500,10 @@ function candidateDocumentIds(
     humansByDoc.set(response.document_id, respondents);
   }
 
-  const minHumans = minimumHumanResponses(
+  const minHumans = minimumHumansToTrigger({
     mode,
-    project.min_responses_for_comparison,
-  );
+    minResponsesForComparison: project.min_responses_for_comparison,
+  });
   return [...humansByDoc.entries()]
     .filter(
       ([documentId, respondents]) =>
@@ -698,27 +580,6 @@ function groupHumanResponsesByDocument(
   return byDocument;
 }
 
-function groupEquivalencesByDocument(
-  equivalences: DocumentEquivalenceRow[],
-): Map<string, Map<string, EquivalencePair[]>> {
-  const byDocument = new Map<string, Map<string, EquivalencePair[]>>();
-  for (const equivalence of equivalences) {
-    const byField =
-      byDocument.get(equivalence.document_id) ??
-      new Map<string, EquivalencePair[]>();
-    const fieldEquivalences = byField.get(equivalence.field_name) ?? [];
-    fieldEquivalences.push({
-      response_a_id: equivalence.response_a_id,
-      response_b_id: equivalence.response_b_id,
-      response_a_answer_snapshot: equivalence.response_a_answer_snapshot,
-      response_b_answer_snapshot: equivalence.response_b_answer_snapshot,
-    });
-    byField.set(equivalence.field_name, fieldEquivalences);
-    byDocument.set(equivalence.document_id, byField);
-  }
-  return byDocument;
-}
-
 async function loadBacklogComparisonData(
   admin: SupabaseDataClient,
   projectId: string,
@@ -746,9 +607,7 @@ async function loadBacklogComparisonData(
         .in("document_id", documentIds),
       admin
         .from("response_equivalences")
-        .select(
-          "document_id, field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot",
-        )
+        .select(EQUIVALENCE_COLS)
         .eq("project_id", projectId)
         .in("document_id", documentIds)
         .is("superseded_at", null),
@@ -757,14 +616,13 @@ async function loadBacklogComparisonData(
   const humans = (queryData(humanResponsesResult) ??
     []) as DocumentResponseRow[];
   const llms = (queryData(llmResponsesResult) ?? []) as DocumentResponseRow[];
-  const equivalences = (queryData(equivalencesResult) ??
-    []) as DocumentEquivalenceRow[];
+  const equivalences = (queryData(equivalencesResult) ?? []) as EquivalenceRow[];
   return {
     humansByDocument: groupHumanResponsesByDocument(humans),
     llmByDocument: new Map(
       llms.map((response) => [response.document_id, response]),
     ),
-    equivalencesByDocument: groupEquivalencesByDocument(equivalences),
+    equivalencesByDocument: buildEquivalenceMap(equivalences),
   };
 }
 
@@ -787,7 +645,7 @@ export async function scanComparisonBacklog(
   );
   const result: Array<{ documentId: string; coderIds: Set<string> }> = [];
   for (const documentId of candidates.documentIds) {
-    const analysis = analyzeComparison({
+    const { verdict, coderIds } = analyzeComparison({
       fields: candidates.project.pydantic_fields,
       project: candidates.project,
       humanResponses: comparisonData.humansByDocument.get(documentId) ?? [],
@@ -796,8 +654,8 @@ export async function scanComparisonBacklog(
         comparisonData.equivalencesByDocument.get(documentId),
       mode,
     });
-    if (analysis.kind !== "divergent") continue;
-    result.push({ documentId, coderIds: analysis.coderIds });
+    if (verdict.kind !== "divergent") continue;
+    result.push({ documentId, coderIds });
   }
 
   return result;

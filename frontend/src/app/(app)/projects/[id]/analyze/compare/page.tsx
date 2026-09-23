@@ -20,7 +20,6 @@ import {
   formatVersion,
 } from "@/lib/compare-version";
 import {
-  buildEquivalenceMap,
   indexResponsesByDoc,
   extractRespondentNames,
   buildAvailableVersions,
@@ -33,6 +32,7 @@ import {
   sortDocumentsByPendingDivergence,
   serializeEquivalencesForClient,
 } from "@/lib/compare-queue";
+import { buildEquivalenceMap } from "@/lib/compare-divergence";
 import type { PydanticField } from "@/lib/types";
 
 export type { DocCoverage } from "@/lib/compare-queue";

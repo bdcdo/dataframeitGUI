@@ -6,7 +6,7 @@ import {
   type QueryError,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
-import { CURRENT_HASH } from "@/test-utils/comparison-fixtures";
+import { CURRENT_HASH, makeEquivalenceRow } from "@/test-utils/comparison-fixtures";
 
 // compare-sync.ts abre com `import "server-only"`, que LANÇA fora de um Server
 // Component. Mocká-lo para no-op deixa o módulo importável no Vitest (node).
@@ -113,6 +113,19 @@ describe("syncCompareAssignment — piso de versão latest_major (#247/#286)", (
     // Sob latest_major só a/b contam → concordam → sem divergência → concluido.
     expect(updateCallsOf("assignments")).toHaveLength(1);
     expect(updateCallsOf("assignments")[0].payload).toMatchObject({
+      status: "concluido",
+    });
+  });
+
+  it("divergência fundida por equivalência registrada → fecha (concluido)", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    tableData.response_equivalences = [
+      makeEquivalenceRow("decisao", { id: "a", answer: "proc" }, { id: "b", answer: "improc" }),
+    ];
+    const client = makeClient();
+    await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
+    expect(updateCallsOf("assignments")[0]?.payload).toMatchObject({
       status: "concluido",
     });
   });
