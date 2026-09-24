@@ -54,6 +54,7 @@ const llm = (q1: string, extra: Record<string, unknown> = {}) => ({
   document_id: "doc1",
   respondent_type: "llm",
   is_latest: true,
+  is_partial: false,
   answers: { q1 },
   answer_field_hashes: null,
   pydantic_hash: CURRENT_HASH,
@@ -292,6 +293,16 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     expect(r.assigned).toBe(false);
   });
 
+  it("linha sem is_partial (coluna fora do select) não conta", async () => {
+    // O mock ignora o select, então a coluna esquecida só aparece como linha
+    // sem a chave; `toVersioned` precisa tratá-la como parcial.
+    const { is_partial: _omitido, ...semColuna } = makeHumanResponse("userB", "B");
+    tableData.responses = [makeHumanResponse("userA", "A"), semColuna];
+    tableData.project_members = [makeProjectMember("userC")];
+    const r = await runAutoComparison();
+    expect(r.assigned).toBe(false);
+  });
+
   it("equivalência registrada funde a divergência → não atribui", async () => {
     tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
     tableData.response_equivalences = [
@@ -511,6 +522,18 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     // LLM antigo não qualifica → falta a 2ª resposta → não dispara.
     expect(r.assigned).toBe(false);
     expect(assignmentCalls()).toHaveLength(0);
+  });
+});
+
+describe("scanComparisonBacklog — compare_llm", () => {
+  it("1 humano + LLM divergentes entram no backlog", async () => {
+    // A fase leve pré-seleciona pelo piso de humanos do modo, que em
+    // compare_llm é 1. Um piso fixo em 2 descartaria o doc antes da análise.
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.projects = [makeProjectRow({ automation_mode: "compare_llm" })];
+    tableData.responses = [makeHumanResponse("userA", "A"), llm("B")];
+    const backlog = await scanComparisonBacklog(makeClient() as never, "p1", "compare_llm");
+    expect(backlog.map((b) => b.documentId)).toEqual(["doc1"]);
   });
 });
 

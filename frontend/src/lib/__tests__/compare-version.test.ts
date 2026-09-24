@@ -169,6 +169,16 @@ describe("responseQualifiesForVersion", () => {
       ),
     ).toBe(true);
   });
+  it("falha fechada quando o select não trouxe is_partial", () => {
+    // As linhas do PostgREST entram por cast, então o tipo não denuncia a
+    // coluna esquecida no select. Sem esta regra, ela voltaria a contar
+    // rascunho em silêncio.
+    const semColuna = resp({ respondent_type: "humano" }) as Partial<VersionedResponse>;
+    delete semColuna.is_partial;
+    expect(
+      responseQualifiesForVersion(semColuna as VersionedResponse, null, proj),
+    ).toBe(false);
+  });
   it("descarta rascunho LLM — redundante com a CHECK do banco, mas não confia nela", () => {
     // `responses_partial_llm_not_latest` já impede LLM parcial de ser
     // is_latest; a regra vale como defesa em profundidade se a constraint for

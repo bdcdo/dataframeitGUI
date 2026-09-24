@@ -44,6 +44,7 @@ const resp = (
   document_id: "doc1",
   respondent_type: "humano",
   is_latest: true,
+  is_partial: false,
   pydantic_hash: CURRENT_HASH,
   schema_version_major: 2,
   schema_version_minor: 0,

@@ -99,11 +99,11 @@ function toVersioned(
   return {
     respondent_type: respondentType,
     is_latest: r.is_latest ?? true,
-    // `responses.is_partial` é NOT NULL DEFAULT false desde a migration
-    // 20260425, então o `??` só cobre o caso de a coluna não ter sido pedida no
-    // select — que o campo obrigatório em `VersionedResponse` já barra em tempo
-    // de compilação. O default espelha o do banco (#678).
-    is_partial: r.is_partial ?? false,
+    // `responses.is_partial` é NOT NULL desde a migration 20260425, então
+    // `undefined` só aparece quando a coluna saiu do select. Tratar esse caso
+    // como parcial falha fechado, pelo mesmo motivo da regra 2 de
+    // `responseQualifiesForVersion` (#678).
+    is_partial: r.is_partial !== false,
     pydantic_hash: r.pydantic_hash ?? null,
     schema_version_major: r.schema_version_major ?? null,
     schema_version_minor: r.schema_version_minor ?? null,

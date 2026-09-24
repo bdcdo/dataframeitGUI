@@ -45,11 +45,12 @@ export interface SchemaVersion {
 // um piso de versão. Tanto `CompareResponse` (página) quanto a linha buscada em
 // compare-sync.ts satisfazem este shape.
 //
-// `is_partial` é obrigatório de propósito (não opcional): é o que obriga cada
-// caller a trazer a coluna do banco. Antes do #678 ela não era pedida em lugar
-// nenhum da comparação, e o resultado foi contar rascunho como codificação em
-// 21 dos 194 documentos ativos do Zolgensma. Tornar o campo opcional aqui
-// reabriria exatamente esse buraco, agora em silêncio.
+// `is_partial` é obrigatório no tipo, mas o tipo não obriga ninguém a pedir a
+// coluna: as linhas do PostgREST chegam sem tipo e entram aqui por cast. Antes
+// do #678 ela não era pedida em lugar nenhum da comparação, e o resultado foi
+// contar rascunho como codificação em 21 dos 194 documentos ativos do
+// Zolgensma. Quem segura isso é a regra 2 de `responseQualifiesForVersion`, que
+// falha fechada: sem a coluna, nenhuma resposta conta.
 export interface VersionedResponse {
   respondent_type: "humano" | "llm";
   is_latest: boolean;
@@ -193,7 +194,10 @@ export function versionGate(project: ProjectVersionRow): {
 //      seguem de fora. Para LLM significa "cobertura abaixo do limiar", e a
 //      CHECK `responses_partial_llm_not_latest` já garante que parcial nunca
 //      seja is_latest, logo a regra só pesa para humano. Sem ela, `is_latest`
-//      virava proxy de "codificou" (#678);
+//      virava proxy de "codificou" (#678). A coluna é NOT NULL, então valor
+//      ausente só acontece quando o select não a pediu; a regra trata esse
+//      caso como parcial, para que o esquecimento esvazie a comparação em vez
+//      de voltar a contar rascunho em silêncio;
 //   3. sem filtro de versão (minVersion null = filtro "all"), qualifica;
 //   4. respostas pré-versionamento (pydantic_hash NULL, gravadas antes da
 //      migration 20260420) são descartadas com filtro ativo — não há como
@@ -215,7 +219,7 @@ export function responseQualifiesForVersion(
   project: ProjectVersionContext,
 ): boolean {
   if (!r.is_latest) return false;
-  if (r.is_partial) return false;
+  if (r.is_partial !== false) return false;
   if (!minVersion) return true;
   if (r.pydantic_hash === null) return false;
   if (r.schema_version_major !== null) {

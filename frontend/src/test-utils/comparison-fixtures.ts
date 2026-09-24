@@ -42,6 +42,7 @@ export function makeHumanResponse(
     respondent_id: respondentId,
     respondent_type: "humano",
     is_latest: true,
+    is_partial: false,
     answers: { q1 },
     answer_field_hashes: null,
     pydantic_hash: CURRENT_HASH,
