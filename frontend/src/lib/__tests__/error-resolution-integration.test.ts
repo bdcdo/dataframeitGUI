@@ -17,9 +17,11 @@ const review = { id: "review1", document_id: "doc1", field_name: "x", verdict: "
   chosen_response_id: "rh", comment: "Revisão original", reviewer_id: "person", created_at: "2026-09-02T00:00:00Z",
   round_id: "round1" };
 const currentRoundId = "round1";
+// Resposta do LLM sem a chave do campo: o que a condicional não acionada grava.
+const ABSENT = Symbol("chave ausente");
 
 function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue: unknown = "LLM", reviewRoundId = "round1") {
-  const currentResponses = responses.map((r) => r.respondent_type === "llm" ? { ...r, answers: { x: llmValue } } : r);
+  const currentResponses = responses.map((r) => r.respondent_type === "llm" ? { ...r, answers: llmValue === ABSENT ? {} : { x: llmValue } } : r);
   const reviews = autoReview ? [] : [{ ...review, round_id: reviewRoundId }];
   const finalAnswers: MetricsFinalAnswer[] = autoReview ? [{ field_review_id: "fr", document_id: "doc1", field_name: "x",
     provenance: "arbitrado", final_verdict: "humano", self_reviewed_at: "2026-09-02T00:00:00Z",
@@ -136,5 +138,30 @@ describe("rodada corrente (#733)", () => {
     expect(r.exported.verdicts.rows[0][r.exported.verdicts.headers.indexOf("x")]).toBe("Veredito");
     expect(r.gabarito[0].fields[0].verdict).toBe("Veredito");
     expect(r.gabarito[0].fields[0].resolutionLabel).toBeTruthy();
+  });
+});
+
+describe("resposta em branco em pergunta condicional", () => {
+  it("Todos errados em branco: célula vazia no export e o LLM que deixou em branco acerta no Gabarito", () => {
+    const row = { ...resolutionFixture("all_wrong"), approved_value: "" };
+    const { metrics, exported, gabarito } = results([row], false, ABSENT);
+    expect(metrics.reviewedEntries[0]).toMatchObject({ isError: true, isPending: false });
+    expect(exported.verdicts.rows[0][exported.verdicts.headers.indexOf("x")]).toBe("");
+    const answers = gabarito[0].fields[0].respondentAnswers;
+    expect(answers.find((a) => a.respondentType === "llm")!.isCorrect).toBe(true);
+    expect(answers.find((a) => a.respondentType === "humano")!.isCorrect).toBe(false);
+  });
+
+  it("Erro humano com o LLM fora da condicional aprova o branco nos três consumidores", () => {
+    const row = resolutionFixture("llm_correct");
+    row.context!.field_definition = { name: "x", type: "text", description: "Pergunta", options: null, condition: { field: "g0", equals: "Sim" } };
+    row.context!.llm_value = { present: false, value: null };
+    row.current_context = structuredClone(row.context);
+    const { metrics, exported, gabarito } = results([row], false, ABSENT);
+    expect(metrics.reviewedEntries[0]).toMatchObject({ isError: false, isPending: false });
+    expect(exported.verdicts.rows[0][exported.verdicts.headers.indexOf("x")]).toBe("");
+    expect(gabarito[0].fields[0].verdict).toBe("");
+    const answers = gabarito[0].fields[0].respondentAnswers;
+    expect(answers.map((a) => a.isCorrect)).toEqual([true, false]);
   });
 });

@@ -54,3 +54,13 @@ describe("LlmErrorCard — affordance de equivalência", () => {
     expect(screen.queryByTitle("Marcar respostas como equivalentes")).toBeNull();
   });
 });
+
+describe("LlmErrorCard — veredito anterior em branco", () => {
+  it("mostra (vazio) em vez de um rótulo sem conteúdo", () => {
+    render(
+      <LlmErrorCard error={{ ...llmError("comparacao"), llmAnswer: "A", chosenVerdict: "" }} projectId="proj1"
+        isPending={false} onDecide={vi.fn()} onReopen={vi.fn()} onMarkEquivalent={vi.fn()} />,
+    );
+    expect(screen.getByText("Veredito anterior:").nextElementSibling?.textContent).toBe("(vazio)");
+  });
+});

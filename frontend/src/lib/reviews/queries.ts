@@ -9,7 +9,7 @@ import type {
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
-import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
+import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
 import { stableStringify } from "@/lib/schema-utils";
 
 /* ── Raw row shapes ── */
@@ -410,6 +410,9 @@ function isReviewedAnswerCorrect(answer: unknown, review: ReviewRow, fieldType: 
 }
 
 function sameAnswer(answer: unknown, value: unknown): boolean {
+  // O branco aprovado é `""`, mas a condicional não acionada chega sem a
+  // chave: as formas de vazio são a mesma resposta.
+  if (isBlankAnswer(answer) && isBlankAnswer(value)) return true;
   return typeof value === "object" || typeof answer === "object"
     ? stableStringify(answer) === stableStringify(value)
     : normalizeForComparison(answer) === normalizeForComparison(value);

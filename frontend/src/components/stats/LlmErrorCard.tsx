@@ -95,7 +95,7 @@ export function LlmErrorCard(props: LlmErrorCardProps) {
         </div>
         <div className="rounded-md border px-3 py-2">
           <p className="text-xs font-medium">Veredito anterior:</p>
-          <p className="text-sm">{formatVerdictDisplay(error.chosenVerdict)}</p>
+          <p className="text-sm">{formatVerdictDisplay(error.chosenVerdict) || "(vazio)"}</p>
         </div>
       </div>
       {error.llmJustification && (

@@ -3,11 +3,13 @@
 import { useId, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
-  ERROR_DECISION_LABELS, choosesValue, effectiveErrorResolution, hasResolutionValue, prefillFromValue, prefillFromVerdict, prefillLosesItems,
+  ERROR_DECISION_LABELS, blankAnswerFor, choosesValue, effectiveErrorResolution, hasResolutionValue, isConditionalField, llmAnswersBlank,
+  prefillFromValue, prefillFromVerdict, prefillLosesItems, startsBlank,
   type ErrorDecision, type ErrorResolutionContext, type ValueChoosingDecision,
 } from "@/lib/error-resolution";
 import { parsePydanticFields } from "@/lib/pydantic-field";
@@ -54,8 +56,8 @@ function NoteField({ note, onChange, isPending }: { note: string; onChange: (not
   </div>;
 }
 
-function DecisionPreview({ decision, answer, verdict }: {
-  decision: Exclude<ErrorDecision, ValueChoosingDecision>; answer: ErrorResolutionContext["llm_value"]; verdict: string;
+function DecisionPreview({ decision, answer, verdict, blankAllowed }: {
+  decision: Exclude<ErrorDecision, ValueChoosingDecision>; answer: ErrorResolutionContext["llm_value"]; verdict: string; blankAllowed: boolean;
 }) {
   if (decision === "discussion") return <div className="rounded-md border p-3 text-sm">Este campo ficará sem valor final aprovado até uma nova decisão.</div>;
   if (decision === "both_correct") return <div className="rounded-md border p-3 text-sm">
@@ -63,7 +65,8 @@ function DecisionPreview({ decision, answer, verdict }: {
     <p className="mt-1 whitespace-pre-wrap">{formatVerdictDisplay(verdict) || "(vazio)"}</p>
     <p className="mt-2 text-xs">A resposta do LLM deixa de contar como erro.</p>
   </div>;
-  const value = answer.present ? formatAnswer(answer.value) || "(vazio)" : "Resposta ausente: não é possível aprovar.";
+  const value = answer.present ? formatAnswer(answer.value) || "(vazio)"
+    : blankAllowed ? "(em branco: a pergunta não foi acionada)" : "Resposta ausente: não é possível aprovar.";
   return <div className="rounded-md border p-3 text-sm">
     <p className="font-medium">Valor que irá para o gabarito</p>
     <p className="mt-1 whitespace-pre-wrap">{value}</p>
@@ -85,11 +88,15 @@ function DecisionPreview({ decision, answer, verdict }: {
 // Em "Todos errados" o veredito é justamente o que o revisor está rejeitando,
 // então ele não pré-marca nada: só o valor de uma decisão "Todos errados"
 // anterior da célula volta ao seletor.
-function initialValue(field: PydanticField, error: LlmError, decision: ValueChoosingDecision): unknown {
+function previousValue(error: LlmError, decision: ValueChoosingDecision): unknown {
   const existing = effectiveErrorResolution(error.resolution);
-  if (existing.status === "approved" && existing.isLlmError && error.resolution?.decision === decision) {
-    return prefillFromValue(field, existing.value);
-  }
+  return existing.status === "approved" && existing.isLlmError && error.resolution?.decision === decision
+    ? existing.value : undefined;
+}
+
+function initialValue(field: PydanticField, error: LlmError, decision: ValueChoosingDecision): unknown {
+  const previous = previousValue(error, decision);
+  if (previous !== undefined) return prefillFromValue(field, previous);
   if (decision === "all_wrong") return undefined;
   return prefillFromVerdict(field, error.chosenVerdict)
     ?? (error.chosenValue !== undefined ? prefillFromValue(field, error.chosenValue) : undefined);
@@ -125,22 +132,31 @@ function VerdictPicker({ pending, decision, context, isPending, onClose, onConfi
 } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
   const field = parsePydanticFields([context.field_definition])?.[0] ?? null;
   const prefill = field ? initialValue(field, pending.error, decision) : undefined;
+  const openedBlank = field ? startsBlank(field, decision, pending.error.chosenVerdict, previousValue(pending.error, decision)) : false;
   const [value, setValue] = useState<unknown>(prefill);
+  const [blank, setBlank] = useState(openedBlank);
+  const blankId = useId();
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
   const confirmLabel = isPending ? "Salvando…" : "Confirmar decisão";
   if (!field) return <>
     <p className="text-sm text-destructive">A definição desta pergunta não pôde ser lida. Recarregue a página e tente de novo.</p>
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => {}} disabled label={confirmLabel} />
   </>;
+  // Em branco é o vazio canônico do tipo, o único que a RPC aceita.
+  const chosen = blank ? blankAnswerFor(field) : value;
   return <>
-    <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, field, pending.error, prefill !== undefined)} />
-    <fieldset className="space-y-2">
+    <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
+    {isConditionalField(field) && <div className="flex items-center gap-2">
+      <Checkbox id={blankId} checked={blank} onCheckedChange={(state) => setBlank(state === true)} disabled={isPending} />
+      <Label htmlFor={blankId}>Deixar em branco (a pergunta não foi acionada)</Label>
+    </div>}
+    {!blank && <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />
-    </fieldset>
+    </fieldset>}
     <NoteField note={note} onChange={setNote} isPending={isPending} />
-    <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note, value)}
-      disabled={!hasResolutionValue(field, value)} label={confirmLabel} />
+    <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note, chosen)}
+      disabled={!hasResolutionValue(field, chosen)} label={confirmLabel} />
   </>;
 }
 
@@ -148,11 +164,14 @@ function ConfirmDecision({ pending, decision, context, isPending, onClose, onCon
   pending: PendingErrorDecision; decision: Exclude<ErrorDecision, ValueChoosingDecision>; context: ErrorResolutionContext;
 } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
+  // Só "Erro humano" aprova o branco do LLM; "Ambos corretos" declara correta
+  // uma resposta que precisa existir ao lado do veredito.
+  const blankAllowed = decision === "llm_correct" && llmAnswersBlank(context);
   return <>
-    <DecisionPreview decision={decision} answer={context.llm_value} verdict={pending.error.chosenVerdict} />
+    <DecisionPreview decision={decision} answer={context.llm_value} verdict={pending.error.chosenVerdict} blankAllowed={blankAllowed} />
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note)}
-      disabled={decision !== "discussion" && !context.llm_value.present} label={isPending ? "Salvando…" : "Confirmar decisão"} />
+      disabled={decision !== "discussion" && !context.llm_value.present && !blankAllowed} label={isPending ? "Salvando…" : "Confirmar decisão"} />
   </>;
 }
 
