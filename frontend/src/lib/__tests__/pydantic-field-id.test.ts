@@ -71,6 +71,8 @@ describe("id de campo no contrato", () => {
     ["fora do padrão RFC, como o banco aceita", "11111111-1111-1111-1111-111111111111", true],
     ["caixa alta, que o banco recusa", "3F2504E0-4F89-41D3-9A0C-0305E82C3301", false],
     ["sem hífens", "3f2504e04f8941d39a0c0305e82c3301", false],
+    ["com sobra antes", "x3f2504e0-4f89-41d3-9a0c-0305e82c3301", false],
+    ["com sobra depois", "3f2504e0-4f89-41d3-9a0c-0305e82c3301x", false],
   ])("%s", (_caso, id, aceito) => {
     expect(pydanticFieldSchema.safeParse(field(id)).success).toBe(aceito);
   });

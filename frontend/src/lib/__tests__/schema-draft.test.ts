@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 import {
   SCHEMA_DRAFT_FORMAT_VERSION,
   convertSchemaDraftV4,
@@ -7,7 +6,7 @@ import {
   readSchemaDraft,
   type SchemaDraftEnvelopeV4,
 } from "@/lib/schema-draft";
-import { PYDANTIC_FIELD_PROPERTY_KEYS } from "@/lib/pydantic-field";
+import { FIELD_ID_PATTERN, PYDANTIC_FIELD_PROPERTY_KEYS } from "@/lib/pydantic-field";
 import { snapshotOf } from "@/lib/schema-utils";
 import type { FieldCondition, PydanticField } from "@/lib/types";
 
@@ -305,10 +304,8 @@ describe("convertSchemaDraftV4", () => {
     const converted = convertSchemaDraftV4(draftV4(), []);
 
     // Canônico, não "36 caracteres do alfabeto certo": o id nascido aqui vai
-    // parar na CHECK do banco, que exige a forma exata.
-    expect(
-      z.uuid().safeParse(converted.base.fields[0].id).success,
-    ).toBe(true);
+    // parar na CHECK do banco, que exige a forma exata de FIELD_ID_PATTERN.
+    expect(converted.base.fields[0].id).toMatch(FIELD_ID_PATTERN);
     expect(converted.fields[0].id).toBe(converted.base.fields[0].id);
   });
 

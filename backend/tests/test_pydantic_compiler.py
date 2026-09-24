@@ -669,8 +669,8 @@ class Analysis(BaseModel):
 
 
 def test_non_canonical_id_fails():
-    # uuid.UUID aceitaria a forma sem hífens; o contrato (z.uuid() no frontend
-    # e a CHECK constraint) não — o compiler tem que concordar com eles.
+    # uuid.UUID aceitaria a forma sem hífens; o contrato (FIELD_ID_PATTERN no
+    # frontend e a CHECK constraint) não — o compiler tem que concordar com eles.
     code = f"""from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
@@ -683,10 +683,10 @@ class Analysis(BaseModel):
 
 
 def test_uppercase_id_fails():
-    # `uuid.UUID` aceita as duas caixas, e as fronteiras desempatam diferente: o
-    # Postgres desduplicava por lower() e o merge no frontend compara string
-    # exata, então o mesmo UUID em caixa alta seria UM campo para o banco e DOIS
-    # para o editor. Uma única forma canônica em circulação é o que fecha isso.
+    # `uuid.UUID` aceita as duas caixas, mas o merge no frontend compara string
+    # exata, então o mesmo UUID em caixas diferentes seria DOIS campos para o
+    # editor. A CHECK e FIELD_ID_PATTERN também só aceitam minúsculas: uma única
+    # forma canônica em circulação é o que fecha isso.
     # `_ID_A` é só dígitos e hífens, então `.upper()` nele não mudaria nada e o
     # teste passaria por vacuidade: a caixa só existe nos dígitos hexadecimais
     # a-f, e é por isso que este id tem letras.

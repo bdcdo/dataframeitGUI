@@ -36,6 +36,14 @@ const pydanticFieldTargetSchema = z.enum([
 
 const pydanticSubfieldRuleSchema = z.enum(["all", "at_least_one"]);
 
+// Forma canonica do `id`: hifens e minusculas, sem exigir versao nem variante.
+// E a mesma regex da CHECK projects_pydantic_fields_shape, e a mesma forma que
+// `_parse_field_id` aceita no compilador Python (por ida e volta em
+// uuid.UUID). `z.uuid()` divergia dos dois nos dois sentidos (aceitava caixa
+// alta e recusava UUID fora do padrao RFC), e um id valido para o banco
+// deixava o editor sem abrir.
+export const FIELD_ID_PATTERN = /^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+
 // Este schema e a fonte runtime e estatica unica de PydanticField.
 // `strictObject` faz a recuperacao de rascunhos falhar fechada quando surgir
 // uma propriedade que ainda nao tenha contrato explicito.
@@ -46,13 +54,6 @@ const pydanticSubfieldRuleSchema = z.enum(["all", "at_least_one"]);
 // e o que permite nome duplicado transitorio no editor sem quebrar o merge —
 // ver issue #473. Exportado para o schema de draft legado (v4) derivar a
 // variante sem `id` via `.omit()` em vez de duplicar o shape.
-// Forma canonica do `id`: hifens e minusculas, sem exigir versao nem variante.
-// E a mesma regex da CHECK projects_pydantic_fields_shape e de
-// `_parse_field_id` no compilador Python; `z.uuid()` divergia das duas nos dois
-// sentidos (aceitava caixa alta e recusava UUID fora do padrao RFC), e um id
-// valido para o banco deixava o editor sem abrir.
-export const FIELD_ID_PATTERN = /^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$/;
-
 export const pydanticFieldSchema = z.strictObject({
   id: z.string().regex(FIELD_ID_PATTERN),
   name: z.string(),
