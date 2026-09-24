@@ -8,6 +8,7 @@ import type { PydanticField } from "@/lib/types";
 afterEach(cleanup);
 
 const dateField: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "data_evento",
   type: "date",
   options: null,
@@ -100,6 +101,7 @@ describe("FieldRenderer (date) — race condition regression", () => {
 const LEGACY_TEXT = "18 anos e 6 meses";
 
 const grupo: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000002",
   name: "q7_idade_paciente",
   type: "text",
   options: null,
@@ -298,6 +300,7 @@ describe("FieldRenderer (grupo de subcampos) — quem não vê o aviso (#607)", 
 
   it("campo sem subcampos exibe a string no textarea, como sempre", () => {
     const semSubcampos: PydanticField = {
+      id: "00000000-0000-4000-8000-000000000003",
       name: "q7",
       type: "text",
       options: null,

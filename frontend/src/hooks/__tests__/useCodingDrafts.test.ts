@@ -18,8 +18,8 @@ import {
 import type { PydanticField } from "@/lib/types";
 
 const FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "" },
-  { name: "q2", type: "text", options: null, description: "" },
+  { id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "" },
+  { id: "00000000-0000-4000-8000-000000000002", name: "q2", type: "text", options: null, description: "" },
 ];
 
 const USER = "user-1";

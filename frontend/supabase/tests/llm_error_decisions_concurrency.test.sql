@@ -11,7 +11,7 @@ INSERT INTO auth.users (id, email) VALUES
 INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_sync_version)
   SELECT id::TEXT, id, 1 FROM auth.users WHERE id::TEXT LIKE 'b9a00000-%';
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
-  ('b9b00000-0000-0000-0000-000000000001', 'Concurrent decisions test', 'b9a00000-0000-0000-0000-000000000001', 'compare_llm', '[{"name":"q","type":"text"}]');
+  ('b9b00000-0000-0000-0000-000000000001', 'Concurrent decisions test', 'b9a00000-0000-0000-0000-000000000001', 'compare_llm', '[{"id":"b9f00000-0000-4000-8000-000000000001","name":"q","type":"text"}]');
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('b9c00000-0000-0000-0000-000000000001', 'b9b00000-0000-0000-0000-000000000001', 'Documento', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers) VALUES

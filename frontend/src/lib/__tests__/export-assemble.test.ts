@@ -11,8 +11,14 @@ import { resolutionFixture } from "./error-resolution-fixture";
 
 // --- Fixtures helpers ---
 
+let fieldIdSeq = 0;
+function nextFieldId(): string {
+  fieldIdSeq += 1;
+  return `00000000-0000-4000-8000-0000000000${String(fieldIdSeq).padStart(2, "0")}`;
+}
+
 function field(name: string, opts: Partial<PydanticField> = {}): PydanticField {
-  return { name, type: "text", options: null, description: "", ...opts };
+  return { id: nextFieldId(), name, type: "text", options: null, description: "", ...opts };
 }
 
 function doc(

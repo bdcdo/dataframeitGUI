@@ -128,12 +128,12 @@ describe("Ambos corretos e Todos errados", () => {
   });
 });
 
-const single: PydanticField = { name: "s", type: "single", options: ["A", "B "], description: "" };
+const single: PydanticField = { id: "00000000-0000-4000-8000-000000000001", name: "s", type: "single", options: ["A", "B "], description: "" };
 const singleOther: PydanticField = { ...single, allow_other: true };
-const multi: PydanticField = { name: "m", type: "multi", options: ["A", "B", "C"], description: "" };
+const multi: PydanticField = { id: "00000000-0000-4000-8000-000000000002", name: "m", type: "multi", options: ["A", "B", "C"], description: "" };
 const multiOther: PydanticField = { ...multi, allow_other: true };
-const text: PydanticField = { name: "t", type: "text", options: null, description: "" };
-const group: PydanticField = { ...text, name: "g", subfields: [{ key: "anos", label: "Anos" }] };
+const text: PydanticField = { id: "00000000-0000-4000-8000-000000000003", name: "t", type: "text", options: null, description: "" };
+const group: PydanticField = { ...text, id: "00000000-0000-4000-8000-000000000004", name: "g", subfields: [{ key: "anos", label: "Anos" }] };
 
 describe("prefillFromVerdict — o veredito anterior nas opções atuais", () => {
   it("single: casa por trim; opção que saiu do formulário não pré-marca", () => {

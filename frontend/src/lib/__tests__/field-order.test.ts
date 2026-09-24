@@ -2,8 +2,15 @@ import { describe, it, expect } from "vitest";
 import { applyFieldOrder, reorderFullList } from "@/lib/field-order";
 import type { PydanticField } from "@/lib/types";
 
+let fieldIdSeq = 0;
+function nextFieldId(): string {
+  fieldIdSeq += 1;
+  return `00000000-0000-4000-8000-0000000000${String(fieldIdSeq).padStart(2, "0")}`;
+}
+
 function f(name: string): PydanticField {
   return {
+    id: nextFieldId(),
     name,
     type: "text",
     options: null,

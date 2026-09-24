@@ -13,6 +13,7 @@ import type { PydanticField } from "@/lib/types";
 // reimplementado (revisão do PR #404).
 
 const field: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "campo1",
   type: "text",
   options: null,

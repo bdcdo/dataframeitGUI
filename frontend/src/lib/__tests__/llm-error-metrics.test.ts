@@ -13,6 +13,7 @@ import { resolutionFixture } from "./error-resolution-fixture";
 
 function field(overrides: Partial<PydanticField> = {}): PydanticField {
   return {
+    id: "00000000-0000-4000-8000-000000000001",
     name: "x",
     type: "text",
     options: null,

@@ -10,7 +10,13 @@ import { unresolvedSchemaConflicts } from "@/lib/schema-merge";
 import type { PydanticField, SchemaSnapshot } from "@/lib/types";
 
 const BASE_FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "Pergunta" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "q1",
+    type: "text",
+    options: null,
+    description: "Pergunta",
+  },
 ];
 const EDITED_FIELDS: PydanticField[] = [
   { ...BASE_FIELDS[0], description: "Pergunta editada" },
@@ -113,7 +119,7 @@ describe("useSchemaDraft", () => {
       schemaDraftStorageKey(SCOPE),
     ]);
     expect(storedDraft()).toMatchObject({
-      formatVersion: 4,
+      formatVersion: 5,
       base: { fields: BASE_FIELDS, version: "0.1.0", revision: 1 },
       fields: EDITED_FIELDS,
     });
@@ -257,7 +263,7 @@ describe("useSchemaDraft", () => {
     const view = renderDraft();
     act(() => view.result.current.setFields(EDITED_FIELDS));
     const otherTab: SchemaDraftEnvelope = {
-      formatVersion: 4,
+      formatVersion: 5,
       writeToken: "outra-aba",
       base: snapshot(BASE_FIELDS, "0.1.0", 1),
       fields: [{ ...BASE_FIELDS[0], help_text: "Outra aba" }],
@@ -562,7 +568,7 @@ describe("useSchemaDraft", () => {
   // "não há rascunho", que é outro caminho.
   it("no mount, rascunho redundante na mesma revisão é limpo do storage", () => {
     const redundante: SchemaDraftEnvelope = {
-      formatVersion: 4,
+      formatVersion: 5,
       writeToken: "rascunho-redundante",
       base: snapshot(BASE_FIELDS, "0.1.0", 1),
       fields: BASE_FIELDS,
@@ -687,5 +693,88 @@ describe("useSchemaDraft", () => {
     const event = new Event("beforeunload", { cancelable: true });
     void act(() => window.dispatchEvent(event));
     expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+// O deploy da #473 encontra rascunhos v4 gravados por abas que já estavam
+// abertas. Descartá-los seria perda de trabalho silenciosa — o mesmo estrago
+// que `stale-format` existe para evitar; aqui a identidade é reconstruível, e o
+// mount converte em vez de descartar.
+describe("rascunho no formato v4 (pré-#473)", () => {
+  function writeDraftV4(fields: Array<Record<string, unknown>>) {
+    window.localStorage.setItem(
+      schemaDraftStorageKey(SCOPE),
+      JSON.stringify({
+        formatVersion: 4,
+        writeToken: "write-v4",
+        base: {
+          fields: [{ name: "q1", type: "text", options: null, description: "Pergunta" }],
+          version: "0.1.0",
+          revision: 1,
+        },
+        fields,
+      }),
+    );
+  }
+
+  it("converte no mount, herdando o id do snapshot remoto", () => {
+    writeDraftV4([
+      { name: "q1", type: "text", options: null, description: "Pergunta editada" },
+    ]);
+
+    const { result } = renderDraft();
+
+    expect(result.current.isDirty).toBe(true);
+    expect(result.current.staleDraftDiscarded).toBe(false);
+    // A identidade vem do remoto: é o MESMO campo que o usuário editava, e um
+    // id novo o transformaria em adição local sobre uma remoção remota.
+    expect(result.current.fields).toEqual([
+      { ...BASE_FIELDS[0], description: "Pergunta editada" },
+    ]);
+  });
+
+  it("persiste o envelope convertido em v5 sob o mesmo writeToken", () => {
+    writeDraftV4([
+      { name: "q1", type: "text", options: null, description: "Pergunta editada" },
+    ]);
+
+    renderDraft();
+
+    const stored = storedDraft();
+    expect(stored).not.toBeNull();
+    expect(stored?.writeToken).toBe("write-v4");
+    expect(stored?.fields[0].id).toBe(BASE_FIELDS[0].id);
+  });
+
+  // A persistência do envelope convertido é oportunista: se o storage está
+  // cheio, o rascunho já foi lido e convertido em memória, e perdê-lo por causa
+  // da gravação seria descartar trabalho por um motivo que não é "não consegui
+  // ler". Foi assim que o `catch` único da leitura transformava quota em
+  // rascunho zerado, sem sequer marcar `staleDraftDiscarded`.
+  it("mantém o rascunho v4 convertido quando a gravação falha por quota", () => {
+    writeDraftV4([
+      { name: "q1", type: "text", options: null, description: "Pergunta editada" },
+    ]);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota", "QuotaExceededError");
+    });
+
+    const { result } = renderDraft();
+
+    expect(result.current.isDirty).toBe(true);
+    expect(result.current.fields).toEqual([
+      { ...BASE_FIELDS[0], description: "Pergunta editada" },
+    ]);
+  });
+
+  it("descarta rascunho v4 que já coincide com o remoto", () => {
+    writeDraftV4([
+      { name: "q1", type: "text", options: null, description: "Pergunta" },
+    ]);
+
+    const { result } = renderDraft();
+
+    expect(result.current.isDirty).toBe(false);
+    expect(window.localStorage.getItem(schemaDraftStorageKey(SCOPE))).toBeNull();
   });
 });

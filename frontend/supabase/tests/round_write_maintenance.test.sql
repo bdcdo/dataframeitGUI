@@ -28,7 +28,7 @@ VALUES
 
 INSERT INTO public.projects (id, name, created_by, pydantic_fields) VALUES
   ('7a100000-0000-0000-0000-000000000001', 'round maintenance',
-   '7a000000-0000-0000-0000-000000000001', '[{"name":"q1"}]');
+   '7a000000-0000-0000-0000-000000000001', '[{"id":"7a200000-0000-4000-8000-000000000001","name":"q1"}]');
 
 INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES
   ('7a200000-0000-0000-0000-000000000001',

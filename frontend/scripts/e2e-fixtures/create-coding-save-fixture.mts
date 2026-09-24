@@ -92,7 +92,10 @@ if (existingProject) {
         // propaga field.hash para responses.answer_field_hashes, e um
         // placeholder violaria a invariante de shape do checker
         // ('answer-field-hashes-do-universo-do-projeto').
+        // `id` fixo: a CHECK projects_pydantic_fields_shape exige id UUID
+        // canônico em todo campo.
         {
+          id: "e2e00000-0000-4000-8000-000000000001",
           hash: "666b31814034",
           name: "resumo",
           type: "text",
@@ -100,6 +103,7 @@ if (existingProject) {
           description: "Resumo do documento",
         },
         {
+          id: "e2e00000-0000-4000-8000-000000000002",
           hash: "0feea7dd6b3d",
           name: "observacao",
           type: "text",

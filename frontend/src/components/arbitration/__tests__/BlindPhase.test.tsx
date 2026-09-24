@@ -19,9 +19,13 @@ function field(over: Partial<ArbitrationField> = {}): ArbitrationField {
   };
 }
 
+let idSeq = 0;
+const nextFieldId = () =>
+  `00000000-0000-4000-8000-0000000000${String(++idSeq).padStart(2, "0")}`;
+
 const meta = (name: string, description: string): [string, PydanticField] => [
   name,
-  { name, type: "single", options: null, description },
+  { id: nextFieldId(), name, type: "single", options: null, description },
 ];
 
 describe("BlindPhase", () => {

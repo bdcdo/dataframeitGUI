@@ -33,7 +33,7 @@ INSERT INTO public.projects (
     '82000000-0000-0000-0000-000000000001',
     'schema rpc test',
     '81000000-0000-0000-0000-000000000001',
-    '[{"name":"old_field"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000001","name":"old_field"}]',
     'class Analysis: old',
     'hash-old'
   ),
@@ -49,7 +49,7 @@ INSERT INTO public.projects (
     '82000000-0000-0000-0000-000000000004',
     'schema suggestion atomic test',
     '81000000-0000-0000-0000-000000000001',
-    '[{"name":"suggested_field","type":"text","options":null,"description":"Antes"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000002","name":"suggested_field","type":"text","options":null,"description":"Antes"}]',
     'class Analysis: before',
     'hash-before'
   ),
@@ -76,7 +76,7 @@ INSERT INTO public.projects (
     '82000000-0000-0000-0000-000000000008',
     'schema suggestion no-op test',
     '81000000-0000-0000-0000-000000000001',
-    '[{"name":"suggested_field","type":"text","options":null,"description":"Depois"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000003","name":"suggested_field","type":"text","options":null,"description":"Depois"}]',
     'class Analysis: after',
     'hash-noop'
   );
@@ -306,7 +306,7 @@ SELECT 'commit-saved', result.*
 FROM public.commit_project_schema(
   '82000000-0000-0000-0000-000000000001',
   0,
-  '[{"name":"new_field"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000011","name":"new_field"}]',
   'class Analysis: new',
   0,
   2,
@@ -330,7 +330,7 @@ BEGIN
 
   IF v_result.status <> 'saved'
      OR v_result.revision <> 1
-     OR v_result.fields <> '[{"name":"new_field"}]'::jsonb
+     OR v_result.fields <> '[{"id":"00000000-0000-4000-8000-000000000011","name":"new_field"}]'::jsonb
      OR (v_result.major, v_result.minor, v_result.patch) <> (0, 2, 0) THEN
     RAISE EXCEPTION 'FALHOU commit: retorno inesperado: %', row_to_json(v_result);
   END IF;
@@ -375,7 +375,7 @@ SELECT 'commit-conflict', result.*
 FROM public.commit_project_schema(
   '82000000-0000-0000-0000-000000000001',
   0,
-  '[{"name":"stale_field"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000012","name":"stale_field"}]',
   'class Analysis: stale',
   0,
   3,
@@ -398,7 +398,7 @@ BEGIN
     WHERE name = 'commit-conflict'
       AND status = 'conflict'
       AND revision = 1
-      AND fields = '[{"name":"new_field"}]'::jsonb
+      AND fields = '[{"id":"00000000-0000-4000-8000-000000000011","name":"new_field"}]'::jsonb
   ) THEN
     RAISE EXCEPTION 'FALHOU CAS: snapshot corrente não retornado no conflito';
   END IF;
@@ -412,7 +412,7 @@ BEGIN
   WHERE project_id = '82000000-0000-0000-0000-000000000001';
 
   IF v_revision <> 1
-     OR v_fields <> '[{"name":"new_field"}]'::jsonb
+     OR v_fields <> '[{"id":"00000000-0000-4000-8000-000000000011","name":"new_field"}]'::jsonb
      OR v_log_count <> 1 THEN
     RAISE EXCEPTION 'FALHOU CAS: conflito stale produziu escrita';
   END IF;
@@ -457,7 +457,7 @@ BEGIN
   FROM public.commit_project_schema(
     '82000000-0000-0000-0000-000000000001',
     1,
-    '[{"name":"invalid_semver"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000013","name":"invalid_semver"}]',
     'class Analysis: invalid_semver',
     9,
     0,
@@ -479,7 +479,7 @@ BEGIN
   FROM public.commit_project_schema(
     '82000000-0000-0000-0000-000000000001',
     1,
-    '[{"name":"must_rollback"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000014","name":"must_rollback"}]',
     'class Analysis: must_rollback',
     0,
     3,
@@ -501,7 +501,7 @@ BEGIN
   FROM public.commit_project_schema(
     '82000000-0000-0000-0000-000000000001',
     1,
-    '[{"name":"without_audit"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000015","name":"without_audit"}]',
     'class Analysis: without_audit',
     0,
     3,
@@ -528,7 +528,7 @@ BEGIN
   FROM public.commit_project_schema(
     '82000000-0000-0000-0000-000000000001',
     1,
-    '[{"name":"new_field"},{"name":"reordered_field"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000011","name":"new_field"},{"id":"00000000-0000-4000-8000-000000000016","name":"reordered_field"}]',
     'class Analysis: reordered',
     0,
     2,
@@ -555,7 +555,7 @@ BEGIN
   FROM public.commit_project_schema(
     '82000000-0000-0000-0000-000000000001',
     1,
-    '[{"name":"null_code"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000017","name":"null_code"}]',
     NULL,
     0,
     3,
@@ -587,7 +587,7 @@ BEGIN
   WHERE project_id = '82000000-0000-0000-0000-000000000001';
 
   IF v_project.schema_revision <> 1
-     OR v_project.pydantic_fields <> '[{"name":"new_field"}]'::jsonb
+     OR v_project.pydantic_fields <> '[{"id":"00000000-0000-4000-8000-000000000011","name":"new_field"}]'::jsonb
      OR v_project.schema_version_minor <> 2
      OR v_log_count <> 1 THEN
     RAISE EXCEPTION 'FALHOU rollback: commit inválido ou sem auditoria reteve escrita';
@@ -610,7 +610,7 @@ SELECT 'researcher-forbidden', result.*
 FROM public.commit_project_schema(
   '82000000-0000-0000-0000-000000000001',
   1,
-  '[{"name":"forbidden"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000018","name":"forbidden"}]',
   'forbidden',
   0,
   3,
@@ -663,7 +663,7 @@ SELECT 'impersonation-forbidden', result.*
 FROM public.commit_project_schema(
   '82000000-0000-0000-0000-000000000001',
   1,
-  '[{"name":"impersonated"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000019","name":"impersonated"}]',
   'class Analysis: impersonated',
   0,
   3,
@@ -729,7 +729,7 @@ BEGIN
     '85000000-0000-0000-0000-000000000001',
     '82000000-0000-0000-0000-000000000004',
     0,
-    '[{"name":"suggested_field","type":"text","options":null,"description":"Depois"}]',
+    '[{"id":"00000000-0000-4000-8000-000000000002","name":"suggested_field","type":"text","options":null,"description":"Depois"}]',
     'class Analysis: after',
     0,
     1,
@@ -785,7 +785,7 @@ BEGIN
       '85000000-0000-0000-0000-000000000099',
       '82000000-0000-0000-0000-000000000004',
       1,
-      '[{"name":"suggested_field","type":"text","options":null,"description":"Não persistir"}]',
+      '[{"id":"00000000-0000-4000-8000-000000000002","name":"suggested_field","type":"text","options":null,"description":"Não persistir"}]',
       'class Analysis: rollback',
       0,
       1,
@@ -847,7 +847,7 @@ FROM public.approve_schema_suggestion(
   '85000000-0000-0000-0000-000000000002',
   '82000000-0000-0000-0000-000000000004',
   1,
-  '[{"name":"suggested_field","type":"text","options":null,"description":"Nunca aprovada"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000002","name":"suggested_field","type":"text","options":null,"description":"Nunca aprovada"}]',
   'class Analysis: forbidden',
   0,
   1,
@@ -872,7 +872,7 @@ FROM public.approve_schema_suggestion(
   '85000000-0000-0000-0000-000000000002',
   '82000000-0000-0000-0000-000000000004',
   1,
-  '[{"name":"suggested_field","type":"text","options":null,"description":"Nunca aprovada"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000002","name":"suggested_field","type":"text","options":null,"description":"Nunca aprovada"}]',
   'class Analysis: not_found',
   0,
   1,
@@ -940,7 +940,7 @@ SELECT 'master-saved', result.*
 FROM public.commit_project_schema(
   '82000000-0000-0000-0000-000000000006',
   0,
-  '[{"name":"master_field"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000020","name":"master_field"}]',
   'class Analysis: master',
   0,
   2,
@@ -990,7 +990,7 @@ SELECT 'commit-service-role', result.*
 FROM public.commit_project_schema(
   '82000000-0000-0000-0000-000000000007',
   0,
-  '[{"name":"service_field"}]',
+  '[{"id":"00000000-0000-4000-8000-000000000021","name":"service_field"}]',
   'class Analysis: service',
   0,
   2,
@@ -1020,7 +1020,7 @@ BEGIN
   FROM public.projects
   WHERE id = '82000000-0000-0000-0000-000000000007';
 
-  IF v_project.pydantic_fields <> '[{"name":"service_field"}]'::jsonb
+  IF v_project.pydantic_fields <> '[{"id":"00000000-0000-4000-8000-000000000021","name":"service_field"}]'::jsonb
      OR v_project.schema_revision <> 1 THEN
     RAISE EXCEPTION 'FALHOU service_role: projeto não recebeu a escrita: %',
       row_to_json(v_project);
@@ -1115,6 +1115,9 @@ BEGIN
   RAISE NOTICE 'OK trigger: estado schema/revisão malformado é irrepresentável';
 END;
 $$;
+
+-- O shape de pydantic_fields (CHECK projects_pydantic_fields_shape) tem suíte
+-- de gate própria: projects_pydantic_fields_shape.test.sql.
 
 -- ----- Backfill sem histórico não pode alterar a versão -----
 SELECT set_config(

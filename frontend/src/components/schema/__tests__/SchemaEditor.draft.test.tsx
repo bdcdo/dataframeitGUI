@@ -81,7 +81,13 @@ vi.mock("../SchemaBuilderGUI", () => ({
 }));
 
 const BASE_FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "Original" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "q1",
+    type: "text",
+    options: null,
+    description: "Original",
+  },
 ];
 const SAVED_FIELDS = [{ ...BASE_FIELDS[0], description: "Editada", hash: "abc" }];
 

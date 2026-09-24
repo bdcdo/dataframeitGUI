@@ -163,7 +163,13 @@ const ROUND_FILTER = {
 };
 
 const FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "q1",
+    type: "text",
+    options: null,
+    description: "",
+  },
 ];
 
 function browseDoc(id: string, responseCount = 0, userAlreadyResponded = false) {

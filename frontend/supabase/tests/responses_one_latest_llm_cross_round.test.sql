@@ -35,7 +35,7 @@ VALUES
 
 INSERT INTO public.projects (id, name, created_by, pydantic_fields) VALUES
   ('7b100000-0000-0000-0000-000000000001', 'llm cross round',
-   '7b000000-0000-0000-0000-000000000001', '[{"name":"q1"}]');
+   '7b000000-0000-0000-0000-000000000001', '[{"id":"7b200000-0000-4000-8000-000000000001","name":"q1"}]');
 
 INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES
   ('7b200000-0000-0000-0000-000000000001',

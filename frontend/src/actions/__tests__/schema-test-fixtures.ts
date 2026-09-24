@@ -2,6 +2,7 @@ import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 import type { TableResult } from "./supabase-mock";
 
 export const FIELD: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "q1",
   type: "text",
   options: null,

@@ -9,7 +9,13 @@ import type { SchemaDraftConflict } from "@/hooks/useSchemaDraft";
 import type { PydanticField } from "@/lib/types";
 
 const base: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "Original" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "q1",
+    type: "text",
+    options: null,
+    description: "Original",
+  },
 ];
 const local = [{ ...base[0], description: "Minha descrição" }];
 const remote = [{ ...base[0], description: "Descrição salva" }];

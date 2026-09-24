@@ -114,7 +114,7 @@ const KEY = codingDraftStorageKey({
 });
 
 const FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "Qual o medicamento?" },
+  { id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "Qual o medicamento?" },
 ];
 
 function assignedDoc(id: string): AssignedDoc {
@@ -372,8 +372,8 @@ describe("envio confirmado", () => {
 // existente reclamava e a feature ficava inerte em produção.
 describe("veredito do servidor chega ao painel (#608, critério 5)", () => {
   const DUAS: PydanticField[] = [
-    { name: "q1", type: "text", options: null, description: "Qual o medicamento?" },
-    { name: "q2", type: "text", options: null, description: "Houve deferimento?" },
+    { id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "Qual o medicamento?" },
+    { id: "00000000-0000-4000-8000-000000000002", name: "q2", type: "text", options: null, description: "Houve deferimento?" },
   ];
 
   it("save que grava com obrigatória em aberto leva o foco até ela e a nomeia", async () => {

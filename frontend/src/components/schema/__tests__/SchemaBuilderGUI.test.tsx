@@ -6,8 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SchemaBuilderGUI } from "../SchemaBuilderGUI";
 import type { PydanticField } from "@/lib/types";
 
+// Id determinístico POR NOME: o mesmo nome devolve sempre o mesmo campo, para
+// `field("q1")` construído na asserção ser igual ao passado no render.
+const fieldIds = new Map<string, string>();
 function field(name: string): PydanticField {
-  return { name, type: "text", options: null, description: name };
+  let id = fieldIds.get(name);
+  if (!id) {
+    id = `00000000-0000-4000-8000-0000000000${String(fieldIds.size + 1).padStart(2, "0")}`;
+    fieldIds.set(name, id);
+  }
+  return { id, name, type: "text", options: null, description: name };
 }
 
 // O nome acessível do gatilho é o nome do campo colado aos badges
@@ -47,12 +55,10 @@ describe("SchemaBuilderGUI — nomes únicos", () => {
     ]);
   });
 
-  // Limitação conhecida, não comportamento desejado: o rename para um nome já
-  // existente é recusado para preservar a unicidade que `mergeSchemas` exige, e
-  // o efeito colateral é que o valor trava no último nome livre digitado ("q").
-  // O teste fixa o contrato atual para que a issue #473 (id estável no campo)
-  // tenha um ponto de partida explícito ao removê-lo.
-  it("recusa o rename que duplicaria outro campo (ver #473)", async () => {
+  // Com a identidade no `field.id` (#473), nome duplicado é estado transitório
+  // legítimo do editor: toda tecla propaga e o aviso é derivado — quem barra a
+  // duplicata é o save, não o input.
+  it("propaga o rename que duplica outro campo e mostra o aviso", async () => {
     render(<ControlledBuilder initial={[field("q1"), field("q2")]} />);
     await userEvent.click(cardTrigger("q2"));
     const input = screen.getByPlaceholderText("nome_do_campo");
@@ -62,16 +68,19 @@ describe("SchemaBuilderGUI — nomes únicos", () => {
     await userEvent.type(screen.getByPlaceholderText("nome_do_campo"), "1");
 
     expect(screen.getByText("Já existe um campo com esse nome.")).toBeTruthy();
-    expect(screen.getByTestId("field-names").textContent).toBe("q1,q");
-    const names = screen.getByTestId("field-names").textContent!.split(",");
-    expect(new Set(names).size).toBe(names.length);
+    expect(screen.getByTestId("field-names").textContent).toBe("q1,q1");
+
+    // Seguir digitando sai do estado duplicado sem nada travado: o valor nunca
+    // ficou preso no "último nome livre".
+    await userEvent.type(screen.getByPlaceholderText("nome_do_campo"), "0");
+    expect(screen.queryByText("Já existe um campo com esse nome.")).toBeNull();
+    expect(screen.getByTestId("field-names").textContent).toBe("q1,q10");
   });
 });
 
-// O card não tem identidade de domínio (`name` é conteúdo editável), então a
-// expansão é rastreada por um id surrogate de `useStableListIds`. Estes testes
-// cobrem o que o id precisa sustentar; sem eles, trocar a fonte dos ids não
-// tinha rede nenhuma.
+// A identidade do card é `field.id` (#473): keys, DnD e expansão seguem o id
+// do próprio campo, não um surrogate posicional. Estes testes cobrem o que a
+// identidade precisa sustentar.
 describe("SchemaBuilderGUI — identidade do card", () => {
   const nomeDoCampo = () => screen.getByPlaceholderText("nome_do_campo");
 

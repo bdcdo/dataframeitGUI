@@ -6,7 +6,7 @@ import { computeLlmErrorMetrics, type MetricsResponse, type MetricsFinalAnswer }
 import type { ErrorDecision, ErrorResolutionRow } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
 
-const field: PydanticField = { name: "x", type: "text", description: "Pergunta", options: null };
+const field: PydanticField = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", description: "Pergunta", options: null };
 const responses = [
   { id: "rllm", respondent_type: "llm" as const, respondent_id: null, answers: { x: "LLM" } },
   { id: "rh", respondent_type: "humano" as const, respondent_id: "person", answers: { x: "Humano" } },

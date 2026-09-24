@@ -8,7 +8,7 @@ import type { PydanticField } from "@/lib/types";
 afterEach(cleanup);
 
 const FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "Diagnóstico" },
+  { id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "Diagnóstico" },
 ];
 
 const DRAFT = { answers: { q1: "do rascunho" }, notes: "" };

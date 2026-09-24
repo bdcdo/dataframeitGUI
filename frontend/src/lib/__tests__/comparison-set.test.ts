@@ -18,8 +18,8 @@ const project = {
 };
 const { minVersion, ctx: versionCtx } = versionGate(project);
 
-const q1: PydanticField = { name: "q1", type: "text", options: null, description: "", required: true };
-const q2: PydanticField = { name: "q2", type: "text", options: null, description: "", required: true };
+const q1: PydanticField = { id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "", required: true };
+const q2: PydanticField = { id: "00000000-0000-4000-8000-000000000002", name: "q2", type: "text", options: null, description: "", required: true };
 
 function human(id: string, answers: Record<string, unknown>, over: Partial<ComparisonCandidate> = {}): ComparisonCandidate {
   return {

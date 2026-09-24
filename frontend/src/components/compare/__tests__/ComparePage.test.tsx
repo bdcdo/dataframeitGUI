@@ -243,8 +243,22 @@ import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import { pendingVerdictLabel, type CompareResponse, type PendingVerdict } from "@/components/compare/compare-types";
 
 const fields: PydanticField[] = [
-  { name: "campoA", type: "text", options: null, description: "Campo A", hash: "hA" },
-  { name: "campoB", type: "text", options: null, description: "Campo B", hash: "hB" },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "campoA",
+    type: "text",
+    options: null,
+    description: "Campo A",
+    hash: "hA",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000002",
+    name: "campoB",
+    type: "text",
+    options: null,
+    description: "Campo B",
+    hash: "hB",
+  },
 ];
 
 const documents = [
@@ -467,7 +481,14 @@ describe("ComparePage — navegação e filtro", () => {
     const user = userEvent.setup();
     const fieldsABC: PydanticField[] = [
       ...fields,
-      { name: "campoC", type: "text", options: null, description: "Campo C", hash: "hC" },
+      {
+        id: "00000000-0000-4000-8000-000000000003",
+        name: "campoC",
+        type: "text",
+        options: null,
+        description: "Campo C",
+        hash: "hC",
+      },
     ];
     const base = {
       ...makeProps(),
@@ -494,7 +515,7 @@ describe("ComparePage — navegação e filtro", () => {
     const user = userEvent.setup();
     const fieldsABC: PydanticField[] = [
       ...fields,
-      { name: "campoC", type: "text", options: null, description: "Campo C", hash: "hC" },
+      { id: "00000000-0000-4000-8000-000000000004", name: "campoC", type: "text", options: null, description: "Campo C", hash: "hC" },
     ];
     const base = {
       ...makeProps(),

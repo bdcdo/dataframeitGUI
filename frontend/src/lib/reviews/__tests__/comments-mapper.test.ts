@@ -18,6 +18,7 @@ import type { PydanticField } from "@/lib/types";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
 
 const field: PydanticField = {
+  id: "00000000-0000-4000-8000-000000000001",
   name: "campo1",
   type: "text",
   options: null,
@@ -173,6 +174,7 @@ describe("mapDifficultyComments", () => {
 
   it("usa o campo llm_ambiguidades quando presente no schema", () => {
     const ambiguitiesField: PydanticField = {
+      id: "00000000-0000-4000-8000-000000000002",
       name: "llm_ambiguidades",
       type: "text",
       options: null,

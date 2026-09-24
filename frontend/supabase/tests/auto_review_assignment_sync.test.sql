@@ -28,7 +28,7 @@ WHERE id::text LIKE 'a0000000-0000-0000-0000-%';
 INSERT INTO public.projects (id, name, created_by, pydantic_fields) VALUES
   ('b0000000-0000-0000-0000-000000000001', 'auto review sync',
    'a0000000-0000-0000-0000-000000000001',
-   '[{"name":"q1"},{"name":"q2"},{"name":"q3"},{"name":"q4"}]');
+   '[{"id":"00000000-0000-4000-8000-0000000000c1","name":"q1"},{"id":"00000000-0000-4000-8000-0000000000c2","name":"q2"},{"id":"00000000-0000-4000-8000-0000000000c3","name":"q3"},{"id":"00000000-0000-4000-8000-0000000000c4","name":"q4"}]');
 
 INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES
   ('c0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000001',

@@ -34,7 +34,11 @@ WHERE id::text LIKE '82a00000-0000-0000-0000-%';
 INSERT INTO public.projects (id, name, created_by, pydantic_fields) VALUES
   ('82b00000-0000-0000-0000-000000000001', 'arbitration reopen #582',
    '82a00000-0000-0000-0000-000000000001',
-   '[{"name":"q1"},{"name":"q2"},{"name":"q3"}]');
+   -- Ids obrigatórios desde a #473: projects_pydantic_fields_shape recusa
+   -- elemento sem id UUID canônico.
+   '[{"id":"00000000-0000-4000-8000-0000000582a1","name":"q1"},
+     {"id":"00000000-0000-4000-8000-0000000582a2","name":"q2"},
+     {"id":"00000000-0000-4000-8000-0000000582a3","name":"q3"}]');
 
 INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES
   ('82c00000-0000-0000-0000-000000000001',

@@ -9,7 +9,14 @@ import type { PydanticField } from "@/lib/types";
 export const CURRENT_HASH = "hash-atual";
 
 const DEFAULT_FIELDS: PydanticField[] = [
-  { name: "q1", type: "text", options: null, description: "", required: true },
+  {
+    id: "00000000-0000-4000-8000-000000000001",
+    name: "q1",
+    type: "text",
+    options: null,
+    description: "",
+    required: true,
+  },
 ];
 
 export function makeProjectRow(over: Record<string, unknown> = {}) {

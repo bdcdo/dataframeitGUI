@@ -27,11 +27,11 @@ INSERT INTO public.projects (
 ) VALUES
   ('b0000000-0000-0000-0000-000000000001', 'cycle test',
    'a0000000-0000-0000-0000-000000000001', 'schema-hash',
-   '[{"name":"q1","type":"text","target":"all","hash":"q1-hash"}]',
+   '[{"id":"00000000-0000-4000-8000-0000000000a1","name":"q1","type":"text","target":"all","hash":"q1-hash"}]',
    1, 0, 0),
   ('b0000000-0000-0000-0000-000000000002', 'trigger test',
    'a0000000-0000-0000-0000-000000000001', 'schema-hash',
-   '[{"name":"q1","type":"text","target":"all","hash":"q1-hash"}]',
+   '[{"id":"00000000-0000-4000-8000-0000000000a1","name":"q1","type":"text","target":"all","hash":"q1-hash"}]',
    1, 0, 0);
 
 INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES

@@ -94,6 +94,7 @@ function conflictBlockMessage(conflicts: SchemaMergeConflict[]): string {
       return `${propertyLabel(conflict.property)} de "${conflict.fieldName}"`;
     }
     if (conflict.kind === "field") return `o campo "${conflict.fieldName}"`;
+    if (conflict.kind === "name") return `o nome "${conflict.name}"`;
     return "a ordem dos campos";
   });
   return `Outra sessão editou ao mesmo tempo: ${[...new Set(disputed)].join(", ")}. Recarregue a página para rever a versão atual antes de salvar.`;

@@ -1,6 +1,10 @@
 import type { PydanticField } from "@/lib/types";
 
-export const LLM_AMBIGUITIES_FIELD: PydanticField = {
+// Definição sem `id` de propósito: identidade nasce quando o campo entra no
+// schema de UM projeto (`toggleLlmField` gera o UUID no append). Um id fixo
+// aqui poderia colidir com um campo já existente que nasceu desta definição e
+// foi renomeado.
+export const LLM_AMBIGUITIES_FIELD: Omit<PydanticField, "id"> = {
   name: "llm_ambiguidades",
   type: "text",
   options: null,

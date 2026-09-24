@@ -17,10 +17,12 @@ function errorCase(chosenVerdict: string, extra: Partial<LlmError> = {}): LlmErr
     resolvedAt: null, reviewedAt: "2026-09-14T12:00:00Z", schemaVersion: null,
     llmResponseId: "rllm", chosenResponseId: "rh", source: "comparacao", sourceId: "review1", ...extra };
 }
-function show(field: unknown, chosenVerdict: string, extra: Partial<LlmError> = {}, decision: ErrorDecision = "researchers_correct") {
+// O `id` vem daqui: o contexto é lido de projects.pydantic_fields, onde todo
+// campo tem id, e cada caso abaixo só varia o que o seletor usa.
+function show(field: object, chosenVerdict: string, extra: Partial<LlmError> = {}, decision: ErrorDecision = "researchers_correct") {
   const onConfirm = vi.fn();
   render(<ErrorDecisionDialog
-    pending={{ error: errorCase(chosenVerdict, extra), decision, context: { ...base.context!, field_definition: field as ErrorResolutionContext["field_definition"] } }}
+    pending={{ error: errorCase(chosenVerdict, extra), decision, context: { ...base.context!, field_definition: { id: "00000000-0000-4000-8000-000000000001", ...field } as ErrorResolutionContext["field_definition"] } }}
     isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
   return onConfirm;
 }
@@ -156,7 +158,7 @@ describe("ErrorDecisionDialog — Erro do LLM leva o veredito nas opções atuai
   });
 });
 
-const yesNo = { name: "x", type: "single", options: ["Sim", "Não", "Talvez"], description: "P" };
+const yesNo = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "single", options: ["Sim", "Não", "Talvez"], description: "P" };
 
 describe("ErrorDecisionDialog — Todos errados", () => {
   it("não pré-marca o veredito, que é o que está sendo rejeitado, e bloqueia até escolher", async () => {
@@ -210,7 +212,7 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
 describe("ErrorDecisionDialog — resposta em branco em pergunta condicional", () => {
   const condition = { field: "g0", equals: "Sim" };
   const condSingle = { ...yesNo, condition };
-  const condMulti = { name: "x", type: "multi", options: ["A", "B"], description: "P", condition };
+  const condMulti = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "multi", options: ["A", "B"], description: "P", condition };
   const blankBox = () => screen.getByRole("checkbox", { name: /Deixar em branco/ });
   const isBlank = () => blankBox().getAttribute("aria-checked") === "true";
 
