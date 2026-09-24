@@ -13,7 +13,7 @@ vi.mock("node:fs", async (importOriginal) => {
       if (name.endsWith("/.env.e2e")) return "E2E_PROJECT_ID=canonical\n";
       if (name === "/runtime/isolated.env") return "E2E_PROJECT_ID=isolated\n";
       if (name === "/runtime/missing.env") throw Object.assign(new Error("fixture missing"), { code: "ENOENT" });
-      return fs.readFileSync(path, options);
+      return options === undefined ? fs.readFileSync(path) : fs.readFileSync(path, options);
     },
   };
 });
