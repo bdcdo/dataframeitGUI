@@ -25,8 +25,8 @@
 --
 --  * POSITIVO (referência dentro do mesmo documento passa): sem ele, uma FK que
 --    recusasse TUDO faria os negativos passarem e o contrato seria vácuo.
---  * NULO em `reviews.chosen_response_id`: 294 das 1.482 reviews de produção
---    não escolhem resposta — veredito sem escolha é legítimo. Uma FK composta
+--  * NULO em `reviews.chosen_response_id`: 360 das 1.929 reviews de produção
+--    (2026-09-24) não escolhem resposta — veredito sem escolha é legítimo. Uma FK composta
 --    que recusasse NULL quebraria a Comparação inteira; MATCH SIMPLE é o que
 --    permite isso, e o caso fixa a permissão.
 --  * `reviews.document_id` NOT NULL: é ELE que faz a FK valer, porque MATCH
@@ -45,7 +45,7 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 
-SELECT plan(12);
+SELECT plan(13);
 
 CREATE OR REPLACE FUNCTION pg_temp.rejected_constraint(statement TEXT)
 RETURNS TEXT
@@ -163,7 +163,7 @@ SELECT is(
   'review do doc A escolhe response do doc A'
 );
 
--- Veredito sem escolha continua legítimo (294 linhas assim em produção).
+-- Veredito sem escolha continua legítimo (360 linhas assim em produção em 2026-09-24).
 SELECT is(
   pg_temp.rejected_constraint($$
     INSERT INTO public.reviews
@@ -360,6 +360,22 @@ SELECT is(
   $$),
   NULL,
   'field_review com os dois lados do mesmo documento passa'
+);
+
+-- ========== ON DELETE de reviews ============================================
+--
+-- A FK de reviews não tem CASCADE, de propósito: apagar a resposta escolhida
+-- não pode apagar o veredito em silêncio. A review positiva do documento A,
+-- gravada acima, escolhe a resposta humana de A; apagá-la tem de ser recusado
+-- pela FK nova. Sem este caso, trocar NO ACTION por CASCADE deixaria a suíte
+-- verde.
+SELECT is(
+  pg_temp.rejected_constraint($$
+    DELETE FROM public.responses
+    WHERE id = '62540000-0000-0000-000a-0000000000aa'
+  $$),
+  'reviews_document_chosen_response_fk',
+  'apagar a response escolhida por um veredito é recusado'
 );
 
 SELECT * FROM finish();

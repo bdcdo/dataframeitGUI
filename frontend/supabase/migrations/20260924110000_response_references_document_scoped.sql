@@ -1,6 +1,6 @@
 -- Toda referência a `responses` passa a carregar o documento (issues #625, #628).
 --
--- Quatro colunas apontam para uma resposta sem dizer de qual documento ela é:
+-- Cinco colunas apontam para uma resposta sem dizer de qual documento ela é:
 -- reviews.chosen_response_id, response_equivalences.response_a_id/_b_id e
 -- field_reviews.human_response_id/llm_response_id. A FK de coluna única garante
 -- que a resposta EXISTE; não garante que ela pertence ao documento da linha que
@@ -18,12 +18,12 @@
 -- "FK garante existência, não coerência". Ela continua valendo como detector do
 -- histórico; daqui para a frente o estado deixa de ser construível.
 --
--- Medição em produção (2026-08-04, harness/2026-08-04-fk-document-scoped/,
--- read-only, 1.179 responses / 1.482 reviews / 325 equivalences / 535
--- field_reviews): ZERO violações vivas nas cinco colunas, zero document_id nulo
--- em responses e reviews, com controle provando que o detector acusaria um par
--- forjado. Ou seja: o resíduo da #628 já foi reparado pela #623 — esta migration
--- fecha uma garantia ausente, não conserta estrago em curso. Por isso as
+-- Medição em produção, só leitura, feita em 2026-08-04 e refeita em 2026-09-24
+-- sobre 1.508 responses / 1.929 reviews / 386 equivalences / 673 field_reviews:
+-- ZERO violações vivas nas cinco colunas, zero document_id nulo em responses e
+-- reviews, com controle provando que o detector acusaria um par forjado. Ou
+-- seja: o resíduo da #628 já foi reparado pela #623 — esta migration fecha uma
+-- garantia ausente, não conserta estrago em curso. Por isso as
 -- restrições entram VALIDADAS, e não NOT VALID: não há histórico a tolerar.
 
 BEGIN;
@@ -104,7 +104,7 @@ $preflight$;
 -- FK MATCH SIMPLE (o default) não verifica NADA quando QUALQUER coluna da chave
 -- é nula. Sem esta guarda a restrição existiria sem restringir — o mesmo modo de
 -- falha que o CHECK de autoria de 20260727120000:117-128 evita no índice único.
--- Produção mede 0 nulos em 1.482 linhas. As demais tabelas já nascem NOT NULL.
+-- Produção mede 0 nulos em 1.929 linhas (2026-09-24). As demais tabelas já nascem NOT NULL.
 DO $preflight_null$
 DECLARE
   v_offenders TEXT;
