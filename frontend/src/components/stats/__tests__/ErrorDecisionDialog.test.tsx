@@ -17,10 +17,12 @@ function errorCase(chosenVerdict: string, extra: Partial<LlmError> = {}): LlmErr
     resolvedAt: null, reviewedAt: "2026-09-14T12:00:00Z", schemaVersion: null,
     llmResponseId: "rllm", chosenResponseId: "rh", source: "comparacao", sourceId: "review1", ...extra };
 }
-function show(field: unknown, chosenVerdict: string, extra: Partial<LlmError> = {}, decision: ErrorDecision = "researchers_correct") {
+// O `id` vem daqui: o contexto é lido de projects.pydantic_fields, onde todo
+// campo tem id, e cada caso abaixo só varia o que o seletor usa.
+function show(field: object, chosenVerdict: string, extra: Partial<LlmError> = {}, decision: ErrorDecision = "researchers_correct") {
   const onConfirm = vi.fn();
   render(<ErrorDecisionDialog
-    pending={{ error: errorCase(chosenVerdict, extra), decision, context: { ...base.context!, field_definition: field as ErrorResolutionContext["field_definition"] } }}
+    pending={{ error: errorCase(chosenVerdict, extra), decision, context: { ...base.context!, field_definition: { id: "00000000-0000-4000-8000-000000000001", ...field } as ErrorResolutionContext["field_definition"] } }}
     isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
   return onConfirm;
 }

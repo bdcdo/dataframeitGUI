@@ -139,7 +139,7 @@ class Analysis(BaseModel):
         json_schema_extra={"subfield_rule": "at_least_one"},
     )
 """
-    result = compile_pydantic(code)
+    result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "doc")
     assert f["subfields"] == [
         {"key": "part_a", "label": "Part A", "required": True},

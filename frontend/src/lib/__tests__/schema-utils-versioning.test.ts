@@ -559,7 +559,10 @@ describe("generatePydanticCode round-trip surface", () => {
     subfields: PydanticField["subfields"],
     subfield_rule?: "all" | "at_least_one",
   ) =>
+    // `id` fixo: ele é sempre emitido, e a comparação byte a byte entre dois
+    // códigos gerados só vale para o mesmo campo.
     baseField({
+      id: "00000000-0000-4000-8000-0000000000bb",
       name: "doc",
       type: "text",
       options: null,

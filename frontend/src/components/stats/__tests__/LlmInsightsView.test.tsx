@@ -51,7 +51,7 @@ describe("decisão individual em Insights", () => {
 
   it("a confirmação mostra o enunciado conferido no servidor", async () => {
     const current = structuredClone(row.context!);
-    current.field_definition = { name: "x", type: "text", description: "Enunciado atualizado" };
+    current.field_definition = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", description: "Enunciado atualizado" };
     mocks.prepare.mockResolvedValue({ context: current });
     show();
     await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
@@ -134,7 +134,7 @@ describe("decisão individual em Insights", () => {
 
   it("veredito que saiu do formulário exige escolher a opção equivalente", async () => {
     const current = structuredClone(row.context!);
-    current.field_definition = { name: "x", type: "single", options: ["Sim", "Não"], description: "Pergunta" };
+    current.field_definition = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "single", options: ["Sim", "Não"], description: "Pergunta" };
     mocks.prepare.mockResolvedValue({ context: current });
     show({ ...errorCase(), chosenVerdict: "Talvez" });
     await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));

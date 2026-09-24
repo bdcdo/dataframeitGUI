@@ -3,7 +3,7 @@ import type { ErrorDecision, ErrorResolutionContext, ErrorResolutionRow } from "
 export function resolutionFixture(decision: ErrorDecision = "llm_correct"): ErrorResolutionRow {
   const context: ErrorResolutionContext = {
     project_id: "p1", document_id: "doc1", field_name: "x", round_id: "round1",
-    automation_mode: "compare_llm", field_definition: { name: "x", type: "text", description: "Pergunta", options: null },
+    automation_mode: "compare_llm", field_definition: { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", description: "Pergunta", options: null },
     llm_response_id: "rllm", human_response_id: "rh",
     llm_value: { present: true, value: "LLM" }, human_value: { present: true, value: "Humano" },
     source: { kind: "comparacao", id: "review1", verdict: "Humano" },
