@@ -9,9 +9,11 @@
 -- nome duplicado são recusados na escrita).
 --
 -- ORDEM DE ROLLOUT — esta migration vai ANTES do deploy do frontend.
--- Medido no remoto em 24/07/2026: dos 8 projetos, 3 têm pydantic_fields vazio,
--- 5 precisam de backfill (Zolgensma 28 campos, Zolgensma-Judiciário 30, PIBIC 1
--- e as 2 fixtures E2E) e NENHUM tem nome duplicado — a constraint entra limpa.
+-- Medido no remoto em 24/09/2026: dos 10 projetos, 3 têm pydantic_fields vazio,
+-- 7 precisam de backfill (Zolgensma-Judiciário 31 campos, Zolgensma 28,
+-- PIBIC-Tráfico Parte 2 9, PIBIC-Tráfico 1 e as 3 fixtures E2E com 6, 2 e 2) e
+-- NENHUM tem nome duplicado — a constraint entra limpa. As 366 decisões com
+-- contexto em error_resolutions estão nos dois projetos Zolgensma (parte 1b).
 --
 -- Se o deploy vier primeiro, a janela é fail-closed e contida: o editor de
 -- schema (`/config/schema`) recusa abrir com a copy de schema inválido e toda
@@ -86,6 +88,25 @@ WHERE EXISTS (
   FROM jsonb_array_elements(p.pydantic_fields) AS e(value)
   WHERE NOT (e.value ? 'id')
 );
+
+-- Parte 1b: as decisões do LLM Insights (error_resolutions) guardam em
+-- context.field_definition a definição do campo que llm_error_context leu, e
+-- só valem enquanto o contexto recalculado for idêntico ao guardado
+-- (contextIsCurrent em frontend/src/lib/error-resolution.ts, e o
+-- `IS DISTINCT FROM` de set_error_resolution). O backfill acima acrescenta
+-- `id` à definição viva; sem o mesmo `id` na guardada, toda decisão existente
+-- viraria "stale" e voltaria para a fila. O casamento é pelo nome, o mesmo
+-- critério de llm_error_context. Só o `id` entra: definição guardada que já
+-- divergia da viva em conteúdo continua divergindo, e a decisão stale segue
+-- stale.
+UPDATE public.error_resolutions er
+SET context = jsonb_set(er.context, '{field_definition,id}', f.value->'id')
+FROM public.projects p,
+     jsonb_array_elements(p.pydantic_fields) AS f(value)
+WHERE p.id = er.project_id
+  AND f.value->>'name' = er.field_name
+  AND jsonb_typeof(er.context->'field_definition') = 'object'
+  AND NOT (er.context->'field_definition' ? 'id');
 
 -- Preflight da constraint: se algum projeto já viola o shape (nome duplicado é
 -- o único caso que o backfill não conserta), falhar AQUI com os ids nomeados é
