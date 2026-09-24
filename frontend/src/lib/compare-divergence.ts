@@ -104,3 +104,42 @@ export function computeDivergentFieldNames(
 
   return divergent;
 }
+
+export type EquivalencePairRow = EquivalencePair & { id: string; reviewer_id: string | null };
+
+export type EquivalenceByDocField = Map<string, Map<string, EquivalencePairRow[]>>;
+
+export interface EquivalenceRow {
+  id: string;
+  document_id: string;
+  field_name: string;
+  response_a_id: string;
+  response_b_id: string;
+  reviewer_id: string | null;
+  response_a_answer_snapshot: unknown;
+  response_b_answer_snapshot: unknown;
+}
+
+// Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
+// detection on the server and for fusing answer cards on the client.
+export function buildEquivalenceMap(
+  allEquivalences: readonly EquivalenceRow[] | null,
+): EquivalenceByDocField {
+  const equivByDocField: EquivalenceByDocField = new Map();
+  for (const eq of allEquivalences ?? []) {
+    if (!equivByDocField.has(eq.document_id)) {
+      equivByDocField.set(eq.document_id, new Map());
+    }
+    const fieldMap = equivByDocField.get(eq.document_id)!;
+    if (!fieldMap.has(eq.field_name)) fieldMap.set(eq.field_name, []);
+    fieldMap.get(eq.field_name)!.push({
+      id: eq.id,
+      response_a_id: eq.response_a_id,
+      response_b_id: eq.response_b_id,
+      reviewer_id: eq.reviewer_id ?? null,
+      response_a_answer_snapshot: eq.response_a_answer_snapshot,
+      response_b_answer_snapshot: eq.response_b_answer_snapshot,
+    });
+  }
+  return equivByDocField;
+}

@@ -1,8 +1,4 @@
-// Métrica de erro do LLM exibida em LLM Insights: numerador (`errors`) e
-// denominador (`reviewedEntries`) de "taxa de erro".
-//
-// Puro e sem Supabase — recebe linhas cruas e devolve as duas listas — para
-// ser testável fora do runtime do Next, no molde de `compare-divergence.ts`.
+// A fila conserva decisões para reabertura; numerador e denominador vêm de reviewedEntries.
 //
 // Há DUAS fontes de veredito sobre acerto/erro do LLM, e as duas contam:
 //
@@ -34,6 +30,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+import { effectiveErrorResolution, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -46,6 +43,16 @@ export interface LlmError {
   llmAnswer: string;
   llmJustification: string | null;
   chosenVerdict: string;
+  /**
+   * A forma crua do veredito em `responses.answers`, para o seletor de
+   * "Erro do LLM" quando o texto de `chosenVerdict` não casa com as opções:
+   * na Comparação, a resposta que a arbitragem escolheu (um voto em card
+   * grava `multi` como "A, C", que não se reconstrói do texto); na
+   * auto-revisão, o snapshot humano. Ausente na ressurreição de decisão da
+   * Comparação: ali o contexto só tem a resposta de um codificador, que não
+   * é o veredito (#733).
+   */
+  chosenValue?: unknown;
   reviewerComment: string | null;
   resolvedAt: string | null;
   reviewedAt: string;
@@ -53,6 +60,8 @@ export interface LlmError {
   llmResponseId: string;
   chosenResponseId: string | null;
   source: LlmErrorSource;
+  sourceId?: string | null;
+  resolution?: ErrorResolutionRow;
 }
 
 // Todo (doc, campo) que o LLM respondeu e que já tem veredito humano — de
@@ -65,12 +74,14 @@ export interface ReviewedEntry {
   schemaVersion: string | null;
   reviewedAt: string;
   isError: boolean;
+  isPending?: boolean;
 }
 
 /* ── Formatos crus de entrada (colunas do banco, snake_case) ── */
 
 export interface MetricsResponse {
   id: string;
+  respondent_name?: string | null;
   document_id: string;
   respondent_type: "humano" | "llm";
   is_latest: boolean;
@@ -84,12 +95,15 @@ export interface MetricsResponse {
 }
 
 export interface MetricsReview {
+  id?: string;
   document_id: string;
   field_name: string;
   verdict: string;
   chosen_response_id: string | null;
   comment: string | null;
   created_at: string;
+  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
+  round_id: string;
 }
 
 // Os valores que o `CASE` de `final_answers` emite, e nada além deles. União
@@ -109,6 +123,7 @@ export type AutoReviewProvenance =
 
 // Linha da view `final_answers` (uma por documento com LLM × campo do schema).
 export interface MetricsFinalAnswer {
+  field_review_id?: string | null;
   document_id: string;
   field_name: string;
   provenance: AutoReviewProvenance;
@@ -138,6 +153,17 @@ export interface LlmErrorMetricsInput {
    */
   automationMode: string | null;
   /**
+   * `projects.current_round_id`. Só a arbitragem feita na rodada corrente
+   * conta como veredito: a fila compara o LLM da rodada corrente, e um
+   * veredito dado sobre respostas de rodada anterior pode nem ser opção do
+   * formulário atual (#733). Decisão já gravada em `errorResolutions` sobre
+   * célula de rodada antiga continua entrando pela ressurreição abaixo,
+   * enquanto o contexto dela seguir válido (a decisão é da rodada em que foi
+   * tomada). A fonte de auto-revisão (`final_answers`) não filtra rodada:
+   * `field_reviews` não tem a coluna.
+   */
+  currentRoundId: string | null;
+  /**
    * Só os documentos ATIVOS do projeto. As chaves, e não só os valores, são
    * consumidas: elas definem o conjunto de documentos que a métrica mede.
    */
@@ -150,8 +176,7 @@ export interface LlmErrorMetricsInput {
   finalAnswers: MetricsFinalAnswer[];
   /** Já filtradas por `superseded_at IS NULL`, COM as colunas de snapshot. */
   equivalences: MetricsEquivalence[];
-  /** "documentId:fieldName" -> resolved_at */
-  errorResolutions: Map<string, string | null>;
+  errorResolutions: Map<string, ErrorResolutionRow>;
 }
 
 // Candidato antes da deduplicação entre as duas fontes.
@@ -343,7 +368,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     isActiveDocument: (docId) => documentTitles.has(docId),
     titleOf: (docId) => documentTitles.get(docId) || docId,
     resolvedAtOf: (docId, fieldName) =>
-      errorResolutions.get(`${docId}:${fieldName}`) ?? null,
+      errorResolutions.get(`${docId}:${fieldName}`)?.resolved_at ?? null,
     responsesByDoc,
     responseById,
     llmLatestByDoc,
@@ -352,11 +377,28 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
   };
 }
 
+// A response que a arbitragem escolheu, por id e no documento da própria
+// review. A FK de `chosen_response_id` é só `REFERENCES responses(id)`: nada no
+// banco impede que ela aponte para response de outro documento, e comparar (ou
+// exibir) a resposta de outro documento seria pior que não ter nenhuma. O
+// `llm_response_id` de `field_reviews` não precisa da mesma guarda: lá o
+// escopo é garantido na escrita, pelo enfileiramento e pelo trigger de
+// reconciliação, enquanto `chosen_response_id` chega cru do cliente.
+function chosenResponseOf(review: MetricsReview, ctx: MetricsContext): MetricsResponse | undefined {
+  if (!review.chosen_response_id) return undefined;
+  const response = ctx.responseById.get(review.chosen_response_id);
+  return response?.document_id === review.document_id ? response : undefined;
+}
+
 // O LLM errou este campo, na leitura da Comparação? Para tudo que não é `multi`,
 // uma única noção de "mesma resposta": as classes do union-find já fundem tanto
 // pares marcados como equivalentes pelo revisor quanto respostas de texto
 // idêntico, e propagam por transitividade (A≡B, B≡C ⇒ A≡C). É a mesma primitiva
-// que a tela de Comparação usa para decidir divergência.
+// que a tela de Comparação usa para decidir divergência. Em `multi` as duas
+// telas se separam num ponto, de propósito: aqui o par marcado pelo revisor
+// vence a comparação de conjuntos (ver `multiIsError`), e em
+// `computeDivergentFieldNames` não, porque a Comparação não oferece par em
+// campo `multi` e lá o campo segue divergente até ser arbitrado.
 function comparisonIsError(
   review: MetricsReview,
   field: PydanticField,
@@ -374,27 +416,30 @@ function comparisonIsError(
 // `multi` tem semântica de CONJUNTO de opções, e é assim que
 // `computeDivergentFieldNames` o compara — enquanto `normalizeForComparison`
 // serializa o array na ordem em que veio, e faria de ["a","b"] vs ["b","a"] um
-// erro do LLM que a tela de Comparação exibe como concordância. Fica de fora do
-// union-find pelo mesmo motivo que lá: a UI de revisão de multi
-// (MultiOptionReview) não tem cards de equivalência, não há par a fundir.
+// erro do LLM que a tela de Comparação exibe como concordância. Por isso a
+// comparação de valores fica fora do union-find.
 //
-// Hoje o caminho é defensivo: `MultiOptionReview` submete sem
-// `chosenResponseId`, e a página filtra `chosen_response_id IS NOT NULL`, de
-// modo que nenhum review de `multi` chega até aqui. Ele existe para que a
-// afirmação "esta métrica usa as primitivas da Comparação" seja verdadeira por
-// construção, e não por acidente da UI atual.
+// Os pares que o revisor marcou, porém, valem aqui também. A UI de revisão de
+// multi (MultiOptionReview) submete sem `chosenResponseId`, e a página filtra
+// `chosen_response_id IS NOT NULL`, então review FEITA em campo multi não chega
+// a esta função. Chega a review feita quando a pergunta ainda era `single` e
+// que depois virou `multi`: ela tem resposta escolhida, o card oferece o "="
+// e o par gravado precisa suprimir o erro. Sem a consulta abaixo o botão
+// confirmava sucesso e o card continuava na fila.
 function multiIsError(
   review: MetricsReview,
   field: PydanticField,
   llmResponse: MetricsResponse,
   ctx: MetricsContext,
 ): boolean {
-  const chosen = review.chosen_response_id
-    ? ctx.responseById.get(review.chosen_response_id)
-    : undefined;
+  const chosen = chosenResponseOf(review, ctx);
   // Sem a response escolhida não há conjunto com que comparar: o texto do
   // veredito de multi é um JSON de opção→marcada, de outra forma que a resposta.
   if (!chosen) return true;
+
+  const groupKeys = ctx.groupKeysFor(review.document_id, review.field_name);
+  const llmKey = groupKeys.get(llmResponse.id);
+  if (llmKey !== undefined && llmKey === groupKeys.get(chosen.id)) return false;
 
   return !multiSelectionsAgree(
     field.options ?? [],
@@ -429,14 +474,27 @@ function groupedIsError(
   );
 }
 
+// A decisão explícita do revisor vence a classificação automática: "Ambos
+// corretos" tira o erro do LLM sem aprovar valor; as decisões que aprovam
+// valor dizem de quem foi o erro.
+function resolutionIsError(resolution: EffectiveErrorResolution, measured: boolean): boolean {
+  if (resolution.status === "upheld") return false;
+  return resolution.status === "approved" ? resolution.isLlmError : measured;
+}
+
 /* ── Fonte A: Comparação (`reviews`) ── */
 function comparisonCandidates(
   reviews: MetricsReview[],
+  currentRoundId: string | null,
   ctx: MetricsContext,
 ): Candidate[] {
   const candidates: Candidate[] = [];
 
   for (const review of reviews) {
+    // Arbitragem de rodada anterior não é veredito sobre o LLM corrente: sai
+    // do numerador e do denominador. Sem rodada corrente, nada conta.
+    if (review.round_id !== currentRoundId) continue;
+
     // Documento excluído (soft delete) sai da métrica inteira, não só do
     // título: medir o acerto do LLM sobre um documento que o coordenador tirou
     // do projeto é ruído em ambos os sentidos.
@@ -482,11 +540,13 @@ function buildComparisonCandidate(
           llmJustification:
             llmResponse.justifications?.[review.field_name] || null,
           chosenVerdict: review.verdict,
+          chosenValue: chosenResponseOf(review, ctx)?.answers?.[review.field_name],
           reviewerComment: review.comment,
           resolvedAt: ctx.resolvedAtOf(review.document_id, review.field_name),
           llmResponseId: llmResponse.id,
           chosenResponseId: review.chosen_response_id,
           source: "comparacao",
+          sourceId: review.id,
         }
       : null,
     entry: { ...shared, isError },
@@ -558,11 +618,13 @@ function buildAutoReviewError(
     ),
     llmJustification: arbitratedLlm.justifications?.[row.field_name] || null,
     chosenVerdict: formatAnswer(row.human_answer_snapshot),
+    chosenValue: row.human_answer_snapshot,
     reviewerComment: row.arbitrator_comment,
     resolvedAt: ctx.resolvedAtOf(row.document_id, row.field_name),
     llmResponseId: arbitratedLlm.id,
     chosenResponseId: row.human_response_id,
     source: "auto_revisao",
+    sourceId: row.field_review_id,
   };
 }
 
@@ -664,6 +726,30 @@ export function usesAutoReviewSource(automationMode: string | null): boolean {
   return automationMode === "auto_review_llm";
 }
 
+// Caso que saiu da lista de divergências (o LLM corrente concorda, a review foi
+// substituída) mas tem decisão gravada: volta à fila a partir do contexto
+// salvo, para a decisão continuar visível e reabrível.
+function revivedCase(resolution: ErrorResolutionRow, ctx: MetricsContext): LlmError | null {
+  const saved = resolution.context;
+  const field = ctx.fieldMap.get(resolution.field_name);
+  if (!saved || !isMeasurableField(field) || !ctx.isActiveDocument(resolution.document_id)) return null;
+  const autoReview = saved.source.kind === "auto_revisao";
+  return {
+    documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
+    fieldName: resolution.field_name, fieldDescription: field.description,
+    llmAnswer: formatAnswer(saved.llm_value.value),
+    // Na Comparação o veredito é o da review gravada na fonte; a resposta
+    // humana do contexto é a de um codificador e não vira "veredito".
+    chosenVerdict: autoReview ? formatAnswer(saved.human_value.value) : String(saved.source.verdict ?? ""),
+    ...(autoReview ? { chosenValue: saved.human_value.value } : {}),
+    llmJustification: null, reviewerComment: null, resolvedAt: resolution.resolved_at,
+    reviewedAt: resolution.resolved_at, schemaVersion: null,
+    llmResponseId: saved.llm_response_id, chosenResponseId: saved.human_response_id,
+    source: autoReview ? "auto_revisao" : "comparacao",
+    sourceId: typeof saved.source.id === "string" ? saved.source.id : null,
+  };
+}
+
 export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
   errors: LlmError[];
   reviewedEntries: ReviewedEntry[];
@@ -673,7 +759,7 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
   const autoReviewEnabled = usesAutoReviewSource(input.automationMode);
 
   const candidates = [
-    ...comparisonCandidates(input.reviews, ctx),
+    ...comparisonCandidates(input.reviews, input.currentRoundId, ctx),
     ...(autoReviewEnabled ? autoReviewCandidates(input.finalAnswers, ctx) : []),
   ];
 
@@ -700,8 +786,24 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
       : a.documentId.localeCompare(b.documentId),
   );
 
+  const cases = new Map<string, LlmError>(sorted.flatMap((c) => c.error ? [[`${c.documentId}:${c.fieldName}`, c.error] as const] : []));
+  for (const [key, resolution] of input.errorResolutions) {
+    if (cases.has(key)) continue;
+    const revived = revivedCase(resolution, ctx);
+    if (revived) cases.set(key, revived);
+  }
   return {
-    errors: sorted.flatMap((c) => (c.error ? [c.error] : [])),
-    reviewedEntries: sorted.map((c) => c.entry),
+    errors: [...cases.entries()].map(([key, error]) => ({
+      ...error,
+      resolution: input.errorResolutions.get(key),
+    })),
+    reviewedEntries: sorted.map((c) => {
+      const resolution = effectiveErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`));
+      return {
+        ...c.entry,
+        isError: resolutionIsError(resolution, c.entry.isError),
+        isPending: resolution.status === "discussion",
+      };
+    }),
   };
 }

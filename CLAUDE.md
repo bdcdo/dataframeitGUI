@@ -86,7 +86,7 @@ cd ../worktrees/<descricao-curta>
 Trabalhar la (todos os edits, commits, push, `gh pr create`). Apos o merge do PR:
 
 ```bash
-cd /home/brunodcdo/Desktop/OpenClaw/LabDados/dataframeitGUI
+cd <raiz do repositorio>
 git worktree remove ../worktrees/<descricao-curta>
 ```
 
@@ -103,7 +103,7 @@ Demais comandos: scripts em `frontend/package.json` (`dev`, `lint`, `typecheck`,
 
 A stack de qualidade cobre quatro eixos — react-doctor (React no arquivo), **fallow** (grafo do codebase), **typescript-eslint type-checked** (tipos), **React Scan** (runtime) — mais **ruff** no backend Python, **actionlint** e o teste comportamental dos workflows de deploy, **Vitest/Playwright/pytest** (testes) e **Dependabot + semgrep** (segurança, sobre o gitleaks já existente). O princípio é que **nada depende de lembrar de rodar**: os hooks de `.pre-commit-config.yaml` disparam sozinhos, divididos em dois estágios — pre-commit (leve/file-scoped: gitleaks, ruff, actionlint, deploy notifier, react-doctor) e pre-push (pesado/grafo: typecheck, vitest, e2e-smoke, lint:types, fallow audit, semgrep, backend-pytest, mypy). Setup (1x): `cd frontend && npm install && uv tool install pre-commit && pre-commit install` (instala os dois estágios). Cada gate grandfathers o débito legado quando aplicável (new-only no fallow/semgrep, file-scoped no ruff/lint:types/mypy, line-scoped no react-doctor); vitest, e2e-smoke e backend-pytest rodam como gates de teste. Decisão completa, baselines e o que foi diferido (tsgo, mypy, Biome) em **`docs/CODE_QUALITY_TOOLING.md`**; baseline e regras silenciadas do react-doctor em `docs/LINT_CONFIG.md`.
 
-**Estratégia de verificação** (o que exige qual nível de verificação; práticas anti-"codificação não salva": discriminador escrita-vs-exibição, prova do vermelho, replay com dados de produção, invariantes de banco via `npm run invariants`): **`docs/VERIFICATION.md`**. Antes de tocar o write path de codificações/comparações, RLS ou migrations, classificar a mudança pela escala de tiers de lá.
+**Estratégia de verificação** (práticas anti-"codificação não salva": discriminador escrita-vs-exibição, prova do vermelho, replay com dados de produção, invariantes de banco via `npm run invariants`): **`docs/VERIFICATION.md`**.
 
 O **react-doctor** roda como hook **local de pre-commit**, line-scoped, via `frontend/scripts/react-doctor-gate.sh` nos commits que tocam `frontend/**/*.{ts,tsx}`: **bloqueia se a linha alterada produzir qualquer diagnóstico** — error ou warning. O débito legado fica grandfathered. O script também falha fechado quando o `react-doctor` instalado diverge do pino do `package.json`, caso em que um `node_modules` stale mediria com a ferramenta errada. Por ser local e opt-in, é rede de proteção do dev, não portão de merge no servidor. Versão pinada, config (fonte única) e regras silenciadas: `frontend/package.json`, `frontend/doctor.config.json` e `docs/LINT_CONFIG.md`.
 

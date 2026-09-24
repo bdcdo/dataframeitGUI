@@ -9,6 +9,7 @@ import {
 import {
   CURRENT_HASH,
   makeEmptyComparisonTableData,
+  makeEquivalenceRow,
   makeHumanResponse,
   makeIncompleteCoderComparisonScenario,
   makeProjectMember,
@@ -53,6 +54,7 @@ const llm = (q1: string, extra: Record<string, unknown> = {}) => ({
   document_id: "doc1",
   respondent_type: "llm",
   is_latest: true,
+  is_partial: false,
   answers: { q1 },
   answer_field_hashes: null,
   pydantic_hash: CURRENT_HASH,
@@ -279,15 +281,66 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     await expectAutoComparisonOutcome([makeHumanResponse("userA", "A")], false);
   });
 
-  it("codificação incompleta não conta para o mínimo", async () => {
-    // userB tem resposta vazia (incompleta) → só 1 humano completo.
+  it("codificação parcial não conta para o mínimo", async () => {
+    // userB gravou conjunto que a régua de completude reprovou (is_partial)
+    // → só 1 humano conta.
     tableData.responses = [
       makeHumanResponse("userA", "A"),
-      { ...makeHumanResponse("userB", "B"), answers: {} },
+      { ...makeHumanResponse("userB", "B"), answers: {}, is_partial: true },
     ];
     tableData.project_members = [makeProjectMember("userC")];
     const r = await runAutoComparison();
     expect(r.assigned).toBe(false);
+  });
+
+  it("linha sem is_partial (coluna fora do select) não conta", async () => {
+    // O mock ignora o select, então a coluna esquecida só aparece como linha
+    // sem a chave; `toVersioned` precisa tratá-la como parcial.
+    const { is_partial: _omitido, ...semColuna } = makeHumanResponse("userB", "B");
+    tableData.responses = [makeHumanResponse("userA", "A"), semColuna];
+    tableData.project_members = [makeProjectMember("userC")];
+    const r = await runAutoComparison();
+    expect(r.assigned).toBe(false);
+  });
+
+  it("equivalência registrada funde a divergência → não atribui", async () => {
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
+    tableData.response_equivalences = [
+      makeEquivalenceRow("q1", { id: "r-userA", answer: "A" }, { id: "r-userB", answer: "B" }),
+    ];
+    tableData.project_members = [makeProjectMember("userC")];
+    const r = await runAutoComparison();
+    expect(r.assigned).toBe(false);
+  });
+
+  it("obrigatória criada depois do envio não tira a codificação do disparo", async () => {
+    // userA enviou quando só existia q1; q2 (obrigatória) veio depois e userB
+    // já a respondeu. Vale a régua do envio (is_partial=false, carimbo sem
+    // q2): userA conta, e a divergência em q1 abre a comparação. Reaplicar a
+    // completude contra o schema de hoje descartaria userA e deixaria a
+    // divergência visível na fila sem ninguém atribuído.
+    tableData.projects = [
+      makeProjectRow({
+        pydantic_fields: [
+          { name: "q1", type: "text", options: null, description: "", required: true },
+          { name: "q2", type: "text", options: null, description: "", required: true },
+        ],
+      }),
+    ];
+    tableData.responses = [
+      makeHumanResponse("userA", "A", {
+        is_partial: false,
+        answer_field_hashes: { q1: "h-q1" },
+      }),
+      makeHumanResponse("userB", "B", {
+        is_partial: false,
+        answers: { q1: "B", q2: "sim" },
+        answer_field_hashes: { q1: "h-q1", q2: "h-q2" },
+      }),
+    ];
+    tableData.project_members = [makeProjectMember("userC")];
+    const r = await runAutoComparison();
+    expect(r.assigned).toBe(true);
   });
 
   it("já existe comparacao ativa → idempotente, não re-sorteia", async () => {
@@ -469,6 +522,30 @@ describe("createAutoComparisonIfDiverges — piso de versão latest_major (#247)
     // LLM antigo não qualifica → falta a 2ª resposta → não dispara.
     expect(r.assigned).toBe(false);
     expect(assignmentCalls()).toHaveLength(0);
+  });
+});
+
+describe("scanComparisonBacklog — compare_llm", () => {
+  it("1 humano + LLM divergentes entram no backlog", async () => {
+    // A fase leve pré-seleciona pelo piso de humanos do modo, que em
+    // compare_llm é 1. Um piso fixo em 2 descartaria o doc antes da análise.
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.projects = [makeProjectRow({ automation_mode: "compare_llm" })];
+    tableData.responses = [makeHumanResponse("userA", "A"), llm("B")];
+    const backlog = await scanComparisonBacklog(makeClient() as never, "p1", "compare_llm");
+    expect(backlog.map((b) => b.documentId)).toEqual(["doc1"]);
+  });
+});
+
+describe("scanComparisonBacklog — equivalências", () => {
+  it("doc cuja divergência foi fundida por equivalência fica fora do backlog", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
+    tableData.response_equivalences = [
+      makeEquivalenceRow("q1", { id: "r-userA", answer: "A" }, { id: "r-userB", answer: "B" }),
+    ];
+    const backlog = await scanComparisonBacklog(makeClient() as never, "p1", "compare_humans");
+    expect(backlog).toHaveLength(0);
   });
 });
 

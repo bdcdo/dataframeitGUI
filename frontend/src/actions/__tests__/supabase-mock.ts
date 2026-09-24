@@ -89,6 +89,8 @@ export function makeSupabaseMock(opts?: {
         error: result?.error ?? null,
       };
       return {
+        order() { return this; },
+        range: () => Promise.resolve(response),
         single: () => Promise.resolve(response),
         maybeSingle: () => Promise.resolve(response),
         then: (resolve: (v: unknown) => unknown) => resolve(response),

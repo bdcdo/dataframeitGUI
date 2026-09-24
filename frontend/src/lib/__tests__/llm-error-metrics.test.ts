@@ -9,6 +9,7 @@ import {
   type MetricsReview,
 } from "@/lib/llm-error-metrics";
 import type { PydanticField } from "@/lib/types";
+import { resolutionFixture } from "./error-resolution-fixture";
 
 function field(overrides: Partial<PydanticField> = {}): PydanticField {
   return {
@@ -46,6 +47,7 @@ function review(overrides: Partial<MetricsReview> = {}): MetricsReview {
     chosen_response_id: "rh",
     comment: null,
     created_at: "2026-02-01T00:00:00Z",
+    round_id: "round1",
     ...overrides,
   };
 }
@@ -91,6 +93,7 @@ function run(overrides: Partial<LlmErrorMetricsInput> = {}) {
   return computeLlmErrorMetrics({
     fields: [field()],
     automationMode: "auto_review_llm",
+    currentRoundId: "round1",
     documentTitles: new Map([["doc1", "Documento 1"]]),
     responses: [],
     reviews: [],
@@ -110,6 +113,42 @@ const llmResp = response({
 const humanResp = response({ id: "rh", answers: { x: "N/A" } });
 
 describe("computeLlmErrorMetrics — fonte Comparação", () => {
+  // A FK de `chosen_response_id` não escopa o documento, então a busca por id
+  // precisa conferi-lo: usar a resposta de outro documento como gabarito
+  // silenciaria um erro real e pré-marcaria o seletor com dado alheio.
+  it("resposta escolhida de outro documento não vale como gabarito", () => {
+    const { errors } = run({
+      responses: [
+        llmResp,
+        response({ id: "rh", document_id: "doc2", answers: { x: "NI" } }),
+      ],
+      reviews: [review({ chosen_response_id: "rh", verdict: "N/A" })],
+    });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].chosenValue).toBeUndefined();
+  });
+
+  // O mesmo ponteiro cruzado em campo `multi`, que tem caminho próprio: sem a
+  // guarda, os conjuntos da response alheia coincidiriam com os do LLM e o
+  // erro sumiria. O par de controle, no mesmo documento, é quem separa isso da
+  // simples ausência de response escolhida.
+  it.each([
+    ["de outro documento, não silencia o erro", "doc2", 1],
+    ["do mesmo documento, concorda e não é erro", "doc1", 0],
+  ])("multi: resposta escolhida %s", (_nome, documentId, esperado) => {
+    const { errors } = run({
+      fields: [field({ name: "x", type: "multi", options: ["a", "b"] })],
+      responses: [
+        response({ id: "rllm", respondent_type: "llm", answers: { x: ["a"] } }),
+        response({ id: "rh", document_id: documentId, answers: { x: ["a"] } }),
+      ],
+      reviews: [review({ chosen_response_id: "rh", verdict: '{"a":true}' })],
+    });
+
+    expect(errors).toHaveLength(esperado);
+  });
+
   it("conta erro quando o gabarito escolhido difere da resposta do LLM", () => {
     const { errors, reviewedEntries } = run({
       responses: [llmResp, humanResp],
@@ -266,6 +305,41 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0].source).toBe("comparacao");
+  });
+
+  // A pergunta era `single` quando foi arbitrada e virou `multi` depois, com a
+  // opção antiga fundida numa nova. A review tem resposta escolhida, o card
+  // oferece o "=", e o par gravado precisa suprimir o erro.
+  describe("review de single em campo que virou multi", () => {
+    const migrated = {
+      fields: [field({ name: "x", type: "multi", options: ["Não discutido", "Há comprovação"] })],
+      responses: [
+        response({ id: "rllm", respondent_type: "llm", answers: { x: ["Não discutido"] } }),
+        response({ id: "rh", is_latest: false, answers: { x: "Não informado se há comprovação" } }),
+      ],
+      reviews: [review({ verdict: "Não informado se há comprovação" })],
+    };
+
+    it("sem par, a opção antiga contra a nova é erro do LLM", () => {
+      expect(run(migrated).errors).toHaveLength(1);
+    });
+
+    it("o par marcado pelo revisor suprime o erro", () => {
+      const { errors, reviewedEntries } = run({
+        ...migrated,
+        equivalences: [equiv("rh", "rllm", "Não informado se há comprovação", ["Não discutido"])],
+      });
+      expect(errors).toEqual([]);
+      expect(reviewedEntries).toMatchObject([{ isError: false }]);
+    });
+
+    it("par com snapshot desatualizado não suprime", () => {
+      const { errors } = run({
+        ...migrated,
+        equivalences: [equiv("rh", "rllm", "Não informado se há comprovação", ["Há comprovação"])],
+      });
+      expect(errors).toHaveLength(1);
+    });
   });
 });
 
@@ -700,9 +774,77 @@ describe("computeLlmErrorMetrics — metadados para os filtros da UI", () => {
     const { errors } = run({
       responses: [llmResp, humanResp],
       reviews: [review({ verdict: "N/A" })],
-      errorResolutions: new Map([["doc1:x", "2026-04-01T00:00:00Z"]]),
+      errorResolutions: new Map([["doc1:x", { id: "resolution", project_id: "p1", document_id: "doc1", field_name: "x", resolved_at: "2026-04-01T00:00:00Z", resolved_by: "user", note: null, decision: null, context: null, current_context: null }]]),
     });
 
     expect(errors[0].resolvedAt).toBe("2026-04-01T00:00:00Z");
+  });
+});
+
+describe("rodada corrente (#733)", () => {
+  const llm = response({ id: "rllm", respondent_type: "llm", answers: { x: "LLM" } });
+  const human = response({ id: "rh", respondent_type: "humano", answers: { x: "Humano" } });
+
+  it("arbitragem de rodada anterior sai da fila e do denominador", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano", round_id: "round0" })],
+    });
+    expect(out.errors).toEqual([]);
+    expect(out.reviewedEntries).toEqual([]);
+  });
+
+  it("a mesma arbitragem na rodada corrente conta como erro do LLM", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano", round_id: "round1" })],
+    });
+    expect(out.errors).toHaveLength(1);
+    expect(out.reviewedEntries).toHaveLength(1);
+    expect(out.reviewedEntries[0].isError).toBe(true);
+  });
+
+  it("sem rodada corrente, nenhuma arbitragem conta", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      currentRoundId: null,
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano" })],
+    });
+    expect(out.errors).toEqual([]);
+    expect(out.reviewedEntries).toEqual([]);
+  });
+
+  it("a fila carrega a forma crua da resposta escolhida, para o seletor de Erro do LLM", () => {
+    const out = run({
+      automationMode: "compare_llm",
+      fields: [field({ type: "multi", options: ["A", "B", "C"] })],
+      responses: [response({ id: "rllm", respondent_type: "llm", answers: { x: ["B"] } }), response({ id: "rh", answers: { x: ["A", "C"] } })],
+      reviews: [review({ verdict: "A, C", chosen_response_id: "rh" })],
+    });
+    expect(out.errors[0]).toMatchObject({ chosenVerdict: "A, C", chosenValue: ["A", "C"] });
+  });
+
+  it("decisão ressuscitada da Comparação mostra o veredito da fonte, não a resposta do codificador", () => {
+    const row = resolutionFixture("researchers_correct");
+    row.context!.source = { kind: "comparacao", id: "review1", verdict: "Veredito da arbitragem" };
+    row.current_context = structuredClone(row.context);
+    const out = run({ automationMode: "compare_llm", responses: [llm, human], reviews: [], errorResolutions: new Map([["doc1:x", row]]) });
+    expect(out.errors[0].chosenVerdict).toBe("Veredito da arbitragem");
+    expect(out.errors[0].chosenValue).toBeUndefined();
+  });
+
+  it("decisão gravada sobre célula de rodada antiga continua na fila", () => {
+    const row = resolutionFixture("researchers_correct");
+    const out = run({
+      automationMode: "compare_llm",
+      responses: [llm, human],
+      reviews: [review({ verdict: "Humano", round_id: "round0" })],
+      errorResolutions: new Map([["doc1:x", row]]),
+    });
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]).toMatchObject({ documentId: "doc1", fieldName: "x", resolution: row });
   });
 });

@@ -6,7 +6,7 @@ import { Bot, AlertTriangle } from "lucide-react";
 interface ErrorStatsCardsProps {
   totalLlmDocs: number;
   errorCount: number;
-  errorRatePct: number;
+  errorRatePct: number | null;
   unreviewedLlmDocs?: number;
 }
 
@@ -48,7 +48,7 @@ export function ErrorStatsCards({
         <Card>
           <CardContent className="pt-6 text-center">
             <p className="text-2xl font-bold tabular-nums">
-              {errorRatePct}%
+              {errorRatePct === null ? "Sem casos decididos" : `${errorRatePct}%`}
             </p>
             <p className="text-xs text-muted-foreground">Taxa de erro</p>
           </CardContent>

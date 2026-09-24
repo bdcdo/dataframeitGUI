@@ -21,6 +21,11 @@ export interface CompareResponse {
   answers: Record<string, unknown>;
   justifications: Record<string, string> | null;
   is_latest: boolean;
+  // Codificação parcial (régua de completude reprovou o conjunto gravado).
+  // Trafega até a fila porque
+  // `responseQualifiesForVersion` decide sobre o dado, não sobre o WHERE da
+  // query — ver regra 2 do predicado e #678.
+  is_partial: boolean;
   pydantic_hash: string | null;
   answer_field_hashes: AnswerFieldHashes;
   schema_version_major: number | null;

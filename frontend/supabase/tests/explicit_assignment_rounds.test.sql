@@ -957,4 +957,29 @@ BEGIN
   RAISE NOTICE 'OK: contagem nula na fotografia e payload invalido, nao ausencia';
 END $$;
 
+-- #678: codificação humana parcial (is_partial) não conta como codificação no
+-- sorteio. Documento próprio, no fim da suíte, para não alterar os asserts
+-- anteriores sobre o documento ...03.
+INSERT INTO public.documents (id, project_id, text) VALUES
+  ('72000000-0000-0000-0000-00000000000a', '71000000-0000-0000-0000-000000000003', 'partial coding doc');
+INSERT INTO public.responses (
+  project_id, document_id, respondent_id, respondent_type, answers, is_partial
+) VALUES
+  ('71000000-0000-0000-0000-000000000003', '72000000-0000-0000-0000-00000000000a',
+   '70000000-0000-0000-0000-000000000001', 'humano', '{}'::jsonb, true),
+  ('71000000-0000-0000-0000-000000000003', '72000000-0000-0000-0000-00000000000a',
+   '70000000-0000-0000-0000-000000000002', 'humano', '{"q": "a"}'::jsonb, false);
+
+DO $$
+DECLARE v_human_count integer;
+BEGIN
+  SELECT human_coding_count INTO STRICT v_human_count
+  FROM public.lottery_doc_stats
+  WHERE id = '72000000-0000-0000-0000-00000000000a';
+  IF v_human_count <> 1 THEN
+    RAISE EXCEPTION 'FALHOU: lottery_doc_stats contou codificacao parcial: human=%', v_human_count;
+  END IF;
+  RAISE NOTICE 'OK: codificacao parcial fica fora de human_coding_count';
+END $$;
+
 ROLLBACK;

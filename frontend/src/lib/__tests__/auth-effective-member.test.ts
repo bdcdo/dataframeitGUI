@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 interface AccessScenario {
   project: { id: string; name: string; created_by: string } | null;
   membershipRole: "coordenador" | "pesquisador" | null;
+  canResolve?: boolean;
   projectError?: string;
   membershipError?: string;
 }
@@ -104,7 +105,7 @@ function resolveMembershipQuery(filters: QueryFilters): QueryResult {
   const scenario = accessScenario(filterValue(filters, "project_id"));
   membershipUserIds.push(filterValue(filters, "user_id"));
   return {
-    data: scenario.membershipRole ? { role: scenario.membershipRole } : null,
+    data: scenario.membershipRole ? { role: scenario.membershipRole, can_resolve: scenario.canResolve ?? false } : null,
     error: queryError(scenario.membershipError),
   };
 }
@@ -263,6 +264,13 @@ async function resolveProjectAccess(
 }
 
 describe("getProjectAccessContext", () => {
+  it.each([false, true])("can_resolve=%s vem do membro canônico sem conceder coordenação", async (canResolve) => {
+    aliasByIdentity[aliasKey("p1", projectUser.id)] = { member_user_id: "canonical-1" };
+    accessByProject.p1 = { project: { id: "p1", name: "Projeto", created_by: "owner" }, membershipRole: "pesquisador", canResolve };
+    expect(await resolveProjectAccess()).toMatchObject({ memberUserId: "canonical-1", isCoordinator: false, canResolve });
+    expect(membershipUserIds).toContain("canonical-1");
+  });
+
   it("resolve conta direta e papel pesquisador", async () => {
     accessByProject.p1 = {
       project: { id: "p1", name: "Projeto", created_by: "owner" },
@@ -404,6 +412,7 @@ describe("resolveProjectQueueIdentity", () => {
     membershipRole: "pesquisador" as const,
     isMaster: false,
     isCoordinator: false,
+    canResolve: false,
   };
 
   it("usa o membro canônico como dono e fila próprios", async () => {
