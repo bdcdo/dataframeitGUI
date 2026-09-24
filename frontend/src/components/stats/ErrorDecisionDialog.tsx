@@ -39,6 +39,8 @@ function decisionDescription(pending: PendingErrorDecision): string {
   return pending.error.fieldDescription || pending.error.fieldName;
 }
 
+const confirmLabel = (isPending: boolean) => (isPending ? "Salvando…" : "Confirmar decisão");
+
 function DecisionFooter({ isPending, onClose, onAction, label, disabled = false }: {
   isPending: boolean; onClose: () => void; onAction: () => void; label: string; disabled?: boolean;
 }) {
@@ -127,36 +129,45 @@ function pickerHint(decision: ValueChoosingDecision, field: PydanticField, error
     : null;
 }
 
-function VerdictPicker({ pending, decision, context, isPending, onClose, onConfirm }: {
-  pending: PendingErrorDecision; decision: ValueChoosingDecision; context: ErrorResolutionContext;
-} & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
+type PickerProps = { pending: PendingErrorDecision; decision: ValueChoosingDecision } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">;
+
+function VerdictPicker({ context, ...props }: PickerProps & { context: ErrorResolutionContext }) {
   const field = parsePydanticFields([context.field_definition])?.[0] ?? null;
-  const prefill = field ? initialValue(field, pending.error, decision) : undefined;
-  const openedBlank = field ? startsBlank(field, decision, pending.error.chosenVerdict, previousValue(pending.error, decision)) : false;
+  if (field) return <FieldValuePicker field={field} {...props} />;
+  return <>
+    <p className="text-sm text-destructive">A definição desta pergunta não pôde ser lida. Recarregue a página e tente de novo.</p>
+    <DecisionFooter isPending={props.isPending} onClose={props.onClose} onAction={() => {}} disabled label={confirmLabel(props.isPending)} />
+  </>;
+}
+
+// "Deixar em branco" só existe em pergunta condicional: é a resposta de quando
+// o gatilho não a aciona.
+function BlankToggle({ checked, onChange, disabled }: { checked: boolean; onChange: (blank: boolean) => void; disabled: boolean }) {
+  const blankId = useId();
+  return <div className="flex items-center gap-2">
+    <Checkbox id={blankId} checked={checked} onCheckedChange={(state) => onChange(state === true)} disabled={disabled} />
+    <Label htmlFor={blankId}>Deixar em branco (a pergunta não foi acionada)</Label>
+  </div>;
+}
+
+function FieldValuePicker({ field, pending, decision, isPending, onClose, onConfirm }: PickerProps & { field: PydanticField }) {
+  const prefill = initialValue(field, pending.error, decision);
+  const openedBlank = startsBlank(field, decision, pending.error.chosenVerdict, previousValue(pending.error, decision));
   const [value, setValue] = useState<unknown>(prefill);
   const [blank, setBlank] = useState(openedBlank);
-  const blankId = useId();
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
-  const confirmLabel = isPending ? "Salvando…" : "Confirmar decisão";
-  if (!field) return <>
-    <p className="text-sm text-destructive">A definição desta pergunta não pôde ser lida. Recarregue a página e tente de novo.</p>
-    <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => {}} disabled label={confirmLabel} />
-  </>;
   // Em branco é o vazio canônico do tipo, o único que a RPC aceita.
   const chosen = blank ? blankAnswerFor(field) : value;
   return <>
     <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
-    {isConditionalField(field) && <div className="flex items-center gap-2">
-      <Checkbox id={blankId} checked={blank} onCheckedChange={(state) => setBlank(state === true)} disabled={isPending} />
-      <Label htmlFor={blankId}>Deixar em branco (a pergunta não foi acionada)</Label>
-    </div>}
+    {isConditionalField(field) && <BlankToggle checked={blank} onChange={setBlank} disabled={isPending} />}
     {!blank && <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />
     </fieldset>}
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note, chosen)}
-      disabled={!hasResolutionValue(field, chosen)} label={confirmLabel} />
+      disabled={!hasResolutionValue(field, chosen)} label={confirmLabel(isPending)} />
   </>;
 }
 
@@ -171,7 +182,7 @@ function ConfirmDecision({ pending, decision, context, isPending, onClose, onCon
     <DecisionPreview decision={decision} answer={context.llm_value} verdict={pending.error.chosenVerdict} blankAllowed={blankAllowed} />
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note)}
-      disabled={decision !== "discussion" && !context.llm_value.present && !blankAllowed} label={isPending ? "Salvando…" : "Confirmar decisão"} />
+      disabled={decision !== "discussion" && !context.llm_value.present && !blankAllowed} label={confirmLabel(isPending)} />
   </>;
 }
 
