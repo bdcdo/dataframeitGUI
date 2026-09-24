@@ -206,3 +206,110 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
     expect(confirmButton().disabled).toBe(true);
   });
 });
+
+describe("ErrorDecisionDialog — resposta em branco em pergunta condicional", () => {
+  const condition = { field: "g0", equals: "Sim" };
+  const condSingle = { ...yesNo, condition };
+  const condMulti = { name: "x", type: "multi", options: ["A", "B"], description: "P", condition };
+  const blankBox = () => screen.getByRole("checkbox", { name: /Deixar em branco/ });
+  const isBlank = () => blankBox().getAttribute("aria-checked") === "true";
+
+  it("sem condição não oferece deixar em branco", () => {
+    show(yesNo, "Sim", {}, "all_wrong");
+    expect(screen.queryByRole("checkbox", { name: /Deixar em branco/ })).toBeNull();
+  });
+
+  it("single condicional: marcar em branco esconde o seletor e confirma \"\"", async () => {
+    const onConfirm = show(condSingle, "Sim", {}, "all_wrong");
+    expect(isBlank()).toBe(false);
+    expect(confirmButton().disabled).toBe(true);
+    await userEvent.click(blankBox());
+    expect(screen.queryByRole("radio", { name: "Sim" })).toBeNull();
+    // O LLM respondeu: o branco é mesmo erro dele, sem aviso.
+    expect(screen.queryByText(/O LLM também deixou em branco/)).toBeNull();
+    expect(confirmButton().disabled).toBe(false);
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("", "");
+  });
+
+  it("multi condicional: em branco confirma []", async () => {
+    const onConfirm = show(condMulti, "{\"A\":true}", {}, "all_wrong");
+    await userEvent.click(blankBox());
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("", []);
+  });
+
+  it("Erro do LLM sobre veredito vazio abre em branco e confirma, sem dizer que saiu do formulário", async () => {
+    const onConfirm = show(condSingle, "");
+    expect(isBlank()).toBe(true);
+    expect(screen.queryByText(/saiu do formulário/)).toBeNull();
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("", "");
+  });
+
+  it("desmarcar em branco volta ao seletor e exige valor", async () => {
+    show(condSingle, "");
+    await userEvent.click(blankBox());
+    expect(screen.getByRole("radio", { name: "Sim" })).toBeTruthy();
+    expect(confirmButton().disabled).toBe(true);
+  });
+
+  function showAbsentLlm(field: unknown, decision: ErrorDecision) {
+    const onConfirm = vi.fn();
+    render(<ErrorDecisionDialog
+      pending={{ error: errorCase("Sim"), decision,
+        context: { ...base.context!, field_definition: field as ErrorResolutionContext["field_definition"], llm_value: { present: false, value: null } } }}
+      isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
+    return onConfirm;
+  }
+
+  it("redecidir parte do branco que a própria decisão aprovou", () => {
+    show(condSingle, "Sim", { resolution: { ...resolutionFixture("all_wrong"), approved_value: "" } }, "all_wrong");
+    expect(isBlank()).toBe(true);
+    cleanup();
+    show(condSingle, "", { resolution: { ...base, approved_value: "Não" } });
+    expect(isBlank()).toBe(false);
+    expect(checked("radio", "Não")).toBe(true);
+  });
+
+  it("com o LLM também em branco, o branco não é erro dele: aponta Erro humano e não confirma", async () => {
+    const onConfirm = vi.fn();
+    render(<ErrorDecisionDialog
+      pending={{ error: errorCase(""), decision: "researchers_correct",
+        context: { ...base.context!, field_definition: condSingle as ErrorResolutionContext["field_definition"], llm_value: { present: false, value: null } } }}
+      isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
+    expect(isBlank()).toBe(true);
+    expect(screen.getByText(/O LLM também deixou em branco/)).toBeTruthy();
+    expect(confirmButton().disabled).toBe(true);
+    await userEvent.click(blankBox());
+    await userEvent.click(screen.getByRole("radio", { name: "Sim" }));
+    expect(confirmButton().disabled).toBe(false);
+  });
+
+  it("LLM presente com resposta em branco também conta como branco do LLM", () => {
+    render(<ErrorDecisionDialog
+      pending={{ error: errorCase(""), decision: "all_wrong",
+        context: { ...base.context!, field_definition: condSingle as ErrorResolutionContext["field_definition"], llm_value: { present: true, value: "" } } }}
+      isPending={false} onClose={() => {}} onConfirm={vi.fn()} />);
+    return userEvent.click(blankBox()).then(() => {
+      expect(screen.getByText(/O LLM também deixou em branco/)).toBeTruthy();
+      expect(confirmButton().disabled).toBe(true);
+    });
+  });
+
+  it("Erro humano com o LLM fora da condicional aprova o branco", async () => {
+    const onConfirm = showAbsentLlm(condSingle, "llm_correct");
+    expect(screen.getByText(/em branco/)).toBeTruthy();
+    expect(confirmButton().disabled).toBe(false);
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("");
+  });
+
+  it("Erro humano sem condição e Ambos corretos seguem exigindo a resposta do LLM", () => {
+    showAbsentLlm(yesNo, "llm_correct");
+    expect(confirmButton().disabled).toBe(true);
+    cleanup();
+    showAbsentLlm(condSingle, "both_correct");
+    expect(confirmButton().disabled).toBe(true);
+  });
+});

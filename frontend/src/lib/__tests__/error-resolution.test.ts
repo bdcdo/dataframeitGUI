@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  choosesValue, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, prefillLosesItems, prefillFromValue, prefillFromVerdict,
+  blankAnswerFor, choosesValue, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, isBlankAnswer,
+  prefillLosesItems, prefillFromValue, prefillFromVerdict, startsBlank,
   type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
@@ -211,5 +214,97 @@ describe("hasResolutionValue — o que basta para confirmar", () => {
     [{ ...text, type: "date" }, "Não informada", true], [{ ...text, type: "date", options: ["Sem data"] }, "Sem data", true],
   ])("%s com %j → %s", (field, value, expected) => {
     expect(hasResolutionValue(field, value)).toBe(expected);
+  });
+});
+
+describe("resposta em branco em pergunta condicional", () => {
+  const condition = { field: "g0", equals: "Sim" };
+  const condSingle: PydanticField = { ...single, condition };
+  const condMulti: PydanticField = { ...multi, condition };
+  const condText: PydanticField = { ...text, condition };
+  const condDate: PydanticField = { ...text, type: "date", condition };
+  const condGroup: PydanticField = { ...group, condition };
+
+  it.each<[PydanticField, unknown, boolean]>([
+    [condSingle, "", true], [condSingle, " ", false], [condSingle, [], false], [condSingle, null, false], [condSingle, undefined, false],
+    [condMulti, [], true], [condMulti, "", false], [condMulti, ["A"], true], [condMulti, ["Z"], false], [condMulti, [""], false],
+    [condText, "", true], [condDate, "", true], [condGroup, "", true],
+    [single, "", false], [multi, [], false], [text, "", false],
+  ])("hasResolutionValue(%s, %j) → %s: o vazio canônico só vale em condicional", (field, value, expected) => {
+    expect(hasResolutionValue(field, value)).toBe(expected);
+  });
+
+  it("o vazio canônico é [] em multi e \"\" nos demais tipos", () => {
+    expect(blankAnswerFor(condMulti)).toEqual([]);
+    expect(blankAnswerFor(condSingle)).toBe("");
+    expect(blankAnswerFor(condGroup)).toBe("");
+  });
+
+  it.each<[unknown, boolean]>([
+    [undefined, true], [null, true], ["", true], ["  ", true], [[], true],
+    ["A", false], [["A"], false], [{}, false], [0, false],
+  ])("isBlankAnswer(%j) → %s", (value, expected) => {
+    expect(isBlankAnswer(value)).toBe(expected);
+  });
+
+  function absentLlm(decision: ErrorResolutionRow["decision"], definition: Record<string, unknown>): ErrorResolutionRow {
+    const base = row(decision);
+    const ctx = { ...base.context!, field_definition: definition, llm_value: { present: false, value: null } } as ErrorResolutionContext;
+    return { ...base, context: ctx, current_context: structuredClone(ctx) };
+  }
+
+  it("Erro humano com o LLM fora da condicional aprova o vazio do tipo", () => {
+    expect(effectiveErrorResolution(absentLlm("llm_correct", { name: "q", type: "single", condition })))
+      .toEqual({ status: "approved", value: "", isLlmError: false });
+    expect(effectiveErrorResolution(absentLlm("llm_correct", { name: "q", type: "multi", condition })))
+      .toEqual({ status: "approved", value: [], isLlmError: false });
+  });
+
+  it("sem condição, ou em Ambos corretos, a resposta ausente do LLM segue sem valor", () => {
+    expect(effectiveErrorResolution(absentLlm("llm_correct", { name: "q", type: "single" })).status).toBe("stale");
+    expect(effectiveErrorResolution(absentLlm("both_correct", { name: "q", type: "single", condition })).status).toBe("stale");
+  });
+
+  it("startsBlank: veredito vazio em condicional abre em branco no Erro do LLM", () => {
+    expect(startsBlank(condSingle, "researchers_correct", "", undefined)).toBe(true);
+    expect(startsBlank(condMulti, "researchers_correct", "{}", undefined)).toBe(true);
+    expect(startsBlank(condMulti, "researchers_correct", "{\"A\":false}", undefined)).toBe(true);
+    expect(startsBlank(condSingle, "researchers_correct", "A", undefined)).toBe(false);
+    expect(startsBlank(condSingle, "researchers_correct", "ambiguo", undefined)).toBe(false);
+    expect(startsBlank(single, "researchers_correct", "", undefined)).toBe(false);
+  });
+
+  it("startsBlank: Todos errados não parte do veredito, só da própria decisão anterior", () => {
+    expect(startsBlank(condSingle, "all_wrong", "", undefined)).toBe(false);
+    expect(startsBlank(condSingle, "all_wrong", "A", "")).toBe(true);
+    expect(startsBlank(condSingle, "researchers_correct", "", "B ")).toBe(false);
+  });
+});
+
+// set_error_resolution decide "LLM em branco" com uma classe de caracteres
+// escrita à mão, porque btrim e [[:space:]] não batem com o trim() do JS. A
+// classe precisa ser o conjunto que o trim() remove, que é o que
+// isBlankAnswer usa no Gabarito e na métrica; a suíte SQL prende só alguns
+// membros, e este teste prende a classe inteira.
+describe("classe de branco de set_error_resolution", () => {
+  it("é exatamente o conjunto que trim() remove", () => {
+    const sql = readFileSync(join(__dirname, "..", "..", "..", "supabase", "migrations",
+      "20260924120000_error_resolutions_resposta_em_branco.sql"), "utf8");
+    const body = /~ E'\^\[(.*?)\]\*\$'/.exec(sql)?.[1];
+    expect(body).toBeDefined();
+    const escapes: Record<string, string> = { t: "\t", n: "\n", f: "\f", r: "\r" };
+    const tokens = [...body!.matchAll(/\\u([0-9A-Fa-f]{4})|\\([tnfr])|([^\\])/g)].map(([, hex, esc, literal]) =>
+      hex ? parseInt(hex, 16) : (esc ? escapes[esc] : literal).charCodeAt(0));
+    const inClass = new Set<number>();
+    for (let i = 0; i < tokens.length; i++) {
+      // "a-b" é intervalo; o "-" chega como o código 0x2d.
+      if (tokens[i + 1] === 0x2d && i + 2 < tokens.length) {
+        for (let c = tokens[i]; c <= tokens[i + 2]; c++) inClass.add(c);
+        i += 2;
+      } else inClass.add(tokens[i]);
+    }
+    const trimmed: number[] = [];
+    for (let c = 0; c <= 0xffff; c++) if (String.fromCharCode(c).trim() === "") trimmed.push(c);
+    expect([...inClass].sort((a, b) => a - b)).toEqual(trimmed);
   });
 });

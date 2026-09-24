@@ -9,7 +9,7 @@ import type {
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
-import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
+import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
 import { stableStringify } from "@/lib/schema-utils";
 
 /* ── Raw row shapes ── */
@@ -74,22 +74,31 @@ export function isAnswerCorrect(
   fieldType: "single" | "multi" | "text" | "date",
 ): boolean {
   if (verdict === "ambiguo" || verdict === "pular") return true;
-  if (fieldType === "multi") {
-    try {
-      const verdictMap = JSON.parse(verdict) as Record<string, boolean>;
-      const verdictSet = new Set(
-        Object.entries(verdictMap).flatMap(([k, v]) => (v ? [k] : [])),
-      );
-      const answerArr = Array.isArray(answer) ? answer : [];
-      const answerSet = new Set(answerArr.map(String));
-      if (verdictSet.size !== answerSet.size) return false;
-      for (const v of verdictSet) if (!answerSet.has(v)) return false;
-      return true;
-    } catch {
-      return normalizeForComparison(answer) === normalizeForComparison(verdict);
-    }
-  }
+  // Votar no grupo em que a resposta está ausente grava o veredito "", e a
+  // condicional não acionada chega sem a chave: as formas de vazio concordam.
+  // Vale antes de `multi` porque `multi` sem opções é votado como texto, e o
+  // voto grava `formatAnswer([])`, que é "".
+  if (isBlankAnswer(answer) && isBlankAnswer(verdict)) return true;
+  if (fieldType === "multi") return isMultiAnswerCorrect(answer, verdict);
   return normalizeForComparison(answer) === normalizeForComparison(verdict);
+}
+
+// Veredito de `multi` é o JSON `{opção: bool}`; veredito ilegível cai na
+// igualdade literal.
+function isMultiAnswerCorrect(answer: unknown, verdict: string): boolean {
+  try {
+    const verdictMap = JSON.parse(verdict) as Record<string, boolean>;
+    const verdictSet = new Set(
+      Object.entries(verdictMap).flatMap(([k, v]) => (v ? [k] : [])),
+    );
+    const answerArr = Array.isArray(answer) ? answer : [];
+    const answerSet = new Set(answerArr.map(String));
+    if (verdictSet.size !== answerSet.size) return false;
+    for (const v of verdictSet) if (!answerSet.has(v)) return false;
+    return true;
+  } catch {
+    return normalizeForComparison(answer) === normalizeForComparison(verdict);
+  }
 }
 
 export function formatAnswer(val: unknown): string {
@@ -410,6 +419,9 @@ function isReviewedAnswerCorrect(answer: unknown, review: ReviewRow, fieldType: 
 }
 
 function sameAnswer(answer: unknown, value: unknown): boolean {
+  // O branco aprovado é `""`, mas a condicional não acionada chega sem a
+  // chave: as formas de vazio são a mesma resposta.
+  if (isBlankAnswer(answer) && isBlankAnswer(value)) return true;
   return typeof value === "object" || typeof answer === "object"
     ? stableStringify(answer) === stableStringify(value)
     : normalizeForComparison(answer) === normalizeForComparison(value);
