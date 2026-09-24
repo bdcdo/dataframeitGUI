@@ -107,7 +107,7 @@ BEGIN
                     -- deixa NBSP e U+FEFF de fora: a classe e explicita.
                     OR (pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'string'
                         AND (v_context->'llm_value'->>'value')
-                          ~ E'^[\t\n\u000B\f\r    -     　﻿]*$'), false) THEN
+                          ~ E'^[\t\n\u000B\f\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$'), false) THEN
         RAISE EXCEPTION 'O LLM também deixou em branco: a decisão é "Erro humano".' USING ERRCODE = '22023';
       END IF;
     ELSE

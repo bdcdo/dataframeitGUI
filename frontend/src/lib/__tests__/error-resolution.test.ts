@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   blankAnswerFor, choosesValue, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, isBlankAnswer,
@@ -276,5 +278,33 @@ describe("resposta em branco em pergunta condicional", () => {
     expect(startsBlank(condSingle, "all_wrong", "", undefined)).toBe(false);
     expect(startsBlank(condSingle, "all_wrong", "A", "")).toBe(true);
     expect(startsBlank(condSingle, "researchers_correct", "", "B ")).toBe(false);
+  });
+});
+
+// set_error_resolution decide "LLM em branco" com uma classe de caracteres
+// escrita à mão, porque btrim e [[:space:]] não batem com o trim() do JS. A
+// classe precisa ser o conjunto que o trim() remove, que é o que
+// isBlankAnswer usa no Gabarito e na métrica; a suíte SQL prende só alguns
+// membros, e este teste prende a classe inteira.
+describe("classe de branco de set_error_resolution", () => {
+  it("é exatamente o conjunto que trim() remove", () => {
+    const sql = readFileSync(join(__dirname, "..", "..", "..", "supabase", "migrations",
+      "20260924120000_error_resolutions_resposta_em_branco.sql"), "utf8");
+    const body = /~ E'\^\[(.*?)\]\*\$'/.exec(sql)?.[1];
+    expect(body).toBeDefined();
+    const escapes: Record<string, string> = { t: "\t", n: "\n", f: "\f", r: "\r" };
+    const tokens = [...body!.matchAll(/\\u([0-9A-Fa-f]{4})|\\([tnfr])|([^\\])/g)].map(([, hex, esc, literal]) =>
+      hex ? parseInt(hex, 16) : (esc ? escapes[esc] : literal).charCodeAt(0));
+    const inClass = new Set<number>();
+    for (let i = 0; i < tokens.length; i++) {
+      // "a-b" é intervalo; o "-" chega como o código 0x2d.
+      if (tokens[i + 1] === 0x2d && i + 2 < tokens.length) {
+        for (let c = tokens[i]; c <= tokens[i + 2]; c++) inClass.add(c);
+        i += 2;
+      } else inClass.add(tokens[i]);
+    }
+    const trimmed: number[] = [];
+    for (let c = 0; c <= 0xffff; c++) if (String.fromCharCode(c).trim() === "") trimmed.push(c);
+    expect([...inClass].sort((a, b) => a - b)).toEqual(trimmed);
   });
 });
