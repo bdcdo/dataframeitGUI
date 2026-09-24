@@ -61,6 +61,8 @@ jobs:
         run: npm run test:db:responses-human-latest
       - name: Rodada da execução LLM
         run: npm run test:db:llm-runs-round
+      - name: Rodada da arbitragem
+        run: npm run test:db:reviews-round
 
       # As fixtures destes precisam estar commitadas (duas conexões dblink veem
       # o mesmo estado), então eles sujam o banco e ficam por último.

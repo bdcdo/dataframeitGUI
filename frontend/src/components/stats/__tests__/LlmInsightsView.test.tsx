@@ -18,8 +18,7 @@ function errorCase(): LlmError {
   return { documentId: "doc1", documentTitle: "Documento", fieldName: "x", fieldDescription: "Pergunta",
     llmAnswer: "LLM", llmJustification: null, chosenVerdict: "Humano", reviewerComment: null,
     resolvedAt: null, reviewedAt: "2026-09-14T12:00:00Z", schemaVersion: null,
-    llmResponseId: "rllm", chosenResponseId: "rh", source: "comparacao", sourceId: "review1",
-    humanChoices: [{ id: "rh", label: "Humano" }] };
+    llmResponseId: "rllm", chosenResponseId: "rh", source: "comparacao", sourceId: "review1" };
 }
 function show(error = errorCase(), canResolve = true) {
   render(<LlmInsightsView projectId="p1" errors={[error]} fields={[{ name: "x", description: "Pergunta" }]}
@@ -90,12 +89,64 @@ describe("decisão individual em Insights", () => {
     expect(mocks.reopen).toHaveBeenCalledWith("p1", "doc1", "x", { ...row, current_context: null });
   });
 
-  it("sem resposta humana ativa explica o bloqueio, sem abrir seletor vazio", async () => {
-    show({ ...errorCase(), humanChoices: [] });
+  it("sem resposta humana ativa o servidor explica o bloqueio e nada abre", async () => {
+    mocks.prepare.mockResolvedValue({ error: "Nenhuma resposta humana ativa nesta rodada. Refaça a revisão antes de decidir." });
+    show();
     await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
-    expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining("Não há resposta humana ativa"));
-    expect(mocks.prepare).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining("Nenhuma resposta humana ativa")));
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ preferredHumanResponseId: "rh" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Erro do LLM leva o veredito anterior, pré-preenchido, como valor (#733)", async () => {
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));
+    await screen.findByRole("dialog");
+    expect(screen.getByText("Veredito anterior")).toBeTruthy();
+    expect(screen.queryByText(/saiu do formulário/)).toBeNull();
+    expect((screen.getByPlaceholderText("Digite sua resposta...") as HTMLTextAreaElement).value).toBe("Humano");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
+      decision: "researchers_correct", context: row.context, expected: null, note: "", value: "Humano",
+    }));
+  });
+
+  it("Todos errados leva o valor digitado", async () => {
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Todos errados" }));
+    await screen.findByRole("dialog");
+    await userEvent.type(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
+      decision: "all_wrong", context: row.context, expected: null, note: "", value: "Terceira",
+    }));
+  });
+
+  it("Ambos corretos confirma sem valor", async () => {
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
+    await screen.findByRole("dialog");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
+      decision: "both_correct", context: row.context, expected: null, note: "",
+    }));
+  });
+
+  it("veredito que saiu do formulário exige escolher a opção equivalente", async () => {
+    const current = structuredClone(row.context!);
+    current.field_definition = { name: "x", type: "single", options: ["Sim", "Não"], description: "Pergunta" };
+    mocks.prepare.mockResolvedValue({ context: current });
+    show({ ...errorCase(), chosenVerdict: "Talvez" });
+    await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));
+    await screen.findByRole("dialog");
+    expect(screen.getByText(/saiu do formulário/)).toBeTruthy();
+    const confirm = await screen.findByRole("button", { name: "Confirmar decisão" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole("radio", { name: "Não" }));
+    await userEvent.click(confirm);
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", expect.objectContaining({
+      decision: "researchers_correct", value: "Não",
+    })));
   });
 
   it("membro sem can_resolve não recebe controles de decisão", () => {
