@@ -100,7 +100,7 @@
     "eslint-config-next": "16.3.5",
     "fallow": "3.27.0",
     "jsdom": "^29.1.1",
-    "react-doctor": "0.9.14",
+    "react-doctor": "0.7.8",
     "react-scan": "0.5.7",
     "shadcn": "^4.21.0",
     "supabase": "2.117.0",
