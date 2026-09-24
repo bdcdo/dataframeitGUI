@@ -74,25 +74,29 @@ export function isAnswerCorrect(
   fieldType: "single" | "multi" | "text" | "date",
 ): boolean {
   if (verdict === "ambiguo" || verdict === "pular") return true;
-  if (fieldType === "multi") {
-    try {
-      const verdictMap = JSON.parse(verdict) as Record<string, boolean>;
-      const verdictSet = new Set(
-        Object.entries(verdictMap).flatMap(([k, v]) => (v ? [k] : [])),
-      );
-      const answerArr = Array.isArray(answer) ? answer : [];
-      const answerSet = new Set(answerArr.map(String));
-      if (verdictSet.size !== answerSet.size) return false;
-      for (const v of verdictSet) if (!answerSet.has(v)) return false;
-      return true;
-    } catch {
-      return normalizeForComparison(answer) === normalizeForComparison(verdict);
-    }
-  }
+  if (fieldType === "multi") return isMultiAnswerCorrect(answer, verdict);
   // Votar no grupo em que a resposta está ausente grava o veredito "", e a
   // condicional não acionada chega sem a chave: as formas de vazio concordam.
   if (isBlankAnswer(answer) && isBlankAnswer(verdict)) return true;
   return normalizeForComparison(answer) === normalizeForComparison(verdict);
+}
+
+// Veredito de `multi` é o JSON `{opção: bool}`; veredito ilegível cai na
+// igualdade literal.
+function isMultiAnswerCorrect(answer: unknown, verdict: string): boolean {
+  try {
+    const verdictMap = JSON.parse(verdict) as Record<string, boolean>;
+    const verdictSet = new Set(
+      Object.entries(verdictMap).flatMap(([k, v]) => (v ? [k] : [])),
+    );
+    const answerArr = Array.isArray(answer) ? answer : [];
+    const answerSet = new Set(answerArr.map(String));
+    if (verdictSet.size !== answerSet.size) return false;
+    for (const v of verdictSet) if (!answerSet.has(v)) return false;
+    return true;
+  } catch {
+    return normalizeForComparison(answer) === normalizeForComparison(verdict);
+  }
 }
 
 export function formatAnswer(val: unknown): string {

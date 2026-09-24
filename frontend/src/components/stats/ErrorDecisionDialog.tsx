@@ -142,12 +142,24 @@ function VerdictPicker({ context, ...props }: PickerProps & { context: ErrorReso
 
 // "Deixar em branco" só existe em pergunta condicional: é a resposta de quando
 // o gatilho não a aciona.
-function BlankToggle({ checked, onChange, disabled }: { checked: boolean; onChange: (blank: boolean) => void; disabled: boolean }) {
+// Se o LLM também deixou em branco, gravar o branco em "Erro do LLM" ou
+// "Todos errados" contaria como erro do LLM uma resposta que o Gabarito marca
+// como certa; o aviso aponta a decisão que registra isso.
+function BlankToggle({ checked, onChange, disabled, llmBlank }: {
+  checked: boolean; onChange: (blank: boolean) => void; disabled: boolean; llmBlank: boolean;
+}) {
   const blankId = useId();
-  return <div className="flex items-center gap-2">
-    <Checkbox id={blankId} checked={checked} onCheckedChange={(state) => onChange(state === true)} disabled={disabled} />
-    <Label htmlFor={blankId}>Deixar em branco (a pergunta não foi acionada)</Label>
-  </div>;
+  return <>
+    <div className="flex items-center gap-2">
+      <Checkbox id={blankId} checked={checked} onCheckedChange={(state) => onChange(state === true)} disabled={disabled} />
+      <Label htmlFor={blankId}>Deixar em branco (a pergunta não foi acionada)</Label>
+    </div>
+    {checked && llmBlank && <p className="text-sm">O LLM também deixou em branco. Se a pergunta não foi acionada, a decisão certa é &quot;Erro humano&quot;.</p>}
+  </>;
+}
+
+function canConfirmValue(field: PydanticField, chosen: unknown, blankIsLlmAnswer: boolean): boolean {
+  return !blankIsLlmAnswer && hasResolutionValue(field, chosen);
 }
 
 function FieldValuePicker({ field, llmBlank, pending, decision, isPending, onClose, onConfirm }: PickerProps & { field: PydanticField; llmBlank: boolean }) {
@@ -158,20 +170,16 @@ function FieldValuePicker({ field, llmBlank, pending, decision, isPending, onClo
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
   // Em branco é o vazio canônico do tipo, o único que a RPC aceita.
   const chosen = blank ? blankAnswerFor(field) : value;
-  // Se o LLM também deixou em branco, gravar o branco aqui contaria como erro
-  // do LLM uma resposta que o Gabarito marca como certa.
-  const blankIsLlmAnswer = blank && llmBlank;
   return <>
     <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
-    {isConditionalField(field) && <BlankToggle checked={blank} onChange={setBlank} disabled={isPending} />}
-    {blankIsLlmAnswer && <p className="text-sm">O LLM também deixou em branco. Se a pergunta não foi acionada, a decisão certa é &quot;Erro humano&quot;.</p>}
+    {isConditionalField(field) && <BlankToggle checked={blank} onChange={setBlank} disabled={isPending} llmBlank={llmBlank} />}
     {!blank && <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />
     </fieldset>}
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note, chosen)}
-      disabled={blankIsLlmAnswer || !hasResolutionValue(field, chosen)} label={confirmLabel(isPending)} />
+      disabled={!canConfirmValue(field, chosen, blank && llmBlank)} label={confirmLabel(isPending)} />
   </>;
 }
 
