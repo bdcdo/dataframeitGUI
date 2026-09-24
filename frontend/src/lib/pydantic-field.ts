@@ -46,8 +46,15 @@ const pydanticSubfieldRuleSchema = z.enum(["all", "at_least_one"]);
 // e o que permite nome duplicado transitorio no editor sem quebrar o merge —
 // ver issue #473. Exportado para o schema de draft legado (v4) derivar a
 // variante sem `id` via `.omit()` em vez de duplicar o shape.
+// Forma canonica do `id`: hifens e minusculas, sem exigir versao nem variante.
+// E a mesma regex da CHECK projects_pydantic_fields_shape e de
+// `_parse_field_id` no compilador Python; `z.uuid()` divergia das duas nos dois
+// sentidos (aceitava caixa alta e recusava UUID fora do padrao RFC), e um id
+// valido para o banco deixava o editor sem abrir.
+export const FIELD_ID_PATTERN = /^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$/;
+
 export const pydanticFieldSchema = z.strictObject({
-  id: z.uuid(),
+  id: z.string().regex(FIELD_ID_PATTERN),
   name: z.string(),
   type: pydanticFieldTypeSchema,
   options: z.array(z.string()).nullable(),
@@ -400,8 +407,8 @@ export const PYDANTIC_FIELD_PROPERTY_KEYS = Object.freeze(
 // Identidade de campo nova. `crypto.randomUUID` so existe em contexto seguro
 // (HTTPS/localhost — mesmo motivo do fallback de `makeId` em utils.ts), mas
 // aqui o fallback nao pode ser um id com prefixo arbitrario: o contrato
-// (`z.uuid()` acima e a CHECK constraint em `projects.pydantic_fields`) exige
-// UUID, entao o fallback monta um v4 valido com `getRandomValues`, que e
+// (`FIELD_ID_PATTERN` acima e a CHECK constraint em `projects.pydantic_fields`)
+// exige UUID, entao o fallback monta um v4 valido com `getRandomValues`, que e
 // disponivel tambem em contexto inseguro.
 export function generateFieldId(): string {
   const cryptoApi = globalThis.crypto;

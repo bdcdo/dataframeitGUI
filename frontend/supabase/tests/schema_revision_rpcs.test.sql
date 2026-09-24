@@ -1116,61 +1116,8 @@ BEGIN
 END;
 $$;
 
--- ----- Constraint: shape de pydantic_fields (#473) -----
--- projects_pydantic_fields_shape recusa elemento sem id UUID canônico, ids
--- repetidos (case-insensitive) e nomes repetidos dentro do array. Cada UPDATE
--- bumpa schema_revision junto, para satisfazer o trigger de revisão e garantir
--- que a única recusa possível venha da constraint de shape — o SQLERRM é
--- conferido pelo nome dela para o teste não passar pelo motivo errado.
-DO $$
-BEGIN
-  BEGIN
-    UPDATE public.projects
-    SET pydantic_fields = '[{"name":"sem_id"}]',
-        schema_revision = schema_revision + 1
-    WHERE id = '82000000-0000-0000-0000-000000000002';
-    RAISE EXCEPTION 'TESTE FALHOU: pydantic_fields sem id foi aceito';
-  EXCEPTION
-    WHEN check_violation THEN
-      IF SQLERRM NOT LIKE '%projects_pydantic_fields_shape%' THEN
-        RAISE;
-      END IF;
-      RAISE NOTICE 'OK shape: campo sem id foi rejeitado pela constraint';
-  END;
-
-  BEGIN
-    UPDATE public.projects
-    SET pydantic_fields =
-          '[{"id":"00000000-0000-4000-8000-0000000000d1","name":"dup_id_a"},
-            {"id":"00000000-0000-4000-8000-0000000000D1","name":"dup_id_b"}]',
-        schema_revision = schema_revision + 1
-    WHERE id = '82000000-0000-0000-0000-000000000002';
-    RAISE EXCEPTION 'TESTE FALHOU: pydantic_fields com id duplicado foi aceito';
-  EXCEPTION
-    WHEN check_violation THEN
-      IF SQLERRM NOT LIKE '%projects_pydantic_fields_shape%' THEN
-        RAISE;
-      END IF;
-      RAISE NOTICE 'OK shape: id duplicado (case-insensitive) foi rejeitado';
-  END;
-
-  BEGIN
-    UPDATE public.projects
-    SET pydantic_fields =
-          '[{"id":"00000000-0000-4000-8000-0000000000e1","name":"dup_name"},
-            {"id":"00000000-0000-4000-8000-0000000000e2","name":"dup_name"}]',
-        schema_revision = schema_revision + 1
-    WHERE id = '82000000-0000-0000-0000-000000000002';
-    RAISE EXCEPTION 'TESTE FALHOU: pydantic_fields com nome duplicado foi aceito';
-  EXCEPTION
-    WHEN check_violation THEN
-      IF SQLERRM NOT LIKE '%projects_pydantic_fields_shape%' THEN
-        RAISE;
-      END IF;
-      RAISE NOTICE 'OK shape: nome duplicado foi rejeitado pela constraint';
-  END;
-END;
-$$;
+-- O shape de pydantic_fields (CHECK projects_pydantic_fields_shape) tem suíte
+-- de gate própria: projects_pydantic_fields_shape.test.sql.
 
 -- ----- Backfill sem histórico não pode alterar a versão -----
 SELECT set_config(

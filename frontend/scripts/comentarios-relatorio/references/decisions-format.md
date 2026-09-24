@@ -18,7 +18,9 @@ Contrato do arquivo consumido por `apply-decisions.ts`. O JSON normalmente é ge
 
 `newFields` substitui `projects.pydantic_fields` por inteiro: campos ausentes são tratados como **removidos** (entry "campo removido" no `schema_change_log`). Portanto, parta sempre do `fields` retornado por `fetch-open-comments.ts` e aplique as edições sobre ele.
 
-O shape de cada campo é o `PydanticField` de `frontend/src/lib/types.ts` (name, type, options, description, help_text, target, required, subfields, subfield_rule, allow_other, condition, justification_prompt). Não inclua `hash` — o script recalcula.
+O shape de cada campo é o `PydanticField` de `frontend/src/lib/types.ts` (id, name, type, options, description, help_text, target, required, subfields, subfield_rule, allow_other, condition, justification_prompt). Não inclua `hash` — o script recalcula.
+
+Todo campo leva `id`: UUID com hífens e em minúsculas (`FIELD_ID_PATTERN` em `frontend/src/lib/pydantic-field.ts`). Campo existente mantém o `id` que veio de `fetch-open-comments.ts`, porque é ele que identifica o campo através de renomeações. Campo novo recebe um UUID v4 novo. Sem `id`, o script recusa o arquivo com "newFields não corresponde ao contrato canônico".
 
 **Guarda anti-wipe**: `newFields: []` sobre projeto que já tem schema é rejeitado com erro (espelha `saveSchemaFromGUI`). Remoção total de campos, se um dia for legítima, é feita pela UI.
 

@@ -50,6 +50,7 @@ GATE_SUITES=(
   auto_review_assignment_sync
   atomic_replace_rpcs
   explicit_assignment_rounds
+  projects_pydantic_fields_shape
   round_write_maintenance
   llm_rate_limit
   llm_runs_round

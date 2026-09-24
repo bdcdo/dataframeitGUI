@@ -45,6 +45,8 @@ jobs:
         run: npm run test:db:responses-actor
       - name: Identidade canônica por projeto e RLS
         run: npm run test:db:identity
+      - name: Shape de pydantic_fields (id canônico, sem id nem nome repetido)
+        run: npm run test:db:pydantic-fields-shape
       - name: Mapping Clerk e snapshot em duas fases
         run: npm run test:db:clerk-mapping
       - name: Fechamento da fila de auto-revisão

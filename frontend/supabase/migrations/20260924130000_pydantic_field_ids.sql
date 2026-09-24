@@ -15,13 +15,18 @@
 -- NENHUM tem nome duplicado — a constraint entra limpa. As 366 decisões com
 -- contexto em error_resolutions estão nos dois projetos Zolgensma (parte 1b).
 --
--- Se o deploy vier primeiro, a janela é fail-closed e contida: o editor de
--- schema (`/config/schema`) recusa abrir com a copy de schema inválido e toda
--- ESCRITA de schema falha em `loadSchemaSaveContext`, enquanto codificação,
+-- Há janela nas duas ordens, porque o contrato Zod do frontend é
+-- `strictObject`: o build anterior recusa campo COM `id`, e o novo recusa campo
+-- SEM `id`. Entre esta migration e o fim do deploy (ou o inverso), o editor de
+-- schema (`/config/schema`) recusa abrir, toda ESCRITA de schema falha em
+-- `loadSchemaSaveContext` (edição, `toggleLlmField`, aprovação de sugestão) e,
+-- no LLM Insights, "Erro do LLM" e "Todos errados" mostram "A definição desta
+-- pergunta não pôde ser lida". As duas falham fechadas, e codificação,
 -- comparação, arbitragem, exportação e as rodadas de LLM seguem funcionando
 -- (leem por cast e nunca tocam `field.id`; o `llm_runner` reconstrói o modelo
 -- por `build_model_from_code`, que não valida identidade — há teste fixando
--- isso). Nada renderiza com `key={undefined}`.
+-- isso). Nada renderiza com `key={undefined}`. Por isso migration, merge e
+-- deploy vão em sequência imediata: a janela dura o deploy.
 --
 -- O que esta migration NÃO toca, de propósito: pydantic_code, pydantic_hash,
 -- semver e schema_change_log. Respostas LLM legadas têm no pydantic_hash seu
@@ -32,8 +37,8 @@
 
 -- Parte 2: o estado ruim vira inconstruível. A função é IMMUTABLE sobre o
 -- input (só funções jsonb do pg_catalog), o que a torna usável em CHECK.
--- A regex é a mesma forma canônica que o frontend valida com z.uuid() e que
--- compile_pydantic exige: hífens e MINÚSCULAS, casadas com `~` (não `~*`).
+-- A regex é a mesma forma canônica de FIELD_ID_PATTERN no frontend
+-- (pydantic-field.ts) e de `_parse_field_id` no compile_pydantic: hífens e MINÚSCULAS, casadas com `~` (não `~*`).
 -- A caixa entra na constraint porque as fronteiras não desempatam igual — o
 -- merge no frontend compara id por string exata, então aceitar as duas caixas
 -- aqui deixaria o mesmo UUID valer como UM campo para o banco e DOIS para o

@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
-import { generateFieldId } from "@/lib/pydantic-field";
+import { FIELD_ID_PATTERN, generateFieldId, pydanticFieldSchema } from "@/lib/pydantic-field";
 
 // A identidade de campo da #473 é validada em três fronteiras que NÃO conversam
-// entre si: `z.uuid()` no contrato do frontend, a regex da CHECK
+// entre si: `FIELD_ID_PATTERN` no contrato do frontend, a regex da CHECK
 // `projects_pydantic_fields_shape` no Postgres e `_parse_field_id` no
 // compilador Python. Todas exigem UUID canônico — então o gerador não pode ter
 // um ramo que produza outra coisa. E ele tem três: `randomUUID`, o fallback por
@@ -18,7 +17,7 @@ describe("generateFieldId", () => {
   // Uma regex de comprimento (`/^[0-9a-f-]{36}$/`) aceitaria 36 hífens e
   // deixaria passar justamente o erro que os fallbacks podem cometer.
   const expectCanonicalV4 = (id: string): void => {
-    expect(z.uuid().safeParse(id).success).toBe(true);
+    expect(id).toMatch(FIELD_ID_PATTERN);
     expect(id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
@@ -60,5 +59,19 @@ describe("generateFieldId", () => {
     vi.stubGlobal("crypto", undefined);
     const ids = new Set(Array.from({ length: 50 }, () => generateFieldId()));
     expect(ids.size).toBe(50);
+  });
+});
+
+// O contrato do frontend aceita exatamente o que a CHECK e o compilador
+// aceitam: forma com hífens e minúsculas, sem exigir versão nem variante.
+describe("id de campo no contrato", () => {
+  const field = (id: string) => ({ id, name: "q", type: "text", options: null, description: "" });
+  it.each([
+    ["v4 canônico", "3f2504e0-4f89-41d3-9a0c-0305e82c3301", true],
+    ["fora do padrão RFC, como o banco aceita", "11111111-1111-1111-1111-111111111111", true],
+    ["caixa alta, que o banco recusa", "3F2504E0-4F89-41D3-9A0C-0305E82C3301", false],
+    ["sem hífens", "3f2504e04f8941d39a0c0305e82c3301", false],
+  ])("%s", (_caso, id, aceito) => {
+    expect(pydanticFieldSchema.safeParse(field(id)).success).toBe(aceito);
   });
 });

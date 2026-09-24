@@ -76,11 +76,10 @@ def _parse_field_id(field_name: str, raw: object, generate_missing_ids: bool) ->
     Aceita apenas a forma canônica com hífens e em MINÚSCULAS — `uuid.UUID`
     sozinho aceitaria formas sem hífen/URN que o resto do contrato rejeita.
 
-    A caixa importa porque as fronteiras não desempatam igual: o Postgres
-    desduplica por `lower(id)` na CHECK, enquanto o merge no frontend compara
-    string exata. Um mesmo UUID gravado em caixas diferentes seria UM campo
-    para o banco e DOIS para o editor. Recusar aqui é o que mantém uma única
-    forma canônica em circulação, em vez de deixar a divergência representável.
+    A caixa importa porque o merge no frontend compara string exata: um mesmo
+    UUID gravado em caixas diferentes seria DOIS campos para o editor. A CHECK
+    do Postgres e `FIELD_ID_PATTERN` no frontend também só aceitam minúsculas;
+    recusar aqui mantém uma única forma canônica em circulação.
     """
     if raw is None:
         if generate_missing_ids:

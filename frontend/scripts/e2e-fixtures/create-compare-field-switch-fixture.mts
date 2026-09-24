@@ -88,7 +88,10 @@ const HELP_TEXTS = [
 
 const LONG_DESCRIPTION_INDEX = 3;
 
+// `id` fixo por posição: a CHECK projects_pydantic_fields_shape exige id UUID
+// canônico em todo campo, e reexecutar o script não deve trocar a identidade.
 const FIELDS = LETTERS.map((letter, i) => ({
+  id: `e2e00000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
   hash: `e2e-ct-f${i + 1}`,
   name: `q${i + 1}_${letter.toLowerCase()}`,
   type: "single" as const,
