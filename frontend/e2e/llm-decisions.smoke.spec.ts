@@ -105,6 +105,9 @@ for (const [index, mode] of ["compare_llm", "auto_review_llm"].entries()) {
       await expect(exportPage.getByText("Erro humano", { exact: true })).toBeVisible();
 
       await card.getByRole("button", { name: "Erro do LLM", exact: true }).click();
+      // A janela nova mostra o veredito anterior e o seletor nas opções atuais (#733);
+      // o campo da fixture é pré-preenchido com o veredito, então confirmar basta.
+      await expect(page.getByText("Veredito anterior", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Confirmar decisão" }).click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await expect.poll(async () => (await admin.from("error_resolutions").select("decision").eq("project_id", projectId).eq("field_name", "x").single()).data?.decision).toBe("researchers_correct");

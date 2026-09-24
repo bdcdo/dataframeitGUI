@@ -42,7 +42,7 @@ function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue
 describe.each([false, true])("a decisão atravessa os consumidores, auto-revisão=%s", (autoReview) => {
   it.each<[ErrorDecision, string, boolean, boolean]>([
     ["llm_correct", "LLM", false, false],
-    ["researchers_correct", "Humano", true, false],
+    ["researchers_correct", "Veredito", true, false],
     ["discussion", "", true, true],
   ])("%s concorda no gabarito, na métrica e no CSV", (decision, value, isError, isPending) => {
     const row = resolutionFixture(decision);
@@ -111,8 +111,8 @@ describe("rodada corrente (#733)", () => {
     const r = results([row], false, "LLM", "round0");
     expect(r.metrics.errors).toHaveLength(1);
     expect(r.metrics.errors[0].resolution).toEqual(row);
-    expect(r.exported.verdicts.rows[0][r.exported.verdicts.headers.indexOf("x")]).toBe("Humano");
-    expect(r.gabarito[0].fields[0].verdict).toBe("Humano");
+    expect(r.exported.verdicts.rows[0][r.exported.verdicts.headers.indexOf("x")]).toBe("Veredito");
+    expect(r.gabarito[0].fields[0].verdict).toBe("Veredito");
     expect(r.gabarito[0].fields[0].resolutionLabel).toBeTruthy();
   });
 });

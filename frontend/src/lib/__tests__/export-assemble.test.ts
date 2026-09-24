@@ -536,6 +536,6 @@ describe("assembleExport — rodada corrente (#733)", () => {
       errorResolutions: [resolution],
     });
     expect(d.verdicts.rows).toHaveLength(1);
-    expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("Humano");
+    expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("Veredito");
   });
 });
