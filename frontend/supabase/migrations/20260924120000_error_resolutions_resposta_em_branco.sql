@@ -90,7 +90,8 @@ BEGIN
     -- Em pergunta condicional, o vazio canonico do tipo e resposta: diz ao
     -- gabarito que o gatilho nao acionou a pergunta. So a forma exata, para
     -- que export e Gabarito leiam um unico vazio por tipo.
-    IF NOT (v_conditional AND ((v_type = 'multi' AND p_value = '[]'::JSONB)
+    -- COALESCE de novo: definicao sem `type` deixaria o teste de multi em NULL.
+    IF NOT (v_conditional AND ((COALESCE(v_type = 'multi', false) AND p_value = '[]'::JSONB)
                                OR (v_type IS DISTINCT FROM 'multi' AND p_value = '""'::JSONB))) THEN
       -- Fora das opcoes so entra o "Outro: <texto>" que o FieldRenderer grava,
       -- e so quando o campo permite; o prefixo sem complemento e resposta

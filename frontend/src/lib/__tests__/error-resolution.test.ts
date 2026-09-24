@@ -225,7 +225,7 @@ describe("resposta em branco em pergunta condicional", () => {
 
   it.each<[PydanticField, unknown, boolean]>([
     [condSingle, "", true], [condSingle, " ", false], [condSingle, [], false], [condSingle, null, false], [condSingle, undefined, false],
-    [condMulti, [], true], [condMulti, "", false],
+    [condMulti, [], true], [condMulti, "", false], [condMulti, ["A"], true], [condMulti, ["Z"], false], [condMulti, [""], false],
     [condText, "", true], [condDate, "", true], [condGroup, "", true],
     [single, "", false], [multi, [], false], [text, "", false],
   ])("hasResolutionValue(%s, %j) → %s: o vazio canônico só vale em condicional", (field, value, expected) => {

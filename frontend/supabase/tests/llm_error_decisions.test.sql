@@ -498,18 +498,22 @@ INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fie
    '[{"name":"g0","type":"single","options":["Sim","Não"],"description":"Gatilho"},
      {"name":"c","type":"single","options":["A","B"],"description":"Condicional","condition":{"field":"g0","equals":"Sim"}},
      {"name":"cm","type":"multi","options":["A","B"],"description":"Condicional múltipla","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"cn","type":"single","options":["A","B"],"description":"Sem condição"}]');
+     {"name":"cn","type":"single","options":["A","B"],"description":"Sem condição"},
+     {"name":"ct","condition":{"field":"g0","equals":"Sim"},"description":"Condicional sem type"},
+     {"name":"cz","type":"single","options":["A","B"],"description":"Condição nula","condition":null}]');
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('a9c00000-0000-0000-0000-000000000003', 'a9b00000-0000-0000-0000-000000000003', 'Documento 3', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers) VALUES
   ('a9d00000-0000-0000-0000-000000000005', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', NULL, 'llm',
    '{"g0":"Não","cn":"A"}'),
   ('a9d00000-0000-0000-0000-000000000006', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'a9a00000-0000-0000-0000-000000000002', 'humano',
-   '{"g0":"Sim","c":"A","cm":["A"],"cn":"B"}');
+   '{"g0":"Sim","c":"A","cm":["A"],"cn":"B","ct":"x","cz":"B"}');
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
   ('a9e00000-0000-0000-0000-000000000021', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000022', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cm', 'a9a00000-0000-0000-0000-000000000002', '{"A":true}', 'a9d00000-0000-0000-0000-000000000006'),
-  ('a9e00000-0000-0000-0000-000000000023', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cn', 'a9a00000-0000-0000-0000-000000000002', 'B', 'a9d00000-0000-0000-0000-000000000006');
+  ('a9e00000-0000-0000-0000-000000000023', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cn', 'a9a00000-0000-0000-0000-000000000002', 'B', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-000000000024', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'ct', 'a9a00000-0000-0000-0000-000000000002', 'x', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-000000000025', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cz', 'a9a00000-0000-0000-0000-000000000002', 'B', 'a9d00000-0000-0000-0000-000000000006');
 
 SELECT set_config('request.jwt.claims', '{"sub":"a9a00000-0000-0000-0000-000000000001","supabase_uid":"a9a00000-0000-0000-0000-000000000001"}', true);
 SET LOCAL ROLE authenticated;
@@ -572,6 +576,23 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: pergunta sem condição aceitou resposta em branco';
   EXCEPTION WHEN invalid_parameter_value THEN NULL;
   END;
+  -- Definicao sem `type`: o vazio de multi nao pode passar sem validacao.
+  c := public.llm_error_context(P, D, 'ct', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000024');
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 'ct', 'all_wrong', c, NULL, NULL, NULL, '[]'::JSONB);
+    RAISE EXCEPTION 'FALHOU: condicional sem type aceitou [] sem validação';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  -- `condition: null` nao e pergunta condicional.
+  c := public.llm_error_context(P, D, 'cz', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000025');
+  FOREACH bad IN ARRAY ARRAY['"all_wrong"'::JSONB, '"llm_correct"'::JSONB] LOOP
+    BEGIN
+      PERFORM public.set_error_resolution(P, D, 'cz', bad #>> '{}', c, NULL, NULL, NULL,
+        CASE WHEN bad #>> '{}' = 'all_wrong' THEN '""'::JSONB END);
+      RAISE EXCEPTION 'FALHOU: condition null tratada como condicional em %', bad;
+    EXCEPTION WHEN invalid_parameter_value THEN NULL;
+    END;
+  END LOOP;
   RAISE NOTICE 'OK: resposta em branco só em pergunta condicional';
 END $$;
 

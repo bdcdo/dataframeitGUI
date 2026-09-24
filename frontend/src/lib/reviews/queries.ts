@@ -89,6 +89,9 @@ export function isAnswerCorrect(
       return normalizeForComparison(answer) === normalizeForComparison(verdict);
     }
   }
+  // Votar no grupo em que a resposta está ausente grava o veredito "", e a
+  // condicional não acionada chega sem a chave: as formas de vazio concordam.
+  if (isBlankAnswer(answer) && isBlankAnswer(verdict)) return true;
   return normalizeForComparison(answer) === normalizeForComparison(verdict);
 }
 

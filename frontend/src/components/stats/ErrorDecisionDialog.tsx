@@ -133,7 +133,7 @@ type PickerProps = { pending: PendingErrorDecision; decision: ValueChoosingDecis
 
 function VerdictPicker({ context, ...props }: PickerProps & { context: ErrorResolutionContext }) {
   const field = parsePydanticFields([context.field_definition])?.[0] ?? null;
-  if (field) return <FieldValuePicker field={field} {...props} />;
+  if (field) return <FieldValuePicker field={field} llmBlank={llmAnswersBlank(context)} {...props} />;
   return <>
     <p className="text-sm text-destructive">A definição desta pergunta não pôde ser lida. Recarregue a página e tente de novo.</p>
     <DecisionFooter isPending={props.isPending} onClose={props.onClose} onAction={() => {}} disabled label={confirmLabel(props.isPending)} />
@@ -150,7 +150,7 @@ function BlankToggle({ checked, onChange, disabled }: { checked: boolean; onChan
   </div>;
 }
 
-function FieldValuePicker({ field, pending, decision, isPending, onClose, onConfirm }: PickerProps & { field: PydanticField }) {
+function FieldValuePicker({ field, llmBlank, pending, decision, isPending, onClose, onConfirm }: PickerProps & { field: PydanticField; llmBlank: boolean }) {
   const prefill = initialValue(field, pending.error, decision);
   const openedBlank = startsBlank(field, decision, pending.error.chosenVerdict, previousValue(pending.error, decision));
   const [value, setValue] = useState<unknown>(prefill);
@@ -158,16 +158,20 @@ function FieldValuePicker({ field, pending, decision, isPending, onClose, onConf
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
   // Em branco é o vazio canônico do tipo, o único que a RPC aceita.
   const chosen = blank ? blankAnswerFor(field) : value;
+  // Se o LLM também deixou em branco, gravar o branco aqui contaria como erro
+  // do LLM uma resposta que o Gabarito marca como certa.
+  const blankIsLlmAnswer = blank && llmBlank;
   return <>
     <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
     {isConditionalField(field) && <BlankToggle checked={blank} onChange={setBlank} disabled={isPending} />}
+    {blankIsLlmAnswer && <p className="text-sm">O LLM também deixou em branco. Se a pergunta não foi acionada, a decisão certa é &quot;Erro humano&quot;.</p>}
     {!blank && <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />
     </fieldset>}
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note, chosen)}
-      disabled={!hasResolutionValue(field, chosen)} label={confirmLabel(isPending)} />
+      disabled={blankIsLlmAnswer || !hasResolutionValue(field, chosen)} label={confirmLabel(isPending)} />
   </>;
 }
 

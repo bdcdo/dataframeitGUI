@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolutionFixture } from "./error-resolution-fixture";
 import { assembleExport } from "@/lib/export/assemble";
-import { computeReviewedDocuments, currentRoundReviews, type ReviewComputationContext } from "@/lib/reviews/queries";
+import { computeReviewedDocuments, currentRoundReviews, isAnswerCorrect, type ReviewComputationContext } from "@/lib/reviews/queries";
 import { computeLlmErrorMetrics, type MetricsResponse, type MetricsFinalAnswer } from "@/lib/llm-error-metrics";
 import type { ErrorDecision, ErrorResolutionRow } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
@@ -163,5 +163,25 @@ describe("resposta em branco em pergunta condicional", () => {
     expect(gabarito[0].fields[0].verdict).toBe("");
     const answers = gabarito[0].fields[0].respondentAnswers;
     expect(answers.map((a) => a.isCorrect)).toEqual([true, false]);
+  });
+});
+
+describe("Gabarito: as formas de vazio são a mesma resposta, com ou sem decisão", () => {
+  // Votar na Comparação no grupo em que a resposta está ausente grava o
+  // veredito "", e quem deixou a chave de fora concorda com ele.
+  it.each(["single", "text", "date"] as const)("sem decisão, veredito \"\" e resposta ausente, null ou \"\" (%s)", (fieldType) => {
+    expect(isAnswerCorrect(undefined, "", fieldType)).toBe(true);
+    expect(isAnswerCorrect(null, "", fieldType)).toBe(true);
+    expect(isAnswerCorrect("", "", fieldType)).toBe(true);
+    expect(isAnswerCorrect("A", "", fieldType)).toBe(false);
+    expect(isAnswerCorrect(undefined, "A", fieldType)).toBe(false);
+  });
+
+  it("Ambos corretos com o LLM em branco num campo sem condição: vazio contra vazio é correto", () => {
+    const row = resolutionFixture("both_correct");
+    row.context!.llm_value = { present: true, value: "" };
+    row.current_context = structuredClone(row.context);
+    const { gabarito } = results([row], false, "");
+    expect(gabarito[0].fields[0].respondentAnswers.find((a) => a.respondentType === "llm")!.isCorrect).toBe(true);
   });
 });
