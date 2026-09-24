@@ -6,6 +6,8 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import type { PydanticField } from "@/lib/types";
+import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import type { ErrorResolutionRow } from "@/lib/error-resolution";
 import {
   assembleExport,
   type ExportDataset,
@@ -15,37 +17,6 @@ import {
 } from "@/lib/export/assemble";
 
 export type GetExportDatasetResult = ExportDataset | { error: string };
-
-// O PostgREST limita cada query a `max_rows` (1000 por padrão, hospedado e local).
-// Sem paginar, um projeto grande teria a exportação truncada SILENCIOSAMENTE —
-// contradizendo a FR-008 ("conjunto completo"). Buscamos por páginas com .range()
-// até uma página vir incompleta. `build()` recria a query a cada página porque um
-// builder do PostgREST é de uso único (o await o executa).
-const EXPORT_PAGE_SIZE = 1000;
-
-async function fetchAllPaged<T>(
-  build: () => {
-    range: (
-      from: number,
-      to: number
-    ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
-  }
-): Promise<{ data: T[]; error: { message: string } | null }> {
-  const all: T[] = [];
-  let from = 0;
-  for (;;) {
-    // await sequencial é da natureza da paginação: só dá para pedir a próxima
-    // página sabendo que a anterior veio cheia.
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop
-    const { data, error } = await build().range(from, from + EXPORT_PAGE_SIZE - 1);
-    if (error) return { data: all, error };
-    const batch = data ?? [];
-    all.push(...batch);
-    if (batch.length < EXPORT_PAGE_SIZE) break;
-    from += EXPORT_PAGE_SIZE;
-  }
-  return { data: all, error: null };
-}
 
 // Retorna o conjunto completo do projeto (documentos + respostas + gabarito)
 // já montado como planilhas de strings. Gate coordinator-only (fail-closed);
@@ -67,10 +38,11 @@ export async function getExportDataset(
     { data: documents, error: documentsError },
     { data: responses, error: responsesError },
     { data: reviews, error: reviewsError },
+    { data: errorResolutions, error: resolutionsError },
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("name, pydantic_fields, min_responses_for_comparison")
+      .select("name, pydantic_fields, min_responses_for_comparison, current_round_id")
       .eq("id", projectId)
       .single(),
     // Base exportada: documentos não excluídos. Exclusão apenas pendente
@@ -81,21 +53,25 @@ export async function getExportDataset(
         .from("documents")
         .select("id, external_id, title, created_at, metadata")
         .eq("project_id", projectId)
-        .is("excluded_at", null)
+        .is("excluded_at", null),
+      ["id"],
     ),
     fetchAllPaged<ExportResponse>(() =>
       supabase
         .from("responses")
         .select("document_id, respondent_name, respondent_type, answers")
         .eq("project_id", projectId)
-        .eq("is_latest", true)
+        .eq("is_latest", true),
+      ["id"],
     ),
     fetchAllPaged<ExportReview>(() =>
       supabase
         .from("reviews")
-        .select("document_id, field_name, verdict, comment")
-        .eq("project_id", projectId)
+        .select("document_id, field_name, verdict, comment, round_id")
+        .eq("project_id", projectId),
+      ["id"],
     ),
+    fetchAllPaged<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId }), ["id"]),
   ]);
 
   const error = [
@@ -103,6 +79,7 @@ export async function getExportDataset(
     documentsError,
     responsesError,
     reviewsError,
+    resolutionsError,
   ].find(Boolean);
   if (error) return { error: error.message };
   if (!project) return { error: "Projeto não encontrado." };
@@ -112,8 +89,10 @@ export async function getExportDataset(
     projectName: project.name || "Projeto",
     fields: (project.pydantic_fields || []) as PydanticField[],
     minResponses: project.min_responses_for_comparison || 2,
+    currentRoundId: (project.current_round_id as string | null) ?? null,
     documents,
     responses,
     reviews,
+    errorResolutions,
   });
 }

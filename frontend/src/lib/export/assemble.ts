@@ -17,6 +17,7 @@ import {
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import { formatExportValue, formatVerdict } from "./format";
+import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 export interface ExportSheet {
   headers: string[];
@@ -51,15 +52,25 @@ export interface ExportReview {
   field_name: string;
   verdict: string;
   comment: string | null;
+  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
+  round_id: string;
 }
 
 export interface AssembleInput {
   projectName: string;
   fields: PydanticField[];
   minResponses: number;
+  /**
+   * `projects.current_round_id`. Só o veredito dado na rodada corrente entra
+   * no gabarito (#733); a célula de rodada antiga cai para a concordância ou
+   * fica vazia, e uma decisão gravada em `errorResolutions` continua
+   * sobrescrevendo, porque é aplicada depois.
+   */
+  currentRoundId: string | null;
   documents: ExportDocument[];
   responses: ExportResponse[];
   reviews: ExportReview[];
+  errorResolutions?: ErrorResolutionRow[];
 }
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
@@ -135,9 +146,21 @@ function unionOriginalColumns(baseDocs: ExportDocument[]): string[] {
 }
 
 // Agrupa os veredictos do revisor por documento (valor formatado + comentários).
-function buildVerdictsByDoc(reviews: ExportReview[]): Map<string, VerdictEntry> {
+// Arbitragem de rodada anterior não é veredito do gabarito corrente, e o
+// comentário dela sai junto, de propósito: foi escrito sobre respostas que a
+// rodada corrente substituiu. Sai do arquivo inteiro, não só da célula: o
+// texto do revisor só aparece na coluna `reviewer_comments`, alimentada também
+// por estas entradas (as decisões de erro entram nela por
+// `applyExportResolutions`), e o export não tem aba de comentários (ver o
+// `return` de `assembleExport`). Quem precisar dele lê a tela de Comentários
+// do app, que não filtra rodada.
+function buildVerdictsByDoc(
+  reviews: ExportReview[],
+  currentRoundId: string | null,
+): Map<string, VerdictEntry> {
   const byDoc = new Map<string, VerdictEntry>();
   for (const r of reviews) {
+    if (r.round_id !== currentRoundId) continue;
     let entry = byDoc.get(r.document_id);
     if (!entry) {
       entry = { fields: new Map(), comments: [] };
@@ -165,6 +188,13 @@ function multiFieldAgrees(
 // Valor concordante de um campo entre as respostas de um documento, ou null se
 // houver divergência. Multi compara conjuntos de opções; demais tipos usam
 // normalizeForComparison.
+//
+// Igualdade LITERAL, de propósito por ora: ao contrário da Comparação e da
+// métrica de erro do LLM — que fundem respostas por union-find sobre pares de
+// `response_equivalences` — aqui duas respostas marcadas como equivalentes
+// ainda contam como divergentes. Fundi-las exigiria decidir QUAL valor vai para
+// a célula, e a saída certa é um dicionário canônico de respostas, não uma
+// escolha arbitrária dentro do grupo. Ver issue bdcdo/dataframeitGUI#702.
 function fieldAgreementValue(
   docResponses: ExportResponse[],
   fieldName: string,
@@ -178,6 +208,50 @@ function fieldAgreementValue(
   const answers = docResponses.map((r) => r.answers?.[fieldName]);
   const unique = new Set(answers.map((a) => normalizeForComparison(a)));
   return unique.size === 1 ? formatExportValue(answers[0]) : null;
+}
+
+// O que a decisão escreve na célula, ou `undefined` para deixá-la como está.
+// "Ambos corretos" não aprova valor: o campo fica com o que o veredito ou a
+// concordância já puseram ali, e só recebe o veredito guardado no contexto
+// (auto-revisão) quando nada chegou por outra via.
+function exportResolutionValue(
+  resolution: ExportedResolution,
+  cellHasValue: boolean,
+): string | undefined {
+  if (resolution.status === "approved") return formatExportValue(resolution.value);
+  if (resolution.status === "discussion") return "";
+  return cellHasValue || resolution.verdictValue === undefined ? undefined : formatExportValue(resolution.verdictValue);
+}
+
+type ExportedResolution = Extract<EffectiveErrorResolution, { status: "approved" | "discussion" | "upheld" }>;
+
+function exportedResolution(row: ErrorResolutionRow): ExportedResolution | null {
+  const resolution = effectiveErrorResolution(row);
+  return resolution.status === "approved" || resolution.status === "discussion" || resolution.status === "upheld"
+    ? resolution : null;
+}
+
+function applyExportResolutions(
+  verdicts: Map<string, VerdictEntry>,
+  rows: ErrorResolutionRow[],
+  documents: ReadonlyMap<string, DocIdentity>,
+  fieldNames: ReadonlySet<string>,
+): void {
+  for (const row of rows) {
+    if (!documents.has(row.document_id) || !fieldNames.has(row.field_name)) continue;
+    const resolution = exportedResolution(row);
+    if (!resolution) continue;
+    const existing = verdicts.get(row.document_id);
+    const entry = existing ?? { fields: new Map<string, string>(), comments: [] };
+    const value = exportResolutionValue(resolution, entry.fields.has(row.field_name));
+    // Decisão que não escreve valor não cria linha de Gabarito sozinha: um
+    // documento só com o comentário sairia no arquivo com todos os campos em
+    // branco, e a tela do Gabarito não o mostra.
+    if (value === undefined && !existing) continue;
+    if (value !== undefined) entry.fields.set(row.field_name, value);
+    entry.comments.push(errorResolutionComment(row));
+    verdicts.set(row.document_id, entry);
+  }
 }
 
 // Campos concordantes de UM documento que o revisor não marcou explicitamente.
@@ -238,6 +312,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     (f) => f.target !== "llm_only" && f.target !== "none"
   );
   const fieldNames = exportableFields.map((f) => f.name);
+  const fieldNameSet = new Set(fieldNames);
 
   // Base ordenada de forma determinística (created_at asc, id como desempate).
   const baseDocs = [...documents].sort((a, b) => {
@@ -294,7 +369,8 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const baseResponses = responses.filter((r) => identity.has(r.document_id));
   const baseReviews = reviews.filter((r) => identity.has(r.document_id));
 
-  const verdictsByDoc = buildVerdictsByDoc(baseReviews);
+  const verdictsByDoc = buildVerdictsByDoc(baseReviews, input.currentRoundId);
+  applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
   const fieldByName = new Map<string, PydanticField>();
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
   const agreementByDoc = buildAgreementByDoc(

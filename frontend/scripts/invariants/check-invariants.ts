@@ -77,6 +77,11 @@ async function fetchAll<T>(
   table: string,
   columns: string,
   filter?: (q: UntypedSelectBuilder) => UntypedSelectBuilder,
+  // Nem toda tabela chaveia por `id`: `auto_review_reconciliation_requests` tem
+  // PK em `document_id`. O default cobre o resto do arquivo; o que a coluna
+  // precisa ser é ÚNICA, senão o ORDER BY volta a não desempatar e o hazard
+  // descrito acima reaparece por outro caminho.
+  orderColumn = "id",
 ): Promise<T[]> {
   const PAGE = 1000;
   const rows: T[] = [];
@@ -84,7 +89,7 @@ async function fetchAll<T>(
     let q: UntypedSelectBuilder = supabase
       .from(table)
       .select(columns)
-      .order("id", { ascending: true })
+      .order(orderColumn, { ascending: true })
       .range(from, from + PAGE - 1);
     if (filter) q = filter(q);
     const { data, error } = await q;
@@ -360,6 +365,53 @@ const invariants: Invariant[] = [
         .map((a) => ({
           key: a.id,
           detail: `assignment concluído cuja response is_latest é rascunho, nunca submetida (doc ${a.document_id}, user ${a.user_id})`,
+        }));
+    },
+  },
+  {
+    name: "comparacao-apoiada-so-em-rascunho",
+    motivation:
+      "#678: `is_partial` humano é o veredito da régua de completude sobre o conjunto gravado (true também nas linhas do auto-save removido no #608), mas sorteio e comparação usavam `is_latest` como proxy de 'codificou' — 21 dos 194 documentos ativos do Zolgensma entraram na fila de comparação apoiados numa codificação parcial. Corrigido em duas fronteiras (view lottery_doc_stats e regra 2 de responseQualifiesForVersion); FAIL aqui = alguma delas voltou a contar rascunho, ou um canal de escrita novo criou comparação sem checar submissão",
+    run: async () => {
+      const active = await activeDocIds();
+      const [assignments, responses] = await Promise.all([
+        fetchAll<{ id: string; document_id: string }>(
+          "assignments",
+          "id, document_id",
+          (q) => q.eq("type", "comparacao"),
+        ),
+        fetchAll<{ document_id: string; respondent_id: string | null; is_partial: boolean | null }>(
+          "responses",
+          "document_id, respondent_id, is_partial",
+          (q) => q.eq("respondent_type", "humano").eq("is_latest", true),
+        ),
+      ]);
+      // Conta, por documento, quantas codificações humanas SUBMETIDAS existem.
+      // `is_partial === true` é o único estado excluído: `null` é linha legada
+      // sem o sinal e conta como submetida, mesma escolha conservadora de
+      // 'codificacao-concluida-response-so-rascunho' — não falso-positivar sem
+      // prova de rascunho.
+      const submittedByDoc = new Map<string, number>();
+      const draftOnlyByDoc = new Map<string, number>();
+      for (const r of responses) {
+        const bucket = r.is_partial === true ? draftOnlyByDoc : submittedByDoc;
+        bucket.set(r.document_id, (bucket.get(r.document_id) ?? 0) + 1);
+      }
+      // Violação: existe comparação para o documento, mas NENHUMA codificação
+      // humana submetida a sustenta — e há ao menos um rascunho, que é o que
+      // explica a comparação ter sido criada. Sem essa segunda condição a
+      // invariante também pegaria comparação órfã por response apagada, que é
+      // outra família (e outra invariante).
+      return assignments
+        .filter(
+          (a) =>
+            active.has(a.document_id) &&
+            (submittedByDoc.get(a.document_id) ?? 0) === 0 &&
+            (draftOnlyByDoc.get(a.document_id) ?? 0) > 0,
+        )
+        .map((a) => ({
+          key: a.id,
+          detail: `comparação apoiada só em rascunho: doc ${a.document_id} tem ${draftOnlyByDoc.get(a.document_id)} codificação(ões) humana(s) nunca submetida(s) e nenhuma submetida`,
         }));
     },
   },
@@ -852,6 +904,47 @@ const invariants: Invariant[] = [
         .map((rv) => ({
           key: rv.id,
           detail: `review de ${rv.created_at.slice(0, 10)} escolheu ${rv.chosen_response_id} mas o snapshot não tem entry dessa resposta`,
+        }));
+    },
+  },
+  {
+    name: "outbox-de-auto-revisao-drena",
+    motivation:
+      "#670: a fila de reconciliação não tem limite de tentativas, TTL nem dead-letter — request que o worker não consegue satisfazer envelhece para sempre com o backoff no teto de 1h, e nada denuncia (o outcome `deferred` não conta como `failed`, e a rota interna só devolve 503 em `failed`). Foi assim que 25 linhas insatisfazíveis passaram dias em retry silencioso no Zolgensma-Judiciário. Com o produtor corrigido, toda request é satisfazível, então FAIL aqui deixou de significar 'estado impossível' e passa a significar CONSUMIDOR parado: worker morto, segredo rotacionado, ou reconcile_auto_review_cycles falhando em série",
+    run: async () => {
+      // Os dois limiares medem coisas diferentes e nenhum cobre o outro.
+      // `attempt_count` pega o loop rápido: o backoff é 5s, 10s, 20s..., então 5
+      // tentativas ≈ 2,5 min de falha contínua — alto o bastante para não morder
+      // um erro transitório isolado (a RPC rejeita input stale por desenho, e
+      // uma rejeição sozinha é normal sob edição concorrente). `requested_at`
+      // pega o caso em que ninguém sequer TENTA: worker parado não incrementa
+      // attempt_count, e a linha ficaria invisível para o primeiro limiar.
+      //
+      // Cuidado ao ler o número: `requested_at` e `attempt_count` são zerados
+      // pelo ON CONFLICT DO UPDATE do trigger a cada nova submissão humana no
+      // mesmo documento. Não medem a idade da fila — medem quanto tempo faz que
+      // o último evento sujo daquele documento está sem drenar, que é o que
+      // interessa aqui.
+      const MAX_ATTEMPTS = 5;
+      const MAX_IDADE_MS = 6 * 60 * 60 * 1000;
+      const rows = await fetchAll<{
+        document_id: string;
+        project_id: string;
+        attempt_count: number;
+        requested_at: string;
+        last_error: string | null;
+      }>(
+        "auto_review_reconciliation_requests",
+        "document_id, project_id, attempt_count, requested_at, last_error",
+        undefined,
+        "document_id",
+      );
+      const corte = Date.now() - MAX_IDADE_MS;
+      return rows
+        .filter((r) => r.attempt_count >= MAX_ATTEMPTS || Date.parse(r.requested_at) < corte)
+        .map((r) => ({
+          key: r.document_id,
+          detail: `${r.attempt_count} tentativa(s) desde ${r.requested_at} (projeto ${r.project_id}): ${r.last_error ?? "nenhuma tentativa registrada"}`,
         }));
     },
   },

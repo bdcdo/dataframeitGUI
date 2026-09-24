@@ -124,7 +124,9 @@ export function GabaritoByDocument({
         if (onlyErrors) {
           docFields = docFields.filter((f) =>
             f.respondentAnswers.some(
-              (a) => !a.isCorrect && f.verdict !== "ambiguo" && f.verdict !== "pular",
+              (a) => !a.isCorrect && (f.resolutionStatus
+                ? f.resolutionStatus === "approved"
+                : f.verdict !== "ambiguo" && f.verdict !== "pular"),
             ),
           );
         }
@@ -317,8 +319,9 @@ function FieldRow({
   documentId: string;
   documentTitle: string;
 }) {
-  const isSpecialVerdict =
-    field.verdict === "ambiguo" || field.verdict === "pular";
+  const isSpecialVerdict = field.resolutionStatus
+    ? field.resolutionStatus === "discussion"
+    : field.verdict === "ambiguo" || field.verdict === "pular";
 
   const verdictDisplay = isSpecialVerdict
     ? field.verdict === "ambiguo"
@@ -350,7 +353,8 @@ function FieldRow({
         )}
       >
         <span className="text-xs font-medium">Gabarito:</span>
-        <span className="font-medium">{verdictDisplay}</span>
+        <span className="font-medium">{isSpecialVerdict && field.resolutionLabel ? field.resolutionLabel : verdictDisplay}</span>
+        {!isSpecialVerdict && field.resolutionLabel && <span className="text-xs">{field.resolutionLabel}</span>}
       </div>
 
       {field.respondentAnswers.map((ra) => (

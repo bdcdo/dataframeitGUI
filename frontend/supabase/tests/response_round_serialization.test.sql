@@ -29,11 +29,11 @@ INSERT INTO public.rounds (id, project_id, label) VALUES
 
 SELECT extensions.dblink_connect(
   'round_writer',
-  'host=host.docker.internal port=54322 dbname=postgres user=postgres password=postgres'
+  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
 );
 SELECT extensions.dblink_connect(
   'round_switcher',
-  'host=host.docker.internal port=54322 dbname=postgres user=postgres password=postgres'
+  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
 );
 
 -- O helper converte somente a rejeicao esperada em dado observavel. Qualquer
@@ -59,7 +59,8 @@ SELECT extensions.dblink_exec(
         '{"q1":"stale"}'::jsonb, true, true, v_old_round
       );
       RETURN 'unexpected-success';
-    EXCEPTION WHEN serialization_failure THEN
+    -- P0R01: recusa terminal, nao conflito transitorio (20260820170000).
+    EXCEPTION WHEN SQLSTATE 'P0R01' THEN
       RETURN 'rejected-stale-round';
     END;
     $fn$;$$

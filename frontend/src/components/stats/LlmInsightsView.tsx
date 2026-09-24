@@ -6,10 +6,13 @@ import { LlmErrorCard } from "./LlmErrorCard";
 import { EditFieldDialog } from "./EditFieldDialog";
 import { ErrorStatsCards } from "./ErrorStatsCards";
 import { ErrorFiltersToolbar } from "./ErrorFiltersToolbar";
+import { ErrorDecisionDialog, type PendingErrorDecision } from "./ErrorDecisionDialog";
+import { choosesValue, type ErrorDecision, type ErrorResolutionInput } from "@/lib/error-resolution";
 import { useLlmErrorFiltering } from "@/hooks/useLlmErrorFiltering";
 import {
   resolveError,
   reopenError,
+  prepareErrorResolution,
 } from "@/actions/stats";
 import { regenerateAutoReviewBacklog } from "@/actions/field-reviews";
 import { markLlmEquivalent } from "@/actions/equivalences";
@@ -19,7 +22,7 @@ import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 import type {
   LlmError,
   ReviewedEntry,
-} from "@/app/(app)/projects/[id]/reviews/llm-insights/page";
+} from "@/lib/llm-error-metrics";
 
 interface LlmInsightsViewProps {
   projectId: string;
@@ -31,10 +34,26 @@ interface LlmInsightsViewProps {
     baseline: SchemaBaselineIdentity;
   };
   isCoordinator?: boolean;
+  canResolve?: boolean;
   summary: {
     totalLlmDocs: number;
     unreviewedLlmDocs?: number;
   };
+}
+
+async function persistDecision(projectId: string, pending: PendingErrorDecision, note: string, value?: unknown) {
+  const { error, decision, context } = pending;
+  if (decision && context) {
+    return resolveError(projectId, error.documentId, error.fieldName, {
+      decision, context, expected: error.resolution ?? null, note,
+      // Só as decisões com seletor levam valor: o que o revisor escolheu (#733).
+      ...(choosesValue(decision) ? { value: value as ErrorResolutionInput["value"] } : {}),
+    });
+  }
+  if (decision === null && error.resolution) {
+    return reopenError(projectId, error.documentId, error.fieldName, error.resolution);
+  }
+  return { success: false, error: "Confira a resposta antes de confirmar." };
 }
 
 export function LlmInsightsView({
@@ -44,12 +63,14 @@ export function LlmInsightsView({
   fields,
   schemaEditor,
   isCoordinator,
+  canResolve,
   summary,
 }: LlmInsightsViewProps) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editingField, setEditingField] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
+  const [pendingDecision, setPendingDecision] = useState<PendingErrorDecision | null>(null);
 
   async function handleRegenerateBacklog() {
     setRegenerating(true);
@@ -61,13 +82,14 @@ export function LlmInsightsView({
         toast.error(result.error ?? "Falha ao regenerar backlog");
         return;
       }
+      // "Aguardando a resposta LLM" saiu na #670: documento sem geração LLM
+      // deixou de entrar no backlog, então não há mais pedido em espera para
+      // contar — o que sobrava ali era a fila insatisfazível se anunciando como
+      // se fosse trabalho em andamento.
       const parts = [
         `${result.queued ?? 0} documento(s) reenfileirado(s)`,
         `${result.processed ?? 0} pedido(s) processado(s)`,
       ];
-      if (result.deferred) {
-        parts.push(`${result.deferred} pedido(s) aguardando a resposta LLM`);
-      }
       toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
       refresh();
     } catch (err) {
@@ -81,34 +103,47 @@ export function LlmInsightsView({
 
   // Error filters + derivation (filtered population, rate, sorting, counts)
   const filtering = useLlmErrorFiltering(errors, reviewedEntries);
-  const { filteredErrors, filteredErrorRate, sortedErrors } = filtering;
+  const { measuredErrorCount, filteredErrorRate, sortedErrors } = filtering;
+  const regenerateLabel = regenerating ? "Regenerando…" : "Regenerar backlog";
+  const emptyMessage = errors.length === 0 ? "Nenhum erro do LLM encontrado." : "Nenhum erro corresponde aos filtros.";
 
-  // Error handlers
-  const handleResolveError = (documentId: string, fieldName: string) => {
+  // A resposta humana do contexto é escolhida no servidor (#733): a UI só
+  // passa a que a arbitragem escolheu, como dica.
+  const prepareDecision = (error: LlmError, decision: ErrorDecision) => {
+    if (!canResolve || !error.sourceId) return;
     startTransition(async () => {
-      const result = await resolveError(projectId, documentId, fieldName);
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Erro resolvido");
-        refresh();
+      try {
+        const result = await prepareErrorResolution({ projectId, documentId: error.documentId,
+          fieldName: error.fieldName, llmResponseId: error.llmResponseId,
+          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId! });
+        if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
+        setPendingDecision({ error, decision, context: result.context });
+      } catch {
+        toast.error("Não foi possível conferir as respostas.");
       }
     });
   };
 
-  const handleReopenError = (documentId: string, fieldName: string) => {
+  const confirmDecision = (note: string, value?: unknown) => {
+    if (!canResolve || !pendingDecision) return;
     startTransition(async () => {
-      const result = await reopenError(projectId, documentId, fieldName);
-      if (result.error) {
-        toast.error(result.error);
-      } else {
-        toast.success("Erro reaberto");
+      try {
+        const result = await persistDecision(projectId, pendingDecision, note, value);
+        if (!result.success) { toast.error(result.error ?? "Falha ao salvar."); return; }
+        toast.success(pendingDecision.decision ? "Decisão salva" : "Caso reaberto");
+        setPendingDecision(null);
         refresh();
+      } catch {
+        toast.error("Não foi possível confirmar a gravação. Recarregue antes de tentar novamente.");
       }
     });
   };
 
   const handleMarkEquivalent = (e: LlmError) => {
+    // Mesma fronteira do affordance no card, aqui como fail-closed: gravar
+    // `response_equivalences` para um erro de auto-revisão não muda a
+    // classificação dele (bdcdo/dataframeitGUI#705).
+    if (e.source !== "comparacao") return;
     if (!e.chosenResponseId) return;
     startTransition(async () => {
       const result = await markLlmEquivalent(
@@ -145,14 +180,14 @@ export function LlmInsightsView({
             onClick={() => void handleRegenerateBacklog()}
             disabled={regenerating}
           >
-            {regenerating ? "Regenerando…" : "Regenerar backlog"}
+            {regenerateLabel}
           </Button>
         </div>
       ) : null}
 
       <ErrorStatsCards
         totalLlmDocs={summary.totalLlmDocs}
-        errorCount={filteredErrors.length}
+        errorCount={measuredErrorCount}
         errorRatePct={filteredErrorRate}
         unreviewedLlmDocs={summary.unreviewedLlmDocs}
       />
@@ -161,9 +196,7 @@ export function LlmInsightsView({
 
       {sortedErrors.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          {errors.length === 0
-            ? "Nenhum erro do LLM encontrado."
-            : "Nenhum erro corresponde aos filtros."}
+          {emptyMessage}
         </p>
       ) : (
         <div className="space-y-3">
@@ -177,8 +210,9 @@ export function LlmInsightsView({
               projectId={projectId}
               isPending={isPending}
               isCoordinator={isCoordinator}
-              onResolve={() => handleResolveError(e.documentId, e.fieldName)}
-              onReopen={() => handleReopenError(e.documentId, e.fieldName)}
+              canResolve={canResolve}
+              onDecide={(decision) => prepareDecision(e, decision)}
+              onReopen={() => setPendingDecision({ error: e, decision: null, context: null })}
               onEditField={() => setEditingField(e.fieldName)}
               onMarkEquivalent={() => handleMarkEquivalent(e)}
             />
@@ -187,6 +221,11 @@ export function LlmInsightsView({
       )}
     </div>
 
+    <ErrorDecisionDialog
+      pending={pendingDecision} isPending={isPending}
+      onClose={() => setPendingDecision(null)}
+      onConfirm={confirmDecision}
+    />
     {isCoordinator && editingField && schemaEditor && (
       <EditFieldDialog
         projectId={projectId}

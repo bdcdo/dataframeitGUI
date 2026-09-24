@@ -1,10 +1,6 @@
 -- Prova concorrente do contrato de que o save humano depende (issue #609).
 --
--- Como rodar após `npx supabase db reset`:
---   npm run test:db:responses-human-concurrency
--- ou, à mão:
---   docker exec -i supabase_db_frontend psql -U postgres -d postgres \
---     -X -v ON_ERROR_STOP=1 < supabase/tests/responses_latest_human_concurrency.test.sql
+-- Execução: npm run test:db:responses-human-concurrency.
 --
 -- Diferentemente dos testes transacionais comuns, as fixtures precisam estar
 -- commitadas para duas conexões dblink enxergarem o mesmo estado. O arquivo usa
@@ -77,11 +73,11 @@ INSERT INTO public.project_members (project_id, user_id, role) VALUES
 
 SELECT extensions.dblink_connect(
   'issue609_a',
-  'host=host.docker.internal port=54322 dbname=postgres user=postgres password=postgres'
+  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
 );
 SELECT extensions.dblink_connect(
   'issue609_b',
-  'host=host.docker.internal port=54322 dbname=postgres user=postgres password=postgres'
+  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
 );
 
 -- ========== 1. Duas gravações do MESMO par: a segunda espera e é recusada ===

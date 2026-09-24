@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   computeTruncation,
+  currentRoundReviews,
   REVIEW_BASE_DATA_LIMIT,
   resolveViewedRespondentId,
+  type ReviewRow,
 } from "@/lib/reviews/queries";
 import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
 import type { PydanticField } from "@/lib/types";
@@ -131,5 +133,27 @@ describe("resolveViewedRespondentId — viewAsUser só para coordenador/criador/
         viewAsUser: "",
       }),
     ).toBe(ownMemberUserId);
+  });
+});
+
+describe("currentRoundReviews — só a rodada corrente entra no Gabarito (#733)", () => {
+  const row = (id: string, round_id: string, field_name = "x"): ReviewRow => ({
+    id, document_id: "d1", field_name, verdict: "sim", chosen_response_id: null,
+    comment: null, reviewer_id: null, round_id,
+  });
+
+  it("descarta arbitragem de rodada anterior e mantém a corrente", () => {
+    expect(currentRoundReviews([row("r1", "round0"), row("r2", "round1", "y")], "round1"))
+      .toEqual([row("r2", "round1", "y")]);
+  });
+
+  it("entre reviews da mesma célula e rodada, id maior vence", () => {
+    expect(currentRoundReviews([row("r1", "round1"), row("r2", "round1")], "round1").map((r) => r.id))
+      .toEqual(["r2"]);
+  });
+
+  it("sem rodada corrente nada conta; query falhada (null) vira vazio", () => {
+    expect(currentRoundReviews([row("r1", "round1")], null)).toEqual([]);
+    expect(currentRoundReviews(null, "round1")).toEqual([]);
   });
 });

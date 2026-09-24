@@ -212,6 +212,7 @@ export interface ResolvedProjectAccessContext {
   membershipRole: ProjectMember["role"] | null;
   isMaster: boolean;
   isCoordinator: boolean;
+  canResolve: boolean;
 }
 
 export interface UnavailableProjectAccessContext {
@@ -229,6 +230,7 @@ type ProjectAccessRead =
       status: "resolved";
       project: ResolvedProjectAccessContext["project"];
       membershipRole: ProjectMember["role"] | null;
+      membershipCanResolve: boolean;
     }
   | UnavailableProjectAccessContext;
 
@@ -291,7 +293,7 @@ async function readProjectAccess(
         .maybeSingle(),
       supabase
         .from("project_members")
-        .select("role")
+        .select("role, can_resolve")
         .eq("project_id", projectId)
         .eq("user_id", memberUserId)
         .maybeSingle(),
@@ -316,10 +318,12 @@ async function readProjectAccess(
       return { status: "unavailable" };
     }
 
+    const membership = membershipResult.data ?? { role: null, can_resolve: false };
     return {
       status: "resolved",
       project: projectResult.data ?? null,
-      membershipRole: membershipResult.data?.role ?? null,
+      membershipRole: membership.role ?? null,
+      membershipCanResolve: membership.can_resolve === true,
     };
   } catch (error) {
     console.error("getProjectAccessContext: access queries failed", {
@@ -358,7 +362,8 @@ const getProjectAccessContextCached = cache(
     if (access.status === "unavailable") {
       return access;
     }
-    const { project, membershipRole } = access;
+    const { project, membershipRole, membershipCanResolve } = access;
+    const isCoordinator = isMaster || project?.created_by === accountUserId || membershipRole === "coordenador";
 
     return {
       status: "resolved",
@@ -369,10 +374,8 @@ const getProjectAccessContextCached = cache(
       isMaster,
       // A autoria do projeto pertence à conta que o criou; o papel pertence ao
       // membro canônico. Não combinar a membership bruta com a canônica.
-      isCoordinator:
-        isMaster ||
-        project?.created_by === accountUserId ||
-        membershipRole === "coordenador",
+      isCoordinator,
+      canResolve: isCoordinator || membershipCanResolve,
     };
   },
 );
