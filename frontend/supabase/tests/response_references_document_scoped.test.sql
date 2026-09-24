@@ -1,6 +1,6 @@
 -- Contrato das referências a `responses`: toda coluna que aponta para uma
 -- resposta carrega o documento dela (issues #625, #628; migration
--- 20260805120000_response_references_document_scoped.sql).
+-- 20260924110000_response_references_document_scoped.sql).
 --
 -- As cinco colunas NÃO estavam no mesmo estado antes desta migration, e a
 -- estrutura do arquivo reflete isso:
