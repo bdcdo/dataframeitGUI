@@ -6,6 +6,7 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend-fly-deploy.yml'
+      - '.github/scripts/check-frontend-fly-machines.sh'
   workflow_dispatch:
 
 permissions:
@@ -25,6 +26,24 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin a SHA (tag 1.6) por supply-chain safety — @master é floating ref.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Recusar cardinalidade divergente antes do deploy
+        run: bash .github/scripts/check-frontend-fly-machines.sh pre
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
+      - name: Convergir para duas Machines
+        working-directory: frontend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
+        # `flyctl deploy` não escala 1 -> 2 em app existente, então a segunda
+        # Machine precisa nascer de um passo declarativo — do contrário o
+        # postflight dependeria de alguém ter lembrado de rodar um comando.
+        # Idempotente: com as duas criadas, é no-op.
+        #
+        # Roda DEPOIS do preflight de propósito: `scale count` destrói
+        # excedentes, então antes dele apagaria em silêncio a divergência que o
+        # preflight existe para recusar — inclusive uma Machine clonada à mão
+        # durante um incidente, que foi o que restaurou o site em 2026-08-10.
+        run: flyctl scale count 2 --region gru --yes -a gui-analise-sistematica-frontend
       - name: flyctl deploy
         working-directory: frontend
         env:
@@ -59,6 +78,10 @@ jobs:
           done
           echo "flyctl deploy falhou apos 3 tentativas"
           exit 1
+      - name: Verificar topologia e health depois do deploy
+        run: bash .github/scripts/check-frontend-fly-machines.sh post
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
 
   # Criar ou comentar uma issue nao dispara este workflow, que escuta apenas
   # push e workflow_dispatch; portanto a notificacao nao forma loop recursivo.

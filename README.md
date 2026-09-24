@@ -12,8 +12,8 @@ Plataforma web para análise de conteúdo com IA, baseada na lib dataframeit.
 
 ## Arquitetura
 
-- **Next.js 15** (App Router) — frontend + Server Actions
-- **Supabase** — Postgres + Auth (Row Level Security)
+- **Next.js 16** (App Router) — frontend + Server Actions
+- **Supabase** — Postgres + Row Level Security (autenticacao via Clerk, nao o Auth nativo)
 - **FastAPI** — backend leve para LLM e validacao Pydantic
 
 ## Instalacao
@@ -110,7 +110,7 @@ fly secrets set SUPABASE_URL=https://xxx.supabase.co \
 # CORS_ORIGINS, CLERK_JWKS_URL e CLERK_JWT_ISSUER ficam em [env] no fly.toml:
 # nenhum é secret (o JWKS é endpoint público, o issuer é a URL da Frontend API),
 # e mantê-los no toml faz da troca de instância Clerk um diff revisável.
-fly deploy -c fly.toml -a gui-analise-sistematica-api   # fallback; o normal é via CI
+fly deploy -c fly.toml --ha=false -a gui-analise-sistematica-api   # fallback; o normal é via CI
 ```
 
 `CLERK_JWKS_URL` já existiu como secret deste app. Enquanto o secret existir, ele **sombreia o `[env]` homônimo** do `fly.toml` — o valor versionado é ignorado em silêncio (o mesmo já aconteceu aqui com `CORS_ORIGINS`). Depois do primeiro deploy que traz a variável para o `[env]`, remover o secret:
@@ -122,6 +122,8 @@ fly secrets unset CLERK_JWKS_URL -a gui-analise-sistematica-api
 Enquanto os dois valores forem idênticos a ordem deploy → unset não tem downtime; a inversa teria. O risco de deixar o secret para trás aparece na *próxima* troca de instância Clerk: o `fly.toml` apontaria para o JWKS novo, o secret continuaria servindo o antigo, e o par JWKS/issuer divergiria — exatamente o modo de falha que a validação de `iss` existe para tornar diagnosticável.
 
 Verificar: `curl https://gui-analise-sistematica-api.fly.dev/health`
+
+O backend opera com exatamente uma Machine `shared-cpu-1x` de 512 MB, sempre ligada. O workflow recusa deploy quando encontra mais de uma Machine e valida cardinalidade, região, tamanho e health depois da atualização; reduções remotas continuam sendo uma operação explícita, fora do deploy automático.
 
 ### 3. Frontend (Fly.io — `gui-analise-sistematica-frontend`)
 
@@ -135,11 +137,16 @@ fly secrets set CLERK_SECRET_KEY=sk_... \
   AUTO_REVIEW_RECONCILIATION_SECRET=the-same-long-random-secret \
   -a gui-analise-sistematica-frontend
 fly deploy -c fly.toml -a gui-analise-sistematica-frontend   # fallback; o normal é via CI
+fly scale count 2 --region gru -a gui-analise-sistematica-frontend   # só se o fallback rodar com menos de duas
 ```
 
 O endpoint de webhook do Clerk em produção é `https://dataframeit.com.br/api/webhooks/clerk`. Ele deve assinar e entregar `user.created`, `user.updated` e `user.deleted`; o signing secret correspondente fica em `CLERK_WEBHOOK_SECRET`. Ao ativar uma rota nova de reconciliação, configure esses três eventos somente depois que o frontend compatível estiver no ar e confirme uma entrega `2xx` de cada tipo — uma rota antiga pode responder `2xx` sem processar eventos que ainda não conhece.
 
 Mudanças que dependem de RPCs, constraints ou colunas novas seguem ordem estrita: backup e preflight, reparo de dados incompatíveis, migrations, verificação de pós-condições, deploy do frontend do mesmo SHA e smokes autenticados. Depois que o schema novo recebe escritas, o rollback suportado é roll-forward; não edite uma migration já registrada.
+
+O frontend opera com duas Machines `shared-cpu-1x` de 512 MB e 512 MB de swap cada, sempre ligadas. A segunda existe porque uma Machine única fica presa a um host: em 2026-08-10 o host de `gru` ficou sem CPU livre, a Machine não conseguiu voltar e o site ficou fora do ar até ser recriada à mão em outro host. O workflow converge a topologia com `flyctl scale count 2` depois do preflight, recusa mais de duas Machines antes do deploy e valida cardinalidade, região, tamanho e health **de cada uma** depois da atualização.
+
+A separação entre hosts é *best-effort* do scheduler do Fly e não é verificável pela CLI (nem `machine list --json` nem `machine status` expõem o host), então o contrato automatizado cobre a cardinalidade e a saúde, não a anti-afinidade. As duas Machines seguem em `gru`: isto não protege contra queda de região.
 
 ### Variáveis de ambiente
 
@@ -164,7 +171,7 @@ Mudanças que dependem de RPCs, constraints ou colunas novas seguem ordem estrit
 ## Estrutura do Projeto
 
 ```
-frontend/     # Next.js 15 + shadcn/ui + Tailwind v4
+frontend/     # Next.js 16 + shadcn/ui + Tailwind v4
 backend/      # FastAPI + dataframeit
 docs/         # Especificacoes tecnicas
 ```

@@ -42,6 +42,7 @@ const access: ResolvedProjectAccessContext = {
   membershipRole: null,
   isMaster: true,
   isCoordinator: true,
+  canResolve: true,
 };
 
 describe("resolveProjectQueueIdentity — viewAs é somente leitura", () => {
@@ -87,7 +88,7 @@ describe("saveResponse — escrita persiste o ator real, nunca o viewAs", () => 
           schema_version_minor: 0,
           schema_version_patch: 0,
           round_strategy: null,
-          current_round_id: null,
+          current_round_id: "round-1",
           automation_mode: null,
         },
       },
@@ -110,13 +111,13 @@ describe("saveResponse — escrita persiste o ator real, nunca o viewAs", () => 
       "project-1",
       "doc-1",
       {},
-      {},
+      { expectedRoundId: "round-1" },
       "member-viewed",
     );
 
-    // `missingRequired` acompanha todo save bem-sucedido: é a contagem de
-    // obrigatórias em aberto no conjunto GRAVADO (0 = codificação completa).
-    expect(result).toEqual({ success: true, missingRequired: 0 });
+    // `missingRequiredFields` acompanha todo save bem-sucedido: são os nomes das
+    // obrigatórias em aberto no conjunto GRAVADO (vazio = codificação completa).
+    expect(result).toEqual({ success: true, missingRequiredFields: [] });
     // A identidade veio do ator autenticado (por projectId), não de input do caller.
     expect(resolveMemberUserId).toHaveBeenCalledWith("project-1");
 
@@ -135,7 +136,9 @@ describe("saveResponse — escrita persiste o ator real, nunca o viewAs", () => 
     );
     const { saveResponse } = await import("@/actions/responses");
 
-    const result = await saveResponse("project-1", "doc-1", {});
+    const result = await saveResponse("project-1", "doc-1", {}, {
+      expectedRoundId: "round-1",
+    });
 
     expect(result).toEqual({
       success: false,

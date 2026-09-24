@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
-import { AgreementGroup, type FieldEquivalencePair } from "./AgreementGroup";
-import { MultiOptionReview } from "./MultiOptionReview";
-import { DivergenceActionsPanel } from "./DivergenceActionsPanel";
-import { UnansweredNotice } from "./UnansweredNotice";
+import type { FieldEquivalencePair } from "./AgreementGroup";
+import {
+  CompareFieldReview,
+  type ComparisonResponse,
+  type EquivalenceConfig,
+} from "./CompareFieldReview";
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,23 +23,7 @@ import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react
 import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
-import {
-  readOnlyTitle,
-  pendingVerdictLabel,
-  type PendingVerdict,
-} from "./compare-types";
-
-interface ComparisonResponse {
-  id: string;
-  respondent_type: "humano" | "llm";
-  respondent_name: string;
-  respondent_id: string | null;
-  answer: unknown;
-  justification?: string;
-  is_latest: boolean;
-  isFieldStale: boolean;
-  schemaVersion?: string | null;
-}
+import type { PendingVerdict, VerdictOrigin } from "./compare-types";
 
 // Conclusão do documento + navegação da fila. Discriminated union: `hasNextDoc`
 // e `onNextDoc` só fazem sentido depois que a revisão do documento terminou, então
@@ -48,14 +34,6 @@ interface ComparisonResponse {
 type DocStatus =
   | { complete: false }
   | { complete: true; hasNextDoc: boolean; onNextDoc: () => void };
-
-// Affordances de equivalência agrupadas: o painel carrega uma config estruturada
-// em vez de dois booleanos soltos (`allowEquivalence`, `canManageAnyPair`) e os
-// repassa ao AgreementGroup.
-interface EquivalenceConfig {
-  allow: boolean;
-  canManageAnyPair: boolean;
-}
 
 interface ComparisonPanelProps {
   readOnly: boolean;
@@ -90,6 +68,7 @@ interface ComparisonPanelProps {
   equivalence: EquivalenceConfig;
   equivalences: FieldEquivalencePair[];
   onConfirmEquivalent: (
+    origin: VerdictOrigin,
     responseIds: string[],
     gabaritoId: string,
     verdictDisplay: string,
@@ -98,6 +77,14 @@ interface ComparisonPanelProps {
   currentUserId: string;
 }
 
+// Cognitive 43 vs. limiar 15 — mas o fallow o marca como achado NOVO apenas
+// porque o arquivo foi tocado. A medição pareada contra origin/main @ 22f4b99c
+// diz o contrário: cyclomatic 23 → 12 e cognitive 53 → 43, porque este PR
+// REMOVEU daqui o rodapé de confirmação com seus três ternários aninhados. O
+// que sobra é o mesmo débito JSX inerente já rastreado na #580 para
+// ComparePage/CompareMainView: encaminhamento de props, que o fallow conta como
+// fiação. Suprimido com a medição registrada, não por conveniência.
+// fallow-ignore-next-line complexity
 export function ComparisonPanel({
   readOnly,
   projectId,
@@ -195,7 +182,18 @@ export function ComparisonPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b px-4 py-1.5">
+      {/*
+        `data-testid` é contrato de medição, não estilo: a comparação de área
+        antes/depois da #610 mede a altura deste bloco em navegador, e casar por
+        classe Tailwind quebraria no primeiro ajuste de layout — em silêncio e
+        sempre para o lado do verde. Mesma razão do `agreement-group`.
+
+        Este cabeçalho é `shrink-0` ACIMA do único scroller do painel: tudo que
+        cresce aqui empurra os cards sem amortecimento. Daí a densidade `fixed`
+        do FieldHeaderLabel e a caixa de tamanho constante do ProgressDots —
+        juntos, tornam a altura deste bloco invariante entre campos.
+      */}
+      <div className="shrink-0 border-b px-4 py-1.5" data-testid="compare-header">
         <ProgressDots
           total={totalFields}
           currentIndex={fieldIndex}
@@ -206,7 +204,7 @@ export function ComparisonPanel({
           <FieldHeaderLabel
             prefix={`Campo ${fieldIndex + 1}/${totalFields}:`}
             helpText={fieldHelpText}
-            helpTextClassName="max-h-24 overflow-y-auto pr-1"
+            density={{ kind: "fixed", clampLines: 2 }}
           >
             {fieldDescription || fieldName}
           </FieldHeaderLabel>
@@ -227,133 +225,58 @@ export function ComparisonPanel({
                 )}
               </Badge>
             )}
+            {isDivergent && (
+              <KeyboardHints
+                readOnly={readOnly}
+                groupCount={groupCount}
+                isMulti={isMulti}
+                optionCount={isMulti ? displayOptions.length : undefined}
+              />
+            )}
           </div>
         </div>
       </div>
 
+      {/*
+        O container de scroll NÃO é keyado: preservá-lo entre campos é o que
+        mantém o `scrollTop` da lista. Quem carrega a identidade do campo é o
+        `CompareFieldReview` abaixo — fronteira ÚNICA de montagem, em vez das
+        três keys irmãs coincidentes que existiam aqui (uma por slot). Ver o
+        cabeçalho de CompareFieldReview para o porquê (#613).
+      */}
       <div className="flex-1 overflow-y-auto px-4 py-2">
-        {isMulti ? (
-          <MultiOptionReview
-            key={`${documentId}|${fieldName}|${readOnly}`}
-            readOnly={readOnly}
-            options={displayOptions}
-            responses={responses}
-            existingVerdict={existingVerdict}
-            isSubmitting={isSavingVerdict}
-            onSubmit={(verdictJson) => onVerdict(verdictJson)}
-          />
-        ) : (
-          <AgreementGroup
-            key={`${documentId}|${fieldName}|${readOnly}`}
-            readOnly={readOnly}
-            responses={responses.map((r) => ({
-              id: r.id,
-              respondent_type: r.respondent_type,
-              respondent_name: r.respondent_name,
-              answer: r.answer,
-              justification: r.justification,
-              is_latest: r.is_latest,
-              isFieldStale: r.isFieldStale,
-              schemaVersion: r.schemaVersion,
-            }))}
-            existingVerdict={existingVerdict}
-            pendingVerdict={pendingVerdict}
-            onVote={(displayAnswer, chosenResponseId) =>
-              onPrepareVerdict({
-                kind: "response",
-                verdict: displayAnswer,
-                chosenResponseId,
-              })
-            }
-            allowEquivalence={equivalence.allow}
-            equivalences={equivalences}
-            onConfirmEquivalent={onConfirmEquivalent}
-            onUnmarkPair={onUnmarkEquivalencePair}
-            currentUserId={currentUserId}
-            canManageAnyPair={equivalence.canManageAnyPair}
-          />
-        )}
-
-        <UnansweredNotice responses={responses} />
-
-        {isDivergent ? (
-          <DivergenceActionsPanel
-            key={`${documentId}|${fieldName}|${readOnly}`}
-            readOnly={readOnly}
-            projectId={projectId}
-            documentId={documentId}
-            documentTitle={documentTitle}
-            fieldName={fieldName}
-            fieldDescription={fieldDescription}
-            fields={fields}
-            isMulti={isMulti}
-            existingVerdict={existingVerdict}
-            pendingVerdict={pendingVerdict}
-            onPrepareVerdict={onPrepareVerdict}
-            comment={comment}
-            onCommentChange={onCommentChange}
-          />
-        ) : (
-          <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              <CheckCircle2 className="size-3.5 text-green-600" />
-              Concordante: todos os respondentes concordam.
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs"
-              onClick={onMarkReviewed}
-              disabled={readOnly}
-              title={readOnlyTitle(readOnly)}
-            >
-              Marcar doc como revisado
-            </Button>
-          </div>
-        )}
+        <CompareFieldReview
+          key={`${documentId}|${fieldName}|${readOnly}`}
+          readOnly={readOnly}
+          projectId={projectId}
+          documentId={documentId}
+          documentTitle={documentTitle}
+          fieldName={fieldName}
+          fieldDescription={fieldDescription}
+          fields={fields}
+          isMulti={isMulti}
+          displayOptions={displayOptions}
+          responses={responses}
+          existingVerdict={existingVerdict}
+          pendingVerdict={pendingVerdict}
+          isDivergent={isDivergent}
+          isSavingVerdict={isSavingVerdict}
+          onVerdict={onVerdict}
+          onPrepareVerdict={onPrepareVerdict}
+          onMarkReviewed={onMarkReviewed}
+          comment={comment}
+          onCommentChange={onCommentChange}
+          equivalence={equivalence}
+          equivalences={equivalences}
+          onConfirmEquivalent={onConfirmEquivalent}
+          onUnmarkEquivalencePair={onUnmarkEquivalencePair}
+          currentUserId={currentUserId}
+          pendingConfirm={{
+            onConfirm: onConfirmPendingVerdict,
+            onDiscard: onDiscardPendingVerdict,
+          }}
+        />
       </div>
-
-      {isDivergent && !isMulti && (!docStatus.complete || pendingVerdict) && (
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t bg-muted/20 px-4 py-2">
-          <span className="min-w-0 truncate text-xs text-muted-foreground">
-            {readOnly ? (
-              "Decisões desabilitadas no modo somente leitura."
-            ) : pendingVerdict ? (
-              <>
-                Selecionado:{" "}
-                <span className="font-medium text-foreground">
-                  {pendingVerdictLabel(pendingVerdict)}
-                </span>
-              </>
-            ) : (
-              "Escolha uma resposta para confirmar."
-            )}
-          </span>
-          <div className="flex shrink-0 items-center gap-2">
-            {pendingVerdict && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={readOnly || isSavingVerdict}
-                onClick={onDiscardPendingVerdict}
-              >
-                Descartar
-              </Button>
-            )}
-            <Button
-              size="sm"
-              disabled={readOnly || !pendingVerdict || isSavingVerdict}
-              onClick={onConfirmPendingVerdict}
-            >
-              {readOnly
-                ? "Somente leitura"
-                : isSavingVerdict
-                  ? "Salvando..."
-                  : "Confirmar"}
-            </Button>
-          </div>
-        </div>
-      )}
 
       {docStatus.complete && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-green-500/20 bg-green-500/5 px-4 py-2">
@@ -380,14 +303,6 @@ export function ComparisonPanel({
         </div>
       )}
 
-      {isDivergent && (
-        <KeyboardHints
-          readOnly={readOnly}
-          groupCount={groupCount}
-          isMulti={isMulti}
-          optionCount={isMulti ? displayOptions.length : undefined}
-        />
-      )}
     </div>
   );
 }

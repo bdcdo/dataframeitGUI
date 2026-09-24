@@ -1,7 +1,13 @@
 import { isFieldVisible } from "@/lib/conditional";
 import { isIncompleteOther } from "@/lib/other-option";
 import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
-import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
+import {
+  resolveRequired,
+  resolveSubfieldRequired,
+  resolveSubfieldRule,
+  resolveTarget,
+} from "@/lib/pydantic-field";
+import { isSubfieldRecord } from "@/lib/subfield-value";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 // Campos que o humano precisa responder para a codificação contar como
@@ -39,7 +45,54 @@ export function isFieldAnswered(field: PydanticField, value: unknown): boolean {
     if (value.length === 0) return false;
     if (value.some(isIncompleteOther)) return false;
   }
+  if (field.subfields?.length) return isSubfieldGroupAnswered(field, value);
   return true;
+}
+
+// Um grupo guarda um objeto, e objeto não-vazio sempre passou o check acima —
+// então `{doenca: "x", cid: ""}` contava como respondido mesmo com `cid`
+// obrigatório, e um grupo `at_least_one` sem nada preenchido também. O
+// asterisco do FieldRenderer e o texto "pelo menos um" não tinham
+// contrapartida em régua nenhuma (#491).
+//
+// As duas regras que o schema já declara, e nada além delas: `at_least_one`
+// exige um subcampo qualquer; `all` exige os subcampos marcados como
+// obrigatórios — os demais seguem opcionais, e um grupo sem nenhum obrigatório
+// continua valendo por presença, como antes.
+function isSubfieldGroupAnswered(field: PydanticField, value: unknown): boolean {
+  // A régua vale para o valor NA FORMA que o grupo produz. Um valor de outra
+  // forma — string, tipicamente — é resposta coletada quando o campo ainda era
+  // texto simples, antes de ganhar subcampos, e já era completa sob o schema da
+  // época. Rejeitá-la aqui contradiria a postura que o sistema toma em
+  // `computeFieldHash`, que exclui as propriedades estruturais justamente para
+  // que mexer nelas não invalide resposta já coletada. Medido: sem esta
+  // fronteira, a régua reclassificava 125 codificações concluídas do Zolgensma
+  // e do Judiciário, TODAS por essa mudança de forma e nenhuma por subcampo
+  // obrigatório em branco (harness/2026-07-24-subfield-completeness).
+  //
+  // A fronteira mora em `subfield-value.ts` porque o FieldRenderer decide pela
+  // MESMA leitura o que exibir. Enquanto cada lado a escrevia por conta
+  // própria, a resposta anistiada aqui era a que o renderizador não sabia
+  // mostrar — o ✓ com a tela vazia da #607.
+  if (!isSubfieldRecord(value)) return true;
+  const answers = value;
+  const subfields = field.subfields ?? [];
+
+  if (resolveSubfieldRule(field.subfield_rule) === "at_least_one") {
+    return subfields.some((sf) => isSubfieldFilled(answers[sf.key]));
+  }
+  return subfields.every(
+    (sf) =>
+      !resolveSubfieldRequired(sf.required) || isSubfieldFilled(answers[sf.key]),
+  );
+}
+
+// Subcampo é sempre texto livre no gerador (`str`/`Optional[str]`), então só
+// espaço em branco é vazio — mesma normalização que `_normalize_optional_str`
+// aplica no backend ao ler o valor de volta.
+function isSubfieldFilled(value: unknown): boolean {
+  if (typeof value === "string") return value.trim() !== "";
+  return value !== undefined && value !== null;
 }
 
 // Campos obrigatórios que ainda faltam — a régua de completude na forma que a UI
@@ -76,12 +129,15 @@ export function missingRequiredHumanFields(
 //   • o gate de `is_partial` em saveResponse, que avalia contra o snapshot da
 //     própria escrita (buildPersistedResponseSnapshot). Para uma codificação NOVA
 //     esse snapshot estampa o schema inteiro como chaves, então aware ≡ blind e
-//     nenhum obrigatório em branco é perdoado; a distinção só morde no auto-save de
+//     nenhum obrigatório em branco é perdoado; a distinção só morde ao reenviar
 //     uma resposta JÁ submetida sob schema que cresceu — exatamente o caso que não
-//     deve rebaixar um doc concluído (#519/#520).
+//     deve rebaixar um doc concluído (#519/#520). Até o #608 o gatilho era o
+//     auto-save de navegação; hoje é reabrir o doc e clicar em Enviar.
 // Quem permanece staleness-BLIND de propósito é a promoção a `concluido` em
 // syncCodingAssignmentStatus (coding-sync): lá é o guard de não-rebaixar um
 // assignment já concluído que sustenta a invariante, não o carimbo per-campo.
+// A comparação (fila, fecho, gatilho) não chama esta função: lê o veredito
+// gravado em `is_partial`, ver comparison-set.ts.
 export function isCodingComplete(
   fields: PydanticField[],
   answers: Record<string, unknown>,

@@ -60,6 +60,34 @@ def test_flatten_preserves_subfield_descriptions():
     assert doenca_field.description == "Nome da doença"
 
 
+class _SubFieldsRequired(BaseModel):
+    doenca: Optional[str] = Field(
+        default=None,
+        description="Nome da doença",
+        json_schema_extra={"subfield_required": True},
+    )
+
+
+class _RootWithRequiredSubfield(BaseModel):
+    q5: _SubFieldsRequired = Field(description="campo aninhado")
+
+
+def test_flatten_does_not_leak_reserved_json_schema_keyword():
+    """O extra do subcampo sobe para property do schema mandado ao provider.
+
+    `_flatten_nested_basemodels` reaproveita o FieldInfo do subcampo inteiro,
+    então qualquer chave de `json_schema_extra` vira chave da property no JSON
+    Schema. `required` é palavra reservada ali (vale no nível do objeto, e como
+    array de strings), por isso o gerador emite `subfield_required` — ver
+    generatePydanticCode e _extract_subfields (issue #491).
+    """
+    flat, _ = _flatten_nested_basemodels(_RootWithRequiredSubfield)
+    prop = flat.model_json_schema()["properties"][f"q5{_NESTED_FLATTEN_SEP}doenca"]
+
+    assert "required" not in prop
+    assert prop["subfield_required"] is True
+
+
 def _reconstruct_nested(answers: dict, justifications: dict, field_map: dict):
     """Mirror da reconstrução em services.llm_runner.run_llm para permitir
     testar sem montar uma run completa. Manter em sincronia com o runner."""

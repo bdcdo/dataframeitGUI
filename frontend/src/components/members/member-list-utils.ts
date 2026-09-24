@@ -1,6 +1,11 @@
 import type { MemberEmailLink, ProjectMember, Profile } from "@/lib/types";
 
-export type MemberRow = ProjectMember & {
+// `Omit` antes da interseção: ProjectMember declara `profiles?: Profile`, e
+// `Profile | undefined` interseccionado com `Profile | null` colapsa para
+// `Profile`. Sem o Omit o tipo afirmaria que o perfil sempre existe, enquanto o
+// join da página devolve null para membro sem profile — o caso que
+// memberDisplayName cobre com "Sem perfil".
+export type MemberRow = Omit<ProjectMember, "profiles"> & {
   profiles: Profile | null;
   accessState: MemberAccessState;
   isClaimable: boolean;
@@ -100,6 +105,15 @@ export function canEditPendingMemberEmail(
 
 export function memberDisplayName(m: MemberRow): string {
   return m.profiles?.first_name || m.profiles?.email || "Sem perfil";
+}
+
+// E-mail que desambigua o nome exibido, quando acrescenta informação.
+// memberDisplayName já cai no e-mail quando não há first_name, então repeti-lo
+// entre parênteses duplicaria o mesmo texto na mesma frase.
+export function memberSecondaryEmail(m: MemberRow): string | null {
+  const email = m.profiles?.email;
+  if (!email || email === memberDisplayName(m)) return null;
+  return email;
 }
 
 export function groupLinksByMember(

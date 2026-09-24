@@ -14,16 +14,13 @@ function makeClient() {
       for (const method of ["select", "eq", "is", "order"]) {
         builder[method] = () => builder;
       }
+      builder.single = async () => ({ data: { current_round_id: null }, error: null });
       builder.then = (resolve: (value: unknown) => unknown) =>
         resolve({ data: [], error: null });
       return builder;
     },
   };
 }
-
-vi.mock("next/cache", () => ({
-  unstable_cache: (callback: () => unknown) => callback,
-}));
 
 vi.mock("next/navigation", () => ({
   notFound: () => {

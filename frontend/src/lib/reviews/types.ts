@@ -13,6 +13,8 @@ export interface ReviewedField {
   fieldDescription: string;
   fieldType: "single" | "multi" | "text" | "date";
   verdict: string;
+  resolutionLabel?: string;
+  resolutionStatus?: "approved" | "discussion";
   respondentAnswers: RespondentAnswer[];
 }
 

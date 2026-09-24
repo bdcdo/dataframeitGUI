@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, waitFor, cleanup } from "@testing-library/react";
+import { renderHook, act, cleanup } from "@testing-library/react";
 import { saveResponse } from "@/actions/responses";
 import { toast } from "sonner";
-import { CODING_SAVE_TRANSPORT_ERROR } from "@/lib/coding-autosave";
+import { CODING_SAVE_TRANSPORT_ERROR } from "@/lib/coding-save";
 import { useAssignedCoding } from "../useAssignedCoding";
 import type { Document, Assignment, PydanticField } from "@/lib/types";
 
@@ -38,6 +38,7 @@ function setup(overrides?: {
   const dirty = overrides?.dirty ?? new Set<string>();
   const params = {
     projectId: "p1",
+    currentRoundId: "round-1",
     documents: DOCS,
     fields: overrides?.fields ?? [],
     sortedDocuments: DOCS,
@@ -49,6 +50,9 @@ function setup(overrides?: {
     markDirty: vi.fn((id: string) => dirty.add(id)),
     markClean: vi.fn((id: string) => dirty.delete(id)),
     isDirty: (id: string | null | undefined) => !!id && dirty.has(id),
+    recordDraft: vi.fn(),
+    restoreDraft: vi.fn(() => null),
+    submitConfirmed: vi.fn(),
     updateDocParam: vi.fn(),
     setParams: vi.fn(),
   };
@@ -61,7 +65,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 beforeEach(() => {
-  mockSave.mockResolvedValue({ success: true });
+  mockSave.mockResolvedValue({ success: true, missingRequiredFields: [] });
 });
 
 describe("useAssignedCoding", () => {
@@ -90,6 +94,7 @@ describe("useAssignedCoding", () => {
     });
     expect(mockSave).toHaveBeenCalledWith("p1", "d1", { q1: "sim" }, {
       notes: "",
+      expectedRoundId: "round-1",
     });
     expect(params.markClean).toHaveBeenCalledWith("d1");
     expect(view.result.current.currentDoc?.id).toBe("d2");
@@ -101,7 +106,7 @@ describe("useAssignedCoding", () => {
     // completar o documento — e ele reapareceria na fila depois, o sintoma
     // relatado como "minha codificação não salvou" (#519). O save em si teve
     // sucesso: markClean roda, só a navegação é que fica retida.
-    mockSave.mockResolvedValue({ success: true, missingRequired: 2 });
+    mockSave.mockResolvedValue({ success: true, missingRequiredFields: ["q1", "q2"] });
     const { view, params } = setup();
     act(() => view.result.current.handleAnswer("q1", "sim"));
     await act(async () => {
@@ -113,10 +118,11 @@ describe("useAssignedCoding", () => {
     expect(view.result.current.allDone).toBe(false);
   });
 
-  it("save sem pendência (missingRequired 0) avança normalmente", async () => {
-    // Boundary com o teste acima: é 0 — e não a mera presença da chave — que
-    // libera a navegação.
-    mockSave.mockResolvedValue({ success: true, missingRequired: 0 });
+  it("save sem pendência (lista vazia) avança normalmente", async () => {
+    // Boundary com o teste acima: é o TAMANHO da lista — não a presença da
+    // chave — que libera a navegação. `[]` é truthy em JS, então testar a lista
+    // crua prenderia no documento quem completou a codificação.
+    mockSave.mockResolvedValue({ success: true, missingRequiredFields: [] });
     const { view, params } = setup();
     act(() => view.result.current.handleAnswer("q1", "sim"));
     await act(async () => {
@@ -127,7 +133,7 @@ describe("useAssignedCoding", () => {
   });
 
   it("pendência no último documento não marca allDone", async () => {
-    mockSave.mockResolvedValue({ success: true, missingRequired: 1 });
+    mockSave.mockResolvedValue({ success: true, missingRequiredFields: ["q1"] });
     const { view } = setup();
     act(() => view.result.current.handleDocNavigate(2)); // vai para d3 (último)
     act(() => view.result.current.handleAnswer("q1", "sim"));
@@ -153,7 +159,7 @@ describe("useAssignedCoding", () => {
     expect(params.setSubmitting).toHaveBeenLastCalledWith(false);
     expect(toast.error).toHaveBeenCalledWith(CODING_SAVE_TRANSPORT_ERROR);
 
-    mockSave.mockResolvedValue({ success: true });
+    mockSave.mockResolvedValue({ success: true, missingRequiredFields: [] });
     await act(async () => {
       await view.result.current.handleSubmit();
     });
@@ -171,29 +177,45 @@ describe("useAssignedCoding", () => {
     expect(view.result.current.allDone).toBe(true);
   });
 
-  it("handleDocNavigate autosalva o doc sujo antes de trocar (#28)", async () => {
+  // Invertido no #608, não apagado: era "handleDocNavigate autosalva o doc sujo
+  // antes de trocar (#28)". A asserção continua guardando o mesmo ponto do
+  // código — só que agora provando a ausência da escrita. Apagá-la deixaria o
+  // critério "nenhuma gravação automática" sem guarda, e reintroduzir o autosave
+  // não deixaria nada vermelho.
+  it("navegar com o doc sujo NÃO grava no servidor; o conteúdo fica no rascunho", async () => {
     const { view, params } = setup();
     act(() => view.result.current.handleAnswer("q1", "sim")); // d1 fica sujo
     await act(async () => {
       view.result.current.handleDocNavigate(1);
     });
-    // autosave do d1 com isAutoSave antes de navegar
-    expect(mockSave).toHaveBeenCalledWith(
-      "p1",
-      "d1",
-      { q1: "sim" },
-      { notes: "", isAutoSave: true },
-    );
-    await waitFor(() => expect(params.markClean).toHaveBeenCalledWith("d1"));
+    expect(mockSave).not.toHaveBeenCalled();
+    // O doc deixado segue marcado como não enviado: é o que mantém o indicador
+    // aceso e o aviso de saída armado. Limpar aqui afirmaria "enviado" sobre
+    // trabalho que ninguém enviou.
+    expect(params.markClean).not.toHaveBeenCalled();
+    // O registro no rascunho local é o que substitui a gravação: o conteúdo de
+    // d1 continua recuperável depois da troca.
+    expect(params.recordDraft).toHaveBeenCalledWith("d1", {
+      answers: { q1: "sim" },
+      notes: "",
+    });
     expect(view.result.current.currentDoc?.id).toBe("d2");
     expect(params.updateDocParam).toHaveBeenCalledWith("d2");
   });
 
-  it("handleDocNavigate NÃO autosalva quando o doc não está sujo", () => {
+  it("navegar com o doc limpo também não grava", () => {
     const { view } = setup();
     act(() => view.result.current.handleDocNavigate(1));
     expect(mockSave).not.toHaveBeenCalled();
     expect(view.result.current.currentDoc?.id).toBe("d2");
+  });
+
+  it("trocar a ordenação com o doc sujo NÃO grava no servidor", () => {
+    const { view, params } = setup();
+    act(() => view.result.current.handleAnswer("q1", "sim"));
+    act(() => view.result.current.handleSortChange("default"));
+    expect(mockSave).not.toHaveBeenCalled();
+    expect(params.markClean).not.toHaveBeenCalled();
   });
 
   // Regressão da mudança de comportamento intencional: sair da tela "Parabéns!"
@@ -255,20 +277,10 @@ describe("useAssignedCoding", () => {
     expect(view.result.current.docAnswers).toEqual({ q1: "não", q2: null });
   });
 
-  it("getPayload reflete o doc e respostas atuais", () => {
-    const { view } = setup({ existingAnswers: { d1: { q: "a" } } });
-    expect(view.result.current.getPayload()).toEqual({
-      projectId: "p1",
-      documentId: "d1",
-      answers: { q: "a" },
-      notes: "",
-    });
-  });
-
   it("duplo-clique em Enviar não duplica saveResponse (guarda de reentrância)", async () => {
-    let resolveSave: (v: { success: true }) => void = () => {};
+    let resolveSave: (v: { success: true, missingRequiredFields: [] }) => void = () => {};
     mockSave.mockReturnValue(
-      new Promise<{ success: true }>((r) => {
+      new Promise<{ success: true, missingRequiredFields: [] }>((r) => {
         resolveSave = r;
       }),
     );
@@ -281,16 +293,16 @@ describe("useAssignedCoding", () => {
     expect(mockSave).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      resolveSave({ success: true });
+      resolveSave({ success: true, missingRequiredFields: [] });
       await Promise.all([p1, p2]);
     });
     expect(mockSave).toHaveBeenCalledTimes(1);
   });
 
   it("congela a edição enquanto submitting (não perde teclas no save em voo)", async () => {
-    let resolveSave: (v: { success: true }) => void = () => {};
+    let resolveSave: (v: { success: true, missingRequiredFields: [] }) => void = () => {};
     mockSave.mockReturnValue(
-      new Promise<{ success: true }>((r) => {
+      new Promise<{ success: true, missingRequiredFields: [] }>((r) => {
         resolveSave = r;
       }),
     );
@@ -308,7 +320,7 @@ describe("useAssignedCoding", () => {
     expect(params.markDirty).not.toHaveBeenCalled();
 
     await act(async () => {
-      resolveSave({ success: true });
+      resolveSave({ success: true, missingRequiredFields: [] });
       await p;
     });
   });

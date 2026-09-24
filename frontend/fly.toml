@@ -24,19 +24,44 @@ swap_size_mb = 512
     NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL = "/dashboard"
 
 [deploy]
-  # Rolling (nao bluegreen): com min_machines_running = 1 e always-on, rolling
-  # reinicia a unica maquina no lugar. Tradeoff aceito (#194 A3): blip curto
-  # possivel no deploy, em troca de manter o frontend sempre ligado.
-  strategy = "rolling"
+  # A nova Machine precisa passar no health check antes de receber trafego; a
+  # antiga so e removida depois, evitando indisponibilidade durante o deploy.
+  strategy = "bluegreen"
 
 [http_service]
   internal_port = 3000
   force_https = true
-  # Always-on (#194 A3): como dominio de producao, o frontend nao escala a
-  # zero — evita cold start na primeira request e espelha o backend. auto_stop
-  # = "off" + min = 1 garantem ao menos uma maquina sempre rodando.
+  # Always-on: rollback do scale-to-zero habilitado no #644, na forma que
+  # aquele PR já previa ("restaurar auto_stop_machines = off e
+  # min_machines_running = 1, mantendo uma única Machine").
+  #
+  # Em 2026-08-10 a Machine parou por ociosidade e não conseguiu voltar: cada
+  # tentativa de acordá-la falhou com "could not reserve resource for machine:
+  # insufficient CPUs available to fulfill request on the current host" — o
+  # host de gru onde ela estava alocada ficou sem CPU livre. Como o proxy só
+  # tenta reacender sob demanda, o resultado foi um loop de start/crash e o
+  # site inteiro fora do ar até a Machine ser recriada em outro host.
+  #
+  # O custo do scale-to-zero, portanto, não é apenas o cold start medido: é
+  # depender da capacidade do host no instante de acordar. Com a Machine
+  # sempre ligada, esse instante deixa de existir no caminho crítico.
+  #
+  # auto_start_machines segue true de propósito: é a rede que reacende a
+  # Machine se ela parar por outro motivo (restart, manutenção do host).
+  #
   auto_stop_machines = "off"
-  min_machines_running = 1
+  auto_start_machines = true
+  # Duas Machines (#664). Manter a Machine acesa tira o "acordar" do caminho
+  # crítico, mas não desfaz a dependência de um único host: se ele reiniciar,
+  # entrar em manutenção ou ficar sem CPU no instante em que a Machine precise
+  # ser recriada, a produção cai de novo e não volta sozinha.
+  #
+  # Com auto_stop_machines = "off" este valor é inerte — min_machines_running
+  # só age quando o autostop está ligado. Ele fica aqui como declaração de
+  # intenção e como trava contra um retorno silencioso do scale-to-zero com
+  # cardinalidade 1. Quem de fato cria e mantém as duas é o `flyctl scale
+  # count 2` do workflow, verificado pelo postflight fail-closed.
+  min_machines_running = 2
 
   [[http_service.checks]]
     grace_period = "10s"
@@ -49,6 +74,5 @@ swap_size_mb = 512
   # 512 MB persiste o `fly scale memory 512` de 2026-07-02: sem esta secao,
   # um `fly deploy` futuro recriaria as maquinas com o default de 256 MB e
   # o OOM-kill do next-server voltaria.
+  size = "shared-cpu-1x"
   memory = "512mb"
-  cpu_kind = "shared"
-  cpus = 1

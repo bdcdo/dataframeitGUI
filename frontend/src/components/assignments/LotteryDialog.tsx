@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { LotteryMode } from "@/lib/lottery-utils";
 import type { LotteryMember } from "./lottery-dialog-types";
 import { useLotteryStats } from "./useLotteryStats";
@@ -37,14 +38,20 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
   const { stats, statsError } = useLotteryStats(projectId, open);
 
   const params = useLotteryParams();
-  const { type, setType, mode, setMode, label, setLabel, setPreviewState } =
-    params;
+  const {
+    type, setType, targetKind, setTargetKind, roundLabel, setRoundLabel,
+    confirmActiveWork, setConfirmActiveWork,
+    confirmPendingScopeWork, setConfirmPendingScopeWork,
+    mode, setMode, label, setLabel,
+    setPreviewState,
+  } = params;
 
   const {
     isComparacao,
     participantCount,
     eligibleCount,
     blockedMessage,
+    canPreview,
     canSubmit,
     preview,
     estimatedPerParticipant,
@@ -99,7 +106,11 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
             <Label>Tipo</Label>
             <RadioGroup
               value={type}
-              onValueChange={(v) => setType(v as "codificacao" | "comparacao")}
+              onValueChange={(v) => {
+                const nextType = v as "codificacao" | "comparacao";
+                setType(nextType);
+                if (nextType === "comparacao") setTargetKind("current");
+              }}
               className="mt-2 flex gap-4"
             >
               <div className="flex items-center gap-2">
@@ -121,6 +132,73 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
                   ? "Elegíveis: documentos com ao menos 1 codificação humana e 1 resposta do LLM."
                   : `Elegíveis: documentos com ao menos ${stats?.minResponsesForComparison ?? 2} codificações humanas.`}
               </p>
+            )}
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label>Rodada</Label>
+            <RadioGroup
+              value={targetKind}
+              onValueChange={(value) => {
+                setTargetKind(value as "current" | "new");
+                setConfirmActiveWork(false);
+                setConfirmPendingScopeWork(false);
+              }}
+              className="space-y-1"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="current" id="round-current" />
+                <Label htmlFor="round-current" className="font-normal">
+                  Rodada atual{stats?.currentRoundLabel ? ` — ${stats.currentRoundLabel}` : ""}
+                </Label>
+              </div>
+              {!isComparacao && (
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="new" id="round-new" />
+                  <Label htmlFor="round-new" className="font-normal">Iniciar nova rodada</Label>
+                </div>
+              )}
+            </RadioGroup>
+            {targetKind === "new" && (
+              <div className="space-y-2 pt-1">
+                <Input
+                  aria-label="Nome da nova rodada"
+                  placeholder="Ex: Segunda rodada"
+                  value={roundLabel}
+                  onChange={(event) => setRoundLabel(event.target.value)}
+                />
+                {(stats?.activeOpenAssignmentCount ?? 0) > 0 && (
+                  <div className="flex items-start gap-2 rounded-md border p-3">
+                    <Checkbox
+                      id="confirm-active-work"
+                      checked={confirmActiveWork}
+                      onCheckedChange={(checked) => setConfirmActiveWork(checked === true)}
+                    />
+                    <Label htmlFor="confirm-active-work" className="font-normal leading-snug">
+                      Confirmo iniciar a nova rodada apesar de {stats?.activeOpenAssignmentCount} atribuições ativas em andamento ou pendentes na rodada atual.
+                    </Label>
+                  </div>
+                )}
+                {(stats?.pendingScopeAssignmentCount ?? 0) > 0 && (
+                  <div className="flex items-start gap-2 rounded-md border p-3">
+                    <Checkbox
+                      id="confirm-pending-scope-work"
+                      checked={confirmPendingScopeWork}
+                      onCheckedChange={(checked) =>
+                        setConfirmPendingScopeWork(checked === true)
+                      }
+                    />
+                    <Label htmlFor="confirm-pending-scope-work" className="font-normal leading-snug">
+                      Confirmo iniciar a nova rodada apesar de {stats?.pendingScopeAssignmentCount} atribuições ligadas a documentos ainda em revisão de escopo. Se o pedido for rejeitado depois, esses documentos precisarão entrar em um novo sorteio da rodada atual.
+                    </Label>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  As respostas anteriores ficam no histórico; os documentos começam sem respostas nesta rodada.
+                </p>
+              </div>
             )}
           </div>
 
@@ -195,6 +273,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
             run={{
               previewing,
               loading,
+              canPreview,
               canSubmit,
               onPreview: () => void handlePreview(),
               onRandomize: () => void handleRandomize(),

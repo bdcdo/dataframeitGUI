@@ -7,6 +7,7 @@ import {
   fireEvent,
   act,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -121,6 +122,7 @@ function resp(
     answers,
     justifications: null,
     is_latest: true,
+    is_partial: false,
     pydantic_hash: null,
     answer_field_hashes: null,
     schema_version_major: null,
@@ -444,7 +446,10 @@ describe("ComparePage — árvore real (smoke)", () => {
         name: /Selecionar esta resposta para confirmar: Deferido/i,
       }),
     );
-    expect(screen.getByText("Selecionado:")).not.toBeNull();
+    // O par presente-ANTES / ausente-DEPOIS é o que sustenta o teste: a
+    // asserção de ausência sozinha passaria mesmo se o gate de impersonação
+    // fosse deletado, porque a barra também não existiria sem rascunho nenhum.
+    expect(screen.getByTestId("pending-confirm")).not.toBeNull();
 
     rerender(
       <TooltipProvider>
@@ -455,16 +460,65 @@ describe("ComparePage — árvore real (smoke)", () => {
       </TooltipProvider>,
     );
 
-    expect(screen.queryByText("Selecionado:")).toBeNull();
-    const confirmButton = screen.getByRole("button", {
-      name: "Somente leitura",
-    }) as HTMLButtonElement;
-    expect(confirmButton.disabled).toBe(true);
+    expect(screen.queryByTestId("pending-confirm")).toBeNull();
+    expect(
+      screen.queryAllByRole("button", { name: "Confirmar" }),
+    ).toHaveLength(0);
 
-    await user.click(confirmButton);
     await user.keyboard("{Enter}");
 
     expectNoCompareWrites();
+  });
+
+  // Defesa em profundidade da #613, na árvore real. A propriedade que faz estas
+  // asserções valerem alguma coisa é o fixture ter conjuntos de resposta
+  // DISJUNTOS por campo (campoA: Deferido/Indeferido; campoB: Sim/Não): assim
+  // "gravou valor de outro campo" é inequívoco, sem depender de qual card foi
+  // clicado. É a mesma propriedade que o fixture E2E preserva de propósito.
+  it("após navegar, a tela mostra só os cards do campo atual", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    expect(screen.getAllByTestId("agreement-group")).toHaveLength(1);
+    expect(screen.getByText("Deferido")).not.toBeNull();
+
+    await user.keyboard("n");
+
+    // Critério de aceitação 1 da #613: uma raiz, sempre.
+    expect(screen.getAllByTestId("agreement-group")).toHaveLength(1);
+    expect(screen.getByText("Sim")).not.toBeNull();
+    expect(screen.queryByText("Deferido")).toBeNull();
+    expect(screen.queryByText("Indeferido")).toBeNull();
+  });
+
+  // Deliberadamente pelo MOUSE, e não pelo teclado: o teclado sempre leu
+  // `answerGroups` frescos e por isso nunca foi o vetor da #613 (ver o
+  // comentário em `useCompareKeyboard`). Um teste de teclado aqui afirmaria uma
+  // propriedade que já valia ANTES da correção — verde tanto no código são
+  // quanto no doente, que é a definição de teste que não testa nada.
+  it("veredito confirmado depois de navegar grava no campo novo, com valor do campo novo", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.keyboard("n");
+
+    // O primeiro card na tela: posição natural do clique, e exatamente onde
+    // ficava o card fantasma do campo anterior.
+    const card = screen.getByRole("button", {
+      name: /Selecionar esta resposta para confirmar: Sim/i,
+    });
+    await user.click(card);
+    await user.click(screen.getByRole("button", { name: /^Confirmar$/ }));
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(submitVerdict).mock.calls[0][0] as {
+      fieldName: string;
+      verdict: string;
+    };
+    expect(call.fieldName).toBe("campoB");
+    // Valor do conjunto de campoB. Como os conjuntos são disjuntos, "Deferido"
+    // aqui seria prova de campo trocado.
+    expect(call.verdict).toBe("Sim");
   });
 
   it("'Descartar' no painel real limpa a seleção sem salvar", async () => {
@@ -515,5 +569,110 @@ describe("ComparePage — árvore real (smoke)", () => {
     );
     expect(screen.getByRole("tab", { name: "Meus atribuídos" })).not.toBeNull();
     expect(screen.getByRole("tab", { name: "Todos" })).not.toBeNull();
+  });
+});
+
+// A confirmação deixou de ser uma barra fixa no rodapé e passou a nascer no
+// elemento que produziu o rascunho (#610). A garantia do #417 é a mesma — dois
+// atos, em controles distintos —, mas o segundo alvo fica a poucos pixels do
+// primeiro em vez de a algumas centenas.
+describe("ComparePage — confirmação ancorada ao que produziu o rascunho (#610)", () => {
+  const voteButton = () =>
+    screen.getByRole("button", {
+      name: /Selecionar esta resposta para confirmar: Deferido/i,
+    });
+
+  it("sem rascunho, não existe nenhum controle de confirmação na tela", () => {
+    renderReal();
+    expect(screen.queryByTestId("pending-confirm")).toBeNull();
+    expect(screen.queryAllByRole("button", { name: "Confirmar" })).toHaveLength(
+      0,
+    );
+  });
+
+  // A LACUNA que este PR fecha: até aqui nenhum teste provava que clicar num
+  // CARD não grava — o análogo usava "Ambíguo". Reverter `onVote` para chamar
+  // `onVerdict` direto (isto é, desfazer o #417 no caminho do mouse) passava
+  // despercebido.
+  it("clicar num card prepara e NÃO grava; a gravação só vem da confirmação", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.click(voteButton());
+    expect(submitVerdict).not.toHaveBeenCalled();
+
+    const card = screen.getByTestId("pending-confirm").closest(
+      '[data-testid="answer-card"]',
+    ) as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "Confirmar" }));
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+    expect(submitVerdict).toHaveBeenCalledWith(
+      expect.objectContaining({ fieldName: "campoA", verdict: "Deferido" }),
+    );
+  });
+
+  it("a barra de confirmação nasce DENTRO do card clicado", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.click(voteButton());
+
+    const card = voteButton().closest(
+      '[data-testid="answer-card"]',
+    ) as HTMLElement;
+    expect(card.getAttribute("data-pending")).toBe("true");
+    expect(
+      within(card).getByRole("button", { name: "Confirmar" }),
+    ).not.toBeNull();
+  });
+
+  // Guarda direta contra o modo de falha mais provável de uma implementação
+  // apressada: manter o rodapé E acrescentar a barra no card, deixando dois
+  // botões "Confirmar" no DOM.
+  it("há no máximo um controle de confirmação no DOM, em qualquer estado", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    expect(screen.queryAllByTestId("pending-confirm")).toHaveLength(0);
+
+    await user.click(voteButton());
+    expect(screen.queryAllByTestId("pending-confirm")).toHaveLength(1);
+    expect(screen.queryAllByRole("button", { name: "Confirmar" })).toHaveLength(
+      1,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Ambíguo/i }));
+    expect(screen.queryAllByTestId("pending-confirm")).toHaveLength(1);
+    expect(screen.queryAllByRole("button", { name: "Confirmar" })).toHaveLength(
+      1,
+    );
+  });
+
+  it("Enter confirma o rascunho criado pelo mouse", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.click(voteButton());
+    expect(submitVerdict).not.toHaveBeenCalled();
+
+    await user.keyboard("{Enter}");
+
+    expect(submitVerdict).toHaveBeenCalledTimes(1);
+  });
+
+  it("'Descartar' dentro do card limpa o rascunho sem salvar", async () => {
+    const user = userEvent.setup();
+    renderReal();
+
+    await user.click(voteButton());
+    const card = voteButton().closest(
+      '[data-testid="answer-card"]',
+    ) as HTMLElement;
+
+    await user.click(within(card).getByRole("button", { name: "Descartar" }));
+
+    expect(screen.queryByTestId("pending-confirm")).toBeNull();
+    expectNoCompareWrites();
   });
 });

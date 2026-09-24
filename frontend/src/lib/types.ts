@@ -1,4 +1,5 @@
 import type { PydanticField } from "./pydantic-field";
+import type { Provider } from "./model-registry";
 
 export interface Profile {
   id: string;
@@ -188,6 +189,7 @@ export interface Assignment {
   type: AssignmentType;
   batch_id: string | null;
   completed_at: string | null;
+  round_id: string;
 }
 
 /**
@@ -195,8 +197,14 @@ export interface Assignment {
  * modo Atribuídos usa (id + status). Fonte única consumida por `CodingPage`,
  * `useAssignedCoding` e `useBrowseCoding` (evita redefinir o mesmo tipo em cada
  * arquivo).
+ *
+ * `text` sai do tipo de propósito: a fila é metadado, e o texto do documento
+ * ABERTO é buscado sob demanda por `useDocumentText`. Trazê-lo na listagem
+ * serializava o texto de todos os atribuídos no payload RSC — até ~2,3 MB na
+ * maior fila medida (145 docs x ~16 KB) — para exibir um só. O `Omit` é o que
+ * faz o compilador recusar uma reintrodução acidental.
  */
-export type AssignedDoc = Document & {
+export type AssignedDoc = Omit<Document, "text"> & {
   assignment?: Pick<Assignment, "id" | "status">;
 };
 
@@ -236,7 +244,11 @@ export interface SchemaChangeEntry {
 // `ModelConfigCard`/`RunCard` — tipo único aqui evita drift ao adicionar um
 // kwarg estrutural novo.
 export interface LlmConfig {
-  llm_provider: string;
+  // `Provider`, e não `string`: enquanto era string, cada consumidor refazia um
+  // `as Provider` por conta própria e nenhum deles validava nada. Com a união
+  // aqui, o compilador exige `isProvider` na única fronteira que lê a coluna
+  // (a página de configure) e os casts somem.
+  llm_provider: Provider;
   llm_model: string;
   llm_kwargs: Record<string, unknown>;
 }

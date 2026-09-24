@@ -17,6 +17,14 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
+# Importado no topo (e não junto do `from dataframeit import dataframeit` que
+# vive dentro de _run_dataframeit_batches) porque os testes substituem
+# sys.modules["dataframeit"] por um SimpleNamespace sem submódulos: resolver a
+# tupla em import-time do módulo mantém esses testes válidos sem que eles
+# precisem conhecer este import.
+from dataframeit.errors import RECOVERABLE_ERRORS
+from supabase import PostgrestAPIError
+
 from services.auto_review_reconciliation import wake_auto_review_reconciliation
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
 from services.pydantic_compiler import build_model_from_code, extract_json_schema_extra
@@ -29,6 +37,20 @@ _jobs: dict[str, dict] = {}
 
 _JUSTIFICATION_FIELD_SUFFIX = "_justification"
 _GENERATED_JUSTIFICATION_FIELDS_ATTR = "__generated_justification_fields__"
+
+# SQLSTATE reservado por publish_latest_llm_response e por
+# enforce_current_response_round_write para "a rodada corrente mudou".
+# Migrations 20260820170000_round_write_allows_maintenance.sql e
+# 20260827160000_llm_publish_demotes_across_rounds.sql; espelho no frontend em
+# src/actions/responses.ts. Deliberadamente não é 40001: aquele código promete
+# que repetir pode dar certo, e aqui a condição nunca converge sozinha.
+_ROUND_CHANGED_SQLSTATE = "P0R01"
+
+# Falha de publicação quase nunca é de uma linha só: RLS negada, pool esgotado
+# e gateway fora falham nas N. O corte tolera a falha isolada sem pagar N
+# round-trips condenados quando a causa é da run inteira, que produziriam N
+# cópias da mesma mensagem no lugar de um diagnóstico.
+_MAX_CONSECUTIVE_PUBLISH_FAILURES = 5
 
 
 def _status_from_row(row: dict) -> dict:
@@ -219,6 +241,11 @@ def _persist_run_snapshot(sb, job_id: str, project: dict, doc_count: int) -> Non
             "llm_model": project.get("llm_model"),
             "document_count": doc_count,
             "pydantic_code": project.get("pydantic_code"),
+            # A rodada é capturada junto do restante do snapshot da execução.
+            # Mesmo que o coordenador inicie outra rodada enquanto o provider
+            # processa os documentos, todas as respostas desta run continuam
+            # apontando para a rodada que estava ativa no início.
+            "round_id": project.get("current_round_id"),
         }
     ).eq("job_id", job_id).execute()
 
@@ -410,6 +437,7 @@ class _RunMetadata:
     """
 
     project_id: str
+    round_id: str
     llm_provider: str
     llm_model: str
     pydantic_hash: str
@@ -474,6 +502,7 @@ def _build_llm_response_row(
     """
     return {
         "project_id": run.project_id,
+        "round_id": run.round_id,
         "document_id": doc_id,
         "respondent_type": "llm",
         "respondent_name": f"{run.llm_provider}/{run.llm_model}",
@@ -805,11 +834,20 @@ def _load_documents_for_run(
     max_response_count: int | None,
     sample_size: int | None,
 ) -> list[dict]:
+    # O escopo de um documento são os dois filtros juntos, e não só o soft
+    # delete: `excluded_at` é a exclusão já aprovada pelo coordenador, e
+    # `exclusion_pending_at` é o pedido do pesquisador ainda em revisão,
+    # derivado por trigger de project_comments
+    # (20260702190000_documents_exclusion_pending). Toda leitura de documents
+    # para processamento aplica os dois. A tela LLM -> Configurar conta pelos
+    # dois campos, e um filtro a menos aqui faz a run processar mais
+    # documentos do que a tela anunciou.
     query = (
         sb.table("documents")
         .select("id, text, title, external_id")
         .eq("project_id", project_id)
         .is_("excluded_at", "null")
+        .is_("exclusion_pending_at", "null")
     )
     if document_ids:
         query = query.in_("id", document_ids)
@@ -832,6 +870,262 @@ def _expected_llm_fields(model_class) -> set[str]:
     return expected_llm_fields
 
 
+def _canary_provider_error(frame: pd.DataFrame) -> str | None:
+    """A mensagem de erro do provider se TODAS as linhas do frame falharam.
+
+    Só constata a falha; não a classifica. A classificação — configuração
+    errada versus azar naquele documento — é feita por experimento em
+    `_probe_schema`, porque nenhuma leitura do texto do erro dá a resposta.
+
+    O critério textual que existia aqui consultava `NON_RECOVERABLE_ERRORS` do
+    dataframeit, e errava nos dois sentidos (ver issue #692). Deixava passar a
+    recusa de schema medida em produção, porque `INVALID_ARGUMENT` não casa
+    com o padrão `InvalidArgument` por causa do underscore; e, na direção
+    oposta, teria matado a run inteira por um `BadRequestError` de um único
+    documento — a tupla responde "vale repetir esta linha?", uma pergunta por
+    documento, e estava sendo usada para decidir "a run está mal
+    configurada?", uma pergunta sobre a run.
+
+    Quem responde "esta linha falhou?" é `_row_error`, pelo status: a
+    presença de `_error_details` não basta, porque sucesso após retry também
+    a preenche.
+    """
+    if frame.empty:
+        return None
+    first_error: str | None = None
+    for _, row in frame.iterrows():
+        dfi_error = _row_error(row)
+        if dfi_error is None:
+            return None
+        if first_error is None:
+            first_error = dfi_error
+    return first_error
+
+
+# Sonda: um documento sintético, curto e sem particularidade nenhuma. O id não
+# colide com uuid de documento real, e o frame da sonda nunca chega a
+# _process_and_save_rows — é descartado assim que o erro é lido.
+_PROBE_DOC_ID = "__schema_probe__"
+_PROBE_TEXT = "Documento de teste."
+
+
+def _is_transient(message: str) -> bool:
+    """O provider declarou falha passageira (429, timeout, 5xx)?
+
+    Consulta `RECOVERABLE_ERRORS` para a pergunta que essa tupla de fato
+    responde — "isto é transitório?" — e exige casamento **explícito**. O
+    default do `is_recoverable_error` é otimista: erro que não casa com lista
+    nenhuma é tratado como recuperável, e foi por aí que a recusa de schema
+    ganhou o prefixo "[Falhou após 3 tentativa(s)]" apesar de determinística.
+    Aqui o silêncio das duas listas significa "não sei", não "passageiro".
+
+    Serve para não martelar um provider que já está recusando: sob rate limit
+    a sonda falha igual à chamada real, e sem esta porta a bisseção abortaria
+    a run inteira por uma falha que costuma passar sozinha.
+    """
+    lowered = message.lower()
+    return any(pattern.lower() in lowered for pattern in RECOVERABLE_ERRORS)
+
+
+def _field_group_key(model_class, name: str) -> str:
+    """Chave do grupo de campos que precisam viajar na mesma chamada.
+
+    Dois vínculos são semânticos e não podem ser quebrados por uma divisão:
+
+    - campo e sua justificativa gerada. Separados, o modelo escreveria a
+      justificativa numa chamada em que a resposta correspondente não foi
+      decidida — justificaria uma resposta que ele não deu;
+    - subcampos achatados de um mesmo pai (`pai__sub`), que são uma pergunta
+      só, quebrada em colunas por `_flatten_nested_basemodels`.
+
+    A justificativa é reconhecida pelo conjunto que o próprio
+    `_extend_model_with_justifications` registrou, não pelo sufixo: um campo
+    do coordenador pode terminar em `_justification` sem ser gerado.
+    """
+    if name in _generated_justification_fields(model_class):
+        name = name[: -len(_JUSTIFICATION_FIELD_SUFFIX)]
+    return name.split(_NESTED_FLATTEN_SEP, 1)[0]
+
+
+def _field_groups(model_class) -> list[list[str]]:
+    """Campos agrupados por `_field_group_key`, na ordem de declaração."""
+    groups: dict[str, list[str]] = {}
+    for name in model_class.model_fields:
+        groups.setdefault(_field_group_key(model_class, name), []).append(name)
+    return list(groups.values())
+
+
+def _submodel(model_class, names: list[str]):
+    """Modelo com o subconjunto de campos, preservando cada `FieldInfo`.
+
+    Devolve o próprio modelo quando o subconjunto é o total: além de evitar
+    reconstrução à toa, preserva os atributos que `_expected_llm_fields` e
+    `_extract_answers_from_row` leem do modelo completo.
+    """
+    if len(names) == len(model_class.model_fields):
+        return model_class
+    from pydantic import create_model
+
+    fields = {
+        name: (
+            model_class.model_fields[name].annotation,
+            model_class.model_fields[name],
+        )
+        for name in names
+    }
+    return create_model(f"{model_class.__name__}Chunk", **fields)
+
+
+def _merge_chunk_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Funde os frames dos lotes de campos de um mesmo conjunto de documentos.
+
+    Cada lote traz suas colunas de resposta mais as duas de controle. A regra
+    de fusão do controle é "erro em qualquer lote marca a linha": sem ela um
+    lote que falhou sozinho desapareceria, o documento sairia como resposta
+    parcial e o erro do provider nunca chegaria ao usuário.
+    """
+    if len(frames) == 1:
+        return frames[0]
+    control = {"_dataframeit_status", "_error_details"}
+    normalized = [f.reset_index(drop=True) for f in frames]
+    merged = normalized[0].copy()
+    for frame in normalized[1:]:
+        for column in frame.columns:
+            if column not in control and column not in merged.columns:
+                merged[column] = frame[column]
+
+    statuses: list[str] = []
+    details: list[str | None] = []
+    for i in range(len(merged)):
+        messages: list[str] = []
+        failed = False
+        for frame in normalized:
+            message = _row_error(frame.iloc[i])
+            if message is not None:
+                failed = True
+                messages.append(message)
+        statuses.append("error" if failed else "processed")
+        # dict.fromkeys deduplica preservando ordem: quando a recusa atinge
+        # todos os lotes, a mesma mensagem chegaria repetida.
+        details.append(" | ".join(dict.fromkeys(messages)) or None)
+    merged["_dataframeit_status"] = statuses
+    merged["_error_details"] = details
+    return merged
+
+
+def _probe_schema(call, model_class, names: list[str]) -> str | None:
+    """Roda o modelo contra um texto trivial. A mensagem de erro, ou None.
+
+    É este experimento que responde a pergunta que o texto do erro não
+    responde: *o erro depende de qual documento é?* Se o texto trivial também
+    falha, o documento não é a variável.
+    """
+    frame = pd.DataFrame([{"id": _PROBE_DOC_ID, "texto": _PROBE_TEXT}])
+    result = call(frame, _submodel(model_class, names))
+    if result.empty:
+        return None
+    return _row_error(result.iloc[0])
+
+
+class _TransientProbeError(Exception):
+    """A sonda esbarrou numa falha passageira, não num veredito sobre o schema.
+
+    Sobe de qualquer nível da bisseção, e não só da primeira pergunta: a
+    divisão dispara sondas em sequência logo depois de `parallel_requests`
+    chamadas, que é justamente quando um 429 é mais provável. Sem esta
+    distinção, um rate limit no meio da recursão faria a bisseção concluir
+    "não cabe" sobre um lote que cabe — over-split permanente no caso leve, e
+    no caso pior a run abortaria no piso culpando o schema.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.provider_message = message
+
+
+def _fit_chunks(probe, groups: list[list[str]], llm_provider, llm_model):
+    """Maior subdivisão que o provider aceita, achada por bisseção.
+
+    Sem número mágico: o limite de schema do provider é opaco (medi que não é
+    contagem de campos, nem propriedades+valores de enum, nem tamanho em chars
+    — cada métrica tem contraexemplo), então ele é descoberto perguntando.
+    Schema que já cabe não paga nada, porque a primeira pergunta é o modelo
+    inteiro — e é essa mesma pergunta que serve de discriminante entre erro do
+    documento e erro de configuração, motivo pelo qual ela não é feita duas
+    vezes (ver `_chunks_after_canary_failure`).
+
+    Recursão em profundidade pela esquerda, levantando no primeiro lote de um
+    grupo só que ainda falhe: um erro que atinge tudo aborta em ~log2(n)
+    sondas, em vez de varrer a árvore inteira martelando um provider que já
+    está recusando.
+    """
+    names = [name for group in groups for name in group]
+    message = probe(names)
+    if message is None:
+        return [names]
+    if _is_transient(message):
+        raise _TransientProbeError(message)
+    if len(groups) == 1:
+        # O piso é um GRUPO, não um campo: campo mais a justificativa dele, ou
+        # um campo aninhado com todos os subcampos (ver `_field_group_key`).
+        #
+        # A dica sobre modelo e chave não afirma causa — afirmar "o schema é
+        # grande demais" aqui seria mentira sempre que a causa for outra. Ela
+        # aponta o que conferir, porque um modelo inexistente ou uma chave
+        # inválida (o caso da #691) recusa exatamente assim: tudo, até o
+        # menor pedido possível. O erro do provider vem junto e fala por si.
+        raise RuntimeError(
+            f"O provider recusou toda chamada a '{llm_provider}/{llm_model}', "
+            f"inclusive com texto trivial e um único grupo de campos no "
+            f"schema, então a run foi abortada sem gravar resposta alguma. "
+            f"Confira o nome do modelo e a chave de API. "
+            f"Erro do provider: {message}"
+        )
+    middle = len(groups) // 2
+    return _fit_chunks(probe, groups[:middle], llm_provider, llm_model) + _fit_chunks(
+        probe, groups[middle:], llm_provider, llm_model
+    )
+
+
+def _chunks_after_canary_failure(
+    probe, model_class, llm_provider, llm_model
+) -> list[list[str]] | None:
+    """Lotes novos quando o canário falhou, ou None para seguir sem dividir.
+
+    Três desfechos. Sonda passa: o erro era daquele documento, a run segue e a
+    via estatística julga. Sonda falha com erro transitório: também segue,
+    porque abortar por rate limit desperdiça uma run que costuma passar
+    depois. Sonda falha de outro jeito: é a configuração, e só aí vale
+    dividir.
+
+    Os três saem da mesma bisseção em vez de uma sonda de entrada seguida de
+    outra idêntica: a primeira pergunta de `_fit_chunks` já é o modelo
+    inteiro, e "cabe inteiro" é o mesmo fato que "o erro era do documento".
+    Perguntar de novo era uma chamada paga ao provider em toda decisão de
+    divisão.
+    """
+    try:
+        split = _fit_chunks(probe, _field_groups(model_class), llm_provider, llm_model)
+    except _TransientProbeError as exc:
+        logger.warning(
+            "Sonda de schema barrada por erro transitório em %s/%s; a run "
+            "segue sem dividir. Erro do provider: %s",
+            llm_provider,
+            llm_model,
+            exc.provider_message,
+        )
+        return None
+    if len(split) == 1:
+        return None
+    logger.warning(
+        "Schema recusado inteiro por %s/%s; dividido em %d lotes de campos.",
+        llm_provider,
+        llm_model,
+        len(split),
+    )
+    return split
+
+
 def _run_dataframeit_batches(
     *,
     sb,
@@ -848,17 +1142,36 @@ def _run_dataframeit_batches(
     from dataframeit import dataframeit
 
     batch_size = max(1, config.parallel_requests)
-    batches = [df.iloc[i : i + batch_size] for i in range(0, len(df), batch_size)]
+    # A primeira batch leva um documento só, como canário. O dataframeit não
+    # propaga erro do provider: ele grava o erro na célula e devolve o frame
+    # normalmente, então um modelo inexistente ou uma chave inválida só
+    # apareceria em _raise_if_run_compromised — depois de gastar uma chamada por
+    # documento e de _process_and_save_rows ter publicado uma resposta vazia
+    # para cada um. Com o canário o pior caso é uma chamada e nenhuma escrita.
+    batches = [
+        batch
+        for batch in [
+            df.iloc[0:1],
+            *(df.iloc[i : i + batch_size] for i in range(1, len(df), batch_size)),
+        ]
+        # Partição vazia não é batch: sem o filtro, um df sem linhas produziria
+        # uma "primeira batch" vazia e o provider seria chamado à toa.
+        if not batch.empty
+    ]
     jobs_state.update(phase="processing", total_batches=len(batches))
 
-    result_frames = []
-    proc_start = time.time()
-    last_proc_heartbeat = 0.0
-    for idx, batch_df in enumerate(batches):
-        jobs_state["current_batch"] = idx + 1
-        batch_result = dataframeit(
-            batch_df,
-            model_class,
+    def _call(frame: pd.DataFrame, model):
+        return dataframeit(
+            # Cópia, e não o frame recebido: o dataframeit escreve as colunas
+            # do modelo e as de controle **no objeto do chamador** (`to_pandas`
+            # devolve o mesmo DataFrame e `_setup_columns` é in-place) e, num
+            # frame que já as tenha, desiste em silêncio — avisa "Colunas [...]
+            # já existem" e devolve sem chamar o provider. Chamar duas vezes
+            # sobre o mesmo frame é justamente o que o refazer do canário
+            # abaixo faz. Copiar aqui torna esse estado inconstruível, em vez
+            # de obrigar cada chamador a lembrar da regra.
+            frame.copy(),
+            model,
             prompt_template,
             text_column="texto",
             provider=llm_provider,
@@ -869,6 +1182,38 @@ def _run_dataframeit_batches(
             resume=False,
             **config.dfi_kwargs,
         )
+
+    def _call_chunks(frame: pd.DataFrame, chunks: list[list[str]]) -> pd.DataFrame:
+        return _merge_chunk_frames(
+            [_call(frame, _submodel(model_class, names)) for names in chunks]
+        )
+
+    def _probe(names: list[str]) -> str | None:
+        return _probe_schema(_call, model_class, names)
+
+    chunks: list[list[str]] = [list(model_class.model_fields)]
+    result_frames = []
+    proc_start = time.time()
+    last_proc_heartbeat = 0.0
+    for idx, batch_df in enumerate(batches):
+        jobs_state["current_batch"] = idx + 1
+        batch_result = _call_chunks(batch_df, chunks)
+        if idx == 0 and _canary_provider_error(batch_result):
+            # A afirmação "nenhuma resposta foi gravada" nas mensagens de abort
+            # depende de esta função rodar inteira antes de
+            # _process_and_save_rows, que é quem publica (ver run_llm).
+            split = _chunks_after_canary_failure(
+                _probe, model_class, llm_provider, llm_model
+            )
+            if split is not None:
+                chunks = split
+                # Refaz o canário para que a run comece com o resultado bom.
+                # Depende de `_call` copiar o frame: sem isso a chamada aqui
+                # reencontraria as colunas que a primeira gravou em batch_df,
+                # devolveria o frame da falha sem chamar o provider, e este
+                # documento sairia vazio — abaixo do run_failure_threshold e,
+                # portanto, sem nem reprovar a run.
+                batch_result = _call_chunks(batch_df, chunks)
         result_frames.append(batch_result)
         processed = sum(len(f) for f in result_frames)
         jobs_state["progress"] = processed
@@ -883,6 +1228,128 @@ def _run_dataframeit_batches(
             last_proc_heartbeat = now_ts
 
     return pd.concat(result_frames, ignore_index=True)
+
+
+@dataclass(frozen=True)
+class _PublishFailure:
+    """Uma linha que o banco recusou, com a mensagem que ele devolveu."""
+
+    doc_id: str
+    message: str
+
+
+@dataclass(frozen=True)
+class _SaveLoopOutcome:
+    """O que o laço de gravação apurou, para as guardas de `run_llm` decidirem.
+
+    Dataclass e não tupla pelo mesmo motivo registrado em `_RunMetadata`: um
+    dado novo passa a ser acrescentado num lugar só, em vez de na assinatura
+    mais no call site. Aqui pesa também que o mypy ignora este módulo por
+    inteiro (`ignore_errors` em pyproject.toml), então o nome do campo é a
+    única documentação executável que resta.
+    """
+
+    partial_warnings: list[str]
+    dfi_error_samples: dict[str, str]
+    publish_failures: list[_PublishFailure]
+
+
+def _dedup_key(message: str) -> str:
+    """Resumo estável de mensagem de erro, para agrupar falhas idênticas.
+
+    MD5 aqui é chave compacta de deduplicação, nunca primitiva de segurança.
+    Agrupar por prefixo comum, como se fazia antes, fundia falhas distintas.
+    Hashear sempre a mensagem crua: incluir o `doc=` na entrada torna cada
+    chave única e transforma a deduplicação em no-op.
+    """
+    return hashlib.md5(
+        message.encode("utf-8", errors="replace"), usedforsecurity=False
+    ).hexdigest()[:16]
+
+
+def _describe_postgrest_error(exc: PostgrestAPIError) -> str:
+    """Mensagem legível de um APIError, sem o doc_id.
+
+    Não usar `str(exc)`: o construtor da lib guarda o dict do corpo de erro em
+    `args` e só depois chama `Exception.__init__(self, str(self))`, quando
+    `args[0]` ainda é o dict — a string que sobra é `{'message': ..., 'code':
+    ...}`, que iria crua para `llm_runs.error_message` e daí para a tela. E
+    `code` nem sempre é SQLSTATE: quando o corpo da resposta não é JSON
+    parseável, `generate_default_error_message` põe o status HTTP (int) ali.
+    """
+    code = str(exc.code) if exc.code is not None else "sem código"
+    return f"[{code}] {exc.message or 'sem mensagem'}"
+
+
+def _format_publish_failures(
+    publish_failures: list[_PublishFailure],
+    partial_warnings: list[str],
+    *,
+    consecutive: int | None = None,
+) -> str:
+    """Mensagem de reprovação por falha de publicação, no formato de seções.
+
+    Todos os `document_id` entram: saber exatamente quais documentos ficaram de
+    fora é o que permite decidir a rerodada, e é a informação que não existe em
+    nenhum outro lugar depois que o processo morre. As mensagens detalhadas
+    param em três, deduplicadas — a quarta cópia da mesma recusa do Postgres não
+    acrescenta diagnóstico.
+
+    A cauda de cobertura parcial existe porque `partial_warnings` só alcançam
+    `llm_runs.error_message` pelo caminho de sucesso, em _persist_run_completion;
+    sem ela, uma run que falhou ao publicar perderia também o diagnóstico do que
+    o LLM respondeu mal.
+    """
+    samples: dict[str, str] = {}
+    for failure in publish_failures:
+        samples.setdefault(
+            _dedup_key(failure.message), f"doc={failure.doc_id}: {failure.message}"
+        )
+    doc_ids = ", ".join(failure.doc_id for failure in publish_failures)
+    # `consecutive` é o tamanho da sequência que disparou o corte, e não o total
+    # acumulado no laço: uma falha isolada lá atrás continua em publish_failures
+    # depois de o contador ter sido zerado por uma publicação bem-sucedida.
+    # Anunciar o total como se fosse sequência infla exatamente o diagnóstico
+    # que separa "causa da run" de "azar isolado".
+    abertura = (
+        f"Publicação interrompida após {consecutive} falhas seguidas"
+        if consecutive is not None
+        else f"Publicação falhou em {len(publish_failures)} doc(s)"
+    )
+    sections = [f"{abertura}. Sem resposta gravada: {doc_ids}."]
+    if consecutive is not None:
+        sections.append(
+            f"Total de {len(publish_failures)} falha(s) na run. Falha seguida em "
+            "toda linha indica causa da run, não do documento; os documentos "
+            "seguintes não chegaram a ser tentados."
+        )
+    sections.append("Erros do banco: " + " || ".join(list(samples.values())[:3]))
+    if partial_warnings:
+        sections.append(
+            f"Também: {len(partial_warnings)} doc(s) com cobertura parcial "
+            f"({' || '.join(partial_warnings[:2])})."
+        )
+    return " ".join(sections)
+
+
+def _raise_if_publish_failed(outcome: _SaveLoopOutcome) -> None:
+    """Reprova a run quando alguma linha não chegou ao banco.
+
+    Tolerância zero, e deliberadamente no fim: quando este raise sai, as demais
+    linhas já estão gravadas, que é justamente o que a resiliência entrega.
+    Resposta parcial ao menos ficou registrada; linha que não publicou é dado
+    perdido com o custo do LLM já pago.
+
+    Chamada antes de _raise_if_run_compromised porque só uma das duas mensagens
+    cabe em llm_runs.error_message, e a daquela afirma que as respostas foram
+    gravadas com is_latest=false — o que é falso para linhas que nunca chegaram
+    ao banco.
+    """
+    if not outcome.publish_failures:
+        return
+    raise RuntimeError(
+        _format_publish_failures(outcome.publish_failures, outcome.partial_warnings)
+    )
 
 
 def _raise_if_run_compromised(
@@ -976,6 +1443,25 @@ def _extract_dataframeit_error(row) -> tuple[object, str | None]:
         else None
     )
     return dfi_status, dfi_error
+
+
+def _row_error(row) -> str | None:
+    """A mensagem da linha **só quando ela de fato falhou**.
+
+    O dataframeit usa `_error_details` para duas coisas diferentes: em falha
+    grava o erro com `_dataframeit_status='error'`, mas em sucesso que passou
+    por retry grava `"Sucesso após N retry(s)"` mantendo o status
+    `'processed'` (`core.py`, tanto no caminho sequencial quanto no
+    paralelo). Quem lê só a mensagem confunde um sucesso com uma recusa de
+    schema — e, no canário, um único retry passaria a disparar a bisseção
+    inteira.
+
+    É por isso que este predicado existe em vez de `_error_details is not
+    None` repetido em cada chamador: a regra é uma só, e o status é quem a
+    decide.
+    """
+    status, message = _extract_dataframeit_error(row)
+    return message if status == "error" else None
 
 
 def _reconstruct_nested_answers(
@@ -1090,11 +1576,18 @@ def _record_processed_row_outcome(
 ) -> None:
     """Update run diagnostics, counters, warnings, and the throttled heartbeat.
 
-    Provider errors are deduplicated by the complete message hash: grouping by
-    a shared prefix previously merged distinct failures. MD5 is only a compact
-    deduplication key, never a security primitive. Persisting progress here also
-    keeps a live run distinguishable from an abandoned one during scale-to-zero.
+    Provider errors are deduplicated by `_dedup_key`, which owns that mechanic
+    and the reasoning behind it. Persisting progress here also keeps a live run
+    distinguishable from an abandoned one during scale-to-zero.
     """
+    # Estes contadores medem o que o LLM processou, não o que chegou ao banco:
+    # são incrementados antes da RPC de publicação, e uma linha que falha ao
+    # publicar já contou aqui. A ordem é deliberada — testes existentes cruzam
+    # processed_* com a contagem de publicações. O `except` genérico de run_llm
+    # passa estes counters para _persist_run_error, então os números gravados em
+    # llm_runs incluem linhas que nunca foram escritas; é por isso que a
+    # contagem de falhas de publicação precisa aparecer na mensagem, ao lado
+    # deles, em vez de deixar o leitor inferir a diferença.
     if processed_row.is_empty:
         jobs_state["processed_empty"] += 1
     elif processed_row.is_partial:
@@ -1113,10 +1606,7 @@ def _record_processed_row_outcome(
         )
 
     if processed_row.dfi_error:
-        key = hashlib.md5(
-            processed_row.dfi_error.encode("utf-8", errors="replace"),
-            usedforsecurity=False,
-        ).hexdigest()[:16]
+        key = _dedup_key(processed_row.dfi_error)
         if key not in dfi_error_samples:
             dfi_error_samples[key] = (
                 f"doc={processed_row.doc_id}: {processed_row.dfi_error}"
@@ -1147,10 +1637,12 @@ def _process_and_save_rows(
     prepared_model: _PreparedLlmModel,
     partial_coverage_threshold: float,
     run: _RunMetadata,
-) -> tuple[list[str], dict[str, str]]:
+) -> _SaveLoopOutcome:
     """Transform and persist each dataframeit row in its canonical shape."""
     partial_warnings: list[str] = []
     dfi_error_samples: dict[str, str] = {}
+    publish_failures: list[_PublishFailure] = []
+    consecutive_failures = 0
     field_conditions = extract_field_conditions(prepared_model.model_class)
     expected_llm_fields = _expected_llm_fields(prepared_model.model_class)
 
@@ -1180,9 +1672,70 @@ def _process_and_save_rows(
             job_id=job_id,
             llm_error_msg=processed_row.llm_error_msg,
         )
-        sb.rpc("publish_latest_llm_response", {"p_response": response}).execute()
+        # O `try` cobre só a RPC. As três chamadas acima são puras sobre o
+        # DataFrame, e exceção nelas é bug nosso, que deve continuar abortando;
+        # envolver a iteração inteira transformaria defeito de código em "falha
+        # de linha" silenciosa.
+        try:
+            sb.rpc("publish_latest_llm_response", {"p_response": response}).execute()
+            consecutive_failures = 0
+        except PostgrestAPIError as exc:
+            # Régua por exclusão, e não allowlist de SQLSTATE toleráveis:
+            # quando o corpo da resposta não é JSON parseável, o postgrest
+            # preenche `code` com o status HTTP, e uma allowlist engoliria isso
+            # como se fosse erro do banco. Um APIError com qualquer outro code é
+            # o banco recusando esta linha.
+            #
+            # Isto INVERTE a convenção do outro ponto do repo que discrimina
+            # erro do Postgres: `persistResponse`, em src/actions/responses.ts,
+            # confere o nome do índice antes de classificar um 23505, porque lá
+            # o objetivo é reconhecer UM conflito esperado e tratar o resto como
+            # erro. Aqui o objetivo é o oposto — sobreviver ao que for recusa
+            # daquela linha e reservar o abort para o que invalida a run —, e
+            # por isso a enumeração fica do lado que aborta. A consequência
+            # aceita: um 23505 em responses_one_latest_llm_per_document, que
+            # pode indicar duas runs concorrentes sobre o mesmo projeto, conta
+            # como falha de linha e não interrompe. O corte por falhas
+            # consecutivas é o que limita o estrago nesse caso.
+            #
+            # O que não é APIError sobe intacto, httpx.ReadTimeout inclusive e
+            # de propósito: timeout não distingue "não gravou" de "gravou e a
+            # resposta se perdeu", e tratá-lo como falha de linha registraria
+            # como perdida uma linha publicada.
+            #
+            # O `str()` abaixo é defesa explícita, não correção: nenhum int
+            # iguala uma str em Python, então a comparação já recusaria o 502
+            # sem ele, e nenhum teste consegue distinguir as duas formas. Quem
+            # de fato precisa normalizar `code` é _describe_postgrest_error.
+            if str(exc.code or "") == _ROUND_CHANGED_SQLSTATE:
+                # A rodada deixou de ser a corrente: o defeito é da run, não da
+                # linha, e nada do que vier depois pode ser gravado. Envelopado
+                # em RuntimeError porque str(APIError) é o dict cru e cairia
+                # assim em llm_runs.error_message.
+                raise RuntimeError(
+                    "A rodada do projeto deixou de ser a corrente durante a "
+                    f"publicação (SQLSTATE {_ROUND_CHANGED_SQLSTATE}). As "
+                    "respostas restantes não foram gravadas."
+                ) from exc
+            message = _describe_postgrest_error(exc)
+            logger.warning(
+                "publish falhou doc=%s: %s",
+                processed_row.doc_id,
+                message,
+                exc_info=True,
+            )
+            publish_failures.append(_PublishFailure(processed_row.doc_id, message))
+            consecutive_failures += 1
+            if consecutive_failures >= _MAX_CONSECUTIVE_PUBLISH_FAILURES:
+                raise RuntimeError(
+                    _format_publish_failures(
+                        publish_failures,
+                        partial_warnings,
+                        consecutive=consecutive_failures,
+                    )
+                ) from exc
 
-    return partial_warnings, dfi_error_samples
+    return _SaveLoopOutcome(partial_warnings, dfi_error_samples, publish_failures)
 
 
 async def run_llm(
@@ -1206,7 +1759,7 @@ async def run_llm(
         project = (
             sb.table("projects")
             .select(
-                "pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch"
+                "pydantic_code, prompt_template, llm_provider, llm_model, llm_kwargs, description, pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, current_round_id"
             )
             .eq("id", project_id)
             .single()
@@ -1282,6 +1835,7 @@ async def run_llm(
 
         run_metadata = _RunMetadata(
             project_id=project_id,
+            round_id=project["current_round_id"],
             llm_provider=llm_provider,
             llm_model=llm_model,
             pydantic_hash=pydantic_hash,
@@ -1290,7 +1844,7 @@ async def run_llm(
             schema_version_minor=schema_version_minor,
             schema_version_patch=schema_version_patch,
         )
-        partial_warnings, dfi_error_samples = _process_and_save_rows(
+        outcome = _process_and_save_rows(
             sb,
             job_id,
             _jobs[job_id],
@@ -1305,9 +1859,10 @@ async def run_llm(
             "id", project_id
         ).execute()
 
+        _raise_if_publish_failed(outcome)
         _raise_if_run_compromised(
-            partial_warnings,
-            dfi_error_samples,
+            outcome.partial_warnings,
+            outcome.dfi_error_samples,
             len(result_df),
             run_config.run_failure_threshold,
         )
@@ -1318,7 +1873,7 @@ async def run_llm(
             job_id,
             _jobs[job_id]["progress"],
             _jobs[job_id]["total"],
-            warnings=partial_warnings or None,
+            warnings=outcome.partial_warnings or None,
             counters=_jobs[job_id],
         )
 

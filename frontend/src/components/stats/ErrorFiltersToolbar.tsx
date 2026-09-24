@@ -66,12 +66,13 @@ export function ErrorFiltersToolbar({
         </SelectContent>
       </Select>
       <Select value={errorStatusFilter} onValueChange={setErrorStatusFilter}>
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="w-40" aria-label="Status dos casos">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="open">Abertos</SelectItem>
-          <SelectItem value="resolved">Resolvidos</SelectItem>
+          <SelectItem value="resolved">Decididos</SelectItem>
+          <SelectItem value="discussion">Em discussão</SelectItem>
           <SelectItem value="all">Todos</SelectItem>
         </SelectContent>
       </Select>
@@ -132,7 +133,7 @@ export function ErrorFiltersToolbar({
         </SelectContent>
       </Select>
       <span className="ml-auto text-sm text-muted-foreground">
-        {sortedCount} erro{sortedCount !== 1 ? "s" : ""}
+        {sortedCount} caso{sortedCount !== 1 ? "s" : ""}
         {openErrorCount > 0 && (
           <Badge variant="destructive" className="ml-1.5">
             {openErrorCount} aberto{openErrorCount !== 1 ? "s" : ""}

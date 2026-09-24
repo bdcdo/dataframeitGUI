@@ -27,6 +27,10 @@ export function useLotteryStats(projectId: string, open: boolean) {
               batches: s.batches ?? [],
               minResponsesForComparison: s.minResponsesForComparison ?? 2,
               automationMode: s.automationMode ?? null,
+              currentRoundId: s.currentRoundId ?? null,
+              currentRoundLabel: s.currentRoundLabel ?? null,
+              activeOpenAssignmentCount: s.activeOpenAssignmentCount ?? 0,
+              pendingScopeAssignmentCount: s.pendingScopeAssignmentCount ?? 0,
             },
             error: false,
           });

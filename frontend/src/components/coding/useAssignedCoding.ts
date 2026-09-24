@@ -1,15 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { sortByRecent } from "@/lib/coding-sort";
-import {
-  autosaveDirtyDoc,
-  saveCodingResponse,
-} from "@/lib/coding-autosave";
+import { saveCodingResponse } from "@/lib/coding-save";
 import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import { notifySaved } from "@/lib/coding-save-feedback";
+import type { CodingSnapshot } from "@/lib/coding-draft";
 import { toast } from "sonner";
-import type { AutosavePayload } from "@/hooks/useAutosaveOnExit";
 import type { CodingSortMode } from "./CodingPage";
 import type { AssignedDoc, PydanticField } from "@/lib/types";
 
@@ -24,7 +21,11 @@ type AssignedAction =
   | { type: "answer"; docId: string; field: string; value: unknown; fields: PydanticField[] }
   | { type: "notes"; docId: string; notes: string }
   | { type: "index"; index: number }
-  | { type: "allDone"; value: boolean };
+  | { type: "allDone"; value: boolean }
+  // Aplicação EXPLÍCITA de um rascunho local (#608). Nunca entra pelo seed do
+  // reducer: semear a partir do rascunho seria aplicá-lo em silêncio, e o
+  // requisito é o oposto — a faixa oferece, a pesquisadora decide.
+  | { type: "restoreDraft"; docId: string; answers: Record<string, unknown>; notes: string };
 
 function reducer(state: AssignedState, action: AssignedAction): AssignedState {
   switch (action.type) {
@@ -59,6 +60,12 @@ function reducer(state: AssignedState, action: AssignedAction): AssignedState {
       return { ...state, docIndex: action.index, allDone: false };
     case "allDone":
       return { ...state, allDone: action.value };
+    case "restoreDraft":
+      return {
+        ...state,
+        allAnswers: { ...state.allAnswers, [action.docId]: action.answers },
+        allNotes: { ...state.allNotes, [action.docId]: action.notes },
+      };
   }
 }
 
@@ -76,6 +83,7 @@ function notesFromJustifications(
 
 interface UseAssignedCodingParams {
   projectId: string;
+  currentRoundId?: string;
   documents: AssignedDoc[];
   /** Schema completo — usado para limpar condicionais órfãs ao responder (#252). */
   fields: PydanticField[];
@@ -88,6 +96,14 @@ interface UseAssignedCodingParams {
   markDirty: (docId: string) => void;
   markClean: (docId: string) => void;
   isDirty: (docId: string | null | undefined) => boolean;
+  /** Rede local do #608: registra a edição corrente para o rascunho em
+   *  localStorage. O baseline é do hook de rascunho, não daqui. */
+  recordDraft: (docId: string, draft: CodingSnapshot) => void;
+  /** Devolve o rascunho oferecido para aplicação explícita. */
+  restoreDraft: (docId: string) => CodingSnapshot | null;
+  /** Chamado quando o servidor confirmou a ESCRITA, inclusive com obrigatória
+   *  em aberto — ver `submitConfirmed`. */
+  submitConfirmed: (docId: string, saved: CodingSnapshot) => void;
   updateDocParam: (docId: string | null) => void;
   setParams: (
     updates: Record<string, string | null>,
@@ -102,11 +118,15 @@ interface UseAssignedCodingParams {
  * Consolida `docIndex`/`allAnswers`/`allNotes`/`allDone` num `useReducer` com
  * init lazy semeado das props — zera `prefer-useReducer` e `no-derived-useState`
  * (que disparavam com os `useState` separados, em especial
- * `useState(existingAnswers)`). Preserva o autosave-on-navigate (#28): navegar
- * ou trocar a ordenação salva o doc sujo antes de mudar.
+ * `useState(existingAnswers)`).
+ *
+ * Nenhum handler daqui grava sozinho. Até o #608, navegar ou trocar a ordenação
+ * autosalvava o doc sujo (#28); a gravação saiu e o que protege a edição agora é
+ * o rascunho local, registrado no effect abaixo.
  */
 export function useAssignedCoding({
   projectId,
+  currentRoundId = "",
   documents,
   fields,
   sortedDocuments,
@@ -118,6 +138,9 @@ export function useAssignedCoding({
   markDirty,
   markClean,
   isDirty,
+  recordDraft,
+  restoreDraft,
+  submitConfirmed,
   updateDocParam,
   setParams,
 }: UseAssignedCodingParams) {
@@ -146,6 +169,18 @@ export function useAssignedCoding({
   // salvo com o snapshot antigo e seriam descartadas na navegação.
   const savingRef = useRef(false);
 
+  // O rascunho local é registrado a partir do estado já reduzido, não de dentro
+  // dos handlers: `handleAnswer` despacha e não vê o resultado, e recompor o
+  // valor novo no call site duplicaria `clearHiddenConditionalAnswers` — a
+  // limpeza de condicionais órfãs (#252) que o reducer faz. O guard de sujeira é
+  // o que impede que abrir um documento limpo registre o conteúdo do servidor
+  // como se fosse edição (o que apagaria um rascunho ainda não retomado).
+  const docId = currentDoc?.id;
+  useEffect(() => {
+    if (!docId || !isDirty(docId)) return;
+    recordDraft(docId, { answers: docAnswers, notes: docNotes });
+  }, [docId, docAnswers, docNotes, isDirty, recordDraft]);
+
   const handleAnswer = useCallback(
     (fieldName: string, value: unknown) => {
       if (savingRef.current) return;
@@ -168,28 +203,58 @@ export function useAssignedCoding({
     [currentDoc?.id, markDirty],
   );
 
+  // Aplica o rascunho oferecido pela faixa. Marca sujo porque o conteúdo passa a
+  // divergir do servidor — é justamente o que o indicador de "não enviado" e o
+  // aviso de saída precisam enxergar.
+  const handleRestoreDraft = useCallback(() => {
+    const id = currentDoc?.id;
+    if (!id) return;
+    const restored = restoreDraft(id);
+    if (!restored) return;
+    dispatch({
+      type: "restoreDraft",
+      docId: id,
+      answers: restored.answers,
+      notes: restored.notes,
+    });
+    markDirty(id);
+  }, [currentDoc?.id, restoreDraft, markDirty]);
+
   const handleSubmit = useCallback(async () => {
     if (!currentDoc || Object.keys(docAnswers).length === 0) return;
+    if (!currentRoundId) {
+      toast.error("O projeto não possui uma rodada atual.");
+      return;
+    }
     if (savingRef.current) return;
     savingRef.current = true;
     setSubmitting(true);
     try {
       const result = await saveCodingResponse(projectId, currentDoc.id, docAnswers, {
         notes: docNotes,
+        expectedRoundId: currentRoundId,
       });
       if (!result.success) {
         toast.error(result.error);
         return;
       }
       markClean(currentDoc.id);
-      notifySaved(result.missingRequired);
+      // A escrita aconteceu: o rascunho local virou redundante e o baseline
+      // passa a ser o que foi gravado. Vem ANTES do early-return abaixo de
+      // propósito — um envio que deixou obrigatória em aberto também gravou.
+      submitConfirmed(currentDoc.id, { answers: docAnswers, notes: docNotes });
+      notifySaved(result.missingRequiredFields, fields);
       // Save com obrigatórias em aberto mantém o pesquisador NO documento:
       // avançar tiraria a tela de baixo do aviso que acabou de pedir para
       // completá-lo, e o doc reapareceria na fila depois — o sintoma que o #519
       // descreve. Só alcançável quando o schema cresceu entre o carregamento do
       // formulário e o envio; fora disso o SubmitBar já cobra a pendência antes
       // do clique, pela mesma régua.
-      if (result.missingRequired) return;
+      //
+      // Devolver a lista (em vez de só sair) é o que deixa o painel rolar até a
+      // pergunta: o veredito trafega pelo retorno do handler, não por um estado
+      // paralelo que precisaria ser mantido em sincronia (#608).
+      if (result.missingRequiredFields.length) return result.missingRequiredFields;
       if (docIndex < sortedDocuments.length - 1) {
         const nextIndex = docIndex + 1;
         dispatch({ type: "index", index: nextIndex });
@@ -212,25 +277,24 @@ export function useAssignedCoding({
     currentDoc,
     docAnswers,
     docNotes,
+    fields,
     projectId,
+    currentRoundId,
     docIndex,
     sortedDocuments,
     updateDocParam,
     markClean,
+    submitConfirmed,
     setSubmitting,
   ]);
 
+  // Trocar de documento apenas troca. Até o #608 isto autosalvava o doc sujo —
+  // uma gravação que ninguém pediu, que não promovia o assignment a `concluido`
+  // e que falhava calada. Agora o conteúdo continua no reducer, o rascunho local
+  // o persiste e o doc segue marcado como não enviado: nada se perde, e o que
+  // vai ao servidor é só o que a pesquisadora mandou.
   const handleDocNavigate = useCallback(
     (newIndex: number) => {
-      if (currentDoc && isDirty(currentDoc.id)) {
-        autosaveDirtyDoc({
-          projectId,
-          docId: currentDoc.id,
-          answers: docAnswers,
-          notes: docNotes,
-          markClean,
-        });
-      }
       const clampedIndex = Math.max(
         0,
         Math.min(newIndex, sortedDocuments.length - 1),
@@ -238,16 +302,7 @@ export function useAssignedCoding({
       dispatch({ type: "index", index: clampedIndex });
       updateDocParam(sortedDocuments[clampedIndex]?.id ?? null);
     },
-    [
-      currentDoc,
-      docAnswers,
-      docNotes,
-      projectId,
-      sortedDocuments,
-      updateDocParam,
-      isDirty,
-      markClean,
-    ],
+    [sortedDocuments, updateDocParam],
   );
 
   // Troca o criterio de ordenacao da navegacao de atribuidos. Ao mudar para
@@ -256,15 +311,6 @@ export function useAssignedCoding({
   // mexeu. Ao voltar para "default", mantem o documento atual selecionado.
   const handleSortChange = useCallback(
     (nextSort: CodingSortMode) => {
-      if (currentDoc && isDirty(currentDoc.id)) {
-        autosaveDirtyDoc({
-          projectId,
-          docId: currentDoc.id,
-          answers: docAnswers,
-          notes: docNotes,
-          markClean,
-        });
-      }
       const nextDocs =
         nextSort === "recent"
           ? sortByRecent(documents, codedAtByDoc)
@@ -281,33 +327,13 @@ export function useAssignedCoding({
       if (targetId) updates.doc = targetId;
       setParams(updates, { scroll: false });
     },
-    [
-      currentDoc,
-      docAnswers,
-      docNotes,
-      projectId,
-      documents,
-      codedAtByDoc,
-      isDirty,
-      markClean,
-      setParams,
-    ],
+    [currentDoc?.id, documents, codedAtByDoc, setParams],
   );
 
   const resetAllDone = useCallback(
     () => dispatch({ type: "allDone", value: false }),
     [],
   );
-
-  const getPayload = useCallback((): AutosavePayload | null => {
-    if (!currentDoc) return null;
-    return {
-      projectId,
-      documentId: currentDoc.id,
-      answers: docAnswers,
-      notes: docNotes,
-    };
-  }, [currentDoc, docAnswers, docNotes, projectId]);
 
   return {
     docIndex,
@@ -318,9 +344,9 @@ export function useAssignedCoding({
     handleAnswer,
     handleNotesChange,
     handleSubmit,
+    handleRestoreDraft,
     handleDocNavigate,
     handleSortChange,
     resetAllDone,
-    getPayload,
   };
 }

@@ -29,6 +29,7 @@ fi
 # Derivado do diretório do projeto pelo Supabase CLI; override para quem roda
 # o banco com outro nome de container.
 CONTAINER="${SUPABASE_DB_CONTAINER:-supabase_db_frontend}"
+DATABASE="${SUPABASE_DB_NAME:-postgres}"
 
 if ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
   echo "container ${CONTAINER} não está no ar — rode 'npx supabase start' antes." >&2
@@ -54,6 +55,6 @@ CONTAINER_IP="$(docker inspect -f \
   | grep -m1 .)"
 
 docker exec -e PGPASSWORD=postgres -i "${CONTAINER}" \
-  psql -h "${CONTAINER_IP}" -p 5432 -U postgres -d postgres \
+  psql -h "${CONTAINER_IP}" -p 5432 -U postgres -d "${DATABASE}" \
   -X -v ON_ERROR_STOP=1 \
   < "${SQL_FILE}"

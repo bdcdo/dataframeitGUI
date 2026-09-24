@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import {
   createRng,
@@ -13,11 +13,13 @@ import {
   resolveWeight,
   resolveCap,
   resolveResearchersPerDoc,
+  LOTTERY_EMPTY_MESSAGES,
   type LotteryBalancing,
   type LotteryDocStats,
   type LotteryFilters,
   type LotteryMode,
   type LotteryParticipant,
+  type LotteryEmptyReason,
 } from "@/lib/lottery-utils";
 import { MEMBERS_TAG_PROFILE, membersTag } from "@/lib/cache";
 import { errorMessage } from "@/lib/utils";
@@ -27,7 +29,8 @@ import {
 } from "@/lib/coding-initial-status";
 import type { ResponseRoundFields, RoundContext } from "@/lib/rounds";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
-import type { AnswerFieldHashes, PydanticField, Round, RoundStrategy } from "@/lib/types";
+import type { AnswerFieldHashes, PydanticField, Round } from "@/lib/types";
+import { z } from "zod";
 
 // --- Status inicial do assignment de codificação (issue #521) ---
 
@@ -88,24 +91,22 @@ interface InitialStatusInputs {
  * qualquer escrita.
  */
 function requireData<T>(
-  result: { data: T | null; error: { message: string } | null },
+  result: { data: T; error: { message: string } | null },
   context: string,
-): T {
-  if (result.error || !result.data) {
+): NonNullable<T> {
+  if (result.error || result.data == null) {
     throw new Error(`${context}: ${result.error?.message ?? "resposta vazia"}`);
   }
-  return result.data;
+  return result.data as NonNullable<T>;
 }
 
-/** Só a estratégia manual consulta o mapa de rodadas em classifyDocStatus. */
-async function loadRoundsIfManual(
+async function loadRounds(
   supabase: SupabaseServerClient,
   projectId: string,
-  strategy: RoundStrategy,
 ): Promise<Round[]> {
-  if (strategy !== "manual") return [];
   const result = await supabase.from("rounds").select("id, label").eq("project_id", projectId);
-  return requireData(result, "Erro ao ler as rodadas do projeto") as Round[];
+  if (result.error) throw new Error(`Erro ao ler as rodadas do projeto: ${result.error.message}`);
+  return (result.data ?? []) as Round[];
 }
 
 async function loadInitialStatusInputs(
@@ -116,9 +117,7 @@ async function loadInitialStatusInputs(
   const [projectResult, ...answerResults] = await Promise.all([
     supabase
       .from("projects")
-      .select(
-        "pydantic_fields, round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch",
-      )
+      .select("pydantic_fields, current_round_id")
       .eq("id", projectId)
       .single(),
     ...chunk(responseIds, RESPONSE_ID_CHUNK).map((ids) =>
@@ -134,9 +133,8 @@ async function loadInitialStatusInputs(
     requireData(result, "Erro ao ler as codificações existentes"),
   );
 
-  const strategy = (project.round_strategy as RoundStrategy) ?? "schema_version";
   return {
-    ctx: buildRoundContext(project, strategy, await loadRoundsIfManual(supabase, projectId, strategy)),
+    ctx: buildRoundContext(project, await loadRounds(supabase, projectId)),
     fields: (project.pydantic_fields as PydanticField[]) ?? [],
     answersById: indexAnswers(answerRows),
   };
@@ -144,17 +142,12 @@ async function loadInitialStatusInputs(
 
 function buildRoundContext(
   project: Record<string, unknown>,
-  strategy: RoundStrategy,
   rounds: Round[],
 ): RoundContext {
   return {
-    strategy,
+    strategy: "manual",
     currentRoundId: (project.current_round_id as string | null) ?? null,
-    currentVersion: {
-      major: (project.schema_version_major as number | null) ?? 0,
-      minor: (project.schema_version_minor as number | null) ?? 0,
-      patch: (project.schema_version_patch as number | null) ?? 0,
-    },
+    currentVersion: { major: 0, minor: 0, patch: 0 },
     rounds,
   };
 }
@@ -190,6 +183,7 @@ async function resolveInitialCodingStatuses(
     const payload = answersById.get(candidate.id);
     const response = {
       ...candidate,
+      round_id: candidate.round_id ?? ctx.currentRoundId,
       answers: payload?.answers ?? null,
       answer_field_hashes: payload?.answer_field_hashes,
     };
@@ -278,6 +272,77 @@ async function promoteToComparison(
   return error ? { error: error.message } : {};
 }
 
+async function getCurrentRoundId(
+  supabase: SupabaseServerClient,
+  projectId: string,
+): Promise<string | null> {
+  const { data: project } = await supabase
+    .from("projects")
+    .select("current_round_id")
+    .eq("id", projectId)
+    .single();
+  return project?.current_round_id ?? null;
+}
+
+async function insertCodingAssignmentOrThrow(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+  userId: string,
+): Promise<void> {
+  const { error } = await insertCodingAssignment(
+    supabase,
+    projectId,
+    documentId,
+    userId,
+  );
+  if (error) throw new Error(error);
+}
+
+async function promoteToComparisonOrThrow(
+  supabase: SupabaseServerClient,
+  assignmentId: string,
+): Promise<string | undefined> {
+  const { error, conflict } = await promoteToComparison(supabase, assignmentId);
+  if (conflict) return error;
+  if (error) throw new Error(error);
+  return undefined;
+}
+
+async function deleteAssignmentsOrThrow(
+  supabase: SupabaseServerClient,
+  assignmentIds: string[],
+): Promise<void> {
+  const { error } = await supabase.from("assignments").delete().in("id", assignmentIds);
+  if (error) throw new Error(error.message);
+}
+
+async function applyPendingAssignmentTransition(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+  userId: string,
+  pendingCoding: { id: string } | undefined,
+  pendingComparison: { id: string } | undefined,
+): Promise<string | undefined> {
+  const transition = `${Number(Boolean(pendingCoding))}${Number(Boolean(pendingComparison))}`;
+  switch (transition) {
+    case "00":
+      await insertCodingAssignmentOrThrow(supabase, projectId, documentId, userId);
+      return undefined;
+    case "10":
+      return promoteToComparisonOrThrow(supabase, pendingCoding!.id);
+    case "01":
+      await deleteAssignmentsOrThrow(supabase, [pendingComparison!.id]);
+      return undefined;
+    case "11":
+      await deleteAssignmentsOrThrow(supabase, [pendingCoding!.id, pendingComparison!.id]);
+      return undefined;
+    default:
+      throw new Error("Transição de atribuição inválida");
+  }
+}
+
 /**
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
  *   vazio → codificacao → comparacao → vazio
@@ -290,13 +355,19 @@ export async function cycleAssignment(
   documentId: string,
   userId: string,
 ): Promise<{ error?: string }> {
+  const gate = await requireCoordinator(projectId, "Apenas coordenadores podem alterar atribuições.");
+  if (!gate.ok) return { error: gate.error };
   const supabase = await createSupabaseServer();
+  const currentRoundId = await getCurrentRoundId(supabase, projectId);
+  if (!currentRoundId) return { error: "O projeto não possui uma rodada atual." };
 
   const { data: existing } = await supabase
     .from("assignments")
     .select("id, status, type")
     .eq("document_id", documentId)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("round_id", currentRoundId);
 
   const rows = existing || [];
 
@@ -308,27 +379,15 @@ export async function cycleAssignment(
   const pendingComp = rows.find((r) => r.type === "comparacao");
 
   try {
-    if (!pendingCod && !pendingComp) {
-      // vazio → codificacao
-      const { error } = await insertCodingAssignment(supabase, projectId, documentId, userId);
-      if (error) throw new Error(error);
-    } else if (pendingCod && !pendingComp) {
-      // codificacao → comparacao
-      const { error, conflict } = await promoteToComparison(supabase, pendingCod.id);
-      if (conflict) return { error };
-      if (error) throw new Error(error);
-    } else if (pendingComp && !pendingCod) {
-      // comparacao → vazio
-      const { error } = await supabase.from("assignments").delete().eq("id", pendingComp.id);
-      if (error) throw new Error(error.message);
-    } else if (pendingCod && pendingComp) {
-      // "ambos" (vindo de sorteio): remover tudo para voltar ao vazio
-      const { error } = await supabase
-        .from("assignments")
-        .delete()
-        .in("id", [pendingCod.id, pendingComp.id]);
-      if (error) throw new Error(error.message);
-    }
+    const conflictError = await applyPendingAssignmentTransition(
+      supabase,
+      projectId,
+      documentId,
+      userId,
+      pendingCod,
+      pendingComp,
+    );
+    if (conflictError) return { error: conflictError };
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao alterar a atribuição" };
   }
@@ -343,14 +402,19 @@ export async function clearPendingAssignments(
   projectId: string,
   type: "codificacao" | "comparacao" = "codificacao"
 ): Promise<{ deleted?: number; error?: string }> {
+  const gate = await requireCoordinator(projectId, "Apenas coordenadores podem limpar atribuições.");
+  if (!gate.ok) return { error: gate.error };
   const supabase = await createSupabaseServer();
+  const currentRoundId = await getCurrentRoundId(supabase, projectId);
+  if (!currentRoundId) return { error: "O projeto não possui uma rodada atual." };
 
   const { count, error } = await supabase
     .from("assignments")
     .delete({ count: "exact" })
     .eq("project_id", projectId)
     .eq("status", "pendente")
-    .eq("type", type);
+    .eq("type", type)
+    .eq("round_id", currentRoundId);
 
   if (error) {
     return { error: error.message || "Erro ao limpar as atribuições pendentes" };
@@ -382,6 +446,15 @@ interface LotteryParamsBase {
    * project_members ao sortear para pré-preencher o próximo sorteio.
    */
   participantSettings?: Record<string, { weight?: number; cap?: number | null }>;
+  target?:
+    | { kind: "current"; expectedRoundId: string }
+    | {
+        kind: "new";
+        expectedRoundId: string;
+        roundLabel: string;
+        confirmActiveWork: boolean;
+        confirmPendingScopeWork: boolean;
+      };
 }
 
 /**
@@ -389,22 +462,133 @@ interface LotteryParamsBase {
  * construível — o braço `comparacao` não tem o campo. A regra é um revisor de
  * comparação por documento (ver COMPARISON_REVIEWERS_PER_DOC, issue #490).
  *
- * ATENÇÃO: isto é garantia de COMPILAÇÃO, para o client. Server Action é
- * endpoint HTTP público e o projeto não valida com zod — um payload forjado
- * chega com `{ type: "comparacao", researchersPerDoc: 5 }` sem passar por
- * type-check nenhum. As garantias de runtime são `resolveResearchersPerDoc` em
- * computeLottery (que ignora o valor recebido) e, no banco, o índice
- * assignments_one_active_comparacao_per_doc. O `researchersPerDoc?: never`
- * existe só para o excess property check pegar o literal no client.
+ * A união também é validada em runtime na fronteira da Server Action: um
+ * payload forjado de comparação com `researchersPerDoc` é recusado antes de
+ * qualquer leitura ou escrita. O índice do banco segue como última barreira.
  */
 export type LotteryParams =
   | (LotteryParamsBase & { type: "codificacao"; researchersPerDoc: number })
   | (LotteryParamsBase & { type: "comparacao"; researchersPerDoc?: never });
 
+const lotteryFiltersSchema = z
+  .object({
+    maxHumanCodings: z.number().int().nonnegative().optional(),
+    assignmentFilter: z.enum(["any", "noActiveOfType", "neverAssigned"]).optional(),
+    batchFilter: z
+      .object({
+        exclude: z.array(z.string().min(1)).optional(),
+        only: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    manualDocIds: z.array(z.string().min(1)).optional(),
+  })
+  .strict()
+  .superRefine((filters, ctx) => {
+    if (filters.batchFilter?.only && filters.batchFilter.exclude?.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Os filtros de lote são mutuamente exclusivos.",
+      });
+    }
+  });
+
+const lotteryTargetSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("current"),
+      expectedRoundId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("new"),
+      expectedRoundId: z.string().min(1),
+      roundLabel: z.string().trim().min(1),
+      confirmActiveWork: z.boolean(),
+      confirmPendingScopeWork: z.boolean(),
+    })
+    .strict(),
+]);
+
+const lotteryParamsBaseSchema = z
+  .object({
+    projectId: z.string().min(1),
+    mode: z.enum(["append", "replace"]),
+    balancing: z.enum(["round", "history"]),
+    seed: z.number().int().min(0).max(2 ** 31 - 1).optional(),
+    docsPerResearcher: z.number().int().positive().optional(),
+    docSubsetSize: z.number().int().positive().optional(),
+    label: z.string().optional(),
+    filters: lotteryFiltersSchema.optional(),
+    participantIds: z.array(z.string().min(1)).min(1),
+    participantSettings: z
+      .record(
+        z.string(),
+        z
+          .object({
+            weight: z.number().positive().optional(),
+            cap: z.number().int().positive().nullable().optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    target: lotteryTargetSchema.optional(),
+  })
+  .strict();
+
+const lotteryParamsSchema = z.discriminatedUnion("type", [
+  lotteryParamsBaseSchema.extend({
+    type: z.literal("codificacao"),
+    researchersPerDoc: z.number().int().positive(),
+  }),
+  lotteryParamsBaseSchema.extend({
+    type: z.literal("comparacao"),
+    researchersPerDoc: z.never().optional(),
+  }),
+]);
+
+function validateLotteryParams(params: LotteryParams): LotteryParams {
+  const result = lotteryParamsSchema.safeParse(params);
+  if (!result.success) {
+    throw new Error(
+      `Configuração do sorteio inválida: ${result.error.issues[0]?.message ?? "revise os campos"}`,
+    );
+  }
+  return result.data as LotteryParams;
+}
+
+async function validateAndAuthorizeLottery(
+  params: LotteryParams,
+): Promise<
+  | { ok: true; params: LotteryParams }
+  | { ok: false; error: string }
+> {
+  let validatedParams: LotteryParams;
+  try {
+    validatedParams = validateLotteryParams(params);
+  } catch (error) {
+    return {
+      ok: false,
+      error: errorMessage(error) || "Configuração do sorteio inválida",
+    };
+  }
+
+  const gate = await requireCoordinator(
+    validatedParams.projectId,
+    "Apenas coordenadores podem sortear atribuições.",
+  );
+  return gate.ok
+    ? { ok: true, params: validatedParams }
+    : { ok: false, error: gate.error };
+}
+
 interface LotteryAssignment {
   document_id: string;
   user_id: string;
 }
+
+type NonEmptyLotteryAssignments = [LotteryAssignment, ...LotteryAssignment[]];
 
 export interface LotteryPreview {
   participants: { userId: string; existing: number; newDocs: number }[];
@@ -412,8 +596,13 @@ export interface LotteryPreview {
   totalPreserved: number;
   /** nº de docs elegíveis pós-filtros (pré-subset) */
   eligibleDocs: number;
+  /** vagas pedidas que não puderam ser preenchidas */
+  unfilledSlots: number;
+  /** presente somente quando nenhuma atribuição nova é possível */
+  emptyReason?: LotteryEmptyReason;
   /** semente usada; o dialog a reenvia em smartRandomize (research D13) */
   seed: number;
+  targetRoundLabel?: string;
 }
 
 interface LotteryDocStatsResult {
@@ -422,6 +611,10 @@ interface LotteryDocStatsResult {
   minResponsesForComparison: number;
   /** modo de automação do projeto — governa o gate de comparação */
   automationMode: string | null;
+  currentRoundId: string | null;
+  currentRoundLabel: string | null;
+  activeOpenAssignmentCount: number;
+  pendingScopeAssignmentCount: number;
 }
 
 interface LotteryData extends LotteryDocStatsResult {
@@ -430,40 +623,81 @@ interface LotteryData extends LotteryDocStatsResult {
     user_id: string;
     status: string;
     type: string;
+    round_id: string;
   }[];
   humanCoderRows: HumanCoderRow[];
 }
 
 /**
  * Stats por documento a partir da view `lottery_doc_stats` (issue #182):
- * agrega humanCodingCount/hasLlmResponse/activeAssignments/hasAnyAssignmentEver/
+ * agrega humanCodingCount/hasLlmResponse/activeAssignments/atribuição na rodada/
  * batchIds em Postgres, bounded pelo nº de documentos ativos do projeto — sem
  * tocar responses/assignments crus.
  */
 async function fetchLotteryDocStats(projectId: string): Promise<LotteryDocStatsResult> {
   const supabase = await createSupabaseServer();
 
-  const [{ data: docs }, { data: batches }, { data: project }] = await Promise.all([
+  const project = requireData(
+    await supabase
+      .from("projects")
+      .select("min_responses_for_comparison, automation_mode, current_round_id")
+      .eq("id", projectId)
+      .single(),
+    "Erro ao ler a rodada atual do projeto",
+  );
+  const currentRoundId = project.current_round_id as string | null;
+  if (!currentRoundId) {
+    return {
+      docs: [],
+      batches: [],
+      minResponsesForComparison: project.min_responses_for_comparison ?? 2,
+      automationMode: project.automation_mode ?? null,
+      currentRoundId: null,
+      currentRoundLabel: null,
+      activeOpenAssignmentCount: 0,
+      pendingScopeAssignmentCount: 0,
+    };
+  }
+
+  const [docsResult, batchesResult, roundResult, workCountsResult] = await Promise.all([
     supabase
       .from("lottery_doc_stats")
       .select(
-        "id, external_id, title, human_coding_count, has_llm_response, active_codificacao, active_comparacao, has_any_assignment_ever, batch_ids"
+        "id, external_id, title, human_coding_count, has_llm_response, active_codificacao, active_comparacao, has_assignment_in_current_round, batch_ids"
       )
       .eq("project_id", projectId),
     supabase
       .from("assignment_batches")
       .select("id, label, created_at")
       .eq("project_id", projectId)
+      .eq("round_id", currentRoundId)
       .order("created_at", { ascending: false }),
     supabase
-      .from("projects")
-      .select("min_responses_for_comparison, automation_mode")
-      .eq("id", projectId)
+      .from("rounds")
+      .select("id, label")
+      .eq("project_id", projectId)
+      .eq("id", currentRoundId)
       .single(),
+    supabase
+      .from("lottery_round_work_counts")
+      .select("assignment_type, scope_state, open_count")
+      .eq("project_id", projectId)
+      .eq("round_id", currentRoundId),
   ]);
+  const docs = requireData(docsResult, "Erro ao ler os documentos do sorteio");
+  const batches = requireData(batchesResult, "Erro ao ler os lotes do sorteio");
+  const currentRound = requireData(roundResult, "Erro ao ler a rodada atual");
+  const workCounts = requireData(
+    workCountsResult,
+    "Erro ao contar o trabalho aberto da rodada",
+  );
+  const countByScope = (scopeState: "active" | "pending_scope") =>
+    workCounts
+      .filter((row) => row.scope_state === scopeState)
+      .reduce((total, row) => total + Number(row.open_count), 0);
 
   return {
-    docs: (docs || []).map((d) => ({
+    docs: docs.map((d) => ({
       id: d.id,
       externalId: d.external_id,
       title: d.title,
@@ -473,16 +707,20 @@ async function fetchLotteryDocStats(projectId: string): Promise<LotteryDocStatsR
         codificacao: d.active_codificacao,
         comparacao: d.active_comparacao,
       },
-      hasAnyAssignmentEver: d.has_any_assignment_ever,
+      hasAssignmentInCurrentRound: d.has_assignment_in_current_round,
       batchIds: d.batch_ids || [],
     })),
-    batches: (batches || []).map((b) => ({
+    batches: batches.map((b) => ({
       id: b.id,
       label: b.label,
       createdAt: b.created_at,
     })),
-    minResponsesForComparison: project?.min_responses_for_comparison ?? 2,
-    automationMode: project?.automation_mode ?? null,
+    minResponsesForComparison: project.min_responses_for_comparison ?? 2,
+    automationMode: project.automation_mode ?? null,
+    currentRoundId,
+    currentRoundLabel: currentRound.label ?? null,
+    activeOpenAssignmentCount: countByScope("active"),
+    pendingScopeAssignmentCount: countByScope("pending_scope"),
   };
 }
 
@@ -496,11 +734,11 @@ async function fetchLotteryDocStats(projectId: string): Promise<LotteryDocStatsR
 async function fetchLotteryData(projectId: string): Promise<LotteryData> {
   const supabase = await createSupabaseServer();
 
-  const [stats, { data: assignments }, { data: humanCoders }] = await Promise.all([
+  const [stats, assignmentsResult, humanCodersResult] = await Promise.all([
     fetchLotteryDocStats(projectId),
     supabase
       .from("assignments")
-      .select("document_id, user_id, status, type")
+      .select("document_id, user_id, status, type, round_id")
       .eq("project_id", projectId),
     // Mesmo predicado do trigger enforce_comparison_assignment_actor
     // (20260716160100): resposta humana is_latest define quem codificou.
@@ -518,16 +756,25 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
       .eq("is_latest", true)
       .not("respondent_id", "is", null),
   ]);
+  const assignments = requireData(
+    assignmentsResult,
+    "Erro ao ler as atribuições existentes do sorteio",
+  );
+  const humanCoders = requireData(
+    humanCodersResult,
+    "Erro ao ler as codificações humanas do sorteio",
+  );
 
   return {
     ...stats,
-    assignmentRows: (assignments || []).map((a) => ({
+    assignmentRows: assignments.map((a) => ({
       document_id: a.document_id,
       user_id: a.user_id,
       status: a.status,
       type: a.type,
+      round_id: a.round_id ?? stats.currentRoundId ?? "",
     })),
-    humanCoderRows: (humanCoders || []).flatMap((r) =>
+    humanCoderRows: humanCoders.flatMap((r) =>
       r.respondent_id
         ? [
             {
@@ -535,7 +782,7 @@ async function fetchLotteryData(projectId: string): Promise<LotteryData> {
               document_id: r.document_id,
               respondent_id: r.respondent_id,
               updated_at: r.updated_at,
-              round_id: r.round_id,
+              round_id: r.round_id ?? stats.currentRoundId,
               is_partial: r.is_partial,
               schema_version_major: r.schema_version_major,
               schema_version_minor: r.schema_version_minor,
@@ -558,54 +805,79 @@ export async function getLotteryDocStats(
   if (!user) return { error: "Não autenticado" };
 
   try {
-    const { docs, batches, minResponsesForComparison, automationMode } =
-      await fetchLotteryDocStats(projectId);
-    return { docs, batches, minResponsesForComparison, automationMode };
+    return await fetchLotteryDocStats(projectId);
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao carregar as estatísticas do sorteio" };
   }
 }
 
-async function computeLottery(params: LotteryParams): Promise<{
-  newAssignments: LotteryAssignment[];
+interface LotteryComputationCommon {
   preservedCount: number;
   preservedByUser: Record<string, number>;
   eligibleCount: number;
+  unfilledSlots: number;
   seed: number;
   batchData: Record<string, unknown>;
   /** tipo normalizado aqui — quem grava reusa em vez de renormalizar */
   assignmentType: "codificacao" | "comparacao";
   /** fase 1 do status inicial (#521): responses humanas leves do projeto */
   humanCoderRows: HumanCoderRow[];
-}> {
+  target: NonNullable<LotteryParams["target"]>;
+}
+
+type LotteryComputation =
+  | (LotteryComputationCommon & {
+      kind: "ready";
+      newAssignments: NonEmptyLotteryAssignments;
+    })
+  | (LotteryComputationCommon & {
+      kind: "empty";
+      newAssignments: [];
+      emptyReason: LotteryEmptyReason;
+    });
+
+async function computeLottery(params: LotteryParams): Promise<LotteryComputation> {
   const supabase = await createSupabaseServer();
-  // Normaliza em vez de confiar no literal: o payload chega por HTTP e não passa
-  // por zod. Qualquer coisa que não seja "comparacao" é codificação.
+  // `validateLotteryParams` tornou o discriminante confiável antes de chegar
+  // aqui; a normalização serve apenas para estreitar o tipo compartilhado.
   const assignmentType =
     params.type === "comparacao" ? "comparacao" : "codificacao";
-  // Para comparação o valor pedido é ignorado (sempre 1) — a união discriminada
-  // já proíbe o campo no client, e este é o guard para quem vem de fora dela.
   const researchersPerDoc = resolveResearchersPerDoc(
     assignmentType,
     (params as { researchersPerDoc?: number }).researchersPerDoc,
   );
   const filters = params.filters || {};
 
-  if (filters.batchFilter?.only && filters.batchFilter?.exclude?.length) {
-    throw new Error("Os filtros de lote são mutuamente exclusivos.");
-  }
-
-  const [{ data: members }, data] = await Promise.all([
+  const [membersResult, data] = await Promise.all([
     supabase
       .from("project_members")
       .select("user_id")
       .eq("project_id", params.projectId),
     fetchLotteryData(params.projectId),
   ]);
+  const members = requireData(
+    membersResult,
+    "Erro ao ler os participantes do sorteio",
+  );
+
+  const target = params.target ?? {
+    kind: "current" as const,
+    expectedRoundId: data.currentRoundId ?? "",
+  };
+  if (!data.currentRoundId || target.expectedRoundId !== data.currentRoundId) {
+    throw new Error("A rodada atual mudou. Reabra o sorteio e tente novamente.");
+  }
+  const startsNewRound = target.kind === "new";
+  if (startsNewRound && assignmentType !== "codificacao") {
+    throw new Error("Uma nova rodada só pode ser iniciada pelo sorteio de codificação.");
+  }
+  if (target.kind === "new" && !target.roundLabel.trim()) {
+    throw new Error("Informe o nome da nova rodada.");
+  }
 
   // Pool de participantes: deduplicado e validado contra project_members
   // (qualquer role) — defesa em profundidade além do RLS (research D5)
-  const memberIds = new Set((members || []).map((m) => m.user_id));
+  const memberIds = new Set(members.map((m) => m.user_id));
   const uniqueIds = [...new Set(params.participantIds)];
   const participantIds = uniqueIds.filter((id) => memberIds.has(id));
   if (!participantIds.length || participantIds.length !== uniqueIds.length) {
@@ -618,7 +890,16 @@ async function computeLottery(params: LotteryParams): Promise<{
 
   // Gate de comparação derivado do modo de automação — compõe com os filtros.
   // compare_llm exige 1 humano + LLM; demais modos exigem N humanos.
-  let candidateDocs = data.docs;
+  let candidateDocs = startsNewRound
+    ? data.docs.map((doc) => ({
+        ...doc,
+        humanCodingCount: 0,
+        hasLlmResponse: false,
+        activeAssignments: { codificacao: 0, comparacao: 0 },
+        hasAssignmentInCurrentRound: false,
+        batchIds: [],
+      }))
+    : data.docs;
   if (assignmentType === "comparacao") {
     candidateDocs = filterComparisonEligible(
       candidateDocs,
@@ -647,8 +928,15 @@ async function computeLottery(params: LotteryParams): Promise<{
       ? ["pendente", "em_andamento", "concluido"]
       : ["em_andamento", "concluido"]
   );
-  const preserved = data.assignmentRows.filter(
-    (a) => a.type === assignmentType && preservedStatuses.has(a.status)
+  const activeDocIds = new Set(data.docs.map((doc) => doc.id));
+  const currentRoundRows = startsNewRound
+    ? []
+    : data.assignmentRows.filter(
+        (a) =>
+          a.round_id === data.currentRoundId && activeDocIds.has(a.document_id),
+      );
+  const preserved = currentRoundRows.filter(
+    (a) => a.type === assignmentType && preservedStatuses.has(a.status),
   );
 
   // Anti-duplicidade de par: continua derivando de `preserved` (dependente do
@@ -664,7 +952,9 @@ async function computeLottery(params: LotteryParams): Promise<{
   // mesmo invariante entra como par vetado do sorteio manual — veto de par,
   // não de vaga: o codificador continua elegível para outros documentos.
   if (assignmentType === "comparacao") {
-    for (const row of data.humanCoderRows) {
+    for (const row of data.humanCoderRows.filter(
+      (candidate) => candidate.round_id === data.currentRoundId,
+    )) {
       preservedSet.add(`${row.document_id}:${row.respondent_id}`);
     }
   }
@@ -693,8 +983,14 @@ async function computeLottery(params: LotteryParams): Promise<{
   // Carga acumulada segue em `preserved`: uma comparação concluída é trabalho
   // feito — conta para o equilíbrio `history` e é o "existing" da prévia, ainda
   // que não ocupe mais a vaga do documento.
+  const loadRows =
+    params.balancing === "history"
+      ? data.assignmentRows.filter(
+          (a) => a.type === assignmentType && activeDocIds.has(a.document_id),
+        )
+      : preserved;
   const preservedByUser: Record<string, number> = {};
-  for (const a of preserved) {
+  for (const a of loadRows) {
     preservedByUser[a.user_id] = (preservedByUser[a.user_id] || 0) + 1;
   }
 
@@ -711,6 +1007,11 @@ async function computeLottery(params: LotteryParams): Promise<{
   if (params.docSubsetSize && params.docSubsetSize < eligibleDocIds.length) {
     eligibleDocIds = shuffleWithRng(eligibleDocIds, rng).slice(0, params.docSubsetSize);
   }
+  const requestedSlots = eligibleDocIds.reduce(
+    (total, documentId) =>
+      total + Math.max(0, researchersPerDoc - (docAssignedCount[documentId] || 0)),
+    0,
+  );
 
   // Matriz de co-ocorrência a partir do conjunto preservado
   const coOccurrence: Record<string, Record<string, number>> = {};
@@ -778,6 +1079,13 @@ async function computeLottery(params: LotteryParams): Promise<{
     label: params.label || null,
     mode: params.mode,
     balancing: params.balancing,
+    open_work_snapshot: {
+      active_count: data.activeOpenAssignmentCount,
+      pending_scope_count: data.pendingScopeAssignmentCount,
+      confirm_active: target.kind === "new" && target.confirmActiveWork,
+      confirm_pending_scope:
+        target.kind === "new" && target.confirmPendingScopeWork,
+    },
     filters: {
       ...filters,
       participantIds,
@@ -787,27 +1095,52 @@ async function computeLottery(params: LotteryParams): Promise<{
     },
   };
 
-  return {
-    newAssignments,
+  const common: LotteryComputationCommon = {
     preservedCount: preserved.length,
     preservedByUser,
     eligibleCount,
+    unfilledSlots: Math.max(0, requestedSlots - newAssignments.length),
     seed,
     batchData,
     assignmentType,
     humanCoderRows: data.humanCoderRows,
+    target,
   };
+  if (newAssignments.length > 0) {
+    return {
+      ...common,
+      kind: "ready",
+      newAssignments: newAssignments as NonEmptyLotteryAssignments,
+    };
+  }
+
+  const emptyReason: LotteryEmptyReason =
+    eligibleDocIds.length === 0
+      ? "all_slots_filled"
+      : participants.every((participant) => participant.capacity <= 0)
+        ? "capacity_exhausted"
+        : "no_available_pairs";
+  return { ...common, kind: "empty", newAssignments: [], emptyReason };
 }
 
 export async function previewLottery(
   params: LotteryParams,
 ): Promise<{ preview?: LotteryPreview; error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const request = await validateAndAuthorizeLottery(params);
+  if (!request.ok) return { error: request.error };
+  const validatedParams = request.params;
 
   try {
-    const { newAssignments, preservedCount, preservedByUser, eligibleCount, seed } =
-      await computeLottery(params);
+    const computation = await computeLottery(validatedParams);
+    const {
+      newAssignments,
+      preservedCount,
+      preservedByUser,
+      eligibleCount,
+      unfilledSlots,
+      seed,
+      target,
+    } = computation;
 
     const newCounts: Record<string, number> = {};
     for (const a of newAssignments) {
@@ -816,7 +1149,7 @@ export async function previewLottery(
 
     return {
       preview: {
-        participants: [...new Set(params.participantIds)].map((userId) => ({
+        participants: [...new Set(validatedParams.participantIds)].map((userId) => ({
           userId,
           existing: preservedByUser[userId] || 0,
           newDocs: newCounts[userId] || 0,
@@ -824,7 +1157,14 @@ export async function previewLottery(
         totalNew: newAssignments.length,
         totalPreserved: preservedCount,
         eligibleDocs: eligibleCount,
+        unfilledSlots,
+        emptyReason:
+          computation.kind === "empty" ? computation.emptyReason : undefined,
         seed,
+        targetRoundLabel:
+          target.kind === "new"
+            ? target.roundLabel.trim()
+            : "Rodada atual",
       },
     };
   } catch (e) {
@@ -835,8 +1175,9 @@ export async function previewLottery(
 export async function smartRandomize(
   params: LotteryParams,
 ): Promise<{ count?: number; preserved?: number; error?: string }> {
-  const user = await getAuthUser();
-  if (!user) return { error: "Não autenticado" };
+  const request = await validateAndAuthorizeLottery(params);
+  if (!request.ok) return { error: request.error };
+  const validatedParams = request.params;
 
   const supabase = await createSupabaseServer();
 
@@ -846,8 +1187,12 @@ export async function smartRandomize(
   // Operação crítica: computeLottery + registro do lote + RPC transacional. Só
   // um erro aqui (nada gravado, ou gravação abortada) deve virar { error }.
   try {
-    const { newAssignments, preservedCount, batchData, assignmentType, humanCoderRows } =
-      await computeLottery(params);
+    const computation = await computeLottery(validatedParams);
+    if (computation.kind === "empty") {
+      return { error: LOTTERY_EMPTY_MESSAGES[computation.emptyReason] };
+    }
+    const { newAssignments, preservedCount, batchData, assignmentType, humanCoderRows, target } =
+      computation;
 
     // Status inicial por linha (#521): um documento já codificado por completo
     // pelo próprio sorteado nasce 'concluido', não 'pendente'. Calculado ANTES
@@ -858,28 +1203,17 @@ export async function smartRandomize(
       assignmentType === "codificacao"
         ? new Map(humanCoderRows.map((r) => [pairKey(r.document_id, r.respondent_id), r]))
         : new Map<string, HumanCoderRow>();
-    const initialStatuses = await resolveInitialCodingStatuses(
-      supabase,
-      params.projectId,
-      newAssignments.flatMap((a) => {
-        const response = responsesByPair.get(pairKey(a.document_id, a.user_id));
-        return response ? [response] : [];
-      }),
-    );
-
-    // O batch é criado antes de qualquer mudança em assignments: se falhar
-    // (ex.: migration ausente), nada foi deletado ainda
-    const { data: batch, error: batchError } = await supabase
-      .from("assignment_batches")
-      .insert({ ...batchData, created_by: user.id })
-      .select("id")
-      .single();
-
-    if (batchError || !batch) {
-      throw new Error(
-        `Erro ao registrar o lote do sorteio: ${batchError?.message ?? "resposta vazia"}`
-      );
-    }
+    const initialStatuses =
+      target.kind === "new"
+        ? new Map<string, InitialCodingStatus>()
+        : await resolveInitialCodingStatuses(
+            supabase,
+            validatedParams.projectId,
+            newAssignments.flatMap((a) => {
+              const response = responsesByPair.get(pairKey(a.document_id, a.user_id));
+              return response ? [response] : [];
+            }),
+          );
 
     // Descarte das pendentes (modo substituir) + gravação das novas numa
     // transação única via RPC (issue #181): uma falha entre o delete e o insert
@@ -895,26 +1229,31 @@ export async function smartRandomize(
           : {}),
       };
     });
-    const { data: inserted, error: rpcError } = await supabase.rpc(
+    const { data: result, error: rpcError } = await supabase.rpc(
       "apply_lottery_assignments",
       {
-        p_project_id: params.projectId,
+        p_project_id: validatedParams.projectId,
         p_type: assignmentType,
-        p_batch_id: batch.id,
+        p_expected_round_id: target.expectedRoundId,
+        p_new_round_label:
+          target.kind === "new" ? target.roundLabel.trim() : null,
+        p_confirm_open_work:
+          target.kind === "new" &&
+          target.confirmActiveWork &&
+          target.confirmPendingScopeWork,
+        p_batch: batchData,
         p_assignments: assignmentRows,
-        p_replace: params.mode === "replace",
+        p_replace: validatedParams.mode === "replace",
       },
     );
     if (rpcError) {
       throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
     }
 
-    // Contagem REAL do RPC, não o tamanho do que se pretendia gravar: o
-    // ON CONFLICT DO NOTHING pula linhas quando o gatilho automático cria a
-    // comparação do documento entre a leitura do computeLottery (fora da
-    // transação) e este INSERT. Reportar o pretendido faria o coordenador ver
-    // um número que não está no banco.
-    count = typeof inserted === "number" ? inserted : newAssignments.length;
+    // A RPC exige correspondência exata entre proposta e inserção. Qualquer
+    // conflito concorrente reverte o lote inteiro com 40001.
+    const rpcResult = result as { inserted?: number } | null;
+    count = rpcResult?.inserted ?? newAssignments.length;
     preserved = preservedCount;
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao sortear" };
@@ -927,7 +1266,7 @@ export async function smartRandomize(
     // Persiste o peso/limite usado por participante (decisão: editar no diálogo,
     // mas assumir continuidade no próximo sorteio). Uma falha aqui só afeta o
     // default da próxima vez.
-    const settingsEntries = Object.entries(params.participantSettings ?? {});
+    const settingsEntries = Object.entries(validatedParams.participantSettings ?? {});
     if (settingsEntries.length > 0) {
       const results = await Promise.all(
         settingsEntries.map(([userId, cfg]) =>
@@ -937,7 +1276,7 @@ export async function smartRandomize(
               assignment_weight: resolveWeight(cfg.weight),
               assignment_cap: resolveCap(cfg.cap),
             })
-            .eq("project_id", params.projectId)
+            .eq("project_id", validatedParams.projectId)
             .eq("user_id", userId),
         ),
       );
@@ -947,12 +1286,12 @@ export async function smartRandomize(
           `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
         );
       }
-      revalidateTag(membersTag(params.projectId), MEMBERS_TAG_PROFILE);
+      revalidateTag(membersTag(validatedParams.projectId), MEMBERS_TAG_PROFILE);
     }
 
-    revalidatePath(`/projects/${params.projectId}/analyze/assignments`);
-    revalidatePath(`/projects/${params.projectId}/analyze/code`);
-    revalidatePath(`/projects/${params.projectId}/analyze/compare`);
+    revalidatePath(`/projects/${validatedParams.projectId}/analyze/assignments`);
+    revalidatePath(`/projects/${validatedParams.projectId}/analyze/code`);
+    revalidatePath(`/projects/${validatedParams.projectId}/analyze/compare`);
   } catch (e) {
     console.error(`[lottery] falha nos efeitos pós-sorteio: ${errorMessage(e)}`);
   }

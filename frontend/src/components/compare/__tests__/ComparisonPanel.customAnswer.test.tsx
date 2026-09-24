@@ -19,6 +19,9 @@ import { panelProps, panelResponse } from "./compare-test-helpers";
 
 afterEach(cleanup);
 
+/** Casa com o (documentId, fieldName) do painel montado abaixo. */
+const PANEL_ORIGIN = { documentId: "d1", fieldName: "data_parecer" };
+
 const FIELD: PydanticField = {
   name: "data_parecer",
   type: "date",
@@ -96,6 +99,7 @@ describe("ComparisonPanel — confirmação pendente", () => {
         kind: "response",
         verdict: "2021-05-10",
         chosenResponseId: "r-llm",
+        origin: PANEL_ORIGIN,
       },
       onConfirmPendingVerdict,
     });
@@ -113,6 +117,7 @@ describe("ComparisonPanel — confirmação pendente", () => {
         kind: "response",
         verdict: "2021-05-10",
         chosenResponseId: "r-llm",
+        origin: PANEL_ORIGIN,
       },
     });
 
@@ -133,6 +138,7 @@ describe("ComparisonPanel — confirmação pendente", () => {
         kind: "response",
         verdict: "2021-05-10",
         chosenResponseId: "r-llm",
+        origin: PANEL_ORIGIN,
       },
       isSavingVerdict: true,
     });
@@ -197,15 +203,20 @@ describe("ComparisonPanel — resposta nova (issue #247, ponto 4)", () => {
     await user.click(screen.getByRole("button", { name: /nenhuma correta/i }));
     const input = screen.getByPlaceholderText("Resposta correta…");
 
-    // só espaços → não prepara nem salva
+    // só espaços → não prepara nem salva. A ausência de rascunho passa a ser
+    // lida pelo testid, e não pela frase do rodapé que sumiu com ele; o par
+    // positivo logo abaixo (mesmo `it`) é o que impede esta asserção de virar
+    // vácua.
     await user.type(input, "   {Enter}");
-    expect(screen.getByText("Escolha uma resposta para confirmar.")).toBeTruthy();
+    expect(screen.queryByTestId("pending-confirm")).toBeNull();
     expect(onVerdict).not.toHaveBeenCalled();
 
     await user.clear(input);
     await user.type(input, "8 meses{Enter}");
     expect(onVerdict).not.toHaveBeenCalled();
-    expect(screen.getByText(/Selecionado:/).textContent).toContain("8 meses");
+    expect(
+      screen.getByTestId("pending-confirm").getAttribute("data-pending-label"),
+    ).toBe("8 meses");
 
     await user.click(screen.getByRole("button", { name: /^confirmar$/i }));
     expect(onVerdict).toHaveBeenCalledWith("8 meses", undefined);
@@ -259,5 +270,32 @@ describe("ComparisonPanel — resposta nova (issue #247, ponto 4)", () => {
     expect(
       screen.getByRole("button", { name: /nenhuma correta/i }).className,
     ).not.toContain("border-brand");
+  });
+});
+
+// A barra de confirmação segue o elemento que produziu o rascunho. Quando esse
+// elemento não existe na tela — rascunho de resposta que o AgreementGroup não
+// renderiza —, ela precisa aparecer nas ações da divergência, senão a revisora
+// fica com um rascunho que trava a navegação (guardNavigation, #434) e que ela
+// não consegue nem confirmar nem descartar pelo mouse. Soft-lock: o defeito do
+// #430 com o sinal trocado.
+describe("ComparisonPanel — rascunho sem card para ancorar (#610)", () => {
+  it("cai para as ações da divergência em vez de sumir da tela", () => {
+    renderPanel({
+      pendingVerdict: {
+        kind: "response",
+        verdict: "resposta de uma linha que não está na lista",
+        chosenResponseId: "r-que-nao-esta-na-tela",
+        origin: PANEL_ORIGIN,
+      },
+    });
+
+    const bar = screen.getByTestId("pending-confirm");
+    expect(bar).not.toBeNull();
+    expect(bar.getAttribute("data-pending-label")).toBe(
+      "resposta de uma linha que não está na lista",
+    );
+    expect(screen.getByRole("button", { name: "Confirmar" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Descartar" })).not.toBeNull();
   });
 });

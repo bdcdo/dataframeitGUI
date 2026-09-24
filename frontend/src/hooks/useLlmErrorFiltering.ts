@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { compareVersions } from "@/lib/compare-version";
+import { effectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 export type DatePreset = "all" | "24h" | "7d" | "30d";
 export type SortBy = "default" | "field" | "document" | "recent";
@@ -40,7 +41,12 @@ interface ScopeFilterable {
 
 interface FilterableError extends ScopeFilterable {
   fieldDescription: string;
-  resolvedAt: string | null;
+  resolution?: ErrorResolutionRow;
+}
+
+function isOpenError(error: FilterableError): boolean {
+  const status = effectiveErrorResolution(error.resolution).status;
+  return status === "open" || status === "legacy" || status === "stale";
 }
 
 function presetCutoffMs(preset: DatePreset, now: number): number | null {
@@ -55,7 +61,7 @@ function presetCutoffMs(preset: DatePreset, now: number): number | null {
 // Extraído de LlmInsightsView (#355): pura relocação de estado e derivação.
 export function useLlmErrorFiltering<
   E extends FilterableError,
-  R extends ScopeFilterable,
+  R extends ScopeFilterable & { isError: boolean; isPending?: boolean },
 >(errors: E[], reviewedEntries: R[]) {
   const [errorFieldFilter, setErrorFieldFilter] = useState("all");
   const [errorSearchQuery, setErrorSearchQuery] = useState("");
@@ -95,9 +101,7 @@ export function useLlmErrorFiltering<
     ? new Date(errorSinceDate + "T00:00:00").getTime()
     : presetCutoffMs(errorDateFilter, now);
 
-  // Scope filters affect both numerator and denominator (so the rate matches
-  // the population the user is looking at). Status only affects which errors
-  // the user wants to see in the list and in the card.
+  // Status recorta só a fila; filtros de população recortam os dois termos da taxa.
   const matchesScopeFilters = (e: ScopeFilterable): boolean => {
     if (errorFieldFilter !== "all" && e.fieldName !== errorFieldFilter)
       return false;
@@ -117,20 +121,20 @@ export function useLlmErrorFiltering<
     return true;
   };
 
-  const filteredReviewed = reviewedEntries.filter(matchesScopeFilters);
-
+  const filteredReviewed = reviewedEntries.filter((e) => !e.isPending && matchesScopeFilters(e));
   const filteredErrors = errors.filter((e) => {
-    if (errorStatusFilter === "open" && e.resolvedAt) return false;
-    if (errorStatusFilter === "resolved" && !e.resolvedAt) return false;
+    const status = effectiveErrorResolution(e.resolution).status;
+    if (errorStatusFilter === "open" && !isOpenError(e)) return false;
+    if (errorStatusFilter === "resolved" && status !== "approved" && status !== "upheld") return false;
+    if (errorStatusFilter === "discussion" && status !== "discussion") return false;
     return matchesScopeFilters(e);
   });
 
-  // Rate uses the same numerator shown in the card (so the two are always
-  // consistent) over the scope-filtered reviewed population.
-  const filteredErrorRate =
-    filteredReviewed.length > 0
-      ? Math.round((filteredErrors.length / filteredReviewed.length) * 100)
-      : 0;
+  // Encerrar a triagem não transforma um erro confirmado em acerto.
+  const measuredErrorCount = filteredReviewed.filter((e) => e.isError).length;
+  const filteredErrorRate = filteredReviewed.length > 0
+    ? Math.round((measuredErrorCount / filteredReviewed.length) * 100)
+    : null;
 
   const sortedErrors = (() => {
     if (sortBy === "default") return filteredErrors;
@@ -153,7 +157,7 @@ export function useLlmErrorFiltering<
 
   // Counted within the current scope so the badge matches the cards.
   const openErrorCount = errors.filter(
-    (e) => !e.resolvedAt && matchesScopeFilters(e),
+    (e) => isOpenError(e) && matchesScopeFilters(e),
   ).length;
 
   return {
@@ -174,6 +178,7 @@ export function useLlmErrorFiltering<
     effectiveVersionFilter,
     filteredErrors,
     filteredErrorRate,
+    measuredErrorCount,
     sortedErrors,
     sortedCount: sortedErrors.length,
     openErrorCount,

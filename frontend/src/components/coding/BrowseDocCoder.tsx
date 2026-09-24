@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/resizable";
 import { DocumentReader } from "./DocumentReader";
 import { QuestionsPanel, type OutOfScopeConfig } from "./QuestionsPanel";
+import type { CodingSubmitVerdict } from "./useQuestionValidation";
 import { FullscreenNav } from "./FullscreenNav";
 import { clearHiddenConditionalAnswers } from "@/lib/conditional";
 import type { CodingDocument } from "@/hooks/useDocumentForCoding";
@@ -15,16 +16,19 @@ import type { PydanticField } from "@/lib/types";
 
 /**
  * Rascunho editável de codificação (respostas + nota), reportado pelo
- * `BrowseDocCoder` para cima e lido pelo autosave-on-exit do container.
+ * `BrowseDocCoder` para cima e usado pelo container para o envio explícito e
+ * para o rascunho local (#608).
  */
 export interface CodingDraft {
   answers: Record<string, unknown>;
   notes: string;
 }
 
-interface BrowseDocCoderProps {
-  /** Documento já carregado (texto + respostas/notas iniciais). */
-  doc: CodingDocument;
+// Props que o container repassa INALTERADAS ao coder. Declaradas uma vez e
+// reusadas por `BrowseCodingView`, que apenas as encaminha: manter as duas
+// listas à mão fazia as assinaturas divergirem a cada campo novo, e era
+// duplicação real (o gate do fallow a flagrou).
+export interface ForwardedCodingProps {
   fields: PydanticField[];
   submitting: boolean;
   readOnly: boolean;
@@ -34,11 +38,18 @@ interface BrowseDocCoderProps {
   responseCount: number;
   onToggleFullscreen: () => void;
   onReorder: (newOrder: string[]) => void;
-  /** Dispara o envio; o container faz o `saveResponse` + coordenação. */
-  onSubmit: (draft: CodingDraft) => void;
-  /** Reporta o rascunho atual para cima (autosave-on-exit + dirty tracking). */
+  /** Dispara o envio; o container faz o `saveResponse` + coordenação. O retorno
+   *  é o veredito do servidor e precisa chegar ao `QuestionsPanel` — ver
+   *  `CodingSubmitVerdict`. */
+  onSubmit: (draft: CodingDraft) => CodingSubmitVerdict;
+  /** Reporta o rascunho atual para cima (rascunho local + dirty tracking). */
   onDraftChange: (draft: CodingDraft) => void;
   outOfScope?: OutOfScopeConfig;
+}
+
+interface BrowseDocCoderProps extends ForwardedCodingProps {
+  /** Documento já carregado (texto + respostas/notas iniciais). */
+  doc: CodingDocument;
 }
 
 /**
@@ -49,8 +60,8 @@ interface BrowseDocCoderProps {
  * Não guarda o doc selecionado em estado no container nem usa effect de
  * deep-link — é o que mantém o `CodingPage` sem estado derivado nem `setState`
  * em effect (o débito de react-doctor que o refactor zera). O rascunho é
- * reportado para cima (`onDraftChange`) para o autosave-on-exit centralizado
- * (#28) ler via ref.
+ * reportado para cima (`onDraftChange`) para o container registrá-lo no
+ * rascunho local e marcar o documento como não enviado.
  */
 export function BrowseDocCoder({
   doc,
@@ -107,9 +118,12 @@ export function BrowseDocCoder({
     [onDraftChange, submitting],
   );
 
-  const handleSubmit = useCallback(() => {
-    onSubmit(draftRef.current);
-  }, [onSubmit]);
+  // Devolve o que o container devolveu: é este valor que faz o painel rolar até
+  // a obrigatória que o servidor ainda vê em aberto (#608).
+  const handleSubmit = useCallback(
+    () => onSubmit(draftRef.current),
+    [onSubmit],
+  );
 
   return (
     <>

@@ -17,6 +17,7 @@ import {
   propertyLabel,
 } from "@/lib/schema-change-format";
 import { isProjectScopedLogEntry } from "@/lib/schema-utils";
+import { resolveSubfieldRequired } from "@/lib/pydantic-field";
 import type { SchemaChangeEntry, FieldCondition, SubfieldDef } from "@/lib/types";
 
 interface FieldChangeDiffProps {
@@ -412,6 +413,16 @@ function OptionsListDiff({
   );
 }
 
+// Asterisco pelo mesmo criterio do `FieldRenderer`, resolvido pelo canonico —
+// `sf.required` ausente e opcional, o oposto do default de campo.
+function subfieldText(s: SubfieldDef): string {
+  return `${s.label || s.key}${resolveSubfieldRequired(s.required) ? " *" : ""}`;
+}
+
+function subfieldRequiredLabel(required: boolean | undefined): string {
+  return resolveSubfieldRequired(required) ? "obrigatório" : "opcional";
+}
+
 function SubfieldsDiff({
   before,
   after,
@@ -425,19 +436,45 @@ function SubfieldsDiff({
   const beforeMap = new Map(beforeArr.map((s) => [s.key, s]));
   const removed = beforeArr.filter((s) => !afterMap.has(s.key));
   const added = afterArr.filter((s) => !beforeMap.has(s.key));
-  const kept = beforeArr.filter((s) => afterMap.has(s.key));
+  // Um subcampo que continua existindo mas mudou de obrigatoriedade e a unica
+  // alteracao que o particionamento kept/removed/added nao enxerga: sem esta
+  // separacao o log gravava a mudanca, o versionamento bumpava minor e o
+  // historico renderizava um badge identico ao de antes (issue #491).
+  const kept = beforeArr
+    .filter((s) => afterMap.has(s.key))
+    .map((s) => ({ before: s, after: afterMap.get(s.key)! }))
+    .map((pair) => ({
+      ...pair,
+      requiredChanged:
+        resolveSubfieldRequired(pair.before.required) !==
+        resolveSubfieldRequired(pair.after.required),
+    }));
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {kept.map((s) => (
-        <Badge
-          key={`kept-${s.key}`}
-          variant="outline"
-          className="text-[10px] px-1.5 py-0 font-normal break-words"
-        >
-          {s.label || s.key}
-        </Badge>
-      ))}
+      {kept.map(({ before: b, after: a, requiredChanged }) =>
+        requiredChanged ? (
+          <Badge
+            key={`kept-${b.key}`}
+            className={cn(
+              "text-[10px] px-1.5 py-0 font-normal break-words gap-0.5",
+              "bg-amber-500/10 text-amber-700 hover:bg-amber-500/10",
+            )}
+          >
+            {b.label || b.key}: {subfieldRequiredLabel(b.required)}
+            <ArrowRight className="h-2.5 w-2.5 shrink-0" />
+            {subfieldRequiredLabel(a.required)}
+          </Badge>
+        ) : (
+          <Badge
+            key={`kept-${b.key}`}
+            variant="outline"
+            className="text-[10px] px-1.5 py-0 font-normal break-words"
+          >
+            {subfieldText(b)}
+          </Badge>
+        ),
+      )}
       {removed.map((s) => (
         <Badge
           key={`rem-${s.key}`}
@@ -446,7 +483,7 @@ function SubfieldsDiff({
             "bg-red-500/10 text-red-700 hover:bg-red-500/10",
           )}
         >
-          <del className="no-underline">− {s.label || s.key}</del>
+          <del className="no-underline">− {subfieldText(s)}</del>
         </Badge>
       ))}
       {added.map((s) => (
@@ -457,7 +494,7 @@ function SubfieldsDiff({
             "bg-green-500/10 text-green-700 hover:bg-green-500/10",
           )}
         >
-          <ins className="no-underline">+ {s.label || s.key}</ins>
+          <ins className="no-underline">+ {subfieldText(s)}</ins>
         </Badge>
       ))}
     </div>

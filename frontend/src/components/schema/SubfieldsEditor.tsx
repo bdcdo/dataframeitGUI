@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
 import { useStableListIds } from "@/hooks/useStableListIds";
 import type { SubfieldDef } from "@/lib/types";
+import { resolveSubfieldRequired } from "@/lib/pydantic-field";
 
 // Estado completo (não um patch parcial): toda emissão inclui os 3 campos,
 // com os que não mudaram preenchidos com o valor atual. O FieldCard repassa
@@ -131,7 +132,7 @@ export function SubfieldsEditor({
               {subfieldRule !== "at_least_one" && (
                 <div className="flex items-center gap-1">
                   <Switch
-                    checked={sf.required !== false}
+                    checked={resolveSubfieldRequired(sf.required)}
                     onCheckedChange={(checked) => {
                       const sfs = [...subfields];
                       sfs[si] = { ...sfs[si], required: checked };

@@ -8,23 +8,21 @@ import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { CodingPage } from "@/components/coding/CodingPage";
 import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
+import { sortByAssignmentStatus } from "@/lib/coding-sort";
 import type {
   Document,
   Assignment,
   PydanticField,
   Round,
-  RoundStrategy,
 } from "@/lib/types";
 import {
   classifyDocStatus,
-  versionLabel,
   getCurrentRoundDescriptor,
-  compareVersionLabels,
   resolveRoundFilter,
   CURRENT_FILTER_VALUE,
   type RoundContext,
   type ResponseRoundFields,
-  type SchemaVersion,
+  type DocRoundStatus,
 } from "@/lib/rounds";
 
 export default async function CodePage({
@@ -47,35 +45,23 @@ export default async function CodePage({
   const access = requireResolvedProjectAccess(
     await getProjectAccessContext(id, user),
   );
-  const { queueUserId, isImpersonating } = resolveProjectQueueIdentity(
-    access,
-    sp.viewAsUser,
-  );
+  // `ownMemberUserId` é quem ESCREVE; `queueUserId` é só a fila exibida. O
+  // rascunho local se chaveia pelo primeiro — chavear pelo observado faria o
+  // master, sob impersonação, depositar trabalho no slot da pesquisadora.
+  const { ownMemberUserId, queueUserId, isImpersonating } =
+    resolveProjectQueueIdentity(access, sp.viewAsUser);
   const roundParam = sp.round ?? CURRENT_FILTER_VALUE;
 
   const supabase = await createSupabaseServer();
 
-  const [
-    { data: project },
-    { data: assignments },
-    { data: rounds },
-    { data: pendingExclusions },
-  ] = await Promise.all([
+  const [{ data: project }, { data: rounds }, { data: pendingExclusions }] = await Promise.all([
     supabase
       .from("projects")
       .select(
-        "pydantic_fields, round_strategy, current_round_id, schema_version_major, schema_version_minor, schema_version_patch, out_of_scope_enabled",
+        "pydantic_fields, current_round_id, out_of_scope_enabled",
       )
       .eq("id", id)
       .single(),
-    supabase
-      .from("assignments")
-      .select("id, status, document_id, documents!inner(id, external_id, title, text)")
-      .eq("project_id", id)
-      .eq("user_id", queueUserId)
-      .eq("type", "codificacao")
-      .is("documents.excluded_at", null)
-      .order("status", { ascending: true }),
     supabase
       .from("rounds")
       .select("id, project_id, label, created_at")
@@ -91,6 +77,43 @@ export default async function CodePage({
       .eq("kind", "exclusion_request")
       .is("resolved_at", null)
       .is("rejected_at", null),
+  ]);
+
+  const ctx: RoundContext = {
+    strategy: "manual",
+    currentRoundId: project?.current_round_id ?? null,
+    currentVersion: { major: 0, minor: 0, patch: 0 },
+    rounds: (rounds ?? []) as Round[],
+  };
+  const roundsById = new Map(ctx.rounds.map((r) => [r.id, r]));
+  const { key: currentRoundKey, label: currentRoundLabel } =
+    getCurrentRoundDescriptor(ctx, roundsById);
+  const effectiveRound = resolveRoundFilter(roundParam, ctx, currentRoundKey, []);
+  const selectedRoundId =
+    effectiveRound === CURRENT_FILTER_VALUE ? ctx.currentRoundId : effectiveRound;
+
+  const [{ data: assignments }, { data: responses }] = await Promise.all([
+    supabase
+      .from("assignments")
+      // Sem `text`: a fila é metadado. O texto do documento aberto vem por
+      // `getDocumentText` (ver `AssignedCodingView`). Trazê-lo aqui serializava
+      // o texto de TODOS os atribuídos no payload RSC e respondia por 126s dos
+      // 214s de CPU de query medidos em produção em 2026-08-20.
+      .select("id, status, document_id, round_id, documents!inner(id, external_id, title)")
+      .eq("project_id", id)
+      .eq("user_id", queueUserId)
+      .eq("type", "codificacao")
+      .eq("round_id", selectedRoundId ?? "00000000-0000-0000-0000-000000000000")
+      .is("documents.excluded_at", null),
+    supabase
+      .from("responses")
+      .select(
+        "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch, is_partial, updated_at",
+      )
+      .eq("project_id", id)
+      .eq("respondent_id", queueUserId)
+      .eq("respondent_type", "humano")
+      .eq("round_id", selectedRoundId ?? "00000000-0000-0000-0000-000000000000"),
   ]);
 
   const pendingExclusionByDoc: Record<string, string> = {};
@@ -110,31 +133,26 @@ export default async function CodePage({
     }
   }
 
-  const allDocuments = (assignments || [])
-    .map((a) => ({
-      ...(a.documents as unknown as Document),
-      assignment: { id: a.id, status: a.status } as Pick<Assignment, "id" | "status">,
-    }))
-    // Doc em revisão de escopo por OUTRO pesquisador sai da fila; com pedido
-    // do próprio usuário permanece (o formulário fica bloqueado).
-    .filter(
-      (d) => !pendingByOthers.has(d.id) || pendingExclusionByDoc[d.id] !== undefined,
-    );
+  // A ordem da fila é decidida aqui, não no `ORDER BY`: ver
+  // `sortByAssignmentStatus`. Esta é a ordem que o modo "Ordem de atribuição"
+  // preserva (`?sort=default`) e a base sobre a qual "Codificados recentemente"
+  // reordena no cliente.
+  const allDocuments = sortByAssignmentStatus(
+    (assignments || [])
+      .map((a) => ({
+        ...(a.documents as unknown as Document),
+        assignment: { id: a.id, status: a.status } as Pick<Assignment, "id" | "status">,
+      }))
+      // Doc em revisão de escopo por OUTRO pesquisador sai da fila; com pedido
+      // do próprio usuário permanece (o formulário fica bloqueado).
+      .filter(
+        (d) => !pendingByOthers.has(d.id) || pendingExclusionByDoc[d.id] !== undefined,
+      ),
+  );
 
   // Responses incluem agora round_id e schema_version para classificacao por rodada.
   // Filtra respondent_type=humano: respostas LLM usam respondent_id NULL, mas o
   // filtro explícito alinha com saveResponse e protege contra colisões futuras.
-  const docIds = allDocuments.map((d) => d.id);
-  const { data: responses } = await supabase
-    .from("responses")
-    .select(
-      "document_id, answers, justifications, round_id, schema_version_major, schema_version_minor, schema_version_patch, is_partial, updated_at",
-    )
-    .eq("project_id", id)
-    .eq("respondent_id", queueUserId)
-    .eq("respondent_type", "humano")
-    .in("document_id", docIds.length > 0 ? docIds : ["__none__"]);
-
   const responseByDoc = new Map<
     string,
     ResponseRoundFields & {
@@ -161,73 +179,29 @@ export default async function CodePage({
     if (r.updated_at) codedAtByDoc[r.document_id] = r.updated_at;
   });
 
-  const currentVersion: SchemaVersion = {
-    major: project?.schema_version_major ?? 0,
-    minor: project?.schema_version_minor ?? 1,
-    patch: project?.schema_version_patch ?? 0,
-  };
-  const strategy: RoundStrategy =
-    (project?.round_strategy as RoundStrategy) ?? "schema_version";
-  const ctx: RoundContext = {
-    strategy,
-    currentRoundId: project?.current_round_id ?? null,
-    currentVersion,
-    rounds: (rounds ?? []) as Round[],
-  };
-  const roundsById = new Map(ctx.rounds.map((r) => [r.id, r]));
-
-  // Versoes anteriores presentes em responses — so faz sentido em schema_version.
-  // Em manual, o select de rodadas anteriores vem da tabela `rounds`.
-  // Sort numerico (compareVersionLabels) para ordenar 0.9.0 < 0.10.0 corretamente.
-  const previousVersions =
-    strategy === "schema_version"
-      ? Array.from(
-          new Set(
-            (responses ?? [])
-              .map((r) => {
-                const m = r.schema_version_major;
-                const n = r.schema_version_minor;
-                const p = r.schema_version_patch;
-                if (m == null || n == null || p == null) return null;
-                const v = versionLabel({ major: m, minor: n, patch: p });
-                if (v === versionLabel(currentVersion)) return null;
-                return v;
-              })
-              .filter((v): v is string => v != null),
-          ),
-        ).sort(compareVersionLabels)
-      : [];
-
-  const { key: currentRoundKey, label: currentRoundLabel } =
-    getCurrentRoundDescriptor(ctx, roundsById);
-
-  // Normaliza ?round= para evitar lista vazia silenciosa (URL manipulada,
-  // troca de estrategia com filtro stale, ou ?round=<currentRoundKey>).
-  const effectiveRound = resolveRoundFilter(
-    roundParam,
-    ctx,
-    currentRoundKey,
-    previousVersions,
-  );
+  // Estado por documento, capturado do MESMO `classifyDocStatus` que decide o
+  // filtro: a tela precisa dizer à pesquisadora por que o documento à sua frente
+  // está na fila (parcial dela × resposta de rodada anterior), e classificar de
+  // novo no cliente abriria espaço para o rótulo discordar do filtro que pôs o
+  // documento ali (#608).
+  //
+  // Guarda o status INTEIRO, não só o `kind`: o membro `previous` carrega o
+  // `label` da rodada — o rótulo do coordenador na estratégia manual, o semver na
+  // `schema_version` — e é ele que torna o texto na tela verdadeiro nas duas.
+  const statusByDoc: Record<string, DocRoundStatus> = {};
 
   // Filtro server-side conforme effectiveRound
   const filteredDocuments = allDocuments.filter((d) => {
     const resp = responseByDoc.get(d.id);
     const status = classifyDocStatus(ctx, resp ?? null, roundsById);
+    statusByDoc[d.id] = status;
 
-    if (effectiveRound === "all") return true;
     if (effectiveRound === CURRENT_FILTER_VALUE) {
       // Padrao: mostra docs que ainda precisam ser respondidos na rodada atual
       // (sem resposta OU resposta de rodada anterior). Concluidos da atual saem.
       return status.kind !== "current_done";
     }
-    // Rodada especifica: id (manual) ou label (schema_version)
-    if (strategy === "manual") {
-      return resp?.round_id === effectiveRound;
-    }
-    return (
-      status.kind === "previous" && status.label === effectiveRound
-    );
+    return true;
   });
 
   const allFields = (project?.pydantic_fields || []) as PydanticField[];
@@ -251,14 +225,16 @@ export default async function CodePage({
   // que pesquisador edite achando que ainda esta na rodada antiga.
   // (Salvar promove para a rodada atual de qualquer jeito.)
   const isViewingPreviousRound =
-    effectiveRound !== CURRENT_FILTER_VALUE && effectiveRound !== "all";
+    effectiveRound !== CURRENT_FILTER_VALUE;
 
   return (
     <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>
       <CodingPage
         projectId={id}
+        userId={ownMemberUserId}
         documents={filteredDocuments}
         codedAtByDoc={codedAtByDoc}
+        statusByDoc={statusByDoc}
         fields={fields}
         existingAnswers={existingAnswers}
         existingJustifications={existingJustifications}
@@ -268,11 +244,9 @@ export default async function CodePage({
         pendingExclusionByDoc={pendingExclusionByDoc}
         readOnly={isImpersonating || isViewingPreviousRound}
         roundFilter={{
-          strategy,
           currentRoundKey,
           currentRoundLabel,
           rounds: ctx.rounds,
-          previousVersions,
           selected: effectiveRound,
         }}
       />

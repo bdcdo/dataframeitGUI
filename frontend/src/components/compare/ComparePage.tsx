@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FullscreenNav } from "../coding/FullscreenNav";
 import { CompareNav } from "./CompareNav";
@@ -17,12 +17,17 @@ import { useUrlState } from "@/hooks/useUrlState";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
-import type {
-  CompareDocument,
-  CompareResponse,
-  EquivalencePairWire,
-  PendingVerdict,
+import {
+  COMPARE_ORIGIN_MISMATCH_MESSAGE,
+  verdictOriginMatches,
+  type CompareDocument,
+  type CompareResponse,
+  type EquivalencePairWire,
+  type PendingVerdict,
+  type VerdictOrigin,
 } from "./compare-types";
+
+const LIST_COLLAPSED_KEY = "compare:listCollapsed";
 
 interface ComparePageProps {
   projectId: string;
@@ -215,6 +220,18 @@ export function ComparePage({
     setPendingVerdict(null);
   }
 
+  // Origem do campo EXIBIDO. Usada pelos caminhos de escrita que não passam por
+  // um rascunho (campo multi e os atalhos `a`/`s` de multi), que por construção
+  // só existem no render corrente. Os caminhos com rascunho usam a origem
+  // carimbada no próprio rascunho — ver `confirmPendingVerdict`.
+  const currentOrigin = useMemo<VerdictOrigin | null>(
+    () =>
+      currentDoc && currentFieldName
+        ? { documentId: currentDoc.id, fieldName: currentFieldName }
+        : null,
+    [currentDoc, currentFieldName],
+  );
+
   const {
     handleVerdict,
     handleConfirmEquivalent,
@@ -243,22 +260,48 @@ export function ComparePage({
       // O bloqueio de somente-leitura vive nos controles (`disabled`), no
       // teclado (`useCompareKeyboard`) e no backstop de escrita
       // (`useCompareVerdicts`) — aqui não se repete.
-      if (verdictSaveInFlightRef.current) return;
+      if (verdictSaveInFlightRef.current) {
+        // Antes este `return` era mudo, e um save lento (até os 15s do watchdog
+        // de #430) deixava a revisora clicando sem nenhum efeito visível.
+        toast.info(
+          "Salvando o veredito anterior — aguarde para escolher outra resposta.",
+          { id: "compare-save-inflight" },
+        );
+        return;
+      }
+      // Recusa PRIMÁRIA de rascunho vindo de outro campo: acontece no clique, que
+      // é onde a revisora consegue relacionar o aviso ao que acabou de fazer. A
+      // mensagem diz o que fazer (recarregar), porque com conteúdo desmontado na
+      // tela nenhum clique naquela região vai funcionar (#613).
+      if (!currentOrigin || !verdictOriginMatches(next.origin, currentOrigin)) {
+        console.error("compare: rascunho de outro campo recusado", {
+          origin: next.origin,
+          atual: currentOrigin,
+        });
+        toast.error(COMPARE_ORIGIN_MISMATCH_MESSAGE, {
+          id: "compare-origin-mismatch",
+        });
+        return;
+      }
       setPendingVerdict(next);
     },
-    [],
+    [currentOrigin],
   );
 
   // Único entrypoint para todo submit via handleVerdict: confirmação de
   // rascunho, campo multi e atalhos especiais. A ref torna um segundo save
   // impossível mesmo antes do rerender que desabilita os controles.
   const submitVerdictSingleFlight = useCallback(
-    async (verdict: string, chosenResponseId?: string) => {
+    async (
+      origin: VerdictOrigin,
+      verdict: string,
+      chosenResponseId?: string,
+    ) => {
       if (verdictSaveInFlightRef.current) return false;
       verdictSaveInFlightRef.current = true;
       setIsSavingVerdict(true);
       try {
-        return await handleVerdict(verdict, chosenResponseId);
+        return await handleVerdict(origin, verdict, chosenResponseId);
       } finally {
         verdictSaveInFlightRef.current = false;
         setIsSavingVerdict(false);
@@ -273,7 +316,11 @@ export function ComparePage({
   // rascunho é MANTIDO: a usuária reconfirma sem re-selecionar.
   const confirmPendingVerdict = useCallback(async () => {
     if (!pendingVerdict) return;
+    // A origem viaja com o rascunho: a confirmação grava no campo em que a
+    // decisão foi TOMADA, não no que estiver em tela agora. `useCompareVerdicts`
+    // recusa se os dois divergirem.
     const saved = await submitVerdictSingleFlight(
+      pendingVerdict.origin,
       pendingVerdict.verdict,
       pendingVerdict.kind === "response"
         ? pendingVerdict.chosenResponseId
@@ -294,8 +341,28 @@ export function ComparePage({
     [],
   );
   const exitFullscreen = useCallback(() => setIsFullscreen(false), []);
-  const [listCollapsed, setListCollapsed] = useState(false);
-  const toggleList = useCallback(() => setListCollapsed((v) => !v), []);
+  // Lista lateral recolhida atravessa sessões: quem revisa muito recolhe uma
+  // vez e não quer refazer o gesto todo dia (#610). Mesmo idioma do
+  // `AutoReviewFooter` — lazy initializer no mount, sem flicker — e não o
+  // `usePinnedDoc`: aquele existe para reagir a escrita externa e limpar
+  // órfãos, e um toggle de sidebar não tem escritor concorrente nem domínio de
+  // validade.
+  const [listCollapsed, setListCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(LIST_COLLAPSED_KEY) === "1";
+  });
+  // `setItem` no handler e NÃO dentro do updater: o React pode reexecutar o
+  // updater e o efeito colateral se repetiria. Ler `listCollapsed` do closure
+  // é seguro porque só o clique altera o valor — e a dependência mantém o
+  // closure fresco, ao custo de trocar a identidade da callback uma vez por
+  // alternância.
+  const toggleList = useCallback(() => {
+    const next = !listCollapsed;
+    setListCollapsed(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(LIST_COLLAPSED_KEY, next ? "1" : "0");
+    }
+  }, [listCollapsed]);
   // Ponto único de gate da navegação MANUAL (sidebar, nav de doc, nav de
   // campo, teclado). Com rascunho não confirmado, navegar descartaria a
   // seleção em silêncio via guard de contexto — a perda de sessão da issue
@@ -360,8 +427,11 @@ export function ComparePage({
   // recebe os dois no array de deps do seu único effect, então um arrow inline
   // religaria o listener de `keydown` a cada render do container.
   const handleSpecialVerdict = useCallback(
-    (verdict: "ambiguo" | "pular") => void submitVerdictSingleFlight(verdict),
-    [submitVerdictSingleFlight],
+    (verdict: "ambiguo" | "pular") => {
+      if (!currentOrigin) return;
+      void submitVerdictSingleFlight(currentOrigin, verdict);
+    },
+    [currentOrigin, submitVerdictSingleFlight],
   );
   const handleConfirmPending = useCallback(
     () => void confirmPendingVerdict(),
@@ -375,6 +445,7 @@ export function ComparePage({
     isCurrentFieldDivergent,
     currentField,
     answerGroups,
+    origin: currentOrigin,
     onToggleFullscreen: toggleFullscreen,
     onExitFullscreen: exitFullscreen,
     onNextField: nextField,
@@ -555,8 +626,14 @@ export function ComparePage({
             ? { complete: true, hasNextDoc, onNextDoc: nextDoc }
             : { complete: false },
           onFieldNavigate: navigateField,
+          // Caminho do campo multi: não passa por rascunho, então a origem é a
+          // do campo exibido. `currentOrigin` é não-nulo aqui — o early-return
+          // acima já descartou o caso sem doc/campo.
           onVerdict: (verdict, chosenResponseId) =>
-            void submitVerdictSingleFlight(verdict, chosenResponseId),
+            void (
+              currentOrigin &&
+              submitVerdictSingleFlight(currentOrigin, verdict, chosenResponseId)
+            ),
           pendingVerdict,
           onPrepareVerdict: preparePendingVerdict,
           onConfirmPendingVerdict: handleConfirmPending,

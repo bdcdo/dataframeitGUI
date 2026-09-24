@@ -14,6 +14,10 @@ import type { CodingsFilterMode } from "./lottery-dialog-types";
 export function useLotteryParams() {
   // Tipo do sorteio (codificação ou comparação)
   const [type, setType] = useState<"codificacao" | "comparacao">("codificacao");
+  const [targetKind, setTargetKind] = useState<"current" | "new">("current");
+  const [roundLabel, setRoundLabel] = useState("");
+  const [confirmActiveWork, setConfirmActiveWork] = useState(false);
+  const [confirmPendingScopeWork, setConfirmPendingScopeWork] = useState(false);
 
   // Distribuição
   const [researchersPerDoc, setResearchersPerDoc] = useState(2);
@@ -64,6 +68,14 @@ export function useLotteryParams() {
   return {
     type,
     setType,
+    targetKind,
+    setTargetKind,
+    roundLabel,
+    setRoundLabel,
+    confirmActiveWork,
+    setConfirmActiveWork,
+    confirmPendingScopeWork,
+    setConfirmPendingScopeWork,
     researchersPerDoc,
     setResearchersPerDoc,
     docsPerResearcherEnabled,
