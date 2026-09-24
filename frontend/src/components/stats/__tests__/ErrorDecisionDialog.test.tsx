@@ -158,7 +158,7 @@ describe("ErrorDecisionDialog — Erro do LLM leva o veredito nas opções atuai
   });
 });
 
-const yesNo = { name: "x", type: "single", options: ["Sim", "Não", "Talvez"], description: "P" };
+const yesNo = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "single", options: ["Sim", "Não", "Talvez"], description: "P" };
 
 describe("ErrorDecisionDialog — Todos errados", () => {
   it("não pré-marca o veredito, que é o que está sendo rejeitado, e bloqueia até escolher", async () => {
@@ -212,7 +212,7 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
 describe("ErrorDecisionDialog — resposta em branco em pergunta condicional", () => {
   const condition = { field: "g0", equals: "Sim" };
   const condSingle = { ...yesNo, condition };
-  const condMulti = { name: "x", type: "multi", options: ["A", "B"], description: "P", condition };
+  const condMulti = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "multi", options: ["A", "B"], description: "P", condition };
   const blankBox = () => screen.getByRole("checkbox", { name: /Deixar em branco/ });
   const isBlank = () => blankBox().getAttribute("aria-checked") === "true";
 

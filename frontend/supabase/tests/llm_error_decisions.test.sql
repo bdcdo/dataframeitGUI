@@ -10,7 +10,7 @@ INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_s
   SELECT id::TEXT, id, 1 FROM auth.users WHERE id::TEXT LIKE 'a9a00000-%';
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
   ('a9b00000-0000-0000-0000-000000000001', 'Decision test', 'a9a00000-0000-0000-0000-000000000001', 'compare_llm',
-   '[{"name":"q","type":"text","description":"Pergunta"},{"name":"other","type":"text","description":"Outra"}]');
+   '[{"id":"a9f10000-0000-4000-8000-000000000001","name":"q","type":"text","description":"Pergunta"},{"id":"a9f10000-0000-4000-8000-000000000002","name":"other","type":"text","description":"Outra"}]');
 INSERT INTO public.project_members (project_id, user_id, role, can_resolve) VALUES
   ('a9b00000-0000-0000-0000-000000000001', 'a9a00000-0000-0000-0000-000000000002', 'pesquisador', true),
   ('a9b00000-0000-0000-0000-000000000001', 'a9a00000-0000-0000-0000-000000000003', 'pesquisador', false);
@@ -194,14 +194,14 @@ END $$;
 -- OUTRA pergunta nao invalida, mudanca na PROPRIA invalida); CHECK da coluna.
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
   ('a9b00000-0000-0000-0000-000000000002', 'Decision value test', 'a9a00000-0000-0000-0000-000000000001', 'compare_llm',
-   '[{"name":"s","type":"single","options":["A","B "],"description":"Única"},
-     {"name":"m","type":"multi","options":["A","B","C"],"description":"Múltipla"},
-     {"name":"g","type":"text","options":null,"description":"Grupo","subfields":[{"key":"anos","label":"Anos"},{"key":"meses","label":"Meses"}]},
-     {"name":"t","type":"text","options":null,"description":"Livre"},
-     {"name":"o","type":"single","options":["A"],"description":"Única com Outro","allow_other":true},
-     {"name":"mo","type":"multi","options":["A","B"],"description":"Múltipla com Outro","allow_other":true},
-     {"name":"d","type":"date","options":["Sem data"],"description":"Data"},
-     {"name":"n","type":"text","options":null,"description":"Ausente na resposta do LLM"}]');
+   '[{"id":"a9f20000-0000-4000-8000-000000000001","name":"s","type":"single","options":["A","B "],"description":"Única"},
+     {"id":"a9f20000-0000-4000-8000-000000000002","name":"m","type":"multi","options":["A","B","C"],"description":"Múltipla"},
+     {"id":"a9f20000-0000-4000-8000-000000000003","name":"g","type":"text","options":null,"description":"Grupo","subfields":[{"key":"anos","label":"Anos"},{"key":"meses","label":"Meses"}]},
+     {"id":"a9f20000-0000-4000-8000-000000000004","name":"t","type":"text","options":null,"description":"Livre"},
+     {"id":"a9f20000-0000-4000-8000-000000000005","name":"o","type":"single","options":["A"],"description":"Única com Outro","allow_other":true},
+     {"id":"a9f20000-0000-4000-8000-000000000006","name":"mo","type":"multi","options":["A","B"],"description":"Múltipla com Outro","allow_other":true},
+     {"id":"a9f20000-0000-4000-8000-000000000007","name":"d","type":"date","options":["Sem data"],"description":"Data"},
+     {"id":"a9f20000-0000-4000-8000-000000000008","name":"n","type":"text","options":null,"description":"Ausente na resposta do LLM"}]');
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('a9c00000-0000-0000-0000-000000000002', 'a9b00000-0000-0000-0000-000000000002', 'Documento 2', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers) VALUES
@@ -495,19 +495,19 @@ END $$;
 RESET ROLE;
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
   ('a9b00000-0000-0000-0000-000000000003', 'Decision blank test', 'a9a00000-0000-0000-0000-000000000001', 'compare_llm',
-   '[{"name":"g0","type":"single","options":["Sim","Não"],"description":"Gatilho"},
-     {"name":"c","type":"single","options":["A","B"],"description":"Condicional","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"c2","type":"single","options":["A","B"],"description":"Condicional respondida pelo LLM","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"c3","type":"single","options":["A","B"],"description":"Condicional em branco no LLM","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"c4","type":"single","options":["A","B"],"description":"LLM com null","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"c5","type":"single","options":["A","B"],"description":"LLM com []","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"c6","type":"single","options":["A","B"],"description":"LLM com espaço","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"c7","type":"single","options":["A","B"],"description":"LLM com tab","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"c8","type":"single","options":["A","B"],"description":"LLM com NBSP","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"cm","type":"multi","options":["A","B"],"description":"Condicional múltipla","condition":{"field":"g0","equals":"Sim"}},
-     {"name":"cn","type":"single","options":["A","B"],"description":"Sem condição"},
-     {"name":"ct","condition":{"field":"g0","equals":"Sim"},"description":"Condicional sem type"},
-     {"name":"cz","type":"single","options":["A","B"],"description":"Condição nula","condition":null}]');
+   '[{"id":"a9f30000-0000-4000-8000-000000000001","name":"g0","type":"single","options":["Sim","Não"],"description":"Gatilho"},
+     {"id":"a9f30000-0000-4000-8000-000000000002","name":"c","type":"single","options":["A","B"],"description":"Condicional","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000003","name":"c2","type":"single","options":["A","B"],"description":"Condicional respondida pelo LLM","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000004","name":"c3","type":"single","options":["A","B"],"description":"Condicional em branco no LLM","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000005","name":"c4","type":"single","options":["A","B"],"description":"LLM com null","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000006","name":"c5","type":"single","options":["A","B"],"description":"LLM com []","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000007","name":"c6","type":"single","options":["A","B"],"description":"LLM com espaço","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000008","name":"c7","type":"single","options":["A","B"],"description":"LLM com tab","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000009","name":"c8","type":"single","options":["A","B"],"description":"LLM com NBSP","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000010","name":"cm","type":"multi","options":["A","B"],"description":"Condicional múltipla","condition":{"field":"g0","equals":"Sim"}},
+     {"id":"a9f30000-0000-4000-8000-000000000011","name":"cn","type":"single","options":["A","B"],"description":"Sem condição"},
+     {"id":"a9f30000-0000-4000-8000-000000000012","name":"ct","condition":{"field":"g0","equals":"Sim"},"description":"Condicional sem type"},
+     {"id":"a9f30000-0000-4000-8000-000000000013","name":"cz","type":"single","options":["A","B"],"description":"Condição nula","condition":null}]');
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('a9c00000-0000-0000-0000-000000000003', 'a9b00000-0000-0000-0000-000000000003', 'Documento 3', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers) VALUES
