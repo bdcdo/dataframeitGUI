@@ -834,11 +834,20 @@ def _load_documents_for_run(
     max_response_count: int | None,
     sample_size: int | None,
 ) -> list[dict]:
+    # O escopo de um documento são os dois filtros juntos, e não só o soft
+    # delete: `excluded_at` é a exclusão já aprovada pelo coordenador, e
+    # `exclusion_pending_at` é o pedido do pesquisador ainda em revisão,
+    # derivado por trigger de project_comments
+    # (20260702190000_documents_exclusion_pending). Toda leitura de documents
+    # para processamento aplica os dois. A tela LLM -> Configurar conta pelos
+    # dois campos, e um filtro a menos aqui faz a run processar mais
+    # documentos do que a tela anunciou.
     query = (
         sb.table("documents")
         .select("id, text, title, external_id")
         .eq("project_id", project_id)
         .is_("excluded_at", "null")
+        .is_("exclusion_pending_at", "null")
     )
     if document_ids:
         query = query.in_("id", document_ids)
