@@ -739,14 +739,9 @@ def test_run_llm_skips_excluded_documents(monkeypatch):
 def test_run_llm_skips_documents_pending_exclusion(monkeypatch):
     """Guarda o filtro `.is_("exclusion_pending_at", "null")` em run_llm.
 
-    Segunda ocorrencia do mesmo padrao que
-    test_run_llm_skips_excluded_documents cobre para `excluded_at`. A
-    migration 20260702190000_documents_exclusion_pending nomeia a fila do
-    LLM entre as que passam a filtrar pedido de exclusao pendente, e
-    aplicou a linha nova nos call sites do frontend; este, o unico
-    consumidor Python de `documents`, ficou de fora. Efeito medido em
-    producao em 30/08/2026: a GUI anunciava 22 documentos e a run
-    processava 26.
+    Par de test_run_llm_skips_excluded_documents, que guarda o mesmo
+    padrão para `excluded_at`. Documento com pedido de exclusão pendente
+    está fora de escopo em toda a interface, e a run não pode processá-lo.
 
     Como em `excluded_at`, o filtro precisa ser aplicado de verdade pelo
     _FakeQuery (ver _FakeQuery._matches); sem isso o teste passaria com o
@@ -757,8 +752,8 @@ def test_run_llm_skips_documents_pending_exclusion(monkeypatch):
         {
             "id": "doc-pending-exclusion",
             "project_id": PROJECT_ID,
-            "text": "texto em revisao de escopo",
-            "title": "Doc com exclusao pendente",
+            "text": "texto em revisão de escopo",
+            "title": "Doc com exclusão pendente",
             "external_id": None,
             "excluded_at": None,
             "exclusion_pending_at": "2026-08-06T14:47:34Z",
