@@ -7,13 +7,26 @@ import { isSubfieldRecord } from "@/lib/subfield-value";
 import { arePartsValid, parseDatePartsForUI } from "@/lib/date-parts";
 import type { PydanticField } from "@/lib/types";
 
-export const errorDecisionSchema = z.enum(["llm_correct", "researchers_correct", "discussion"]);
+// A ordem é a dos botões no card: quem errou (um lado, nenhum, os dois) e,
+// por último, o adiamento.
+export const errorDecisionSchema = z.enum(["llm_correct", "researchers_correct", "both_correct", "all_wrong", "discussion"]);
 export type ErrorDecision = z.infer<typeof errorDecisionSchema>;
 export const ERROR_DECISION_LABELS: Record<ErrorDecision, string> = {
   llm_correct: "Erro humano",
   researchers_correct: "Erro do LLM",
+  both_correct: "Ambos corretos",
+  all_wrong: "Todos errados",
   discussion: "Em discussão",
 };
+
+/**
+ * Decisões em que o revisor escolhe o valor que vai ao gabarito, gravado em
+ * `approved_value`. Espelha o CHECK `error_resolution_value_iff_chosen`.
+ */
+export type ValueChoosingDecision = Extract<ErrorDecision, "researchers_correct" | "all_wrong">;
+export function choosesValue(decision: ErrorDecision): decision is ValueChoosingDecision {
+  return decision === "researchers_correct" || decision === "all_wrong";
+}
 
 const answerSchema = z.object({ present: z.boolean(), value: z.json() });
 export const errorResolutionContextSchema = z.object({
@@ -31,8 +44,8 @@ export const errorResolutionInputSchema = z.object({
   expected: z.object({ id: z.string(), resolved_at: z.string() }).nullable(),
   note: z.string().optional(),
   /**
-   * O valor que vai ao gabarito em `researchers_correct`, escolhido pelo
-   * revisor nas opções atuais do campo (#733). A RPC valida o domínio.
+   * O valor que vai ao gabarito nas decisões de `choosesValue`, escolhido
+   * pelo revisor nas opções atuais do campo (#733). A RPC valida o domínio.
    */
   value: z.json().optional(),
 });
@@ -49,7 +62,7 @@ export interface ErrorResolutionRow {
   resolved_at: string;
   resolved_by: string;
   note: string | null;
-  /** Coluna `approved_value`: só em `researchers_correct` (CHECK no banco). */
+  /** Coluna `approved_value`: só nas decisões de `choosesValue` (CHECK no banco). */
   approved_value?: unknown;
 }
 
@@ -58,27 +71,48 @@ export type EffectiveErrorResolution =
   | { status: "legacy" }
   | { status: "stale" }
   | { status: "discussion" }
+  /**
+   * "Ambos corretos": nenhum valor é aprovado, o gabarito continua sendo o
+   * veredito da arbitragem. `llmValue` é a resposta do LLM, que passa a contar
+   * como correta ao lado dele. `verdictValue` só existe na auto-revisão, cujo
+   * veredito (a resposta humana do contexto) não chega ao export nem ao
+   * Gabarito por outra via; na Comparação quem o traz é a própria review.
+   */
+  | { status: "upheld"; llmValue: unknown; verdictValue?: unknown }
   | { status: "approved"; value: unknown; isLlmError: boolean };
+
+// A decisão só vale enquanto as fontes em que ela se apoiou seguem iguais.
+function contextIsCurrent(row: ErrorResolutionRow, context: ErrorResolutionContext): boolean {
+  return !!row.current_context &&
+    context.project_id === row.project_id && context.document_id === row.document_id &&
+    context.field_name === row.field_name &&
+    stableStringify(context) === stableStringify(row.current_context);
+}
+
+function upheldResolution(context: ErrorResolutionContext): EffectiveErrorResolution {
+  if (!context.llm_value.present) return { status: "stale" };
+  const fromAutoReview = context.source.kind === "auto_revisao" && context.human_value.present;
+  return { status: "upheld", llmValue: context.llm_value.value,
+    ...(fromAutoReview ? { verdictValue: context.human_value.value } : {}) };
+}
+
+// "Erro do LLM" e "Todos errados" aprovam o valor que o revisor escolheu, não
+// a resposta de um codificador: `human_value` fica no contexto só como âncora
+// de invalidação (#733). Linha sem coluna é anterior à migration e não é
+// aprovável até ser confirmada de novo.
+function chosenValueResolution(row: ErrorResolutionRow): EffectiveErrorResolution {
+  if (row.approved_value === undefined || row.approved_value === null) return { status: "stale" };
+  return { status: "approved", value: row.approved_value, isLlmError: true };
+}
 
 export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): EffectiveErrorResolution {
   if (!row) return { status: "open" };
   if (row.decision === null) return { status: "legacy" };
   const context = row.context;
-  if (!context || !row.current_context ||
-      context.project_id !== row.project_id || context.document_id !== row.document_id ||
-      context.field_name !== row.field_name ||
-      stableStringify(context) !== stableStringify(row.current_context)) {
-    return { status: "stale" };
-  }
+  if (!context || !contextIsCurrent(row, context)) return { status: "stale" };
   if (row.decision === "discussion") return { status: "discussion" };
-  if (row.decision === "researchers_correct") {
-    // "Erro do LLM" aprova o valor que o revisor escolheu, não a resposta de
-    // um codificador: `human_value` fica no contexto só como âncora de
-    // invalidação (#733). Linha sem coluna é anterior à migration e não é
-    // aprovável até ser confirmada de novo.
-    if (row.approved_value === undefined || row.approved_value === null) return { status: "stale" };
-    return { status: "approved", value: row.approved_value, isLlmError: true };
-  }
+  if (row.decision === "both_correct") return upheldResolution(context);
+  if (choosesValue(row.decision)) return chosenValueResolution(row);
   if (!context.llm_value.present) return { status: "stale" };
   return { status: "approved", value: context.llm_value.value, isLlmError: false };
 }
@@ -228,6 +262,6 @@ function hasDateValue(field: PydanticField, value: unknown): boolean {
 
 export function errorResolutionComment(row: ErrorResolutionRow): string {
   const result = effectiveErrorResolution(row);
-  if (result.status !== "approved" && result.status !== "discussion") return "";
+  if (result.status !== "approved" && result.status !== "discussion" && result.status !== "upheld") return "";
   return `[${row.field_name}] ${ERROR_DECISION_LABELS[row.decision!]}${row.note ? `: ${row.note}` : ""}`;
 }

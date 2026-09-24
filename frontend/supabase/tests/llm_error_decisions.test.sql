@@ -200,14 +200,15 @@ INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fie
      {"name":"t","type":"text","options":null,"description":"Livre"},
      {"name":"o","type":"single","options":["A"],"description":"Única com Outro","allow_other":true},
      {"name":"mo","type":"multi","options":["A","B"],"description":"Múltipla com Outro","allow_other":true},
-     {"name":"d","type":"date","options":["Sem data"],"description":"Data"}]');
+     {"name":"d","type":"date","options":["Sem data"],"description":"Data"},
+     {"name":"n","type":"text","options":null,"description":"Ausente na resposta do LLM"}]');
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('a9c00000-0000-0000-0000-000000000002', 'a9b00000-0000-0000-0000-000000000002', 'Documento 2', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers) VALUES
   ('a9d00000-0000-0000-0000-000000000003', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', NULL, 'llm',
    '{"s":"A","m":["A"],"g":{"anos":"1"},"t":"LLM","o":"A","mo":["A"],"d":"01/02/2026"}'),
   ('a9d00000-0000-0000-0000-000000000004', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'a9a00000-0000-0000-0000-000000000002', 'humano',
-   '{"s":"A","m":["A","B"],"g":{"anos":"2"},"t":"Humano","o":"Outro: livre","mo":["A","Outro: livre"],"d":"XX/03/2024"}');
+   '{"s":"A","m":["A","B"],"g":{"anos":"2"},"t":"Humano","o":"Outro: livre","mo":["A","Outro: livre"],"d":"XX/03/2024","n":"Humano"}');
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
   ('a9e00000-0000-0000-0000-000000000011', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 's', 'a9a00000-0000-0000-0000-000000000002', 'B ', 'a9d00000-0000-0000-0000-000000000004'),
   ('a9e00000-0000-0000-0000-000000000012', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'm', 'a9a00000-0000-0000-0000-000000000002', '{"A":true,"C":true}', 'a9d00000-0000-0000-0000-000000000004'),
@@ -215,7 +216,8 @@ INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id
   ('a9e00000-0000-0000-0000-000000000014', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 't', 'a9a00000-0000-0000-0000-000000000002', 'Humano', 'a9d00000-0000-0000-0000-000000000004'),
   ('a9e00000-0000-0000-0000-000000000015', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'o', 'a9a00000-0000-0000-0000-000000000002', 'Outro: livre', 'a9d00000-0000-0000-0000-000000000004'),
   ('a9e00000-0000-0000-0000-000000000016', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'mo', 'a9a00000-0000-0000-0000-000000000002', '{"A":true,"Outro: livre":true}', 'a9d00000-0000-0000-0000-000000000004'),
-  ('a9e00000-0000-0000-0000-000000000017', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'd', 'a9a00000-0000-0000-0000-000000000002', 'ambiguo', 'a9d00000-0000-0000-0000-000000000004');
+  ('a9e00000-0000-0000-0000-000000000017', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'd', 'a9a00000-0000-0000-0000-000000000002', 'ambiguo', 'a9d00000-0000-0000-0000-000000000004'),
+  ('a9e00000-0000-0000-0000-000000000018', 'a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'n', 'a9a00000-0000-0000-0000-000000000002', 'Humano', 'a9d00000-0000-0000-0000-000000000004');
 
 SELECT set_config('request.jwt.claims', '{"sub":"a9a00000-0000-0000-0000-000000000001","supabase_uid":"a9a00000-0000-0000-0000-000000000001"}', true);
 SET LOCAL ROLE authenticated;
@@ -255,6 +257,50 @@ BEGIN
   PERFORM public.set_error_resolution(P, D, 's', 'llm_correct', c, item.id, item.resolved_at, NULL, '"B "'::JSONB);
   SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
   IF item.approved_value IS NOT NULL THEN RAISE EXCEPTION 'FALHOU: llm_correct gravou approved_value'; END IF;
+  -- Ambos corretos: nao aprova valor, mesmo que o chamador mande um.
+  PERFORM public.set_error_resolution(P, D, 's', 'both_correct', c, item.id, item.resolved_at, 'Sinonimos', '"B "'::JSONB);
+  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
+  IF item.decision <> 'both_correct' OR item.approved_value IS NOT NULL OR item.note <> 'Sinonimos'
+    OR item.current_context IS DISTINCT FROM item.context THEN
+    RAISE EXCEPTION 'FALHOU: both_correct não gravou decisão sem valor';
+  END IF;
+  -- Todos errados: exige valor, com a mesma validacao por tipo de Erro do LLM.
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'all_wrong', c, item.id, item.resolved_at, NULL, NULL);
+    RAISE EXCEPTION 'FALHOU: Todos errados sem valor foi aceito';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'all_wrong', c, item.id, item.resolved_at, NULL, '"C"'::JSONB);
+    RAISE EXCEPTION 'FALHOU: Todos errados aceitou valor fora das opções';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  PERFORM public.set_error_resolution(P, D, 's', 'all_wrong', c, item.id, item.resolved_at, NULL, '"A"'::JSONB);
+  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
+  IF item.decision <> 'all_wrong' OR item.approved_value IS DISTINCT FROM '"A"'::JSONB THEN
+    RAISE EXCEPTION 'FALHOU: all_wrong não gravou o valor escolhido';
+  END IF;
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'nobody_knows', c, item.id, item.resolved_at, NULL, NULL);
+    RAISE EXCEPTION 'FALHOU: decisão desconhecida foi aceita';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+  -- As decisoes que declaram o LLM correto exigem que a resposta dele contenha
+  -- o campo; "Todos errados" e "Erro do LLM" nao dependem disso.
+  c := public.llm_error_context(P, D, 'n', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000018');
+  IF c IS NULL OR (c->'llm_value'->>'present')::BOOLEAN THEN
+    RAISE EXCEPTION 'FALHOU: fixture deveria ter o campo n ausente na resposta do LLM';
+  END IF;
+  FOREACH bad IN ARRAY ARRAY['"llm_correct"'::JSONB, '"both_correct"'::JSONB] LOOP
+    BEGIN
+      PERFORM public.set_error_resolution(P, D, 'n', bad #>> '{}', c, NULL, NULL, NULL, NULL);
+      RAISE EXCEPTION 'FALHOU: % aceito sem resposta do LLM no campo', bad;
+    EXCEPTION WHEN invalid_parameter_value THEN NULL;
+    END;
+  END LOOP;
+  PERFORM public.set_error_resolution(P, D, 'n', 'all_wrong', c, NULL, NULL, NULL, '"Terceira"'::JSONB);
+  c := public.llm_error_context(P, D, 's', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000011');
+  RAISE NOTICE 'OK: both_correct sem valor, all_wrong com valor validado';
   -- e volta a Erro do LLM, para os blocos de invalidacao abaixo.
   PERFORM public.set_error_resolution(P, D, 's', 'researchers_correct', c, item.id, item.resolved_at, NULL, '"B "'::JSONB);
 
@@ -399,7 +445,8 @@ BEGIN
   RAISE NOTICE 'OK: a regra de reabertura só afirma divergência quando pode prová-la';
 END $$;
 
--- CHECK: approved_value existe se, e somente se, a decisao e Erro do LLM.
+-- CHECK: approved_value existe se, e somente se, a decisao escolhe valor
+-- (Erro do LLM e Todos errados).
 DO $$
 BEGIN
   BEGIN
@@ -416,7 +463,28 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: discussão com approved_value passou no CHECK';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
-  RAISE NOTICE 'OK: CHECK amarra approved_value à decisão Erro do LLM';
+  BEGIN
+    INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context)
+    VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',
+            'a9a00000-0000-0000-0000-000000000001', 'all_wrong', '{}'::jsonb);
+    RAISE EXCEPTION 'FALHOU: Todos errados sem approved_value passou no CHECK';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context, approved_value)
+    VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',
+            'a9a00000-0000-0000-0000-000000000001', 'both_correct', '{}'::jsonb, '"x"'::jsonb);
+    RAISE EXCEPTION 'FALHOU: Ambos corretos com approved_value passou no CHECK';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context)
+    VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',
+            'a9a00000-0000-0000-0000-000000000001', 'nobody_knows', '{}'::jsonb);
+    RAISE EXCEPTION 'FALHOU: decisão desconhecida passou no CHECK';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  RAISE NOTICE 'OK: CHECK amarra approved_value às decisões que escolhem valor';
 END $$;
 
 ROLLBACK;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  effectiveErrorResolution, hasResolutionValue, prefillLosesItems, prefillFromValue, prefillFromVerdict,
+  choosesValue, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, prefillLosesItems, prefillFromValue, prefillFromVerdict,
   type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
@@ -17,7 +17,7 @@ function row(decision: ErrorResolutionRow["decision"]): ErrorResolutionRow {
   return { id: "resolution", project_id: "p", document_id: "d", field_name: "q",
     resolved_at: "2026-09-14T12:00:00Z", resolved_by: "user", note: null,
     decision, context: structuredClone(context), current_context: structuredClone(context),
-    approved_value: decision === "researchers_correct" ? "humano" : null };
+    approved_value: decision === "researchers_correct" ? "humano" : decision === "all_wrong" ? "terceira" : null };
 }
 
 describe("resolução explícita de divergência", () => {
@@ -88,6 +88,40 @@ describe("Erro do LLM leva o valor escolhido, não a resposta do codificador (#7
   });
   it.each([["a", "b"], { anos: "2" }, 0, false])("preserva o valor tipado %j de approved_value", (value) => {
     expect(effectiveErrorResolution({ ...row("researchers_correct"), approved_value: value })).toMatchObject({ status: "approved", value });
+  });
+});
+
+describe("Ambos corretos e Todos errados", () => {
+  it("ambos corretos não aprova valor: mantém o veredito e guarda a resposta do LLM", () => {
+    const result = effectiveErrorResolution(row("both_correct"));
+    expect(result).toEqual({ status: "upheld", llmValue: "máquina" });
+    expect(result).not.toHaveProperty("value");
+  });
+  it("ambos corretos exige a resposta do LLM que declara correta", () => {
+    const r = row("both_correct");
+    r.context!.llm_value = { present: false, value: null };
+    r.current_context = structuredClone(r.context);
+    expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+  });
+  it("todos errados aprova o valor escolhido, que não é o do LLM nem o humano, e segue erro do LLM", () => {
+    expect(effectiveErrorResolution(row("all_wrong"))).toEqual({ status: "approved", value: "terceira", isLlmError: true });
+  });
+  it("todos errados sem valor pede confirmação de novo", () => {
+    expect(effectiveErrorResolution({ ...row("all_wrong"), approved_value: null })).toEqual({ status: "stale" });
+  });
+  it("fonte alterada invalida as duas decisões novas", () => {
+    for (const decision of ["both_correct", "all_wrong"] as const) {
+      const r = row(decision);
+      r.current_context!.llm_value.value = "outra";
+      expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+    }
+  });
+  it("choosesValue separa as decisões com seletor das demais, sem deixar nenhuma de fora", () => {
+    expect(errorDecisionSchema.options.filter(choosesValue)).toEqual(["researchers_correct", "all_wrong"]);
+  });
+  it("as duas decisões entram no comentário de export com o rótulo próprio", () => {
+    expect(errorResolutionComment({ ...row("both_correct"), note: "sinônimos" })).toBe("[q] Ambos corretos: sinônimos");
+    expect(errorResolutionComment(row("all_wrong"))).toBe("[q] Todos errados");
   });
 });
 

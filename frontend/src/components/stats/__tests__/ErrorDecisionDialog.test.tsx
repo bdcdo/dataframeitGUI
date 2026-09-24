@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { ErrorDecisionDialog } from "@/components/stats/ErrorDecisionDialog";
 import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
 import type { LlmError } from "@/lib/llm-error-metrics";
-import type { ErrorResolutionContext } from "@/lib/error-resolution";
+import type { ErrorDecision, ErrorResolutionContext } from "@/lib/error-resolution";
 
 // O seletor de "Erro do LLM" por tipo de campo (#733). Texto e `single`
 // pré-marcado passam pela view (LlmInsightsView.test.tsx); aqui ficam os tipos
@@ -17,10 +17,10 @@ function errorCase(chosenVerdict: string, extra: Partial<LlmError> = {}): LlmErr
     resolvedAt: null, reviewedAt: "2026-09-14T12:00:00Z", schemaVersion: null,
     llmResponseId: "rllm", chosenResponseId: "rh", source: "comparacao", sourceId: "review1", ...extra };
 }
-function show(field: unknown, chosenVerdict: string, extra: Partial<LlmError> = {}) {
+function show(field: unknown, chosenVerdict: string, extra: Partial<LlmError> = {}, decision: ErrorDecision = "researchers_correct") {
   const onConfirm = vi.fn();
   render(<ErrorDecisionDialog
-    pending={{ error: errorCase(chosenVerdict, extra), decision: "researchers_correct", context: { ...base.context!, field_definition: field as ErrorResolutionContext["field_definition"] } }}
+    pending={{ error: errorCase(chosenVerdict, extra), decision, context: { ...base.context!, field_definition: field as ErrorResolutionContext["field_definition"] } }}
     isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
   return onConfirm;
 }
@@ -152,6 +152,57 @@ describe("ErrorDecisionDialog — Erro do LLM leva o veredito nas opções atuai
   it("definição ilegível não deixa confirmar", () => {
     show({ name: "x", type: "bogus" }, "x");
     expect(screen.getByText(/não pôde ser lida/)).toBeTruthy();
+    expect(confirmButton().disabled).toBe(true);
+  });
+});
+
+const yesNo = { name: "x", type: "single", options: ["Sim", "Não", "Talvez"], description: "P" };
+
+describe("ErrorDecisionDialog — Todos errados", () => {
+  it("não pré-marca o veredito, que é o que está sendo rejeitado, e bloqueia até escolher", async () => {
+    const onConfirm = show(yesNo, "Sim", {}, "all_wrong");
+    expect(screen.getByRole("heading", { name: "Todos errados" })).toBeTruthy();
+    expect(checked("radio", "Sim")).toBe(false);
+    expect(screen.getByText(/Nem esta resposta nem a do LLM/)).toBeTruthy();
+    expect(confirmButton().disabled).toBe(true);
+    await userEvent.click(screen.getByRole("radio", { name: "Talvez" }));
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("", "Talvez");
+  });
+
+  it("redecidir Todos errados parte do valor que a própria decisão aprovou", () => {
+    const resolution = { ...resolutionFixture("all_wrong"), approved_value: "Talvez" };
+    show(yesNo, "Sim", { resolution }, "all_wrong");
+    expect(checked("radio", "Talvez")).toBe(true);
+  });
+
+  it("valor aprovado em Erro do LLM não migra para Todos errados, nem o contrário", () => {
+    show(yesNo, "Sim", { resolution: { ...base, approved_value: "Não" } }, "all_wrong");
+    expect(checked("radio", "Não")).toBe(false);
+    cleanup();
+    show(yesNo, "Sim", { resolution: { ...resolutionFixture("all_wrong"), approved_value: "Talvez" } });
+    expect(checked("radio", "Sim")).toBe(true);
+  });
+});
+
+describe("ErrorDecisionDialog — Ambos corretos", () => {
+  it("mostra o veredito que segue no gabarito, sem seletor, e confirma só com a nota", async () => {
+    const onConfirm = show(yesNo, "Sim", {}, "both_correct");
+    expect(screen.getByRole("heading", { name: "Ambos corretos" })).toBeTruthy();
+    expect(screen.getByText(/continua sendo o veredito anterior/)).toBeTruthy();
+    expect(screen.getByText("Sim")).toBeTruthy();
+    expect(screen.queryByRole("radio")).toBeNull();
+    await userEvent.type(screen.getByLabelText("Nota opcional"), "sinônimos");
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("sinônimos");
+  });
+
+  it("sem resposta do LLM no campo não há o que declarar correto", () => {
+    const onConfirm = vi.fn();
+    render(<ErrorDecisionDialog
+      pending={{ error: errorCase("Sim"), decision: "both_correct",
+        context: { ...base.context!, llm_value: { present: false, value: null } } }}
+      isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
     expect(confirmButton().disabled).toBe(true);
   });
 });

@@ -306,6 +306,41 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].source).toBe("comparacao");
   });
+
+  // A pergunta era `single` quando foi arbitrada e virou `multi` depois, com a
+  // opção antiga fundida numa nova. A review tem resposta escolhida, o card
+  // oferece o "=", e o par gravado precisa suprimir o erro.
+  describe("review de single em campo que virou multi", () => {
+    const migrated = {
+      fields: [field({ name: "x", type: "multi", options: ["Não discutido", "Há comprovação"] })],
+      responses: [
+        response({ id: "rllm", respondent_type: "llm", answers: { x: ["Não discutido"] } }),
+        response({ id: "rh", is_latest: false, answers: { x: "Não informado se há comprovação" } }),
+      ],
+      reviews: [review({ verdict: "Não informado se há comprovação" })],
+    };
+
+    it("sem par, a opção antiga contra a nova é erro do LLM", () => {
+      expect(run(migrated).errors).toHaveLength(1);
+    });
+
+    it("o par marcado pelo revisor suprime o erro", () => {
+      const { errors, reviewedEntries } = run({
+        ...migrated,
+        equivalences: [equiv("rh", "rllm", "Não informado se há comprovação", ["Não discutido"])],
+      });
+      expect(errors).toEqual([]);
+      expect(reviewedEntries).toMatchObject([{ isError: false }]);
+    });
+
+    it("par com snapshot desatualizado não suprime", () => {
+      const { errors } = run({
+        ...migrated,
+        equivalences: [equiv("rh", "rllm", "Não informado se há comprovação", ["Há comprovação"])],
+      });
+      expect(errors).toHaveLength(1);
+    });
+  });
 });
 
 describe("computeLlmErrorMetrics — fonte Auto-revisão", () => {

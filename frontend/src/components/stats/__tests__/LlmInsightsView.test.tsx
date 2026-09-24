@@ -111,6 +111,27 @@ describe("decisão individual em Insights", () => {
     }));
   });
 
+  it("Todos errados leva o valor digitado", async () => {
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Todos errados" }));
+    await screen.findByRole("dialog");
+    await userEvent.type(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
+      decision: "all_wrong", context: row.context, expected: null, note: "", value: "Terceira",
+    }));
+  });
+
+  it("Ambos corretos confirma sem valor", async () => {
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
+    await screen.findByRole("dialog");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
+      decision: "both_correct", context: row.context, expected: null, note: "",
+    }));
+  });
+
   it("veredito que saiu do formulário exige escolher a opção equivalente", async () => {
     const current = structuredClone(row.context!);
     current.field_definition = { name: "x", type: "single", options: ["Sim", "Não"], description: "Pergunta" };

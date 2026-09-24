@@ -5,7 +5,7 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
-import { errorResolutionInputSchema, errorResolutionContextSchema, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
+import { choosesValue, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 async function withResolutionAction(
   projectId: string,
@@ -309,8 +309,8 @@ export async function resolveError(
       p_decision: decision, p_expected_context: context,
       p_expected_id: identity.id,
       p_expected_resolved_at: identity.resolved_at, p_note: note ?? null,
-      // A RPC valida o valor contra a definição do campo em `researchers_correct`.
-      p_value: decision === "researchers_correct" ? (value ?? null) : null,
+      // A RPC valida o valor contra a definição do campo nas decisões que o levam.
+      p_value: choosesValue(decision) ? (value ?? null) : null,
     });
     if (error) return { success: false, error: error.message };
     if (!data?.id) return { success: false, error: "O banco não confirmou a gravação." };
