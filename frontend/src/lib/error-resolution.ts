@@ -105,6 +105,59 @@ function chosenValueResolution(row: ErrorResolutionRow): EffectiveErrorResolutio
   return { status: "approved", value: row.approved_value, isLlmError: true };
 }
 
+// Pergunta condicional cujo gatilho não a aciona fica sem a chave em
+// `answers`, na codificação humana e no LLM. Nela, e só nela, "em branco" é
+// resposta: o revisor pode aprová-la como gabarito, e o LLM que deixou o campo
+// de fora pode estar certo. O vazio gravado tem uma forma só por tipo, a que
+// `set_error_resolution` aceita; JSON null não serve porque o cliente o lê
+// igual à coluna nula, que significa decisão sem valor.
+export function isConditionalField(field: Pick<PydanticField, "condition">): boolean {
+  return field.condition != null;
+}
+
+export function blankAnswerFor(field: Pick<PydanticField, "type">): "" | string[] {
+  return field.type === "multi" ? [] : "";
+}
+
+/** Se a resposta está em branco em qualquer das formas que chegam do banco. */
+export function isBlankAnswer(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === "string") return value.trim() === "";
+  return Array.isArray(value) && value.length === 0;
+}
+
+function isCanonicalBlank(field: Pick<PydanticField, "type">, value: unknown): boolean {
+  return field.type === "multi" ? Array.isArray(value) && value.length === 0 : value === "";
+}
+
+// O contexto da decisão traz a definição do campo como JSON cru.
+function conditionalBlank(definition: unknown): "" | string[] | undefined {
+  if (!isSubfieldRecord(definition) || !isSubfieldRecord(definition.condition)) return undefined;
+  return blankAnswerFor({ type: definition.type === "multi" ? "multi" : "text" });
+}
+
+/** Se o LLM deixou de fora um campo condicional, o que conta como resposta "em branco". */
+export function llmAnswersBlank(context: ErrorResolutionContext): boolean {
+  return !context.llm_value.present && conditionalBlank(context.field_definition) !== undefined;
+}
+
+/**
+ * Se a resposta do LLM está em branco em qualquer forma: sem a chave, ou com
+ * `null`, `""` ou `[]`. Nesse caso o branco não pode ser gravado como erro do
+ * LLM (`set_error_resolution` recusa), porque o Gabarito o marca como certo.
+ */
+export function llmValueIsBlank(context: ErrorResolutionContext): boolean {
+  return !context.llm_value.present || isBlankAnswer(context.llm_value.value);
+}
+
+// "Erro humano" aprova a resposta do LLM. Sem o campo nela, só há o que
+// aprovar quando o campo é condicional: o LLM respondeu "em branco".
+function llmCorrectResolution(context: ErrorResolutionContext): EffectiveErrorResolution {
+  if (context.llm_value.present) return { status: "approved", value: context.llm_value.value, isLlmError: false };
+  const blank = conditionalBlank(context.field_definition);
+  return blank === undefined ? { status: "stale" } : { status: "approved", value: blank, isLlmError: false };
+}
+
 export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): EffectiveErrorResolution {
   if (!row) return { status: "open" };
   if (row.decision === null) return { status: "legacy" };
@@ -113,8 +166,7 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
   if (row.decision === "discussion") return { status: "discussion" };
   if (row.decision === "both_correct") return upheldResolution(context);
   if (choosesValue(row.decision)) return chosenValueResolution(row);
-  if (!context.llm_value.present) return { status: "stale" };
-  return { status: "approved", value: context.llm_value.value, isLlmError: false };
+  return llmCorrectResolution(context);
 }
 
 function hasSubfields(field: PydanticField): boolean {
@@ -212,6 +264,22 @@ export function prefillFromVerdict(field: PydanticField, verdict: string): unkno
   return prefillFromValue(field, text === "" ? undefined : verdict);
 }
 
+/**
+ * Se o seletor abre com "Deixar em branco" marcado. Só em pergunta
+ * condicional, e com a mesma precedência de `initialValue` no diálogo: o
+ * valor aprovado numa decisão anterior do mesmo tipo (`previous`) vence; em
+ * "Erro do LLM", depois dele vem o veredito, e um veredito vazio (texto em
+ * branco, ou `multi` sem opção marcada) é a arbitragem dizendo "em branco".
+ * "Todos errados" rejeita o veredito, então não parte dele.
+ */
+export function startsBlank(field: PydanticField, decision: ValueChoosingDecision, verdict: string, previous: unknown): boolean {
+  if (!isConditionalField(field)) return false;
+  if (previous !== undefined) return isBlankAnswer(previous);
+  if (decision === "all_wrong") return false;
+  if (field.type === "multi" && verdict.trim() !== "") return verdictMultiItems(verdict)?.length === 0;
+  return verdict.trim() === "";
+}
+
 // "Outro: " só com espaços é o prefixo sem complemento: o input de "Outro" do
 // FieldRenderer grava `OTHER_PREFIX + texto`, e a RPC exige complemento.
 function isFilledText(value: unknown): boolean {
@@ -233,6 +301,7 @@ function isAllowedOption(field: PydanticField, value: unknown): boolean {
  * habilita o que a RPC aceita.
  */
 export function hasResolutionValue(field: PydanticField, value: unknown): boolean {
+  if (isConditionalField(field) && isCanonicalBlank(field, value)) return true;
   if (field.type === "single") return isAllowedOption(field, value);
   if (field.type === "multi") {
     return Array.isArray(value) && value.length > 0 && value.every((v) => isAllowedOption(field, v));

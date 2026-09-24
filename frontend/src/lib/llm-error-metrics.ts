@@ -30,7 +30,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { effectiveErrorResolution, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { effectiveErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -449,6 +449,13 @@ function multiIsError(
   );
 }
 
+// O union-find agrupa pelo texto, que separa chave ausente, `null` e `""`;
+// o Gabarito lê as três como a mesma resposta em branco, e a métrica também.
+function bothBlank(review: MetricsReview, llmResponse: MetricsResponse, ctx: MetricsContext): boolean {
+  const chosenAnswer = chosenResponseOf(review, ctx)?.answers?.[review.field_name] ?? review.verdict;
+  return isBlankAnswer(llmResponse.answers?.[review.field_name]) && isBlankAnswer(chosenAnswer);
+}
+
 // Demais tipos: classe de equivalência do union-find, que já funde tanto os
 // pares marcados pelo revisor quanto as respostas de texto idêntico.
 function groupedIsError(
@@ -456,6 +463,7 @@ function groupedIsError(
   llmResponse: MetricsResponse,
   ctx: MetricsContext,
 ): boolean {
+  if (bothBlank(review, llmResponse, ctx)) return false;
   const groupKeys = ctx.groupKeysFor(review.document_id, review.field_name);
   const llmKey = groupKeys.get(llmResponse.id);
   const chosenKey = review.chosen_response_id
