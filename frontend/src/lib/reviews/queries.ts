@@ -74,10 +74,12 @@ export function isAnswerCorrect(
   fieldType: "single" | "multi" | "text" | "date",
 ): boolean {
   if (verdict === "ambiguo" || verdict === "pular") return true;
-  if (fieldType === "multi") return isMultiAnswerCorrect(answer, verdict);
   // Votar no grupo em que a resposta está ausente grava o veredito "", e a
   // condicional não acionada chega sem a chave: as formas de vazio concordam.
+  // Vale antes de `multi` porque `multi` sem opções é votado como texto, e o
+  // voto grava `formatAnswer([])`, que é "".
   if (isBlankAnswer(answer) && isBlankAnswer(verdict)) return true;
+  if (fieldType === "multi") return isMultiAnswerCorrect(answer, verdict);
   return normalizeForComparison(answer) === normalizeForComparison(verdict);
 }
 

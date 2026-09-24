@@ -101,8 +101,13 @@ BEGIN
       IF NOT (v_context->'llm_value'->>'present')::BOOLEAN
         OR COALESCE(pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'null'
                     OR v_context->'llm_value'->'value' = '[]'::JSONB
+                    -- Texto so de espaco no sentido do trim() do JS, que e o que
+                    -- isBlankAnswer usa no Gabarito e na metrica. btrim tira so
+                    -- o espaco comum, e [[:space:]] depende da localidade e
+                    -- deixa NBSP e U+FEFF de fora: a classe e explicita.
                     OR (pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'string'
-                        AND pg_catalog.btrim(v_context->'llm_value'->>'value') = ''), false) THEN
+                        AND (v_context->'llm_value'->>'value')
+                          ~ E'^[\t\n\u000B\f\r    -     　﻿]*$'), false) THEN
         RAISE EXCEPTION 'O LLM também deixou em branco: a decisão é "Erro humano".' USING ERRCODE = '22023';
       END IF;
     ELSE

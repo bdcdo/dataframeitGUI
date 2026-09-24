@@ -21,10 +21,11 @@ const currentRoundId = "round1";
 const ABSENT = Symbol("chave ausente");
 
 function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue: unknown = "LLM", reviewRoundId = "round1",
-  human: { value: unknown; verdict: string } = { value: "Humano", verdict: "Humano" }) {
+  human: { value: unknown; verdict: string; chosenResponseId?: string } = { value: "Humano", verdict: "Humano" }) {
   const answersOf = (value: unknown) => (value === ABSENT ? {} : { x: value });
   const currentResponses = responses.map((r) => ({ ...r, answers: answersOf(r.respondent_type === "llm" ? llmValue : human.value) }));
-  const reviews = autoReview ? [] : [{ ...review, round_id: reviewRoundId, verdict: human.verdict }];
+  const reviews = autoReview ? [] : [{ ...review, round_id: reviewRoundId, verdict: human.verdict,
+    chosen_response_id: human.chosenResponseId ?? review.chosen_response_id }];
   const finalAnswers: MetricsFinalAnswer[] = autoReview ? [{ field_review_id: "fr", document_id: "doc1", field_name: "x",
     provenance: "arbitrado", final_verdict: "humano", self_reviewed_at: "2026-09-02T00:00:00Z",
     final_decided_at: "2026-09-03T00:00:00Z", human_response_id: "rh", llm_response_id: "rllm",
@@ -168,6 +169,21 @@ describe("resposta em branco em pergunta condicional", () => {
     expect(metrics.reviewedEntries[0]).toMatchObject({ isError: true });
   });
 
+  // O branco só absolve o LLM quando o lado escolhido também está em branco.
+  it("sem decisão, LLM sem a chave e humano escolhido respondendo: erro do LLM na métrica e no Gabarito", () => {
+    const { metrics, gabarito } = results([], false, ABSENT);
+    expect(metrics.reviewedEntries[0]).toMatchObject({ isError: true });
+    expect(gabarito[0].fields[0].respondentAnswers.map((a) => a.isCorrect)).toEqual([false, true]);
+  });
+
+  // Resposta escolhida que sumiu: o lado escolhido é o texto do veredito.
+  it.each<[string, string, boolean]>([["preenchido", "Humano", true], ["em branco", "", false]])(
+    "sem decisão, resposta escolhida sumida e veredito %s, com o LLM sem a chave",
+    (_forma, verdict, isError) => {
+      const { metrics } = results([], false, ABSENT, "round1", { value: "Humano", verdict, chosenResponseId: "sumiu" });
+      expect(metrics.reviewedEntries[0]).toMatchObject({ isError });
+    });
+
   it("Erro humano com o LLM fora da condicional aprova o branco nos três consumidores", () => {
     const row = resolutionFixture("llm_correct");
     row.context!.field_definition = { name: "x", type: "text", description: "Pergunta", options: null, condition: { field: "g0", equals: "Sim" } };
@@ -185,12 +201,18 @@ describe("resposta em branco em pergunta condicional", () => {
 describe("Gabarito: as formas de vazio são a mesma resposta, com ou sem decisão", () => {
   // Votar na Comparação no grupo em que a resposta está ausente grava o
   // veredito "", e quem deixou a chave de fora concorda com ele.
-  it.each(["single", "text", "date"] as const)("sem decisão, veredito \"\" e resposta ausente, null ou \"\" (%s)", (fieldType) => {
+  it.each(["single", "text", "date", "multi"] as const)("sem decisão, veredito \"\" e resposta ausente, null ou \"\" (%s)", (fieldType) => {
     expect(isAnswerCorrect(undefined, "", fieldType)).toBe(true);
     expect(isAnswerCorrect(null, "", fieldType)).toBe(true);
     expect(isAnswerCorrect("", "", fieldType)).toBe(true);
     expect(isAnswerCorrect("A", "", fieldType)).toBe(false);
     expect(isAnswerCorrect(undefined, "A", fieldType)).toBe(false);
+  });
+
+  // `multi` sem opções é votado como texto: o grupo da resposta vazia grava "".
+  it("multi: veredito \"\" e resposta [] são a mesma resposta vazia", () => {
+    expect(isAnswerCorrect([], "", "multi")).toBe(true);
+    expect(isAnswerCorrect(["A"], "", "multi")).toBe(false);
   });
 
   it("Ambos corretos com o LLM em branco num campo sem condição: vazio contra vazio é correto", () => {

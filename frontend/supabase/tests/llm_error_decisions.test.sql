@@ -499,6 +499,11 @@ INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fie
      {"name":"c","type":"single","options":["A","B"],"description":"Condicional","condition":{"field":"g0","equals":"Sim"}},
      {"name":"c2","type":"single","options":["A","B"],"description":"Condicional respondida pelo LLM","condition":{"field":"g0","equals":"Sim"}},
      {"name":"c3","type":"single","options":["A","B"],"description":"Condicional em branco no LLM","condition":{"field":"g0","equals":"Sim"}},
+     {"name":"c4","type":"single","options":["A","B"],"description":"LLM com null","condition":{"field":"g0","equals":"Sim"}},
+     {"name":"c5","type":"single","options":["A","B"],"description":"LLM com []","condition":{"field":"g0","equals":"Sim"}},
+     {"name":"c6","type":"single","options":["A","B"],"description":"LLM com espaço","condition":{"field":"g0","equals":"Sim"}},
+     {"name":"c7","type":"single","options":["A","B"],"description":"LLM com tab","condition":{"field":"g0","equals":"Sim"}},
+     {"name":"c8","type":"single","options":["A","B"],"description":"LLM com NBSP","condition":{"field":"g0","equals":"Sim"}},
      {"name":"cm","type":"multi","options":["A","B"],"description":"Condicional múltipla","condition":{"field":"g0","equals":"Sim"}},
      {"name":"cn","type":"single","options":["A","B"],"description":"Sem condição"},
      {"name":"ct","condition":{"field":"g0","equals":"Sim"},"description":"Condicional sem type"},
@@ -507,9 +512,9 @@ INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('a9c00000-0000-0000-0000-000000000003', 'a9b00000-0000-0000-0000-000000000003', 'Documento 3', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers) VALUES
   ('a9d00000-0000-0000-0000-000000000005', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', NULL, 'llm',
-   '{"g0":"Não","cn":"A","c2":"B","c3":"","cm":["B"]}'),
+   '{"g0":"Não","cn":"A","c2":"B","c3":"","c4":null,"c5":[],"c6":" ","c7":"\t","c8":"\u00a0","cm":["B"]}'),
   ('a9d00000-0000-0000-0000-000000000006', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'a9a00000-0000-0000-0000-000000000002', 'humano',
-   '{"g0":"Sim","c":"A","c2":"A","c3":"A","cm":["A"],"cn":"B","ct":"x","cz":"B"}');
+   '{"g0":"Sim","c":"A","c2":"A","c3":"A","c4":"A","c5":"A","c6":"A","c7":"A","c8":"A","cm":["A"],"cn":"B","ct":"x","cz":"B"}');
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
   ('a9e00000-0000-0000-0000-000000000021', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000022', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cm', 'a9a00000-0000-0000-0000-000000000002', '{"A":true}', 'a9d00000-0000-0000-0000-000000000006'),
@@ -517,6 +522,11 @@ INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id
   ('a9e00000-0000-0000-0000-000000000024', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'ct', 'a9a00000-0000-0000-0000-000000000002', 'x', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000026', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c2', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000027', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c3', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-000000000028', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c4', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-000000000029', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c5', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-00000000002a', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c6', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-00000000002b', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c7', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-00000000002c', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c8', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000025', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cz', 'a9a00000-0000-0000-0000-000000000002', 'B', 'a9d00000-0000-0000-0000-000000000006');
 
 SELECT set_config('request.jwt.claims', '{"sub":"a9a00000-0000-0000-0000-000000000001","supabase_uid":"a9a00000-0000-0000-0000-000000000001"}', true);
@@ -530,6 +540,8 @@ DECLARE
   c JSONB;
   item RECORD;
   bad JSONB;
+  fname TEXT;
+  rid UUID;
 BEGIN
   c := public.llm_error_context(P, D, 'c', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000021');
   IF c IS NULL OR (c->'llm_value'->>'present')::BOOLEAN OR NOT (c->'field_definition' ? 'condition') THEN
@@ -557,13 +569,22 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: llm_correct não aceitou LLM ausente em condicional';
   END IF;
 
-  -- LLM presente com "" tambem e LLM em branco.
-  c := public.llm_error_context(P, D, 'c3', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000027');
-  BEGIN
-    PERFORM public.set_error_resolution(P, D, 'c3', 'all_wrong', c, NULL, NULL, NULL, '""'::JSONB);
-    RAISE EXCEPTION 'FALHOU: branco aceito com o LLM respondendo ""';
-  EXCEPTION WHEN invalid_parameter_value THEN NULL;
-  END;
+  -- LLM presente em branco, em cada forma que isBlankAnswer le como branco:
+  -- "", null, [], espaco, tab e NBSP (c3 a c8, reviews ...27 a ...2c).
+  FOR fname, rid IN SELECT * FROM (VALUES
+      ('c3', 'a9e00000-0000-0000-0000-000000000027'::UUID), ('c4', 'a9e00000-0000-0000-0000-000000000028'::UUID),
+      ('c5', 'a9e00000-0000-0000-0000-000000000029'::UUID), ('c6', 'a9e00000-0000-0000-0000-00000000002a'::UUID),
+      ('c7', 'a9e00000-0000-0000-0000-00000000002b'::UUID), ('c8', 'a9e00000-0000-0000-0000-00000000002c'::UUID)) AS v LOOP
+    c := public.llm_error_context(P, D, fname, L, H, 'comparacao', rid);
+    IF c IS NULL OR NOT (c->'llm_value'->>'present')::BOOLEAN THEN
+      RAISE EXCEPTION 'FALHOU: fixture de % deveria ter o LLM presente', fname;
+    END IF;
+    BEGIN
+      PERFORM public.set_error_resolution(P, D, fname, 'all_wrong', c, NULL, NULL, NULL, '""'::JSONB);
+      RAISE EXCEPTION 'FALHOU: branco aceito com o LLM em branco em % (%)', fname, c->'llm_value'->'value';
+    EXCEPTION WHEN invalid_parameter_value THEN NULL;
+    END;
+  END LOOP;
 
   -- LLM respondeu a condicional: o branco e valor aprovavel, so na forma canonica.
   c := public.llm_error_context(P, D, 'c2', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000026');
