@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
-  ERROR_DECISION_LABELS, blankAnswerFor, choosesValue, effectiveErrorResolution, hasResolutionValue, isConditionalField, llmAnswersBlank,
+  ERROR_DECISION_LABELS, blankAnswerFor, choosesValue, effectiveErrorResolution, hasResolutionValue, isConditionalField, llmAnswersBlank, llmValueIsBlank,
   prefillFromValue, prefillFromVerdict, prefillLosesItems, startsBlank,
   type ErrorDecision, type ErrorResolutionContext, type ValueChoosingDecision,
 } from "@/lib/error-resolution";
@@ -133,7 +133,7 @@ type PickerProps = { pending: PendingErrorDecision; decision: ValueChoosingDecis
 
 function VerdictPicker({ context, ...props }: PickerProps & { context: ErrorResolutionContext }) {
   const field = parsePydanticFields([context.field_definition])?.[0] ?? null;
-  if (field) return <FieldValuePicker field={field} llmBlank={llmAnswersBlank(context)} {...props} />;
+  if (field) return <FieldValuePicker field={field} llmBlank={llmValueIsBlank(context)} {...props} />;
   return <>
     <p className="text-sm text-destructive">A definição desta pergunta não pôde ser lida. Recarregue a página e tente de novo.</p>
     <DecisionFooter isPending={props.isPending} onClose={props.onClose} onAction={() => {}} disabled label={confirmLabel(props.isPending)} />

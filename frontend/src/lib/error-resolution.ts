@@ -141,6 +141,15 @@ export function llmAnswersBlank(context: ErrorResolutionContext): boolean {
   return !context.llm_value.present && conditionalBlank(context.field_definition) !== undefined;
 }
 
+/**
+ * Se a resposta do LLM está em branco em qualquer forma: sem a chave, ou com
+ * `null`, `""` ou `[]`. Nesse caso o branco não pode ser gravado como erro do
+ * LLM (`set_error_resolution` recusa), porque o Gabarito o marca como certo.
+ */
+export function llmValueIsBlank(context: ErrorResolutionContext): boolean {
+  return !context.llm_value.present || isBlankAnswer(context.llm_value.value);
+}
+
 // "Erro humano" aprova a resposta do LLM. Sem o campo nela, só há o que
 // aprovar quando o campo é condicional: o LLM respondeu "em branco".
 function llmCorrectResolution(context: ErrorResolutionContext): EffectiveErrorResolution {

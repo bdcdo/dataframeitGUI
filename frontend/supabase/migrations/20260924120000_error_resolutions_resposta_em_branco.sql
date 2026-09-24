@@ -8,7 +8,8 @@
 --   nao conseguia aprovar "em branco" como gabarito. Agora, so em campo com
 --   `condition`, o vazio canonico do tipo e aceito: `[]` em `multi`, `""` nos
 --   demais. JSON null continua recusado, porque o cliente o le igual a coluna
---   nula, que significa decisao sem valor.
+--   nula, que significa decisao sem valor. Com o LLM tambem em branco, o
+--   branco nao e erro dele e e recusado aqui: a decisao e "Erro humano".
 -- * "Erro humano" exigia que a resposta do LLM contivesse o campo. Em campo
 --   condicional, o LLM que deixou a pergunta de fora respondeu "em branco", e
 --   isso pode ser o certo. "Ambos corretos" continua exigindo a resposta,
@@ -18,7 +19,8 @@
 -- 20260921120000_error_resolutions_both_correct_all_wrong.sql com tres pontos
 -- alterados: `v_field` lido antes do guard do LLM, com `v_conditional`; o
 -- guard do LLM ausente, que deixa de valer para `llm_correct` em condicional;
--- e a cadeia de validacao por tipo, que o vazio canonico em condicional pula.
+-- e a cadeia de validacao por tipo, que o vazio canonico em condicional pula
+-- quando o LLM respondeu.
 -- A assinatura nao muda, entao `OR REPLACE` preserva os grants.
 
 BEGIN;
@@ -89,10 +91,21 @@ BEGIN
     END IF;
     -- Em pergunta condicional, o vazio canonico do tipo e resposta: diz ao
     -- gabarito que o gatilho nao acionou a pergunta. So a forma exata, para
-    -- que export e Gabarito leiam um unico vazio por tipo.
-    -- COALESCE de novo: definicao sem `type` deixaria o teste de multi em NULL.
-    IF NOT (v_conditional AND ((COALESCE(v_type = 'multi', false) AND p_value = '[]'::JSONB)
-                               OR (v_type IS DISTINCT FROM 'multi' AND p_value = '""'::JSONB))) THEN
+    -- que export e Gabarito leiam um unico vazio por tipo. Com o LLM tambem
+    -- em branco (sem a chave, null, "" ou []), o branco nao e erro dele e a
+    -- decisao e "Erro humano": gravar aqui contaria erro onde o Gabarito marca
+    -- acerto. COALESCE de novo: definicao sem `type` deixaria o teste de multi
+    -- em NULL.
+    IF v_conditional AND ((COALESCE(v_type = 'multi', false) AND p_value = '[]'::JSONB)
+                          OR (v_type IS DISTINCT FROM 'multi' AND p_value = '""'::JSONB)) THEN
+      IF NOT (v_context->'llm_value'->>'present')::BOOLEAN
+        OR COALESCE(pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'null'
+                    OR v_context->'llm_value'->'value' = '[]'::JSONB
+                    OR (pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'string'
+                        AND pg_catalog.btrim(v_context->'llm_value'->>'value') = ''), false) THEN
+        RAISE EXCEPTION 'O LLM também deixou em branco: a decisão é "Erro humano".' USING ERRCODE = '22023';
+      END IF;
+    ELSE
       -- Fora das opcoes so entra o "Outro: <texto>" que o FieldRenderer grava,
       -- e so quando o campo permite; o prefixo sem complemento e resposta
       -- incompleta (other-option.ts, `isIncompleteOther`).

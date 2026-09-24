@@ -20,9 +20,11 @@ const currentRoundId = "round1";
 // Resposta do LLM sem a chave do campo: o que a condicional não acionada grava.
 const ABSENT = Symbol("chave ausente");
 
-function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue: unknown = "LLM", reviewRoundId = "round1") {
-  const currentResponses = responses.map((r) => r.respondent_type === "llm" ? { ...r, answers: llmValue === ABSENT ? {} : { x: llmValue } } : r);
-  const reviews = autoReview ? [] : [{ ...review, round_id: reviewRoundId }];
+function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue: unknown = "LLM", reviewRoundId = "round1",
+  human: { value: unknown; verdict: string } = { value: "Humano", verdict: "Humano" }) {
+  const answersOf = (value: unknown) => (value === ABSENT ? {} : { x: value });
+  const currentResponses = responses.map((r) => ({ ...r, answers: answersOf(r.respondent_type === "llm" ? llmValue : human.value) }));
+  const reviews = autoReview ? [] : [{ ...review, round_id: reviewRoundId, verdict: human.verdict }];
   const finalAnswers: MetricsFinalAnswer[] = autoReview ? [{ field_review_id: "fr", document_id: "doc1", field_name: "x",
     provenance: "arbitrado", final_verdict: "humano", self_reviewed_at: "2026-09-02T00:00:00Z",
     final_decided_at: "2026-09-03T00:00:00Z", human_response_id: "rh", llm_response_id: "rllm",
@@ -142,14 +144,28 @@ describe("rodada corrente (#733)", () => {
 });
 
 describe("resposta em branco em pergunta condicional", () => {
-  it("Todos errados em branco: célula vazia no export e o LLM que deixou em branco acerta no Gabarito", () => {
+  it("Todos errados em branco: célula vazia no export, e LLM e humano que responderam erram no Gabarito", () => {
     const row = { ...resolutionFixture("all_wrong"), approved_value: "" };
-    const { metrics, exported, gabarito } = results([row], false, ABSENT);
+    const { metrics, exported, gabarito } = results([row]);
     expect(metrics.reviewedEntries[0]).toMatchObject({ isError: true, isPending: false });
     expect(exported.verdicts.rows[0][exported.verdicts.headers.indexOf("x")]).toBe("");
-    const answers = gabarito[0].fields[0].respondentAnswers;
-    expect(answers.find((a) => a.respondentType === "llm")!.isCorrect).toBe(true);
-    expect(answers.find((a) => a.respondentType === "humano")!.isCorrect).toBe(false);
+    expect(gabarito[0].fields[0].respondentAnswers.map((a) => a.isCorrect)).toEqual([false, false]);
+  });
+
+  // Veredito "" de quem votou no grupo em branco, e o LLM sem a chave: métrica
+  // e Gabarito concordam que não houve erro.
+  it.each<[string, unknown]>([["ausente", ABSENT], ["null", null], ["\"\"", ""]])(
+    "sem decisão, humano escolhido em branco (%s) e LLM sem a chave: nem erro na métrica, nem incorreto no Gabarito",
+    (_forma, humanValue) => {
+      const { metrics, gabarito } = results([], false, ABSENT, "round1", { value: humanValue, verdict: "" });
+      expect(metrics.reviewedEntries[0]).toMatchObject({ isError: false });
+      expect(metrics.errors).toHaveLength(0);
+      expect(gabarito[0].fields[0].respondentAnswers.map((a) => a.isCorrect)).toEqual([true, true]);
+    });
+
+  it("sem decisão, veredito em branco e LLM respondendo segue erro do LLM", () => {
+    const { metrics } = results([], false, "LLM", "round1", { value: "", verdict: "" });
+    expect(metrics.reviewedEntries[0]).toMatchObject({ isError: true });
   });
 
   it("Erro humano com o LLM fora da condicional aprova o branco nos três consumidores", () => {

@@ -497,6 +497,8 @@ INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fie
   ('a9b00000-0000-0000-0000-000000000003', 'Decision blank test', 'a9a00000-0000-0000-0000-000000000001', 'compare_llm',
    '[{"name":"g0","type":"single","options":["Sim","Não"],"description":"Gatilho"},
      {"name":"c","type":"single","options":["A","B"],"description":"Condicional","condition":{"field":"g0","equals":"Sim"}},
+     {"name":"c2","type":"single","options":["A","B"],"description":"Condicional respondida pelo LLM","condition":{"field":"g0","equals":"Sim"}},
+     {"name":"c3","type":"single","options":["A","B"],"description":"Condicional em branco no LLM","condition":{"field":"g0","equals":"Sim"}},
      {"name":"cm","type":"multi","options":["A","B"],"description":"Condicional múltipla","condition":{"field":"g0","equals":"Sim"}},
      {"name":"cn","type":"single","options":["A","B"],"description":"Sem condição"},
      {"name":"ct","condition":{"field":"g0","equals":"Sim"},"description":"Condicional sem type"},
@@ -505,14 +507,16 @@ INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('a9c00000-0000-0000-0000-000000000003', 'a9b00000-0000-0000-0000-000000000003', 'Documento 3', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers) VALUES
   ('a9d00000-0000-0000-0000-000000000005', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', NULL, 'llm',
-   '{"g0":"Não","cn":"A"}'),
+   '{"g0":"Não","cn":"A","c2":"B","c3":"","cm":["B"]}'),
   ('a9d00000-0000-0000-0000-000000000006', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'a9a00000-0000-0000-0000-000000000002', 'humano',
-   '{"g0":"Sim","c":"A","cm":["A"],"cn":"B","ct":"x","cz":"B"}');
+   '{"g0":"Sim","c":"A","c2":"A","c3":"A","cm":["A"],"cn":"B","ct":"x","cz":"B"}');
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
   ('a9e00000-0000-0000-0000-000000000021', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000022', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cm', 'a9a00000-0000-0000-0000-000000000002', '{"A":true}', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000023', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cn', 'a9a00000-0000-0000-0000-000000000002', 'B', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000024', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'ct', 'a9a00000-0000-0000-0000-000000000002', 'x', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-000000000026', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c2', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
+  ('a9e00000-0000-0000-0000-000000000027', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'c3', 'a9a00000-0000-0000-0000-000000000002', 'A', 'a9d00000-0000-0000-0000-000000000006'),
   ('a9e00000-0000-0000-0000-000000000025', 'a9b00000-0000-0000-0000-000000000003', 'a9c00000-0000-0000-0000-000000000003', 'cz', 'a9a00000-0000-0000-0000-000000000002', 'B', 'a9d00000-0000-0000-0000-000000000006');
 
 SELECT set_config('request.jwt.claims', '{"sub":"a9a00000-0000-0000-0000-000000000001","supabase_uid":"a9a00000-0000-0000-0000-000000000001"}', true);
@@ -537,24 +541,43 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: both_correct aceito sem resposta do LLM em condicional';
   EXCEPTION WHEN invalid_parameter_value THEN NULL;
   END;
-  -- JSON null nao e o vazio canonico, e o vazio de outro tipo tambem nao.
+  -- Com o LLM tambem em branco, o branco nao e erro dele: recusado em
+  -- "Todos errados" e em "Erro do LLM"; a decisao e "Erro humano".
+  FOREACH bad IN ARRAY ARRAY['"all_wrong"'::JSONB, '"researchers_correct"'::JSONB] LOOP
+    BEGIN
+      PERFORM public.set_error_resolution(P, D, 'c', bad #>> '{}', c, NULL, NULL, NULL, '""'::JSONB);
+      RAISE EXCEPTION 'FALHOU: % em branco aceito com o LLM também em branco', bad;
+    EXCEPTION WHEN invalid_parameter_value THEN NULL;
+    END;
+  END LOOP;
+  -- Erro humano: o LLM deixou a condicional de fora, e isso e a resposta dele.
+  PERFORM public.set_error_resolution(P, D, 'c', 'llm_correct', c, NULL, NULL, NULL, NULL);
+  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 'c';
+  IF item.decision <> 'llm_correct' OR item.approved_value IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: llm_correct não aceitou LLM ausente em condicional';
+  END IF;
+
+  -- LLM presente com "" tambem e LLM em branco.
+  c := public.llm_error_context(P, D, 'c3', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000027');
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 'c3', 'all_wrong', c, NULL, NULL, NULL, '""'::JSONB);
+    RAISE EXCEPTION 'FALHOU: branco aceito com o LLM respondendo ""';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
+
+  -- LLM respondeu a condicional: o branco e valor aprovavel, so na forma canonica.
+  c := public.llm_error_context(P, D, 'c2', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000026');
   FOREACH bad IN ARRAY ARRAY['null'::JSONB, '[]'::JSONB, '" "'::JSONB] LOOP
     BEGIN
-      PERFORM public.set_error_resolution(P, D, 'c', 'all_wrong', c, NULL, NULL, NULL, bad);
+      PERFORM public.set_error_resolution(P, D, 'c2', 'all_wrong', c, NULL, NULL, NULL, bad);
       RAISE EXCEPTION 'FALHOU: single condicional aceitou vazio não canônico: %', bad;
     EXCEPTION WHEN invalid_parameter_value THEN NULL;
     END;
   END LOOP;
-  PERFORM public.set_error_resolution(P, D, 'c', 'all_wrong', c, NULL, NULL, NULL, '""'::JSONB);
-  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 'c';
+  PERFORM public.set_error_resolution(P, D, 'c2', 'all_wrong', c, NULL, NULL, NULL, '""'::JSONB);
+  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 'c2';
   IF item.decision <> 'all_wrong' OR item.approved_value IS DISTINCT FROM '""'::JSONB THEN
     RAISE EXCEPTION 'FALHOU: all_wrong em branco não gravou o vazio';
-  END IF;
-  -- Erro humano: o LLM deixou a condicional de fora, e isso e a resposta dele.
-  PERFORM public.set_error_resolution(P, D, 'c', 'llm_correct', c, item.id, item.resolved_at, NULL, NULL);
-  SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 'c';
-  IF item.decision <> 'llm_correct' OR item.approved_value IS NOT NULL THEN
-    RAISE EXCEPTION 'FALHOU: llm_correct não aceitou LLM ausente em condicional';
   END IF;
 
   c := public.llm_error_context(P, D, 'cm', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000022');

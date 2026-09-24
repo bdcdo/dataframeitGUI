@@ -225,6 +225,8 @@ describe("ErrorDecisionDialog — resposta em branco em pergunta condicional", (
     expect(confirmButton().disabled).toBe(true);
     await userEvent.click(blankBox());
     expect(screen.queryByRole("radio", { name: "Sim" })).toBeNull();
+    // O LLM respondeu: o branco é mesmo erro dele, sem aviso.
+    expect(screen.queryByText(/O LLM também deixou em branco/)).toBeNull();
     expect(confirmButton().disabled).toBe(false);
     await userEvent.click(confirmButton());
     expect(onConfirm).toHaveBeenCalledWith("", "");
@@ -282,6 +284,17 @@ describe("ErrorDecisionDialog — resposta em branco em pergunta condicional", (
     await userEvent.click(blankBox());
     await userEvent.click(screen.getByRole("radio", { name: "Sim" }));
     expect(confirmButton().disabled).toBe(false);
+  });
+
+  it("LLM presente com resposta em branco também conta como branco do LLM", () => {
+    render(<ErrorDecisionDialog
+      pending={{ error: errorCase(""), decision: "all_wrong",
+        context: { ...base.context!, field_definition: condSingle as ErrorResolutionContext["field_definition"], llm_value: { present: true, value: "" } } }}
+      isPending={false} onClose={() => {}} onConfirm={vi.fn()} />);
+    return userEvent.click(blankBox()).then(() => {
+      expect(screen.getByText(/O LLM também deixou em branco/)).toBeTruthy();
+      expect(confirmButton().disabled).toBe(true);
+    });
   });
 
   it("Erro humano com o LLM fora da condicional aprova o branco", async () => {
