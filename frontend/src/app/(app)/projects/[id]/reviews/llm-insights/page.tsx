@@ -63,7 +63,7 @@ function fetchMetricsSources(
         supabase
           .from("reviews")
           .select(
-            "id, document_id, field_name, verdict, chosen_response_id, comment, created_at",
+            "id, document_id, field_name, verdict, chosen_response_id, comment, created_at, round_id",
           )
           .eq("project_id", id)
           .not("chosen_response_id", "is", null),
@@ -146,7 +146,7 @@ async function loadInsightsData(
   const [{ data: project }, accessResult] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, schema_revision, automation_mode")
+      .select("pydantic_fields, schema_revision, automation_mode, current_round_id")
       .eq("id", id)
       .single(),
     getProjectAccessContext(id, user),
@@ -270,6 +270,7 @@ export default async function LlmInsightsPage({
   const { errors, reviewedEntries } = computeLlmErrorMetrics({
     fields: allFields,
     automationMode: project?.automation_mode ?? null,
+    currentRoundId: (project?.current_round_id as string | null) ?? null,
     documentTitles: new Map(
       documents.map((d) => [d.id, d.title || d.external_id || d.id]),
     ),

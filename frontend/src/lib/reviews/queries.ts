@@ -27,7 +27,7 @@ interface ResponseRow {
   created_at: string;
 }
 
-interface ReviewRow {
+export interface ReviewRow {
   id: string;
   document_id: string;
   field_name: string;
@@ -35,6 +35,8 @@ interface ReviewRow {
   chosen_response_id: string | null;
   comment: string | null;
   reviewer_id: string | null;
+  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
+  round_id: string;
   resolutionLabel?: string;
   resolution?: Extract<EffectiveErrorResolution, { status: "approved" | "discussion" }>;
 }
@@ -176,6 +178,30 @@ export function computeTruncation(
   };
 }
 
+/**
+ * A review vigente de cada (documento, campo) do Gabarito: só as da rodada
+ * corrente contam (#733), porque arbitragem de rodada anterior foi dada sobre
+ * respostas que a rodada corrente substituiu. Decisão gravada em
+ * `errorResolutions` sobre célula antiga continua entrando por
+ * `reviewsWithResolutions` enquanto o contexto dela seguir válido (a decisão
+ * é da rodada em que foi tomada). Entre reviews da mesma célula e rodada,
+ * desempate por id descendente, como sempre foi.
+ */
+export function currentRoundReviews(
+  reviews: ReviewRow[] | null,
+  currentRoundId: string | null,
+): ReviewRow[] {
+  const reviewMap = new Map<string, ReviewRow>();
+  (reviews ?? [])
+    .filter((r) => r.round_id === currentRoundId)
+    .sort((a, b) => b.id.localeCompare(a.id))
+    .forEach((r) => {
+      const key = `${r.document_id}:${r.field_name}`;
+      if (!reviewMap.has(key)) reviewMap.set(key, r);
+    });
+  return [...reviewMap.values()];
+}
+
 export async function fetchReviewBaseData(
   supabase: SupabaseClient,
   projectId: string,
@@ -203,14 +229,14 @@ export async function fetchReviewBaseData(
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, pydantic_hash, created_by")
+      .select("pydantic_fields, pydantic_hash, created_by, current_round_id")
       .eq("id", projectId)
       .single(),
     responsesQuery,
     supabase
       .from("reviews")
       .select(
-        "id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id",
+        "id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, round_id",
       )
       .eq("project_id", projectId)
       .limit(REVIEW_BASE_DATA_LIMIT),
@@ -279,16 +305,16 @@ export async function fetchReviewBaseData(
     responsesByDoc.set(r.document_id, list);
   });
 
-  // Deduplicate reviews by (document_id, field_name) — latest wins
-  const reviewMap = new Map<string, ReviewRow>();
-  (reviews as ReviewRow[] | null)
-    ?.sort((a, b) => b.id.localeCompare(a.id))
-    .forEach((r) => {
-      const key = `${r.document_id}:${r.field_name}`;
-      if (!reviewMap.has(key)) reviewMap.set(key, r);
-    });
-
-  const uniqueReviews = [...reviewMap.values()];
+  const currentRoundId = (project?.current_round_id as string | null) ?? null;
+  // Estado representável (ver o cabeçalho de 20260811120000): sem rodada
+  // corrente nenhuma review conta, e o Gabarito fica vazio embora existam
+  // reviews. Fail-closed de propósito, mas anunciado, como o truncamento acima.
+  if (currentRoundId === null && (reviews?.length ?? 0) > 0) {
+    console.warn(
+      `fetchReviewBaseData: projeto ${projectId} sem rodada corrente; ${reviews?.length} reviews ficam fora do Gabarito.`,
+    );
+  }
+  const uniqueReviews = currentRoundReviews(reviews as ReviewRow[] | null, currentRoundId);
 
   const comparableFields = fields.filter(
     (f) => !f.target || f.target === "all",
@@ -329,6 +355,10 @@ function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, Revi
     effectiveReviews.set(`${row.document_id}:${row.field_name}`, {
       id: row.id, document_id: row.document_id, field_name: row.field_name, verdict,
       chosen_response_id: null, comment: errorResolutionComment(row), reviewer_id: row.resolved_by,
+      // Rodada em que a decisão foi tomada. A decisão explícita vale mesmo
+      // sobre célula de rodada antiga, então o filtro de rodada já ficou para
+      // trás (em `currentRoundReviews`) e este carimbo é só descritivo.
+      round_id: row.context?.round_id ?? "",
       resolutionLabel: ERROR_DECISION_LABELS[row.decision!],
       resolution,
     });

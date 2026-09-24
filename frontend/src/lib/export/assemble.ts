@@ -52,12 +52,21 @@ export interface ExportReview {
   field_name: string;
   verdict: string;
   comment: string | null;
+  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
+  round_id: string;
 }
 
 export interface AssembleInput {
   projectName: string;
   fields: PydanticField[];
   minResponses: number;
+  /**
+   * `projects.current_round_id`. Só o veredito dado na rodada corrente entra
+   * no gabarito (#733); a célula de rodada antiga cai para a concordância ou
+   * fica vazia, e uma decisão gravada em `errorResolutions` continua
+   * sobrescrevendo, porque é aplicada depois.
+   */
+  currentRoundId: string | null;
   documents: ExportDocument[];
   responses: ExportResponse[];
   reviews: ExportReview[];
@@ -137,9 +146,21 @@ function unionOriginalColumns(baseDocs: ExportDocument[]): string[] {
 }
 
 // Agrupa os veredictos do revisor por documento (valor formatado + comentários).
-function buildVerdictsByDoc(reviews: ExportReview[]): Map<string, VerdictEntry> {
+// Arbitragem de rodada anterior não é veredito do gabarito corrente, e o
+// comentário dela sai junto, de propósito: foi escrito sobre respostas que a
+// rodada corrente substituiu. Sai do arquivo inteiro, não só da célula: o
+// texto do revisor só aparece na coluna `reviewer_comments`, alimentada também
+// por estas entradas (as decisões de erro entram nela por
+// `applyExportResolutions`), e o export não tem aba de comentários (ver o
+// `return` de `assembleExport`). Quem precisar dele lê a tela de Comentários
+// do app, que não filtra rodada.
+function buildVerdictsByDoc(
+  reviews: ExportReview[],
+  currentRoundId: string | null,
+): Map<string, VerdictEntry> {
   const byDoc = new Map<string, VerdictEntry>();
   for (const r of reviews) {
+    if (r.round_id !== currentRoundId) continue;
     let entry = byDoc.get(r.document_id);
     if (!entry) {
       entry = { fields: new Map(), comments: [] };
@@ -321,7 +342,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const baseResponses = responses.filter((r) => identity.has(r.document_id));
   const baseReviews = reviews.filter((r) => identity.has(r.document_id));
 
-  const verdictsByDoc = buildVerdictsByDoc(baseReviews);
+  const verdictsByDoc = buildVerdictsByDoc(baseReviews, input.currentRoundId);
   applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
   const fieldByName = new Map<string, PydanticField>();
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
