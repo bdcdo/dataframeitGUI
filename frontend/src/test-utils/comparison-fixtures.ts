@@ -42,6 +42,7 @@ export function makeHumanResponse(
     respondent_id: respondentId,
     respondent_type: "humano",
     is_latest: true,
+    is_partial: false,
     answers: { q1 },
     answer_field_hashes: null,
     pydantic_hash: CURRENT_HASH,
@@ -53,6 +54,29 @@ export function makeHumanResponse(
     "documents.excluded_at": null,
     "documents.exclusion_pending_at": null,
     ...extra,
+  };
+}
+
+// Equivalência registrada pela revisora entre duas respostas de um campo. Os
+// snapshots precisam casar com as respostas atuais, senão
+// `filterCurrentEquivalencePairs` descarta o par; `superseded_at: null` casa
+// com o filtro `.is("superseded_at", null)` das queries.
+export function makeEquivalenceRow(
+  fieldName: string,
+  a: { id: string; answer: unknown },
+  b: { id: string; answer: unknown },
+) {
+  return {
+    id: `eq-${a.id}-${b.id}`,
+    project_id: "p1",
+    document_id: "doc1",
+    field_name: fieldName,
+    response_a_id: a.id,
+    response_b_id: b.id,
+    reviewer_id: "rev1",
+    response_a_answer_snapshot: a.answer,
+    response_b_answer_snapshot: b.answer,
+    superseded_at: null,
   };
 }
 
@@ -87,7 +111,9 @@ export function makeIncompleteCoderComparisonScenario() {
     responses: [
       makeHumanResponse("userA", "A"),
       makeHumanResponse("userB", "B"),
-      { ...makeHumanResponse("userC", "C"), answers: {} },
+      // Parcial pela régua de completude do envio: fica fora da contagem,
+      // mas segue codificador do documento (fora do pool de revisores).
+      { ...makeHumanResponse("userC", "C"), answers: {}, is_partial: true },
     ],
     members: [makeProjectMember("userC"), makeProjectMember("userD")],
     openAssignments: [

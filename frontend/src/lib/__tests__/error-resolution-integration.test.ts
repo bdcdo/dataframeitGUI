@@ -42,7 +42,10 @@ function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue
 describe.each([false, true])("a decisão atravessa os consumidores, auto-revisão=%s", (autoReview) => {
   it.each<[ErrorDecision, string, boolean, boolean]>([
     ["llm_correct", "LLM", false, false],
-    ["researchers_correct", "Humano", true, false],
+    ["researchers_correct", "Veredito", true, false],
+    // O veredito ("Humano") segue no gabarito e o LLM deixa de ser erro.
+    ["both_correct", "Humano", false, false],
+    ["all_wrong", "Terceira", true, false],
     ["discussion", "", true, true],
   ])("%s concorda no gabarito, na métrica e no CSV", (decision, value, isError, isPending) => {
     const row = resolutionFixture(decision);
@@ -76,6 +79,25 @@ describe("precedência e contexto", () => {
     const fieldResult = gabarito[0].fields[0];
     expect(fieldResult.respondentAnswers.find((r) => r.respondentType === "llm")!.isCorrect).toBe(true);
     expect(fieldResult.respondentAnswers.find((r) => r.respondentType === "humano")!.isCorrect).toBe(false);
+  });
+  it.each([false, true])("ambos corretos marca LLM e humano como corretos no Gabarito, auto-revisão=%s", (autoReview) => {
+    const row = resolutionFixture("both_correct");
+    if (autoReview) {
+      row.context!.source = { kind: "auto_revisao", id: "fr" };
+      row.current_context = structuredClone(row.context);
+    }
+    const answers = results([row], autoReview).gabarito[0].fields[0].respondentAnswers;
+    expect(answers.map((a) => a.isCorrect)).toEqual([true, true]);
+  });
+  it("todos errados marca LLM e humano como errados no Gabarito", () => {
+    const answers = results([resolutionFixture("all_wrong")]).gabarito[0].fields[0].respondentAnswers;
+    expect(answers.map((a) => a.isCorrect)).toEqual([false, false]);
+  });
+  it("ambos corretos sobre célula de rodada antiga na Comparação não inventa gabarito", () => {
+    const r = results([resolutionFixture("both_correct")], false, "LLM", "round0");
+    expect(r.gabarito).toEqual([]);
+    // Nem linha só com o comentário: o export acompanha a tela.
+    expect(r.exported.verdicts.rows).toEqual([]);
   });
   it("discussão bloqueia o gabarito original; reabrir o restaura", () => {
     expect(results([resolutionFixture("discussion")]).exported.verdicts.rows[0][3]).toBe("");
@@ -111,8 +133,8 @@ describe("rodada corrente (#733)", () => {
     const r = results([row], false, "LLM", "round0");
     expect(r.metrics.errors).toHaveLength(1);
     expect(r.metrics.errors[0].resolution).toEqual(row);
-    expect(r.exported.verdicts.rows[0][r.exported.verdicts.headers.indexOf("x")]).toBe("Humano");
-    expect(r.gabarito[0].fields[0].verdict).toBe("Humano");
+    expect(r.exported.verdicts.rows[0][r.exported.verdicts.headers.indexOf("x")]).toBe("Veredito");
+    expect(r.gabarito[0].fields[0].verdict).toBe("Veredito");
     expect(r.gabarito[0].fields[0].resolutionLabel).toBeTruthy();
   });
 });

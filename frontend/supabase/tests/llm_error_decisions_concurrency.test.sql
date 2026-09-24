@@ -1,5 +1,9 @@
 -- As fixtures são confirmadas entre conexões; executar com o runner Docker local.
 
+-- Como nas outras suítes com dblink: num banco recém-resetado a extensão só
+-- existe se alguma suíte anterior a criou, e a ordem do runner não é contrato.
+CREATE EXTENSION IF NOT EXISTS dblink WITH SCHEMA extensions;
+
 BEGIN;
 INSERT INTO auth.users (id, email) VALUES
   ('b9a00000-0000-0000-0000-000000000001', 'concurrent-owner@example.test'),

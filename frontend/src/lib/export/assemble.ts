@@ -17,7 +17,7 @@ import {
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import { formatExportValue, formatVerdict } from "./format";
-import { effectiveErrorResolution, errorResolutionComment, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 export interface ExportSheet {
   headers: string[];
@@ -210,6 +210,27 @@ function fieldAgreementValue(
   return unique.size === 1 ? formatExportValue(answers[0]) : null;
 }
 
+// O que a decisão escreve na célula, ou `undefined` para deixá-la como está.
+// "Ambos corretos" não aprova valor: o campo fica com o que o veredito ou a
+// concordância já puseram ali, e só recebe o veredito guardado no contexto
+// (auto-revisão) quando nada chegou por outra via.
+function exportResolutionValue(
+  resolution: ExportedResolution,
+  cellHasValue: boolean,
+): string | undefined {
+  if (resolution.status === "approved") return formatExportValue(resolution.value);
+  if (resolution.status === "discussion") return "";
+  return cellHasValue || resolution.verdictValue === undefined ? undefined : formatExportValue(resolution.verdictValue);
+}
+
+type ExportedResolution = Extract<EffectiveErrorResolution, { status: "approved" | "discussion" | "upheld" }>;
+
+function exportedResolution(row: ErrorResolutionRow): ExportedResolution | null {
+  const resolution = effectiveErrorResolution(row);
+  return resolution.status === "approved" || resolution.status === "discussion" || resolution.status === "upheld"
+    ? resolution : null;
+}
+
 function applyExportResolutions(
   verdicts: Map<string, VerdictEntry>,
   rows: ErrorResolutionRow[],
@@ -218,10 +239,16 @@ function applyExportResolutions(
 ): void {
   for (const row of rows) {
     if (!documents.has(row.document_id) || !fieldNames.has(row.field_name)) continue;
-    const resolution = effectiveErrorResolution(row);
-    if (resolution.status !== "approved" && resolution.status !== "discussion") continue;
-    const entry = verdicts.get(row.document_id) ?? { fields: new Map<string, string>(), comments: [] };
-    entry.fields.set(row.field_name, resolution.status === "approved" ? formatExportValue(resolution.value) : "");
+    const resolution = exportedResolution(row);
+    if (!resolution) continue;
+    const existing = verdicts.get(row.document_id);
+    const entry = existing ?? { fields: new Map<string, string>(), comments: [] };
+    const value = exportResolutionValue(resolution, entry.fields.has(row.field_name));
+    // Decisão que não escreve valor não cria linha de Gabarito sozinha: um
+    // documento só com o comentário sairia no arquivo com todos os campos em
+    // branco, e a tela do Gabarito não o mostra.
+    if (value === undefined && !existing) continue;
+    if (value !== undefined) entry.fields.set(row.field_name, value);
     entry.comments.push(errorResolutionComment(row));
     verdicts.set(row.document_id, entry);
   }

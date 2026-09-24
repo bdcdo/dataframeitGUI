@@ -5,7 +5,7 @@
 
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
-import type { EquivalenceByDocField } from "@/lib/compare-queue";
+import type { EquivalenceByDocField } from "@/lib/compare-divergence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 export interface HumanResponseRow {

@@ -125,7 +125,7 @@ export function useLlmErrorFiltering<
   const filteredErrors = errors.filter((e) => {
     const status = effectiveErrorResolution(e.resolution).status;
     if (errorStatusFilter === "open" && !isOpenError(e)) return false;
-    if (errorStatusFilter === "resolved" && status !== "approved") return false;
+    if (errorStatusFilter === "resolved" && status !== "approved" && status !== "upheld") return false;
     if (errorStatusFilter === "discussion" && status !== "discussion") return false;
     return matchesScopeFilters(e);
   });

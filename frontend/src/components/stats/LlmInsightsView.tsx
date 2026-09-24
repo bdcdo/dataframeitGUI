@@ -7,7 +7,7 @@ import { EditFieldDialog } from "./EditFieldDialog";
 import { ErrorStatsCards } from "./ErrorStatsCards";
 import { ErrorFiltersToolbar } from "./ErrorFiltersToolbar";
 import { ErrorDecisionDialog, type PendingErrorDecision } from "./ErrorDecisionDialog";
-import type { ErrorDecision } from "@/lib/error-resolution";
+import { choosesValue, type ErrorDecision, type ErrorResolutionInput } from "@/lib/error-resolution";
 import { useLlmErrorFiltering } from "@/hooks/useLlmErrorFiltering";
 import {
   resolveError,
@@ -41,17 +41,13 @@ interface LlmInsightsViewProps {
   };
 }
 
-function preferredHumanId(choices: NonNullable<LlmError["humanChoices"]>, chosenId: string | null): string | undefined {
-  const chosen = choices.find((choice) => choice.id === chosenId);
-  if (chosen) return chosen.id;
-  return choices.length === 1 ? choices[0].id : undefined;
-}
-
-async function persistDecision(projectId: string, pending: PendingErrorDecision, note: string) {
+async function persistDecision(projectId: string, pending: PendingErrorDecision, note: string, value?: unknown) {
   const { error, decision, context } = pending;
   if (decision && context) {
     return resolveError(projectId, error.documentId, error.fieldName, {
       decision, context, expected: error.resolution ?? null, note,
+      // Só as decisões com seletor levam valor: o que o revisor escolheu (#733).
+      ...(choosesValue(decision) ? { value: value as ErrorResolutionInput["value"] } : {}),
     });
   }
   if (decision === null && error.resolution) {
@@ -111,23 +107,15 @@ export function LlmInsightsView({
   const regenerateLabel = regenerating ? "Regenerando…" : "Regenerar backlog";
   const emptyMessage = errors.length === 0 ? "Nenhum erro do LLM encontrado." : "Nenhum erro corresponde aos filtros.";
 
-  const prepareDecision = (error: LlmError, decision: ErrorDecision, selectedHumanId?: string) => {
+  // A resposta humana do contexto é escolhida no servidor (#733): a UI só
+  // passa a que a arbitragem escolheu, como dica.
+  const prepareDecision = (error: LlmError, decision: ErrorDecision) => {
     if (!canResolve || !error.sourceId) return;
-    const choices = error.humanChoices ?? [];
-    if (choices.length === 0) {
-      toast.error("Não há resposta humana ativa para este campo. Refaça a revisão antes de decidir.");
-      return;
-    }
-    const humanId = selectedHumanId ?? preferredHumanId(choices, error.chosenResponseId);
-    if (!humanId) {
-      setPendingDecision({ error, decision, context: null });
-      return;
-    }
     startTransition(async () => {
       try {
         const result = await prepareErrorResolution({ projectId, documentId: error.documentId,
           fieldName: error.fieldName, llmResponseId: error.llmResponseId,
-          humanResponseId: humanId, sourceKind: error.source, sourceId: error.sourceId! });
+          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId! });
         if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
         setPendingDecision({ error, decision, context: result.context });
       } catch {
@@ -136,11 +124,11 @@ export function LlmInsightsView({
     });
   };
 
-  const confirmDecision = (note: string) => {
+  const confirmDecision = (note: string, value?: unknown) => {
     if (!canResolve || !pendingDecision) return;
     startTransition(async () => {
       try {
-        const result = await persistDecision(projectId, pendingDecision, note);
+        const result = await persistDecision(projectId, pendingDecision, note, value);
         if (!result.success) { toast.error(result.error ?? "Falha ao salvar."); return; }
         toast.success(pendingDecision.decision ? "Decisão salva" : "Caso reaberto");
         setPendingDecision(null);
@@ -236,7 +224,6 @@ export function LlmInsightsView({
     <ErrorDecisionDialog
       pending={pendingDecision} isPending={isPending}
       onClose={() => setPendingDecision(null)}
-      onPrepare={prepareDecision}
       onConfirm={confirmDecision}
     />
     {isCoordinator && editingField && schemaEditor && (
