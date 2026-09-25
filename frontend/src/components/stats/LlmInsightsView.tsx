@@ -45,6 +45,9 @@ interface LlmInsightsViewProps {
   };
 }
 
+// Constante de módulo: um `[]` no default criaria array novo a cada render.
+const NO_LAPSED_DECISIONS: LapsedDecision[] = [];
+
 async function persistDecision(projectId: string, pending: PendingErrorDecision, note: string, value?: unknown) {
   const { error, decision, context } = pending;
   if (decision && context) {
@@ -64,7 +67,7 @@ export function LlmInsightsView({
   projectId,
   errors,
   reviewedEntries,
-  lapsedDecisions = [],
+  lapsedDecisions = NO_LAPSED_DECISIONS,
   fields,
   schemaEditor,
   isCoordinator,
