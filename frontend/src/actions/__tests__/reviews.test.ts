@@ -69,6 +69,10 @@ async function loadSubmit() {
 }
 
 describe("submitVerdict — veredito ambiguo vira comentario automatico", () => {
+  const PROJECT = {
+    pydantic_fields: [{ id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "", hash: "aaaaaaaaaaaa" }],
+  };
+
   it("grava o review no membro canônico e mantém a autoria na conta autenticada", async () => {
     tableData = { project_comments: null };
     const submitVerdict = await loadSubmit();
@@ -147,7 +151,27 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
 
   it("verdict nao-ambiguo e nenhum outro revisor ambiguo → deleta o comentario orfao", async () => {
     // reviews query (stillAmbiguous) retorna vazio
-    tableData = { reviews: [] };
+    tableData = { reviews: [], projects: PROJECT };
+    const submitVerdict = await loadSubmit();
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "concordo",
+    });
+
+    expect(
+      opCalls.some((c) => c.op === "delete" && c.table === "project_comments"),
+    ).toBe(true);
+  });
+
+  // #758: só veredito que ainda vale sustenta a pendência. O "ambiguo" dado
+  // sobre outra versão da pergunta não é mais gabarito de ninguém.
+  it("verdict nao-ambiguo e o outro ambiguo e de outra versao da pergunta → deleta", async () => {
+    tableData = {
+      reviews: [{ id: "r2", field_name: "q1", verdict: "ambiguo", field_hash: "ffffffffffff" }],
+      projects: PROJECT,
+    };
     const submitVerdict = await loadSubmit();
     await submitVerdict({
       projectId: "p1",
@@ -162,7 +186,10 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
   });
 
   it("verdict nao-ambiguo mas outro revisor ainda marca ambiguo → nao deleta", async () => {
-    tableData = { reviews: [{ id: "r2" }] };
+    tableData = {
+      reviews: [{ id: "r2", field_name: "q1", verdict: "ambiguo", field_hash: "aaaaaaaaaaaa" }],
+      projects: PROJECT,
+    };
     const submitVerdict = await loadSubmit();
     await submitVerdict({
       projectId: "p1",

@@ -52,7 +52,7 @@ export default async function CommentsPage({
     supabase
       .from("reviews")
       .select(
-        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at, response_snapshot",
+        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at, response_snapshot, field_hash",
       )
       .eq("project_id", id)
       .not("comment", "is", null)

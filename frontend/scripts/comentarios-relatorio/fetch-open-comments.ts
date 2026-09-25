@@ -23,6 +23,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import type { PydanticField } from "../../src/lib/types";
+import { reviewIsValid } from "../../src/lib/review-validity";
 import { loadEnv } from "./load-env";
 
 loadEnv();
@@ -158,7 +159,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
     supabase
       .from("reviews")
       .select(
-        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at, response_snapshot",
+        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at, response_snapshot, field_hash",
       )
       .eq("project_id", projectId)
       .not("comment", "is", null)
@@ -297,6 +298,17 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       createdAt: r.created_at as string,
       extra: {
         verdict: r.verdict,
+        // Se o veredito ainda é gabarito (`review-validity.ts`). O comentário
+        // entra no relatório de qualquer forma; o veredito dado sobre outra
+        // versão da pergunta não deve ser lido como a resposta certa.
+        verdictValid: reviewIsValid(
+          {
+            field_name: r.field_name as string,
+            verdict: r.verdict as string,
+            field_hash: (r.field_hash as string | null) ?? null,
+          },
+          field,
+        ),
         chosenResponseId: r.chosen_response_id,
         responseSnapshot: r.response_snapshot,
         fieldType: field?.type,

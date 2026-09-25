@@ -276,6 +276,15 @@ def render_review_cluster(cl: dict) -> list[str]:
     for ln in r["text"].splitlines():
         body.append(f"> {ln}" if ln.strip() else ">")
     body.append("")
+    # `verdictValid` vem de fetch-open-comments.ts: False quando o veredito foi
+    # dado sobre outra versão da pergunta e deixou de ser gabarito. Ausente em
+    # JSON gerado antes da chave existir, e aí nada é dito.
+    if (r.get("extra") or {}).get("verdictValid") is False:
+        body.append(
+            "Esse veredito foi dado sobre uma versão anterior da pergunta e "
+            "não vale mais como gabarito."
+        )
+        body.append("")
 
     if doubts:
         body.append(

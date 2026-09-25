@@ -9,6 +9,7 @@ import {
   type CompareAssignmentStatus,
 } from "@/lib/compare-assignment-status";
 import { versionGate } from "@/lib/compare-version";
+import { reviewIsValid } from "@/lib/review-validity";
 
 const PG_UNIQUE_VIOLATION = "23505";
 // O índice parcial criado pelo #490 (uma comparação ATIVA por documento;
@@ -188,7 +189,7 @@ export async function syncCompareAssignment(
       .eq("document_id", documentId),
     supabase
       .from("reviews")
-      .select("field_name")
+      .select("field_name, verdict, field_hash")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("reviewer_id", userId),
@@ -202,9 +203,16 @@ export async function syncCompareAssignment(
       .is("superseded_at", null),
   ]);
 
-  const reviewedFields = new Set((reviews ?? []).map((r) => r.field_name));
-
   const fields = (project?.pydantic_fields as PydanticField[]) || [];
+
+  // Só veredito que ainda vale resolve a divergência: o mesmo critério do
+  // Gabarito e da fila da Comparação (`review-validity.ts`). Um veredito dado
+  // sobre outra versão da pergunta fecharia o parecer com uma célula que o
+  // Gabarito não tem, e ninguém seria chamado a rearbitrá-la.
+  const fieldByName = new Map(fields.map((f) => [f.name, f]));
+  const reviewedFields = new Set(
+    (reviews ?? []).flatMap((r) => (reviewIsValid(r, fieldByName.get(r.field_name)) ? [r.field_name] : [])),
+  );
 
   // O fecho lê a divergência a resolver do conjunto de comparação
   // (comparison-set.ts), a mesma que a fila mostra no estado default: resolver

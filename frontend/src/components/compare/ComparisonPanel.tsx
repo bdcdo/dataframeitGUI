@@ -50,6 +50,8 @@ interface ComparisonPanelProps {
   totalFields: number;
   responses: ComparisonResponse[];
   existingVerdict: VerdictInfo | null;
+  /** Veredito do revisor que perdeu a validade; só referência (#758). */
+  staleVerdict?: VerdictInfo | null;
   reviewed: boolean[];
   isDivergent: boolean;
   docStatus: DocStatus;
@@ -100,6 +102,7 @@ export function ComparisonPanel({
   totalFields,
   responses,
   existingVerdict,
+  staleVerdict = null,
   reviewed,
   isDivergent,
   docStatus,
@@ -258,6 +261,7 @@ export function ComparisonPanel({
           displayOptions={displayOptions}
           responses={responses}
           existingVerdict={existingVerdict}
+          staleVerdict={staleVerdict}
           pendingVerdict={pendingVerdict}
           isDivergent={isDivergent}
           isSavingVerdict={isSavingVerdict}

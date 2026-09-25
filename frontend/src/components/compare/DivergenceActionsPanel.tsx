@@ -28,6 +28,13 @@ interface DivergenceActionsPanelProps {
   fields: PydanticField[];
   isMulti: boolean;
   existingVerdict: VerdictInfo | null;
+  /**
+   * Veredito do revisor dado sobre outra versão da pergunta (ou fora das
+   * opções atuais): não conta como revisão, e a célula pede arbitragem de
+   * novo. Fica na tela só como referência, e some assim que houver veredito
+   * válido (#758).
+   */
+  staleVerdict?: VerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
   onPrepareVerdict: (pending: PendingVerdict) => void;
   comment: string;
@@ -57,6 +64,7 @@ export function DivergenceActionsPanel({
   fields,
   isMulti,
   existingVerdict,
+  staleVerdict = null,
   pendingVerdict,
   onPrepareVerdict,
   comment,
@@ -98,6 +106,20 @@ export function DivergenceActionsPanel({
           onConfirm={pendingConfirm.onConfirm}
           onDiscard={pendingConfirm.onDiscard}
         />
+      )}
+
+      {!existingVerdict && staleVerdict && (
+        <div className="mt-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+          Veredito anterior à mudança da pergunta:{" "}
+          <span className="font-medium text-foreground">
+            {formatVerdictDisplay(staleVerdict.verdict)}
+          </span>
+          {staleVerdict.comment && (
+            <span className="ml-1">
+              &mdash; &ldquo;{staleVerdict.comment}&rdquo;
+            </span>
+          )}
+        </div>
       )}
 
       {existingVerdict && (

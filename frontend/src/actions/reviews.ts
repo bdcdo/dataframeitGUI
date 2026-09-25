@@ -5,6 +5,8 @@ import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
+import { reviewIsValid } from "@/lib/review-validity";
+import type { PydanticField } from "@/lib/types";
 
 export interface ResponseSnapshotEntry {
   id: string;
@@ -105,17 +107,24 @@ export async function submitVerdict({
     } else {
       // Veredito deixou de ser ambíguo. Se nenhum outro revisor ainda marca
       // este campo como ambíguo, remove o comentário automático para não deixar
-      // pendência órfã na aba Comentários.
-      const { data: stillAmbiguous } = await supabase
-        .from("reviews")
-        .select("id")
-        .eq("project_id", projectId)
-        .eq("document_id", documentId)
-        .eq("field_name", fieldName)
-        .eq("verdict", "ambiguo")
-        .limit(1);
+      // pendência órfã na aba Comentários. Só conta o "ambiguo" que ainda vale
+      // (`review-validity.ts`): o dado sobre outra versão da pergunta não é
+      // mais o veredito de ninguém. Sem `limit(1)`, porque o primeiro pode ser
+      // justamente um inválido; são no máximo um por revisor da célula.
+      const [{ data: ambiguous }, { data: project }] = await Promise.all([
+        supabase
+          .from("reviews")
+          .select("id, field_name, verdict, field_hash")
+          .eq("project_id", projectId)
+          .eq("document_id", documentId)
+          .eq("field_name", fieldName)
+          .eq("verdict", "ambiguo"),
+        supabase.from("projects").select("pydantic_fields").eq("id", projectId).single(),
+      ]);
+      const field = ((project?.pydantic_fields ?? []) as PydanticField[]).find((f) => f.name === fieldName);
+      const stillAmbiguous = (ambiguous ?? []).some((r) => reviewIsValid(r, field));
 
-      if (!stillAmbiguous || stillAmbiguous.length === 0) {
+      if (!stillAmbiguous) {
         const { error: deleteError } = await supabase
           .from("project_comments")
           .delete()

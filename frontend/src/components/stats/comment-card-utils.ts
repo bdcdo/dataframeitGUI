@@ -23,6 +23,11 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
+  /**
+   * Só em comentário de review: o veredito foi dado sobre outra versão da
+   * pergunta, ou saiu das opções atuais, e não é mais gabarito (#758).
+   */
+  verdictStale?: boolean;
   source:
     | "review"
     | "nota"

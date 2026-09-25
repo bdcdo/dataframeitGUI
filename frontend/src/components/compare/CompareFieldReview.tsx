@@ -47,6 +47,8 @@ interface CompareFieldReviewProps {
   displayOptions: string[];
   responses: ComparisonResponse[];
   existingVerdict: VerdictInfo | null;
+  /** Veredito do revisor que perdeu a validade; só referência (#758). */
+  staleVerdict?: VerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
   isDivergent: boolean;
   isSavingVerdict: boolean;
@@ -120,6 +122,7 @@ export function CompareFieldReview({
   displayOptions,
   responses,
   existingVerdict,
+  staleVerdict = null,
   pendingVerdict,
   isDivergent,
   isSavingVerdict,
@@ -193,6 +196,7 @@ export function CompareFieldReview({
           fields={fields}
           isMulti={isMulti}
           existingVerdict={existingVerdict}
+          staleVerdict={staleVerdict}
           pendingVerdict={pendingVerdict}
           onPrepareVerdict={onPrepareVerdict}
           comment={comment}

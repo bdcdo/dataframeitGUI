@@ -87,7 +87,9 @@ export function GabaritoSection({ comment, projectId }: GabaritoSectionProps) {
       <CollapsibleContent>
         <div className="mt-1 space-y-1.5 rounded-md bg-muted/50 p-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium">Gabarito:</span>
+            <span className="text-xs font-medium">
+              {comment.verdictStale ? "Veredito anterior à mudança da pergunta:" : "Gabarito:"}
+            </span>
             <Badge
               variant={verdictVariant(comment.verdict)}
               className="text-xs"

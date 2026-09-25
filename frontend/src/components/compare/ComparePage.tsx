@@ -36,6 +36,8 @@ interface ComparePageProps {
   divergentFields: Record<string, string[]>;
   fields: PydanticField[];
   existingReviews: ReviewsByDoc;
+  /** Vereditos do revisor que perderam a validade, só como referência (#758). */
+  staleReviews?: ReviewsByDoc;
   projectPydanticHash: string | null;
   respondentNames: string[];
   // Defaults VIVOS derivados do automation_mode/projeto (compareDefaultsForMode):
@@ -92,6 +94,7 @@ export function ComparePage({
   divergentFields,
   fields,
   existingReviews,
+  staleReviews,
   projectPydanticHash,
   respondentNames,
   defaultMinHumans,
@@ -620,6 +623,7 @@ export function ComparePage({
           totalFields: docFields.length,
           responses: fieldResponses,
           existingVerdict: currentVerdict,
+          staleVerdict: staleReviews?.[currentDoc.id]?.[currentFieldName] ?? null,
           reviewed,
           isDivergent: isCurrentFieldDivergent,
           docStatus: isCurrentDocComplete
