@@ -488,9 +488,10 @@ function pairedWithVerdict(
   const groupKeys = ctx.groupKeysFor(review.document_id, review.field_name);
   const llmKey = groupKeys.get(llmResponse.id);
   if (llmKey === undefined) return false;
+  // A própria resposta do LLM entra na varredura sem efeito: quem chega aqui já
+  // sabe que ela não bate com o veredito.
   return (ctx.responsesByDoc.get(review.document_id) ?? []).some(
     (response) =>
-      response.id !== llmResponse.id &&
       groupKeys.get(response.id) === llmKey &&
       matches(response.answers?.[review.field_name]),
   );

@@ -197,6 +197,21 @@ describe("métrica: validade do veredito no lugar da rodada", () => {
     expect(errors[0].sourceId).toBe("valid");
   });
 
+  it.each([
+    ["ambiguo", "ambiguo"],
+    ["resposta nova digitada", "Outra coisa"],
+  ])("veredito válido mais recente sem resposta escolhida (%s) tira a célula da métrica", (_label, verdict) => {
+    const { errors, reviewedEntries } = run({
+      responses: [llm("B"), response({ answers: { x: "A" } })],
+      reviews: [
+        review({ id: "antiga", verdict: "A", created_at: "2026-01-01T00:00:00Z" }),
+        review({ id: "nova", verdict, chosen_response_id: null, created_at: "2026-03-01T00:00:00Z" }),
+      ],
+    });
+    expect(errors).toEqual([]);
+    expect(reviewedEntries).toEqual([]);
+  });
+
   it("entre válidas vence a mais recente por created_at", () => {
     const { errors } = run({
       responses: [llm("B"), response({ answers: { x: "A" } }), response({ id: "rh2", answers: { x: "B" } })],

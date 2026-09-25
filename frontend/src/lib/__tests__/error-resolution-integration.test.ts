@@ -137,6 +137,12 @@ describe("veredito que perdeu a validade (#758)", () => {
     expect(r.exported.verdicts.rows).toEqual([]);
     expect(r.gabarito).toEqual([]);
   });
+  it("Em discussão sobre veredito que perdeu a validade não vale em nenhum dos três", () => {
+    const r = results([resolutionFixture("discussion")], false, "LLM", OTHER_QUESTION);
+    expect(r.gabarito).toEqual([]);
+    expect(r.exported.verdicts.rows).toEqual([]);
+    expect(r.metrics.reviewedEntries).toEqual([]);
+  });
   it("decisão com valor próprio sobre veredito que perdeu a validade continua valendo nos três", () => {
     const row = resolutionFixture("researchers_correct");
     const r = results([row], false, "LLM", OTHER_QUESTION);
