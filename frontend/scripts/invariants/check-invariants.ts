@@ -24,7 +24,14 @@ import {
   buildTimelineFromPersistedVersions,
   type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
-import { computeFieldHash } from "@/lib/schema-utils";
+import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
+import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
+import {
+  decisionDependsOnSource,
+  hasResolutionValue,
+  type ErrorDecision,
+  type ErrorResolutionContext,
+} from "@/lib/error-resolution";
 // Mesma primitiva de igualdade que o produto usa para decidir divergência
 // (`lib/compare-divergence.ts`, `lib/equivalence.ts`): se as duas réguas
 // divergirem, é bug de contrato e a invariante deve enxergar.
@@ -138,7 +145,78 @@ async function activeDocIds(): Promise<Set<string>> {
 }
 
 type Violation = { key: string; detail: string };
-type Invariant = { name: string; motivation: string; run: () => Promise<Violation[]> };
+// `informational`: a lista é evidência para acompanhar, não violação. Sai como
+// INFO e não conta como falha (ex.: o legado sem `field_hash`, que só diminui
+// com rearbitragem).
+type Invariant = {
+  name: string;
+  motivation: string;
+  run: () => Promise<Violation[]>;
+  informational?: true;
+};
+
+/** Linha de `error_resolutions` lida pelas invariantes de validade do veredito. */
+interface DecisionRow {
+  id: string;
+  project_id: string;
+  document_id: string;
+  field_name: string;
+  decision: ErrorDecision | null;
+  context: ErrorResolutionContext | null;
+  approved_value: unknown;
+}
+
+interface ReviewValidityRow extends ValidatableReview {
+  id: string;
+  project_id: string;
+}
+
+// As decisões do LLM Insights que dependem do veredito de origem ("Ambos
+// corretos", "Em discussão", legado) e o apontam, com a validade dessa fonte
+// pelas DUAS cópias da regra: `reviewIsValid` (TS, a que Gabarito, export e
+// fila usam) e `review_is_valid` (SQL, a que `read_error_resolutions` usa para
+// decidir se a decisão continua aplicada). O service_role não consegue
+// avaliar `current_context` (`llm_error_context` exige usuário Clerk), então a
+// invariante confere o mecanismo: as duas cópias precisam concordar em toda
+// fonte de decisão que dependa dela. Decisão que grava valor próprio ("Erro
+// humano", "Erro do LLM", "Todos errados") vale mesmo com a fonte inválida e
+// fica de fora.
+async function sourceDependentDecisions(): Promise<
+  { decision: DecisionRow; sourceId: string; tsValid: boolean; sqlValid: boolean }[]
+> {
+  const [decisions, projects] = await Promise.all([
+    fetchAll<DecisionRow>(
+      "error_resolutions",
+      "id, project_id, document_id, field_name, decision, context, approved_value",
+      (q) => q.not("context", "is", null),
+    ),
+    fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+  ]);
+  const anchored = decisions.flatMap((decision) => {
+    const source = decision.context?.source;
+    if (!decisionDependsOnSource(decision.decision) || source?.kind !== "comparacao") return [];
+    return typeof source.id === "string" ? [{ decision, sourceId: source.id }] : [];
+  });
+  const reviews = new Map(
+    (await fetchByIds<ReviewValidityRow>(
+      "reviews",
+      "id, project_id, field_name, verdict, field_hash",
+      [...new Set(anchored.map((a) => a.sourceId))],
+    )).map((r) => [r.id, r]),
+  );
+  const fieldsOf = new Map(
+    projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))]),
+  );
+  const result = [];
+  for (const { decision, sourceId } of anchored) {
+    const review = reviews.get(sourceId);
+    const tsValid = !!review && reviewIsValid(review, fieldsOf.get(review.project_id)?.get(review.field_name));
+    const { data, error } = await supabase.rpc("review_is_valid", { p_review_id: sourceId });
+    if (error) throw new Error(`review_is_valid(${sourceId}): ${error.message}`);
+    result.push({ decision, sourceId, tsValid, sqlValid: data === true });
+  }
+  return result;
+}
 
 const invariants: Invariant[] = [
   {
@@ -950,6 +1028,86 @@ const invariants: Invariant[] = [
   },
 ];
 
+invariants.push(
+  {
+    name: "decisao-aplicada-tem-fonte-valida",
+    motivation:
+      "#758: decisão do LLM Insights que depende do veredito de origem (Ambos corretos, Em discussão) só vale enquanto ele vale. `read_error_resolutions` a derruba quando `review_is_valid` (SQL) reprova a fonte; Gabarito, export e fila fazem o mesmo com `reviewIsValid` (TS). FAIL aqui = a fonte é inválida pela regra do produto e o banco ainda a aceita, logo a decisão continuaria aplicada ao gabarito sobre um veredito dado para outra versão da pergunta",
+    run: async () =>
+      (await sourceDependentDecisions())
+        .filter((d) => !d.tsValid && d.sqlValid)
+        .map((d) => ({
+          key: d.decision.id,
+          detail: `decisão '${d.decision.decision}' em ${d.decision.document_id}/${d.decision.field_name}: fonte ${d.sourceId} inválida pela regra TS, válida para o banco`,
+        })),
+  },
+  {
+    name: "fonte-valida-mantem-decisao-aplicada",
+    motivation:
+      "inversa da anterior: fonte válida pela regra do produto que o banco reprova derrubaria do gabarito uma decisão legítima, em silêncio (o revisor veria 'Fontes alteradas' sem nada ter mudado). FAIL = as duas cópias da regra divergem no sentido oposto",
+    run: async () =>
+      (await sourceDependentDecisions())
+        .filter((d) => d.tsValid && !d.sqlValid)
+        .map((d) => ({
+          key: d.decision.id,
+          detail: `decisão '${d.decision.decision}' em ${d.decision.document_id}/${d.decision.field_name}: fonte ${d.sourceId} válida pela regra TS, inválida para o banco`,
+        })),
+  },
+  {
+    name: "reviews-sem-field-hash",
+    informational: true,
+    motivation:
+      "#758: veredito sem `field_hash` é legado que o backfill não conseguiu provar (resposta escolhida e snapshot sem hash do campo). Vale enquanto o valor está no domínio atual, sem garantia de que a pergunta é a mesma. A contagem só cai com rearbitragem; subir indica canal de escrita que grava review sem passar pelo gatilho de carimbo",
+    run: async () => {
+      const [rows, projects] = await Promise.all([
+        fetchAll<{ id: string; project_id: string; field_name: string }>(
+          "reviews",
+          "id, project_id, field_name",
+          (q) => q.is("field_hash", null),
+        ),
+        fetchAll<{ id: string; name: string | null }>("projects", "id, name"),
+      ]);
+      const nameOf = new Map(projects.map((p) => [p.id, p.name ?? p.id]));
+      const byProject = new Map<string, number>();
+      for (const r of rows) byProject.set(r.project_id, (byProject.get(r.project_id) ?? 0) + 1);
+      return [
+        ...[...byProject.entries()].map(([projectId, count]) => ({
+          key: projectId,
+          detail: `${count} review(s) sem field_hash em ${nameOf.get(projectId) ?? projectId}`,
+        })),
+        ...rows.map((r) => ({ key: r.id, detail: `sem field_hash (projeto ${r.project_id}, campo ${r.field_name})` })),
+      ];
+    },
+  },
+  {
+    name: "approved-value-no-dominio-atual",
+    motivation:
+      "#758: o valor aprovado por 'Erro do LLM' e 'Todos errados' vai ao gabarito mesmo com a fonte inválida, porque a decisão é um julgamento sobre a pergunta atual. Enquanto a definição do campo guardada na decisão é a atual (se mudou, a decisão já é 'Fontes alteradas'), o valor precisa estar no domínio atual, a mesma régua de `set_error_resolution` (`hasResolutionValue`). FAIL = valor gravado por canal que pulou a validação da RPC",
+    run: async () => {
+      const [decisions, projects] = await Promise.all([
+        fetchAll<DecisionRow>(
+          "error_resolutions",
+          "id, project_id, document_id, field_name, decision, context, approved_value",
+          (q) => q.not("approved_value", "is", null),
+        ),
+        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+      ]);
+      const fieldsOf = new Map(
+        projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))]),
+      );
+      return decisions.flatMap((d) => {
+        const field = fieldsOf.get(d.project_id)?.get(d.field_name);
+        if (!field || stableStringify(d.context?.field_definition) !== stableStringify(field)) return [];
+        if (hasResolutionValue(field, d.approved_value)) return [];
+        return [{
+          key: d.id,
+          detail: `'${d.decision}' em ${d.document_id}/${d.field_name} aprovou ${JSON.stringify(d.approved_value)}, fora do domínio atual`,
+        }];
+      });
+    },
+  },
+);
+
 /** Linhas de `reviews` usadas pela invariante de coerência veredito×campo. */
 interface ReviewVerdictRow {
   id: string;
@@ -967,6 +1125,11 @@ async function main() {
       const violations = await inv.run();
       if (violations.length === 0) {
         console.log(`PASS  ${inv.name}`);
+      } else if (inv.informational) {
+        console.log(`INFO  ${inv.name} — ${violations.length} linha(s)`);
+        console.log(`      motivação: ${inv.motivation}`);
+        for (const v of violations.slice(0, 10)) console.log(`      - [${v.key}] ${v.detail}`);
+        if (violations.length > 10) console.log(`      ... e mais ${violations.length - 10}`);
       } else {
         failures++;
         console.log(`FAIL  ${inv.name} — ${violations.length} violação(ões)`);
