@@ -17,7 +17,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { normalizeForComparison } from "@/lib/utils";
-import { formatPartialDate } from "@/lib/date-parts";
+import { formatCardAnswer } from "@/lib/verdict-display";
 import {
   buildResponseGroupKeys,
 } from "@/lib/equivalence";
@@ -84,21 +84,6 @@ interface AgreementGroupProps {
   };
 }
 
-function formatAnswer(answer: unknown): string {
-  if (answer == null) return "";
-  if (typeof answer === "string") return formatPartialDate(answer.trim());
-  if (Array.isArray(answer))
-    return answer.map((v) => (typeof v === "string" ? v.trim() : v)).join(", ");
-  if (typeof answer === "object") {
-    const obj = answer as Record<string, unknown>;
-    return Object.entries(obj)
-      .filter(([, v]) => v != null && String(v).trim() !== "")
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ");
-  }
-  return String(answer);
-}
-
 interface RenderedGroup {
   groupKey: string;
   displayAnswer: string;
@@ -149,7 +134,7 @@ function groupByEquivalenceKey(
     }
     map.set(key, {
       groupKey: key,
-      displayAnswer: formatAnswer(r.answer),
+      displayAnswer: formatCardAnswer(r.answer),
       responses: [r],
       variants: [],
     });
@@ -176,7 +161,7 @@ function variantsWithinGroup(
       pairId: p.id,
       reviewerId: p.reviewer_id,
       respondentName: `${a.respondent_name} ↔ ${b.respondent_name}`,
-      answerDisplay: `${formatAnswer(a.answer)} · ${formatAnswer(b.answer)}`,
+      answerDisplay: `${formatCardAnswer(a.answer)} · ${formatCardAnswer(b.answer)}`,
     });
   }
   return variants;

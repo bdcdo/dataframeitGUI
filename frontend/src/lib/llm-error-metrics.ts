@@ -29,8 +29,10 @@ import {
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
+import { formatCardAnswer } from "@/lib/verdict-display";
+import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { effectiveErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { applicableErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -46,11 +48,12 @@ export interface LlmError {
   /**
    * A forma crua do veredito em `responses.answers`, para o seletor de
    * "Erro do LLM" quando o texto de `chosenVerdict` não casa com as opções:
-   * na Comparação, a resposta que a arbitragem escolheu (um voto em card
-   * grava `multi` como "A, C", que não se reconstrói do texto); na
-   * auto-revisão, o snapshot humano. Ausente na ressurreição de decisão da
-   * Comparação: ali o contexto só tem a resposta de um codificador, que não
-   * é o veredito (#733).
+   * na Comparação, a resposta que a arbitragem escolheu enquanto ela ainda
+   * é o veredito (um voto em card grava `multi` como "A, C", que não se
+   * reconstrói do texto); se o codificador a editou depois, ela não é mais o
+   * veredito e fica ausente. Na auto-revisão, o snapshot humano. Ausente na
+   * ressurreição de decisão da Comparação: ali o contexto só tem a resposta
+   * de um codificador, que não é o veredito (#733).
    */
   chosenValue?: unknown;
   reviewerComment: string | null;
@@ -95,15 +98,15 @@ export interface MetricsResponse {
 }
 
 export interface MetricsReview {
-  id?: string;
+  id: string;
   document_id: string;
   field_name: string;
   verdict: string;
   chosen_response_id: string | null;
   comment: string | null;
   created_at: string;
-  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
-  round_id: string;
+  /** `reviews.field_hash`: o hash do campo quando a arbitragem foi feita. */
+  field_hash: string | null;
 }
 
 // Os valores que o `CASE` de `final_answers` emite, e nada além deles. União
@@ -138,6 +141,19 @@ export interface MetricsFinalAnswer {
   arbitrator_comment: string | null;
 }
 
+/**
+ * Decisão gravada que saiu da fila por ter perdido a validade: ou o contexto
+ * mudou (`stale`), ou ela depende do veredito de origem e ele não vale mais.
+ */
+export interface LapsedDecision {
+  documentId: string;
+  documentTitle: string;
+  fieldName: string;
+  fieldDescription: string;
+  decision: ErrorResolutionRow["decision"];
+  resolvedAt: string;
+}
+
 export interface MetricsEquivalence extends EquivalencePair {
   document_id: string;
   field_name: string;
@@ -153,24 +169,17 @@ export interface LlmErrorMetricsInput {
    */
   automationMode: string | null;
   /**
-   * `projects.current_round_id`. Só a arbitragem feita na rodada corrente
-   * conta como veredito: a fila compara o LLM da rodada corrente, e um
-   * veredito dado sobre respostas de rodada anterior pode nem ser opção do
-   * formulário atual (#733). Decisão já gravada em `errorResolutions` sobre
-   * célula de rodada antiga continua entrando pela ressurreição abaixo,
-   * enquanto o contexto dela seguir válido (a decisão é da rodada em que foi
-   * tomada). A fonte de auto-revisão (`final_answers`) não filtra rodada:
-   * `field_reviews` não tem a coluna.
-   */
-  currentRoundId: string | null;
-  /**
    * Só os documentos ATIVOS do projeto. As chaves, e não só os valores, são
    * consumidas: elas definem o conjunto de documentos que a métrica mede.
    */
   documentTitles: Map<string, string>;
   /** Todas as responses do projeto, de todas as rodadas e respondentes. */
   responses: MetricsResponse[];
-  /** Já filtradas por `chosen_response_id IS NOT NULL`. */
+  /**
+   * Todas as reviews do projeto, de qualquer rodada e revisor. Quais valem e
+   * qual vale por célula é decidido aqui, pela regra única de
+   * `review-validity.ts`: a rodada não entra nela, a versão da pergunta sim.
+   */
   reviews: MetricsReview[];
   /** Já filtradas por projeto; vazio quando o projeto não usa auto-revisão. */
   finalAnswers: MetricsFinalAnswer[];
@@ -284,6 +293,8 @@ interface MetricsContext {
   responsesByDoc: Map<string, MetricsResponse[]>;
   responseById: Map<string, MetricsResponse>;
   llmLatestByDoc: Map<string, MetricsResponse>;
+  /** Ids das reviews que valem como gabarito (`review-validity.ts`). */
+  validReviewIds: ReadonlySet<string>;
   /** Classes de equivalência por (documento, campo), memoizadas. */
   groupKeysFor: (docId: string, fieldName: string) => Map<string, string>;
   /** `isCodingComplete` da response, memoizado por id. */
@@ -292,6 +303,7 @@ interface MetricsContext {
 
 function buildContext(input: LlmErrorMetricsInput): MetricsContext {
   const { fields, documentTitles, responses, equivalences, errorResolutions } = input;
+  const fieldMap = new Map(fields.map((f) => [f.name, f]));
 
   const responsesByDoc = new Map<string, MetricsResponse[]>();
   const responseById = new Map<string, MetricsResponse>();
@@ -364,7 +376,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
   };
 
   return {
-    fieldMap: new Map(fields.map((f) => [f.name, f])),
+    fieldMap,
     isActiveDocument: (docId) => documentTitles.has(docId),
     titleOf: (docId) => documentTitles.get(docId) || docId,
     resolvedAtOf: (docId, fieldName) =>
@@ -372,6 +384,9 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     responsesByDoc,
     responseById,
     llmLatestByDoc,
+    validReviewIds: new Set(
+      input.reviews.filter((review) => reviewIsValid(review, fieldMap.get(review.field_name))).map((review) => review.id),
+    ),
     groupKeysFor,
     codingIsComplete,
   };
@@ -380,105 +395,113 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
 // A response que a arbitragem escolheu, por id e no documento da própria
 // review. Desde 20260924110000 a FK de `chosen_response_id` é composta com
 // `document_id`, e o banco recusa response de outro documento. A guarda fica
-// como defesa barata: comparar (ou exibir) a resposta de outro documento seria
-// pior que não ter nenhuma, e ela não depende de a migration estar aplicada no
-// banco que o código lê.
+// como defesa barata: exibir a resposta de outro documento seria pior que não
+// ter nenhuma, e ela não depende de a migration estar aplicada no banco que o
+// código lê.
 function chosenResponseOf(review: MetricsReview, ctx: MetricsContext): MetricsResponse | undefined {
   if (!review.chosen_response_id) return undefined;
   const response = ctx.responseById.get(review.chosen_response_id);
   return response?.document_id === review.document_id ? response : undefined;
 }
 
-// O LLM errou este campo, na leitura da Comparação? Para tudo que não é `multi`,
-// uma única noção de "mesma resposta": as classes do union-find já fundem tanto
-// pares marcados como equivalentes pelo revisor quanto respostas de texto
-// idêntico, e propagam por transitividade (A≡B, B≡C ⇒ A≡C). É a mesma primitiva
-// que a tela de Comparação usa para decidir divergência. Em `multi` as duas
-// telas se separam num ponto, de propósito: aqui o par marcado pelo revisor
-// vence a comparação de conjuntos (ver `multiIsError`), e em
-// `computeDivergentFieldNames` não, porque a Comparação não oferece par em
-// campo `multi` e lá o campo segue divergente até ser arbitrado.
+type VerdictMatcher = (answer: unknown) => boolean;
+
+// Uma resposta crua bate com o veredito quando as duas estão em branco, ou
+// quando o veredito é a resposta na forma crua ou na forma que o card de
+// Comparação exibe, que é o que o voto no card grava (data parcial com "—",
+// subcampos unidos por ", "). A normalização é a de sempre:
+// `normalizeForComparison`, que ignora caixa, acento e espaço.
+function textVerdictMatcher(verdict: string): VerdictMatcher {
+  const target = normalizeForComparison(verdict);
+  return (answer) =>
+    (isBlankAnswer(answer) && isBlankAnswer(verdict)) ||
+    normalizeForComparison(answer) === target ||
+    normalizeForComparison(formatCardAnswer(answer)) === target;
+}
+
+// `multi` tem semântica de CONJUNTO de opções, e é assim que
+// `computeDivergentFieldNames` o compara: ["a","b"] e ["b","a"] concordam. O
+// veredito votado na grade é o JSON `{opção: bool}`; o votado em card (quando
+// a pergunta ainda era `single`) é o texto "A, C", lido como uma opção inteira
+// ou como partes separadas por ", ".
+function multiVerdictMatcher(verdict: string, options: string[]): VerdictMatcher {
+  const selection = verdictSelection(verdict, options);
+  return (answer) => multiSelectionsAgree(options, multiSelectionSets([answer, selection]));
+}
+
+function verdictSelection(verdict: string, options: string[]): string[] {
+  const text = verdict.trim();
+  if (text.startsWith("{")) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return Object.entries(parsed).flatMap(([option, marked]) => (marked === true ? [option] : []));
+      }
+    } catch {
+      // Não é JSON: segue como texto.
+    }
+  }
+  if (text === "") return [];
+  return options.includes(text) ? [text] : text.split(", ").map((part) => part.trim());
+}
+
+function verdictMatcher(review: MetricsReview, field: PydanticField): VerdictMatcher {
+  return field.type === "multi" && !!field.options?.length
+    ? multiVerdictMatcher(review.verdict, field.options)
+    : textVerdictMatcher(review.verdict);
+}
+
+// O LLM errou este campo, na leitura da Comparação? Errou sse o valor dele
+// difere do VALOR do veredito, e não da resposta atual de quem a arbitragem
+// escolheu: o codificador pode ter editado a resposta depois da arbitragem, e
+// o Gabarito e o export leem o veredito. A exceção é o par "=" vigente: se ele
+// liga (direto ou por transitividade, pelo union-find de
+// `filterCurrentEquivalencePairs`, que já descarta par cujo snapshot não bate
+// com a resposta atual) a resposta do LLM a uma resposta cujo valor atual é o
+// do veredito, o revisor declarou as duas a mesma resposta.
+//
+// Em `multi` a métrica se separa de `computeDivergentFieldNames` num ponto, de
+// propósito: aqui o par marcado pelo revisor vale, e lá não, porque a
+// Comparação não oferece par em campo `multi` e o campo segue divergente até
+// ser arbitrado.
 function comparisonIsError(
   review: MetricsReview,
   field: PydanticField,
   llmResponse: MetricsResponse,
   ctx: MetricsContext,
 ): boolean {
+  // O revisor escolheu a própria resposta do LLM. Resposta de LLM não é
+  // editada no lugar: rodada nova grava outra linha.
   if (review.chosen_response_id === llmResponse.id) return false;
 
-  const isMulti = field.type === "multi" && !!field.options?.length;
-  return isMulti
-    ? multiIsError(review, field, llmResponse, ctx)
-    : groupedIsError(review, llmResponse, ctx);
+  const matches = verdictMatcher(review, field);
+  if (matches(llmResponse.answers?.[review.field_name])) return false;
+  return !pairedWithVerdict(review, llmResponse, matches, ctx);
 }
 
-// `multi` tem semântica de CONJUNTO de opções, e é assim que
-// `computeDivergentFieldNames` o compara — enquanto `normalizeForComparison`
-// serializa o array na ordem em que veio, e faria de ["a","b"] vs ["b","a"] um
-// erro do LLM que a tela de Comparação exibe como concordância. Por isso a
-// comparação de valores fica fora do union-find.
-//
-// Os pares que o revisor marcou, porém, valem aqui também. A UI de revisão de
-// multi (MultiOptionReview) submete sem `chosenResponseId`, e a página filtra
-// `chosen_response_id IS NOT NULL`, então review FEITA em campo multi não chega
-// a esta função. Chega a review feita quando a pergunta ainda era `single` e
-// que depois virou `multi`: ela tem resposta escolhida, o card oferece o "="
-// e o par gravado precisa suprimir o erro. Sem a consulta abaixo o botão
-// confirmava sucesso e o card continuava na fila.
-function multiIsError(
+function pairedWithVerdict(
   review: MetricsReview,
-  field: PydanticField,
   llmResponse: MetricsResponse,
+  matches: VerdictMatcher,
   ctx: MetricsContext,
 ): boolean {
-  const chosen = chosenResponseOf(review, ctx);
-  // Sem a response escolhida não há conjunto com que comparar: o texto do
-  // veredito de multi é um JSON de opção→marcada, de outra forma que a resposta.
-  if (!chosen) return true;
-
   const groupKeys = ctx.groupKeysFor(review.document_id, review.field_name);
   const llmKey = groupKeys.get(llmResponse.id);
-  if (llmKey !== undefined && llmKey === groupKeys.get(chosen.id)) return false;
-
-  return !multiSelectionsAgree(
-    field.options ?? [],
-    multiSelectionSets([
-      llmResponse.answers?.[review.field_name],
-      chosen.answers?.[review.field_name],
-    ]),
+  if (llmKey === undefined) return false;
+  return (ctx.responsesByDoc.get(review.document_id) ?? []).some(
+    (response) =>
+      response.id !== llmResponse.id &&
+      groupKeys.get(response.id) === llmKey &&
+      matches(response.answers?.[review.field_name]),
   );
 }
 
-// O union-find agrupa pelo texto, que separa chave ausente, `null` e `""`;
-// o Gabarito lê as três como a mesma resposta em branco, e a métrica também.
-function bothBlank(review: MetricsReview, llmResponse: MetricsResponse, ctx: MetricsContext): boolean {
-  const chosenAnswer = chosenResponseOf(review, ctx)?.answers?.[review.field_name] ?? review.verdict;
-  return isBlankAnswer(llmResponse.answers?.[review.field_name]) && isBlankAnswer(chosenAnswer);
-}
-
-// Demais tipos: classe de equivalência do union-find, que já funde tanto os
-// pares marcados pelo revisor quanto as respostas de texto idêntico.
-function groupedIsError(
-  review: MetricsReview,
-  llmResponse: MetricsResponse,
-  ctx: MetricsContext,
-): boolean {
-  if (bothBlank(review, llmResponse, ctx)) return false;
-  const groupKeys = ctx.groupKeysFor(review.document_id, review.field_name);
-  const llmKey = groupKeys.get(llmResponse.id);
-  const chosenKey = review.chosen_response_id
-    ? groupKeys.get(review.chosen_response_id)
-    : undefined;
-
-  if (llmKey !== undefined && chosenKey !== undefined) return llmKey !== chosenKey;
-
-  // A response escolhida sumiu do conjunto (apagada, ou de um documento que não
-  // veio na página). Resta comparar o texto do veredito, que é uma cópia do
-  // valor escolhido no momento da revisão.
-  return (
-    normalizeForComparison(llmResponse.answers?.[review.field_name]) !==
-    normalizeForComparison(review.verdict)
-  );
+// A resposta escolhida só serve de forma crua do veredito enquanto ainda é o
+// veredito; editada depois da arbitragem, pré-marcaria no seletor um valor que
+// ninguém arbitrou.
+function chosenValueOf(review: MetricsReview, field: PydanticField, ctx: MetricsContext): unknown {
+  const chosen = chosenResponseOf(review, ctx)?.answers?.[review.field_name];
+  return chosen !== undefined && verdictMatcher(review, field)(chosen) ? chosen : undefined;
 }
 
 // A decisão explícita do revisor vence a classificação automática: "Ambos
@@ -490,17 +513,22 @@ function resolutionIsError(resolution: EffectiveErrorResolution, measured: boole
 }
 
 /* ── Fonte A: Comparação (`reviews`) ── */
+// Uma review por célula, entre as que valem (`pickValidCellReviews`): a
+// rodada não entra na regra, a versão da pergunta sim. Célula cujo veredito
+// perdeu a validade sai do numerador e do denominador até ser rearbitrada.
 function comparisonCandidates(
   reviews: MetricsReview[],
-  currentRoundId: string | null,
   ctx: MetricsContext,
 ): Candidate[] {
   const candidates: Candidate[] = [];
 
-  for (const review of reviews) {
-    // Arbitragem de rodada anterior não é veredito sobre o LLM corrente: sai
-    // do numerador e do denominador. Sem rodada corrente, nada conta.
-    if (review.round_id !== currentRoundId) continue;
+  for (const review of pickValidCellReviews(reviews, ctx.fieldMap).values()) {
+    // Sem resposta escolhida o veredito é "ambiguo", "pular", resposta nova
+    // digitada ou a grade de `multi`: nenhum deles entrava na métrica, e
+    // continuam fora. A escolha por célula vem antes deste filtro, a mesma do
+    // Gabarito: um "ambiguo" mais recente tira a célula da métrica em vez de
+    // deixar valer um veredito que o Gabarito já não mostra.
+    if (!review.chosen_response_id) continue;
 
     // Documento excluído (soft delete) sai da métrica inteira, não só do
     // título: medir o acerto do LLM sobre um documento que o coordenador tirou
@@ -547,7 +575,7 @@ function buildComparisonCandidate(
           llmJustification:
             llmResponse.justifications?.[review.field_name] || null,
           chosenVerdict: review.verdict,
-          chosenValue: chosenResponseOf(review, ctx)?.answers?.[review.field_name],
+          chosenValue: chosenValueOf(review, field, ctx),
           reviewerComment: review.comment,
           resolvedAt: ctx.resolvedAtOf(review.document_id, review.field_name),
           llmResponseId: llmResponse.id,
@@ -735,11 +763,34 @@ export function usesAutoReviewSource(automationMode: string | null): boolean {
 
 // Caso que saiu da lista de divergências (o LLM corrente concorda, a review foi
 // substituída) mas tem decisão gravada: volta à fila a partir do contexto
-// salvo, para a decisão continuar visível e reabrível.
-function revivedCase(resolution: ErrorResolutionRow, ctx: MetricsContext): LlmError | null {
+// salvo, para a decisão continuar visível e reabrível. Só enquanto ela vale:
+// contexto corrente (não `stale`) e, se ela depende do veredito de origem
+// ("Ambos corretos", "Em discussão"), veredito ainda válido. Decisão que grava
+// valor próprio vale mesmo com a fonte inválida (`applicableErrorResolution`).
+// As que perderam a validade vão para `lapsed`, que a fila conta à parte;
+// documento excluído e campo fora da métrica saem sem contar, como antes.
+type RevivedOutcome = { kind: "revived"; error: LlmError } | { kind: "lapsed"; lapsed: LapsedDecision } | { kind: "ignored" };
+
+function reviveDecision(resolution: ErrorResolutionRow, ctx: MetricsContext): RevivedOutcome {
   const saved = resolution.context;
   const field = ctx.fieldMap.get(resolution.field_name);
-  if (!saved || !isMeasurableField(field) || !ctx.isActiveDocument(resolution.document_id)) return null;
+  if (!saved || !isMeasurableField(field) || !ctx.isActiveDocument(resolution.document_id)) return { kind: "ignored" };
+  if (applicableErrorResolution(resolution, ctx.validReviewIds).status === "stale") {
+    return { kind: "lapsed", lapsed: {
+      documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
+      fieldName: resolution.field_name, fieldDescription: field.description || resolution.field_name,
+      decision: resolution.decision, resolvedAt: resolution.resolved_at,
+    } };
+  }
+  return { kind: "revived", error: revivedCase(resolution, saved, field, ctx) };
+}
+
+function revivedCase(
+  resolution: ErrorResolutionRow,
+  saved: NonNullable<ErrorResolutionRow["context"]>,
+  field: PydanticField,
+  ctx: MetricsContext,
+): LlmError {
   const autoReview = saved.source.kind === "auto_revisao";
   return {
     documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
@@ -760,13 +811,15 @@ function revivedCase(resolution: ErrorResolutionRow, ctx: MetricsContext): LlmEr
 export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
   errors: LlmError[];
   reviewedEntries: ReviewedEntry[];
+  /** Decisões que a fila deixou de mostrar por terem perdido a validade. */
+  lapsedDecisions: LapsedDecision[];
 } {
   const ctx = buildContext(input);
 
   const autoReviewEnabled = usesAutoReviewSource(input.automationMode);
 
   const candidates = [
-    ...comparisonCandidates(input.reviews, input.currentRoundId, ctx),
+    ...comparisonCandidates(input.reviews, ctx),
     ...(autoReviewEnabled ? autoReviewCandidates(input.finalAnswers, ctx) : []),
   ];
 
@@ -794,18 +847,21 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
   );
 
   const cases = new Map<string, LlmError>(sorted.flatMap((c) => c.error ? [[`${c.documentId}:${c.fieldName}`, c.error] as const] : []));
+  const lapsedDecisions: LapsedDecision[] = [];
   for (const [key, resolution] of input.errorResolutions) {
     if (cases.has(key)) continue;
-    const revived = revivedCase(resolution, ctx);
-    if (revived) cases.set(key, revived);
+    const outcome = reviveDecision(resolution, ctx);
+    if (outcome.kind === "revived") cases.set(key, outcome.error);
+    else if (outcome.kind === "lapsed") lapsedDecisions.push(outcome.lapsed);
   }
   return {
+    lapsedDecisions,
     errors: [...cases.entries()].map(([key, error]) => ({
       ...error,
       resolution: input.errorResolutions.get(key),
     })),
     reviewedEntries: sorted.map((c) => {
-      const resolution = effectiveErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`));
+      const resolution = applicableErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`), ctx.validReviewIds);
       return {
         ...c.entry,
         isError: resolutionIsError(resolution, c.entry.isError),

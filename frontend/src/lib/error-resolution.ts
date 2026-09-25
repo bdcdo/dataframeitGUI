@@ -169,6 +169,43 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
   return llmCorrectResolution(context);
 }
 
+/**
+ * Se a decisão depende do veredito que a originou para valer. "Erro humano",
+ * "Erro do LLM" e "Todos errados" gravam valor próprio (a resposta do LLM ou
+ * `approved_value`): são um julgamento novo sobre as respostas e a pergunta
+ * atuais, que o contexto já confere, e valem mesmo que o veredito da fonte
+ * tenha perdido a validade. "Ambos corretos" e "Em discussão" não gravam
+ * valor, e o gabarito continua sendo o veredito da fonte. A lista é a das
+ * decisões com valor para que um tipo novo nasça exigindo a fonte; a cópia SQL
+ * é o último argumento de `llm_error_context` em `read_error_resolutions`
+ * (20260926121000_llm_error_context_review_valid.sql).
+ */
+export function decisionDependsOnSource(decision: ErrorDecision | null): boolean {
+  return decision !== "llm_correct" && decision !== "researchers_correct" && decision !== "all_wrong";
+}
+
+/**
+ * `effectiveErrorResolution` com a validade do veredito de origem: decisão que
+ * depende da fonte (`decisionDependsOnSource`) cuja review de origem não está
+ * em `validReviewIds` (inválida ou apagada) vira `stale`. Fonte de auto-revisão
+ * não é review e não passa por esta regra: `llm_error_context` já a confere
+ * contra o `field_reviews` corrente.
+ *
+ * O banco aplica a mesma regra ao calcular `current_context` em
+ * `read_error_resolutions`; esta cópia existe para que Gabarito, export e fila
+ * não dependam de a migration estar aplicada no banco que o código lê.
+ */
+export function applicableErrorResolution(
+  row: ErrorResolutionRow | undefined,
+  validReviewIds: ReadonlySet<string>,
+): EffectiveErrorResolution {
+  const resolution = effectiveErrorResolution(row);
+  if (!row || resolution.status === "open" || resolution.status === "stale") return resolution;
+  if (!decisionDependsOnSource(row.decision) || row.context?.source.kind !== "comparacao") return resolution;
+  const sourceId = row.context.source.id;
+  return typeof sourceId === "string" && validReviewIds.has(sourceId) ? resolution : { status: "stale" };
+}
+
 function hasSubfields(field: PydanticField): boolean {
   return field.type === "text" && (field.subfields?.length ?? 0) > 0;
 }

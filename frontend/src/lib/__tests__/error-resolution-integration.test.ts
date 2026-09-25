@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { resolutionFixture } from "./error-resolution-fixture";
 import { assembleExport } from "@/lib/export/assemble";
-import { computeReviewedDocuments, currentRoundReviews, isAnswerCorrect, type ReviewComputationContext } from "@/lib/reviews/queries";
+import { computeReviewedDocuments, gabaritoReviews, isAnswerCorrect, type ReviewComputationContext } from "@/lib/reviews/queries";
+import { reviewIsValid } from "@/lib/review-validity";
 import { computeLlmErrorMetrics, type MetricsResponse, type MetricsFinalAnswer } from "@/lib/llm-error-metrics";
 import type { ErrorDecision, ErrorResolutionRow } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
@@ -15,31 +16,34 @@ const responses = [
   answer_field_hashes: {}, schema_version_major: null, schema_version_minor: null, schema_version_patch: null }));
 const review = { id: "review1", document_id: "doc1", field_name: "x", verdict: "Humano",
   chosen_response_id: "rh", comment: "Revisão original", reviewer_id: "person", created_at: "2026-09-02T00:00:00Z",
-  round_id: "round1" };
-const currentRoundId = "round1";
+  field_hash: null as string | null };
+// Hash de outra versão da pergunta: o veredito carimbado com ele perdeu a validade.
+const OTHER_QUESTION = "ffffffffffff";
 // Resposta do LLM sem a chave do campo: o que a condicional não acionada grava.
 const ABSENT = Symbol("chave ausente");
 
-function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue: unknown = "LLM", reviewRoundId = "round1",
+function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue: unknown = "LLM", reviewFieldHash: string | null = null,
   human: { value: unknown; verdict: string; chosenResponseId?: string } = { value: "Humano", verdict: "Humano" }) {
   const answersOf = (value: unknown) => (value === ABSENT ? {} : { x: value });
   const currentResponses = responses.map((r) => ({ ...r, answers: answersOf(r.respondent_type === "llm" ? llmValue : human.value) }));
-  const reviews = autoReview ? [] : [{ ...review, round_id: reviewRoundId, verdict: human.verdict,
+  const reviews = autoReview ? [] : [{ ...review, field_hash: reviewFieldHash, verdict: human.verdict,
     chosen_response_id: human.chosenResponseId ?? review.chosen_response_id }];
   const finalAnswers: MetricsFinalAnswer[] = autoReview ? [{ field_review_id: "fr", document_id: "doc1", field_name: "x",
     provenance: "arbitrado", final_verdict: "humano", self_reviewed_at: "2026-09-02T00:00:00Z",
     final_decided_at: "2026-09-03T00:00:00Z", human_response_id: "rh", llm_response_id: "rllm",
     human_answer_snapshot: "Humano", llm_answer_snapshot: "LLM", arbitrator_comment: null }] : [];
-  const metrics = computeLlmErrorMetrics({ fields: [field], automationMode: autoReview ? "auto_review_llm" : "compare_llm", currentRoundId,
+  const metrics = computeLlmErrorMetrics({ fields: [field], automationMode: autoReview ? "auto_review_llm" : "compare_llm",
     documentTitles: new Map([["doc1", "Documento"]]), responses: currentResponses as MetricsResponse[], reviews, finalAnswers,
     equivalences: [], errorResolutions: new Map(resolutions.map((r) => [`${r.document_id}:${r.field_name}`, r])) });
-  const exported = assembleExport({ projectName: "Projeto", fields: [field], minResponses: 2, currentRoundId,
+  const exported = assembleExport({ projectName: "Projeto", fields: [field], minResponses: 2,
     documents: [{ id: "doc1", external_id: "EXT-1", title: "Documento", created_at: "2026-09-01", metadata: null }],
     responses: currentResponses, reviews, errorResolutions: resolutions });
   const ctx: ReviewComputationContext = { fields: [field], comparableFields: [field],
     projectPydanticHash: null, currentFieldHashes: {}, fieldMap: new Map([["x", field]]),
     docMap: new Map([["doc1", "Documento"]]), responsesByDoc: new Map([["doc1", currentResponses]]),
-    uniqueReviews: currentRoundReviews(reviews, currentRoundId), errorResolutions: resolutions, profileMap: new Map(),
+    uniqueReviews: gabaritoReviews(reviews, new Map([["x", field]])),
+    validReviewIds: new Set(reviews.filter((r) => reviewIsValid(r, field)).map((r) => r.id)),
+    errorResolutions: resolutions, profileMap: new Map(),
     truncated: { responses: false, reviews: false, documents: false } };
   return { metrics, exported, gabarito: computeReviewedDocuments(ctx) };
 }
@@ -98,8 +102,8 @@ describe("precedência e contexto", () => {
     const answers = results([resolutionFixture("all_wrong")]).gabarito[0].fields[0].respondentAnswers;
     expect(answers.map((a) => a.isCorrect)).toEqual([false, false]);
   });
-  it("ambos corretos sobre célula de rodada antiga na Comparação não inventa gabarito", () => {
-    const r = results([resolutionFixture("both_correct")], false, "LLM", "round0");
+  it("ambos corretos sobre veredito que perdeu a validade não inventa gabarito", () => {
+    const r = results([resolutionFixture("both_correct")], false, "LLM", OTHER_QUESTION);
     expect(r.gabarito).toEqual([]);
     // Nem linha só com o comentário: o export acompanha a tela.
     expect(r.exported.verdicts.rows).toEqual([]);
@@ -125,17 +129,17 @@ describe("precedência e contexto", () => {
   });
 });
 
-describe("rodada corrente (#733)", () => {
-  it("arbitragem de rodada anterior sai da métrica, do CSV e do Gabarito", () => {
-    const r = results([], false, "LLM", "round0");
+describe("veredito que perdeu a validade (#758)", () => {
+  it("arbitragem sobre outra versão da pergunta sai da métrica, do CSV e do Gabarito", () => {
+    const r = results([], false, "LLM", OTHER_QUESTION);
     expect(r.metrics.errors).toEqual([]);
     expect(r.metrics.reviewedEntries).toEqual([]);
     expect(r.exported.verdicts.rows).toEqual([]);
     expect(r.gabarito).toEqual([]);
   });
-  it("decisão gravada sobre célula de rodada antiga continua valendo nos três", () => {
+  it("decisão com valor próprio sobre veredito que perdeu a validade continua valendo nos três", () => {
     const row = resolutionFixture("researchers_correct");
-    const r = results([row], false, "LLM", "round0");
+    const r = results([row], false, "LLM", OTHER_QUESTION);
     expect(r.metrics.errors).toHaveLength(1);
     expect(r.metrics.errors[0].resolution).toEqual(row);
     expect(r.exported.verdicts.rows[0][r.exported.verdicts.headers.indexOf("x")]).toBe("Veredito");
@@ -158,14 +162,14 @@ describe("resposta em branco em pergunta condicional", () => {
   it.each<[string, unknown]>([["ausente", ABSENT], ["null", null], ["\"\"", ""]])(
     "sem decisão, humano escolhido em branco (%s) e LLM sem a chave: nem erro na métrica, nem incorreto no Gabarito",
     (_forma, humanValue) => {
-      const { metrics, gabarito } = results([], false, ABSENT, "round1", { value: humanValue, verdict: "" });
+      const { metrics, gabarito } = results([], false, ABSENT, null, { value: humanValue, verdict: "" });
       expect(metrics.reviewedEntries[0]).toMatchObject({ isError: false });
       expect(metrics.errors).toHaveLength(0);
       expect(gabarito[0].fields[0].respondentAnswers.map((a) => a.isCorrect)).toEqual([true, true]);
     });
 
   it("sem decisão, veredito em branco e LLM respondendo segue erro do LLM", () => {
-    const { metrics } = results([], false, "LLM", "round1", { value: "", verdict: "" });
+    const { metrics } = results([], false, "LLM", null, { value: "", verdict: "" });
     expect(metrics.reviewedEntries[0]).toMatchObject({ isError: true });
   });
 
@@ -180,7 +184,7 @@ describe("resposta em branco em pergunta condicional", () => {
   it.each<[string, string, boolean]>([["preenchido", "Humano", true], ["em branco", "", false]])(
     "sem decisão, resposta escolhida sumida e veredito %s, com o LLM sem a chave",
     (_forma, verdict, isError) => {
-      const { metrics } = results([], false, ABSENT, "round1", { value: "Humano", verdict, chosenResponseId: "sumiu" });
+      const { metrics } = results([], false, ABSENT, null, { value: "Humano", verdict, chosenResponseId: "sumiu" });
       expect(metrics.reviewedEntries[0]).toMatchObject({ isError });
     });
 

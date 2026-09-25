@@ -7,6 +7,7 @@ import { EditFieldDialog } from "./EditFieldDialog";
 import { ErrorStatsCards } from "./ErrorStatsCards";
 import { ErrorFiltersToolbar } from "./ErrorFiltersToolbar";
 import { ErrorDecisionDialog, type PendingErrorDecision } from "./ErrorDecisionDialog";
+import { LapsedDecisionsNotice } from "./LapsedDecisionsNotice";
 import { choosesValue, type ErrorDecision, type ErrorResolutionInput } from "@/lib/error-resolution";
 import { useLlmErrorFiltering } from "@/hooks/useLlmErrorFiltering";
 import {
@@ -20,6 +21,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 import type {
+  LapsedDecision,
   LlmError,
   ReviewedEntry,
 } from "@/lib/llm-error-metrics";
@@ -28,6 +30,8 @@ interface LlmInsightsViewProps {
   projectId: string;
   errors: LlmError[];
   reviewedEntries: ReviewedEntry[];
+  /** Decisões que saíram da fila por terem perdido a validade. */
+  lapsedDecisions?: LapsedDecision[];
   fields: { name: string; description: string }[];
   schemaEditor?: {
     fields: PydanticField[];
@@ -60,6 +64,7 @@ export function LlmInsightsView({
   projectId,
   errors,
   reviewedEntries,
+  lapsedDecisions = [],
   fields,
   schemaEditor,
   isCoordinator,
@@ -193,6 +198,8 @@ export function LlmInsightsView({
       />
 
       <ErrorFiltersToolbar fields={fields} filtering={filtering} />
+
+      <LapsedDecisionsNotice decisions={lapsedDecisions} />
 
       {sortedErrors.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">

@@ -9,7 +9,8 @@ import type {
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
-import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
+import { applicableErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
+import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
 import { stableStringify } from "@/lib/schema-utils";
 
 /* ── Raw row shapes ── */
@@ -35,8 +36,9 @@ export interface ReviewRow {
   chosen_response_id: string | null;
   comment: string | null;
   reviewer_id: string | null;
-  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
-  round_id: string;
+  created_at: string;
+  /** `reviews.field_hash`: o hash do campo quando a arbitragem foi feita. */
+  field_hash: string | null;
   resolutionLabel?: string;
   resolution?: Extract<EffectiveErrorResolution, { status: "approved" | "discussion" | "upheld" }>;
 }
@@ -58,6 +60,12 @@ export interface ReviewComputationContext {
   docMap: Map<string, string>;
   responsesByDoc: Map<string, ResponseRow[]>;
   uniqueReviews: ReviewRow[];
+  /**
+   * Ids das reviews que valem como gabarito, de qualquer revisor. A decisão do
+   * LLM Insights que depende da fonte só vale enquanto a review de origem
+   * está aqui (`applicableErrorResolution`).
+   */
+  validReviewIds: ReadonlySet<string>;
   errorResolutions?: ErrorResolutionRow[];
   profileMap: Map<string, string>;
   // true para cada tabela cuja query atingiu REVIEW_BASE_DATA_LIMIT — os
@@ -188,27 +196,16 @@ export function computeTruncation(
 }
 
 /**
- * A review vigente de cada (documento, campo) do Gabarito: só as da rodada
- * corrente contam (#733), porque arbitragem de rodada anterior foi dada sobre
- * respostas que a rodada corrente substituiu. Decisão gravada em
- * `errorResolutions` sobre célula antiga continua entrando por
- * `reviewsWithResolutions` enquanto o contexto dela seguir válido (a decisão
- * é da rodada em que foi tomada). Entre reviews da mesma célula e rodada,
- * desempate por id descendente, como sempre foi.
+ * A review vigente de cada (documento, campo) do Gabarito, pela regra única de
+ * `review-validity.ts`: vale o veredito enquanto a pergunta não muda, de
+ * qualquer rodada, e entre os válidos da célula o de `pickCellReview`. Célula
+ * cujo veredito perdeu a validade sai do Gabarito até ser rearbitrada.
  */
-export function currentRoundReviews(
+export function gabaritoReviews(
   reviews: ReviewRow[] | null,
-  currentRoundId: string | null,
+  fieldMap: ReadonlyMap<string, PydanticField>,
 ): ReviewRow[] {
-  const reviewMap = new Map<string, ReviewRow>();
-  (reviews ?? [])
-    .filter((r) => r.round_id === currentRoundId)
-    .sort((a, b) => b.id.localeCompare(a.id))
-    .forEach((r) => {
-      const key = `${r.document_id}:${r.field_name}`;
-      if (!reviewMap.has(key)) reviewMap.set(key, r);
-    });
-  return [...reviewMap.values()];
+  return [...pickValidCellReviews(reviews, fieldMap).values()];
 }
 
 export async function fetchReviewBaseData(
@@ -238,14 +235,14 @@ export async function fetchReviewBaseData(
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, pydantic_hash, created_by, current_round_id")
+      .select("pydantic_fields, pydantic_hash, created_by")
       .eq("id", projectId)
       .single(),
     responsesQuery,
     supabase
       .from("reviews")
       .select(
-        "id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, round_id",
+        "id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, created_at, field_hash",
       )
       .eq("project_id", projectId)
       .limit(REVIEW_BASE_DATA_LIMIT),
@@ -314,16 +311,11 @@ export async function fetchReviewBaseData(
     responsesByDoc.set(r.document_id, list);
   });
 
-  const currentRoundId = (project?.current_round_id as string | null) ?? null;
-  // Estado representável (ver o cabeçalho de 20260811120000): sem rodada
-  // corrente nenhuma review conta, e o Gabarito fica vazio embora existam
-  // reviews. Fail-closed de propósito, mas anunciado, como o truncamento acima.
-  if (currentRoundId === null && (reviews?.length ?? 0) > 0) {
-    console.warn(
-      `fetchReviewBaseData: projeto ${projectId} sem rodada corrente; ${reviews?.length} reviews ficam fora do Gabarito.`,
-    );
-  }
-  const uniqueReviews = currentRoundReviews(reviews as ReviewRow[] | null, currentRoundId);
+  const reviewRows = (reviews ?? []) as ReviewRow[];
+  const uniqueReviews = gabaritoReviews(reviewRows, fieldMap);
+  const validReviewIds = new Set(
+    reviewRows.filter((r) => reviewIsValid(r, fieldMap.get(r.field_name))).map((r) => r.id),
+  );
 
   const comparableFields = fields.filter(
     (f) => !f.target || f.target === "all",
@@ -338,6 +330,7 @@ export async function fetchReviewBaseData(
     docMap,
     responsesByDoc,
     uniqueReviews,
+    validReviewIds,
     errorResolutions,
     profileMap,
     truncated,
@@ -368,20 +361,19 @@ function resolvedReview(
     const comment = [current.comment, errorResolutionComment(row)].filter(Boolean).join("\n");
     return { ...current, comment, resolutionLabel, resolution };
   }
-  // Sem review na célula, "Ambos corretos" só tem veredito a mostrar quando
-  // o contexto o guarda (auto-revisão). Na Comparação isso é a decisão sobre
-  // arbitragem de rodada anterior: ela fica visível na fila LLM Insights e
-  // no comentário do export, mas não vira linha aqui, porque a linha exigiria
-  // um veredito e inventar um é pior que omitir a célula.
+  // Sem review válida na célula, "Ambos corretos" só tem veredito a mostrar
+  // quando o contexto o guarda (auto-revisão). Na Comparação isso não acontece
+  // com a fonte válida, porque a fonte é a própria review da célula; e com a
+  // fonte inválida a decisão já nem chega aqui (`applicableErrorResolution`).
+  // Inventar um veredito seria pior que omitir a célula.
   if (resolution.status === "upheld" && resolution.verdictValue === undefined) return null;
   return {
     id: row.id, document_id: row.document_id, field_name: row.field_name,
     verdict: resolutionVerdict(resolution, fieldType),
     chosen_response_id: null, comment: errorResolutionComment(row), reviewer_id: row.resolved_by,
-    // Rodada em que a decisão foi tomada. A decisão explícita vale mesmo
-    // sobre célula de rodada antiga, então o filtro de rodada já ficou para
-    // trás (em `currentRoundReviews`) e este carimbo é só descritivo.
-    round_id: row.context?.round_id ?? "",
+    // A linha é da decisão, não de uma review: sem hash de pergunta a conferir,
+    // porque a decisão já foi validada contra a definição atual do campo.
+    created_at: row.resolved_at, field_hash: null,
     resolutionLabel, resolution,
   };
 }
@@ -393,7 +385,7 @@ function appliesToGabarito(resolution: EffectiveErrorResolution): resolution is 
 function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, ReviewRow> {
   const effectiveReviews = new Map(ctx.uniqueReviews.map((r) => [`${r.document_id}:${r.field_name}`, r]));
   for (const row of ctx.errorResolutions ?? []) {
-    const resolution = effectiveErrorResolution(row);
+    const resolution = applicableErrorResolution(row, ctx.validReviewIds);
     const field = ctx.fieldMap.get(row.field_name);
     if (!field || !ctx.docMap.has(row.document_id) || !appliesToGabarito(resolution)) continue;
     const key = `${row.document_id}:${row.field_name}`;
