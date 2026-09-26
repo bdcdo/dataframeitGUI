@@ -27,6 +27,7 @@ import type { AutoReviewProvenance } from "@/lib/llm-error-metrics";
 import { formatExportValue, formatVerdict } from "./format";
 import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
+import { isSubmittedResponse } from "@/lib/compare-version";
 
 export interface ExportSheet {
   headers: string[];
@@ -61,6 +62,8 @@ export interface ExportResponse {
   answers: Record<string, unknown> | null;
   /** Decide se um par "=" ainda vale para a versão atual da pergunta. */
   answer_field_hashes?: AnswerFieldHashes;
+  /** Rascunho, pela régua da Comparação (`isSubmittedResponse`). */
+  is_partial: boolean;
 }
 
 /** Linha da view `final_answers`: o valor e a proveniência da auto-revisão. */
@@ -103,6 +106,18 @@ export interface AssembleInput {
    * dado, e as células que só o LLM preencheu ficam listadas na aba "Só LLM".
    */
   fillFromLlm?: boolean;
+  /**
+   * Conta os rascunhos no Gabarito e nas Pendências. Desligado por padrão
+   * porque a Comparação não os considera (`isSubmittedResponse`): rascunho é
+   * resposta que o pesquisador não entregou, e a célula que só ele preenchia
+   * sai em branco, com o motivo que as demais respostas derem. O documento em
+   * que todo pesquisador só tem rascunho conta como não codificado, como na
+   * fila de codificação, e não entra nas Pendências. Independe de
+   * `fillFromLlm`: sem o rascunho, a célula que ninguém mais respondeu é célula
+   * sem pesquisador, e a opção do LLM a preenche. As abas Respostas e o CSV
+   * mostram os rascunhos com a opção ligada ou não, marcados em `DRAFT_COLUMN`.
+   */
+  includeDrafts?: boolean;
 }
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
@@ -116,6 +131,13 @@ const CONTROL_COLUMNS = [
   "source",
 ] as const;
 const REVIEWER_COMMENTS = "reviewer_comments";
+// Marca de rascunho nas linhas de resposta (abas Respostas e CSV). Vai no fim
+// das duas, depois de `reviewer_comments` no CSV, para que as colunas que já
+// existiam fiquem na mesma posição: quem lê o arquivo por índice não quebra.
+// O nome em português segue as abas mais novas (Pendências, Só LLM). Entra
+// no conjunto reservado, como as colunas de controle.
+const DRAFT_COLUMN = "rascunho";
+const draftCell = (r: ExportResponse): string => (isSubmittedResponse(r) ? "não" : "sim");
 
 // Resolve os cabeçalhos exibidos das colunas originais garantindo unicidade:
 // colidiu com um nome reservado → prefixo `original_`; se o resultado ainda
@@ -646,8 +668,9 @@ function resolveOpenCells(input: {
     const { filled, pending, fromLlm } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
     if (filled.size > 0) filledByDoc.set(docId, filled);
     // Entram nas Pendências os documentos que têm linha no Gabarito ou alguma
-    // codificação humana. Documento só com a resposta do LLM ainda não foi
-    // codificado, e listá-lo campo a campo só esconderia os brancos que importam.
+    // codificação humana. Documento só com a resposta do LLM (e, com
+    // `includeDrafts` desligada, os rascunhos) ainda não foi codificado, e
+    // listá-lo campo a campo só esconderia os brancos que importam.
     // Com `fillFromLlm`, o LLM preenche o documento e ele passa a ter linha.
     const hasGabaritoRow = filled.size > 0 || verdictFields !== undefined;
     if (!hasGabaritoRow && doc.humans.length === 0) continue;
@@ -658,9 +681,16 @@ function resolveOpenCells(input: {
   return { filledByDoc, pendingRows, llmOnlyRows };
 }
 
+// As respostas que contam no Gabarito e nas Pendências: sem `includeDrafts`,
+// só as entregues, pela regra da Comparação.
+function countedResponses(responses: ExportResponse[], includeDrafts: boolean): ExportResponse[] {
+  return includeDrafts ? responses : responses.filter(isSubmittedResponse);
+}
+
 export function assembleExport(input: AssembleInput): ExportDataset {
   const { projectName, fields, documents, responses, reviews } = input;
   const fillFromLlm = input.fillFromLlm === true;
+  const includeDrafts = input.includeDrafts === true;
 
   // `llm_only` só entra com `fillFromLlm`: sem ela, nenhuma célula dele teria
   // gabarito, porque nenhum pesquisador o responde.
@@ -701,6 +731,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const reserved = new Set<string>([
     ...CONTROL_COLUMNS,
     REVIEWER_COMMENTS,
+    DRAFT_COLUMN,
     ...fieldNames,
   ]);
   // Reserva `document_text` só quando há coluna de texto: assim uma coluna
@@ -724,6 +755,8 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   // Filtragem à base (achado C1): descarta respostas/reviews de docs fora dela.
   const baseResponses = responses.filter((r) => identity.has(r.document_id));
   const baseReviews = reviews.filter((r) => identity.has(r.document_id));
+  // As abas de respostas seguem com `baseResponses`, rascunhos incluídos.
+  const codingResponses = countedResponses(baseResponses, includeDrafts);
 
   const fieldByName = new Map<string, PydanticField>();
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
@@ -734,7 +767,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     identity,
     exportableFields,
     verdictsByDoc,
-    responses: baseResponses,
+    responses: codingResponses,
     ctx: buildCellContext(input, baseReviews, fillFromLlm),
   });
 
@@ -785,6 +818,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       "respondent_type",
       "source",
       ...fieldNames,
+      DRAFT_COLUMN,
     ],
     rows: baseResponses.map((r) => {
       const info = identity.get(r.document_id)!;
@@ -795,6 +829,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
         r.respondent_type,
         sourceOf(r.respondent_type),
         ...responseFieldCells(r),
+        draftCell(r),
       ];
     }),
   };
@@ -845,6 +880,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       ...auxCells(r.document_id),
       ...responseFieldCells(r),
       "",
+      draftCell(r),
     ];
   });
   const verdictCsvRows = gabaritoIds.map((docId) => {
@@ -858,6 +894,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       ...auxCells(docId),
       ...verdictFieldCells(docId),
       (verdictsByDoc.get(docId)?.comments ?? []).join(" | "),
+      "",
     ];
   });
   // Linha source=documento apenas para documentos SEM resposta E SEM gabarito.
@@ -874,6 +911,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
         ...auxCells(d.id),
         ...fieldNames.map(() => ""),
         "",
+        "",
       ];
     });
 
@@ -883,6 +921,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       ...auxHeaders,
       ...fieldNames,
       REVIEWER_COMMENTS,
+      DRAFT_COLUMN,
     ],
     rows: [...responseCsvRows, ...verdictCsvRows, ...documentoCsvRows],
   };

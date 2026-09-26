@@ -63,15 +63,21 @@ const PREVIEW_LIMIT = 10;
 
 type ExportFormat = "csv" | "xlsx";
 
-// Opção de preencher o Gabarito com o LLM, desligada por padrão pelo motivo
-// que a doc de `AssembleInput.fillFromLlm` dá. Fica travada enquanto o dataset
+// Uma opção que muda a montagem do dataset, desligada por padrão pelo motivo
+// que a doc dela em `AssembleInput` dá. Fica travada enquanto o dataset
 // carrega: a resposta em curso foi montada com o valor anterior e, trocada a
 // opção no meio, chegaria depois como prévia da opção nova.
-function FillFromLlmOption({
+function ExportOption({
+  id,
+  label,
+  help,
   checked,
   disabled,
   onCheckedChange,
 }: {
+  id: string;
+  label: string;
+  help: string;
   checked: boolean;
   disabled: boolean;
   onCheckedChange: (checked: boolean) => void;
@@ -80,18 +86,16 @@ function FillFromLlmOption({
     <div className="space-y-1">
       <div className="flex items-center gap-2">
         <Checkbox
-          id="export-fill-from-llm"
+          id={id}
           checked={checked}
           disabled={disabled}
           onCheckedChange={(v) => onCheckedChange(v === true)}
         />
-        <Label htmlFor="export-fill-from-llm" className="text-sm">
-          Preencher com o LLM onde nenhum pesquisador respondeu
+        <Label htmlFor={id} className="text-sm">
+          {label}
         </Label>
       </div>
-      <p className="pl-6 text-xs text-muted-foreground">
-        No CSV, as células preenchidas pelo LLM não se distinguem das demais; a lista delas vai na aba &quot;Só LLM&quot; do XLSX. Elas não servem para medir o LLM.
-      </p>
+      <p className="pl-6 text-xs text-muted-foreground">{help}</p>
     </div>
   );
 }
@@ -224,6 +228,7 @@ function PreviewTable({ sheet, limit }: { sheet: ExportSheet; limit: number }) {
 export function ExportCard({ projectId }: { projectId: string }) {
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [fillFromLlm, setFillFromLlm] = useState(false);
+  const [includeDrafts, setIncludeDrafts] = useState(false);
   const [dataset, setDataset] = useState<ExportDataset | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -234,7 +239,7 @@ export function ExportCard({ projectId }: { projectId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await getExportDataset(projectId, { fillFromLlm });
+      const result = await getExportDataset(projectId, { fillFromLlm, includeDrafts });
       if ("error" in result) {
         setError(result.error);
         return null;
@@ -282,6 +287,12 @@ export function ExportCard({ projectId }: { projectId: string }) {
 
   const isEmpty = dataset !== null && dataset.csv.rows.length === 0;
 
+  // A prévia foi montada com a outra opção.
+  const toggleOption = (set: (checked: boolean) => void) => (checked: boolean) => {
+    set(checked);
+    setDataset(null);
+  };
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -302,14 +313,22 @@ export function ExportCard({ projectId }: { projectId: string }) {
           onDownload={() => void handleDownload()}
         />
 
-        <FillFromLlmOption
+        <ExportOption
+          id="export-fill-from-llm"
+          label="Preencher com o LLM onde nenhum pesquisador respondeu"
+          help={"No CSV, as células preenchidas pelo LLM não se distinguem das demais; a lista delas vai na aba \"Só LLM\" do XLSX. Elas não servem para medir o LLM."}
           checked={fillFromLlm}
           disabled={loading}
-          onCheckedChange={(checked) => {
-            setFillFromLlm(checked);
-            // A prévia foi montada com a outra opção.
-            setDataset(null);
-          }}
+          onCheckedChange={toggleOption(setFillFromLlm)}
+        />
+
+        <ExportOption
+          id="export-include-drafts"
+          label="Incluir rascunhos"
+          help={"Rascunho é resposta não entregue, e a Comparação não o considera. Nas respostas individuais ele sempre aparece, marcado na coluna \"rascunho\"."}
+          checked={includeDrafts}
+          disabled={loading}
+          onCheckedChange={toggleOption(setIncludeDrafts)}
         />
 
         {error && (

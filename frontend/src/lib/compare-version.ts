@@ -176,6 +176,15 @@ export function versionGate(project: ProjectVersionRow): {
   return { minVersion: resolveMinVersion(COMPARE_DEFAULT_VERSION, version), ctx };
 }
 
+// Regra 2 de `responseQualifiesForVersion`, sozinha: a resposta foi entregue,
+// e não é rascunho. Exportada para quem aplica a regra da Comparação sem piso
+// de versão, como o export (`AssembleInput.includeDrafts`). Falha fechada como
+// a regra: `is_partial` ausente, porque o select não pediu a coluna, conta
+// como rascunho.
+export function isSubmittedResponse(r: Pick<VersionedResponse, "is_partial">): boolean {
+  return r.is_partial === false;
+}
+
 // Predicado único de qualificação de uma resposta sob um piso de versão.
 // Regras, nesta ordem:
 //   1. respostas superseded (is_latest=false) ficam de fora — humanas OU LLM.
@@ -219,7 +228,7 @@ export function responseQualifiesForVersion(
   project: ProjectVersionContext,
 ): boolean {
   if (!r.is_latest) return false;
-  if (r.is_partial !== false) return false;
+  if (!isSubmittedResponse(r)) return false;
   if (!minVersion) return true;
   if (r.pydantic_hash === null) return false;
   if (r.schema_version_major !== null) {

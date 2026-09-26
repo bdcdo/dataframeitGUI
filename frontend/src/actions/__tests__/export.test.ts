@@ -217,7 +217,7 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
 describe("getExportDataset: pares \"=\" e auto-revisão", () => {
   const campo = [{ name: "campo", type: "text", options: null, description: "" }];
   const resposta = (id: string, type: string, value: string) => ({
-    id, document_id: "d1", respondent_name: id, respondent_type: type, answers: { campo: value },
+    id, document_id: "d1", respondent_name: id, respondent_type: type, is_partial: false, answers: { campo: value },
   });
   const base = (automationMode: string | null, responses: unknown[]): TableResults => ({
     projects: [{ data: { name: "P", pydantic_fields: campo, min_responses_for_comparison: 2, automation_mode: automationMode } }],
@@ -274,6 +274,23 @@ describe("getExportDataset: pares \"=\" e auto-revisão", () => {
     expect(gabaritoCell(r)).toBe("Sim");
     if ("error" in r) throw new Error(r.error);
     expect(r.llmOnly.rows).toEqual([["EXT-1", "", "campo"]]);
+  });
+
+  it("a opção de incluir rascunhos chega à montagem, e só o true a liga", async () => {
+    // O rascunho completa o consenso só com a opção. O select precisa trazer
+    // `is_partial`: sem a coluna, a resposta entregue também contaria como
+    // rascunho, e a célula sairia em branco nos três casos.
+    const comRascunho = () => base(null, [resposta("h1", "humano", "Sim"), { ...resposta("h2", "humano", "Sim"), is_partial: true }]);
+    serverTableResults = comRascunho();
+    const padrao = await (await loadAction())("proj-1");
+    expect(gabaritoCell(padrao)).toBe("");
+    if ("error" in padrao) throw new Error(padrao.error);
+    expect(padrao.responses.rows.map((row) => row.at(-1))).toEqual(["não", "sim"]);
+    serverTableResults = comRascunho();
+    const loose = { includeDrafts: "sim" } as unknown as { includeDrafts: boolean };
+    expect(gabaritoCell(await (await loadAction())("proj-1", loose))).toBe("");
+    serverTableResults = comRascunho();
+    expect(gabaritoCell(await (await loadAction())("proj-1", { includeDrafts: true }))).toBe("Sim");
   });
 
   it("propaga o erro da leitura de final_answers", async () => {

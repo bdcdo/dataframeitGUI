@@ -56,7 +56,7 @@ describe("ExportCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
 
     await waitFor(() =>
-      expect(hoisted.getExportDataset).toHaveBeenCalledWith("p1", { fillFromLlm: false }),
+      expect(hoisted.getExportDataset).toHaveBeenCalledWith("p1", { fillFromLlm: false, includeDrafts: false }),
     );
     expect(await screen.findByText(/Prévia \(1 linha\)/)).toBeTruthy();
     // Cabeçalhos da visão unificada aparecem na prévia.
@@ -78,7 +78,7 @@ describe("ExportCard", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
     await waitFor(() =>
-      expect(hoisted.getExportDataset).toHaveBeenLastCalledWith("p1", { fillFromLlm: true }),
+      expect(hoisted.getExportDataset).toHaveBeenLastCalledWith("p1", { fillFromLlm: true, includeDrafts: false }),
     );
   });
 
@@ -88,6 +88,39 @@ describe("ExportCard", () => {
     render(<ExportCard projectId="p1" />);
     const option = screen.getByRole("checkbox", { name: "Preencher com o LLM onde nenhum pesquisador respondeu" });
     expect(option.hasAttribute("disabled")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+    expect(option.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(option);
+    expect(option.getAttribute("aria-checked")).toBe("false");
+
+    resolve(makeDataset());
+    await screen.findByText(/Prévia \(1 linha\)/);
+    expect(option.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("a opção de incluir rascunhos vem desligada e, marcada, chega à action e descarta a prévia", async () => {
+    hoisted.getExportDataset.mockResolvedValue(makeDataset());
+    render(<ExportCard projectId="p1" />);
+    const option = screen.getByRole("checkbox", { name: "Incluir rascunhos" });
+    expect(option.getAttribute("aria-checked")).toBe("false");
+
+    await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+    await screen.findByText(/Prévia \(1 linha\)/);
+    await userEvent.click(option);
+    expect(screen.queryByText(/Prévia \(/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+    await waitFor(() =>
+      expect(hoisted.getExportDataset).toHaveBeenLastCalledWith("p1", { fillFromLlm: false, includeDrafts: true }),
+    );
+  });
+
+  it("a opção de incluir rascunhos fica travada enquanto o dataset carrega", async () => {
+    let resolve: (d: ExportDataset) => void = () => {};
+    hoisted.getExportDataset.mockReturnValue(new Promise<ExportDataset>((r) => { resolve = r; }));
+    render(<ExportCard projectId="p1" />);
+    const option = screen.getByRole("checkbox", { name: "Incluir rascunhos" });
 
     await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
     expect(option.hasAttribute("disabled")).toBe(true);
