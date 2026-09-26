@@ -21,11 +21,23 @@ export const ERROR_DECISION_LABELS: Record<ErrorDecision, string> = {
 
 /**
  * Decisões em que o revisor escolhe o valor que vai ao gabarito, gravado em
- * `approved_value`. Espelha o CHECK `error_resolution_value_iff_chosen`.
+ * `approved_value`. O CHECK `error_resolution_value_by_decision` exige o
+ * valor nelas; "Ambos corretos" também pode ter valor, mas quem o calcula é o
+ * servidor (`carriesValue`).
  */
 export type ValueChoosingDecision = Extract<ErrorDecision, "researchers_correct" | "all_wrong">;
 export function choosesValue(decision: ErrorDecision): decision is ValueChoosingDecision {
   return decision === "researchers_correct" || decision === "all_wrong";
+}
+
+/**
+ * Decisões que levam `value` ao RPC: as de `choosesValue`, com o valor do
+ * seletor, e "Ambos corretos", com o valor comum que a prévia do servidor
+ * mostrou (`both_correct_value`). Em "Ambos corretos" o RPC recalcula o valor
+ * e recusa a decisão quando o enviado não é ele (#758).
+ */
+export function carriesValue(decision: ErrorDecision): boolean {
+  return choosesValue(decision) || decision === "both_correct";
 }
 
 const answerSchema = z.object({ present: z.boolean(), value: z.json() });
@@ -38,14 +50,24 @@ export const errorResolutionContextSchema = z.object({
 });
 export type ErrorResolutionContext = z.infer<typeof errorResolutionContextSchema>;
 
+/**
+ * O que "Ambos corretos" grava no gabarito, calculado pelo banco sobre o
+ * contexto conferido (`both_correct_value`, a mesma função que
+ * `set_error_resolution` usa ao gravar): o valor comum, ou `null` quando o
+ * veredito continua valendo (#758). `""` e `[]` são valor.
+ */
+export type BothCorrectPreview = { value: unknown } | null;
+
 export const errorResolutionInputSchema = z.object({
   decision: errorDecisionSchema,
   context: errorResolutionContextSchema,
   expected: z.object({ id: z.string(), resolved_at: z.string() }).nullable(),
   note: z.string().optional(),
   /**
-   * O valor que vai ao gabarito nas decisões de `choosesValue`, escolhido
-   * pelo revisor nas opções atuais do campo (#733). A RPC valida o domínio.
+   * O valor que vai ao gabarito nas decisões de `carriesValue`: nas de
+   * `choosesValue`, escolhido pelo revisor nas opções atuais do campo (#733),
+   * e a RPC valida o domínio; em "Ambos corretos", o valor comum da prévia,
+   * que a RPC recalcula e confere (#758).
    */
   value: z.json().optional(),
 });
@@ -62,7 +84,12 @@ export interface ErrorResolutionRow {
   resolved_at: string;
   resolved_by: string;
   note: string | null;
-  /** Coluna `approved_value`: só nas decisões de `choosesValue` (CHECK no banco). */
+  /**
+   * Coluna `approved_value`: obrigatória nas decisões de `choosesValue` e
+   * opcional em "Ambos corretos", que a tem quando gravou o valor comum
+   * (CHECK `error_resolution_value_by_decision`). `""` e `[]` são valor (o
+   * branco de condicional); ausência é `null`.
+   */
   approved_value?: unknown;
 }
 
@@ -72,11 +99,12 @@ export type EffectiveErrorResolution =
   | { status: "stale" }
   | { status: "discussion" }
   /**
-   * "Ambos corretos": nenhum valor é aprovado, o gabarito continua sendo o
-   * veredito da arbitragem. `llmValue` é a resposta do LLM, que passa a contar
-   * como correta ao lado dele. `verdictValue` só existe na auto-revisão, cujo
-   * veredito (a resposta humana do contexto) não chega ao export nem ao
-   * Gabarito por outra via; na Comparação quem o traz é a própria review.
+   * "Ambos corretos" sem valor comum: nenhum valor é aprovado, o gabarito
+   * continua sendo o veredito da arbitragem. `llmValue` é a resposta do LLM,
+   * que passa a contar como correta ao lado dele. `verdictValue` só existe na
+   * auto-revisão, cujo veredito (a resposta humana do contexto) não chega ao
+   * export nem ao Gabarito por outra via; na Comparação quem o traz é a
+   * própria review. Com o valor comum, "Ambos corretos" é `approved`.
    */
   | { status: "upheld"; llmValue: unknown; verdictValue?: unknown }
   | { status: "approved"; value: unknown; isLlmError: boolean };
@@ -96,12 +124,27 @@ function upheldResolution(context: ErrorResolutionContext): EffectiveErrorResolu
     ...(fromAutoReview ? { verdictValue: context.human_value.value } : {}) };
 }
 
+/** Se a linha gravou valor próprio em `approved_value` (`""` e `[]` contam). */
+function hasApprovedValue(row: Pick<ErrorResolutionRow, "approved_value">): boolean {
+  return row.approved_value !== undefined && row.approved_value !== null;
+}
+
+// "Ambos corretos" com o valor comum (#758): o veredito ficou para trás, e os
+// pesquisadores atuais e o LLM concordam no valor que vai ao gabarito. Nenhum
+// dos lados errou, então não é erro do LLM, e "Erro humano" deixa de ser o
+// único jeito de gravar esse valor.
+function bothCorrectResolution(row: ErrorResolutionRow, context: ErrorResolutionContext): EffectiveErrorResolution {
+  return hasApprovedValue(row)
+    ? { status: "approved", value: row.approved_value, isLlmError: false }
+    : upheldResolution(context);
+}
+
 // "Erro do LLM" e "Todos errados" aprovam o valor que o revisor escolheu, não
 // a resposta de um codificador: `human_value` fica no contexto só como âncora
 // de invalidação (#733). Linha sem coluna é anterior à migration e não é
 // aprovável até ser confirmada de novo.
 function chosenValueResolution(row: ErrorResolutionRow): EffectiveErrorResolution {
-  if (row.approved_value === undefined || row.approved_value === null) return { status: "stale" };
+  if (!hasApprovedValue(row)) return { status: "stale" };
   return { status: "approved", value: row.approved_value, isLlmError: true };
 }
 
@@ -164,7 +207,7 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
   const context = row.context;
   if (!context || !contextIsCurrent(row, context)) return { status: "stale" };
   if (row.decision === "discussion") return { status: "discussion" };
-  if (row.decision === "both_correct") return upheldResolution(context);
+  if (row.decision === "both_correct") return bothCorrectResolution(row, context);
   if (choosesValue(row.decision)) return chosenValueResolution(row);
   return llmCorrectResolution(context);
 }
@@ -172,15 +215,18 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
 /**
  * Se a decisão depende do veredito que a originou para valer. "Erro humano",
  * "Erro do LLM" e "Todos errados" gravam valor próprio (a resposta do LLM ou
- * `approved_value`): são um julgamento novo sobre as respostas e a pergunta
- * atuais, que o contexto já confere, e valem mesmo que o veredito da fonte
- * tenha perdido a validade. "Ambos corretos" e "Em discussão" não gravam
- * valor, e o gabarito continua sendo o veredito da fonte. A lista é a das
- * decisões com valor para que um tipo novo nasça exigindo a fonte; a cópia SQL
- * é o último argumento de `llm_error_context` em `read_error_resolutions`
- * (20260926121000_llm_error_context_review_valid.sql).
+ * `approved_value`), e "Ambos corretos" também quando gravou o valor comum:
+ * são um julgamento novo sobre as respostas e a pergunta atuais, que o
+ * contexto já confere, e valem mesmo que o veredito da fonte tenha perdido a
+ * validade. "Ambos corretos" sem valor e "Em discussão" não gravam valor, e o
+ * gabarito continua sendo o veredito da fonte. A lista é a das decisões com
+ * valor para que um tipo novo nasça exigindo a fonte; a cópia SQL é o último
+ * argumento de `llm_error_context` em `read_error_resolutions`
+ * (20260927120000_both_correct_common_value.sql).
  */
-export function decisionDependsOnSource(decision: ErrorDecision | null): boolean {
+export function decisionDependsOnSource(row: Pick<ErrorResolutionRow, "decision" | "approved_value">): boolean {
+  const { decision } = row;
+  if (decision === "both_correct") return !hasApprovedValue(row);
   return decision !== "llm_correct" && decision !== "researchers_correct" && decision !== "all_wrong";
 }
 

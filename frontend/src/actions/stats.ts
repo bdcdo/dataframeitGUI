@@ -285,7 +285,7 @@ export async function prepareErrorResolution(input: {
       // Sobre veredito que perdeu a validade, as decisões que gravam valor
       // próprio continuam possíveis; as que dependem dele, não. A mesma regra
       // em `set_error_resolution`, que recalcula o contexto com o mesmo flag.
-      p_require_valid_source: decisionDependsOnSource(input.decision),
+      p_require_valid_source: decisionDependsOnSource({ decision: input.decision, approved_value: null }),
     });
     if (error) return { error: error.message };
     const parsed = errorResolutionContextSchema.safeParse(data);

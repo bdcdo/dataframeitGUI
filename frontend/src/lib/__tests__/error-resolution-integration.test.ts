@@ -154,6 +154,53 @@ describe("veredito que perdeu a validade (#758)", () => {
   });
 });
 
+// #758: o veredito da arbitragem antiga diz "Humano", e o pesquisador da
+// rodada atual e o LLM dizem "LLM". "Ambos corretos" grava o valor comum, e
+// cada consumidor o aplica: um caso por consumidor, com a fonte válida e com
+// ela inválida (a decisão com valor próprio não depende dela).
+describe("Ambos corretos com o valor comum atravessa os consumidores", () => {
+  const agreeing = { value: "LLM", verdict: "Humano" };
+  const withCommonValue = () => ({ ...resolutionFixture("both_correct"), approved_value: "LLM" });
+
+  it("métrica, fonte válida: nenhum dos lados conta erro", () => {
+    const { metrics } = results([withCommonValue()], false, "LLM", null, agreeing);
+    expect(metrics.reviewedEntries).toEqual([expect.objectContaining({ isError: false, isPending: false })]);
+  });
+
+  // Sem veredito válido a célula sai da taxa (como toda decisão com valor
+  // próprio), mas a decisão continua na fila em vez de contar como perdida.
+  it("métrica, fonte inválida: a decisão segue na fila, sem virar decisão perdida", () => {
+    const row = withCommonValue();
+    const { metrics } = results([row], false, "LLM", OTHER_QUESTION, agreeing);
+    expect(metrics.errors).toEqual([expect.objectContaining({ resolution: row })]);
+    expect(metrics.lapsedDecisions).toEqual([]);
+  });
+
+  it.each([["válida", null], ["inválida", OTHER_QUESTION]])("export, fonte %s: a célula leva o valor comum", (_label, hash) => {
+    const { exported } = results([withCommonValue()], false, "LLM", hash, agreeing);
+    expect(exported.verdicts.rows[0][exported.verdicts.headers.indexOf("x")]).toBe("LLM");
+    expect(exported.verdicts.rows[0][exported.verdicts.headers.indexOf("reviewer_comments")]).toContain("Ambos corretos");
+  });
+
+  it.each([["válida", null], ["inválida", OTHER_QUESTION]])("Gabarito, fonte %s: o valor comum no lugar do veredito, e todos acertam", (_label, hash) => {
+    const { gabarito } = results([withCommonValue()], false, "LLM", hash, agreeing);
+    expect(gabarito[0].fields[0]).toMatchObject({ verdict: "LLM", resolutionLabel: "Ambos corretos", resolutionStatus: "approved" });
+    expect(gabarito[0].fields[0].respondentAnswers.map((a) => a.isCorrect)).toEqual([true, true]);
+  });
+
+  it("o branco comum de condicional vai ao gabarito como vazio, com o LLM sem a chave", () => {
+    const row = { ...resolutionFixture("both_correct"), approved_value: "" };
+    row.context!.field_definition = { name: "x", type: "text", description: "Pergunta", options: null, condition: { field: "g0", equals: "Sim" } };
+    row.context!.llm_value = { present: false, value: null };
+    row.current_context = structuredClone(row.context);
+    const { metrics, exported, gabarito } = results([row], false, ABSENT, null, { value: ABSENT, verdict: "Humano" });
+    expect(metrics.reviewedEntries[0]).toMatchObject({ isError: false });
+    expect(exported.verdicts.rows[0][exported.verdicts.headers.indexOf("x")]).toBe("");
+    expect(gabarito[0].fields[0].verdict).toBe("");
+    expect(gabarito[0].fields[0].respondentAnswers.map((a) => a.isCorrect)).toEqual([true, true]);
+  });
+});
+
 describe("resposta em branco em pergunta condicional", () => {
   it("Todos errados em branco: célula vazia no export, e LLM e humano que responderam erram no Gabarito", () => {
     const row = { ...resolutionFixture("all_wrong"), approved_value: "" };

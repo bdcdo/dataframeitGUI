@@ -351,11 +351,11 @@ DECLARE
 BEGIN
   FOR kase IN SELECT * FROM (VALUES
       ('  Adalimumabé  ', 'adalimumabe'),
-      (E'ÁRVORE   Grande', 'arvore grande'),
+      (E'ÁRVORE\u00A0\u2003 Grande', 'arvore grande'),
       ('Ação', 'acao'),
       (E'a\tb\nc', 'a b c'),
       ('a^b`c', 'abc'),
-      (E'x﻿', 'x'),
+      (E'x\uFEFF', 'x'),
       ('', '')) AS v(input, expected) LOOP
     IF public.answer_normalize_text(kase.input) IS DISTINCT FROM kase.expected THEN
       RAISE EXCEPTION 'FALHOU: answer_normalize_text(%) = % (esperado %)', kase.input, public.answer_normalize_text(kase.input), kase.expected;

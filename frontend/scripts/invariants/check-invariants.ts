@@ -184,7 +184,7 @@ async function scanSourceDependentDecisions(): Promise<
   ]);
   const anchored = decisions.flatMap((decision) => {
     const source = decision.context?.source;
-    if (!decisionDependsOnSource(decision.decision) || source?.kind !== "comparacao") return [];
+    if (!decisionDependsOnSource(decision) || source?.kind !== "comparacao") return [];
     return typeof source.id === "string" ? [{ decision, sourceId: source.id }] : [];
   });
   const reviews = new Map(

@@ -33,7 +33,10 @@ import { formatAnswer } from "@/lib/reviews/queries";
 import { formatCardAnswer } from "@/lib/verdict-display";
 import { pickValidCellReviews, reviewValidity, verdictSelection, type ReviewInvalidReason } from "@/lib/review-validity";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { effectiveErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import {
+  blankAnswerFor, effectiveErrorResolution, hasResolutionValue, isBlankAnswer, isConditionalField,
+  type EffectiveErrorResolution, type ErrorResolutionRow,
+} from "@/lib/error-resolution";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -75,6 +78,17 @@ export interface LlmError {
    */
   sourceInvalidReason?: SourceInvalidReason;
   resolution?: ErrorResolutionRow;
+  /**
+   * O que cada pesquisador responde agora (respostas humanas `is_latest`),
+   * formatado, em ordem de nome. O card o mostra ao lado do veredito
+   * anterior, que pode ser de uma arbitragem antiga (#758).
+   */
+  currentHumanAnswers?: CurrentHumanAnswer[];
+}
+
+export interface CurrentHumanAnswer {
+  name: string;
+  answer: string;
 }
 
 export type SourceInvalidReason = ReviewInvalidReason | "veredito_apagado";
@@ -372,24 +386,11 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     const cacheKey = `${docId}:${fieldName}`;
     const cached = groupKeyCache.get(cacheKey);
     if (cached) return cached;
-
-    // Todas as responses do documento entram, inclusive rodadas anteriores:
-    // `chosen_response_id` pode apontar para uma resposta que não é mais a
-    // `is_latest`, e é justamente por essas que o fecho transitivo passa.
-    const items = (responsesByDoc.get(docId) ?? []).map((response) => ({
-      id: response.id,
-      answer: response.answers?.[fieldName],
-      answerFieldHashes: response.answer_field_hashes ?? undefined,
-    }));
-    const field = fieldMap.get(fieldName);
-    const pairs = filterCurrentEquivalencePairs(
-      items,
+    const groupKeys = groupKeysOf(
+      responsesByDoc.get(docId) ?? [],
       equivByDocField.get(docId)?.get(fieldName) ?? [],
-      (item) => item.answer,
-      (item) => answersCurrentQuestion(item.answerFieldHashes, field),
-    );
-    const groupKeys = buildResponseGroupKeys(items, pairs, (item) =>
-      normalizeForComparison(item.answer),
+      fieldMap.get(fieldName),
+      fieldName,
     );
     groupKeyCache.set(cacheKey, groupKeys);
     return groupKeys;
@@ -431,6 +432,32 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
   };
 }
 
+// As classes de equivalência das respostas de um documento para um campo.
+// Todas as responses do documento entram, inclusive rodadas anteriores:
+// `chosen_response_id` pode apontar para uma resposta que não é mais a
+// `is_latest`, e é justamente por essas que o fecho transitivo passa. Par "="
+// com resposta dada a outra versão da pergunta não conta. A cópia SQL é a CTE
+// recursiva de `both_correct_common_value`.
+function groupKeysOf(
+  docResponses: readonly MetricsResponse[],
+  pairs: readonly EquivalencePair[],
+  field: PydanticField | undefined,
+  fieldName: string,
+): Map<string, string> {
+  const items = docResponses.map((response) => ({
+    id: response.id,
+    answer: response.answers?.[fieldName],
+    answerFieldHashes: response.answer_field_hashes ?? undefined,
+  }));
+  const current = filterCurrentEquivalencePairs(
+    items,
+    [...pairs],
+    (item) => item.answer,
+    (item) => answersCurrentQuestion(item.answerFieldHashes, field),
+  );
+  return buildResponseGroupKeys(items, current, (item) => normalizeForComparison(item.answer));
+}
+
 // A response que a arbitragem escolheu, por id e no documento da própria
 // review. Desde 20260924110000 a FK de `chosen_response_id` é composta com
 // `document_id`, e o banco recusa response de outro documento. A guarda fica
@@ -468,10 +495,43 @@ function multiVerdictMatcher(verdict: string, options: string[]): VerdictMatcher
   return (answer) => multiSelectionsAgree(options, multiSelectionSets([answer, selection]));
 }
 
-function verdictMatcher(review: MetricsReview, field: PydanticField): VerdictMatcher {
+type MatcherField = Pick<PydanticField, "type" | "options">;
+
+function verdictMatcher(verdict: string, field: MatcherField): VerdictMatcher {
   return field.type === "multi" && !!field.options?.length
-    ? multiVerdictMatcher(review.verdict, field.options)
-    : textVerdictMatcher(review.verdict);
+    ? multiVerdictMatcher(verdict, field.options)
+    : textVerdictMatcher(verdict);
+}
+
+/**
+ * Se uma resposta crua casa com o texto do veredito, pela regra da métrica. A
+ * cópia SQL é `verdict_matches_answer`; a matriz de casos é a mesma nas duas.
+ */
+export function verdictMatchesAnswer(field: MatcherField, verdict: string, answer: unknown): boolean {
+  return verdictMatcher(verdict, field)(answer);
+}
+
+/**
+ * Se duas respostas cruas são a mesma resposta: branco só com branco, `multi`
+ * com dois arrays por conjunto de opções (como `computeDivergentFieldNames`),
+ * o resto por `normalizeForComparison`. A classe de equivalência (par "=")
+ * fica a cargo de quem chama. A cópia SQL é `answers_agree`.
+ */
+export function answersAgree(field: Pick<PydanticField, "type" | "options">, a: unknown, b: unknown): boolean {
+  if (isBlankAnswer(a) || isBlankAnswer(b)) return isBlankAnswer(a) && isBlankAnswer(b);
+  if (field.type === "multi" && Array.isArray(a) && Array.isArray(b)) {
+    return multiSelectionsAgree(field.options ?? [], multiSelectionSets([a, b]));
+  }
+  return normalizeForComparison(a) === normalizeForComparison(b);
+}
+
+interface VerdictAgainstLlm {
+  field: PydanticField;
+  verdict: string;
+  chosenResponseId: string | null;
+  llmResponse: MetricsResponse;
+  documentResponses: readonly MetricsResponse[];
+  groupKeys: ReadonlyMap<string, string>;
 }
 
 // O LLM errou este campo, na leitura da Comparação? Errou sse o valor dele
@@ -493,31 +553,86 @@ function comparisonIsError(
   llmResponse: MetricsResponse,
   ctx: MetricsContext,
 ): boolean {
-  // O revisor escolheu a própria resposta do LLM. Resposta de LLM não é
-  // editada no lugar: rodada nova grava outra linha.
-  if (review.chosen_response_id === llmResponse.id) return false;
-
-  const matches = verdictMatcher(review, field);
-  if (matches(llmResponse.answers?.[review.field_name])) return false;
-  return !pairedWithVerdict(review, llmResponse, matches, ctx);
+  return verdictDivergesFromLlm({
+    field, verdict: review.verdict, chosenResponseId: review.chosen_response_id, llmResponse,
+    documentResponses: ctx.responsesByDoc.get(review.document_id) ?? [],
+    groupKeys: ctx.groupKeysFor(review.document_id, review.field_name),
+  });
 }
 
-function pairedWithVerdict(
-  review: MetricsReview,
-  llmResponse: MetricsResponse,
-  matches: VerdictMatcher,
-  ctx: MetricsContext,
-): boolean {
-  const groupKeys = ctx.groupKeysFor(review.document_id, review.field_name);
+function verdictDivergesFromLlm(input: VerdictAgainstLlm): boolean {
+  const { field, verdict, chosenResponseId, llmResponse } = input;
+  // O revisor escolheu a própria resposta do LLM. Resposta de LLM não é
+  // editada no lugar: rodada nova grava outra linha.
+  if (chosenResponseId === llmResponse.id) return false;
+
+  const matches = verdictMatcher(verdict, field);
+  if (matches(llmResponse.answers?.[field.name])) return false;
+  return !pairedWithVerdict(input, matches);
+}
+
+function pairedWithVerdict(input: VerdictAgainstLlm, matches: VerdictMatcher): boolean {
+  const { field, llmResponse, documentResponses, groupKeys } = input;
   const llmKey = groupKeys.get(llmResponse.id);
   if (llmKey === undefined) return false;
   // A própria resposta do LLM entra na varredura sem efeito: quem chega aqui já
   // sabe que ela não bate com o veredito.
-  return (ctx.responsesByDoc.get(review.document_id) ?? []).some(
+  return documentResponses.some(
     (response) =>
       groupKeys.get(response.id) === llmKey &&
-      matches(response.answers?.[review.field_name]),
+      matches(response.answers?.[field.name]),
   );
+}
+
+export interface BothCorrectInput {
+  field: PydanticField;
+  /** O veredito da fonte (`reviews.verdict`), só da Comparação. */
+  verdict: string;
+  chosenResponseId: string | null;
+  llmResponse: MetricsResponse;
+  /** Todas as responses do documento, de qualquer rodada: o union-find as usa. */
+  documentResponses: readonly MetricsResponse[];
+  /** As respostas humanas `is_latest` da rodada corrente. */
+  currentHumans: readonly MetricsResponse[];
+  /** Pares "=" do campo no documento, com as colunas de snapshot. */
+  equivalences: readonly EquivalencePair[];
+}
+
+/**
+ * O valor que "Ambos corretos" grava quando o veredito ficou para trás (#758),
+ * ou `null`. Vale quando o veredito diverge da resposta do LLM pela regra da
+ * métrica (`comparisonIsError`), todo pesquisador corrente concorda com o LLM
+ * (`answersAgree` ou a mesma classe de equivalência) e o valor cabe no domínio
+ * atual da pergunta. O valor é a resposta do LLM; em pergunta condicional com
+ * todos em branco, o vazio canônico do tipo. Fora de condicional o branco não é
+ * resposta, e não há valor.
+ *
+ * Quem grava é o servidor: `set_error_resolution` calcula o valor com a cópia
+ * SQL (`both_correct_common_value`) e recusa o que o cliente mandar fora dela.
+ * Esta cópia serve à invariante que confere as decisões gravadas e prende, com
+ * a mesma matriz de casos, que as duas regras não derivem.
+ */
+export function bothCorrectCommonValue(input: BothCorrectInput): { value: unknown } | null {
+  const { field, llmResponse, currentHumans } = input;
+  const llmAnswer = llmResponse.answers?.[field.name];
+  let value: unknown;
+  if (isBlankAnswer(llmAnswer)) {
+    if (!isConditionalField(field)) return null;
+    value = blankAnswerFor(field);
+  } else if (hasResolutionValue(field, llmAnswer)) {
+    value = llmAnswer;
+  } else {
+    return null;
+  }
+
+  const groupKeys = groupKeysOf(input.documentResponses, input.equivalences, field, field.name);
+  if (!verdictDivergesFromLlm({ ...input, groupKeys })) return null;
+  if (currentHumans.length === 0) return null;
+  const llmKey = groupKeys.get(llmResponse.id);
+  const agrees = (human: MetricsResponse) =>
+    answersAgree(field, llmAnswer, human.answers?.[field.name]) ||
+    (llmKey !== undefined && groupKeys.get(human.id) === llmKey);
+  return currentHumans.every(agrees) ? { value } : null;
 }
 
 // A resposta escolhida só serve de forma crua do veredito enquanto ainda é o
@@ -525,12 +640,23 @@ function pairedWithVerdict(
 // ninguém arbitrou.
 function chosenValueOf(review: MetricsReview, field: PydanticField, ctx: MetricsContext): unknown {
   const chosen = chosenResponseOf(review, ctx)?.answers?.[review.field_name];
-  return chosen !== undefined && verdictMatcher(review, field)(chosen) ? chosen : undefined;
+  return chosen !== undefined && verdictMatcher(review.verdict, field)(chosen) ? chosen : undefined;
+}
+
+// As respostas humanas correntes do documento, para o card mostrar ao lado do
+// veredito anterior. `is_latest` basta: a troca de rodada arquiva as da
+// rodada anterior no mesmo passo (invariante `response-is-latest-na-rodada-corrente`).
+function currentHumanAnswersOf(docId: string, fieldName: string, ctx: MetricsContext): CurrentHumanAnswer[] {
+  return (ctx.responsesByDoc.get(docId) ?? [])
+    .filter((response) => response.respondent_type === "humano" && response.is_latest)
+    .map((response) => ({ name: response.respondent_name || "Pesquisador", answer: formatAnswer(response.answers?.[fieldName]) }))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 }
 
 // A decisão explícita do revisor vence a classificação automática: "Ambos
-// corretos" tira o erro do LLM sem aprovar valor; as decisões que aprovam
-// valor dizem de quem foi o erro.
+// corretos" sem valor tira o erro do LLM mantendo o veredito; as decisões que
+// aprovam valor dizem de quem foi o erro ("Ambos corretos" com o valor comum
+// é `approved` sem erro do LLM).
 function resolutionIsError(resolution: EffectiveErrorResolution, measured: boolean): boolean {
   if (resolution.status === "upheld") return false;
   return resolution.status === "approved" ? resolution.isLlmError : measured;
@@ -606,6 +732,7 @@ function buildComparisonCandidate(
           chosenResponseId: review.chosen_response_id,
           source: "comparacao",
           sourceId: review.id,
+          currentHumanAnswers: currentHumanAnswersOf(review.document_id, review.field_name, ctx),
         }
       : null,
     entry: { ...shared, isError },
@@ -684,6 +811,7 @@ function buildAutoReviewError(
     chosenResponseId: row.human_response_id,
     source: "auto_revisao",
     sourceId: row.field_review_id,
+    currentHumanAnswers: currentHumanAnswersOf(row.document_id, row.field_name, ctx),
   };
 }
 
@@ -833,6 +961,7 @@ function revivedCase(
     source: autoReview ? "auto_revisao" : "comparacao",
     sourceId,
     ...sourceInvalidity(autoReview, sourceId, ctx),
+    currentHumanAnswers: currentHumanAnswersOf(resolution.document_id, resolution.field_name, ctx),
   };
 }
 

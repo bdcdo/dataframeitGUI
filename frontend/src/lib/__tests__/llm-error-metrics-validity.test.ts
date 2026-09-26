@@ -348,3 +348,28 @@ describe("fila: decisão com valor próprio sobre veredito que perdeu a validade
     expect(errors).toEqual([expect.objectContaining({ sourceInvalidReason: "fora_do_dominio" })]);
   });
 });
+
+// #758: o card do LLM Insights mostra, ao lado do veredito anterior, o que os
+// pesquisadores respondem agora. Só as respostas humanas correntes entram.
+describe("fila: respostas atuais dos pesquisadores no card", () => {
+  const people = [
+    llm("B"),
+    response({ id: "rh", respondent_name: "Beto", answers: { x: "B" } }),
+    response({ id: "rh2", respondent_name: "Ana", answers: { x: "b " } }),
+    response({ id: "old", respondent_name: "Ana", is_latest: false, answers: { x: "A" } }),
+  ];
+
+  it("caso vivo: cada pesquisador corrente com a resposta formatada, em ordem de nome", () => {
+    const { errors } = run({ responses: people, reviews: [review({ verdict: "A", chosen_response_id: "old" })] });
+    expect(errors[0].currentHumanAnswers).toEqual([{ name: "Ana", answer: "b " }, { name: "Beto", answer: "B" }]);
+  });
+
+  it("decisão ressuscitada também mostra as respostas atuais", () => {
+    const { errors } = run({
+      responses: [llm("A"), response({ id: "rh", respondent_name: "Beto", answers: { x: "A" } })],
+      reviews: [review({ id: "valid", verdict: "A" })],
+      errorResolutions: new Map([["doc1:x", decision("both_correct", "valid")]]),
+    });
+    expect(errors[0].currentHumanAnswers).toEqual([{ name: "Beto", answer: "A" }]);
+  });
+});

@@ -81,7 +81,7 @@ function ErrorCardActions({ error, projectId, isPending, canResolve, onDecide, o
     )}
     {canResolve && <>
       {errorDecisionSchema.options.map((decision) => {
-        const needsValidSource = !!error.sourceInvalidReason && decisionDependsOnSource(decision);
+        const needsValidSource = !!error.sourceInvalidReason && decisionDependsOnSource({ decision, approved_value: null });
         return (
           <Button key={decision} variant="outline" size="sm" disabled={isPending || !error.sourceId || needsValidSource}
             title={needsValidSource ? SOURCE_REQUIRED_REASON : undefined} onClick={() => onDecide(decision)}>

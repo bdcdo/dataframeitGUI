@@ -106,6 +106,23 @@ describe("Ambos corretos e Todos errados", () => {
     r.current_context = structuredClone(r.context);
     expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
   });
+  // #758: o veredito ficou para trás e os pesquisadores concordam com o LLM.
+  // O valor comum vai ao gabarito, e nenhum dos lados conta erro.
+  it("ambos corretos com o valor comum aprova esse valor, sem erro de ninguém", () => {
+    expect(effectiveErrorResolution({ ...row("both_correct"), approved_value: "máquina" }))
+      .toEqual({ status: "approved", value: "máquina", isLlmError: false });
+  });
+  it("o branco comum de condicional aprova o vazio mesmo com o LLM sem a chave", () => {
+    const r = { ...row("both_correct"), approved_value: "" };
+    r.context!.llm_value = { present: false, value: null };
+    r.current_context = structuredClone(r.context);
+    expect(effectiveErrorResolution(r)).toEqual({ status: "approved", value: "", isLlmError: false });
+  });
+  it("ambos corretos com valor também cai quando as respostas mudam", () => {
+    const r = { ...row("both_correct"), approved_value: "máquina" };
+    r.current_context!.llm_value.value = "outra";
+    expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+  });
   it("todos errados aprova o valor escolhido, que não é o do LLM nem o humano, e segue erro do LLM", () => {
     expect(effectiveErrorResolution(row("all_wrong"))).toEqual({ status: "approved", value: "terceira", isLlmError: true });
   });
@@ -317,10 +334,20 @@ describe("decisionDependsOnSource: decisão que depende do veredito de origem (#
     ["both_correct", true],
     ["discussion", true],
   ])("%s depende da fonte: %s", (decision, depends) => {
-    expect(decisionDependsOnSource(decision)).toBe(depends);
+    expect(decisionDependsOnSource({ decision, approved_value: null })).toBe(depends);
   });
 
   it("decisão sem tipo (legado) nasce dependendo da fonte", () => {
-    expect(decisionDependsOnSource(null)).toBe(true);
+    expect(decisionDependsOnSource({ decision: null, approved_value: null })).toBe(true);
+  });
+
+  // #758: com o valor comum, "Ambos corretos" é um julgamento novo sobre as
+  // respostas atuais, como as demais decisões com valor.
+  it("ambos corretos com o valor comum não depende da fonte", () => {
+    const row = { decision: "both_correct" as const, approved_value: "LLM" };
+    expect(decisionDependsOnSource(row)).toBe(false);
+    // O branco comum também é valor próprio: "" não é ausência de valor.
+    expect(decisionDependsOnSource({ ...row, approved_value: "" })).toBe(false);
+    expect(decisionDependsOnSource({ ...row, approved_value: [] })).toBe(false);
   });
 });
