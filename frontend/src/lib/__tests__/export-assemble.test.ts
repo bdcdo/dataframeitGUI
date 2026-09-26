@@ -4,8 +4,11 @@ import {
   resolveOriginalHeaders,
   type AssembleInput,
   type ExportDocument,
+  type ExportFinalAnswer,
+  type ExportResponse,
   type ExportSheet,
 } from "@/lib/export/assemble";
+import type { EquivalenceRow } from "@/lib/compare-divergence";
 import type { PydanticField } from "@/lib/types";
 import { resolutionFixture } from "./error-resolution-fixture";
 
@@ -145,8 +148,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("campo")],
       documents: [doc("A")],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
+        { id: "resp-1", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
+        { id: "resp-2", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(1);
@@ -158,8 +161,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("campo")],
       documents: [doc("A")],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "nao" } },
+        { id: "resp-3", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
+        { id: "resp-4", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "nao" } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -171,7 +174,7 @@ describe("assembleExport — auto-fill de concordância", () => {
       minResponses: 2,
       documents: [doc("A")],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
+        { id: "resp-5", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -182,8 +185,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("opts", { type: "multi", options: ["x", "y"] })],
       documents: [doc("A")],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x"] } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["x"] } },
+        { id: "resp-6", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x"] } },
+        { id: "resp-7", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["x"] } },
       ],
     });
     expect(d.verdicts.rows[0][idx(d.verdicts, "opts")]).toBe("x");
@@ -194,8 +197,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("opts", { type: "multi", options: ["x", "y"] })],
       documents: [doc("A")],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x"] } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["y"] } },
+        { id: "resp-8", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x"] } },
+        { id: "resp-9", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["y"] } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -209,8 +212,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("opts", { type: "multi", options: ["x"] })],
       documents: [doc("A")],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x", "z"] } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["x"] } },
+        { id: "resp-10", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x", "z"] } },
+        { id: "resp-11", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["x"] } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -225,8 +228,8 @@ describe("assembleExport — prioridade do veredicto sobre a concordância", () 
       fields: [field("campo")],
       documents: [doc("A")],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "concordado" } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "concordado" } },
+        { id: "resp-12", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "concordado" } },
+        { id: "resp-13", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "concordado" } },
       ],
       reviews: [
         { document_id: "A", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "pular", comment: "nota do revisor" },
@@ -249,7 +252,7 @@ describe("assembleExport — linha source=documento", () => {
         doc("B", { external_id: "EXT-B" }), // órfão
       ],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "v" } },
+        { id: "resp-14", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "v" } },
       ],
     });
     const sources = d.csv.rows.map((r) => r[idx(d.csv, "source")]);
@@ -285,8 +288,8 @@ describe("assembleExport — colunas originais no CSV", () => {
         }),
       ],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "a" } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "b" } },
+        { id: "resp-15", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "a" } },
+        { id: "resp-16", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "b" } },
       ],
     });
     const tribunalCol = idx(d.csv, "tribunal");
@@ -358,8 +361,8 @@ describe("assembleExport — filtra à base exportada (achado C1)", () => {
       documents: [doc("A", { external_id: "EXT-A" })],
       // resposta e review de um doc 'ghost' que não está na base (ex.: excluído).
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "v" } },
-        { document_id: "ghost", respondent_name: "RX", respondent_type: "llm", answers: { campo: "x" } },
+        { id: "resp-17", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "v" } },
+        { id: "resp-18", document_id: "ghost", respondent_name: "RX", respondent_type: "llm", answers: { campo: "x" } },
       ],
       reviews: [
         { document_id: "ghost", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "ambiguo", comment: null },
@@ -391,8 +394,8 @@ describe("assembleExport — inteiro teor só na aba Documentos", () => {
         }),
       ],
       responses: [
-        { document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "a" } },
-        { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "b" } },
+        { id: "resp-19", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "a" } },
+        { id: "resp-20", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "b" } },
       ],
     });
 
@@ -505,8 +508,8 @@ describe("assembleExport: validade do veredito (#758)", () => {
     fields: [field("campo", { hash: HASH })],
     documents: [doc("A")],
     responses: [
-      { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
-      { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
+      { id: "resp-21", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
+      { id: "resp-22", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
     ],
   };
   const review = (overrides: Partial<{ id: string; verdict: string; comment: string | null; created_at: string; field_hash: string | null; chosen_response_id: string | null }> = {}) => ({
@@ -564,8 +567,8 @@ describe("assembleExport: validade do veredito (#758)", () => {
       fields: [field("x", { hash: HASH })],
       documents: [doc("doc1")],
       responses: [
-        { document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { x: "LLM" } },
-        { document_id: "doc1", respondent_name: "R1", respondent_type: "codificacao", answers: { x: "Humano" } },
+        { id: "resp-23", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { x: "LLM" } },
+        { id: "resp-24", document_id: "doc1", respondent_name: "R1", respondent_type: "codificacao", answers: { x: "Humano" } },
       ],
     };
     const source = (field_hash: string) => ({
@@ -611,6 +614,150 @@ describe("assembleExport: validade do veredito (#758)", () => {
       const d = run({ ...decisionBase, reviews: [newer, source(HASH)], errorResolutions: [resolutionFixture("discussion")] });
       expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("");
       expect(d.verdicts.rows[0][idx(d.verdicts, "reviewer_comments")]).toContain("Em discussão");
+    });
+  });
+});
+
+// --- Células sem veredito: auto-revisão, grupos "=" e Pendências ---
+
+describe("assembleExport: células sem veredito", () => {
+  const resp = (id: string, type: "humano" | "llm", value: unknown, docId = "A"): ExportResponse => ({
+    id, document_id: docId, respondent_name: id, respondent_type: type, answers: { campo: value },
+  });
+  // Par "=" com os snapshots iguais às respostas atuais, salvo quando o teste
+  // passa outro.
+  const pair = (a: ExportResponse, b: ExportResponse, snapA: unknown = a.answers?.campo): EquivalenceRow => ({
+    id: `${a.id}-${b.id}`, document_id: a.document_id, field_name: "campo", response_a_id: a.id, response_b_id: b.id,
+    reviewer_id: null, response_a_answer_snapshot: snapA, response_b_answer_snapshot: b.answers?.campo,
+  });
+  const exported = (overrides: Partial<AssembleInput>) =>
+    run({ fields: [field("campo")], documents: [doc("A")], ...overrides });
+  const cellOf = (d: ReturnType<typeof run>, docId = "A") =>
+    d.verdicts.rows.find((r) => r[0] === docId)?.[idx(d.verdicts, "campo")] ?? "";
+  const pendingOf = (d: ReturnType<typeof run>) => d.pending.rows.map((r) => [r[0], r[2], r[3]]);
+
+  it("par \"=\" entre humanos, LLM fora do grupo: vence a forma mais frequente", () => {
+    const [h1, h2, h3, llm] = [resp("h1", "humano", "NI"), resp("h2", "humano", "NI"), resp("h3", "humano", "Ausente"), resp("l", "llm", "Sim")];
+    const d = exported({ responses: [h1, h2, h3, llm], equivalences: [pair(h3, h1)] });
+    expect(cellOf(d)).toBe("NI");
+    expect(d.pending.rows).toEqual([]);
+  });
+
+  it("empate de frequência cai na ordem alfabética, qualquer que seja a ordem das linhas", () => {
+    const [h1, h2, llm] = [resp("h1", "humano", "NI"), resp("h2", "humano", "Ausente"), resp("l", "llm", "Sim")];
+    const equivalences = [pair(h1, h2)];
+    expect(cellOf(exported({ responses: [h1, h2, llm], equivalences }))).toBe("Ausente");
+    expect(cellOf(exported({ responses: [llm, h2, h1], equivalences }))).toBe("Ausente");
+  });
+
+  it("LLM no grupo \"=\": a célula recebe a forma do LLM, mesmo minoritária", () => {
+    const [h1, h2, llm] = [resp("h1", "humano", "NI"), resp("h2", "humano", "NI"), resp("l", "llm", "Não informado")];
+    const d = exported({ responses: [h1, h2, llm], equivalences: [pair(h1, llm)] });
+    expect(cellOf(d)).toBe("Não informado");
+  });
+
+  it("dois humanos concordam e o LLM diverge: vale o consenso humano", () => {
+    const d = exported({ responses: [resp("h1", "humano", "Sim"), resp("h2", "humano", "sim "), resp("l", "llm", "Não")] });
+    expect(cellOf(d)).toBe("Sim");
+    // O CSV repete a linha do Gabarito.
+    const csvRow = d.csv.rows.find((r) => r[idx(d.csv, "source")] === "comparacao")!;
+    expect(csvRow[idx(d.csv, "campo")]).toBe("Sim");
+  });
+
+  it("multi: humanos com o mesmo conjunto e LLM divergente preenchem", () => {
+    const multi = field("campo", { type: "multi", options: ["a", "b", "c"] });
+    const d = exported({
+      fields: [multi],
+      responses: [resp("h1", "humano", ["b", "a"]), resp("h2", "humano", ["a", "b"]), resp("l", "llm", ["c"])],
+    });
+    expect(cellOf(d)).toBe("a; b");
+  });
+
+  it("um humano e o LLM divergentes: fica em branco e vai para Pendências", () => {
+    const d = exported({ responses: [resp("h1", "humano", "Sim"), resp("l", "llm", "Não")] });
+    expect(d.verdicts.rows).toEqual([]);
+    expect(pendingOf(d)).toEqual([["A", "campo", "aguarda arbitragem"]]);
+  });
+
+  it("par \"=\" com snapshot desatualizado não funde", () => {
+    const [h1, h2, llm] = [resp("h1", "humano", "NI"), resp("h2", "humano", "N/A"), resp("l", "llm", "Sim")];
+    const d = exported({ responses: [h1, h2, llm], equivalences: [pair(h1, h2, "Não informado")] });
+    expect(cellOf(d)).toBe("");
+    expect(pendingOf(d)).toEqual([["A", "campo", "aguarda arbitragem"]]);
+  });
+
+  describe("auto-revisão (view final_answers)", () => {
+    const answer = (provenance: ExportFinalAnswer["provenance"], value: unknown = null): ExportFinalAnswer => ({
+      document_id: "A", field_name: "campo", provenance, answer: value,
+    });
+    const responses = [resp("h1", "humano", "Sim"), resp("l", "llm", "Não")];
+
+    it.each(["auto_corrigido", "equivalente", "arbitrado"] as const)("%s resolvida preenche com o valor da view", (provenance) => {
+      const d = exported({ responses, finalAnswers: [answer(provenance, "Não")] });
+      expect(cellOf(d)).toBe("Não");
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it.each([
+      ["aguarda_auto_revisao", "auto-revisão pendente"],
+      ["aguarda_reconciliacao", "auto-revisão pendente"],
+      ["aguarda_arbitragem", "aguarda arbitragem"],
+      ["ambiguo", "ambíguo ou pular"],
+      ["pergunta_alterada", "pergunta alterada"],
+    ] as const)("%s deixa em branco com o motivo da view", (provenance, reason) => {
+      const d = exported({ responses, finalAnswers: [answer(provenance)] });
+      expect(cellOf(d)).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "campo", reason]]);
+    });
+
+    it("consenso da view não decide nada: a concordância das respostas é que vale", () => {
+      const d = exported({ responses, finalAnswers: [answer("consenso", "Não")] });
+      expect(cellOf(d)).toBe("");
+    });
+  });
+
+  describe("motivos das Pendências", () => {
+    it("Em discussão no LLM Insights", () => {
+      const d = run({
+        fields: [field("x", { hash: "h" })],
+        documents: [doc("doc1")],
+        responses: [
+          { id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { x: "LLM" } },
+          { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "humano", answers: { x: "Humano" } },
+        ],
+        reviews: [{ id: "review1", document_id: "doc1", field_name: "x", verdict: "Humano", comment: null,
+          created_at: "2026-01-01T00:00:00Z", field_hash: "h", chosen_response_id: "rh" }],
+        errorResolutions: [resolutionFixture("discussion")],
+      });
+      expect(pendingOf(d)).toEqual([["doc1", "x", "em discussão no LLM Insights"]]);
+    });
+
+    it("veredito que perdeu a validade vira pergunta alterada", () => {
+      const d = exported({
+        fields: [field("campo", { hash: "atual" })],
+        responses: [resp("h1", "humano", "Sim"), resp("l", "llm", "Não")],
+        reviews: [{ id: "rv", document_id: "A", field_name: "campo", verdict: "Sim", comment: null,
+          created_at: "2026-01-01T00:00:00Z", field_hash: "antigo", chosen_response_id: null }],
+      });
+      expect(pendingOf(d)).toEqual([["A", "campo", "pergunta alterada"]]);
+    });
+
+    it("um só pesquisador, sem LLM: poucas respostas", () => {
+      const d = exported({ responses: [resp("h1", "humano", "Sim")] });
+      expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
+    });
+
+    it("divergência que a Comparação não examina: divergência sem comparação", () => {
+      const d = exported({
+        fields: [field("campo", { target: "human_only" })],
+        responses: [resp("h1", "humano", "Sim"), resp("h2", "humano", "Não")],
+      });
+      expect(pendingOf(d)).toEqual([["A", "campo", "divergência sem comparação"]]);
+    });
+
+    it("documento só com a resposta do LLM não entra nas Pendências", () => {
+      const d = exported({ responses: [resp("l", "llm", "Sim")] });
+      expect(d.pending.rows).toEqual([]);
     });
   });
 });

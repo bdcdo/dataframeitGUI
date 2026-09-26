@@ -10,12 +10,15 @@
 // - Colunas originais: união preservando a ordem do CSV, docs por created_at asc.
 // - Colisão de nome de coluna original com controle/campo do schema → original_<nome>.
 
-import type { DocumentMetadata, PydanticField } from "@/lib/types";
-import { normalizeForComparison } from "@/lib/utils";
+import type { AnswerFieldHashes, DocumentMetadata, PydanticField } from "@/lib/types";
+import { groupBy } from "@/lib/utils";
 import {
   multiSelectionSets,
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
+import { answerGroupKeys, type EquivalencePair } from "@/lib/equivalence";
+import { buildEquivalenceMap, computeDivergentFieldNames, type EquivalenceRow } from "@/lib/compare-divergence";
+import type { AutoReviewProvenance } from "@/lib/llm-error-metrics";
 import { formatExportValue, formatVerdict } from "./format";
 import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
@@ -30,6 +33,8 @@ export interface ExportDataset {
   documents: ExportSheet;
   responses: ExportSheet;
   verdicts: ExportSheet;
+  /** Células do Gabarito em branco, com o motivo. Só vai para o XLSX. */
+  pending: ExportSheet;
   csv: ExportSheet;
 }
 
@@ -42,10 +47,21 @@ export interface ExportDocument {
 }
 
 export interface ExportResponse {
+  id: string;
   document_id: string;
   respondent_name: string | null;
   respondent_type: string;
   answers: Record<string, unknown> | null;
+  /** Decide se um par "=" ainda vale para a versão atual da pergunta. */
+  answer_field_hashes?: AnswerFieldHashes;
+}
+
+/** Linha da view `final_answers`: o valor e a proveniência da auto-revisão. */
+export interface ExportFinalAnswer {
+  document_id: string;
+  field_name: string;
+  provenance: AutoReviewProvenance;
+  answer: unknown;
 }
 
 export interface ExportReview {
@@ -68,6 +84,10 @@ export interface AssembleInput {
   responses: ExportResponse[];
   reviews: ExportReview[];
   errorResolutions?: ErrorResolutionRow[];
+  /** Pares "=" vigentes (`superseded_at IS NULL`), COM as colunas de snapshot. */
+  equivalences?: EquivalenceRow[];
+  /** Vazio quando o projeto não usa auto-revisão. */
+  finalAnswers?: ExportFinalAnswer[];
 }
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
@@ -176,44 +196,6 @@ function buildVerdictsByDoc(
   return byDoc;
 }
 
-// Campo multi concorda quando todas as respostas coincidem na seleção de cada
-// opção comparável (as do schema mais as efetivamente marcadas).
-function multiFieldAgrees(
-  docResponses: ExportResponse[],
-  fieldName: string,
-  options: string[]
-): boolean {
-  return multiSelectionsAgree(
-    options,
-    multiSelectionSets(docResponses.map((r) => r.answers?.[fieldName]))
-  );
-}
-
-// Valor concordante de um campo entre as respostas de um documento, ou null se
-// houver divergência. Multi compara conjuntos de opções; demais tipos usam
-// normalizeForComparison.
-//
-// Igualdade LITERAL, de propósito por ora: ao contrário da Comparação e da
-// métrica de erro do LLM — que fundem respostas por union-find sobre pares de
-// `response_equivalences` — aqui duas respostas marcadas como equivalentes
-// ainda contam como divergentes. Fundi-las exigiria decidir QUAL valor vai para
-// a célula, e a saída certa é um dicionário canônico de respostas, não uma
-// escolha arbitrária dentro do grupo. Ver issue bdcdo/dataframeitGUI#702.
-function fieldAgreementValue(
-  docResponses: ExportResponse[],
-  fieldName: string,
-  fullField: PydanticField | undefined
-): string | null {
-  if (fullField?.type === "multi" && fullField.options?.length) {
-    return multiFieldAgrees(docResponses, fieldName, fullField.options)
-      ? formatExportValue(docResponses[0].answers?.[fieldName])
-      : null;
-  }
-  const answers = docResponses.map((r) => r.answers?.[fieldName]);
-  const unique = new Set(answers.map((a) => normalizeForComparison(a)));
-  return unique.size === 1 ? formatExportValue(answers[0]) : null;
-}
-
 // O que a decisão escreve na célula, ou `undefined` para deixá-la como está.
 // "Ambos corretos" não aprova valor: o campo fica com o que o veredito ou a
 // concordância já puseram ali, e só recebe o veredito guardado no contexto
@@ -258,59 +240,249 @@ function applyExportResolutions(
   }
 }
 
-// Campos concordantes de UM documento que o revisor não marcou explicitamente.
-function docAgreements(
-  docResponses: ExportResponse[],
-  exportableFields: PydanticField[],
-  fieldByName: Map<string, PydanticField>,
-  reviewedFields: Map<string, string> | undefined
-): Map<string, string> {
-  const agreements = new Map<string, string>();
-  for (const field of exportableFields) {
-    if (reviewedFields?.has(field.name)) continue;
-    const value = fieldAgreementValue(
-      docResponses,
-      field.name,
-      fieldByName.get(field.name)
-    );
-    if (value !== null) agreements.set(field.name, value);
-  }
-  return agreements;
+function cellKey(documentId: string, fieldName: string): string {
+  return `${documentId}:${fieldName}`;
 }
 
-// Auto-fill: para cada documento com respostas suficientes, os campos em que
-// todas as respostas concordam e que o revisor NÃO marcou explicitamente.
-function buildAgreementByDoc(
-  baseResponses: ExportResponse[],
-  exportableFields: PydanticField[],
-  fieldByName: Map<string, PydanticField>,
-  verdictsByDoc: Map<string, VerdictEntry>,
-  minResponses: number
-): Map<string, Map<string, string>> {
-  const responsesByDoc = new Map<string, ExportResponse[]>();
-  for (const r of baseResponses) {
-    const list = responsesByDoc.get(r.document_id);
-    if (list) list.push(r);
-    else responsesByDoc.set(r.document_id, [r]);
-  }
+// Motivos da aba Pendências. Saem só do que o export já lê: nenhum deles
+// justifica uma consulta a mais.
+const PENDING_REASON = {
+  discussion: "em discussão no LLM Insights",
+  arbitration: "aguarda arbitragem",
+  autoReview: "auto-revisão pendente",
+  questionChanged: "pergunta alterada",
+  ambiguous: "ambíguo ou pular",
+  fewResponses: "poucas respostas",
+  uncompared: "divergência sem comparação",
+} as const;
 
-  const agreementByDoc = new Map<string, Map<string, string>>();
-  for (const [docId, docResponses] of responsesByDoc) {
-    if (docResponses.length < minResponses) continue;
-    const agreements = docAgreements(
-      docResponses,
-      exportableFields,
-      fieldByName,
-      verdictsByDoc.get(docId)?.fields
-    );
-    if (agreements.size > 0) agreementByDoc.set(docId, agreements);
+// O que cada proveniência da view `final_answers` faz com a célula: "decidido"
+// quando o CASE da view devolve em `answer` o snapshot que a auto-revisão
+// escolheu; um motivo quando o ciclo está aberto ou não produz gabarito;
+// `null` em 'consenso', que é a ausência de ciclo e que a view emite para todo
+// campo, com ou sem codificação humana: ali quem decide é a concordância. O
+// `satisfies` quebra a compilação se a view ganhar um estado sem destino aqui.
+const AUTO_REVIEW_CELL = {
+  auto_corrigido: "decidido",
+  equivalente: "decidido",
+  arbitrado: "decidido",
+  consenso: null,
+  aguarda_reconciliacao: PENDING_REASON.autoReview,
+  aguarda_auto_revisao: PENDING_REASON.autoReview,
+  aguarda_arbitragem: PENDING_REASON.arbitration,
+  ambiguo: PENDING_REASON.ambiguous,
+  pergunta_alterada: PENDING_REASON.questionChanged,
+} satisfies Record<AutoReviewProvenance, string | null>;
+
+// As respostas atuais de um documento, separadas como a concordância as usa.
+interface DocResponses {
+  all: ExportResponse[];
+  humans: ExportResponse[];
+  llm: ExportResponse | undefined;
+}
+
+// Se um conjunto de respostas cai num grupo só. `multi` segue a regra de
+// `computeDivergentFieldNames`: conjuntos de opções, sem pares "=", que a
+// Comparação não oferece nesse tipo. Os demais tipos usam as classes de
+// `answerGroupKeys` (pares "=" vigentes mais a mesma resposta normalizada).
+function groupAgreement(
+  field: PydanticField,
+  doc: DocResponses,
+  pairs: readonly EquivalencePair[],
+): (responses: ExportResponse[]) => boolean {
+  if (field.type === "multi" && field.options?.length) {
+    const options = field.options;
+    return (responses) =>
+      multiSelectionsAgree(options, multiSelectionSets(responses.map((r) => r.answers?.[field.name])));
   }
-  return agreementByDoc;
+  const keys = answerGroupKeys(doc.all, pairs, field, field.name);
+  return (responses) => new Set(responses.map((r) => keys.get(r.id))).size === 1;
+}
+
+// O valor de um grupo concordante. A resposta do LLM vem primeiro: é uma só
+// por documento e sai do mesmo gerador em todos eles, então a coluna fica com
+// a mesma grafia de documento para documento, enquanto entre pesquisadores o
+// mesmo conteúdo aparece escrito de jeitos diferentes ("NI", "N/A"). Sem o LLM
+// no grupo, vence a forma mais frequente, e o empate cai na ordem alfabética
+// para que dois exports do mesmo dado saiam iguais: a ordem das linhas que o
+// Postgres devolve não é estável.
+function groupValue(fieldName: string, group: ExportResponse[], llm: ExportResponse | undefined): string {
+  if (llm && group.includes(llm)) return formatExportValue(llm.answers?.[fieldName]);
+  const counts = new Map<string, number>();
+  for (const r of group) {
+    const value = formatExportValue(r.answers?.[fieldName]);
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts].sort(([a, na], [b, nb]) => nb - na || a.localeCompare(b, "pt-BR"))[0][0];
+}
+
+// Consenso da célula, ou null. Vale quando todas as respostas atuais, LLM
+// incluído, caem num grupo (com o piso `minResponses` de sempre), ou quando
+// pelo menos dois pesquisadores caem num grupo e o LLM diverge: dois humanos
+// concordantes já são gabarito, e o LLM é justamente o que está sendo medido.
+function cellConsensus(
+  field: PydanticField,
+  doc: DocResponses,
+  pairs: readonly EquivalencePair[],
+  minResponses: number,
+): string | null {
+  const agree = groupAgreement(field, doc, pairs);
+  const allAgree = agree(doc.all);
+  if (allAgree && doc.all.length >= minResponses) return groupValue(field.name, doc.all, doc.llm);
+  if (doc.humans.length >= 2 && agree(doc.humans)) {
+    return groupValue(field.name, allAgree ? doc.all : doc.humans, doc.llm);
+  }
+  return null;
+}
+
+interface CellContext {
+  minResponses: number;
+  autoReview: ReadonlyMap<string, ExportFinalAnswer>;
+  /** Células com alguma review, válida ou não. */
+  reviewedCells: ReadonlySet<string>;
+  /** Células que a decisão "Em discussão" do LLM Insights deixou em branco. */
+  discussed: ReadonlySet<string>;
+  pairsByDoc: ReturnType<typeof buildEquivalenceMap>;
+  /** Campos que a Comparação lista como divergência a resolver, por documento. */
+  comparisonDivergence: (docId: string, doc: DocResponses) => ReadonlySet<string>;
+}
+
+// Uma célula sem veredito: o valor que ela recebe ou o motivo de ficar em
+// branco. Ordem: auto-revisão decidida, concordância, e então o motivo.
+function resolveCell(
+  docId: string,
+  field: PydanticField,
+  doc: DocResponses,
+  ctx: CellContext,
+): { value: string } | { reason: string } {
+  const auto = ctx.autoReview.get(cellKey(docId, field.name));
+  if (auto && AUTO_REVIEW_CELL[auto.provenance] === "decidido") return { value: formatExportValue(auto.answer) };
+  const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
+  const consensus = cellConsensus(field, doc, pairs, ctx.minResponses);
+  if (consensus !== null) return { value: consensus };
+  return { reason: pendingReason(docId, field.name, doc, ctx) };
+}
+
+function pendingReason(docId: string, fieldName: string, doc: DocResponses, ctx: CellContext): string {
+  const key = cellKey(docId, fieldName);
+  const auto = ctx.autoReview.get(key);
+  const autoReason = auto ? AUTO_REVIEW_CELL[auto.provenance] : null;
+  if (autoReason) return autoReason;
+  // Há review na célula e nenhuma entrou no Gabarito: todas perderam a
+  // validade (`review-validity.ts`), porque a pergunta mudou depois delas.
+  if (ctx.reviewedCells.has(key)) return PENDING_REASON.questionChanged;
+  if (doc.all.length < ctx.minResponses && doc.humans.length < 2) return PENDING_REASON.fewResponses;
+  // Sem ler as atribuições não se sabe se a comparação já foi aberta; o que se
+  // sabe é se a regra da Comparação vê a divergência. Quando não vê (campo
+  // `human_only`, resposta a que o campo não se aplica), ninguém vai arbitrar.
+  return ctx.comparisonDivergence(docId, doc).has(fieldName)
+    ? PENDING_REASON.arbitration
+    : PENDING_REASON.uncompared;
+}
+
+// A divergência pela regra da Comparação, calculada uma vez por documento e só
+// quando uma célula dele fica em branco.
+function memoizedComparisonDivergence(
+  fields: PydanticField[],
+  pairsByDoc: CellContext["pairsByDoc"],
+): CellContext["comparisonDivergence"] {
+  const cache = new Map<string, Set<string>>();
+  return (docId, doc) => {
+    let divergent = cache.get(docId);
+    if (!divergent) {
+      divergent = new Set(
+        computeDivergentFieldNames(
+          fields,
+          doc.all.map((r) => ({ id: r.id, answers: r.answers, answerFieldHashes: r.answer_field_hashes ?? undefined })),
+          pairsByDoc.get(docId),
+        ),
+      );
+      cache.set(docId, divergent);
+    }
+    return divergent;
+  };
+}
+
+// O contexto das células sem veredito, montado do que o export leu.
+function buildCellContext(input: AssembleInput, baseReviews: ExportReview[]): CellContext {
+  const pairsByDoc = buildEquivalenceMap(input.equivalences ?? []);
+  const discussed = (input.errorResolutions ?? []).filter((row) => exportedResolution(row)?.status === "discussion");
+  return {
+    minResponses: input.minResponses,
+    autoReview: new Map((input.finalAnswers ?? []).map((row) => [cellKey(row.document_id, row.field_name), row])),
+    reviewedCells: new Set(baseReviews.map((r) => cellKey(r.document_id, r.field_name))),
+    discussed: new Set(discussed.map((row) => cellKey(row.document_id, row.field_name))),
+    pairsByDoc,
+    comparisonDivergence: memoizedComparisonDivergence(input.fields, pairsByDoc),
+  };
+}
+
+// As células de um documento: as que a auto-revisão ou a concordância
+// preenchem, e as que ficam em branco, com o motivo. Célula com veredito só
+// volta como pendente quando o veredito é o branco de "Em discussão".
+function resolveDocCells(
+  docId: string,
+  doc: DocResponses,
+  verdictFields: ReadonlyMap<string, string> | undefined,
+  fields: PydanticField[],
+  ctx: CellContext,
+): { filled: Map<string, string>; pending: [string, string][] } {
+  const filled = new Map<string, string>();
+  const pending: [string, string][] = [];
+  for (const field of fields) {
+    if (!verdictFields?.has(field.name)) {
+      const outcome = resolveCell(docId, field, doc, ctx);
+      if ("value" in outcome) filled.set(field.name, outcome.value);
+      else pending.push([field.name, outcome.reason]);
+    } else if (ctx.discussed.has(cellKey(docId, field.name))) {
+      pending.push([field.name, PENDING_REASON.discussion]);
+    }
+  }
+  return { filled, pending };
+}
+
+function splitResponses(all: ExportResponse[] = []): DocResponses {
+  return {
+    all,
+    humans: all.filter((r) => r.respondent_type !== "llm"),
+    llm: all.find((r) => r.respondent_type === "llm"),
+  };
+}
+
+// Entram nas Pendências os documentos que têm linha no Gabarito ou alguma
+// codificação humana. Documento só com a resposta do LLM ainda não foi
+// codificado, e listá-lo campo a campo só esconderia os brancos que importam.
+function listsPending(doc: DocResponses, hasGabaritoRow: boolean): boolean {
+  return hasGabaritoRow || doc.humans.length > 0;
+}
+
+// Percorre os documentos: as células preenchidas vão para `filledByDoc`, as em
+// branco viram linhas de Pendências.
+function resolveOpenCells(input: {
+  baseDocs: ExportDocument[];
+  identity: ReadonlyMap<string, DocIdentity>;
+  exportableFields: PydanticField[];
+  verdictsByDoc: ReadonlyMap<string, VerdictEntry>;
+  responses: ExportResponse[];
+  ctx: CellContext;
+}): { filledByDoc: Map<string, Map<string, string>>; pendingRows: string[][] } {
+  const responsesByDoc = groupBy(input.responses, (r) => r.document_id);
+  const filledByDoc = new Map<string, Map<string, string>>();
+  const pendingRows: string[][] = [];
+  for (const { id: docId } of input.baseDocs) {
+    const doc = splitResponses(responsesByDoc.get(docId));
+    const verdictFields = input.verdictsByDoc.get(docId)?.fields;
+    const { filled, pending } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
+    if (filled.size > 0) filledByDoc.set(docId, filled);
+    if (!listsPending(doc, filled.size > 0 || verdictFields !== undefined)) continue;
+    const { displayId, title } = input.identity.get(docId)!;
+    for (const [fieldName, reason] of pending) pendingRows.push([displayId, title, fieldName, reason]);
+  }
+  return { filledByDoc, pendingRows };
 }
 
 export function assembleExport(input: AssembleInput): ExportDataset {
-  const { projectName, fields, minResponses, documents, responses, reviews } =
-    input;
+  const { projectName, fields, documents, responses, reviews } = input;
 
   const exportableFields = fields.filter(
     (f) => f.target !== "llm_only" && f.target !== "none"
@@ -377,24 +549,26 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
   const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName);
   applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
-  const agreementByDoc = buildAgreementByDoc(
-    baseResponses,
+  const { filledByDoc, pendingRows } = resolveOpenCells({
+    baseDocs,
+    identity,
     exportableFields,
-    fieldByName,
     verdictsByDoc,
-    minResponses
-  );
+    responses: baseResponses,
+    ctx: buildCellContext(input, baseReviews),
+  });
 
-  // Documentos com gabarito (veredicto OU concordância), na ordem da base.
+  // Documentos com gabarito (veredicto, auto-revisão ou concordância), na ordem da base.
   const gabaritoIds = baseDocs
     .map((d) => d.id)
-    .filter((id) => verdictsByDoc.has(id) || agreementByDoc.has(id));
+    .filter((id) => verdictsByDoc.has(id) || filledByDoc.has(id));
   const gabaritoSet = new Set(gabaritoIds);
 
-  // Prioridade por campo: veredicto do revisor > concordância > vazio.
+  // Prioridade por campo: veredicto do revisor (com as decisões do LLM
+  // Insights) > auto-revisão decidida > concordância > vazio.
   const verdictFieldValue = (docId: string, fieldName: string): string =>
     verdictsByDoc.get(docId)?.fields.get(fieldName) ??
-    agreementByDoc.get(docId)?.get(fieldName) ??
+    filledByDoc.get(docId)?.get(fieldName) ??
     "";
 
   const sourceOf = (respondentType: string): string =>
@@ -467,6 +641,12 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     }),
   };
 
+  // --- Visão Pendências --- (só no XLSX: o CSV é uma tabela só)
+  const pendingSheet: ExportSheet = {
+    headers: ["document_id", "document_title", "campo", "motivo"],
+    rows: pendingRows,
+  };
+
   // --- CSV unificado: respostas + gabaritos + documentos órfãos ---
   const docsWithResponse = new Set(baseResponses.map((r) => r.document_id));
   const responseCsvRows = baseResponses.map((r) => {
@@ -527,6 +707,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     documents: documentsSheet,
     responses: responsesSheet,
     verdicts: verdictsSheet,
+    pending: pendingSheet,
     csv: csvSheet,
   };
 }
