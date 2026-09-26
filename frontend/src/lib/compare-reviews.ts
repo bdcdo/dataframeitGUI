@@ -7,6 +7,8 @@
 // e, de quebra, deixa mudanças do servidor (após `revalidatePath`) fluírem para
 // a tela — coisa que a cópia única de prop não fazia.
 
+import type { ReviewInvalidReason } from "@/lib/review-validity";
+
 export interface VerdictInfo {
   verdict: string;
   chosenResponseId: string | null;
@@ -15,6 +17,13 @@ export interface VerdictInfo {
 
 /** Vereditos indexados por documento e depois por campo. */
 export type ReviewsByDoc = Record<string, Record<string, VerdictInfo>>;
+
+/** Veredito que perdeu a validade, com o motivo (`review-validity.ts`). */
+export interface StaleVerdictInfo extends VerdictInfo {
+  invalidReason: ReviewInvalidReason;
+}
+
+export type StaleReviewsByDoc = Record<string, Record<string, StaleVerdictInfo>>;
 
 /**
  * Mescla os vereditos do servidor com os overrides otimistas. Override vence

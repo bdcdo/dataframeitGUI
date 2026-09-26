@@ -1,6 +1,11 @@
 import type { PydanticField } from "@/lib/types";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
-import { reviewIsValid } from "@/lib/review-validity";
+import { reviewValidity, type ReviewInvalidReason, type ValidatableReview } from "@/lib/review-validity";
+
+function invalidReasonOf(review: ValidatableReview, field: PydanticField | undefined): ReviewInvalidReason | undefined {
+  const validity = reviewValidity(review, field);
+  return validity.valid ? undefined : validity.reason;
+}
 
 /* ── Raw row shapes (subset de colunas realmente usadas por cada mapper) ── */
 
@@ -112,7 +117,7 @@ export function mapReviewComments(
     // O comentário continua na aba como foi escrito, mesmo quando só faz
     // sentido na versão antiga da pergunta; o que muda é que o veredito dele
     // deixa de ser apresentado como gabarito (`review-validity.ts`).
-    verdictStale: !reviewIsValid(r, fieldMap.get(r.field_name)),
+    verdictInvalidReason: invalidReasonOf(r, fieldMap.get(r.field_name)),
     source: "review",
     responseSnapshot:
       (r.response_snapshot as ReviewComment["responseSnapshot"]) ?? null,

@@ -291,6 +291,37 @@ describe("fila: decisão ressuscitada só enquanto vale", () => {
   });
 });
 
+describe("fila: decisão ancorada em veredito válido que não é o escolhido da célula", () => {
+  // Dois revisores arbitraram a célula, os dois vereditos valem, e a decisão
+  // foi dada sobre o mais antigo. A fonte continua válida: a regra é "a fonte
+  // vale", e não "a fonte é o veredito que o Gabarito escolheu".
+  const reviews = [
+    review({ id: "nova", verdict: "A", created_at: "2026-03-01T00:00:00Z" }),
+    review({ id: "antiga", verdict: "A", created_at: "2026-01-01T00:00:00Z" }),
+  ];
+
+  it("Em discussão continua na fila e continua pendente", () => {
+    const { errors, lapsedDecisions, reviewedEntries } = run({
+      responses: [llm("B"), response({ answers: { x: "A" } })],
+      reviews,
+      errorResolutions: new Map([["doc1:x", decision("discussion", "antiga")]]),
+    });
+    expect(lapsedDecisions).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(reviewedEntries).toEqual([expect.objectContaining({ isPending: true })]);
+  });
+
+  it("Ambos corretos ressuscitada fica na fila sem contar como perda de validade", () => {
+    const { errors, lapsedDecisions } = run({
+      responses: [llm("A"), response({ answers: { x: "A" } })],
+      reviews,
+      errorResolutions: new Map([["doc1:x", decision("both_correct", "antiga")]]),
+    });
+    expect(lapsedDecisions).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+  });
+});
+
 describe("fila: decisão com valor próprio sobre veredito que perdeu a validade", () => {
   const reviews = [
     review({ id: "stale", verdict: "B", field_hash: OLD_HASH, created_at: "2026-01-01T00:00:00Z" }),

@@ -86,13 +86,15 @@ describe("mapReviewComments: veredito que perdeu a validade (#758)", () => {
   });
 
   it.each([
-    ["mesma pergunta", row("aaaaaaaaaaaa"), false],
-    ["pergunta alterada", row("ffffffffffff"), true],
-    ["campo removido", row("aaaaaaaaaaaa", "sumiu"), true],
-  ])("%s: o comentário continua, e o veredito é marcado conforme a validade", (_label, review, stale) => {
-    const [result] = mapReviewComments([review], docMap, new Map([["campo1", hashed]]), new Map());
+    ["mesma pergunta", row("aaaaaaaaaaaa"), undefined],
+    ["pergunta alterada", row("ffffffffffff"), "pergunta_alterada"],
+    ["campo removido", row("aaaaaaaaaaaa", "sumiu"), "campo_removido"],
+    ["fora das opções", { ...row(null), verdict: "Talvez" }, "fora_do_dominio"],
+  ])("%s: o comentário continua, e o veredito é marcado com o motivo", (_label, review, reason) => {
+    const single = { ...hashed, type: "single" as const, options: ["x"] };
+    const [result] = mapReviewComments([review], docMap, new Map([["campo1", single]]), new Map());
     expect(result.comment).toBe("comentário antigo");
-    expect(result.verdictStale).toBe(stale);
+    expect(result.verdictInvalidReason).toBe(reason);
   });
 });
 

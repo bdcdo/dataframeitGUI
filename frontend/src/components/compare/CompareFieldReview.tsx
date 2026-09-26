@@ -12,7 +12,7 @@ import {
   type PendingVerdict,
   type VerdictOrigin,
 } from "./compare-types";
-import type { VerdictInfo } from "@/lib/compare-reviews";
+import type { StaleVerdictInfo, VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DomainField } from "@/lib/review-validity";
 
@@ -49,7 +49,7 @@ interface CompareFieldReviewProps {
   responses: ComparisonResponse[];
   existingVerdict: VerdictInfo | null;
   /** Veredito do revisor que perdeu a validade; só referência (#758). */
-  staleVerdict?: VerdictInfo | null;
+  staleVerdict?: StaleVerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
   isDivergent: boolean;
   isSavingVerdict: boolean;

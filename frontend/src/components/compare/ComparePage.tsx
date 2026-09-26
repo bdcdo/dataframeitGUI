@@ -14,7 +14,7 @@ import { useCompareFieldData } from "./useCompareFieldData";
 import { useCompareVerdicts } from "./useCompareVerdicts";
 import { useCompareKeyboard } from "./useCompareKeyboard";
 import { useUrlState } from "@/hooks/useUrlState";
-import type { ReviewsByDoc } from "@/lib/compare-reviews";
+import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
 import {
@@ -37,7 +37,7 @@ interface ComparePageProps {
   fields: PydanticField[];
   existingReviews: ReviewsByDoc;
   /** Vereditos do revisor que perderam a validade, só como referência (#758). */
-  staleReviews?: ReviewsByDoc;
+  staleReviews?: StaleReviewsByDoc;
   projectPydanticHash: string | null;
   respondentNames: string[];
   // Defaults VIVOS derivados do automation_mode/projeto (compareDefaultsForMode):

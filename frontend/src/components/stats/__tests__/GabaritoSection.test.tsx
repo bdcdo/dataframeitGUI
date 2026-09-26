@@ -22,10 +22,12 @@ function comment(overrides: Partial<ReviewComment> = {}): ReviewComment {
 
 describe("GabaritoSection (#758)", () => {
   it.each([
-    [false, "Gabarito:"],
-    [true, "Veredito anterior à mudança da pergunta:"],
-  ])("verdictStale=%s mostra %s", async (verdictStale, label) => {
-    render(<GabaritoSection comment={comment({ verdictStale })} projectId="p1" />);
+    [undefined, "Gabarito:"],
+    ["pergunta_alterada" as const, "Veredito anterior à mudança da pergunta:"],
+    ["fora_do_dominio" as const, "Veredito fora das opções atuais da pergunta:"],
+    ["campo_removido" as const, "Veredito de pergunta removida do formulário:"],
+  ])("verdictInvalidReason=%s mostra %s", async (verdictInvalidReason, label) => {
+    render(<GabaritoSection comment={comment({ verdictInvalidReason })} projectId="p1" />);
     await userEvent.click(screen.getByRole("button", { name: /Ver gabarito/ }));
     expect(await screen.findByText(label)).toBeTruthy();
   });

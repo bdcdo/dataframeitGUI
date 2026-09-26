@@ -1,3 +1,5 @@
+import type { ReviewInvalidReason } from "@/lib/review-validity";
+
 export { TYPE_LABELS, TYPE_COLORS } from "@/lib/field-labels";
 
 export interface ResponseSnapshotEntry {
@@ -24,10 +26,10 @@ export interface ReviewComment {
   createdAt: string;
   chosenResponseId: string | null;
   /**
-   * Só em comentário de review: o veredito foi dado sobre outra versão da
-   * pergunta, ou saiu das opções atuais, e não é mais gabarito (#758).
+   * Só em comentário de review cujo veredito não é mais gabarito: o motivo
+   * (`review-validity.ts`), que a tela usa para rotulá-lo (#758).
    */
-  verdictStale?: boolean;
+  verdictInvalidReason?: ReviewInvalidReason;
   source:
     | "review"
     | "nota"

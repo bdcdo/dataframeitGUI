@@ -16,8 +16,8 @@ import {
   type SchemaVersion,
   parseVersionStr,
 } from "@/lib/compare-version";
-import type { ReviewsByDoc } from "@/lib/compare-reviews";
-import { reviewIsValid } from "@/lib/review-validity";
+import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
+import { reviewValidity } from "@/lib/review-validity";
 import type { PydanticField } from "@/lib/types";
 import type { CompareResponse } from "@/components/compare/compare-types";
 
@@ -386,11 +386,11 @@ export function buildReviewsAndReviewedCounts(
    * revisados, e a célula volta a pedir arbitragem; a tela os mostra só como
    * referência.
    */
-  staleReviews: ReviewsByDoc;
+  staleReviews: StaleReviewsByDoc;
   reviewedCountByDoc: Record<string, number>;
 } {
   const existingReviews: ReviewsByDoc = {};
-  const staleReviews: ReviewsByDoc = {};
+  const staleReviews: StaleReviewsByDoc = {};
 
   // A revisão da Comparação é POR REVISOR (UNIQUE inclui reviewer_id, e
   // syncCompareAssignment fecha o assignment contando só os reviews do
@@ -407,14 +407,17 @@ export function buildReviewsAndReviewedCounts(
   const myReviewsByDoc = new Map<string, Set<string>>();
   reviews?.forEach((r) => {
     if (r.reviewer_id !== userId) return;
-    const target = reviewIsValid(r, fieldByName.get(r.field_name)) ? existingReviews : staleReviews;
-    if (!target[r.document_id]) target[r.document_id] = {};
-    target[r.document_id][r.field_name] = {
+    const info = {
       verdict: r.verdict,
       chosenResponseId: r.chosen_response_id ?? null,
       comment: r.comment ?? null,
     };
-    if (target === staleReviews) return;
+    const validity = reviewValidity(r, fieldByName.get(r.field_name));
+    if (!validity.valid) {
+      (staleReviews[r.document_id] ??= {})[r.field_name] = { ...info, invalidReason: validity.reason };
+      return;
+    }
+    (existingReviews[r.document_id] ??= {})[r.field_name] = info;
     if (!myReviewsByDoc.has(r.document_id)) myReviewsByDoc.set(r.document_id, new Set());
     myReviewsByDoc.get(r.document_id)!.add(r.field_name);
   });

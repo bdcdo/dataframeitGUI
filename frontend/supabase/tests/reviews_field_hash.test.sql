@@ -263,6 +263,51 @@ BEGIN
 END;
 $$;
 
+-- Rearbitragem pelo caminho real: o upsert de `submitVerdict` chega ao banco
+-- como INSERT ... ON CONFLICT DO UPDATE, com todas as colunas do payload no
+-- SET e sem `field_hash`. O doc 3 tem o veredito copiado fora das opcoes, dado
+-- sob o hash antigo da pergunta `q`.
+DO $$
+DECLARE
+  v_created timestamptz;
+BEGIN
+  SELECT created_at INTO v_created FROM public.reviews WHERE id = '5e400000-0000-0000-0000-000000000005';
+  IF (SELECT field_hash FROM public.reviews WHERE id = '5e400000-0000-0000-0000-000000000005') IS DISTINCT FROM 'aaaaaaaaaaaa' THEN
+    RAISE EXCEPTION 'FALHOU: fixture da rearbitragem por upsert deveria partir do hash antigo';
+  END IF;
+
+  -- Payload identico ao gravado: recarimba o hash atual, e o veredito
+  -- copiado continua fora das opcoes, entao continua sem validade.
+  INSERT INTO public.reviews AS review (project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id, comment, response_snapshot)
+  VALUES ('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 'q',
+    '5e000000-0000-0000-0000-000000000002', 'Não houve', '5e300000-0000-0000-0000-000000000013', NULL, NULL)
+  ON CONFLICT (project_id, document_id, field_name, reviewer_id) DO UPDATE SET
+    project_id = EXCLUDED.project_id, document_id = EXCLUDED.document_id, field_name = EXCLUDED.field_name,
+    reviewer_id = EXCLUDED.reviewer_id, verdict = EXCLUDED.verdict, chosen_response_id = EXCLUDED.chosen_response_id,
+    comment = EXCLUDED.comment, response_snapshot = EXCLUDED.response_snapshot;
+  IF (SELECT field_hash FROM public.reviews WHERE id = '5e400000-0000-0000-0000-000000000005') IS DISTINCT FROM 'eeeeeeeeeeee' THEN
+    RAISE EXCEPTION 'FALHOU: upsert de rearbitragem com payload identico nao recarimbou o hash atual';
+  END IF;
+  IF public.review_is_valid('5e400000-0000-0000-0000-000000000005') THEN
+    RAISE EXCEPTION 'FALHOU: o recarimbo nao pode validar veredito copiado fora das opcoes';
+  END IF;
+
+  -- Rearbitrada para uma opcao atual: vale, sem mover `created_at`.
+  INSERT INTO public.reviews AS review (project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id, comment, response_snapshot)
+  VALUES ('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 'q',
+    '5e000000-0000-0000-0000-000000000002', 'Não', '5e300000-0000-0000-0000-000000000013', NULL, NULL)
+  ON CONFLICT (project_id, document_id, field_name, reviewer_id) DO UPDATE SET
+    project_id = EXCLUDED.project_id, document_id = EXCLUDED.document_id, field_name = EXCLUDED.field_name,
+    reviewer_id = EXCLUDED.reviewer_id, verdict = EXCLUDED.verdict, chosen_response_id = EXCLUDED.chosen_response_id,
+    comment = EXCLUDED.comment, response_snapshot = EXCLUDED.response_snapshot;
+  IF NOT public.review_is_valid('5e400000-0000-0000-0000-000000000005')
+     OR (SELECT created_at FROM public.reviews WHERE id = '5e400000-0000-0000-0000-000000000005') IS DISTINCT FROM v_created THEN
+    RAISE EXCEPTION 'FALHOU: upsert de rearbitragem nao revalidou o veredito (ou moveu created_at)';
+  END IF;
+  RAISE NOTICE 'OK: rearbitragem por INSERT ... ON CONFLICT DO UPDATE recarimba e revalida';
+END;
+$$;
+
 -- (d) Regra do backfill.
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes) VALUES
   ('5e300000-0000-0000-0000-000000000021', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000002',

@@ -247,6 +247,23 @@ def render_annotation_context_bullets(context_annots: list[dict]) -> list[str]:
     return lines
 
 
+# Por motivo de `ReviewInvalidReason` (frontend/src/lib/review-validity.ts).
+INVALID_VERDICT_SENTENCES = {
+    "pergunta_alterada": (
+        "Esse veredito foi dado sobre uma versão anterior da pergunta e "
+        "não vale mais como gabarito."
+    ),
+    "fora_do_dominio": (
+        "Esse veredito usa uma opção que não está mais no formulário e "
+        "não vale mais como gabarito."
+    ),
+    "campo_removido": (
+        "A pergunta desse veredito foi removida do formulário, e ele não "
+        "vale mais como gabarito."
+    ),
+}
+
+
 def render_review_cluster(cl: dict) -> list[str]:
     r = cl["anchor"]
     doubts = cl["doubts"]
@@ -276,13 +293,16 @@ def render_review_cluster(cl: dict) -> list[str]:
     for ln in r["text"].splitlines():
         body.append(f"> {ln}" if ln.strip() else ">")
     body.append("")
-    # `verdictValid` vem de fetch-open-comments.ts: False quando o veredito foi
-    # dado sobre outra versão da pergunta e deixou de ser gabarito. Ausente em
-    # JSON gerado antes da chave existir, e aí nada é dito.
-    if (r.get("extra") or {}).get("verdictValid") is False:
+    # `verdictValid` e `verdictInvalidReason` vêm de fetch-open-comments.ts:
+    # o veredito deixou de ser gabarito, e o motivo (`review-validity.ts`).
+    # Ausentes em JSON gerado antes das chaves existirem, e aí nada é dito.
+    extra = r.get("extra") or {}
+    if extra.get("verdictValid") is False:
         body.append(
-            "Esse veredito foi dado sobre uma versão anterior da pergunta e "
-            "não vale mais como gabarito."
+            INVALID_VERDICT_SENTENCES.get(
+                extra.get("verdictInvalidReason"),
+                "Esse veredito não vale mais como gabarito.",
+            )
         )
         body.append("")
 

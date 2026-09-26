@@ -21,7 +21,7 @@ import {
 } from "@/lib/compare-multi-options";
 import { ArrowRight, CheckCircle2, MessageSquare, Lightbulb } from "lucide-react";
 import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
-import type { VerdictInfo } from "@/lib/compare-reviews";
+import type { StaleVerdictInfo, VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { PendingVerdict, VerdictOrigin } from "./compare-types";
 
@@ -51,7 +51,7 @@ interface ComparisonPanelProps {
   responses: ComparisonResponse[];
   existingVerdict: VerdictInfo | null;
   /** Veredito do revisor que perdeu a validade; só referência (#758). */
-  staleVerdict?: VerdictInfo | null;
+  staleVerdict?: StaleVerdictInfo | null;
   reviewed: boolean[];
   isDivergent: boolean;
   docStatus: DocStatus;

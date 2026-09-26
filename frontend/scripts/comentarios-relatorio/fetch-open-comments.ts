@@ -23,7 +23,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import type { PydanticField } from "../../src/lib/types";
-import { reviewIsValid } from "../../src/lib/review-validity";
+import { reviewValidity } from "../../src/lib/review-validity";
 import { loadEnv } from "./load-env";
 
 loadEnv();
@@ -142,6 +142,14 @@ async function resolveProject(args: Record<string, string | boolean>) {
 }
 
 // ----------------------- Fetching -----------------------
+
+function verdictValidityExtra(
+  review: Parameters<typeof reviewValidity>[0],
+  field: PydanticField | undefined,
+): { verdictValid: boolean; verdictInvalidReason: string | null } {
+  const validity = reviewValidity(review, field);
+  return { verdictValid: validity.valid, verdictInvalidReason: validity.valid ? null : validity.reason };
+}
 
 async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
   const [
@@ -298,10 +306,10 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       createdAt: r.created_at as string,
       extra: {
         verdict: r.verdict,
-        // Se o veredito ainda é gabarito (`review-validity.ts`). O comentário
-        // entra no relatório de qualquer forma; o veredito dado sobre outra
-        // versão da pergunta não deve ser lido como a resposta certa.
-        verdictValid: reviewIsValid(
+        // Se o veredito ainda é gabarito (`review-validity.ts`) e, se não é,
+        // por quê. O comentário entra no relatório de qualquer forma; o
+        // veredito sem validade não deve ser lido como a resposta certa.
+        ...verdictValidityExtra(
           {
             field_name: r.field_name as string,
             verdict: r.verdict as string,

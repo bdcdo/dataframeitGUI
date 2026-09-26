@@ -9,7 +9,8 @@ import { Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
-import type { VerdictInfo } from "@/lib/compare-reviews";
+import { INVALID_VERDICT_LABELS } from "@/lib/review-validity";
+import type { StaleVerdictInfo, VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import { PendingConfirmBar } from "./PendingConfirmBar";
 import {
@@ -29,12 +30,12 @@ interface DivergenceActionsPanelProps {
   isMulti: boolean;
   existingVerdict: VerdictInfo | null;
   /**
-   * Veredito do revisor dado sobre outra versão da pergunta (ou fora das
-   * opções atuais): não conta como revisão, e a célula pede arbitragem de
-   * novo. Fica na tela só como referência, e some assim que houver veredito
-   * válido (#758).
+   * Veredito do revisor que perdeu a validade (pergunta alterada, valor fora
+   * das opções atuais, campo removido): não conta como revisão, e a célula
+   * pede arbitragem de novo. Fica na tela só como referência, rotulado pelo
+   * motivo, e some assim que houver veredito válido (#758).
    */
-  staleVerdict?: VerdictInfo | null;
+  staleVerdict?: StaleVerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
   onPrepareVerdict: (pending: PendingVerdict) => void;
   comment: string;
@@ -110,7 +111,7 @@ export function DivergenceActionsPanel({
 
       {!existingVerdict && staleVerdict && (
         <div className="mt-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
-          Veredito anterior à mudança da pergunta:{" "}
+          {INVALID_VERDICT_LABELS[staleVerdict.invalidReason]}:{" "}
           <span className="font-medium text-foreground">
             {formatVerdictDisplay(staleVerdict.verdict)}
           </span>

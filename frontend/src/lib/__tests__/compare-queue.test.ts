@@ -468,13 +468,13 @@ describe("buildReviewsAndReviewedCounts", () => {
     });
 
     it.each([
-      ["pergunta alterada", mine({ field_hash: "velho0000000" })],
-      ["veredito fora das opções atuais", mine({ field_hash: null, verdict: "Talvez" })],
-    ])("%s: a célula volta a pedir arbitragem e o veredito antigo fica como referência", (_label, stale) => {
+      ["pergunta alterada", mine({ field_hash: "velho0000000" }), "pergunta_alterada"],
+      ["veredito fora das opções atuais", mine({ field_hash: null, verdict: "Talvez" }), "fora_do_dominio"],
+    ])("%s: a célula volta a pedir arbitragem e o veredito antigo fica como referência, com o motivo", (_label, stale, reason) => {
       const out = buildReviewsAndReviewedCounts([stale], "me", ["doc1"], { doc1: ["a"] }, fields);
       expect(out.existingReviews.doc1).toBeUndefined();
       expect(out.reviewedCountByDoc.doc1).toBe(0);
-      expect(out.staleReviews.doc1.a).toEqual({ verdict: stale.verdict, chosenResponseId: "r1", comment: "antes" });
+      expect(out.staleReviews.doc1.a).toEqual({ verdict: stale.verdict, chosenResponseId: "r1", comment: "antes", invalidReason: reason });
     });
   });
 

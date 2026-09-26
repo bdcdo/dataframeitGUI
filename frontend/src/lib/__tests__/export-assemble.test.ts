@@ -600,5 +600,14 @@ describe("assembleExport — validade do veredito (#758)", () => {
       const stale = run({ ...decisionBase, reviews: [source("ffffffffffff")], errorResolutions: [resolutionFixture("both_correct")] });
       expect(stale.verdicts.rows).toHaveLength(0);
     });
+
+    // A fonte vale mesmo sem ser a review escolhida da célula: outro revisor
+    // arbitrou depois, e os dois vereditos valem.
+    it("Em discussão ancorada no veredito válido mais antigo da célula bloqueia o gabarito", () => {
+      const newer = { ...source(HASH), id: "review2", created_at: "2026-02-01T00:00:00Z" };
+      const d = run({ ...decisionBase, reviews: [newer, source(HASH)], errorResolutions: [resolutionFixture("discussion")] });
+      expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("");
+      expect(d.verdicts.rows[0][idx(d.verdicts, "reviewer_comments")]).toContain("Em discussão");
+    });
   });
 });
