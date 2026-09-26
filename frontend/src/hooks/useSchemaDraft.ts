@@ -21,7 +21,10 @@ import {
   type SchemaMergeResult,
   unresolvedSchemaConflicts,
 } from "@/lib/schema-merge";
-import { serializeSchemaFields } from "@/lib/schema-utils";
+import {
+  inheritQuestionRevisions,
+  serializeSchemaFields,
+} from "@/lib/schema-utils";
 import { makeId } from "@/lib/utils";
 import type {
   PydanticField,
@@ -43,6 +46,9 @@ interface UseSchemaDraftParams {
 
 interface SchemaDraftSubmission {
   fields: PydanticField[];
+  // O schema salvo sobre o qual o rascunho vai ser gravado: é contra ele que o
+  // save pergunta se a instrução alterada muda como responder.
+  baseFields: PydanticField[];
   expectedBaseline: SchemaBaselineIdentity;
 }
 
@@ -410,12 +416,16 @@ function stateAfterFieldsChange(
 // falhava o compare-and-swap, o envelope ficava órfão, e como este ramo zera
 // `persistedToken` toda escrita seguinte passava a colidir com o próprio lixo —
 // o rascunho nunca mais era gravado na sessão e o banner culpava outra aba.
+//
+// O rascunho herda o contador de revisão da pergunta do schema salvo: o
+// "Muda como responder" vai só no payload do save, e sem a herança o editor
+// ficaria sujo, com uma diferença que nenhuma edição explica.
 function stateAfterSave(
   current: SchemaDraftState,
   saved: SchemaSnapshot,
   scope: SchemaDraftScope,
 ): SchemaDraftState {
-  const fields = stateFields(current);
+  const fields = inheritQuestionRevisions(saved.fields, stateFields(current));
   if (sameFields(fields, saved.fields)) {
     const deleted = deleteDraftIfTokenMatches(
       scope,
@@ -621,9 +631,11 @@ function submissionFromState(state: SchemaDraftState): SchemaDraftSubmission {
   if (state.kind === "conflict") {
     throw new Error("Resolva todos os conflitos antes de salvar o schema.");
   }
+  const baseline = stateBaseline(state);
   return {
     fields: stateFields(state),
-    expectedBaseline: { revision: stateBaseline(state).revision },
+    baseFields: baseline.fields,
+    expectedBaseline: { revision: baseline.revision },
   };
 }
 

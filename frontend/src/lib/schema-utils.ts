@@ -122,6 +122,16 @@ function fieldExtra(field: PydanticField): string {
   ) {
     extras.push(`"subfield_rule": "at_least_one"`);
   }
+  extras.push(...trailingExtras(field));
+  if (extras.length === 0) return "";
+  return `, json_schema_extra={${extras.join(", ")}}`;
+}
+
+// As chaves que fecham o `json_schema_extra`, na ordem em que sempre saíram: a
+// ordem é parte do texto de que o `pydantic_hash` deriva. Separadas de
+// `fieldExtra` só para manter a complexidade dele sob o limiar do fallow.
+function trailingExtras(field: PydanticField): string[] {
+  const extras: string[] = [];
   if (field.help_text?.trim()) {
     extras.push(`"help_text": "${escapeString(field.help_text.trim())}"`);
   }
@@ -133,8 +143,14 @@ function fieldExtra(field: PydanticField): string {
       `"justification_prompt": "${escapeString(field.justification_prompt.trim())}"`,
     );
   }
-  if (extras.length === 0) return "";
-  return `, json_schema_extra={${extras.join(", ")}}`;
+  // Por último e só quando existe, pelo mesmo motivo de `required`: o texto do
+  // código fica byte-idêntico para campo sem revisão. Sem a chave aqui,
+  // `compile_pydantic` (recuperação de campos) recalcularia o hash sem o
+  // contador e devolveria o hash anterior à revisão.
+  if (field.question_revision) {
+    extras.push(`"question_revision": ${field.question_revision}`);
+  }
+  return extras;
 }
 
 export function generatePydanticCode(
@@ -468,22 +484,55 @@ export function stableStringify(value: unknown): string {
 // Hash estável por campo — espelha _field_hash do backend. Exclui `target`,
 // `condition`, `help_text` (carregados estruturalmente) de propósito: mudá-los
 // não invalida respostas já coletadas.
+//
+// `questionRevision` é o caminho para a instrução invalidar julgamentos quando
+// quem edita declara que ela muda como responder: o contador sobe e o hash
+// muda, e vereditos, pares "=", auto-revisões e decisões presos ao hash antigo
+// caem pelo mecanismo que já existe. Ele só entra na string quando é um inteiro
+// positivo; ausente (ou nulo, como vem de payload antigo do schema_change_log)
+// deixa a string exatamente como era, e é isso que mantém todo hash gravado
+// antes do contador existir válido.
 export function computeFieldHash(
   name: string,
   type: string,
   options: string[] | null,
   description: string,
+  questionRevision?: number | null,
 ): string {
   const optionsPart = options ? pythonListRepr(options.toSorted()) : "";
-  const content = `${name}|${type}|${optionsPart}|${description}`;
+  const revisionPart =
+    questionRevision && questionRevision > 0 ? `|r${questionRevision}` : "";
+  const content = `${name}|${type}|${optionsPart}|${description}${revisionPart}`;
   return sha256Hex(content).slice(0, 12);
+}
+
+// Hash do campo inteiro, pela mesma fórmula; é o que o save grava.
+export function fieldHashOf(
+  field: Pick<PydanticField, "name" | "type" | "options" | "description" | "question_revision">,
+): string {
+  return computeFieldHash(
+    field.name,
+    field.type,
+    field.options,
+    field.description,
+    field.question_revision,
+  );
+}
+
+// Uma só definição de "a instrução mudou", para o log de auditoria
+// (`diffFields`) e para a pergunta de revisão no save concordarem.
+export function helpTextChanged(
+  before: Pick<PydanticField, "help_text">,
+  after: Pick<PydanticField, "help_text">,
+): boolean {
+  return (before.help_text || "") !== (after.help_text || "");
 }
 
 export type ChangeType = "major" | "minor" | "patch";
 
 // Classifica uma edição de schema:
-// - PATCH: mudanças apenas em description/help_text/justification_prompt ou
-//   reordenação (sem mudança estrutural)
+// - PATCH: mudanças apenas em description/help_text/justification_prompt/
+//   question_revision ou reordenação (sem mudança estrutural)
 // - MINOR: adicionar/remover campo, adicionar/remover opção, mudar
 //   type/target/required/subfields/condition
 // - Retorna null quando não há mudança alguma.
@@ -553,6 +602,7 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     allow_other: resolveAllowOther(field.allow_other),
     condition: field.condition ?? null,
     justification_prompt: field.justification_prompt ?? null,
+    question_revision: field.question_revision ?? null,
   };
 }
 
@@ -565,7 +615,8 @@ export function serializeSchemaFields(fields: PydanticField[]): string {
 
 // Classifica um diff de schema_change_log (before/after por campo) como
 // estrutural (minor) ou textual (patch). Add/remove são sempre estruturais.
-// description / help_text / justification_prompt são textuais (patch).
+// description / help_text / justification_prompt / question_revision são
+// textuais (patch).
 export function fieldDiffIsStructural(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
@@ -694,7 +745,7 @@ export function diffFields(
       before.description = old.description;
       after.description = f.description;
     }
-    if ((old.help_text || "") !== (f.help_text || "")) {
+    if (helpTextChanged(old, f)) {
       diffs.push("instruções");
       before.help_text = old.help_text || null;
       after.help_text = f.help_text || null;
@@ -752,6 +803,15 @@ export function diffFields(
       before.justification_prompt = old.justification_prompt || null;
       after.justification_prompt = f.justification_prompt || null;
     }
+    // Registrado porque entra no hash: o backfill e a invariante de
+    // `answer_field_hashes` reconstroem o hash de cada versão a partir de
+    // before/after, e sem o contador aqui reconstruiriam o hash anterior à
+    // revisão. Não é estrutural (a classificação segue a da instrução, patch).
+    if ((old.question_revision ?? null) !== (f.question_revision ?? null)) {
+      diffs.push("revisão da pergunta");
+      before.question_revision = old.question_revision ?? null;
+      after.question_revision = f.question_revision ?? null;
+    }
 
     if (diffs.length > 0) {
       logEntries.push({
@@ -777,6 +837,30 @@ export function diffFields(
   return logEntries;
 }
 
+// O contador de revisão da pergunta só sobe. Campo (casado por `id`) que volta
+// sem ele, ou com valor menor que o salvo, herda o salvo: baixar o contador
+// devolveria o hash anterior à revisão e reviveria os vereditos, pares,
+// auto-revisões e decisões que o "Muda como responder" derrubou. Herdar, e não
+// recusar, porque quem perde o contador (JSON escrito à mão para
+// `apply-decisions.ts`, rascunho que não o recebeu) não quis desfazer nada.
+// Devolve o próprio array quando não há o que herdar.
+export function inheritQuestionRevisions(
+  savedFields: readonly PydanticField[],
+  fields: PydanticField[],
+): PydanticField[] {
+  const savedRevision = new Map(
+    savedFields.map((field) => [field.id, field.question_revision ?? 0]),
+  );
+  const lowered = (field: PydanticField) =>
+    (field.question_revision ?? 0) < (savedRevision.get(field.id) ?? 0);
+  if (!fields.some(lowered)) return fields;
+  return fields.map((field) =>
+    lowered(field)
+      ? { ...field, question_revision: savedRevision.get(field.id) }
+      : field,
+  );
+}
+
 export interface SchemaPersistencePlan {
   changeType: ChangeType | null;
   bumped: { major: number; minor: number; patch: number };
@@ -796,9 +880,10 @@ export interface SchemaPersistencePlan {
 // deve ser reimplementado em paralelo (risco de drift — ver #63/PR #352).
 export function planSchemaPersistence(
   oldFields: PydanticField[],
-  newFields: PydanticField[],
+  submittedFields: PydanticField[],
   current: { major: number; minor: number; patch: number },
 ): SchemaPersistencePlan {
+  const newFields = inheritQuestionRevisions(oldFields, submittedFields);
   const changeType = classifyChange(oldFields, newFields);
   const bumped = changeType ? bumpVersion(current, changeType) : current;
   const logEntries = diffFields(oldFields, newFields);
@@ -806,7 +891,7 @@ export function planSchemaPersistence(
   const hash = sha256Hex(code).slice(0, 16);
   const fieldsWithHash = newFields.map((f) => ({
     ...f,
-    hash: computeFieldHash(f.name, f.type, f.options, f.description),
+    hash: fieldHashOf(f),
   }));
   return { changeType, bumped, logEntries, code, hash, fieldsWithHash };
 }

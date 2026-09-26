@@ -137,6 +137,19 @@ describe("diffPydanticField", () => {
     expect(diffs[0].property).toBe("subfields");
   });
 
+  it("captura a revisão da pergunta, e o nulo do log equivale a ausente", () => {
+    expect(
+      diffPydanticField(
+        { help_text: "a", question_revision: null },
+        { help_text: "b", question_revision: 1 },
+      ),
+    ).toEqual([
+      { property: "help_text", before: "a", after: "b" },
+      { property: "question_revision", before: null, after: 1 },
+    ]);
+    expect(diffPydanticField({ question_revision: null }, {})).toEqual([]);
+  });
+
   it("captura mudança de condition", () => {
     const diffs = diffPydanticField(
       { condition: { field: "x", equals: "a" } },

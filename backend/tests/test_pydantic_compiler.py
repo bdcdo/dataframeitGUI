@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 
 from services.pydantic_compiler import (
+    _field_hash,
     build_model_from_code,
     compile_pydantic,
     find_root_model,
@@ -505,7 +506,8 @@ class Analysis(BaseModel):
 
 
 def test_required_excluded_from_field_hash():
-    """`_field_hash` cobre name|type|options|description e nada mais. Se
+    """`_field_hash` cobre name|type|options|description (e o contador de
+    revisão da pergunta, quando existe) e nada mais. Se
     `required` entrasse no hash, marcar um campo como opcional invalidaria as
     respostas já codificadas daquele campo na Comparação."""
     base = """from pydantic import BaseModel, Field
@@ -749,3 +751,71 @@ class Analysis(BaseModel):
     model = build_model_from_code(legacy)
     assert model is not None
     assert list(model.model_fields) == ["verdict"]
+
+
+# Revisão da pergunta ("Muda como responder" no editor de schema). O código
+# abaixo é o que `generatePydanticCode` emite para o campo com o contador (texto
+# copiado da saída do gerador), e os hashes são os mesmos literais de
+# `computeFieldHash: revisão da pergunta` em schema-utils-versioning.test.ts:
+# é isso que prende a paridade entre as duas fórmulas.
+_QUESTION_REVISION_CODE = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+
+class Analysis(BaseModel):
+    topic: Literal["b", "a"] = Field(description="Tema principal. Instrucoes: Considere o pedido.", json_schema_extra={{"id": "00000000-0000-4000-8000-0000000000aa", "help_text": "Considere o pedido."{extra}}})
+"""
+
+
+def test_question_revision_hash_matches_frontend():
+    # Sem contador, o hash anterior ao contador: nenhum hash gravado muda.
+    for absent in (None, 0):
+        assert (
+            _field_hash("topic", "single", ["b", "a"], "Tema principal", absent)
+            == "1a83dff054c5"
+        )
+    assert _field_hash("q", "multi", ["Sim", "Não"], "Houve provimento? ção") == (
+        "1f9113c64480"
+    )
+    assert _field_hash("note", "text", None, "Observações livres") == "28d0c3996ce7"
+    # Com contador, o hash muda, e cada revisão tem o seu.
+    assert _field_hash("topic", "single", ["b", "a"], "Tema principal", 1) == (
+        "634789885ddf"
+    )
+    assert _field_hash("topic", "single", ["b", "a"], "Tema principal", 2) == (
+        "7f1c62b839bb"
+    )
+    assert (
+        _field_hash("q", "multi", ["Sim", "Não"], "Houve provimento? ção", 3)
+        == "cc2855e6ff71"
+    )
+
+
+def test_question_revision_round_trips_into_hash():
+    """Sem o contador na volta, a recuperação de campos recalcularia o hash
+    anterior à revisão e reviveria os julgamentos que ela derrubou."""
+    result = compile_pydantic(
+        _QUESTION_REVISION_CODE.format(extra=', "question_revision": 2')
+    )
+    assert result["valid"], result["errors"]
+    field = _field(result, "topic")
+    assert field["question_revision"] == 2
+    assert field["hash"] == "7f1c62b839bb"
+    assert field["help_text"] == "Considere o pedido."
+
+
+def test_question_revision_absent_keeps_field_and_hash():
+    result = compile_pydantic(_QUESTION_REVISION_CODE.format(extra=""))
+    assert result["valid"], result["errors"]
+    field = _field(result, "topic")
+    assert "question_revision" not in field
+    assert field["hash"] == "1a83dff054c5"
+
+
+def test_malformed_question_revision_fails():
+    for raw in ("0", "-1", '"2"', "True", "1.5"):
+        result = compile_pydantic(
+            _QUESTION_REVISION_CODE.format(extra=f', "question_revision": {raw}')
+        )
+        assert not result["valid"], raw
+        assert "question_revision" in result["errors"][0], raw

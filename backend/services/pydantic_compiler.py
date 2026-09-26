@@ -194,6 +194,7 @@ def _assemble_field_dict(
     subfield_rule: str | None,
     condition: dict | None,
     justification_prompt: str | None,
+    question_revision: int | None = None,
 ) -> dict:
     # `id` é identidade, não conteúdo: fica fora de `_field_hash` (como target).
     field_dict: dict = {
@@ -203,7 +204,9 @@ def _assemble_field_dict(
         "options": options,
         "description": description,
         "target": target,
-        "hash": _field_hash(field_name, field_type, options, description),
+        "hash": _field_hash(
+            field_name, field_type, options, description, question_revision
+        ),
     }
 
     if help_text:
@@ -229,7 +232,27 @@ def _assemble_field_dict(
     if justification_prompt:
         field_dict["justification_prompt"] = justification_prompt
 
+    if question_revision:
+        field_dict["question_revision"] = question_revision
+
     return field_dict
+
+
+def _parse_question_revision(field_name: str, raw: object) -> int | None:
+    """Lê o contador de revisão da pergunta, que entra no hash do campo.
+
+    Ausente é "nenhuma revisão". Valor presente e malformado é erro, e não
+    ausência: descartá-lo em silêncio devolveria o hash anterior à revisão e
+    reviveria os julgamentos que ela derrubou. `bool` é recusado de propósito,
+    porque em Python `True` é um `int`.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        raise ValueError(
+            f'Campo "{field_name}": "question_revision" deve ser inteiro >= 1.'
+        )
+    return raw
 
 
 def _build_field_dict(
@@ -263,6 +286,9 @@ def _build_field_dict(
         subfield_rule=_normalize_optional_str(extra.get("subfield_rule")),
         condition=_sanitize_condition(extra.get("condition")),
         justification_prompt=_normalize_optional_str(extra.get("justification_prompt")),
+        question_revision=_parse_question_revision(
+            field_name, extra.get("question_revision")
+        ),
     )
 
 
@@ -312,10 +338,21 @@ def find_root_model(namespace: dict):
 
 
 def _field_hash(
-    name: str, field_type: str, options: list[str] | None, description: str
+    name: str,
+    field_type: str,
+    options: list[str] | None,
+    description: str,
+    question_revision: int | None = None,
 ) -> str:
-    """Stable hash for a field, excluding target."""
+    """Stable hash for a field, excluding target.
+
+    Espelha `computeFieldHash` (frontend/src/lib/schema-utils.ts). O contador
+    de revisão só entra quando é positivo, para que todo hash gravado antes
+    dele exista continue igual.
+    """
     content = f"{name}|{field_type}|{sorted(options) if options else ''}|{description}"
+    if question_revision and question_revision > 0:
+        content += f"|r{question_revision}"
     return hashlib.sha256(content.encode()).hexdigest()[:12]
 
 

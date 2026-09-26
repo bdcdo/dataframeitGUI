@@ -13,6 +13,7 @@ import { ValidationErrorPanel } from "./ValidationErrorPanel";
 import { SchemaEditorHeader } from "./SchemaEditorHeader";
 import { SchemaEditorBanners } from "./SchemaEditorBanners";
 import { SchemaEditorDialogs } from "./SchemaEditorDialogs";
+import { InstructionChangeDialog } from "./InstructionChangeDialog";
 import { SchemaEditorFooter } from "./SchemaEditorFooter";
 import { useSchemaEditorDialogs } from "./useSchemaEditorDialogs";
 import { useSchemaEditorActions } from "./useSchemaEditorActions";
@@ -182,6 +183,7 @@ function SchemaEditor({
     handleBackfill,
     handleRecover,
     handleSave,
+    instructionDialogProps,
   } = useSchemaEditorActions({
     projectId,
     initialCode,
@@ -346,6 +348,10 @@ function SchemaEditor({
         onApplyResolvedDraft={applyResolvedDraft}
         onDiscardConflictingDraft={discardConflictingDraft}
       />
+
+      {instructionDialogProps && (
+        <InstructionChangeDialog open {...instructionDialogProps} />
+      )}
     </div>
   );
 }

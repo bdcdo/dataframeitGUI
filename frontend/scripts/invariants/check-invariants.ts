@@ -793,7 +793,13 @@ const invariants: Invariant[] = [
 
       const hashOf = (f: Partial<PydanticField> | null): string | null => {
         if (!f || typeof f.name !== "string" || typeof f.type !== "string") return null;
-        return computeFieldHash(f.name, f.type, f.options ?? null, f.description ?? "");
+        return computeFieldHash(
+          f.name,
+          f.type,
+          f.options ?? null,
+          f.description ?? "",
+          f.question_revision,
+        );
       };
       const universe = new Map<string, Set<string>>();
       const add = (projectId: string, hash: string | null) => {

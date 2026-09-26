@@ -149,6 +149,8 @@ async function applySchemaChanges(
     patch: project?.schema_version_patch ?? 0,
   };
 
+  // `help_text` alterado aqui vale como "Só esclarece": ver `question_revision`
+  // em references/decisions-format.md.
   const { changeType, bumped, logEntries, code, hash, fieldsWithHash } =
     planSchemaPersistence(oldFields, validatedFields, current);
 

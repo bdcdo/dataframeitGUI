@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditFieldDialog } from "../EditFieldDialog";
@@ -255,5 +255,50 @@ describe("EditFieldDialog — aprovação de sugestão", () => {
       ),
     );
     expect(hoisted.toast.success).not.toHaveBeenCalled();
+  });
+});
+
+// A mesma pergunta do SchemaEditor, pelo mesmo componente: instrução alterada
+// sem outra mudança que troque o hash pede a escolha antes de gravar.
+describe("EditFieldDialog: instrução alterada", () => {
+  async function editHelpTextAndSave(choice: string) {
+    hoisted.saveSchemaFromGUI.mockResolvedValue({
+      status: "saved",
+      snapshot: { fields: [], version: "0.1.2", revision: 2 },
+    });
+    render(dialogAt([fieldA], 1));
+    const helpText = screen.getByPlaceholderText("Explicações adicionais");
+    await userEvent.clear(helpText);
+    await userEvent.type(helpText, "Ajuda nova");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    const question = await screen.findByRole("alertdialog");
+    expect(hoisted.saveSchemaFromGUI).not.toHaveBeenCalled();
+    await userEvent.click(within(question).getByRole("button", { name: choice }));
+    await userEvent.click(within(question).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(hoisted.saveSchemaFromGUI).toHaveBeenCalled());
+  }
+
+  it("\"Muda como responder\" sobe o contador do campo", async () => {
+    await editHelpTextAndSave("Muda como responder");
+    expect(savedFieldsArg()[0]).toMatchObject({ help_text: "Ajuda nova", question_revision: 1 });
+  });
+
+  // O contador sai do form por spread do campo base: perdê-lo no caminho
+  // mandaria ao save um campo de volta ao hash anterior à revisão.
+  it("campo já revisado leva o contador quando outra propriedade muda", async () => {
+    hoisted.saveSchemaFromGUI.mockResolvedValue({
+      status: "saved",
+      snapshot: { fields: [], version: "0.1.2", revision: 2 },
+    });
+    render(dialogAt([{ ...fieldA, question_revision: 1 }], 1));
+    await typeDescription("Descrição editada");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(hoisted.saveSchemaFromGUI).toHaveBeenCalled());
+    expect(savedFieldsArg()[0]).toMatchObject({
+      description: "Descrição editada",
+      question_revision: 1,
+    });
   });
 });
