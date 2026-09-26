@@ -700,6 +700,16 @@ interface MeasurableAutoReviewRow {
   isError: boolean;
 }
 
+// Cópia da regra que a view já aplica (`field_review_question_current`): a
+// métrica não conta auto-revisão aberta sob outra versão da pergunta, mesmo
+// que a view e esta cópia divirjam. Linha sem ciclo (consenso) não tem carimbo
+// a conferir. Não cobre banco sem a migration: lá a coluna
+// `field_review_field_hash` não existe e o PostgREST devolve erro na consulta
+// da página, em vez de linhas sem ela.
+function rowCycleIsCurrent(row: MetricsFinalAnswer, field: PydanticField): boolean {
+  return !row.field_review_id || fieldReviewIsCurrent(row.field_review_field_hash ?? null, field);
+}
+
 // A cadeia de guardas da fonte B, separada da montagem do candidato. `null`
 // quando a linha não é mensurável: documento excluído, campo fora da superfície
 // de revisão, documento sem LLM corrente, codificação humana ausente ou
@@ -721,12 +731,7 @@ function measurableAutoReviewRow(
   if (!hasComparableHumanCoding(row.document_id, field, llmResponse, ctx))
     return null;
 
-  // Cópia da regra que a view já aplica (`field_review_question_current`): a
-  // métrica não conta auto-revisão aberta sob outra versão da pergunta, mesmo
-  // que a view e esta cópia divirjam. Não cobre banco sem a migration: lá a
-  // coluna `field_review_field_hash` não existe e o PostgREST devolve erro na
-  // consulta da página, em vez de linhas sem ela.
-  if (row.field_review_id && !fieldReviewIsCurrent(row.field_review_field_hash ?? null, field)) return null;
+  if (!rowCycleIsCurrent(row, field)) return null;
 
   const outcome = classifyAutoReview(row);
   if (outcome === "pendente") return null;
