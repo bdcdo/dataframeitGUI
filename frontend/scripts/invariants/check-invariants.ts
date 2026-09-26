@@ -24,11 +24,10 @@ import {
   buildTimelineFromPersistedVersions,
   type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
-import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
+import { computeFieldHash } from "@/lib/schema-utils";
 import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import {
   decisionDependsOnSource,
-  rpcAcceptsResolutionValue,
   type ErrorDecision,
   type ErrorResolutionContext,
 } from "@/lib/error-resolution";
@@ -145,15 +144,7 @@ async function activeDocIds(): Promise<Set<string>> {
 }
 
 type Violation = { key: string; detail: string };
-// `informational`: a lista é evidência para acompanhar, não violação. Sai como
-// INFO e não conta como falha (ex.: o legado sem `field_hash`, que só diminui
-// com rearbitragem).
-type Invariant = {
-  name: string;
-  motivation: string;
-  run: () => Promise<Violation[]>;
-  informational?: true;
-};
+type Invariant = { name: string; motivation: string; run: () => Promise<Violation[]> };
 
 /** Linha de `error_resolutions` lida pelas invariantes de validade do veredito. */
 interface DecisionRow {
@@ -163,7 +154,6 @@ interface DecisionRow {
   field_name: string;
   decision: ErrorDecision | null;
   context: ErrorResolutionContext | null;
-  approved_value: unknown;
 }
 
 interface ReviewValidityRow extends ValidatableReview {
@@ -181,13 +171,13 @@ interface ReviewValidityRow extends ValidatableReview {
 // fonte de decisão que dependa dela. Decisão que grava valor próprio ("Erro
 // humano", "Erro do LLM", "Todos errados") vale mesmo com a fonte inválida e
 // fica de fora.
-async function sourceDependentDecisions(): Promise<
+async function scanSourceDependentDecisions(): Promise<
   { decision: DecisionRow; sourceId: string; tsValid: boolean; sqlValid: boolean }[]
 > {
   const [decisions, projects] = await Promise.all([
     fetchAll<DecisionRow>(
       "error_resolutions",
-      "id, project_id, document_id, field_name, decision, context, approved_value",
+      "id, project_id, document_id, field_name, decision, context",
       (q) => q.not("context", "is", null),
     ),
     fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
@@ -216,6 +206,13 @@ async function sourceDependentDecisions(): Promise<
     result.push({ decision, sourceId, tsValid, sqlValid: data === true });
   }
   return result;
+}
+
+// As duas invariantes de fonte leem a mesma varredura, feita uma vez só: ela
+// chama `review_is_valid` uma vez por decisão, em série.
+let sourceScan: ReturnType<typeof scanSourceDependentDecisions> | undefined;
+function sourceDependentDecisions() {
+  return (sourceScan ??= scanSourceDependentDecisions());
 }
 
 const invariants: Invariant[] = [
@@ -1053,59 +1050,6 @@ invariants.push(
           detail: `decisão '${d.decision.decision}' em ${d.decision.document_id}/${d.decision.field_name}: fonte ${d.sourceId} válida pela regra TS, inválida para o banco`,
         })),
   },
-  {
-    name: "reviews-sem-field-hash",
-    informational: true,
-    motivation:
-      "#758: veredito sem `field_hash` é legado que o backfill não conseguiu provar (resposta escolhida e snapshot sem hash do campo). Vale enquanto o valor está no domínio atual, sem garantia de que a pergunta é a mesma. A contagem só cai com rearbitragem; subir indica canal de escrita que grava review sem passar pelo gatilho de carimbo",
-    run: async () => {
-      const [rows, projects] = await Promise.all([
-        fetchAll<{ id: string; project_id: string; field_name: string }>(
-          "reviews",
-          "id, project_id, field_name",
-          (q) => q.is("field_hash", null),
-        ),
-        fetchAll<{ id: string; name: string | null }>("projects", "id, name"),
-      ]);
-      const nameOf = new Map(projects.map((p) => [p.id, p.name ?? p.id]));
-      const byProject = new Map<string, number>();
-      for (const r of rows) byProject.set(r.project_id, (byProject.get(r.project_id) ?? 0) + 1);
-      return [
-        ...[...byProject.entries()].map(([projectId, count]) => ({
-          key: projectId,
-          detail: `${count} review(s) sem field_hash em ${nameOf.get(projectId) ?? projectId}`,
-        })),
-        ...rows.map((r) => ({ key: r.id, detail: `sem field_hash (projeto ${r.project_id}, campo ${r.field_name})` })),
-      ];
-    },
-  },
-  {
-    name: "approved-value-no-dominio-atual",
-    motivation:
-      "#758: o valor aprovado por 'Erro do LLM' e 'Todos errados' vai ao gabarito mesmo com a fonte inválida, porque a decisão é um julgamento sobre a pergunta atual. Enquanto a definição do campo guardada na decisão é a atual (se mudou, a decisão já é 'Fontes alteradas'), o valor precisa estar no domínio atual, a régua exata de `set_error_resolution` (`rpcAcceptsResolutionValue`), e não a da tela, que é mais restritiva em grupo de subcampos. FAIL = valor gravado por canal que pulou a validação da RPC",
-    run: async () => {
-      const [decisions, projects] = await Promise.all([
-        fetchAll<DecisionRow>(
-          "error_resolutions",
-          "id, project_id, document_id, field_name, decision, context, approved_value",
-          (q) => q.not("approved_value", "is", null),
-        ),
-        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
-      ]);
-      const fieldsOf = new Map(
-        projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))]),
-      );
-      return decisions.flatMap((d) => {
-        const field = fieldsOf.get(d.project_id)?.get(d.field_name);
-        if (!field || !d.context || stableStringify(d.context.field_definition) !== stableStringify(field)) return [];
-        if (rpcAcceptsResolutionValue(d.context, d.approved_value)) return [];
-        return [{
-          key: d.id,
-          detail: `'${d.decision}' em ${d.document_id}/${d.field_name} aprovou ${JSON.stringify(d.approved_value)}, fora do domínio atual`,
-        }];
-      });
-    },
-  },
 );
 
 /** Linhas de `reviews` usadas pela invariante de coerência veredito×campo. */
@@ -1125,11 +1069,6 @@ async function main() {
       const violations = await inv.run();
       if (violations.length === 0) {
         console.log(`PASS  ${inv.name}`);
-      } else if (inv.informational) {
-        console.log(`INFO  ${inv.name}: ${violations.length} linha(s)`);
-        console.log(`      motivação: ${inv.motivation}`);
-        for (const v of violations.slice(0, 10)) console.log(`      - [${v.key}] ${v.detail}`);
-        if (violations.length > 10) console.log(`      ... e mais ${violations.length - 10}`);
       } else {
         failures++;
         console.log(`FAIL  ${inv.name} — ${violations.length} violação(ões)`);

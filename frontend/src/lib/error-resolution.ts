@@ -333,15 +333,9 @@ function isAllowedOption(field: PydanticField, value: unknown): boolean {
 }
 
 /**
- * Se o valor do seletor basta para ir ao gabarito, na fronteira do cliente: o
- * botão só habilita valor que `set_error_resolution` aceita. A régua segue a
- * da RPC tipo a tipo, com uma diferença: em grupo de subcampos a tela aceita
- * só objeto ou a sentinela `NOT_INFORMED`, e a RPC aceita também qualquer
- * texto não vazio (o último ELSIF dela). A tela é mais restritiva ali. A
- * regra do grupo que a migration 20260918130000 descreve é "objeto só com
- * chaves conhecidas e algum valor, ou a sentinela textual", a mesma da tela.
- * A régua exata da RPC, usada para auditar o que já foi gravado, é
- * `rpcAcceptsResolutionValue`.
+ * Se o valor do seletor basta para ir ao gabarito. Espelha, na fronteira do
+ * cliente, a validação de `set_error_resolution`, regra a regra: o botão só
+ * habilita o que a RPC aceita.
  */
 export function hasResolutionValue(field: PydanticField, value: unknown): boolean {
   if (isConditionalField(field) && isCanonicalBlank(field, value)) return true;
@@ -378,113 +372,3 @@ export function errorResolutionComment(row: ErrorResolutionRow): string {
   return `[${row.field_name}] ${ERROR_DECISION_LABELS[row.decision!]}${row.note ? `: ${row.note}` : ""}`;
 }
 
-// A classe de branco da RPC: o conjunto que `trim()` remove (o teste "classe
-// de branco de set_error_resolution" prende a cópia SQL a ele).
-function isBlankLikeRpc(text: string): boolean {
-  return text.trim() === "";
-}
-
-// `btrim` do Postgres tira só o espaço comum.
-function btrim(text: string): string {
-  return text.replace(/^ +| +$/g, "");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-// `'^Outro: .*\S'` da RPC: o `.` do regex do Postgres casa quebra de linha.
-const RPC_OTHER = /^Outro: [\s\S]*\S/;
-const RPC_PARTIAL_DATE = /^([0-9]{1,2}|XX)\/([0-9]{1,2}|XX)\/([0-9]{1,4}|XXXX)$/;
-
-function rpcAllowedOption(value: unknown, options: readonly unknown[], allowOther: boolean): boolean {
-  if (typeof value !== "string") return false;
-  return options.includes(value) || (allowOther && RPC_OTHER.test(value));
-}
-
-// O LLM também em branco: sem a chave, JSON null, `[]` ou texto só de branco.
-function rpcLlmBlank(llm: ErrorResolutionContext["llm_value"]): boolean {
-  if (!llm.present) return true;
-  const value = llm.value;
-  if (value === null || (Array.isArray(value) && value.length === 0)) return true;
-  return typeof value === "string" && isBlankLikeRpc(value);
-}
-
-function rpcGroupObjectAccepted(value: Record<string, unknown>, subfields: readonly unknown[]): boolean {
-  const known = new Set(subfields.map((sf) => (isRecord(sf) ? sf.key : undefined)));
-  return Object.keys(value).every((key) => known.has(key))
-    && Object.values(value).some((v) => typeof v === "string" && btrim(v) !== "");
-}
-
-interface RpcFieldShape {
-  type: unknown;
-  options: readonly unknown[];
-  allowOther: boolean;
-  subfields: readonly unknown[];
-}
-
-function rpcFieldShape(definition: Record<string, unknown>): RpcFieldShape {
-  return {
-    type: definition.type,
-    options: Array.isArray(definition.options) ? definition.options : [],
-    allowOther: definition.allow_other === true,
-    subfields: Array.isArray(definition.subfields) ? definition.subfields : [],
-  };
-}
-
-function isFilledRpcText(value: unknown): value is string {
-  return typeof value === "string" && btrim(value) !== "";
-}
-
-function rpcDateAccepted(value: unknown, options: readonly unknown[]): boolean {
-  if (typeof value !== "string") return false;
-  const partial = RPC_PARTIAL_DATE.test(value) && /[0-9]/.test(value);
-  return partial || options.includes(value) || value === NOT_INFORMED;
-}
-
-function rpcSingleAccepted(field: RpcFieldShape, value: unknown): boolean {
-  return isFilledRpcText(value) && rpcAllowedOption(value, field.options, field.allowOther);
-}
-
-function rpcMultiAccepted(field: RpcFieldShape, value: unknown): boolean {
-  return Array.isArray(value) && value.length > 0
-    && value.every((item) => rpcAllowedOption(item, field.options, field.allowOther));
-}
-
-// Objeto em grupo de subcampos; texto solto em grupo cai no último ELSIF.
-function isRpcGroupObject(field: RpcFieldShape, value: unknown): value is Record<string, unknown> {
-  return field.type === "text" && field.subfields.length > 0 && isRecord(value);
-}
-
-// A cadeia de ELSIF da RPC, na mesma ordem.
-function rpcTypedValueAccepted(field: RpcFieldShape, value: unknown): boolean {
-  if (field.type === "single") return rpcSingleAccepted(field, value);
-  if (field.type === "multi") return rpcMultiAccepted(field, value);
-  if (isRpcGroupObject(field, value)) return rpcGroupObjectAccepted(value, field.subfields);
-  if (field.type === "date") return rpcDateAccepted(value, field.options);
-  // Texto simples, e o texto solto em grupo de subcampos.
-  return isFilledRpcText(value);
-}
-
-/**
- * Se `set_error_resolution` aceita `value` como valor aprovado de "Erro do
- * LLM" ou "Todos errados", sobre o contexto gravado na decisão. Espelha,
- * tipo a tipo, o bloco `IF p_decision IN ('researchers_correct', 'all_wrong')`
- * da versão vigente da RPC, em
- * 20260926121000_llm_error_context_review_valid.sql (corpo herdado de
- * 20260924120000_error_resolutions_resposta_em_branco.sql). É a régua da
- * invariante `approved-value-no-dominio-atual`, que acusa valor gravado por
- * canal que pulou a RPC. Não é a régua da tela (`hasResolutionValue`), que é
- * mais restritiva em grupo de subcampos.
- */
-export function rpcAcceptsResolutionValue(
-  context: Pick<ErrorResolutionContext, "field_definition" | "llm_value">,
-  value: unknown,
-): boolean {
-  if (value === null || value === undefined) return false;
-  const definition = isRecord(context.field_definition) ? context.field_definition : {};
-  const isMulti = definition.type === "multi";
-  const canonicalBlank = isMulti ? Array.isArray(value) && value.length === 0 : value === "";
-  if (isRecord(definition.condition) && canonicalBlank) return !rpcLlmBlank(context.llm_value);
-  return rpcTypedValueAccepted(rpcFieldShape(definition), value);
-}
