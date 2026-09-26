@@ -15,7 +15,11 @@
 --       que só esclarece, grava o recalculado, e recusa o pedido antes de
 --       uma mudança de hash;
 --   (d) grants: a função nova fica fechada para o cliente, e o RPC continua
---       DEFINER com search_path vazio e os grants de antes.
+--       DEFINER com search_path vazio e os grants de antes;
+--   (e) o valor é julgado pela definição atual na gravação: o branco pedido
+--       antes de a pergunta perder a condição é recusado, e a resposta do LLM
+--       que "Erro humano" aprova precisa estar no domínio atual
+--       (`review_verdict_in_domain`), em `single` e em `multi`.
 --
 -- Roda numa transação e não deixa fixture no banco local.
 
@@ -27,24 +31,35 @@ INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_s
   SELECT id::TEXT, id, 1 FROM auth.users WHERE id::TEXT LIKE 'dec00000-%';
 
 -- q e q2 são a mesma pergunta em dois campos: q para a leitura (a), q2 para a
--- gravação (c). g0 é o gatilho da condição que o caso (a) acrescenta.
+-- gravação (c). g0 é o gatilho da condição que o caso (a) acrescenta. q3, q4
+-- e q5 servem ao bloco (e): q3 é condicional e o LLM a deixa de fora, q4 e q5
+-- aceitam "Outro" e o LLM responde com ele.
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
   ('dec10000-0000-0000-0000-000000000001', 'Decision follows hash test', 'dec00000-0000-0000-0000-000000000001', 'compare_llm',
    '[{"id":"dec50000-0000-4000-8000-000000000001","name":"g0","type":"single","options":["Sim","Não"],"description":"Gatilho","hash":"g00000000001"},
      {"id":"dec50000-0000-4000-8000-000000000002","name":"q","type":"single","options":["A","B"],"description":"Pergunta","help_text":"Ajuda","hash":"q00000000001"},
-     {"id":"dec50000-0000-4000-8000-000000000003","name":"q2","type":"single","options":["A","B"],"description":"Pergunta","help_text":"Ajuda","hash":"q20000000001"}]');
+     {"id":"dec50000-0000-4000-8000-000000000003","name":"q2","type":"single","options":["A","B"],"description":"Pergunta","help_text":"Ajuda","hash":"q20000000001"},
+     {"id":"dec50000-0000-4000-8000-000000000004","name":"q3","type":"text","description":"Condicional","condition":{"field":"g0","equals":"Sim"},"hash":"q30000000001"},
+     {"id":"dec50000-0000-4000-8000-000000000005","name":"q4","type":"single","options":["A","B"],"allow_other":true,"description":"Com Outro","hash":"q40000000001"},
+     {"id":"dec50000-0000-4000-8000-000000000006","name":"q5","type":"multi","options":["A","B"],"allow_other":true,"description":"Várias com Outro","hash":"q50000000001"}]');
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('dec20000-0000-0000-0000-000000000001', 'dec10000-0000-0000-0000-000000000001', 'Documento', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, is_latest, answers) VALUES
   ('dec30000-0000-0000-0000-000000000001', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', NULL, 'llm', true,
-   '{"g0":"Sim","q":"A","q2":"A"}'),
+   '{"g0":"Sim","q":"A","q2":"A","q4":"Outro: C","q5":["A","Outro: C"]}'),
   ('dec30000-0000-0000-0000-000000000002', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'dec00000-0000-0000-0000-000000000001', 'humano', true,
-   '{"g0":"Sim","q":"B","q2":"B"}');
+   '{"g0":"Sim","q":"B","q2":"B","q3":"Texto","q4":"B","q5":["B"]}');
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
   ('dec40000-0000-0000-0000-000000000001', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q',
    'dec00000-0000-0000-0000-000000000001', 'B', 'dec30000-0000-0000-0000-000000000002'),
   ('dec40000-0000-0000-0000-000000000002', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q2',
-   'dec00000-0000-0000-0000-000000000001', 'B', 'dec30000-0000-0000-0000-000000000002');
+   'dec00000-0000-0000-0000-000000000001', 'B', 'dec30000-0000-0000-0000-000000000002'),
+  ('dec40000-0000-0000-0000-000000000003', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q3',
+   'dec00000-0000-0000-0000-000000000001', 'Texto', 'dec30000-0000-0000-0000-000000000002'),
+  ('dec40000-0000-0000-0000-000000000004', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q4',
+   'dec00000-0000-0000-0000-000000000001', 'B', 'dec30000-0000-0000-0000-000000000002'),
+  ('dec40000-0000-0000-0000-000000000005', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q5',
+   'dec00000-0000-0000-0000-000000000001', '{"B": true}', 'dec30000-0000-0000-0000-000000000002');
 
 -- A edição do schema como o save a faz: o patch entra na definição de um
 -- campo e a revisão do schema sobe.
@@ -196,6 +211,82 @@ BEGIN
   EXCEPTION WHEN serialization_failure THEN NULL;
   END;
   RAISE NOTICE 'OK: set_error_resolution segue a mesma regra';
+END $$;
+RESET ROLE;
+
+-- (e) O valor pela definição atual. Cada contexto é pedido antes da edição,
+-- que não muda o hash, e confirmado depois dela.
+CREATE FUNCTION pg_temp.requested(p_field TEXT, p_review UUID) RETURNS JSONB LANGUAGE sql AS $$
+  SELECT public.llm_error_context('dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', p_field,
+    'dec30000-0000-0000-0000-000000000001', 'dec30000-0000-0000-0000-000000000002', 'comparacao', p_review);
+$$;
+-- Grava e reabre; devolve a mensagem da recusa, ou NULL quando gravou.
+CREATE FUNCTION pg_temp.try_decide(p_field TEXT, p_decision TEXT, p_context JSONB, p_value JSONB DEFAULT NULL)
+RETURNS TEXT LANGUAGE plpgsql AS $$
+DECLARE
+  v_saved JSONB;
+BEGIN
+  v_saved := public.set_error_resolution('dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001',
+    p_field, p_decision, p_context, NULL, NULL, NULL, p_value);
+  PERFORM public.set_error_resolution('dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001',
+    p_field, NULL, NULL, (v_saved->>'id')::UUID, (v_saved->>'resolved_at')::TIMESTAMPTZ);
+  RETURN NULL;
+EXCEPTION WHEN invalid_parameter_value THEN RETURN SQLERRM;
+END $$;
+GRANT EXECUTE ON FUNCTION pg_temp.requested(TEXT, UUID), pg_temp.try_decide(TEXT, TEXT, JSONB, JSONB) TO authenticated;
+
+SET LOCAL ROLE authenticated;
+INSERT INTO hash_requested VALUES
+  ('q3 condicional', pg_temp.requested('q3', 'dec40000-0000-0000-0000-000000000003')),
+  ('q4 com Outro', pg_temp.requested('q4', 'dec40000-0000-0000-0000-000000000004')),
+  ('q5 com Outro', pg_temp.requested('q5', 'dec40000-0000-0000-0000-000000000005'));
+DO $$
+BEGIN
+  -- Controle: antes da edição, as mesmas decisões gravam.
+  IF pg_temp.try_decide('q3', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q3 condicional')) IS NOT NULL
+     OR pg_temp.try_decide('q4', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q4 com Outro')) IS NOT NULL
+     OR pg_temp.try_decide('q5', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q5 com Outro')) IS NOT NULL
+     OR pg_temp.try_decide('q4', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q4 com Outro'), '"Outro: D"') IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: a decisão foi recusada antes da edição';
+  END IF;
+END $$;
+RESET ROLE;
+UPDATE public.projects
+SET pydantic_fields = (
+  SELECT jsonb_agg(CASE WHEN f->>'name' = 'q3' THEN f - 'condition' ELSE f END ORDER BY i)
+  FROM jsonb_array_elements(pydantic_fields) WITH ORDINALITY AS t(f, i)),
+    schema_revision = schema_revision + 1
+WHERE id = 'dec10000-0000-0000-0000-000000000001';
+SELECT pg_temp.patch_field('q4', '{"allow_other":false}');
+SELECT pg_temp.patch_field('q5', '{"allow_other":false}');
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE
+  v_problem TEXT;
+BEGIN
+  v_problem := pg_temp.try_decide('q3', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q3 condicional'));
+  IF v_problem IS DISTINCT FROM 'A resposta do LLM não contém este campo.' THEN
+    RAISE EXCEPTION 'FALHOU: Erro humano gravou o branco numa pergunta que perdeu a condição (%)', v_problem;
+  END IF;
+  v_problem := pg_temp.try_decide('q3', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q3 condicional'), '""');
+  IF v_problem IS NULL THEN
+    RAISE EXCEPTION 'FALHOU: Erro do LLM gravou o branco numa pergunta que perdeu a condição';
+  END IF;
+  FOREACH v_problem IN ARRAY ARRAY[
+      pg_temp.try_decide('q4', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q4 com Outro')),
+      pg_temp.try_decide('q5', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q5 com Outro'))] LOOP
+    IF v_problem IS DISTINCT FROM 'A resposta do LLM está fora das opções atuais da pergunta: escolha "Erro do LLM" ou "Todos errados".' THEN
+      RAISE EXCEPTION 'FALHOU: Erro humano gravou a resposta do LLM fora do domínio atual (%)', v_problem;
+    END IF;
+  END LOOP;
+  IF pg_temp.try_decide('q4', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q4 com Outro'), '"Outro: D"') IS NULL THEN
+    RAISE EXCEPTION 'FALHOU: Erro do LLM gravou Outro depois que allow_other foi desligado';
+  END IF;
+  -- A resposta do LLM dentro das opções continua aprovável.
+  IF pg_temp.try_decide('q4', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q4 com Outro'), '"A"') IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: a guarda recusou um valor das opções atuais';
+  END IF;
+  RAISE NOTICE 'OK: o valor é julgado pela definição atual na gravação';
 END $$;
 RESET ROLE;
 

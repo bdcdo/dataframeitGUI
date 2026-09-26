@@ -30,11 +30,23 @@
 -- cópia TypeScript (`contextIsCurrent`, frontend/src/lib/error-resolution.ts),
 -- que deriva o hash da definição gravada pela mesma fórmula quando ele falta.
 --
+-- O hash não cobre `condition` nem `allow_other`, então a decisão sobrevive à
+-- mudança deles, e o valor que ela aprovou passa a ser julgado pela definição
+-- atual na leitura (`approvedUnderCurrent`, na cópia TypeScript): o branco
+-- aprovado numa pergunta que perdeu a condição cai, e o valor fora do domínio
+-- atual cai pela régua do veredito da Comparação (`verdictInDomain`, cuja
+-- cópia SQL é `review_verdict_in_domain`). Na gravação, a validação já usa a
+-- definição recalculada: o branco exige a condição atual, e o valor escolhido
+-- e o valor comum passam por `error_resolution_value_problem`. Faltava a
+-- resposta do LLM que "Erro humano" aprova, que nada conferia contra o
+-- domínio; sem a guarda nova, a decisão sobre uma resposta fora das opções
+-- atuais nasceria sem valer e voltaria à fila a cada confirmação.
+--
 -- `set_error_resolution` é o corpo de 20260927140000_both_correct_common_value.sql
--- sem outra mudança além da comparação. A assinatura não muda, então
--- `OR REPLACE` preserva SECURITY DEFINER, search_path e os grants de
--- 20260918130000. O contexto gravado continua sendo o recalculado, com a
--- definição atual inteira.
+-- com duas mudanças: a comparação dos contextos e a guarda de domínio de
+-- "Erro humano". A assinatura não muda, então `OR REPLACE` preserva SECURITY
+-- DEFINER, search_path e os grants de 20260918130000. O contexto gravado
+-- continua sendo o recalculado, com a definição atual inteira.
 
 BEGIN;
 
@@ -84,6 +96,7 @@ DECLARE
   v_common JSONB;
   v_problem TEXT;
   v_requires_source BOOLEAN;
+  v_llm_verdict TEXT;
 BEGIN
   IF v_actor IS NULL OR NOT COALESCE((
     p_project_id IN (SELECT public.auth_user_coordinator_or_creator_project_ids())
@@ -179,6 +192,26 @@ BEGIN
   IF ((p_decision = 'both_correct' AND v_common IS NULL) OR (p_decision = 'llm_correct' AND NOT v_conditional))
     AND NOT (v_context->'llm_value'->>'present')::BOOLEAN
     THEN RAISE EXCEPTION 'A resposta do LLM não contém este campo.' USING ERRCODE = '22023'; END IF;
+
+  -- "Erro humano" põe a resposta do LLM no gabarito, e ela precisa estar no
+  -- domínio atual do campo pela régua do veredito, que é a da leitura. A
+  -- resposta vira texto de veredito: o de `multi` é o JSON {opção: true} que
+  -- a grade grava. Array com item que não é texto e registro de subcampos não
+  -- têm essa forma, e o domínio não os mede, como na cópia TypeScript.
+  IF p_decision = 'llm_correct' AND (v_context->'llm_value'->>'present')::BOOLEAN THEN
+    v_llm_verdict := CASE pg_catalog.jsonb_typeof(v_context->'llm_value'->'value')
+      WHEN 'string' THEN v_context->'llm_value'->>'value'
+      WHEN 'array' THEN CASE WHEN NOT EXISTS (
+          SELECT 1 FROM pg_catalog.jsonb_array_elements(v_context->'llm_value'->'value') AS item
+          WHERE pg_catalog.jsonb_typeof(item) <> 'string')
+        THEN COALESCE((SELECT pg_catalog.jsonb_object_agg(item, true)
+                       FROM pg_catalog.jsonb_array_elements_text(v_context->'llm_value'->'value') AS item)::TEXT, '{}') END
+    END;
+    IF v_llm_verdict IS NOT NULL AND NOT public.review_verdict_in_domain(v_llm_verdict, v_field) THEN
+      RAISE EXCEPTION 'A resposta do LLM está fora das opções atuais da pergunta: escolha "Erro do LLM" ou "Todos errados".'
+        USING ERRCODE = '22023';
+    END IF;
+  END IF;
 
   -- "Erro do LLM" e "Todos errados": o valor aprovado e escolhido pelo revisor nas opcoes atuais
   -- do campo. A resposta humana do contexto e so ancora de invalidacao, nao a

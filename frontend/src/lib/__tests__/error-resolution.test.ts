@@ -77,9 +77,12 @@ describe("resolução explícita de divergência", () => {
 // SQL da regra.
 describe("a decisão segue o hash do campo, não a definição inteira", () => {
   const question = { name: "q", type: "single" as const, options: ["A", "B"], description: "Pergunta", help_text: "Ajuda" };
+  // A resposta do LLM é uma das opções, para que só a regra do hash decida.
   function withDefinitions(saved: Record<string, unknown>, current: Record<string, unknown>): ErrorResolutionRow {
     const r = row("llm_correct");
+    r.context!.llm_value.value = "A";
     r.context!.field_definition = saved as ErrorResolutionContext["field_definition"];
+    r.current_context = structuredClone(r.context);
     r.current_context!.field_definition = current as ErrorResolutionContext["field_definition"];
     return r;
   }
@@ -127,6 +130,100 @@ describe("a decisão segue o hash do campo, não a definição inteira", () => {
     const withoutDescription = { name: "q", type: "single", options: ["A", "B"], help_text: "Ajuda" };
     expect(effectiveErrorResolution(withDefinitions(withoutDescription, { ...withoutDescription })).status).toBe("approved");
     expect(effectiveErrorResolution(withDefinitions(withoutDescription, { ...withoutDescription, help_text: "Ajuda reescrita" }))).toEqual({ status: "stale" });
+  });
+});
+
+// O hash não cobre `condition`, `allow_other` nem `subfields`: a decisão
+// sobrevive à mudança deles, e o valor que ela põe no gabarito é julgado pela
+// definição atual.
+describe("o valor aprovado é julgado pela definição atual", () => {
+  const hash = "abcdefabcdef";
+  const condition = { field: "g0", equals: "Sim" };
+  function decided(
+    decision: ErrorDecision, saved: Record<string, unknown>, current: Record<string, unknown>,
+    patch: Partial<ErrorResolutionRow> = {},
+  ): ErrorResolutionRow {
+    const r = { ...row(decision), ...patch };
+    r.context!.field_definition = { name: "q", description: "Pergunta", hash, ...saved } as ErrorResolutionContext["field_definition"];
+    r.current_context = structuredClone(r.context);
+    r.current_context!.field_definition = { name: "q", description: "Pergunta", hash, ...current } as ErrorResolutionContext["field_definition"];
+    return r;
+  }
+
+  describe("o branco de condicional cai com a condição", () => {
+    const text = { type: "text", options: null };
+    it("Erro humano sobre o LLM sem a chave", () => {
+      const absent = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value = { present: false, value: null };
+        r.current_context!.llm_value = { present: false, value: null };
+        return r;
+      };
+      expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition })))
+        .toEqual({ status: "approved", value: "", isLlmError: false });
+      expect(effectiveErrorResolution(absent({ ...text, condition }, text))).toEqual({ status: "stale" });
+    });
+    it("Erro humano sobre o LLM que respondeu o branco", () => {
+      const blankLlm = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value.value = "";
+        r.current_context!.llm_value.value = "";
+        return r;
+      };
+      expect(effectiveErrorResolution(blankLlm({ ...text, condition }, { ...text, condition })).status).toBe("approved");
+      expect(effectiveErrorResolution(blankLlm({ ...text, condition }, text))).toEqual({ status: "stale" });
+      // Pergunta que nunca foi condicional: fora da regra, como antes.
+      expect(effectiveErrorResolution(blankLlm(text, text)).status).toBe("approved");
+    });
+    it.each([
+      ["Erro do LLM", "researchers_correct", { type: "text", options: null }, ""],
+      ["Todos errados", "all_wrong", { type: "text", options: null }, ""],
+      ["Ambos corretos", "both_correct", { type: "multi", options: ["A", "B"] }, []],
+    ] as const)("%s com o branco canônico", (_label, decision, field, blank) => {
+      expect(effectiveErrorResolution(decided(decision, { ...field, condition }, { ...field, condition }, { approved_value: blank })).status)
+        .toBe("approved");
+      expect(effectiveErrorResolution(decided(decision, { ...field, condition }, field, { approved_value: blank })))
+        .toEqual({ status: "stale" });
+    });
+  });
+
+  describe("fora do domínio atual, pela régua do veredito", () => {
+    const single = { type: "single", options: ["A", "B"] };
+    it.each([
+      ["Erro do LLM", "researchers_correct"],
+      ["Todos errados", "all_wrong"],
+      ["Ambos corretos", "both_correct"],
+    ] as const)("%s com Outro depois que allow_other é desligado", (_label, decision) => {
+      const patch = { approved_value: "Outro: C" };
+      expect(effectiveErrorResolution(decided(decision, { ...single, allow_other: true }, { ...single, allow_other: true }, patch)).status)
+        .toBe("approved");
+      expect(effectiveErrorResolution(decided(decision, { ...single, allow_other: true }, { ...single, allow_other: false }, patch)))
+        .toEqual({ status: "stale" });
+    });
+    it("Erro humano com a resposta do LLM fora do domínio", () => {
+      const llm = (value: string | string[], field: Record<string, unknown>) => {
+        const r = decided("llm_correct", { ...field, allow_other: true }, field);
+        r.context!.llm_value.value = value;
+        r.current_context!.llm_value.value = value;
+        return r;
+      };
+      expect(effectiveErrorResolution(llm("Outro: C", { ...single, allow_other: true })).status).toBe("approved");
+      expect(effectiveErrorResolution(llm("Outro: C", single))).toEqual({ status: "stale" });
+      const multi = { type: "multi", options: ["A", "B"] };
+      expect(effectiveErrorResolution(llm(["A", "Outro: C"], { ...multi, allow_other: true })).status).toBe("approved");
+      expect(effectiveErrorResolution(llm(["A", "Outro: C"], multi))).toEqual({ status: "stale" });
+      expect(effectiveErrorResolution(llm(["A", "B"], multi)).status).toBe("approved");
+    });
+  });
+
+  // `verdictInDomain` não mede registro de subcampos: o subcampo removido não
+  // derruba a decisão, como não derruba o veredito da Comparação.
+  it("subcampo removido com valor no registro não derruba a decisão", () => {
+    const subfields = [{ key: "a", label: "A" }, { key: "b", label: "B" }];
+    const r = decided("researchers_correct",
+      { type: "text", options: null, subfields }, { type: "text", options: null, subfields: subfields.slice(0, 1) },
+      { approved_value: { a: "x", b: "y" } });
+    expect(effectiveErrorResolution(r)).toEqual({ status: "approved", value: { a: "x", b: "y" }, isLlmError: true });
   });
 });
 

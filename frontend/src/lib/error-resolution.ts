@@ -5,6 +5,7 @@ import { resolveAllowOther } from "@/lib/pydantic-field";
 import { NOT_INFORMED } from "@/lib/sentinels";
 import { isSubfieldRecord } from "@/lib/subfield-value";
 import { arePartsValid, parseDatePartsForUI } from "@/lib/date-parts";
+import { verdictInDomain, type DomainField } from "@/lib/review-validity";
 import type { PydanticField } from "@/lib/types";
 
 // A ordem é a dos botões no card: quem errou (um lado, nenhum, os dois) e,
@@ -158,13 +159,61 @@ function hasApprovedValue(row: Pick<ErrorResolutionRow, "approved_value">): bool
   return row.approved_value !== undefined && row.approved_value !== null;
 }
 
+// A definição que julga o valor aprovado é a atual (`current_context`), não a
+// gravada. O hash não cobre `condition` nem `allow_other`, então a decisão
+// sobrevive à mudança deles; o valor, não. O branco aprovado numa pergunta
+// condicional deixa de valer quando ela perde a condição, porque o export o
+// gravaria numa pergunta que todo documento deve responder. O branco aprovado
+// numa pergunta que nunca foi condicional (o "Erro humano" sobre o LLM que
+// respondeu `""`) não é assunto desta regra e continua como antes. Fora do
+// domínio atual (o "Outro: ..." depois que `allow_other` foi desligado, a
+// opção que saiu do formulário) a decisão cai pela mesma régua do veredito da
+// Comparação (`verdictInDomain`, motivo `fora_do_dominio`), senão a célula
+// ficaria com o valor que a regra do veredito acabou de recusar. `verdictInDomain` não mede registro de
+// subcampos, e um subcampo removido não derruba a decisão, como não derruba o
+// veredito. Na gravação, `set_error_resolution` valida contra a definição
+// atual e recusa o valor do LLM fora do domínio dela, para que nenhuma decisão
+// nasça sem valer.
+function approvedUnderCurrent(
+  row: ErrorResolutionRow, value: unknown, isLlmError: boolean,
+): EffectiveErrorResolution {
+  const current = row.current_context?.field_definition;
+  const blankWithoutCondition = isBlankAnswer(value) &&
+    conditionalBlank(row.context?.field_definition) !== undefined && conditionalBlank(current) === undefined;
+  if (blankWithoutCondition || !valueInDomain(current, value)) return { status: "stale" };
+  return { status: "approved", value, isLlmError };
+}
+
+const domainFieldSchema = z.object({
+  type: z.string(), options: z.array(z.string()).nullish(), allow_other: z.boolean().nullish(),
+});
+
+// Sem as partes que o domínio lê, não há domínio a conferir.
+function valueInDomain(definition: unknown, value: unknown): boolean {
+  const parsed = domainFieldSchema.safeParse(definition);
+  const verdict = asVerdict(value);
+  if (!parsed.success || verdict === undefined) return true;
+  return verdictInDomain(verdict, parsed.data as DomainField);
+}
+
+// O valor na forma de `responses.answers` escrito como veredito: o de `multi`
+// é o JSON `{opção: true}` que a grade grava. Registro de subcampos não tem
+// forma de veredito que o domínio meça.
+function asVerdict(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return JSON.stringify(Object.fromEntries(value.map((item) => [item, true])));
+  }
+  return undefined;
+}
+
 // "Ambos corretos" com o valor comum (#758): o veredito ficou para trás, e os
 // pesquisadores atuais e o LLM concordam no valor que vai ao gabarito. Nenhum
 // dos lados errou, então não é erro do LLM, e "Erro humano" deixa de ser o
 // único jeito de gravar esse valor.
 function bothCorrectResolution(row: ErrorResolutionRow, context: ErrorResolutionContext): EffectiveErrorResolution {
   return hasApprovedValue(row)
-    ? { status: "approved", value: row.approved_value, isLlmError: false }
+    ? approvedUnderCurrent(row, row.approved_value, false)
     : upheldResolution(context);
 }
 
@@ -174,7 +223,7 @@ function bothCorrectResolution(row: ErrorResolutionRow, context: ErrorResolution
 // aprovável até ser confirmada de novo.
 function chosenValueResolution(row: ErrorResolutionRow): EffectiveErrorResolution {
   if (!hasApprovedValue(row)) return { status: "stale" };
-  return { status: "approved", value: row.approved_value, isLlmError: true };
+  return approvedUnderCurrent(row, row.approved_value, true);
 }
 
 // Pergunta condicional cujo gatilho não a aciona fica sem a chave em
@@ -223,10 +272,11 @@ export function llmValueIsBlank(context: ErrorResolutionContext): boolean {
 }
 
 // "Erro humano" aprova a resposta do LLM. Sem o campo nela, só há o que
-// aprovar quando o campo é condicional: o LLM respondeu "em branco".
-function llmCorrectResolution(context: ErrorResolutionContext): EffectiveErrorResolution {
-  if (context.llm_value.present) return { status: "approved", value: context.llm_value.value, isLlmError: false };
-  const blank = conditionalBlank(context.field_definition);
+// aprovar quando o campo é condicional na definição atual: o LLM respondeu
+// "em branco".
+function llmCorrectResolution(row: ErrorResolutionRow, context: ErrorResolutionContext): EffectiveErrorResolution {
+  if (context.llm_value.present) return approvedUnderCurrent(row, context.llm_value.value, false);
+  const blank = conditionalBlank(row.current_context?.field_definition);
   return blank === undefined ? { status: "stale" } : { status: "approved", value: blank, isLlmError: false };
 }
 
@@ -238,7 +288,7 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
   if (row.decision === "discussion") return { status: "discussion" };
   if (row.decision === "both_correct") return bothCorrectResolution(row, context);
   if (choosesValue(row.decision)) return chosenValueResolution(row);
-  return llmCorrectResolution(context);
+  return llmCorrectResolution(row, context);
 }
 
 /**

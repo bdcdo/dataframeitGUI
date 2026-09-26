@@ -10,6 +10,7 @@ import {
 } from "@/lib/export/assemble";
 import type { EquivalenceRow } from "@/lib/compare-divergence";
 import type { PydanticField } from "@/lib/types";
+import type { ErrorDecision, ErrorResolutionContext, ErrorResolutionRow } from "@/lib/error-resolution";
 import { resolutionFixture } from "./error-resolution-fixture";
 
 // --- Fixtures helpers ---
@@ -616,6 +617,57 @@ describe("assembleExport: validade do veredito (#758)", () => {
       const d = run({ ...decisionBase, reviews: [newer, source(HASH)], errorResolutions: [resolutionFixture("discussion")] });
       expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("");
       expect(d.verdicts.rows[0][idx(d.verdicts, "reviewer_comments")]).toContain("Em discussão");
+    });
+  });
+
+  // O hash não cobre `condition` nem `allow_other`: a decisão sobrevive à
+  // mudança deles, mas o valor que ela aprovou é julgado pela definição atual.
+  // Sem a decisão valendo, a célula volta ao consenso dos pesquisadores.
+  describe("decisão do LLM Insights julgada pela definição atual", () => {
+    const g0 = field("g0", { type: "single", options: ["Sim", "Não"] });
+    const humans = [
+      { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { g0: "Não", x: "Humano" } },
+      { id: "rh2", document_id: "doc1", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { g0: "Não", x: "Humano" } },
+    ];
+    function decidedOn(
+      decision: ErrorDecision, saved: Record<string, unknown>, current: Record<string, unknown>,
+      llmValue: ErrorResolutionContext["llm_value"],
+    ): ErrorResolutionRow {
+      const resolution = resolutionFixture(decision);
+      const definition = { ...(resolution.context!.field_definition as Record<string, unknown>), hash: HASH };
+      resolution.context!.field_definition = { ...definition, ...saved } as ErrorResolutionContext["field_definition"];
+      resolution.context!.llm_value = llmValue;
+      resolution.current_context = structuredClone(resolution.context);
+      resolution.current_context!.field_definition = { ...definition, ...current } as ErrorResolutionContext["field_definition"];
+      return resolution;
+    }
+    const exportWith = (x: PydanticField, llmAnswers: Record<string, unknown>, resolutions: ErrorResolutionRow[]) => {
+      const d = run({
+        fields: [g0, x], documents: [doc("doc1")], reviews: [], errorResolutions: resolutions,
+        responses: [{ id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", is_partial: false, answers: llmAnswers }, ...humans],
+      });
+      const row = d.verdicts.rows[0];
+      return { cell: row[idx(d.verdicts, "x")], comments: row[idx(d.verdicts, "reviewer_comments")] };
+    };
+
+    it("o branco de Erro humano cai quando a pergunta deixa de ser condicional", () => {
+      const x = field("x", { hash: HASH });
+      const decision = decidedOn("llm_correct", { condition: { field: "g0", equals: "Sim" } }, {}, { present: false, value: null });
+      const withDecision = exportWith(x, { g0: "Não" }, [decision]);
+      expect(withDecision).toEqual(exportWith(x, { g0: "Não" }, []));
+      expect(withDecision.cell).toBe("Humano");
+      expect(withDecision.comments).not.toContain("Erro humano");
+    });
+
+    it("o Outro de Erro do LLM cai quando allow_other é desligado", () => {
+      const x = field("x", { type: "single", options: ["Humano", "LLM"], hash: HASH });
+      const single = { type: "single", options: ["Humano", "LLM"] };
+      const decision = decidedOn("researchers_correct", { ...single, allow_other: true }, { ...single, allow_other: false },
+        { present: true, value: "LLM" });
+      decision.approved_value = "Outro: C";
+      const withDecision = exportWith(x, { g0: "Não", x: "LLM" }, [decision]);
+      expect(withDecision).toEqual(exportWith(x, { g0: "Não", x: "LLM" }, []));
+      expect(withDecision.cell).toBe("Humano");
     });
   });
 });
