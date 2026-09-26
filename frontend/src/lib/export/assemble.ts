@@ -40,6 +40,8 @@ export interface ExportDataset {
   verdicts: ExportSheet;
   /** Células do Gabarito em branco, com o motivo. Só vai para o XLSX. */
   pending: ExportSheet;
+  /** Células do Gabarito preenchidas pela opção `fillFromLlm`. Só vai para o XLSX. */
+  llmOnly: ExportSheet;
   csv: ExportSheet;
 }
 
@@ -93,6 +95,14 @@ export interface AssembleInput {
   equivalences?: EquivalenceRow[];
   /** Vazio quando o projeto não usa auto-revisão. */
   finalAnswers?: ExportFinalAnswer[];
+  /**
+   * Preenche com a resposta do LLM a célula do Gabarito que nenhum
+   * pesquisador respondeu, e põe os campos `llm_only` nas colunas. Desligado
+   * por padrão porque o Gabarito serve para medir o LLM: uma célula com o valor
+   * dele contaria como acerto dele mesmo. Ligado, o arquivo serve para usar o
+   * dado, e as células que só o LLM preencheu ficam listadas na aba "Só LLM".
+   */
+  fillFromLlm?: boolean;
 }
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
@@ -262,6 +272,7 @@ const PENDING_REASON = {
   uncompared: "respostas divergem e o campo não entra na Comparação",
   llmOnly: "só o LLM respondeu",
   nobody: "ninguém respondeu o campo",
+  contradiction: (parent: string) => `julgamento contradiz o campo ${parent}`,
 } as const;
 
 // O que cada proveniência da view `final_answers` faz com a célula: "decidido"
@@ -328,10 +339,16 @@ function groupValue(fieldName: string, group: ExportResponse[], llm: ExportRespo
 // aplicável, por `isFieldApplicable`, o mesmo predicado da Comparação e da view
 // `final_answers`: quem codificou antes de o campo existir, ou respondeu o
 // campo pai com outro valor e por isso não viu este, não tem resposta a
-// comparar, e o branco dele não conta como voto nem como divergência.
+// comparar, e o branco dele não conta como voto nem como divergência. Campo
+// `llm_only` (que só chega aqui com `fillFromLlm`) não aparece na codificação
+// humana, e o pesquisador nunca o responde: a resposta legada, sem
+// `answer_field_hashes`, passaria por `isFieldApplicable` e o branco dela
+// divergiria do LLM.
 function applicableResponses(field: PydanticField, doc: DocResponses): DocResponses {
   return splitResponses(
-    doc.all.filter((r) => isFieldApplicable(field, r.answers, r.answer_field_hashes ?? undefined)),
+    doc.all.filter((r) =>
+      (field.target !== "llm_only" || r.respondent_type === "llm") &&
+      isFieldApplicable(field, r.answers, r.answer_field_hashes ?? undefined)),
   );
 }
 
@@ -368,6 +385,7 @@ interface CellContext {
   /** Células que a decisão "Em discussão" do LLM Insights deixou em branco. */
   discussed: ReadonlySet<string>;
   pairsByDoc: ReturnType<typeof buildEquivalenceMap>;
+  fillFromLlm: boolean;
 }
 
 // A linha do Gabarito em montagem, na forma das respostas, para que as
@@ -375,6 +393,16 @@ interface CellContext {
 // Só tem chave o campo já decidido: com valor, ou `undefined` quando a condição
 // dele não se cumpre. Campo sem chave está pendente, e o filho dele espera.
 type GabaritoRow = Record<string, unknown>;
+
+// A linha e os campos dela que só estão decididos porque `fillFromLlm` está
+// ligada: os que o LLM preencheu, o branco que a condição tirou de um pai
+// desses, e todo campo `llm_only`, que sem a opção nem entra no arquivo. Ligar
+// a opção só pode mudar a célula que nenhum pesquisador respondeu; para as
+// demais, esses campos contam como não decididos, como com a opção desligada.
+interface GabaritoLine {
+  row: GabaritoRow;
+  optionOnly: Set<string>;
+}
 
 // Os rótulos de "ambíguo" e "pular" são o veredito de que o campo não tem
 // valor, não um valor: a célula fica fora da linha, e o filho espera como se o
@@ -395,47 +423,87 @@ function settleCell(row: GabaritoRow, field: PydanticField, cell: string | undef
 // Devolve null quando o campo se aplica. O schema só aceita condição sobre
 // campo anterior (`conditionTrigger` em pydantic-field.ts), então, percorrendo
 // os campos na ordem dele, o pai já passou por aqui; pai fora do Gabarito
-// (`llm_only`, `none`) nunca se decide, e o filho espera.
-function conditionOutcome(field: PydanticField, row: GabaritoRow): CellOutcome | null {
+// (`none`, e `llm_only` sem `fillFromLlm`) nunca se decide, e o filho espera.
+// `readOptionOnly` diz se o pai em `GabaritoLine.optionOnly` vale como
+// decidido: só vale para a célula que nenhum pesquisador respondeu, e o branco
+// que ele decide entra também nesse conjunto.
+function conditionOutcome(field: PydanticField, line: GabaritoLine, readOptionOnly: boolean): CellOutcome | null {
   const parent = field.condition?.field;
   if (!parent) return null;
-  if (!Object.hasOwn(row, parent)) return { reason: `aguarda o campo ${parent}` };
-  return isFieldVisible(field, row) ? null : { value: undefined };
+  const byOption = line.optionOnly.has(parent);
+  if (!Object.hasOwn(line.row, parent) || (byOption && !readOptionOnly)) return { reason: `aguarda o campo ${parent}` };
+  if (isFieldVisible(field, line.row)) return null;
+  return byOption ? { value: undefined, optionOnly: true } : { value: undefined };
 }
 
 // `value: undefined` é o branco legítimo: a condição não se cumpre na linha.
-type CellOutcome = { value: string | undefined } | { reason: string };
+// `notApplicable` marca o motivo que, mesmo deixando a célula nas Pendências,
+// dá o campo como fora da linha (ver `judgedCell`).
+// `optionOnly` marca a célula que só a opção `fillFromLlm` decidiu (ver
+// `GabaritoLine`); com valor, é a que o LLM preencheu e vai para "Só LLM".
+type CellOutcome = { value: string | undefined; optionOnly?: true } | { reason: string; notApplicable?: true };
+
+// Uma célula com julgamento explícito (veredito do revisor, decisão do LLM
+// Insights, auto-revisão decidida) diante da condição do campo na linha. O
+// julgamento não passa por cima da condição: se o pai no Gabarito diz que o
+// campo não se aplica e o julgamento pôs valor nele, os dois se contradizem, e
+// a célula fica em branco nas Pendências até alguém decidir qual dos dois
+// cede. Branco não contradiz nada: é o que a condição pede, e é o que "Erro
+// humano" aprova quando o LLM deixou de fora o campo condicional. "Ambíguo" e
+// "pular" (`NOT_A_VALUE`) também não, porque não afirmam valor nenhum: entram
+// como antes da regra, e o filho deles espera. Pai ainda pendente, ou decidido
+// só pela opção `fillFromLlm`, também não: o julgamento entra, porque não há o
+// que contradizer.
+// Na contradição, o campo sai da linha como não aplicável (`settleCell` com
+// `undefined`), o mesmo estado do branco legítimo: é o que o pai no Gabarito
+// diz, e assim o neto segue a linha como ela está, em vez de esperar por um
+// filho que, com esse pai, nunca terá valor.
+function judgedCell(field: PydanticField, line: GabaritoLine, cell: string): CellOutcome {
+  const parent = field.condition?.field;
+  const gate = conditionOutcome(field, line, false);
+  if (parent && gate && "value" in gate && cell !== "" && !NOT_A_VALUE.has(cell)) {
+    return { reason: PENDING_REASON.contradiction(parent), notApplicable: true };
+  }
+  return { value: cell };
+}
 
 // Uma célula sem veredito: o valor que ela recebe ou o motivo de ficar em
-// branco. Ordem: auto-revisão decidida, condição na linha do Gabarito,
-// concordância, e então o motivo.
+// branco. Ordem: auto-revisão decidida (pesada contra a condição por
+// `judgedCell`), condição na linha do Gabarito, concordância, e então o motivo.
 function resolveCell(
   docId: string,
   field: PydanticField,
   doc: DocResponses,
-  row: GabaritoRow,
+  line: GabaritoLine,
   ctx: CellContext,
 ): CellOutcome {
   const auto = ctx.autoReview.get(cellKey(docId, field.name));
-  if (auto && AUTO_REVIEW_CELL[auto.provenance] === "decidido") return { value: formatExportValue(auto.answer) };
-  const gate = conditionOutcome(field, row);
-  if (gate) return gate;
-  const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
+  if (auto && AUTO_REVIEW_CELL[auto.provenance] === "decidido") return judgedCell(field, line, formatExportValue(auto.answer));
   const applicable = applicableResponses(field, doc);
-  // Sem pesquisador entre as respostas que contam, não há gabarito. Só o LLM:
-  // ele é o que o gabarito serve para medir, e uma célula com o valor dele
-  // contaria como acerto dele mesmo. Ninguém: a linha diz que o campo se
-  // aplica, mas nenhum respondente o viu nessa condição (o pai no Gabarito veio
-  // de um veredito que ninguém tinha escolhido, ou o campo nasceu depois da
-  // codificação), e o branco precisa de quem o preencha.
-  if (applicable.humans.length === 0) {
-    return { reason: applicable.all.length > 0 ? PENDING_REASON.llmOnly : PENDING_REASON.nobody };
-  }
+  const uncoded = applicable.humans.length === 0;
+  const gate = conditionOutcome(field, line, uncoded);
+  if (gate) return gate;
+  // Vem depois da condição na linha: o LLM não preenche campo que ela diz não
+  // se aplicar.
+  if (uncoded) return uncodedCell(field, applicable, ctx.fillFromLlm);
+  const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
   const agree = groupAgreement(field, applicable, pairs);
   const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
   const signals = pendingSignals(field, doc, applicable, agree, ctx.minResponses);
   return { reason: pendingReason(cellKey(docId, field.name), ctx, signals) };
+}
+
+// Célula sem pesquisador entre as respostas que contam: não há gabarito. Só o
+// LLM: fica pendente, salvo com `AssembleInput.fillFromLlm` (a resposta em
+// branco não tem o que preencher e segue pendente). Ninguém: a linha diz que o
+// campo se aplica, mas nenhum respondente o viu nessa condição (o pai no
+// Gabarito veio de um veredito que ninguém tinha escolhido, ou o campo nasceu
+// depois da codificação), e o branco precisa de quem o preencha.
+function uncodedCell(field: PydanticField, applicable: DocResponses, fillFromLlm: boolean): CellOutcome {
+  const llmCell = fillFromLlm && applicable.llm ? formatExportValue(applicable.llm.answers?.[field.name]) : "";
+  if (llmCell !== "") return { value: llmCell, optionOnly: true };
+  return { reason: applicable.all.length > 0 ? PENDING_REASON.llmOnly : PENDING_REASON.nobody };
 }
 
 // O que decide o motivo de uma célula que ficou sem consenso.
@@ -487,7 +555,7 @@ function pendingReason(key: string, ctx: CellContext, signals: PendingSignals): 
 }
 
 // O contexto das células sem veredito, montado do que o export leu.
-function buildCellContext(input: AssembleInput, baseReviews: ExportReview[]): CellContext {
+function buildCellContext(input: AssembleInput, baseReviews: ExportReview[], fillFromLlm: boolean): CellContext {
   const discussed = (input.errorResolutions ?? []).filter((row) => exportedResolution(row)?.status === "discussion");
   return {
     minResponses: input.minResponses,
@@ -495,40 +563,59 @@ function buildCellContext(input: AssembleInput, baseReviews: ExportReview[]): Ce
     reviewedCells: new Set(baseReviews.map((r) => cellKey(r.document_id, r.field_name))),
     discussed: new Set(discussed.map((row) => cellKey(row.document_id, row.field_name))),
     pairsByDoc: buildEquivalenceMap(input.equivalences ?? []),
+    fillFromLlm,
   };
 }
 
-// As células de um documento, na ordem do schema: as que a auto-revisão ou a
-// concordância preenchem, e as que ficam em branco, com o motivo. Célula com
-// veredito só volta como pendente quando o veredito é o branco de "Em
-// discussão"; as demais entram na linha como estão, porque o veredito é
-// julgamento explícito e vale acima da condição.
+// As células de um documento, na ordem do schema: as que o veredito, a
+// auto-revisão ou a concordância preenchem, e as que ficam em branco, com o
+// motivo. O veredito (com as decisões do LLM Insights, que chegam pelo mesmo
+// mapa em `applyExportResolutions`) vale acima da concordância, mas não acima
+// da condição: passa por `judgedCell` como a auto-revisão decidida. O branco
+// de "Em discussão" vai para as Pendências antes disso.
 function resolveDocCells(
   docId: string,
   doc: DocResponses,
   verdictFields: ReadonlyMap<string, string> | undefined,
   fields: PydanticField[],
   ctx: CellContext,
-): { filled: Map<string, string>; pending: [string, string][] } {
-  const filled = new Map<string, string>();
-  const pending: [string, string][] = [];
-  const row: GabaritoRow = {};
+): DocCells {
+  const cells: DocCells = { filled: new Map(), pending: [], fromLlm: [] };
+  const line: GabaritoLine = { row: {}, optionOnly: new Set() };
   for (const field of fields) {
+    if (field.target === "llm_only") line.optionOnly.add(field.name);
     const verdict = verdictFields?.get(field.name);
-    if (verdict !== undefined) {
-      if (ctx.discussed.has(cellKey(docId, field.name))) pending.push([field.name, PENDING_REASON.discussion]);
-      else settleCell(row, field, verdict);
+    if (verdict !== undefined && ctx.discussed.has(cellKey(docId, field.name))) {
+      cells.pending.push([field.name, PENDING_REASON.discussion]);
       continue;
     }
-    const outcome = resolveCell(docId, field, doc, row, ctx);
-    if ("reason" in outcome) {
-      pending.push([field.name, outcome.reason]);
-      continue;
-    }
-    if (outcome.value !== undefined) filled.set(field.name, outcome.value);
-    settleCell(row, field, outcome.value);
+    const outcome = verdict !== undefined ? judgedCell(field, line, verdict) : resolveCell(docId, field, doc, line, ctx);
+    recordCell(cells, line, field, outcome);
   }
-  return { filled, pending };
+  return cells;
+}
+
+interface DocCells {
+  filled: Map<string, string>;
+  pending: [string, string][];
+  /** As células que o LLM preencheu, para a aba "Só LLM". */
+  fromLlm: string[];
+}
+
+// Grava o desfecho de uma célula nas saídas do documento e na linha, onde os
+// campos seguintes leem a condição.
+function recordCell(cells: DocCells, line: GabaritoLine, field: PydanticField, outcome: CellOutcome): void {
+  if ("reason" in outcome) {
+    cells.pending.push([field.name, outcome.reason]);
+    if (outcome.notApplicable) settleCell(line.row, field, undefined);
+    return;
+  }
+  if (outcome.value !== undefined) cells.filled.set(field.name, outcome.value);
+  if (outcome.optionOnly) {
+    line.optionOnly.add(field.name);
+    if (outcome.value !== undefined) cells.fromLlm.push(field.name);
+  }
+  settleCell(line.row, field, outcome.value);
 }
 
 function splitResponses(all: ExportResponse[] = []): DocResponses {
@@ -540,7 +627,7 @@ function splitResponses(all: ExportResponse[] = []): DocResponses {
 }
 
 // Percorre os documentos: as células preenchidas vão para `filledByDoc`, as em
-// branco viram linhas de Pendências.
+// branco viram linhas de Pendências, e as que só o LLM preencheu, de "Só LLM".
 function resolveOpenCells(input: {
   baseDocs: ExportDocument[];
   identity: ReadonlyMap<string, DocIdentity>;
@@ -548,31 +635,37 @@ function resolveOpenCells(input: {
   verdictsByDoc: ReadonlyMap<string, VerdictEntry>;
   responses: ExportResponse[];
   ctx: CellContext;
-}): { filledByDoc: Map<string, Map<string, string>>; pendingRows: string[][] } {
+}): { filledByDoc: Map<string, Map<string, string>>; pendingRows: string[][]; llmOnlyRows: string[][] } {
   const responsesByDoc = groupBy(input.responses, (r) => r.document_id);
   const filledByDoc = new Map<string, Map<string, string>>();
   const pendingRows: string[][] = [];
+  const llmOnlyRows: string[][] = [];
   for (const { id: docId } of input.baseDocs) {
     const doc = splitResponses(responsesByDoc.get(docId));
     const verdictFields = input.verdictsByDoc.get(docId)?.fields;
-    const { filled, pending } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
+    const { filled, pending, fromLlm } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
     if (filled.size > 0) filledByDoc.set(docId, filled);
     // Entram nas Pendências os documentos que têm linha no Gabarito ou alguma
     // codificação humana. Documento só com a resposta do LLM ainda não foi
     // codificado, e listá-lo campo a campo só esconderia os brancos que importam.
+    // Com `fillFromLlm`, o LLM preenche o documento e ele passa a ter linha.
     const hasGabaritoRow = filled.size > 0 || verdictFields !== undefined;
     if (!hasGabaritoRow && doc.humans.length === 0) continue;
     const { displayId, title } = input.identity.get(docId)!;
     for (const [fieldName, reason] of pending) pendingRows.push([displayId, title, fieldName, reason]);
+    for (const fieldName of fromLlm) llmOnlyRows.push([displayId, title, fieldName]);
   }
-  return { filledByDoc, pendingRows };
+  return { filledByDoc, pendingRows, llmOnlyRows };
 }
 
 export function assembleExport(input: AssembleInput): ExportDataset {
   const { projectName, fields, documents, responses, reviews } = input;
+  const fillFromLlm = input.fillFromLlm === true;
 
+  // `llm_only` só entra com `fillFromLlm`: sem ela, nenhuma célula dele teria
+  // gabarito, porque nenhum pesquisador o responde.
   const exportableFields = fields.filter(
-    (f) => f.target !== "llm_only" && f.target !== "none"
+    (f) => f.target !== "none" && (fillFromLlm || f.target !== "llm_only")
   );
   const fieldNames = exportableFields.map((f) => f.name);
   const fieldNameSet = new Set(fieldNames);
@@ -636,13 +729,13 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
   const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName);
   applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
-  const { filledByDoc, pendingRows } = resolveOpenCells({
+  const { filledByDoc, pendingRows, llmOnlyRows } = resolveOpenCells({
     baseDocs,
     identity,
     exportableFields,
     verdictsByDoc,
     responses: baseResponses,
-    ctx: buildCellContext(input, baseReviews),
+    ctx: buildCellContext(input, baseReviews, fillFromLlm),
   });
 
   // Documentos com gabarito (veredicto, auto-revisão ou concordância), na ordem da base.
@@ -651,12 +744,11 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     .filter((id) => verdictsByDoc.has(id) || filledByDoc.has(id));
   const gabaritoSet = new Set(gabaritoIds);
 
-  // Prioridade por campo: veredicto do revisor (com as decisões do LLM
-  // Insights) > auto-revisão decidida > concordância > vazio.
+  // Cada célula vem de `resolveDocCells`, que aplica a prioridade: veredicto
+  // do revisor (com as decisões do LLM Insights) > auto-revisão decidida >
+  // concordância > vazio, com a condição na linha acima dos julgamentos.
   const verdictFieldValue = (docId: string, fieldName: string): string =>
-    verdictsByDoc.get(docId)?.fields.get(fieldName) ??
-    filledByDoc.get(docId)?.get(fieldName) ??
-    "";
+    filledByDoc.get(docId)?.get(fieldName) ?? "";
 
   const sourceOf = (respondentType: string): string =>
     respondentType === "llm" ? "llm" : "codificacao";
@@ -734,6 +826,12 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     rows: pendingRows,
   };
 
+  // --- Visão Só LLM --- (só no XLSX, como Pendências)
+  const llmOnlySheet: ExportSheet = {
+    headers: ["document_id", "document_title", "campo"],
+    rows: llmOnlyRows,
+  };
+
   // --- CSV unificado: respostas + gabaritos + documentos órfãos ---
   const docsWithResponse = new Set(baseResponses.map((r) => r.document_id));
   const responseCsvRows = baseResponses.map((r) => {
@@ -795,6 +893,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     responses: responsesSheet,
     verdicts: verdictsSheet,
     pending: pendingSheet,
+    llmOnly: llmOnlySheet,
     csv: csvSheet,
   };
 }

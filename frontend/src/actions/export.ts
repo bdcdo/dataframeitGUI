@@ -21,13 +21,19 @@ import {
 
 export type GetExportDatasetResult = ExportDataset | { error: string };
 
+export interface ExportOptions {
+  /** Ver `AssembleInput.fillFromLlm`. */
+  fillFromLlm?: boolean;
+}
+
 // Retorna o conjunto completo do projeto (documentos + respostas + gabarito)
 // já montado como planilhas de strings. Gate coordinator-only (fail-closed);
 // lê documents.metadata APENAS aqui, nunca na listagem da página. As queries
 // são paralelas e usam colunas explícitas (Princípio II de velocidade), exceto
 // `final_answers`, que depende do modo de automação lido no projeto.
 export async function getExportDataset(
-  projectId: string
+  projectId: string,
+  options: ExportOptions = {},
 ): Promise<GetExportDatasetResult> {
   const gate = await requireCoordinator(
     projectId,
@@ -126,5 +132,7 @@ export async function getExportDataset(
     errorResolutions,
     equivalences,
     finalAnswers: finalAnswers.data,
+    // O argumento chega do cliente: só o `true` literal liga a opção.
+    fillFromLlm: options.fillFromLlm === true,
   });
 }

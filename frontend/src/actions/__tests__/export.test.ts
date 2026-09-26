@@ -262,6 +262,20 @@ describe("getExportDataset: pares \"=\" e auto-revisão", () => {
     expect(gabaritoCell(r)).toBe("Não");
   });
 
+  it("a opção de preencher com o LLM chega à montagem, e só o true a liga", async () => {
+    const soLlm = () => base(null, [{ ...resposta("l", "llm", "Sim") }]);
+    serverTableResults = soLlm();
+    expect(gabaritoCell(await (await loadAction())("proj-1"))).toBe("");
+    serverTableResults = soLlm();
+    const loose = { fillFromLlm: "sim" } as unknown as { fillFromLlm: boolean };
+    expect(gabaritoCell(await (await loadAction())("proj-1", loose))).toBe("");
+    serverTableResults = soLlm();
+    const r = await (await loadAction())("proj-1", { fillFromLlm: true });
+    expect(gabaritoCell(r)).toBe("Sim");
+    if ("error" in r) throw new Error(r.error);
+    expect(r.llmOnly.rows).toEqual([["EXT-1", "", "campo"]]);
+  });
+
   it("propaga o erro da leitura de final_answers", async () => {
     serverTableResults = {
       ...base("auto_review_llm", []),

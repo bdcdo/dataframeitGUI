@@ -836,13 +836,98 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(late)).toEqual([["A", "pai", "ninguém respondeu o campo"]]);
     });
 
-    it("auto-revisão resolvida vale acima da condição na linha", () => {
-      const d = withChain({
-        responses: [answering("h1", "humano", { pai: "não" }), answering("l", "llm", { pai: "sim", filho: "Sim" })],
-        reviews: [paiVerdict("não")],
-        finalAnswers: [{ document_id: "A", field_name: "filho", provenance: "arbitrado", answer: "Sim" }],
+    describe("julgamento explícito diante da condição", () => {
+      const verdictOn = (fieldName: string, verdict: string) => ({
+        ...paiVerdict(verdict), id: `rv-${fieldName}-${verdict}`, field_name: fieldName,
       });
-      expect(cell(d, "filho")).toBe("Sim");
+      const contradicted = [
+        answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+        answering("h2", "humano", { pai: "não" }),
+        answering("l", "llm", { pai: "não" }),
+      ];
+
+      it("veredito no filho com o pai no Gabarito sem cumprir a condição: branco e Pendências", () => {
+        const d = withChain({ responses: contradicted, reviews: [paiVerdict("não"), verdictOn("filho", "Sim")] });
+        expect(cell(d, "pai")).toBe("não");
+        expect(cell(d, "filho")).toBe("");
+        // O filho sai da linha como não aplicável: o neto fica no branco
+        // legítimo, sem esperar por ele.
+        expect(cell(d, "neto")).toBe("");
+        expect(pendingOf(d)).toEqual([["A", "filho", "julgamento contradiz o campo pai"]]);
+      });
+
+      it("veredito em branco no filho não contradiz o pai", () => {
+        const d = withChain({ responses: contradicted, reviews: [paiVerdict("não"), verdictOn("filho", "")] });
+        expect(cell(d, "filho")).toBe("");
+        expect(d.pending.rows).toEqual([]);
+      });
+
+      // "Ambíguo" e "pular" não afirmam valor: entram como antes da regra, e o
+      // neto espera pelo filho, que não é valor.
+      it.each([["ambiguo", "[AMBIGUO]"], ["pular", "[PULAR]"]])(
+        "veredito %s no filho não contradiz o pai",
+        (verdict, label) => {
+          const d = withChain({ responses: contradicted, reviews: [paiVerdict("não"), verdictOn("filho", verdict)] });
+          expect(cell(d, "filho")).toBe(label);
+          expect(pendingOf(d)).toEqual([["A", "neto", "aguarda o campo filho"]]);
+        },
+      );
+
+      it("veredito no filho com o pai pendente: entra, porque não há o que contradizer", () => {
+        const d = withChain({
+          responses: [
+            answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+            answering("h2", "humano", { pai: "não" }),
+            answering("l", "llm", { pai: "sim", filho: "Sim" }),
+          ],
+          reviews: [verdictOn("filho", "Sim")],
+        });
+        expect(cell(d, "filho")).toBe("Sim");
+        expect(pendingOf(d)).toEqual([["A", "pai", "divergência entre pesquisadores"]]);
+      });
+
+      it("auto-revisão decidida no filho contradizendo o pai: branco e Pendências", () => {
+        const d = withChain({
+          responses: [answering("h1", "humano", { pai: "não" }), answering("l", "llm", { pai: "sim", filho: "Sim" })],
+          reviews: [paiVerdict("não")],
+          finalAnswers: [{ document_id: "A", field_name: "filho", provenance: "arbitrado", answer: "Sim" }],
+        });
+        expect(cell(d, "filho")).toBe("");
+        expect(pendingOf(d)).toEqual([["A", "filho", "julgamento contradiz o campo pai"]]);
+      });
+
+      it("auto-revisão decidida no filho com o pai pendente: entra", () => {
+        const d = withChain({
+          responses: [
+            answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+            answering("h2", "humano", { pai: "não" }),
+            answering("l", "llm", { pai: "sim", filho: "Não" }),
+          ],
+          finalAnswers: [{ document_id: "A", field_name: "filho", provenance: "arbitrado", answer: "Sim" }],
+        });
+        expect(cell(d, "filho")).toBe("Sim");
+        expect(pendingOf(d)).toEqual([["A", "pai", "divergência entre pesquisadores"]]);
+      });
+
+      // A decisão do LLM Insights chega pelo mesmo mapa dos vereditos
+      // (`applyExportResolutions`), e a regra vale igual para ela.
+      it("decisão do LLM Insights no filho contradizendo o pai: branco e Pendências", () => {
+        const x = field("x", { condition: { field: "pai", equals: "sim" } });
+        const d = exported({
+          fields: [pai, x],
+          documents: [doc("doc1")],
+          responses: [
+            { id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { pai: "sim", x: "LLM" } },
+            { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "humano", answers: { pai: "sim", x: "Humano" } },
+          ],
+          reviews: [{ ...paiVerdict("não"), document_id: "doc1" }],
+          errorResolutions: [resolutionFixture("llm_correct")],
+        });
+        const row = d.verdicts.rows.find((r) => r[0] === "doc1")!;
+        expect(row[idx(d.verdicts, "x")]).toBe("");
+        expect(row[idx(d.verdicts, "reviewer_comments")]).toContain("Erro humano");
+        expect(pendingOf(d)).toEqual([["doc1", "x", "julgamento contradiz o campo pai"]]);
+      });
     });
 
     it("um único pesquisador viu o filho: a célula recebe a resposta dele", () => {
@@ -884,6 +969,195 @@ describe("assembleExport: células sem veredito", () => {
       });
       expect(cell(d, "filho")).toBe("");
       expect(pendingOf(d)).toEqual([["A", "filho", "aguarda arbitragem"], ["A", "neto", "aguarda o campo filho"]]);
+    });
+  });
+
+  describe("opção de preencher com o LLM onde nenhum pesquisador respondeu", () => {
+    // `pai` é respondido por todos; `extra` nasceu depois da codificação
+    // humana e só o LLM o respondeu; `interno` é `llm_only`; `oculto`, `none`.
+    const pai = field("pai");
+    const extra = field("extra");
+    const interno = field("interno", { target: "llm_only" });
+    const oculto = field("oculto", { target: "none" });
+    const before = { answer_field_hashes: { pai: "h" } };
+    const human = (id: string): ExportResponse => ({
+      id, document_id: "A", respondent_name: id, respondent_type: "humano", answers: { pai: "sim" }, ...before,
+    });
+    const llm = (answers: Record<string, unknown>): ExportResponse => ({
+      id: "l", document_id: "A", respondent_name: "LLM", respondent_type: "llm", answers,
+    });
+    const base = (overrides: Partial<AssembleInput> = {}) => exported({
+      fields: [pai, extra, interno, oculto],
+      responses: [human("h1"), human("h2"), llm({ pai: "sim", extra: "do LLM", interno: "só dele", oculto: "x" })],
+      ...overrides,
+    });
+    const cell = (d: ReturnType<typeof run>, name: string) =>
+      d.verdicts.rows.find((r) => r[0] === "A")?.[idx(d.verdicts, name)] ?? "";
+
+    it("desligada: a célula só do LLM segue nas Pendências, e o campo llm_only fica fora", () => {
+      const d = base();
+      expect(cell(d, "extra")).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "extra", "só o LLM respondeu"]]);
+      expect(d.llmOnly.rows).toEqual([]);
+      expect(d.verdicts.headers).not.toContain("interno");
+      expect(d.responses.headers).not.toContain("interno");
+    });
+
+    it("ligada: a célula recebe o valor do LLM, sai das Pendências e entra em \"Só LLM\"", () => {
+      const d = base({ fillFromLlm: true });
+      expect(cell(d, "pai")).toBe("sim");
+      expect(cell(d, "extra")).toBe("do LLM");
+      expect(d.pending.rows).toEqual([]);
+      expect(d.llmOnly.headers).toEqual(["document_id", "document_title", "campo"]);
+      expect(d.llmOnly.rows).toEqual([["A", "", "extra"], ["A", "", "interno"]]);
+    });
+
+    it("ligada: o campo llm_only entra nas colunas e o none continua fora", () => {
+      const d = base({ fillFromLlm: true });
+      expect(cell(d, "interno")).toBe("só dele");
+      expect(d.verdicts.headers).toContain("interno");
+      const llmRow = d.responses.rows.find((r) => r[idx(d.responses, "respondent_type")] === "llm")!;
+      expect(llmRow[idx(d.responses, "interno")]).toBe("só dele");
+      expect(d.verdicts.headers).not.toContain("oculto");
+      expect(d.responses.headers).not.toContain("oculto");
+      expect(d.csv.headers).not.toContain("oculto");
+    });
+
+    it("ligada: o branco do pesquisador legado no campo llm_only não diverge do LLM", () => {
+      // Sem `answer_field_hashes`, a resposta conta como tendo visto todo campo.
+      const legacy = (id: string): ExportResponse => ({
+        id, document_id: "A", respondent_name: id, respondent_type: "humano", answers: { pai: "sim" },
+      });
+      const d = base({ fillFromLlm: true, fields: [pai, interno], responses: [legacy("h1"), legacy("h2"), llm({ pai: "sim", interno: "só dele" })] });
+      expect(cell(d, "interno")).toBe("só dele");
+      expect(d.pending.rows).toEqual([]);
+      expect(d.llmOnly.rows).toEqual([["A", "", "interno"]]);
+    });
+
+    it("ligada: resposta do LLM em branco não preenche e segue nas Pendências", () => {
+      const d = base({
+        fillFromLlm: true,
+        responses: [human("h1"), human("h2"), llm({ pai: "sim", extra: "", interno: "só dele" })],
+      });
+      expect(cell(d, "extra")).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "extra", "só o LLM respondeu"]]);
+      expect(d.llmOnly.rows).toEqual([["A", "", "interno"]]);
+    });
+
+    describe("a célula do LLM não decide a condição de quem tem pesquisador ou julgamento", () => {
+      // `f` só se aplica com `interno` = "sim", e `interno` é `llm_only`: sem a
+      // opção, ele nunca se decide, e com ela o LLM o preenche com "não".
+      const f = field("f", { condition: { field: "interno", equals: "sim" } });
+      const g = field("g", { condition: { field: "f", equals: "Y" } });
+      const fCell = (d: ReturnType<typeof run>) => [cell(d, "f"), pendingOf(d).filter(([, name]) => name === "f")];
+      // Resposta legada, sem `answer_field_hashes`: conta como tendo visto todo campo.
+      const coded = (id: string, answers: Record<string, unknown>): ExportResponse => ({
+        id, document_id: "A", respondent_name: id, respondent_type: "humano", answers,
+      });
+      const bothModes = (overrides: Partial<AssembleInput>) =>
+        [false, true].map((fillFromLlm) => exported({ fields: [interno, f], ...overrides, fillFromLlm }));
+
+      it("veredito no filho: entra igual nos dois modos, sem contradição", () => {
+        const verdictOnF = {
+          id: "rv-f", document_id: "A", field_name: "f", verdict: "X", comment: null,
+          created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null,
+        };
+        const [off, on] = bothModes({ responses: [human("h1"), llm({ interno: "não" })], reviews: [verdictOnF] });
+        expect(fCell(off)).toEqual(["X", []]);
+        expect(fCell(on)).toEqual(fCell(off));
+        expect(cell(on, "interno")).toBe("não");
+      });
+
+      it("consenso de dois pesquisadores no filho: igual nos dois modos, esperando o pai", () => {
+        const answers = { interno: "sim", f: "X" };
+        const [off, on] = bothModes({ responses: [coded("h1", answers), coded("h2", answers), llm({ interno: "não" })] });
+        expect(fCell(off)).toEqual(["", [["A", "f", "aguarda o campo interno"]]]);
+        expect(fCell(on)).toEqual(fCell(off));
+      });
+
+      it("o branco que a célula do LLM decide também não decide o neto com pesquisador", () => {
+        // Nenhum pesquisador vê `f` (a resposta dele não tem `interno`), mas
+        // os dois responderam `g`.
+        const answers = { f: "Y", g: "Z" };
+        const [off, on] = bothModes({ fields: [interno, f, g], responses: [coded("h1", answers), coded("h2", answers), llm({ interno: "não" })] });
+        const gCell = (d: ReturnType<typeof run>) => [cell(d, "g"), pendingOf(d).filter(([, name]) => name === "g")];
+        expect(gCell(off)).toEqual(["", [["A", "g", "aguarda o campo f"]]]);
+        expect(gCell(on)).toEqual(gCell(off));
+        // O branco do próprio `f`, que nenhum pesquisador respondeu, a opção muda.
+        expect(pendingOf(on).filter(([, name]) => name === "f")).toEqual([]);
+      });
+
+      it("pai llm_only fora da condição do avô: o filho com pesquisador espera igual nos dois modos", () => {
+        const internoDoPai = field("interno", { target: "llm_only", condition: { field: "pai", equals: "sim" } });
+        const answers = { pai: "não", interno: "sim", f: "X" };
+        const [off, on] = bothModes({
+          fields: [pai, internoDoPai, f], responses: [coded("h1", answers), coded("h2", answers), llm({ pai: "não" })],
+        });
+        expect(fCell(off)).toEqual(["", [["A", "f", "aguarda o campo interno"]]]);
+        expect(fCell(on)).toEqual(fCell(off));
+      });
+
+      describe("pai comum que só o LLM preencheu, porque nasceu depois da codificação", () => {
+        // `extra` não é `llm_only`: entra em `GabaritoLine.optionOnly` só porque
+        // a célula dele saiu de `uncodedCell`. Os pesquisadores codificaram `f`
+        // antes de `extra` existir (fora de `answer_field_hashes`); com
+        // `exists: false`, `f` fica à mostra para eles, e a linha com o valor
+        // do LLM em `extra` diria que `f` não se aplica.
+        const fOnExtra = field("f", { condition: { field: "extra", exists: false } });
+        const codedBefore = (id: string, answers: Record<string, unknown>): ExportResponse => ({
+          id, document_id: "A", respondent_name: id, respondent_type: "humano", answers, answer_field_hashes: { f: "h" },
+        });
+        const modes = (overrides: Partial<AssembleInput>) => bothModes({ fields: [extra, fOnExtra], ...overrides });
+
+        it("pesquisadores que concordam no filho: igual nos dois modos, esperando o pai", () => {
+          const responses = [codedBefore("h1", { f: "X" }), codedBefore("h2", { f: "X" }), llm({ extra: "do LLM" })];
+          const [off, on] = modes({ responses });
+          expect(cell(on, "extra")).toBe("do LLM");
+          expect(fCell(off)).toEqual(["", [["A", "f", "aguarda o campo extra"]]]);
+          expect(fCell(on)).toEqual(fCell(off));
+        });
+
+        it("veredito no filho: entra igual nos dois modos, sem contradição", () => {
+          const verdictOnF = {
+            id: "rv-f", document_id: "A", field_name: "f", verdict: "X", comment: null,
+            created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null,
+          };
+          const responses = [codedBefore("h1", { f: "X" }), codedBefore("h2", { f: "Y" }), llm({ extra: "do LLM" })];
+          const [off, on] = modes({ responses, reviews: [verdictOnF] });
+          expect(cell(on, "extra")).toBe("do LLM");
+          expect(fCell(off)).toEqual(["X", []]);
+          expect(fCell(on)).toEqual(fCell(off));
+        });
+      });
+
+      it("filho só do LLM com pai só do LLM: a condição vale na linha", () => {
+        const onlyLlm = (answers: Record<string, unknown>) =>
+          exported({ fields: [interno, f], fillFromLlm: true, responses: [human("h1"), human("h2"), llm(answers)] });
+        const fails = onlyLlm({ interno: "não", f: "Y" });
+        expect(cell(fails, "f")).toBe("");
+        expect(fails.pending.rows).toEqual([]);
+        expect(fails.llmOnly.rows).toEqual([["A", "", "interno"]]);
+        const holds = onlyLlm({ interno: "sim", f: "Y" });
+        expect(cell(holds, "f")).toBe("Y");
+        expect(holds.llmOnly.rows).toEqual([["A", "", "interno"], ["A", "", "f"]]);
+      });
+    });
+
+    it("ligada: a condição que não se cumpre na linha continua deixando a célula em branco", () => {
+      const filho = field("filho", { condition: { field: "pai", equals: "sim" } });
+      const d = exported({
+        fillFromLlm: true,
+        fields: [pai, filho],
+        responses: [
+          { ...human("h1"), answers: { pai: "não" } },
+          { ...human("h2"), answers: { pai: "não" } },
+          llm({ pai: "sim", filho: "Sim" }),
+        ],
+      });
+      expect(cell(d, "pai")).toBe("não");
+      expect(cell(d, "filho")).toBe("");
+      expect(d.pending.rows).toEqual([]);
+      expect(d.llmOnly.rows).toEqual([]);
     });
   });
 

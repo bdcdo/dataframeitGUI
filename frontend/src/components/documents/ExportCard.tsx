@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -38,7 +39,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 // Monta o XLSX com exceljs (import dinâmico — pesado, lazy). Aba Documentos
-// sempre presente; Respostas/Gabarito/Pendências só quando houver linhas.
+// sempre presente; Respostas/Gabarito/Pendências/Só LLM só quando houver linhas.
 async function buildXlsxBlob(data: ExportDataset): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
@@ -51,6 +52,7 @@ async function buildXlsxBlob(data: ExportDataset): Promise<Blob> {
   if (data.responses.rows.length > 0) addSheet("Respostas", data.responses);
   if (data.verdicts.rows.length > 0) addSheet("Gabarito", data.verdicts);
   if (data.pending.rows.length > 0) addSheet("Pendências", data.pending);
+  if (data.llmOnly.rows.length > 0) addSheet("Só LLM", data.llmOnly);
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -60,6 +62,39 @@ async function buildXlsxBlob(data: ExportDataset): Promise<Blob> {
 const PREVIEW_LIMIT = 10;
 
 type ExportFormat = "csv" | "xlsx";
+
+// Opção de preencher o Gabarito com o LLM, desligada por padrão pelo motivo
+// que a doc de `AssembleInput.fillFromLlm` dá. Fica travada enquanto o dataset
+// carrega: a resposta em curso foi montada com o valor anterior e, trocada a
+// opção no meio, chegaria depois como prévia da opção nova.
+function FillFromLlmOption({
+  checked,
+  disabled,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="export-fill-from-llm"
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={(v) => onCheckedChange(v === true)}
+        />
+        <Label htmlFor="export-fill-from-llm" className="text-sm">
+          Preencher com o LLM onde nenhum pesquisador respondeu
+        </Label>
+      </div>
+      <p className="pl-6 text-xs text-muted-foreground">
+        No CSV, as células preenchidas pelo LLM não se distinguem das demais; a lista delas vai na aba &quot;Só LLM&quot; do XLSX. Elas não servem para medir o LLM.
+      </p>
+    </div>
+  );
+}
 
 // Controles do card: seletor de formato + botões "Gerar prévia"/"Baixar".
 function ExportControls({
@@ -188,6 +223,7 @@ function PreviewTable({ sheet, limit }: { sheet: ExportSheet; limit: number }) {
 
 export function ExportCard({ projectId }: { projectId: string }) {
   const [format, setFormat] = useState<ExportFormat>("csv");
+  const [fillFromLlm, setFillFromLlm] = useState(false);
   const [dataset, setDataset] = useState<ExportDataset | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -198,7 +234,7 @@ export function ExportCard({ projectId }: { projectId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await getExportDataset(projectId);
+      const result = await getExportDataset(projectId, { fillFromLlm });
       if ("error" in result) {
         setError(result.error);
         return null;
@@ -264,6 +300,16 @@ export function ExportCard({ projectId }: { projectId: string }) {
           isEmpty={isEmpty}
           onPreview={() => void loadDataset()}
           onDownload={() => void handleDownload()}
+        />
+
+        <FillFromLlmOption
+          checked={fillFromLlm}
+          disabled={loading}
+          onCheckedChange={(checked) => {
+            setFillFromLlm(checked);
+            // A prévia foi montada com a outra opção.
+            setDataset(null);
+          }}
         />
 
         {error && (
