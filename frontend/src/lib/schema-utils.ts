@@ -837,6 +837,30 @@ export function diffFields(
   return logEntries;
 }
 
+// O contador de revisão da pergunta só sobe. Campo (casado por `id`) que volta
+// sem ele, ou com valor menor que o salvo, herda o salvo: baixar o contador
+// devolveria o hash anterior à revisão e reviveria os vereditos, pares,
+// auto-revisões e decisões que o "Muda como responder" derrubou. Herdar, e não
+// recusar, porque quem perde o contador (JSON escrito à mão para
+// `apply-decisions.ts`, rascunho que não o recebeu) não quis desfazer nada.
+// Devolve o próprio array quando não há o que herdar.
+export function inheritQuestionRevisions(
+  savedFields: readonly PydanticField[],
+  fields: PydanticField[],
+): PydanticField[] {
+  const savedRevision = new Map(
+    savedFields.map((field) => [field.id, field.question_revision ?? 0]),
+  );
+  const lowered = (field: PydanticField) =>
+    (field.question_revision ?? 0) < (savedRevision.get(field.id) ?? 0);
+  if (!fields.some(lowered)) return fields;
+  return fields.map((field) =>
+    lowered(field)
+      ? { ...field, question_revision: savedRevision.get(field.id) }
+      : field,
+  );
+}
+
 export interface SchemaPersistencePlan {
   changeType: ChangeType | null;
   bumped: { major: number; minor: number; patch: number };
@@ -856,9 +880,10 @@ export interface SchemaPersistencePlan {
 // deve ser reimplementado em paralelo (risco de drift — ver #63/PR #352).
 export function planSchemaPersistence(
   oldFields: PydanticField[],
-  newFields: PydanticField[],
+  submittedFields: PydanticField[],
   current: { major: number; minor: number; patch: number },
 ): SchemaPersistencePlan {
+  const newFields = inheritQuestionRevisions(oldFields, submittedFields);
   const changeType = classifyChange(oldFields, newFields);
   const bumped = changeType ? bumpVersion(current, changeType) : current;
   const logEntries = diffFields(oldFields, newFields);

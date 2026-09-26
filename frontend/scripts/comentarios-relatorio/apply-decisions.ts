@@ -149,11 +149,8 @@ async function applySchemaChanges(
     patch: project?.schema_version_patch ?? 0,
   };
 
-  // Instrução alterada aqui vale como "Só esclarece": sem a pergunta que a UI
-  // faz no save, o script não sobe `question_revision`, e o hash do campo não
-  // muda por causa dela. Para "Muda como responder", o `newFields` precisa
-  // trazer o contador já incrementado. O contrário também vale: um campo que
-  // perca o contador que tinha volta ao hash anterior à revisão.
+  // `help_text` alterado aqui vale como "Só esclarece": ver `question_revision`
+  // em references/decisions-format.md.
   const { changeType, bumped, logEntries, code, hash, fieldsWithHash } =
     planSchemaPersistence(oldFields, validatedFields, current);
 

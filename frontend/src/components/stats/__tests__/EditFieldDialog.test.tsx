@@ -260,7 +260,7 @@ describe("EditFieldDialog — aprovação de sugestão", () => {
 
 // A mesma pergunta do SchemaEditor, pelo mesmo componente: instrução alterada
 // sem outra mudança que troque o hash pede a escolha antes de gravar.
-describe("EditFieldDialog — instrução alterada", () => {
+describe("EditFieldDialog: instrução alterada", () => {
   async function editHelpTextAndSave(choice: string) {
     hoisted.saveSchemaFromGUI.mockResolvedValue({
       status: "saved",
@@ -284,26 +284,21 @@ describe("EditFieldDialog — instrução alterada", () => {
     expect(savedFieldsArg()[0]).toMatchObject({ help_text: "Ajuda nova", question_revision: 1 });
   });
 
-  it("\"Só esclarece\" grava a instrução sem contador", async () => {
-    await editHelpTextAndSave("Só esclarece");
-    expect(savedFieldsArg()[0].help_text).toBe("Ajuda nova");
-    expect(savedFieldsArg()[0]).not.toHaveProperty("question_revision");
-  });
-
-  it("instrução e descrição alteradas juntas não perguntam, porque o hash já muda", async () => {
+  // O contador sai do form por spread do campo base: perdê-lo no caminho
+  // mandaria ao save um campo de volta ao hash anterior à revisão.
+  it("campo já revisado leva o contador quando outra propriedade muda", async () => {
     hoisted.saveSchemaFromGUI.mockResolvedValue({
       status: "saved",
       snapshot: { fields: [], version: "0.1.2", revision: 2 },
     });
-    render(dialogAt([fieldA], 1));
+    render(dialogAt([{ ...fieldA, question_revision: 1 }], 1));
     await typeDescription("Descrição editada");
-    const helpText = screen.getByPlaceholderText("Explicações adicionais");
-    await userEvent.clear(helpText);
-    await userEvent.type(helpText, "Ajuda nova");
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(() => expect(hoisted.saveSchemaFromGUI).toHaveBeenCalled());
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(savedFieldsArg()[0]).not.toHaveProperty("question_revision");
+    expect(savedFieldsArg()[0]).toMatchObject({
+      description: "Descrição editada",
+      question_revision: 1,
+    });
   });
 });

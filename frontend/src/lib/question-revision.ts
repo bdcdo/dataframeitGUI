@@ -28,10 +28,10 @@ export function fieldsWithInstructionOnlyChange(
   });
 }
 
-// Aplica as escolhas ao rascunho. O contador parte do valor SALVO, e não do
-// rascunho, para que reaplicar as escolhas a um rascunho que já as recebeu não
-// some duas revisões. Sem nenhum "Muda como responder", devolve o próprio
-// rascunho, e quem chama sabe por identidade que não há o que gravar nele.
+// Aplica as escolhas ao que vai ser gravado. O contador parte do valor SALVO,
+// e não do rascunho, para que reaplicar as escolhas a campos que já as
+// receberam não some duas revisões. Sem nenhum "Muda como responder", devolve
+// o próprio rascunho.
 export function applyInstructionChoices(
   savedFields: readonly PydanticField[],
   draftFields: PydanticField[],

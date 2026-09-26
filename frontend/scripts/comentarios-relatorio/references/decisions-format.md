@@ -20,7 +20,7 @@ Contrato do arquivo consumido por `apply-decisions.ts`. O JSON normalmente é ge
 
 O shape de cada campo é o `PydanticField` de `frontend/src/lib/types.ts` (id, name, type, options, description, help_text, target, required, subfields, subfield_rule, allow_other, condition, justification_prompt). Não inclua `hash` — o script recalcula.
 
-Mudar `help_text` aqui vale como "Só esclarece": o script não faz a pergunta que a UI faz no save e não sobe `question_revision`, e o hash do campo não muda por causa da instrução. Para "Muda como responder", grave no campo `question_revision` igual ao atual mais 1 (ou `1`, se o campo não tiver). Preserve o `question_revision` que veio de `fetch-open-comments.ts`: tirá-lo devolve o campo ao hash anterior à revisão.
+Mudar `help_text` aqui vale como "Só esclarece": o script não faz a pergunta que a UI faz no save e não sobe `question_revision`, e o hash do campo não muda por causa da instrução. Para "Muda como responder", grave no campo `question_revision` igual ao atual mais 1 (ou `1`, se o campo não tiver). O contador só sobe: campo que chegar sem ele, ou com valor menor que o salvo, herda o salvo (`inheritQuestionRevisions` em `frontend/src/lib/schema-utils.ts`), porque baixá-lo devolveria o campo ao hash anterior à revisão.
 
 Todo campo leva `id`: UUID com hífens e em minúsculas (`FIELD_ID_PATTERN` em `frontend/src/lib/pydantic-field.ts`). Campo existente mantém o `id` que veio de `fetch-open-comments.ts`, porque é ele que identifica o campo através de renomeações. Campo novo recebe um UUID v4 novo. Sem `id`, o script recusa o arquivo com "newFields não corresponde ao contrato canônico".
 

@@ -182,17 +182,17 @@ export function useSchemaEditorActions({
     if (!choices) return;
     startTransition(async () => {
       try {
-        // As escolhas vão para o rascunho, e não só para o payload: o save
-        // devolve o schema com o contador, e um rascunho sem ele ficaria sujo
-        // e, no save seguinte, desfaria a revisão. Aplicadas sobre o estado de
-        // agora, porque o rascunho pode ter sido rebasado com o diálogo aberto.
+        // As escolhas vão só para o payload, e não para o rascunho: um save
+        // que falhe não deixa nele um contador que o save seguinte gravaria
+        // mesmo com a instrução desfeita. O rascunho recebe o contador do
+        // schema devolvido, em `markSaved`. Aplicadas sobre o estado de agora,
+        // porque o rascunho pode ter sido rebasado com o diálogo aberto.
         const current = prepareSubmission();
         const revised = applyInstructionChoices(
           current.baseFields,
           current.fields,
           choices,
         );
-        if (revised !== current.fields) setFields(revised);
         const r = await saveSchemaFromGUI(
           projectId,
           revised,

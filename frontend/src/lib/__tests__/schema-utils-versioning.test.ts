@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
 import {
   computeFieldHash,
-  fieldHashOf,
   classifyChange,
   bumpVersion,
   snapshotOf,
@@ -93,7 +92,7 @@ describe("computeFieldHash", () => {
 // contador são os mesmos literais de
 // `test_question_revision_hash_matches_frontend` no backend, e é isso que
 // prende a paridade entre `computeFieldHash` e `_field_hash`.
-describe("computeFieldHash — revisão da pergunta", () => {
+describe("computeFieldHash: revisão da pergunta", () => {
   const PRE_COUNTER_HASHES: Array<[string, string, string[] | null, string, string]> = [
     ["topic", "single", ["b", "a"], "Tema principal", "1a83dff054c5"],
     ["q", "multi", ["Sim", "Não"], "Houve provimento? ção", "1f9113c64480"],
@@ -124,19 +123,6 @@ describe("computeFieldHash — revisão da pergunta", () => {
     ).toBe("cc2855e6ff71");
   });
 
-  it("acrescenta |r<n> ao fim do conteúdo, e nada mais", () => {
-    const content = "note|text||Observações livres|r4";
-    expect(computeFieldHash("note", "text", null, "Observações livres", 4)).toBe(
-      createHash("sha256").update(content).digest("hex").slice(0, 12),
-    );
-  });
-
-  it("fieldHashOf lê o contador do próprio campo", () => {
-    const field = baseField({ name: "topic", options: ["b", "a"], description: "Tema principal" });
-    expect(fieldHashOf(field)).toBe("1a83dff054c5");
-    expect(fieldHashOf({ ...field, question_revision: 1 })).toBe("634789885ddf");
-  });
-
   it("planSchemaPersistence grava o hash com o contador", () => {
     const old = baseField({
       name: "topic",
@@ -157,6 +143,26 @@ describe("computeFieldHash — revisão da pergunta", () => {
         after_value: { help_text: "Depois", question_revision: 1 },
       },
     ]);
+  });
+
+  it("planSchemaPersistence não deixa o contador baixar: o campo herda o salvo", () => {
+    const saved = baseField({
+      name: "topic",
+      options: ["b", "a"],
+      description: "Tema principal",
+      help_text: "Depois",
+      question_revision: 2,
+    });
+    const current = { major: 0, minor: 1, patch: 0 };
+    for (const question_revision of [undefined, 1]) {
+      const submitted = { ...saved, question_revision };
+      const plan = planSchemaPersistence([saved], [submitted], current);
+      expect(plan.fieldsWithHash[0].hash).toBe("7f1c62b839bb");
+      expect(plan.fieldsWithHash[0].question_revision).toBe(2);
+      expect(plan.code).toContain('"question_revision": 2');
+      expect(plan.changeType).toBeNull();
+      expect(plan.logEntries).toEqual([]);
+    }
   });
 
   it("snapshotOf registra o contador, e o campo sem revisão como nulo", () => {

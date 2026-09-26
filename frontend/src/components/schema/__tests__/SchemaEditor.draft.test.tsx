@@ -79,6 +79,9 @@ vi.mock("../SchemaBuilderGUI", () => ({
       <button onClick={() => onChange([{ ...fields[0], help_text: "Nova instrução" }])}>
         Editar instrução
       </button>
+      <button onClick={() => onChange([{ ...fields[0], help_text: undefined }])}>
+        Apagar instrução
+      </button>
     </div>
   ),
 }));
@@ -157,9 +160,8 @@ describe("SchemaEditor — ciclo do draft", () => {
   });
 
   // Ponta a ponta no editor: a pergunta abre FORA da transição do save (dentro
-  // dela, o diálogo nunca apareceria), o contador vai no payload e também no
-  // rascunho, e o schema devolvido com ele deixa o editor limpo, sem uma
-  // edição fantasma que desfaria a revisão no save seguinte.
+  // dela, o diálogo nunca apareceria), o contador vai no payload, e o rascunho
+  // o herda do schema devolvido, o que deixa o editor limpo.
   it("instrução alterada pergunta antes de salvar e grava a revisão escolhida", async () => {
     const revised = { ...BASE_FIELDS[0], help_text: "Nova instrução", question_revision: 1 };
     hoisted.saveSchemaFromGUI.mockResolvedValue({
@@ -208,6 +210,32 @@ describe("SchemaEditor — ciclo do draft", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(hoisted.saveSchemaFromGUI).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toContain("Alterações não salvas");
+  });
+
+  // O contador vai só no payload: um save que falha não o deixa no rascunho,
+  // e o save seguinte, sem a instrução, não grava revisão nenhuma.
+  it("save com revisão que falha não deixa o contador no rascunho", async () => {
+    hoisted.saveSchemaFromGUI.mockResolvedValueOnce({ status: "error", message: "Falhou" });
+    await renderEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Editar instrução" }));
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Muda como responder" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+    await waitFor(() => expect(hoisted.toast.error).toHaveBeenCalledWith("Falhou"));
+
+    hoisted.saveSchemaFromGUI.mockResolvedValueOnce({
+      status: "saved",
+      snapshot: { fields: SAVED_FIELDS, version: "0.1.1", revision: 1 },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Apagar instrução" }));
+    await userEvent.click(screen.getByRole("button", { name: "Editar campo" }));
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(hoisted.toast.success).toHaveBeenCalledWith("Schema salvo!"));
+    const [, fields] = hoisted.saveSchemaFromGUI.mock.calls[1] as [string, PydanticField[]];
+    expect(fields[0].description).toBe("Editada");
+    expect(fields[0].question_revision).toBeUndefined();
   });
 
   it("bloqueia o save até escolher e aplicar o merge de três vias", async () => {
