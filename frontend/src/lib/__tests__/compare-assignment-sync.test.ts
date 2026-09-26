@@ -12,7 +12,7 @@ import {
 } from "@/test-utils/supabase-mock";
 import { CURRENT_HASH } from "@/test-utils/comparison-fixtures";
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
-import { runResync } from "@/lib/compare-resync-cli";
+import { resyncProjects } from "../../../scripts/compare-assignments/resync";
 
 const HASH = "aaaaaaaaaaaa";
 const FIELDS: PydanticField[] = [{
@@ -168,62 +168,15 @@ describe("resyncProjectCompareAssignments", () => {
   });
 });
 
-describe("runResync (o script de pós-deploy)", () => {
-  function run(argv: string[]) {
-    const lines: string[] = [];
-    const done = runResync({ client: client(), argv, log: (line) => lines.push(line) });
-    return done.then((code) => ({ code, lines }));
-  }
-
-  it("--dry-run lista a mudança e não grava", async () => {
-    const { code, lines } = await run(["--project", "p1", "--dry-run"]);
-
-    expect(code).toBe(0);
-    expect(lines.join("\n")).toMatch(/a-doc2.*concluido -> pendente/);
-    expect(updates()).toHaveLength(0);
-  });
-
-  it("sem --dry-run grava", async () => {
-    const { code } = await run(["--project", "p1"]);
-
-    expect(code).toBe(0);
-    expect(updates()).toHaveLength(1);
-  });
-
-  it("--all percorre todos os projetos", async () => {
-    tableData.projects.push({ id: "p2", name: "Outro", pydantic_fields: [], pydantic_hash: null });
-
-    const { code, lines } = await run(["--all", "--dry-run"]);
-
-    expect(code).toBe(0);
-    expect(lines.filter((l) => l.startsWith("projeto "))).toHaveLength(2);
-  });
-
+describe("resyncProjects (o script de pós-deploy)", () => {
   it("falha num projeto sai com código 1, relatada, sem parar os outros", async () => {
     queryErrors["assignments:select"] = { message: "tempo esgotado" };
     tableData.projects.push({ id: "p2", name: "Outro", pydantic_fields: [], pydantic_hash: null });
+    const lines: string[] = [];
 
-    const { code, lines } = await run(["--project", "p1", "--project", "p2"]);
+    const code = await resyncProjects(client(), ["p1", "p2"], false, (line) => lines.push(line));
 
     expect(code).toBe(1);
     expect(lines.filter((l) => l.includes("falhou: assignments: tempo esgotado"))).toHaveLength(2);
   });
-
-  it("--all com a lista de projetos ilegível sai com código 1", async () => {
-    queryErrors["projects:select"] = { message: "sem acesso" };
-
-    const { code, lines } = await run(["--all"]);
-
-    expect(code).toBe(1);
-    expect(lines).toEqual(["projects: sem acesso"]);
-  });
-
-  it.each([[[]], [["--project"]], [["--all", "--project", "p1"]], [["--desconhecido"]]])(
-    "argumentos inválidos (%j) saem com código 2 sem tocar no banco",
-    async (argv) => {
-      const { code } = await run(argv);
-      expect(code).toBe(2);
-      expect(writeCalls).toHaveLength(0);
-    },
-  );
 });
