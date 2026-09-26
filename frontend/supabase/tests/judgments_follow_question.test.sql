@@ -740,4 +740,34 @@ END;
 $$;
 RESET ROLE;
 
+-- Campo removido num save e readicionado com outra definicao no seguinte: o
+-- par "=" de `q` do documento 8 nao vale sob a definicao nova. O save que o
+-- readiciona nao tem `q` no schema anterior, e sem o documento na fila a view
+-- seguia dando 'consenso' com a resposta do LLM.
+DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
+UPDATE public.projects
+SET pydantic_fields = pydantic_fields - 1,
+    schema_revision = schema_revision + 1
+WHERE id = '7a100000-0000-0000-0000-000000000001';
+DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
+UPDATE public.projects
+SET pydantic_fields = pydantic_fields || '[{"id":"7af00000-0000-4000-8000-000000000009","name":"q","type":"text","target":"all","description":"Readicionada","hash":"q00000000004"}]',
+    schema_revision = schema_revision + 1
+WHERE id = '7a100000-0000-0000-0000-000000000001';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
+                 WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
+    RAISE EXCEPTION 'FALHOU: campo readicionado com outra definicao nao levou o par "=" caido ao reconciliador';
+  END IF;
+  IF (SELECT provenance FROM public.final_answers
+      WHERE document_id = '7a200000-0000-0000-0000-000000000008' AND field_name = 'q')
+     IS DISTINCT FROM 'aguarda_reconciliacao' THEN
+    RAISE EXCEPTION 'FALHOU: final_answers deu consenso com par "=" de outra definicao do campo readicionado';
+  END IF;
+  RAISE NOTICE 'OK: campo removido e readicionado leva o par "=" caido ao reconciliador';
+END;
+$$;
+
 ROLLBACK;

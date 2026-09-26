@@ -357,7 +357,10 @@ BEGIN
   -- ja nao valia foi enfileirado no save que o derrubou, e reenfileira-lo a
   -- cada save poria o documento em 'aguarda_reconciliacao' sem mudanca nenhuma
   -- nele. Com `p_previous_fields` NULL (o backfill) entra todo par que nao
-  -- vale.
+  -- vale, e tambem o do campo que o schema anterior nao tinha: campo removido
+  -- num save e readicionado com outra definicao no seguinte (ou renomeado e
+  -- desfeito) nao foi enfileirado no save que o removeu, porque ali o campo
+  -- saiu do schema.
   SELECT pg_catalog.array_agg(DISTINCT equivalence.document_id)
   INTO v_stale_pairs
   FROM public.response_equivalences AS equivalence
@@ -376,6 +379,7 @@ BEGIN
       AND public.response_answers_current_question(response_b.answer_field_hashes, field.current_value))
     AND (
       p_previous_fields IS NULL
+      OR field.previous_value IS NULL
       OR (public.response_answers_current_question(response_a.answer_field_hashes, field.previous_value)
           AND public.response_answers_current_question(response_b.answer_field_hashes, field.previous_value)));
 
