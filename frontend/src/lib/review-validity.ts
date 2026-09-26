@@ -24,6 +24,7 @@
 // Puro e client-safe.
 import { resolveAllowOther } from "@/lib/pydantic-field";
 import { parseExistingMultiVerdict } from "@/lib/compare-multi-choices";
+import { groupBy } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
 
 /** As colunas de `reviews` de que a regra precisa. */
@@ -143,6 +144,15 @@ export function reviewValidity(
   return { valid: true };
 }
 
+/** O motivo de o veredito não valer, ou `undefined` quando ele vale. */
+export function invalidReasonOf(
+  review: ValidatableReview,
+  field: (DomainField & Pick<PydanticField, "hash">) | undefined,
+): ReviewInvalidReason | undefined {
+  const validity = reviewValidity(review, field);
+  return validity.valid ? undefined : validity.reason;
+}
+
 export function reviewIsValid(
   review: ValidatableReview,
   field: (DomainField & Pick<PydanticField, "hash">) | undefined,
@@ -198,14 +208,10 @@ export function pickValidCellReviews<
   reviews: readonly R[] | null | undefined,
   fieldByName: ReadonlyMap<string, PydanticField>,
 ): Map<string, R> {
-  const validByCell = new Map<string, R[]>();
-  for (const review of reviews ?? []) {
-    if (!reviewIsValid(review, fieldByName.get(review.field_name))) continue;
-    const key = cellKey(review.document_id, review.field_name);
-    const bucket = validByCell.get(key);
-    if (bucket) bucket.push(review);
-    else validByCell.set(key, [review]);
-  }
+  const validByCell = groupBy(
+    (reviews ?? []).filter((review) => reviewIsValid(review, fieldByName.get(review.field_name))),
+    (review) => cellKey(review.document_id, review.field_name),
+  );
   const picked = new Map<string, R>();
   for (const [key, bucket] of validByCell) picked.set(key, pickCellReview(bucket)!);
   return picked;

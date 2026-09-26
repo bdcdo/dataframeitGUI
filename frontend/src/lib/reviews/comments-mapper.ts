@@ -1,11 +1,6 @@
 import type { PydanticField } from "@/lib/types";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
-import { reviewValidity, type ReviewInvalidReason, type ValidatableReview } from "@/lib/review-validity";
-
-function invalidReasonOf(review: ValidatableReview, field: PydanticField | undefined): ReviewInvalidReason | undefined {
-  const validity = reviewValidity(review, field);
-  return validity.valid ? undefined : validity.reason;
-}
+import { invalidReasonOf } from "@/lib/review-validity";
 
 /* ── Raw row shapes (subset de colunas realmente usadas por cada mapper) ── */
 

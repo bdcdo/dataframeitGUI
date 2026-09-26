@@ -25,6 +25,19 @@ export function toggleInSet<T>(
   return next;
 }
 
+// Agrupa preservando a ordem de chegada dentro de cada grupo. `Map.groupBy`
+// faria o mesmo, mas este módulo também roda no navegador.
+export function groupBy<T>(rows: Iterable<T>, key: (row: T) => string): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const k = key(row);
+    const bucket = grouped.get(k);
+    if (bucket) bucket.push(row);
+    else grouped.set(k, [row]);
+  }
+  return grouped;
+}
+
 // Normalizacao agressiva para comparar respostas de texto livre que sao
 // "iguais" para um humano mas diferem em bytes: acentos decompostos
 // (NFD vs NFC, comum em texto colado de PDF), maiusculas e espacos internos

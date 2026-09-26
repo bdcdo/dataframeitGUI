@@ -23,6 +23,7 @@ import {
 import { versionGate, type ProjectVersionRow } from "@/lib/compare-version";
 import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { groupBy } from "@/lib/utils";
 
 const PG_UNIQUE_VIOLATION = "23505";
 // O índice parcial criado pelo #490 (uma comparação ATIVA por documento;
@@ -204,17 +205,6 @@ type ResponseRow = ComparisonCandidate & { document_id: string };
 function rowsOrThrow<T>(table: string, { data, error }: { data: T[]; error: { message: string } | null }): T[] {
   if (error) throw new Error(`${table}: ${error.message}`, { cause: error });
   return data;
-}
-
-function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[]> {
-  const grouped = new Map<string, T[]>();
-  for (const row of rows) {
-    const k = key(row);
-    const bucket = grouped.get(k);
-    if (bucket) bucket.push(row);
-    else grouped.set(k, [row]);
-  }
-  return grouped;
 }
 
 interface ProjectCompareState {
