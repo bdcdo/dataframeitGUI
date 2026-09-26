@@ -78,4 +78,30 @@ describe("useCompareFieldData: par = e versão da pergunta", () => {
     expect(data.currentFieldEquivalences).toEqual([]);
     expect(data.answerGroups).toHaveLength(2);
   });
+
+  // O card usa esta marca para oferecer o "=" (a RPC recusa o par com resposta
+  // de outra versão). Sem hash, a ausência não invalida.
+  it("marca em cada resposta se ela foi dada à versão atual da pergunta", () => {
+    const flags = (hash: string | null) =>
+      renderHook(() =>
+        useCompareFieldData({
+          currentDoc: { id: "doc1", title: "Doc", external_id: null, text: "" } as never,
+          currentFieldName: "q",
+          currentField: field,
+          responses: {
+            doc1: [
+              response("r1", "alpha", HASH),
+              { ...response("r2", "beta", HASH), answer_field_hashes: hash === null ? {} : { q: hash } },
+            ],
+          },
+          fields: [field],
+          projectPydanticHash: null,
+          equivalencesByDocField: {},
+        }),
+      ).result.current.fieldResponses.map((r) => r.answersCurrentQuestion);
+
+    expect(flags(HASH)).toEqual([true, true]);
+    expect(flags(OLD_HASH)).toEqual([true, false]);
+    expect(flags(null)).toEqual([true, true]);
+  });
 });

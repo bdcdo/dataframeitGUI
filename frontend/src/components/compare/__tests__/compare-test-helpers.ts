@@ -35,6 +35,7 @@ export function panelResponse(
     answer: undefined,
     is_latest: true,
     isFieldStale: false,
+    answersCurrentQuestion: true,
     ...over,
   };
 }

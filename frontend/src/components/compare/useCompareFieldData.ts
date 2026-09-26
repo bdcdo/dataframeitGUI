@@ -88,10 +88,11 @@ export function useCompareFieldData({
           justification: r.justifications?.[currentFieldName],
           is_latest: r.is_latest,
           isFieldStale: stale,
+          answersCurrentQuestion: answersCurrentQuestion(r.answer_field_hashes, currentField),
           schemaVersion: version,
         };
       }),
-    [docResponses, currentFieldName, currentFieldHashes, projectPydanticHash],
+    [docResponses, currentFieldName, currentField, currentFieldHashes, projectPydanticHash],
   );
 
   const fieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
@@ -103,16 +104,13 @@ export function useCompareFieldData({
     const present = fieldResponses.filter(
       (response) => response.answer !== undefined,
     );
-    const hashesById = new Map(
-      docResponses.map((response) => [response.id, response.answer_field_hashes]),
-    );
     return filterCurrentEquivalencePairs(
       present,
       fieldEquivalences,
       (response) => response.answer,
-      (response) => answersCurrentQuestion(hashesById.get(response.id), currentField),
+      (response) => response.answersCurrentQuestion,
     );
-  }, [docResponses, fieldResponses, fieldEquivalences, currentField]);
+  }, [fieldResponses, fieldEquivalences]);
 
   // Equivalência (fundir respostas distintas como iguais) vale para qualquer
   // campo NÃO-multi: texto, data e single (com ou sem opções). Todos renderizam

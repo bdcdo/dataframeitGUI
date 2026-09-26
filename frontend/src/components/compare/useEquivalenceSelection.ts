@@ -7,6 +7,12 @@ interface SelectableGroup {
   groupKey: string;
   displayAnswer: string;
   responses: { id: string }[];
+  /**
+   * A resposta do grupo que entra no par "=": a primeira dada à versão atual
+   * da pergunta. `null` quando nenhuma foi, e o grupo não pode ser fundido
+   * (a RPC recusaria o par).
+   */
+  representativeId: string | null;
 }
 
 /**
@@ -60,6 +66,7 @@ export function useEquivalenceSelection<G extends SelectableGroup>({
   // que React pode reexecutar. `selectionOrder` do closure basta para decidir o
   // ramo — só o clique altera a seleção.
   function toggleSelection(groupKey: string) {
+    if (!groups.some((g) => g.groupKey === groupKey && g.representativeId)) return;
     if (selectionOrder.includes(groupKey)) {
       setSelectionOrder((prev) => prev.filter((k) => k !== groupKey));
       if (gabaritoOverride === groupKey) setGabaritoOverride(null);
@@ -77,11 +84,15 @@ export function useEquivalenceSelection<G extends SelectableGroup>({
     }
     // Um representante por grupo: respostas com o mesmo texto literal já foram
     // fundidas no servidor, então pares intragrupo só criariam linhas inúteis.
-    const responseIds = selectedGroups.map((g) => g.responses[0].id);
+    // O representante é o da versão atual da pergunta, e só grupo que o tem
+    // chega à seleção.
+    const responseIds = selectedGroups.flatMap((g) => (g.representativeId ? [g.representativeId] : []));
+    const gabaritoId = gabaritoGroup.representativeId;
+    if (!gabaritoId || responseIds.length < 2) return;
     startTransition(async () => {
       await onConfirmEquivalent(
         responseIds,
-        gabaritoGroup.responses[0].id,
+        gabaritoId,
         gabaritoGroup.displayAnswer,
       );
       setSelectionOrder([]);
@@ -93,8 +104,9 @@ export function useEquivalenceSelection<G extends SelectableGroup>({
   // de uma vez, em vez de o revisor marcar par a par. A persistência continua no
   // botão explícito de confirmação, inclusive quando há maioria clara.
   function selectAll() {
-    if (!onConfirmEquivalent || groups.length < 2) return;
-    setSelectionOrder(groups.map((g) => g.groupKey));
+    const eligible = groups.filter((g) => g.representativeId);
+    if (!onConfirmEquivalent || eligible.length < 2) return;
+    setSelectionOrder(eligible.map((g) => g.groupKey));
     setGabaritoOverride(null);
   }
 

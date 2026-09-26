@@ -44,8 +44,13 @@ interface GabaritoAffordance {
 // função fora do JSX: sem o tipo anotado, `selected: true` seria inferido como
 // `boolean` e a união discriminada — que é o que torna o gabarito num card não
 // selecionado irrepresentável — se perderia na inferência.
+//
+// O terceiro ramo é o card cujas respostas foram todas dadas a outra versão da
+// pergunta: a RPC recusaria o par, então não há o que alternar, e a razão vai
+// escrita no card.
 export type EquivalenceMode =
   | { selected: false; onToggle: () => void }
+  | { selected: false; unavailableReason: string }
   | {
       selected: true;
       onToggle: () => void;
@@ -154,6 +159,8 @@ export function AnswerCard({
         <GabaritoRadio mode={equivalenceMode} readOnly={readOnly} />
       </div>
 
+      <EquivalenceUnavailableNote mode={equivalenceMode} />
+
       <PendingConfirmSlot isPending={isPending} slot={confirmSlot} />
     </div>
   );
@@ -165,6 +172,19 @@ export function AnswerCard({
  * cobre o card inteiro. Sem isso, clicar em "Confirmar" acertaria o overlay e
  * apenas re-prepararia o rascunho.
  */
+/**
+ * A razão escrita no card quando o "=" não está disponível (todas as respostas
+ * do grupo foram dadas a outra versão da pergunta).
+ */
+function EquivalenceUnavailableNote({ mode }: { mode?: EquivalenceMode }) {
+  if (!mode || !("unavailableReason" in mode)) return null;
+  return (
+    <p className="mt-1 pl-7 text-[11px] leading-tight text-muted-foreground">
+      {mode.unavailableReason}
+    </p>
+  );
+}
+
 function PendingConfirmSlot({ isPending, slot }: { isPending: boolean; slot?: ReactNode }) {
   if (!isPending || !slot) return null;
   return <div className="relative z-[2]">{slot}</div>;
@@ -309,6 +329,18 @@ function EquivalenceCheckbox({
   readOnly: boolean;
 }) {
   if (!mode) return null;
+  if ("unavailableReason" in mode) {
+    return (
+      <div className="relative z-[2] flex h-5 shrink-0 items-center">
+        <Checkbox
+          checked={false}
+          disabled
+          aria-label={mode.unavailableReason}
+          title={mode.unavailableReason}
+        />
+      </div>
+    );
+  }
   return (
     <div className="relative z-[2] flex h-5 shrink-0 items-center">
       <Checkbox
