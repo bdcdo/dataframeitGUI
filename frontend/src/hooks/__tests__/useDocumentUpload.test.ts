@@ -425,14 +425,14 @@ describe("checkDuplicatesInChunks: agregação entre lotes", () => {
           ? {
               duplicates: [{ csvIndex: 0, existingDocId: "d0", matchType: "external_id" }],
               duplicatesWithResponses: 1,
-              respondedDuplicatesWithNewText: 0,
+              respondedDuplicatesWithNewText: 2,
             }
           : {
               duplicates: [
                 { csvIndex: 5_000, existingDocId: "d5000", matchType: "external_id" },
               ],
               duplicatesWithResponses: 1,
-              respondedDuplicatesWithNewText: 1,
+              respondedDuplicatesWithNewText: 3,
             }
     );
 
@@ -443,8 +443,9 @@ describe("checkDuplicatesInChunks: agregação entre lotes", () => {
       .map((c) => (c[1] as unknown[]).length)
       .sort((a, b) => a - b);
     expect(tamanhos).toEqual([1, 5_000]);
-    // A contagem vem só do segundo lote: somar apenas o primeiro daria 0.
-    expect(r.respondedDuplicatesWithNewText).toBe(1);
+    // Os dois lotes trazem contagem não nula: ler só o primeiro daria 2, e
+    // sobrescrever em vez de somar daria 3.
+    expect(r.respondedDuplicatesWithNewText).toBe(5);
     expect(r.duplicatesWithResponses).toBe(2);
     expect(r.duplicates.map((d) => d.existingDocId)).toEqual(["d0", "d5000"]);
   });
