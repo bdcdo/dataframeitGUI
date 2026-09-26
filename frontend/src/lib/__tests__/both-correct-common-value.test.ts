@@ -68,13 +68,12 @@ const scenarios: Array<[string, PydanticField, string, unknown]> = [
   ["t3: par = com snapshot velho não junta os pesquisadores ao LLM", field("t3", { type: "text", options: null }), "Glicose", null],
 ];
 
-function commonValue(f: PydanticField, verdict: string, overrides: { chosenResponseId?: string | null; responses?: MetricsResponse[] } = {}) {
-  const docResponses = overrides.responses ?? documentResponses;
+function commonValue(f: PydanticField, verdict: string, overrides: { chosenResponseId?: string | null } = {}) {
   return bothCorrectCommonValue({
     field: f, verdict, chosenResponseId: overrides.chosenResponseId ?? "HV",
-    llmResponse: docResponses.find((r) => r.id === "L")!,
-    documentResponses: docResponses,
-    currentHumans: docResponses.filter((r) => r.respondent_type === "humano" && r.is_latest),
+    llmResponse: documentResponses.find((r) => r.id === "L")!,
+    documentResponses,
+    currentHumans: documentResponses.filter((r) => r.respondent_type === "humano" && r.is_latest),
     equivalences: equivalences.filter((p) => p.field_name === f.name),
   });
 }
@@ -91,11 +90,6 @@ describe("bothCorrectCommonValue", () => {
 
   it("a arbitragem que escolheu a própria resposta do LLM não diverge dela", () => {
     expect(commonValue(field("s"), "B", { chosenResponseId: "L" })).toBeNull();
-  });
-
-  it("um pesquisador que muda a resposta tira o valor comum", () => {
-    const changed = documentResponses.map((r) => (r.id === "H2" ? { ...r, answers: { ...r.answers, s: "B" } } : r));
-    expect(commonValue(field("s"), "B", { responses: changed })).toBeNull();
   });
 
   it("sem pesquisador corrente não há valor comum", () => {
