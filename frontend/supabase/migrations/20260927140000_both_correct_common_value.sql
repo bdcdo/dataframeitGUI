@@ -44,11 +44,12 @@
 -- JS (`\p{Diacritic}` e `\s`), e o teste unitario both-correct-common-value
 -- confere as duas contra o motor do Node; a matriz de casos de
 -- supabase/tests/both_correct_common_value.test.sql e a mesma do teste
--- unitario. Divergencias conhecidas, todas fora de texto em portugues:
--- `lower` do Postgres usa o mapeamento simples de caixa (o JS usa o completo:
--- "İ" e o sigma final grego diferem), numero com zero decimal a direita e
--- chave de objeto em forma de inteiro saem em ordem ou forma diferentes no
--- texto do card.
+-- unitario. Numero no texto do card segue o `String()` do JS
+-- (`answer_js_number`). Divergencias conhecidas e aceitas, todas fora de texto
+-- em portugues: `lower` do Postgres usa o mapeamento simples de caixa (o JS
+-- usa o completo: "İ" e o sigma final grego diferem); chave de objeto em forma
+-- de inteiro sai em outra ordem no texto do card (o JS poe as chaves inteiras
+-- primeiro); e `\u0000` em texto JSON, que o jsonb recusa.
 --
 -- CHECK: `error_resolution_value_iff_chosen` vira
 -- `error_resolution_value_by_decision`: valor obrigatorio em "Erro do LLM" e
@@ -134,6 +135,73 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
   END;
 $$;
 
+-- `String(n)` do JS para um numero JSON. O JSON.parse le o numero como
+-- double, e o `String()` escreve o menor texto que volta ao mesmo double, sem
+-- zero decimal a direita, com expoente fora de [1e-6, 1e21) ("1e+21",
+-- "1e-7"). O cast para float8 da o mesmo double e, com `extra_float_digits`
+-- em 1 (fixado na funcao, contra sessao que o mude), os mesmos digitos (o
+-- menor texto que volta ao valor); o resto e
+-- a regra de posicao do ponto e do expoente de `Number::toString`. Numero
+-- fora do alcance do double vira "Infinity", e o que o double arredonda para
+-- zero vira "0", como no JS.
+CREATE FUNCTION public.answer_js_number(p_value NUMERIC)
+RETURNS TEXT
+LANGUAGE plpgsql IMMUTABLE STRICT SET search_path = '' SET extra_float_digits = 1 AS $$
+DECLARE
+  v_double DOUBLE PRECISION;
+  v_text TEXT;
+  v_sign TEXT := '';
+  v_mantissa TEXT;
+  v_exponent INT := 0;
+  v_digits TEXT;
+  v_point INT;
+  v_length INT;
+  v_n INT;
+BEGIN
+  BEGIN
+    v_double := p_value::DOUBLE PRECISION;
+  EXCEPTION WHEN numeric_value_out_of_range THEN
+    IF pg_catalog.abs(p_value) < 1 THEN RETURN '0'; END IF;
+    RETURN CASE WHEN p_value < 0 THEN '-Infinity' ELSE 'Infinity' END;
+  END;
+  IF v_double = 0 THEN RETURN '0'; END IF;
+  v_text := v_double::TEXT;
+  IF pg_catalog.left(v_text, 1) = '-' THEN
+    v_sign := '-';
+    v_text := pg_catalog.substr(v_text, 2);
+  END IF;
+  -- Mantissa e expoente do texto do float8 ("1.5e-07", "123.4", "1e+21").
+  IF pg_catalog.strpos(v_text, 'e') > 0 THEN
+    v_mantissa := pg_catalog.split_part(v_text, 'e', 1);
+    v_exponent := pg_catalog.split_part(v_text, 'e', 2)::INT;
+  ELSE
+    v_mantissa := v_text;
+  END IF;
+  -- Digitos significativos e a posicao `n` do ponto: valor = 0.digitos x 10^n.
+  v_point := pg_catalog.strpos(v_mantissa, '.');
+  IF v_point = 0 THEN v_point := pg_catalog.length(v_mantissa) + 1; END IF;
+  v_digits := pg_catalog.replace(v_mantissa, '.', '');
+  v_n := v_point - 1 + v_exponent;
+  -- Zeros a esquerda saem e deslocam o ponto; zeros a direita so saem.
+  WHILE pg_catalog.left(v_digits, 1) = '0' LOOP
+    v_digits := pg_catalog.substr(v_digits, 2);
+    v_n := v_n - 1;
+  END LOOP;
+  v_digits := pg_catalog.rtrim(v_digits, '0');
+  v_length := pg_catalog.length(v_digits);
+  IF v_length <= v_n AND v_n <= 21 THEN
+    RETURN v_sign || v_digits || pg_catalog.repeat('0', v_n - v_length);
+  ELSIF 0 < v_n AND v_n <= 21 THEN
+    RETURN v_sign || pg_catalog.left(v_digits, v_n) || '.' || pg_catalog.substr(v_digits, v_n + 1);
+  ELSIF -6 < v_n AND v_n <= 0 THEN
+    RETURN v_sign || '0.' || pg_catalog.repeat('0', -v_n) || v_digits;
+  END IF;
+  RETURN v_sign || pg_catalog.left(v_digits, 1)
+    || CASE WHEN v_length > 1 THEN '.' || pg_catalog.substr(v_digits, 2) ELSE '' END
+    || 'e' || CASE WHEN v_n - 1 >= 0 THEN '+' ELSE '-' END || pg_catalog.abs(v_n - 1)::TEXT;
+END;
+$$;
+
 -- `String(v)` do JS para os valores que o card junta: array vira os itens
 -- unidos por "," (null vira vazio), objeto vira "[object Object]".
 CREATE FUNCTION public.answer_js_string(p_value JSONB)
@@ -146,6 +214,7 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
       FROM pg_catalog.jsonb_array_elements(p_value) WITH ORDINALITY AS element(item, position)), '')
     WHEN 'object' THEN '[object Object]'
     WHEN 'null' THEN 'null'
+    WHEN 'number' THEN public.answer_js_number((p_value #>> '{}')::NUMERIC)
     ELSE p_value #>> '{}' END;
 $$;
 
@@ -176,7 +245,7 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
       FROM pg_catalog.jsonb_each(p_answer) WITH ORDINALITY AS pair(key, value, position)
       WHERE pg_catalog.jsonb_typeof(pair.value) <> 'null'
         AND public.answer_js_trim(public.answer_js_string(pair.value)) <> ''), '')
-    ELSE p_answer #>> '{}' END;
+    ELSE public.answer_js_string(p_answer) END;
 $$;
 
 -- A selecao que um veredito de `multi` marca (`verdictSelection`): o JSON
@@ -208,11 +277,12 @@ END;
 $$;
 
 -- `verdictMatcher` (llm-error-metrics.ts): se uma resposta crua casa com o
--- texto do veredito.
+-- texto do veredito. O COALESCE fecha o NULL do SQL: resposta sem a chave com
+-- veredito preenchido faz `jsonb_typeof` dar NULL, e o TS devolve false.
 CREATE FUNCTION public.verdict_matches_answer(p_field JSONB, p_verdict TEXT, p_answer JSONB)
 RETURNS BOOLEAN
 LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT CASE
+  SELECT COALESCE(CASE
     WHEN p_field->>'type' = 'multi' AND pg_catalog.jsonb_typeof(p_field->'options') = 'array'
          AND pg_catalog.jsonb_array_length(p_field->'options') > 0
       THEN public.answer_string_set(p_answer) = public.verdict_multi_selection(p_verdict, p_field->'options')
@@ -220,7 +290,7 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
       OR (pg_catalog.jsonb_typeof(p_answer) = 'string'
           AND public.answer_normalize_text(p_answer #>> '{}') = public.answer_normalize_text(p_verdict))
       OR public.answer_normalize_text(public.answer_card_text(p_answer)) = public.answer_normalize_text(p_verdict)
-  END;
+  END, false);
 $$;
 
 -- ── Dominio do valor aprovado ─────────────────────────────────────────────
@@ -564,6 +634,7 @@ REVOKE ALL ON FUNCTION public.answer_is_blank(JSONB) FROM PUBLIC, anon, authenti
 REVOKE ALL ON FUNCTION public.answer_comparison_key(JSONB) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.answer_string_set(JSONB) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.answers_agree(JSONB, JSONB, JSONB) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.answer_js_number(NUMERIC) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.answer_js_string(JSONB) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.answer_partial_date(TEXT) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.answer_card_text(JSONB) FROM PUBLIC, anon, authenticated;

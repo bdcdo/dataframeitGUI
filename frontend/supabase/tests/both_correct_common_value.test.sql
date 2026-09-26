@@ -393,20 +393,66 @@ BEGIN
       ('multi: JSON do veredito diferente', multi_field, '{"A":true}', '["A","B"]'::JSONB, false),
       ('multi: texto votado em card', multi_field, 'A, C', '["C","A"]'::JSONB, true),
       ('multi: veredito vazio e resposta vazia', multi_field, '', '[]'::JSONB, true),
-      ('multi: veredito vazio e resposta marcada', multi_field, '', '["A"]'::JSONB, false)
+      ('multi: veredito vazio e resposta marcada', multi_field, '', '["A"]'::JSONB, false),
+      ('texto: resposta ausente e veredito preenchido', text_field, 'A', NULL::JSONB, false),
+      ('subcampo numérico: 2.0 exibido como 2', text_field, 'dose: 2', '{"dose":2.0}'::JSONB, true),
+      ('número: 1.50 exibido como 1.5', text_field, '1.5', '1.50'::JSONB, true),
+      ('número: 1e21 exibido como 1e+21', text_field, '1e+21', '1e21'::JSONB, true),
+      ('número: 1e21 não é exibido por extenso', text_field, '1000000000000000000000', '1e21'::JSONB, false)
     ) AS v(label, field, verdict, answer, expected) LOOP
     IF public.verdict_matches_answer(kase.field, kase.verdict, kase.answer) IS DISTINCT FROM kase.expected THEN
       RAISE EXCEPTION 'FALHOU: verdict_matches_answer %', kase.label;
     END IF;
   END LOOP;
+  -- O texto do card (`formatCardAnswer`) escreve número como o `String()` do
+  -- JS: o JSON é lido como double, sem zero decimal à direita e com expoente
+  -- fora de [1e-6, 1e21).
+  FOR kase IN SELECT * FROM (VALUES
+      ('2.0', '2'),
+      ('1.50', '1.5'),
+      ('1e21', '1e+21'),
+      ('1E+21', '1e+21'),
+      ('1e20', '100000000000000000000'),
+      ('-1.5e-7', '-1.5e-7'),
+      ('0.000001', '0.000001'),
+      ('0.0000001', '1e-7'),
+      ('-0', '0'),
+      ('0', '0'),
+      ('123456789012345678901', '123456789012345680000'),
+      ('{"dose":2.0}', 'dose: 2'),
+      ('[1.50,true,null,"x"]', '1.5, true, , x'),
+      ('{"a":1e21,"b":false}', 'a: 1e+21, b: false'),
+      ('12.340e1', '123.4'),
+      ('1e400', 'Infinity'),
+      ('-1e400', '-Infinity'),
+      ('1e-400', '0'),
+      ('0.1', '0.1'),
+      ('1.0000000000000002', '1.0000000000000002')
+    ) AS v(answer, expected) LOOP
+    IF public.answer_card_text(kase.answer::JSONB) IS DISTINCT FROM kase.expected THEN
+      RAISE EXCEPTION 'FALHOU: answer_card_text(%) = % (esperado %)', kase.answer, public.answer_card_text(kase.answer::JSONB), kase.expected;
+    END IF;
+  END LOOP;
   RAISE NOTICE 'OK: matriz das funções puras';
 END $$;
+
+-- A forma do número não depende da sessão: com `extra_float_digits` baixo, o
+-- texto do float8 sairia arredondado ("1" no lugar de "1.0000000000000002").
+SET LOCAL extra_float_digits = 0;
+DO $$
+BEGIN
+  IF public.answer_card_text('1.0000000000000002'::JSONB) IS DISTINCT FROM '1.0000000000000002' THEN
+    RAISE EXCEPTION 'FALHOU: answer_card_text depende de extra_float_digits da sessão: %', public.answer_card_text('1.0000000000000002'::JSONB);
+  END IF;
+  RAISE NOTICE 'OK: a forma do número não depende da sessão';
+END $$;
+RESET extra_float_digits;
 
 -- (c) Grants: só a prévia é do cliente.
 DO $$
 DECLARE fn TEXT;
 BEGIN
-  FOREACH fn IN ARRAY ARRAY['public.both_correct_common_value(jsonb)', 'public.answer_normalize_text(text)',
+  FOREACH fn IN ARRAY ARRAY['public.both_correct_common_value(jsonb)', 'public.answer_normalize_text(text)', 'public.answer_js_number(numeric)',
       'public.answers_agree(jsonb,jsonb,jsonb)', 'public.verdict_matches_answer(jsonb,text,jsonb)'] LOOP
     IF has_function_privilege('authenticated', fn, 'EXECUTE') OR has_function_privilege('anon', fn, 'EXECUTE') THEN
       RAISE EXCEPTION 'FALHOU: % exposta ao cliente', fn;

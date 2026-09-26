@@ -16,6 +16,7 @@ import {
   type MetricsResponse,
 } from "@/lib/llm-error-metrics";
 import { normalizeText } from "@/lib/utils";
+import { formatCardAnswer } from "@/lib/verdict-display";
 import type { PydanticField } from "@/lib/types";
 
 const MIGRATION = join(__dirname, "..", "..", "..", "supabase", "migrations", "20260927140000_both_correct_common_value.sql");
@@ -149,8 +150,40 @@ describe("funções puras, a mesma matriz da cópia SQL", () => {
     ["multi: texto votado em card", multiField, "A, C", ["C", "A"], true],
     ["multi: veredito vazio e resposta vazia", multiField, "", [], true],
     ["multi: veredito vazio e resposta marcada", multiField, "", ["A"], false],
+    ["texto: resposta ausente e veredito preenchido", textField, "A", undefined, false],
+    ["subcampo numérico: 2.0 exibido como 2", textField, "dose: 2", JSON.parse('{"dose":2.0}'), true],
+    ["número: 1.50 exibido como 1.5", textField, "1.5", JSON.parse("1.50"), true],
+    ["número: 1e21 exibido como 1e+21", textField, "1e+21", JSON.parse("1e21"), true],
+    ["número: 1e21 não é exibido por extenso", textField, "1000000000000000000000", JSON.parse("1e21"), false],
   ])("verdictMatchesAnswer %s", (_label, f, verdict, answer, expected) => {
     expect(verdictMatchesAnswer(f, verdict, answer)).toBe(expected);
+  });
+
+  // O texto do card com número: a mesma matriz de `answer_card_text` na cópia
+  // SQL, com a resposta como o JSON que vem do banco.
+  it.each([
+    ["2.0", "2"],
+    ["1.50", "1.5"],
+    ["1e21", "1e+21"],
+    ["1E+21", "1e+21"],
+    ["1e20", "100000000000000000000"],
+    ["-1.5e-7", "-1.5e-7"],
+    ["0.000001", "0.000001"],
+    ["0.0000001", "1e-7"],
+    ["-0", "0"],
+    ["0", "0"],
+    ["123456789012345678901", "123456789012345680000"],
+    ["{\"dose\":2.0}", "dose: 2"],
+    ["[1.50,true,null,\"x\"]", "1.5, true, , x"],
+    ["{\"a\":1e21,\"b\":false}", "a: 1e+21, b: false"],
+    ["12.340e1", "123.4"],
+    ["1e400", "Infinity"],
+    ["-1e400", "-Infinity"],
+    ["1e-400", "0"],
+    ["0.1", "0.1"],
+    ["1.0000000000000002", "1.0000000000000002"],
+  ])("formatCardAnswer(%s) = %j", (json, expected) => {
+    expect(formatCardAnswer(JSON.parse(json))).toBe(expected);
   });
 });
 
