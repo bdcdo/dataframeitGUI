@@ -486,8 +486,6 @@ END $$;
 --     depois da rodada). Sem esta guarda a view emitia 'consenso' com
 --     resposta nula. Mapa legado (NULL ou `{}`) nao prova ausencia e segue
 --     como antes, a mesma leitura de `fieldExistedWhenCoded`.
--- `field_review_field_hash` vai ao fim porque CREATE OR REPLACE VIEW so
--- acrescenta coluna depois das existentes.
 CREATE OR REPLACE VIEW public.final_answers
 WITH (security_invoker = true) AS
 SELECT
@@ -529,8 +527,7 @@ SELECT
   fr.llm_response_id,
   fr.human_answer_snapshot,
   fr.llm_answer_snapshot,
-  fr.arbitrator_comment,
-  fr.field_hash AS field_review_field_hash
+  fr.arbitrator_comment
 FROM public.responses AS r_llm
 JOIN public.projects AS project ON project.id = r_llm.project_id
 CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(
