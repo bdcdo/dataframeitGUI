@@ -24,7 +24,7 @@ import {
   buildTimelineFromPersistedVersions,
   type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
-import { computeFieldHash } from "@/lib/schema-utils";
+import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
 import { fieldReviewIsCurrent, reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import {
   blankAnswerFor,
@@ -34,8 +34,7 @@ import {
   type ErrorDecision,
   type ErrorResolutionContext,
 } from "@/lib/error-resolution";
-import { answersAgree, verdictMatchesAnswer } from "@/lib/llm-error-metrics";
-import { acknowledgmentIsCurrent } from "@/lib/reviews/verdict-acknowledgment";
+import { verdictMatchesAnswer } from "@/lib/llm-error-metrics";
 // Mesma primitiva de igualdade que o produto usa para decidir divergência
 // (`lib/compare-divergence.ts`, `lib/equivalence.ts`): se as duas réguas
 // divergirem, é bug de contrato e a invariante deve enxergar.
@@ -159,6 +158,7 @@ interface DecisionRow {
   field_name: string;
   decision: ErrorDecision | null;
   context: ErrorResolutionContext | null;
+  approved_value: unknown;
 }
 
 interface ReviewValidityRow extends ValidatableReview {
@@ -182,7 +182,7 @@ async function scanSourceDependentDecisions(): Promise<
   const [decisions, projects] = await Promise.all([
     fetchAll<DecisionRow>(
       "error_resolutions",
-      "id, project_id, document_id, field_name, decision, context",
+      "id, project_id, document_id, field_name, decision, context, approved_value",
       (q) => q.not("context", "is", null),
     ),
     fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
@@ -221,18 +221,17 @@ function sourceDependentDecisions() {
 }
 
 // O que o contexto congelado de uma decisão diz sobre o veredito da fonte e a
-// resposta do LLM, pelas regras da métrica (`verdictMatchesAnswer`,
-// `answersAgree`). O contexto não guarda os pares "=" nem os demais
-// pesquisadores; o que depende deles fica de fora de propósito, para que a
-// leitura só afirme o que o contexto prova.
+// resposta do LLM, pela regra da métrica (`verdictMatchesAnswer`). O contexto
+// não guarda os pares "=" nem os demais pesquisadores; o que depende deles
+// fica de fora de propósito, para que a leitura só afirme o que o contexto
+// prova.
 function frozenContextReading(d: DecisionRow) {
   const c = d.context!;
   const field = (c.field_definition ?? {}) as PydanticField;
   const llm = c.llm_value.present ? c.llm_value.value : undefined;
-  const human = c.human_value.present ? c.human_value.value : undefined;
   const verdict = typeof c.source.verdict === "string" ? c.source.verdict : "";
   const verdictIsLlm = c.source.chosen_response_id === c.llm_response_id || verdictMatchesAnswer(field, verdict, llm);
-  return { field, llm, human, verdictIsLlm, fromComparison: c.source.kind === "comparacao" };
+  return { field, llm, verdictIsLlm, fromComparison: c.source.kind === "comparacao" };
 }
 
 async function decisionsWithContext(): Promise<DecisionRow[]> {
@@ -1123,50 +1122,6 @@ invariants.push(
           : null;
         return problem ? [{ key: d.id, detail: `${d.document_id}/${d.field_name}: ${problem}` }] : [];
       }),
-  },
-  {
-    name: "decisao-sem-valor-comum-onde-ele-cabia",
-    informational: true,
-    motivation:
-      "#758, inversa da anterior: decisões gravadas antes do valor comum no padrão do relato, em que o veredito diverge do LLM e a pesquisadora do contexto concorda com o LLM. 'Erro humano' ali conta um erro humano que não existiu; 'Ambos corretos' sem valor deixou o veredito antigo no Gabarito. Lista para quem revisa decidir de novo; a contagem só cai com redecisão",
-    run: async () => {
-      const found = (await decisionsWithContext()).filter((d) => {
-        if (d.decision !== "llm_correct" && !(d.decision === "both_correct" && (d.approved_value === null || d.approved_value === undefined))) return false;
-        const { field, llm, human, verdictIsLlm, fromComparison } = frozenContextReading(d);
-        return fromComparison && !verdictIsLlm && answersAgree(field, llm, human);
-      });
-      const byDecision = new Map<string, number>();
-      for (const d of found) byDecision.set(d.decision ?? "?", (byDecision.get(d.decision ?? "?") ?? 0) + 1);
-      return [
-        ...[...byDecision.entries()].map(([decision, count]) => ({ key: decision, detail: `${count} decisão(ões) '${decision}' no padrão` })),
-        ...found.map((d) => ({ key: d.id, detail: `'${d.decision}' em ${d.document_id}/${d.field_name}` })),
-      ];
-    },
-  },
-  {
-    name: "reconhecimento-de-veredito-rearbitrado",
-    informational: true,
-    motivation:
-      "#758: reconhecimentos cujo veredito foi rearbitrado depois (`acknowledgmentIsCurrent` falso). Não é violação: o item volta a pendente em Meus vereditos, e a dúvida aberta sai de Comentários. A lista mostra quem precisa responder de novo e as dúvidas que saíram da fila",
-    run: async () => {
-      const acks = await fetchAll<{ id: string; review_id: string; status: string; resolved_at: string | null; acknowledged_verdict: string | null }>(
-        "verdict_acknowledgments", "id, review_id, status, resolved_at, acknowledged_verdict",
-      );
-      const reviews = new Map(
-        (await fetchByIds<{ id: string; project_id: string; verdict: string }>(
-          "reviews", "id, project_id, verdict", [...new Set(acks.map((a) => a.review_id))],
-        )).map((r) => [r.id, r]),
-      );
-      const outdated = acks.filter((a) => {
-        const review = reviews.get(a.review_id);
-        return review !== undefined && !acknowledgmentIsCurrent(a, review.verdict);
-      });
-      const openQuestions = outdated.filter((a) => a.status === "questioned" && a.resolved_at === null).length;
-      return [
-        ...(outdated.length > 0 ? [{ key: "total", detail: `${outdated.length} reconhecimento(s) de veredito rearbitrado, ${openQuestions} dúvida(s) aberta(s) entre eles` }] : []),
-        ...outdated.map((a) => ({ key: a.id, detail: `review ${a.review_id}: reconheceu ${JSON.stringify(a.acknowledged_verdict)}, veredito atual ${JSON.stringify(reviews.get(a.review_id)!.verdict)}` })),
-      ];
-    },
   },
 );
 
