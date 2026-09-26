@@ -142,10 +142,11 @@ END $$;
 RESET ROLE;
 
 -- Upsert sem `acknowledged_verdict`, como o do frontend anterior: o gatilho
--- nao carimba mais o veredito atual. No INSERT a coluna chega NULL, e no
--- UPDATE que o upsert faz quando a linha ja existe ela fica com o valor
--- gravado; nos dois casos, se nao e o veredito atual, recusa. Mesmo SQL que o
--- PostgREST gera para o upsert: o SET so tem as colunas do payload.
+-- nao carimba mais o veredito atual. O BEFORE INSERT dispara antes de o
+-- conflito ser detectado, com a coluna NULL, e recusa, exista a linha ou nao;
+-- o UPDATE que nao toca a coluna ja esta coberto pelo caso de `comment` acima.
+-- Mesmo SQL que o PostgREST gera para o upsert: o SET so tem as colunas do
+-- payload.
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('b1c20000-0000-0000-0000-000000000002', 'b1c10000-0000-0000-0000-000000000001', 'Documento 2', 'Texto');
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
@@ -162,23 +163,6 @@ BEGIN
       SET review_id = EXCLUDED.review_id, respondent_id = EXCLUDED.respondent_id,
           status = EXCLUDED.status, comment = EXCLUDED.comment;
     RAISE EXCEPTION 'FALHOU: upsert sem a coluna gravou reconhecimento novo';
-  EXCEPTION WHEN serialization_failure THEN NULL;
-  END;
-  INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status, comment, acknowledged_verdict)
-  VALUES ('b1c40000-0000-0000-0000-000000000002', 'b1c00000-0000-0000-0000-000000000002', 'questioned', 'Por quê?', 'Sim');
-END $$;
-RESET ROLE;
-UPDATE public.reviews SET verdict = 'Não' WHERE id = 'b1c40000-0000-0000-0000-000000000002';
-SET LOCAL ROLE authenticated;
-DO $$
-BEGIN
-  BEGIN
-    INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status, comment)
-    VALUES ('b1c40000-0000-0000-0000-000000000002', 'b1c00000-0000-0000-0000-000000000002', 'accepted', NULL)
-    ON CONFLICT (review_id, respondent_id) DO UPDATE
-      SET review_id = EXCLUDED.review_id, respondent_id = EXCLUDED.respondent_id,
-          status = EXCLUDED.status, comment = EXCLUDED.comment;
-    RAISE EXCEPTION 'FALHOU: upsert sem a coluna sobre linha existente passou o reconhecimento para o veredito atual';
   EXCEPTION WHEN serialization_failure THEN NULL;
   END;
   RAISE NOTICE 'OK: upsert sem a coluna não carimba o veredito atual';
