@@ -28,7 +28,7 @@ import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
 import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import {
   decisionDependsOnSource,
-  hasResolutionValue,
+  rpcAcceptsResolutionValue,
   type ErrorDecision,
   type ErrorResolutionContext,
 } from "@/lib/error-resolution";
@@ -1082,7 +1082,7 @@ invariants.push(
   {
     name: "approved-value-no-dominio-atual",
     motivation:
-      "#758: o valor aprovado por 'Erro do LLM' e 'Todos errados' vai ao gabarito mesmo com a fonte inválida, porque a decisão é um julgamento sobre a pergunta atual. Enquanto a definição do campo guardada na decisão é a atual (se mudou, a decisão já é 'Fontes alteradas'), o valor precisa estar no domínio atual, a mesma régua de `set_error_resolution` (`hasResolutionValue`). FAIL = valor gravado por canal que pulou a validação da RPC",
+      "#758: o valor aprovado por 'Erro do LLM' e 'Todos errados' vai ao gabarito mesmo com a fonte inválida, porque a decisão é um julgamento sobre a pergunta atual. Enquanto a definição do campo guardada na decisão é a atual (se mudou, a decisão já é 'Fontes alteradas'), o valor precisa estar no domínio atual, a régua exata de `set_error_resolution` (`rpcAcceptsResolutionValue`), e não a da tela, que é mais restritiva em grupo de subcampos. FAIL = valor gravado por canal que pulou a validação da RPC",
     run: async () => {
       const [decisions, projects] = await Promise.all([
         fetchAll<DecisionRow>(
@@ -1097,8 +1097,8 @@ invariants.push(
       );
       return decisions.flatMap((d) => {
         const field = fieldsOf.get(d.project_id)?.get(d.field_name);
-        if (!field || stableStringify(d.context?.field_definition) !== stableStringify(field)) return [];
-        if (hasResolutionValue(field, d.approved_value)) return [];
+        if (!field || !d.context || stableStringify(d.context.field_definition) !== stableStringify(field)) return [];
+        if (rpcAcceptsResolutionValue(d.context, d.approved_value)) return [];
         return [{
           key: d.id,
           detail: `'${d.decision}' em ${d.document_id}/${d.field_name} aprovou ${JSON.stringify(d.approved_value)}, fora do domínio atual`,
