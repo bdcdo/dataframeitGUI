@@ -13,6 +13,12 @@ export interface EquivalencePair extends EquivalenceEdge {
 // An equivalence is a decision about two answer values, not permanently about
 // two mutable response rows. Missing snapshots fail closed: a caller that
 // forgets to select them cannot silently reactivate an unverifiable decision.
+//
+// O par também é uma decisão sobre UMA versão da pergunta: ele só vale
+// enquanto as duas respostas foram dadas à versão atual
+// (`answersCurrentQuestion` de `answer-staleness.ts`, que o chamador aplica
+// com o campo e o `answer_field_hashes` de cada resposta). O parâmetro é
+// obrigatório para que nenhum leitor de par esqueça a regra.
 export function filterCurrentEquivalencePairs<
   T extends { id: string },
   P extends EquivalencePair,
@@ -20,6 +26,7 @@ export function filterCurrentEquivalencePairs<
   responses: T[],
   pairs: P[],
   getAnswer: (response: T) => unknown,
+  answersCurrentQuestion: (response: T) => boolean,
 ): P[] {
   const byId = new Map(responses.map((response) => [response.id, response]));
 
@@ -27,6 +34,7 @@ export function filterCurrentEquivalencePairs<
     const responseA = byId.get(pair.response_a_id);
     const responseB = byId.get(pair.response_b_id);
     if (!responseA || !responseB) return false;
+    if (!answersCurrentQuestion(responseA) || !answersCurrentQuestion(responseB)) return false;
 
     if (
       pair.response_a_answer_snapshot === undefined ||

@@ -5,7 +5,7 @@ import {
   filterCurrentEquivalencePairs,
   type EquivalencePair,
 } from "@/lib/equivalence";
-import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
+import { answersCurrentQuestion, fieldExistedWhenCoded } from "@/lib/answer-staleness";
 import {
   multiSelectionSets,
   multiSelectionsAgree,
@@ -88,11 +88,13 @@ export function computeDivergentFieldNames(
     const items = applicable.map((r) => ({
       id: r.id,
       answer: (r.answers as Record<string, unknown>)?.[field.name],
+      answerFieldHashes: r.answerFieldHashes,
     }));
     const pairs = filterCurrentEquivalencePairs(
       items,
       equivalencesByField?.get(field.name) ?? [],
       (item) => item.answer,
+      (item) => answersCurrentQuestion(item.answerFieldHashes, field),
     );
     const groupKeys = buildResponseGroupKeys(items, pairs, (r) =>
       normalizeForComparison(r.answer),

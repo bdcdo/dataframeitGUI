@@ -65,3 +65,32 @@ export function isFieldStale({
   }
   return !!projectPydanticHash && pydanticHash !== projectPydanticHash;
 }
+
+// Se a resposta ao campo foi dada à versão ATUAL da pergunta, para os
+// julgamentos presos a respostas (o par "=" da Comparação). Só o hash gravado
+// na resposta prova a versão: diferente do atual, ou campo que saiu do schema
+// (removido ou renomeado), reprova. Sem hash do campo na resposta (mapa legado
+// `null`/`{}`, chave ausente ou `null`) não há como provar, e a ausência não
+// invalida sozinha, a mesma política de `reviews.field_hash` NULL em
+// `review-validity.ts`. Campo atual sem hash com resposta carimbada reprova,
+// como lá.
+//
+// Diferente de `isFieldStale`, que marca como desatualizada a resposta sem
+// proveniência: aquela é a leitura da tela (avisar o revisor), esta decide se
+// um julgamento já feito cai.
+//
+// A cópia SQL é `response_answers_current_question` (migration
+// 20260927120000_judgments_follow_question.sql); a matriz de casos dos testes
+// é a mesma nas duas.
+export function answersCurrentQuestion(
+  answerFieldHashes: AnswerFieldHashes | undefined,
+  field: Pick<PydanticField, "name" | "hash"> | undefined,
+): boolean {
+  if (!field) return false;
+  const saved =
+    answerFieldHashes && Object.hasOwn(answerFieldHashes, field.name)
+      ? answerFieldHashes[field.name]
+      : undefined;
+  if (typeof saved !== "string") return true;
+  return saved === field.hash;
+}

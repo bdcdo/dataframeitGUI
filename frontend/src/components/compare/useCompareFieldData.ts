@@ -6,7 +6,7 @@ import {
   buildResponseGroupKeys,
   filterCurrentEquivalencePairs,
 } from "@/lib/equivalence";
-import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
+import { answersCurrentQuestion, buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { PydanticField } from "@/lib/types";
 import type {
   CompareDocument,
@@ -103,12 +103,16 @@ export function useCompareFieldData({
     const present = fieldResponses.filter(
       (response) => response.answer !== undefined,
     );
+    const hashesById = new Map(
+      docResponses.map((response) => [response.id, response.answer_field_hashes]),
+    );
     return filterCurrentEquivalencePairs(
       present,
       fieldEquivalences,
       (response) => response.answer,
+      (response) => answersCurrentQuestion(hashesById.get(response.id), currentField),
     );
-  }, [fieldResponses, fieldEquivalences]);
+  }, [docResponses, fieldResponses, fieldEquivalences, currentField]);
 
   // Equivalência (fundir respostas distintas como iguais) vale para qualquer
   // campo NÃO-multi: texto, data e single (com ou sem opções). Todos renderizam

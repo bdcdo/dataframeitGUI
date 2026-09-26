@@ -146,7 +146,7 @@ describe("filterCurrentEquivalencePairs", () => {
       response_b_answer_snapshot: "current-b",
     }];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual(pairs);
   });
 
@@ -158,7 +158,7 @@ describe("filterCurrentEquivalencePairs", () => {
       response_b_answer_snapshot: "current-b",
     }];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual([]);
   });
 
@@ -167,7 +167,7 @@ describe("filterCurrentEquivalencePairs", () => {
       { response_a_id: "a", response_b_id: "b" },
     ] as unknown as Parameters<typeof filterCurrentEquivalencePairs>[1];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual([]);
   });
 
@@ -179,7 +179,29 @@ describe("filterCurrentEquivalencePairs", () => {
       response_b_answer_snapshot: "current-b",
     }];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual(pairs);
+  });
+
+  // O par diz que dois VALORES são a mesma resposta para UMA pergunta. Quando
+  // a pergunta muda, uma das respostas passa a ser resposta a outra versão, e
+  // o par cai mesmo com os valores intactos.
+  it("descarta o par quando uma das respostas é de outra versão da pergunta", () => {
+    const pairs = [{
+      response_a_id: "a",
+      response_b_id: "b",
+      response_a_answer_snapshot: "current-a",
+      response_b_answer_snapshot: "current-b",
+    }];
+    for (const outdatedId of ["a", "b"]) {
+      expect(
+        filterCurrentEquivalencePairs(
+          responses,
+          pairs,
+          (response) => response.answer,
+          (response) => response.id !== outdatedId,
+        ),
+      ).toEqual([]);
+    }
   });
 });

@@ -22,6 +22,7 @@ import {
   type EquivalencePair,
 } from "@/lib/equivalence";
 import { isFieldApplicable } from "@/lib/compare-divergence";
+import { answersCurrentQuestion } from "@/lib/answer-staleness";
 import {
   multiSelectionSets,
   multiSelectionsAgree,
@@ -373,11 +374,14 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     const items = (responsesByDoc.get(docId) ?? []).map((response) => ({
       id: response.id,
       answer: response.answers?.[fieldName],
+      answerFieldHashes: response.answer_field_hashes ?? undefined,
     }));
+    const field = fieldMap.get(fieldName);
     const pairs = filterCurrentEquivalencePairs(
       items,
       equivByDocField.get(docId)?.get(fieldName) ?? [],
       (item) => item.answer,
+      (item) => answersCurrentQuestion(item.answerFieldHashes, field),
     );
     const groupKeys = buildResponseGroupKeys(items, pairs, (item) =>
       normalizeForComparison(item.answer),

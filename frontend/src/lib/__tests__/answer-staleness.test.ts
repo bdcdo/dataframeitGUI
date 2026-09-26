@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answersCurrentQuestion,
   buildFieldHashMap,
   fieldExistedWhenCoded,
   isFieldStale,
@@ -79,5 +80,37 @@ describe("isFieldStale", () => {
         projectPydanticHash: "p-new",
       }),
     ).toBe(true);
+  });
+});
+
+// A matriz é a mesma de `response_answers_current_question` em
+// `supabase/tests/judgments_follow_question.test.sql`: as duas cópias da regra
+// falham juntas quando uma derivar.
+describe("answersCurrentQuestion", () => {
+  const current = { name: "q", hash: "aaaaaaaaaaaa" };
+  const cases: Array<{
+    label: string;
+    hashes: Parameters<typeof answersCurrentQuestion>[0];
+    field: Parameters<typeof answersCurrentQuestion>[1];
+    expected: boolean;
+  }> = [
+    { label: "hash igual ao atual", hashes: { q: "aaaaaaaaaaaa" }, field: current, expected: true },
+    { label: "hash de outra versão da pergunta", hashes: { q: "ffffffffffff" }, field: current, expected: false },
+    { label: "campo removido ou renomeado", hashes: { q: "aaaaaaaaaaaa" }, field: undefined, expected: false },
+    { label: "mapa nulo (legado)", hashes: null, field: current, expected: true },
+    { label: "mapa ausente (legado)", hashes: undefined, field: current, expected: true },
+    { label: "mapa vazio (legado)", hashes: {}, field: current, expected: true },
+    { label: "chave ausente em mapa não vazio", hashes: { outro: "bbbbbbbbbbbb" }, field: current, expected: true },
+    { label: "hash nulo do campo", hashes: { q: null }, field: current, expected: true },
+    { label: "campo atual sem hash e resposta com hash", hashes: { q: "aaaaaaaaaaaa" }, field: { name: "q" }, expected: false },
+    { label: "campo atual sem hash e resposta sem hash", hashes: { q: null }, field: { name: "q" }, expected: true },
+  ];
+
+  it.each(cases)("$label", ({ hashes, field: currentField, expected }) => {
+    expect(answersCurrentQuestion(hashes, currentField)).toBe(expected);
+  });
+
+  it("lê a chave própria do mapa, não a herdada do protótipo", () => {
+    expect(answersCurrentQuestion({ q: "aaaaaaaaaaaa" }, { name: "constructor", hash: "x" })).toBe(true);
   });
 });
