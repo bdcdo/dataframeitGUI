@@ -130,8 +130,9 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: UPDATE de comment sem a coluna sobre veredito que mudou foi aceito';
   EXCEPTION WHEN serialization_failure THEN NULL;
   END;
-  -- O mesmo para `status`: trocar a duvida por aceite sem mandar a coluna
-  -- aceitaria, em nome do pesquisador, um veredito que ele nao viu.
+  -- O mesmo para `status`: fora do `UPDATE OF`, a duvida viraria aceite de
+  -- um veredito que ja nao e o atual e sairia da pagina de comentarios do
+  -- coordenador, que so lista `questioned`.
   BEGIN
     UPDATE public.verdict_acknowledgments SET status = 'accepted'
     WHERE review_id = 'b1c40000-0000-0000-0000-000000000001';
