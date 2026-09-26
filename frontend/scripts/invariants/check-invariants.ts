@@ -1029,7 +1029,7 @@ invariants.push(
   {
     name: "decisao-aplicada-tem-fonte-valida",
     motivation:
-      "#758: decisão do LLM Insights que depende do veredito de origem (Ambos corretos, Em discussão) só vale enquanto ele vale. `read_error_resolutions` a derruba quando `review_is_valid` (SQL) reprova a fonte; Gabarito, export e fila fazem o mesmo com `reviewIsValid` (TS). FAIL aqui = a fonte é inválida pela regra do produto e o banco ainda a aceita, logo a decisão continuaria aplicada ao gabarito sobre um veredito dado para outra versão da pergunta",
+      "#758: decisão do LLM Insights que depende do veredito de origem (Ambos corretos, Em discussão) só vale enquanto ele vale. `read_error_resolutions` a derruba quando `review_is_valid` (SQL) reprova a fonte; o veredito de Gabarito, export e fila vale pela cópia TS (`reviewIsValid`). FAIL aqui = a fonte é inválida pela regra do produto e o banco ainda a aceita, logo a decisão continuaria aplicada ao gabarito sobre um veredito dado para outra versão da pergunta",
     run: async () =>
       (await sourceDependentDecisions())
         .filter((d) => !d.tsValid && d.sqlValid)

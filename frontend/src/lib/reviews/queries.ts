@@ -9,8 +9,8 @@ import type {
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
-import { applicableErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
-import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
+import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
+import { pickValidCellReviews } from "@/lib/review-validity";
 import { stableStringify } from "@/lib/schema-utils";
 
 /* ── Raw row shapes ── */
@@ -60,12 +60,6 @@ export interface ReviewComputationContext {
   docMap: Map<string, string>;
   responsesByDoc: Map<string, ResponseRow[]>;
   uniqueReviews: ReviewRow[];
-  /**
-   * Ids das reviews que valem como gabarito, de qualquer revisor. A decisão do
-   * LLM Insights que depende da fonte só vale enquanto a review de origem
-   * está aqui (`applicableErrorResolution`).
-   */
-  validReviewIds: ReadonlySet<string>;
   errorResolutions?: ErrorResolutionRow[];
   profileMap: Map<string, string>;
   // true para cada tabela cuja query atingiu REVIEW_BASE_DATA_LIMIT — os
@@ -311,11 +305,7 @@ export async function fetchReviewBaseData(
     responsesByDoc.set(r.document_id, list);
   });
 
-  const reviewRows = (reviews ?? []) as ReviewRow[];
-  const uniqueReviews = gabaritoReviews(reviewRows, fieldMap);
-  const validReviewIds = new Set(
-    reviewRows.filter((r) => reviewIsValid(r, fieldMap.get(r.field_name))).map((r) => r.id),
-  );
+  const uniqueReviews = gabaritoReviews(reviews as ReviewRow[] | null, fieldMap);
 
   const comparableFields = fields.filter(
     (f) => !f.target || f.target === "all",
@@ -330,7 +320,6 @@ export async function fetchReviewBaseData(
     docMap,
     responsesByDoc,
     uniqueReviews,
-    validReviewIds,
     errorResolutions,
     profileMap,
     truncated,
@@ -364,7 +353,7 @@ function resolvedReview(
   // Sem review válida na célula, "Ambos corretos" só tem veredito a mostrar
   // quando o contexto o guarda (auto-revisão). Na Comparação isso não acontece
   // com a fonte válida, porque a fonte é a própria review da célula; e com a
-  // fonte inválida a decisão já nem chega aqui (`applicableErrorResolution`).
+  // fonte inválida `read_error_resolutions` já não dá contexto corrente à decisão.
   // Inventar um veredito seria pior que omitir a célula.
   if (resolution.status === "upheld" && resolution.verdictValue === undefined) return null;
   return {
@@ -385,7 +374,7 @@ function appliesToGabarito(resolution: EffectiveErrorResolution): resolution is 
 function reviewsWithResolutions(ctx: ReviewComputationContext): Map<string, ReviewRow> {
   const effectiveReviews = new Map(ctx.uniqueReviews.map((r) => [`${r.document_id}:${r.field_name}`, r]));
   for (const row of ctx.errorResolutions ?? []) {
-    const resolution = applicableErrorResolution(row, ctx.validReviewIds);
+    const resolution = effectiveErrorResolution(row);
     const field = ctx.fieldMap.get(row.field_name);
     if (!field || !ctx.docMap.has(row.document_id) || !appliesToGabarito(resolution)) continue;
     const key = `${row.document_id}:${row.field_name}`;

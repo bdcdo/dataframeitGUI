@@ -243,21 +243,21 @@ describe("fila: decisão ressuscitada só enquanto vale", () => {
     ],
   };
 
-  it.each<[string, ErrorDecision, string, boolean]>([
-    ["Ambos corretos sobre veredito inválido cai", "both_correct", "stale", false],
-    ["Em discussão sobre veredito inválido cai", "discussion", "stale", false],
-    ["Erro humano sobre veredito inválido grava valor próprio e fica", "llm_correct", "stale", true],
-    ["Erro do LLM sobre veredito inválido grava valor próprio e fica", "researchers_correct", "stale", true],
-    ["Todos errados sobre veredito inválido grava valor próprio e fica", "all_wrong", "stale", true],
-    ["Ambos corretos sobre veredito válido fica", "both_correct", "valid", true],
-    ["Ambos corretos sobre review apagada cai", "both_correct", "sumiu", false],
-  ])("%s", (_label, kind, sourceId, revived) => {
+  // "Ambos corretos" e "Em discussão" sobre fonte inválida ou apagada caem no
+  // banco: `read_error_resolutions` não lhes dá contexto corrente (suíte SQL
+  // de reviews_field_hash), e a decisão stale cai no teste seguinte.
+  it.each<[string, ErrorDecision, string]>([
+    ["Erro humano sobre veredito inválido grava valor próprio e fica", "llm_correct", "stale"],
+    ["Erro do LLM sobre veredito inválido grava valor próprio e fica", "researchers_correct", "stale"],
+    ["Todos errados sobre veredito inválido grava valor próprio e fica", "all_wrong", "stale"],
+    ["Ambos corretos sobre veredito válido fica", "both_correct", "valid"],
+  ])("%s", (_label, kind, sourceId) => {
     const { errors, lapsedDecisions } = run({
       ...base,
       errorResolutions: new Map([["doc1:x", decision(kind, sourceId)]]),
     });
-    expect(errors).toHaveLength(revived ? 1 : 0);
-    expect(lapsedDecisions).toHaveLength(revived ? 0 : 1);
+    expect(errors).toHaveLength(1);
+    expect(lapsedDecisions).toHaveLength(0);
   });
 
   it("decisão stale não volta, mesmo com valor próprio, e entra na contagem das que perderam a validade", () => {
@@ -281,11 +281,12 @@ describe("fila: decisão ressuscitada só enquanto vale", () => {
 
   it("Ambos corretos sobre veredito inválido não tira o erro do caso vivo da célula", () => {
     // O caso vivo vem do veredito válido ("A") contra o LLM ("B"); a decisão
-    // gravada foi dada sobre o veredito da pergunta antiga.
+    // gravada foi dada sobre o veredito da pergunta antiga, e o banco não lhe
+    // dá contexto corrente.
     const { reviewedEntries } = run({
       responses: [llm("B"), response({ answers: { x: "A" } })],
       reviews: base.reviews,
-      errorResolutions: new Map([["doc1:x", decision("both_correct", "stale")]]),
+      errorResolutions: new Map([["doc1:x", decision("both_correct", "stale", { current_context: null })]]),
     });
     expect(reviewedEntries).toEqual([expect.objectContaining({ isError: true })]);
   });

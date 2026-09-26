@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  applicableErrorResolution, blankAnswerFor, choosesValue, decisionDependsOnSource, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, isBlankAnswer,
+  blankAnswerFor, choosesValue, decisionDependsOnSource, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, isBlankAnswer,
   prefillLosesItems, prefillFromValue, prefillFromVerdict, startsBlank,
   type ErrorDecision, type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
@@ -310,10 +310,7 @@ describe("classe de branco de set_error_resolution", () => {
   });
 });
 
-describe("applicableErrorResolution: decisão que depende do veredito de origem (#758)", () => {
-  const valid = new Set(["review1"]);
-  const none = new Set<string>();
-
+describe("decisionDependsOnSource: decisão que depende do veredito de origem (#758)", () => {
   it.each<[ErrorDecision, boolean]>([
     ["llm_correct", false],
     ["researchers_correct", false],
@@ -322,28 +319,9 @@ describe("applicableErrorResolution: decisão que depende do veredito de origem 
     ["discussion", true],
   ])("%s depende da fonte: %s", (decision, depends) => {
     expect(decisionDependsOnSource(decision)).toBe(depends);
-    const row = resolutionFixture(decision);
-    const withValid = applicableErrorResolution(row, valid).status;
-    const withInvalid = applicableErrorResolution(row, none).status;
-    expect(withValid).toBe(effectiveErrorResolution(row).status);
-    expect(withInvalid).toBe(depends ? "stale" : effectiveErrorResolution(row).status);
   });
 
   it("decisão sem tipo (legado) nasce dependendo da fonte", () => {
     expect(decisionDependsOnSource(null)).toBe(true);
-  });
-
-  it("fonte de auto-revisão não é review e não passa pela regra", () => {
-    const row = resolutionFixture("both_correct");
-    row.context!.source = { kind: "auto_revisao", id: "fr" };
-    row.current_context = structuredClone(row.context);
-    expect(applicableErrorResolution(row, none).status).toBe("upheld");
-  });
-
-  it("contexto que já mudou continua stale, e ausência de decisão continua aberta", () => {
-    const row = resolutionFixture("llm_correct");
-    row.current_context = null;
-    expect(applicableErrorResolution(row, valid).status).toBe("stale");
-    expect(applicableErrorResolution(undefined, valid).status).toBe("open");
   });
 });

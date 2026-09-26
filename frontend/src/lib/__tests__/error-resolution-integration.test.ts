@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { resolutionFixture } from "./error-resolution-fixture";
 import { assembleExport } from "@/lib/export/assemble";
 import { computeReviewedDocuments, gabaritoReviews, isAnswerCorrect, type ReviewComputationContext } from "@/lib/reviews/queries";
-import { reviewIsValid } from "@/lib/review-validity";
 import { computeLlmErrorMetrics, type MetricsResponse, type MetricsFinalAnswer } from "@/lib/llm-error-metrics";
 import type { ErrorDecision, ErrorResolutionRow } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
@@ -42,7 +41,6 @@ function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue
     projectPydanticHash: null, currentFieldHashes: {}, fieldMap: new Map([["x", field]]),
     docMap: new Map([["doc1", "Documento"]]), responsesByDoc: new Map([["doc1", currentResponses]]),
     uniqueReviews: gabaritoReviews(reviews, new Map([["x", field]])),
-    validReviewIds: new Set(reviews.filter((r) => reviewIsValid(r, field)).map((r) => r.id)),
     errorResolutions: resolutions, profileMap: new Map(),
     truncated: { responses: false, reviews: false, documents: false } };
   return { metrics, exported, gabarito: computeReviewedDocuments(ctx) };
@@ -138,7 +136,9 @@ describe("veredito que perdeu a validade (#758)", () => {
     expect(r.gabarito).toEqual([]);
   });
   it("Em discussão sobre veredito que perdeu a validade não vale em nenhum dos três", () => {
-    const r = results([resolutionFixture("discussion")], false, "LLM", OTHER_QUESTION);
+    // `read_error_resolutions` não dá contexto corrente à decisão que depende
+    // de fonte inválida.
+    const r = results([{ ...resolutionFixture("discussion"), current_context: null }], false, "LLM", OTHER_QUESTION);
     expect(r.gabarito).toEqual([]);
     expect(r.exported.verdicts.rows).toEqual([]);
     expect(r.metrics.reviewedEntries).toEqual([]);

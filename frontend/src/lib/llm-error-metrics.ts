@@ -32,7 +32,7 @@ import { formatAnswer } from "@/lib/reviews/queries";
 import { formatCardAnswer } from "@/lib/verdict-display";
 import { pickValidCellReviews, reviewValidity, type ReviewInvalidReason } from "@/lib/review-validity";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { applicableErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { effectiveErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -67,7 +67,7 @@ export interface LlmError {
   /**
    * Presente quando a review de origem (`sourceId`, fonte da Comparação) não
    * vale mais: só acontece na decisão ressuscitada que grava valor próprio,
-   * a única que sobrevive à fonte inválida (`applicableErrorResolution`).
+   * a única que sobrevive à fonte inválida (`read_error_resolutions`).
    * "veredito_apagado" é a review que nem existe mais na leitura. O card usa
    * o motivo para rotular o veredito e para desabilitar as decisões que
    * dependem dele (`decisionDependsOnSource`).
@@ -315,7 +315,7 @@ interface MetricsContext {
 }
 
 // A validade de TODA review do projeto, e não só da escolhida por célula: a
-// decisão que depende da fonte vale enquanto a review de origem vale.
+// decisão ressuscitada rotula a review de origem pelo motivo da invalidade.
 function indexReviewValidity(
   reviews: readonly MetricsReview[],
   fieldMap: ReadonlyMap<string, PydanticField>,
@@ -797,7 +797,7 @@ export function usesAutoReviewSource(automationMode: string | null): boolean {
 // salvo, para a decisão continuar visível e reabrível. Só enquanto ela vale:
 // contexto corrente (não `stale`) e, se ela depende do veredito de origem
 // ("Ambos corretos", "Em discussão"), veredito ainda válido. Decisão que grava
-// valor próprio vale mesmo com a fonte inválida (`applicableErrorResolution`),
+// valor próprio vale mesmo com a fonte inválida (`read_error_resolutions`),
 // e volta com `sourceInvalidReason`: ela pode ser redecidida entre as outras
 // decisões com valor próprio, mas não virar uma que dependa da fonte.
 // As que perderam a validade vão para `lapsed`, que a fila conta à parte;
@@ -808,7 +808,7 @@ function reviveDecision(resolution: ErrorResolutionRow, ctx: MetricsContext): Re
   const saved = resolution.context;
   const field = ctx.fieldMap.get(resolution.field_name);
   if (!saved || !isMeasurableField(field) || !ctx.isActiveDocument(resolution.document_id)) return { kind: "ignored" };
-  if (applicableErrorResolution(resolution, ctx.validReviewIds).status === "stale") {
+  if (effectiveErrorResolution(resolution).status === "stale") {
     return { kind: "lapsed", lapsed: {
       documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
       fieldName: resolution.field_name, fieldDescription: field.description || resolution.field_name,
@@ -907,7 +907,7 @@ export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {
       resolution: input.errorResolutions.get(key),
     })),
     reviewedEntries: sorted.map((c) => {
-      const resolution = applicableErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`), ctx.validReviewIds);
+      const resolution = effectiveErrorResolution(input.errorResolutions.get(`${c.documentId}:${c.fieldName}`));
       return {
         ...c.entry,
         isError: resolutionIsError(resolution, c.entry.isError),

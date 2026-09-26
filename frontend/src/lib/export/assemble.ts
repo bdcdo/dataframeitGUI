@@ -17,7 +17,7 @@ import {
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import { formatExportValue, formatVerdict } from "./format";
-import { applicableErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
 
 export interface ExportSheet {
@@ -229,8 +229,8 @@ function exportResolutionValue(
 
 type ExportedResolution = Extract<EffectiveErrorResolution, { status: "approved" | "discussion" | "upheld" }>;
 
-function exportedResolution(row: ErrorResolutionRow, validReviewIds: ReadonlySet<string>): ExportedResolution | null {
-  const resolution = applicableErrorResolution(row, validReviewIds);
+function exportedResolution(row: ErrorResolutionRow): ExportedResolution | null {
+  const resolution = effectiveErrorResolution(row);
   return resolution.status === "approved" || resolution.status === "discussion" || resolution.status === "upheld"
     ? resolution : null;
 }
@@ -240,11 +240,10 @@ function applyExportResolutions(
   rows: ErrorResolutionRow[],
   documents: ReadonlyMap<string, DocIdentity>,
   fieldNames: ReadonlySet<string>,
-  validReviewIds: ReadonlySet<string>,
 ): void {
   for (const row of rows) {
     if (!documents.has(row.document_id) || !fieldNames.has(row.field_name)) continue;
-    const resolution = exportedResolution(row, validReviewIds);
+    const resolution = exportedResolution(row);
     if (!resolution) continue;
     const existing = verdicts.get(row.document_id);
     const entry = existing ?? { fields: new Map<string, string>(), comments: [] };
@@ -377,12 +376,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const fieldByName = new Map<string, PydanticField>();
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
   const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName);
-  // De `reviews` inteiro, e não só da base: a fonte de uma decisão é validada
-  // pela review, e o documento dela já é filtrado por `applyExportResolutions`.
-  const validReviewIds = new Set(
-    reviews.filter((r) => reviewIsValid(r, fieldByName.get(r.field_name))).map((r) => r.id),
-  );
-  applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet, validReviewIds);
+  applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
   const agreementByDoc = buildAgreementByDoc(
     baseResponses,
     exportableFields,

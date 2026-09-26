@@ -579,11 +579,13 @@ describe("assembleExport: validade do veredito (#758)", () => {
       expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("Veredito");
     });
 
+    // Sobre veredito inválido, `read_error_resolutions` não dá contexto
+    // corrente à decisão que depende da fonte.
     it.each([
-      ["válido", HASH, "Em discussão", ""],
-      ["inválido", "ffffffffffff", "", undefined],
-    ])("Em discussão sobre veredito %s", (_label, hash, comment, cell) => {
-      const d = run({ ...decisionBase, reviews: [source(hash)], errorResolutions: [resolutionFixture("discussion")] });
+      ["válido", HASH, "Em discussão", "", resolutionFixture("discussion")],
+      ["inválido", "ffffffffffff", "", undefined, { ...resolutionFixture("discussion"), current_context: null }],
+    ])("Em discussão sobre veredito %s", (_label, hash, comment, cell, resolution) => {
+      const d = run({ ...decisionBase, reviews: [source(hash)], errorResolutions: [resolution] });
       if (cell === undefined) {
         // Sem veredito válido nem concordância nem decisão: a linha nem existe.
         expect(d.verdicts.rows).toHaveLength(0);
@@ -597,7 +599,8 @@ describe("assembleExport: validade do veredito (#758)", () => {
       const valid = run({ ...decisionBase, reviews: [source(HASH)], errorResolutions: [resolutionFixture("both_correct")] });
       expect(valid.verdicts.rows[0][idx(valid.verdicts, "x")]).toBe("Humano");
       expect(valid.verdicts.rows[0][idx(valid.verdicts, "reviewer_comments")]).toContain("Ambos corretos");
-      const stale = run({ ...decisionBase, reviews: [source("ffffffffffff")], errorResolutions: [resolutionFixture("both_correct")] });
+      const stale = run({ ...decisionBase, reviews: [source("ffffffffffff")],
+        errorResolutions: [{ ...resolutionFixture("both_correct"), current_context: null }] });
       expect(stale.verdicts.rows).toHaveLength(0);
     });
 
