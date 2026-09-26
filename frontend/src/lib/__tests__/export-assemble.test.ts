@@ -1326,6 +1326,28 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(comRascunho)).toEqual([["A", "campo", "aguarda arbitragem"]]);
     });
 
+    it("par \"=\" que só se fecha pelo rascunho: desligada, o par cai e os pesquisadores divergem, como na Comparação", () => {
+      // O rascunho a é a ponte: a = b e a = c, com b e c diferentes entre si.
+      const [a, b, c] = [draft("a", "NI"), resp("b", "humano", "N/A"), resp("c", "humano", "Não informado")];
+      const equivalences = [pair(a, b), pair(a, c)];
+      const comRascunho = exported({ responses: [a, b, c], equivalences, includeDrafts: true });
+      expect(cellOf(comRascunho)).toBe("N/A");
+      expect(comRascunho.pending.rows).toEqual([]);
+      const d = exported({ responses: [a, b, c], equivalences });
+      expect(cellOf(d)).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
+    });
+
+    it("auto-revisão decidida sobre um rascunho vale nas duas posições da opção", () => {
+      const responses = [draft("h1", "Sim"), resp("l", "llm", "Não")];
+      const finalAnswers: ExportFinalAnswer[] = [{ document_id: "A", field_name: "campo", provenance: "arbitrado", answer: "Sim" }];
+      for (const includeDrafts of [false, true]) {
+        const d = exported({ responses, finalAnswers, includeDrafts });
+        expect(cellOf(d)).toBe("Sim");
+        expect(d.pending.rows).toEqual([]);
+      }
+    });
+
     it("resposta sem is_partial conta como rascunho, como na Comparação", () => {
       const semColuna = { ...resp("h2", "humano", "Sim") } as Partial<ExportResponse>;
       delete semColuna.is_partial;

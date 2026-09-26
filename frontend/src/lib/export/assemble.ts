@@ -111,11 +111,11 @@ export interface AssembleInput {
    * porque a Comparação não os considera (`isSubmittedResponse`): rascunho é
    * resposta que o pesquisador não entregou, e a célula que só ele preenchia
    * sai em branco, com o motivo que as demais respostas derem. O documento em
-   * que todo pesquisador só tem rascunho conta como não codificado, como na
-   * fila de codificação, e não entra nas Pendências. Independe de
-   * `fillFromLlm`: sem o rascunho, a célula que ninguém mais respondeu é célula
-   * sem pesquisador, e a opção do LLM a preenche. As abas Respostas e o CSV
-   * mostram os rascunhos com a opção ligada ou não, marcados em `DRAFT_COLUMN`.
+   * que todo pesquisador só tem rascunho conta como não codificado e não
+   * entra nas Pendências. Independe de `fillFromLlm`: sem o rascunho, a
+   * célula que ninguém mais respondeu é célula sem pesquisador, e a opção do
+   * LLM a preenche. As abas Respostas e o CSV mostram os rascunhos com a
+   * opção ligada ou não, marcados em `DRAFT_COLUMN`.
    */
   includeDrafts?: boolean;
 }

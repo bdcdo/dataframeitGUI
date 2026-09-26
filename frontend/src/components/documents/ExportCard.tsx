@@ -325,7 +325,7 @@ export function ExportCard({ projectId }: { projectId: string }) {
         <ExportOption
           id="export-include-drafts"
           label="Incluir rascunhos"
-          help={"Rascunho é resposta não entregue, e a Comparação não o considera. Nas respostas individuais ele sempre aparece, marcado na coluna \"rascunho\"."}
+          help={"Rascunho é resposta não entregue, e a Comparação não o considera. Desmarcado, ele não conta no Gabarito nem nas Pendências. Nas respostas individuais ele sempre aparece, marcado na coluna \"rascunho\"."}
           checked={includeDrafts}
           disabled={loading}
           onCheckedChange={toggleOption(setIncludeDrafts)}
