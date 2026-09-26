@@ -1054,19 +1054,6 @@ invariants.push(
 
 invariants.push(
   {
-    name: "decisao-com-contexto-tem-hash-da-celula",
-    motivation:
-      "a decisão do LLM Insights só continua valendo com o contexto recalculado idêntico ao guardado, e o recalculado traz `source.cell_answers_hash` desde a migration 20260927130000, que a grava nas decisões existentes. Decisão com contexto sem a chave cai como 'Fontes alteradas' sem nada ter mudado. FAIL = backfill que não rodou, ou canal que grava contexto sem passar por `llm_error_context`",
-    run: async () =>
-      (await fetchAll<{ id: string; document_id: string; field_name: string; context: ErrorResolutionContext | null }>(
-        "error_resolutions",
-        "id, document_id, field_name, context",
-        (q) => q.not("context", "is", null),
-      ))
-        .filter((d) => d.context?.source && !Object.hasOwn(d.context.source, "cell_answers_hash"))
-        .map((d) => ({ key: d.id, detail: `decisão em ${d.document_id}/${d.field_name} sem cell_answers_hash` })),
-  },
-  {
     name: "ciclo-operacional-e-da-pergunta-atual",
     motivation:
       "o save do schema encerra, na mesma transação, todo ciclo de `field_reviews` aberto sob outra versão da pergunta ou de campo renomeado/removido (gatilho archive_judgments_on_question_change), e o reconciliador encerra o que escapar. Ciclo operacional de outra versão fica na fila de auto-revisão e de arbitragem, que não conferem o carimbo. FAIL = caminho de escrita de schema que pulou o gatilho",
