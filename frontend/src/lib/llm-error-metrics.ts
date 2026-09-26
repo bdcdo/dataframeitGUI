@@ -31,7 +31,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import { formatCardAnswer } from "@/lib/verdict-display";
-import { fieldReviewIsCurrent, pickValidCellReviews, reviewValidity, verdictSelection, type ReviewInvalidReason } from "@/lib/review-validity";
+import { pickValidCellReviews, reviewValidity, verdictSelection, type ReviewInvalidReason } from "@/lib/review-validity";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { effectiveErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
@@ -152,11 +152,6 @@ export interface MetricsFinalAnswer {
   llm_answer_snapshot: unknown;
   /** Texto que o arbitrador escreveu ao decidir; exibido como "Comentário do revisor". */
   arbitrator_comment: string | null;
-  /**
-   * `field_reviews.field_hash`: a versão da pergunta sob a qual o ciclo foi
-   * aberto. Ausente em linha sem ciclo (consenso) e em fixture antiga.
-   */
-  field_review_field_hash?: string | null;
 }
 
 /**
@@ -700,16 +695,6 @@ interface MeasurableAutoReviewRow {
   isError: boolean;
 }
 
-// Cópia da regra que a view já aplica (`field_review_question_current`): a
-// métrica não conta auto-revisão aberta sob outra versão da pergunta, mesmo
-// que a view e esta cópia divirjam. Linha sem ciclo (consenso) não tem carimbo
-// a conferir. Não cobre banco sem a migration: lá a coluna
-// `field_review_field_hash` não existe e o PostgREST devolve erro na consulta
-// da página, em vez de linhas sem ela.
-function rowCycleIsCurrent(row: MetricsFinalAnswer, field: PydanticField): boolean {
-  return !row.field_review_id || fieldReviewIsCurrent(row.field_review_field_hash ?? null, field);
-}
-
 // A cadeia de guardas da fonte B, separada da montagem do candidato. `null`
 // quando a linha não é mensurável: documento excluído, campo fora da superfície
 // de revisão, documento sem LLM corrente, codificação humana ausente ou
@@ -730,8 +715,6 @@ function measurableAutoReviewRow(
   if (!llmResponse) return null;
   if (!hasComparableHumanCoding(row.document_id, field, llmResponse, ctx))
     return null;
-
-  if (!rowCycleIsCurrent(row, field)) return null;
 
   const outcome = classifyAutoReview(row);
   if (outcome === "pendente") return null;
