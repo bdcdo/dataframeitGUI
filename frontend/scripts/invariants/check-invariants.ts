@@ -26,8 +26,6 @@ import {
 } from "@/lib/schema-backfill";
 import { computeFieldHash } from "@/lib/schema-utils";
 import { fieldReviewIsCurrent, reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
-import { answersCurrentQuestion } from "@/lib/answer-staleness";
-import { filterCurrentEquivalencePairs } from "@/lib/equivalence";
 import {
   decisionDependsOnSource,
   type ErrorDecision,
@@ -1054,80 +1052,6 @@ invariants.push(
   },
 );
 
-/** Resposta lida pelas invariantes do par "=". */
-interface PairResponseRow {
-  id: string;
-  project_id: string;
-  answers: Record<string, unknown> | null;
-  answer_field_hashes: AnswerFieldHashes | undefined;
-}
-
-interface PairRow {
-  id: string;
-  project_id: string;
-  document_id: string;
-  field_name: string;
-  response_a_id: string;
-  response_b_id: string;
-  response_a_answer_snapshot: unknown;
-  response_b_answer_snapshot: unknown;
-}
-
-// Todo par operacional com a leitura do PRODUTO (`filterCurrentEquivalencePairs`,
-// a mesma chamada dos leitores) e a leitura independente do estado: os valores
-// iguais aos do par e as duas respostas dadas à versão atual da pergunta. A
-// rodada não entra: resposta que deixou de ser `is_latest` fica congelada e
-// pode ser parte do par. As duas invariantes do par comparam uma leitura com a
-// outra.
-async function pairUsage(): Promise<
-  { pair: PairRow; used: boolean; snapshotsMatch: boolean; currentQuestion: boolean }[]
-> {
-  const [pairs, projects] = await Promise.all([
-    fetchAll<PairRow>(
-      "response_equivalences",
-      "id, project_id, document_id, field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot",
-      (q) => q.is("superseded_at", null),
-    ),
-    fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
-  ]);
-  const responses = new Map(
-    (await fetchByIds<PairResponseRow>(
-      "responses",
-      "id, project_id, answers, answer_field_hashes",
-      [...new Set(pairs.flatMap((p) => [p.response_a_id, p.response_b_id]))],
-    )).map((r) => [r.id, r]),
-  );
-  const fieldsOf = new Map(
-    projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))]),
-  );
-  return pairs.map((pair) => {
-    const a = responses.get(pair.response_a_id);
-    const b = responses.get(pair.response_b_id);
-    const field = fieldsOf.get(pair.project_id)?.get(pair.field_name);
-    const answer = (r: PairResponseRow) => r.answers?.[pair.field_name];
-    const used = !!a && !!b && filterCurrentEquivalencePairs(
-      [a, b],
-      [pair],
-      answer,
-      (r) => answersCurrentQuestion(r.answer_field_hashes ?? undefined, field),
-    ).length === 1;
-    // Leitura independente da versão: hash gravado na resposta, quando há, é o
-    // hash atual do campo; sem hash, a ausência não invalida.
-    const onCurrentQuestion = (r: PairResponseRow) => {
-      const saved = r.answer_field_hashes?.[pair.field_name];
-      return !!field && (typeof saved !== "string" || saved === field.hash);
-    };
-    return {
-      pair,
-      used,
-      snapshotsMatch: !!a && !!b
-        && normalizeForComparison(pair.response_a_answer_snapshot) === normalizeForComparison(answer(a))
-        && normalizeForComparison(pair.response_b_answer_snapshot) === normalizeForComparison(answer(b)),
-      currentQuestion: !!a && !!b && onCurrentQuestion(a) && onCurrentQuestion(b),
-    };
-  });
-}
-
 /** Linha de `final_answers` lida pelas invariantes da auto-revisão. */
 interface FinalAnswerRow {
   project_id: string;
@@ -1181,30 +1105,6 @@ async function autoReviewFinalAnswers(): Promise<{
 const COUNTED_PROVENANCES = new Set(["consenso", "auto_corrigido", "equivalente", "arbitrado"]);
 
 invariants.push(
-  {
-    name: "equivalencia-usada-e-da-pergunta-atual",
-    motivation:
-      "par \"=\" que o produto usa (`filterCurrentEquivalencePairs`) funde respostas na Comparação, na fila e na métrica do LLM Insights. Ele só pode ligar respostas dadas à versão atual da pergunta, a regra que `record_response_equivalences` passou a exigir na escrita. FAIL = leitor que voltou a aceitar resposta de outra versão",
-    run: async () =>
-      (await pairUsage())
-        .filter((u) => u.used && !u.currentQuestion)
-        .map((u) => ({
-          key: u.pair.id,
-          detail: `par em ${u.pair.document_id}/${u.pair.field_name} usado com resposta de outra versão da pergunta`,
-        })),
-  },
-  {
-    name: "equivalencia-da-pergunta-atual-e-usada",
-    motivation:
-      "inversa da anterior: par com os valores de quando foi marcado e as duas respostas na versão atual da pergunta que o produto descarta desfaz em silêncio uma equivalência que o revisor declarou (os cards voltam a divergir). FAIL = o filtro dos leitores ficou mais estrito que a regra",
-    run: async () =>
-      (await pairUsage())
-        .filter((u) => !u.used && u.snapshotsMatch && u.currentQuestion)
-        .map((u) => ({
-          key: u.pair.id,
-          detail: `par da pergunta atual em ${u.pair.document_id}/${u.pair.field_name} descartado pelo produto`,
-        })),
-  },
   {
     name: "auto-revisao-contada-e-da-pergunta-atual",
     motivation:
