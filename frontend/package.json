@@ -41,6 +41,7 @@
     "test:db:llm-runs-round": "npm run test:db:psql -- supabase/tests/llm_runs_round.test.sql",
     "test:db:reviews-round": "npm run test:db:psql -- supabase/tests/reviews_round_id.test.sql",
     "test:db:reviews-field-hash": "npm run test:db:psql -- supabase/tests/reviews_field_hash.test.sql",
+    "test:db:judgments-follow-question": "npm run test:db:psql -- supabase/tests/judgments_follow_question.test.sql",
     "test:db:psql": "bash scripts/run-sql-test.sh",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
