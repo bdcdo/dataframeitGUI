@@ -21,7 +21,8 @@ INSERT INTO auth.users (id, email) VALUES
   ('b0c00000-0000-0000-0000-000000000001', 'common-owner@example.test'),
   ('b0c00000-0000-0000-0000-000000000002', 'common-coder-1@example.test'),
   ('b0c00000-0000-0000-0000-000000000003', 'common-coder-2@example.test'),
-  ('b0c00000-0000-0000-0000-000000000004', 'common-outsider@example.test');
+  ('b0c00000-0000-0000-0000-000000000004', 'common-outsider@example.test'),
+  ('b0c00000-0000-0000-0000-000000000005', 'common-coder-other-round@example.test');
 INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_sync_version)
   SELECT id::TEXT, id, 1 FROM auth.users WHERE id::TEXT LIKE 'b0c00000-%';
 
@@ -42,6 +43,8 @@ INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_s
 --       veredito. A métrica conta o LLM como certo: sem valor.
 --   t3  texto: o par "=" que juntaria os pesquisadores ao LLM tem snapshot
 --       velho e não vale. Sem valor.
+--   s6  single: a arbitragem escolheu a própria resposta do LLM, e o veredito
+--       é ela, mesmo com o texto "B". Sem valor.
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
   ('b0c10000-0000-0000-0000-000000000001', 'Common value test', 'b0c00000-0000-0000-0000-000000000001', 'compare_llm',
    '[{"id":"b0f10000-0000-4000-8000-000000000001","name":"s","type":"single","options":["A","B"],"description":"Única","hash":"s00000000001"},
@@ -55,7 +58,8 @@ INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fie
      {"id":"b0f10000-0000-4000-8000-000000000009","name":"cm","type":"multi","options":["A","B"],"description":"Condicional múltipla","condition":{"field":"g0","equals":"Sim"},"hash":"c00000000002"},
      {"id":"b0f10000-0000-4000-8000-000000000010","name":"t","type":"text","options":null,"description":"Livre","hash":"t00000000001"},
      {"id":"b0f10000-0000-4000-8000-000000000011","name":"t2","type":"text","options":null,"description":"Par com o veredito","hash":"t00000000002"},
-     {"id":"b0f10000-0000-4000-8000-000000000012","name":"t3","type":"text","options":null,"description":"Par velho","hash":"t00000000003"}]');
+     {"id":"b0f10000-0000-4000-8000-000000000012","name":"t3","type":"text","options":null,"description":"Par velho","hash":"t00000000003"},
+     {"id":"b0f10000-0000-4000-8000-000000000013","name":"s6","type":"single","options":["A","B"],"description":"Escolhida é o LLM","hash":"s00000000006"}]');
 INSERT INTO public.project_members (project_id, user_id, role, can_resolve) VALUES
   ('b0c10000-0000-0000-0000-000000000001', 'b0c00000-0000-0000-0000-000000000002', 'pesquisador', false),
   ('b0c10000-0000-0000-0000-000000000001', 'b0c00000-0000-0000-0000-000000000003', 'pesquisador', false);
@@ -66,13 +70,36 @@ INSERT INTO public.documents (id, project_id, title, text) VALUES
 -- de `is_latest`, com as respostas que a arbitragem antiga escolheu.
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, is_latest, answers) VALUES
   ('b0c30000-0000-0000-0000-000000000001', 'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', NULL, 'llm', true,
-   '{"s":"A","s2":"A","s3":"A","s4":"","s5":"Z","m":["B","A"],"g0":"Não","cm":[],"t":"Adalimumabe","t2":"Dipirona","t3":"Soro"}'),
+   '{"s":"A","s2":"A","s3":"A","s4":"","s5":"Z","m":["B","A"],"g0":"Não","cm":[],"t":"Adalimumabe","t2":"Dipirona","t3":"Soro","s6":"A"}'),
   ('b0c30000-0000-0000-0000-000000000002', 'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', 'b0c00000-0000-0000-0000-000000000002', 'humano', true,
-   '{"s":"A","s2":"A","s3":"A","s4":"","s5":"Z","m":["A","B"],"g0":"Não","t":"adalimumabé ","t2":"Dipirona","t3":"soro fisiologico"}'),
+   '{"s":"A","s2":"A","s3":"A","s4":"","s5":"Z","m":["A","B"],"g0":"Não","t":"adalimumabé ","t2":"Dipirona","t3":"soro fisiologico","s6":"A"}'),
   ('b0c30000-0000-0000-0000-000000000003', 'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', 'b0c00000-0000-0000-0000-000000000003', 'humano', true,
-   '{"s":" a","s2":"B","s3":"A","s4":"","s5":"Z","m":["B","A"],"g0":"Não","t":"ADA","t2":"dipirona","t3":"Soro fisiológico"}'),
+   '{"s":" a","s2":"B","s3":"A","s4":"","s5":"Z","m":["B","A"],"g0":"Não","t":"ADA","t2":"dipirona","t3":"Soro fisiológico","s6":"A"}'),
   ('b0c30000-0000-0000-0000-000000000004', 'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', 'b0c00000-0000-0000-0000-000000000003', 'humano', false,
-   '{"s":"B","s2":"B","s4":"A","s5":"A","m":["C"],"g0":"Sim","c":"A","cm":["A"],"t":"Outro remédio","t2":"Metamizol","t3":"Glicose"}');
+   '{"s":"B","s2":"B","s4":"A","s5":"A","m":["C"],"g0":"Sim","c":"A","cm":["A"],"t":"Outro remédio","t2":"Metamizol","t3":"Glicose","s6":"B"}');
+
+-- Um pesquisador com resposta `is_latest` numa rodada que não é a corrente,
+-- discordando do LLM em `s`. Não é pesquisador atual: o valor comum lê só a
+-- rodada corrente. A troca de rodada o teria arquivado; a fixture o cria direto,
+-- trocando a rodada corrente só durante o INSERT, porque o gatilho de escrita
+-- só aceita resposta nova na rodada corrente.
+INSERT INTO public.rounds (id, project_id, label) VALUES
+  ('b0c50000-0000-0000-0000-000000000001', 'b0c10000-0000-0000-0000-000000000001', 'Rodada paralela');
+CREATE TEMP TABLE common_round (id UUID) ON COMMIT DROP;
+INSERT INTO common_round SELECT current_round_id FROM public.projects WHERE id = 'b0c10000-0000-0000-0000-000000000001';
+UPDATE public.projects SET current_round_id = 'b0c50000-0000-0000-0000-000000000001' WHERE id = 'b0c10000-0000-0000-0000-000000000001';
+INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, is_latest, answers) VALUES
+  ('b0c30000-0000-0000-0000-000000000005', 'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001',
+   'b0c00000-0000-0000-0000-000000000005', 'humano', true, '{"s":"B"}');
+UPDATE public.projects SET current_round_id = (SELECT id FROM common_round) WHERE id = 'b0c10000-0000-0000-0000-000000000001';
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.responses WHERE id = 'b0c30000-0000-0000-0000-000000000005'
+                 AND is_latest AND round_id = 'b0c50000-0000-0000-0000-000000000001')
+     OR (SELECT current_round_id FROM public.projects WHERE id = 'b0c10000-0000-0000-0000-000000000001') = 'b0c50000-0000-0000-0000-000000000001' THEN
+    RAISE EXCEPTION 'FALHOU: fixture do pesquisador de outra rodada';
+  END IF;
+END $$;
 
 INSERT INTO public.response_equivalences (project_id, document_id, field_name, response_a_id, response_b_id,
   reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot) VALUES
@@ -97,9 +124,11 @@ WHERE field_name = 't3' AND project_id = 'b0c10000-0000-0000-0000-000000000001';
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id)
 SELECT ('b0c40000-0000-0000-0000-0000000000' || lpad(n::TEXT, 2, '0'))::UUID,
   'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', f, 'b0c00000-0000-0000-0000-000000000001', v,
-  CASE WHEN f = 's3' THEN 'b0c30000-0000-0000-0000-000000000002'::UUID ELSE 'b0c30000-0000-0000-0000-000000000004'::UUID END
+  CASE WHEN f = 's3' THEN 'b0c30000-0000-0000-0000-000000000002'::UUID
+       WHEN f = 's6' THEN 'b0c30000-0000-0000-0000-000000000001'::UUID
+       ELSE 'b0c30000-0000-0000-0000-000000000004'::UUID END
 FROM (VALUES (1, 's', 'B'), (2, 's2', 'B'), (3, 's3', 'A'), (4, 's4', 'A'), (5, 's5', 'A'), (6, 'm', '{"C":true}'),
-             (7, 'c', 'A'), (8, 'cm', '{"A":true}'), (9, 't', 'Outro remédio'), (10, 't2', 'Metamizol'), (11, 't3', 'Glicose'))
+             (7, 'c', 'A'), (8, 'cm', '{"A":true}'), (9, 't', 'Outro remédio'), (10, 't2', 'Metamizol'), (11, 't3', 'Glicose'), (12, 's6', 'B'))
   AS v(n, f, v);
 
 -- Os contextos, abertos como o dono (creator) do projeto.
@@ -110,6 +139,7 @@ INSERT INTO common_cases (field, review, expected) VALUES
   ('s3', 'b0c40000-0000-0000-0000-000000000003', NULL),
   ('s4', 'b0c40000-0000-0000-0000-000000000004', NULL),
   ('s5', 'b0c40000-0000-0000-0000-000000000005', NULL),
+  ('s6', 'b0c40000-0000-0000-0000-000000000012', NULL),
   ('m', 'b0c40000-0000-0000-0000-000000000006', '["B","A"]'),
   ('c', 'b0c40000-0000-0000-0000-000000000007', '""'),
   ('cm', 'b0c40000-0000-0000-0000-000000000008', '[]'),
