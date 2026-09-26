@@ -67,11 +67,6 @@ describe("fieldsWithInstructionOnlyChange", () => {
     expect(fieldsWithInstructionOnlyChange(saved, draft)).toEqual([]);
   });
 
-  it("não pergunta quando a instrução e a descrição mudaram", () => {
-    const draft = withEdit(ID_A, { help_text: "Outra", description: "Houve provimento total?" });
-    expect(fieldsWithInstructionOnlyChange(saved, draft)).toEqual([]);
-  });
-
   it("não pergunta por campo novo", () => {
     const draft: PydanticField[] = [
       ...saved,

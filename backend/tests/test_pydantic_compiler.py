@@ -756,7 +756,7 @@ class Analysis(BaseModel):
 # Revisão da pergunta ("Muda como responder" no editor de schema). O código
 # abaixo é o que `generatePydanticCode` emite para o campo com o contador (texto
 # copiado da saída do gerador), e os hashes são os mesmos literais de
-# `computeFieldHash — revisão da pergunta` em schema-utils-versioning.test.ts:
+# `computeFieldHash: revisão da pergunta` em schema-utils-versioning.test.ts:
 # é isso que prende a paridade entre as duas fórmulas.
 _QUESTION_REVISION_CODE = """from pydantic import BaseModel, Field
 from typing import Literal, Optional

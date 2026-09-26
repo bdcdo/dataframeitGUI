@@ -145,7 +145,7 @@ describe("reconstructSnapshotsByVersion", () => {
 // A revisão da pergunta entra no hash, e o backfill reconstrói o hash de cada
 // versão a partir do before/after do log: sem o contador registrado ali, a
 // versão anterior à revisão sairia com o hash da posterior.
-describe("buildTimelineFromPersistedVersions — revisão da pergunta", () => {
+describe("buildTimelineFromPersistedVersions: revisão da pergunta", () => {
   it("cada versão tem o hash do seu contador, e o nulo do log vale como ausente", () => {
     const [entry] = diffFields(
       [{ id: "00000000-0000-4000-8000-000000000004", name: "campo1", type: "text", options: null, description: "d", help_text: "a" }],
