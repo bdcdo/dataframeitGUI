@@ -676,7 +676,7 @@ describe("assembleExport: validade do veredito (#758)", () => {
       const x = field("x", { hash: HASH, condition });
       const decision = decidedOn("llm_correct", { condition }, { condition }, { present: false, value: null });
       const withDecision = exportWith(x, { g0: "Não" }, [decision]);
-      expect(withDecision.cell).toBe("");
+      expect(withDecision.cell).toBe("[NÃO SE APLICA]");
       expect(withDecision.comments).toContain("Erro humano");
     });
 
