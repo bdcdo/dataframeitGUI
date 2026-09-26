@@ -11,7 +11,7 @@ const responses = [
   { id: "rllm", respondent_type: "llm" as const, respondent_id: null, answers: { x: "LLM" } },
   { id: "rh", respondent_type: "humano" as const, respondent_id: "person", answers: { x: "Humano" } },
 ].map((r) => ({ ...r, document_id: "doc1", respondent_name: r.respondent_type,
-  is_latest: true, justifications: null, created_at: "2026-09-01T00:00:00Z", pydantic_hash: null,
+  is_latest: true, is_partial: false, justifications: null, created_at: "2026-09-01T00:00:00Z", pydantic_hash: null,
   answer_field_hashes: {}, schema_version_major: null, schema_version_minor: null, schema_version_patch: null }));
 const review = { id: "review1", document_id: "doc1", field_name: "x", verdict: "Humano",
   chosen_response_id: "rh", comment: "Revisão original", reviewer_id: "person", created_at: "2026-09-02T00:00:00Z",

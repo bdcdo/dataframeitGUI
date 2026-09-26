@@ -148,8 +148,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("campo")],
       documents: [doc("A")],
       responses: [
-        { id: "resp-1", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
-        { id: "resp-2", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
+        { id: "resp-1", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { campo: "sim" } },
+        { id: "resp-2", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { campo: "sim" } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(1);
@@ -161,8 +161,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("campo")],
       documents: [doc("A")],
       responses: [
-        { id: "resp-3", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
-        { id: "resp-4", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "nao" } },
+        { id: "resp-3", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { campo: "sim" } },
+        { id: "resp-4", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { campo: "nao" } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -174,7 +174,7 @@ describe("assembleExport — auto-fill de concordância", () => {
       minResponses: 2,
       documents: [doc("A")],
       responses: [
-        { id: "resp-5", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
+        { id: "resp-5", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { campo: "sim" } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -185,8 +185,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("opts", { type: "multi", options: ["x", "y"] })],
       documents: [doc("A")],
       responses: [
-        { id: "resp-6", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x"] } },
-        { id: "resp-7", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["x"] } },
+        { id: "resp-6", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { opts: ["x"] } },
+        { id: "resp-7", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { opts: ["x"] } },
       ],
     });
     expect(d.verdicts.rows[0][idx(d.verdicts, "opts")]).toBe("x");
@@ -197,8 +197,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("opts", { type: "multi", options: ["x", "y"] })],
       documents: [doc("A")],
       responses: [
-        { id: "resp-8", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x"] } },
-        { id: "resp-9", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["y"] } },
+        { id: "resp-8", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { opts: ["x"] } },
+        { id: "resp-9", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { opts: ["y"] } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -212,8 +212,8 @@ describe("assembleExport — auto-fill de concordância", () => {
       fields: [field("opts", { type: "multi", options: ["x"] })],
       documents: [doc("A")],
       responses: [
-        { id: "resp-10", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { opts: ["x", "z"] } },
-        { id: "resp-11", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { opts: ["x"] } },
+        { id: "resp-10", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { opts: ["x", "z"] } },
+        { id: "resp-11", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { opts: ["x"] } },
       ],
     });
     expect(d.verdicts.rows).toHaveLength(0);
@@ -228,8 +228,8 @@ describe("assembleExport — prioridade do veredicto sobre a concordância", () 
       fields: [field("campo")],
       documents: [doc("A")],
       responses: [
-        { id: "resp-12", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "concordado" } },
-        { id: "resp-13", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "concordado" } },
+        { id: "resp-12", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { campo: "concordado" } },
+        { id: "resp-13", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { campo: "concordado" } },
       ],
       reviews: [
         { document_id: "A", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "pular", comment: "nota do revisor" },
@@ -252,7 +252,7 @@ describe("assembleExport — linha source=documento", () => {
         doc("B", { external_id: "EXT-B" }), // órfão
       ],
       responses: [
-        { id: "resp-14", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "v" } },
+        { id: "resp-14", document_id: "A", respondent_name: "R1", respondent_type: "llm", is_partial: false, answers: { campo: "v" } },
       ],
     });
     const sources = d.csv.rows.map((r) => r[idx(d.csv, "source")]);
@@ -288,8 +288,8 @@ describe("assembleExport — colunas originais no CSV", () => {
         }),
       ],
       responses: [
-        { id: "resp-15", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "a" } },
-        { id: "resp-16", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "b" } },
+        { id: "resp-15", document_id: "A", respondent_name: "R1", respondent_type: "llm", is_partial: false, answers: { campo: "a" } },
+        { id: "resp-16", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { campo: "b" } },
       ],
     });
     const tribunalCol = idx(d.csv, "tribunal");
@@ -309,7 +309,8 @@ describe("assembleExport — documentos antigos sem linha original (US3)", () =>
     });
     // Sem colunas originais: aba Documentos = document_id + document_title só.
     expect(d.documents.headers).toEqual(["document_id", "document_title"]);
-    // CSV = 5 controles + campo do schema + reviewer_comments (sem originais).
+    // CSV = 5 controles + campo do schema + reviewer_comments + rascunho (sem
+    // originais).
     expect(d.csv.headers).toEqual([
       "document_id",
       "document_title",
@@ -318,6 +319,7 @@ describe("assembleExport — documentos antigos sem linha original (US3)", () =>
       "source",
       "campo",
       "reviewer_comments",
+      "rascunho",
     ]);
   });
 
@@ -361,8 +363,8 @@ describe("assembleExport — filtra à base exportada (achado C1)", () => {
       documents: [doc("A", { external_id: "EXT-A" })],
       // resposta e review de um doc 'ghost' que não está na base (ex.: excluído).
       responses: [
-        { id: "resp-17", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "v" } },
-        { id: "resp-18", document_id: "ghost", respondent_name: "RX", respondent_type: "llm", answers: { campo: "x" } },
+        { id: "resp-17", document_id: "A", respondent_name: "R1", respondent_type: "llm", is_partial: false, answers: { campo: "v" } },
+        { id: "resp-18", document_id: "ghost", respondent_name: "RX", respondent_type: "llm", is_partial: false, answers: { campo: "x" } },
       ],
       reviews: [
         { document_id: "ghost", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "ambiguo", comment: null },
@@ -394,8 +396,8 @@ describe("assembleExport — inteiro teor só na aba Documentos", () => {
         }),
       ],
       responses: [
-        { id: "resp-19", document_id: "A", respondent_name: "R1", respondent_type: "llm", answers: { campo: "a" } },
-        { id: "resp-20", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "b" } },
+        { id: "resp-19", document_id: "A", respondent_name: "R1", respondent_type: "llm", is_partial: false, answers: { campo: "a" } },
+        { id: "resp-20", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { campo: "b" } },
       ],
     });
 
@@ -508,8 +510,8 @@ describe("assembleExport: validade do veredito (#758)", () => {
     fields: [field("campo", { hash: HASH })],
     documents: [doc("A")],
     responses: [
-      { id: "resp-21", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
-      { id: "resp-22", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
+      { id: "resp-21", document_id: "A", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { campo: "sim" } },
+      { id: "resp-22", document_id: "A", respondent_name: "R2", respondent_type: "codificacao", is_partial: false, answers: { campo: "sim" } },
     ],
   };
   const review = (overrides: Partial<{ id: string; verdict: string; comment: string | null; created_at: string; field_hash: string | null; chosen_response_id: string | null }> = {}) => ({
@@ -567,8 +569,8 @@ describe("assembleExport: validade do veredito (#758)", () => {
       fields: [field("x", { hash: HASH })],
       documents: [doc("doc1")],
       responses: [
-        { id: "resp-23", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { x: "LLM" } },
-        { id: "resp-24", document_id: "doc1", respondent_name: "R1", respondent_type: "codificacao", answers: { x: "Humano" } },
+        { id: "resp-23", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", is_partial: false, answers: { x: "LLM" } },
+        { id: "resp-24", document_id: "doc1", respondent_name: "R1", respondent_type: "codificacao", is_partial: false, answers: { x: "Humano" } },
       ],
     };
     const source = (field_hash: string) => ({
@@ -622,7 +624,7 @@ describe("assembleExport: validade do veredito (#758)", () => {
 
 describe("assembleExport: células sem veredito", () => {
   const resp = (id: string, type: "humano" | "llm", value: unknown, docId = "A"): ExportResponse => ({
-    id, document_id: docId, respondent_name: id, respondent_type: type, answers: { campo: value },
+    id, document_id: docId, respondent_name: id, respondent_type: type, is_partial: false, answers: { campo: value },
   });
   // Par "=" com os snapshots iguais às respostas atuais, salvo quando o teste
   // passa outro.
@@ -693,7 +695,7 @@ describe("assembleExport: células sem veredito", () => {
     const filho = field("filho", { condition: { field: "pai", equals: "sim" } });
     const neto = field("neto", { condition: { field: "filho", equals: "Sim" } });
     const answering = (id: string, type: "humano" | "llm", answers: Record<string, unknown>): ExportResponse => ({
-      id, document_id: "A", respondent_name: id, respondent_type: type, answers,
+      id, document_id: "A", respondent_name: id, respondent_type: type, is_partial: false, answers,
     });
     // Veredito do revisor sobre o pai: fixa o valor dele no Gabarito
     // independentemente das respostas.
@@ -917,8 +919,8 @@ describe("assembleExport: células sem veredito", () => {
           fields: [pai, x],
           documents: [doc("doc1")],
           responses: [
-            { id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { pai: "sim", x: "LLM" } },
-            { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "humano", answers: { pai: "sim", x: "Humano" } },
+            { id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", is_partial: false, answers: { pai: "sim", x: "LLM" } },
+            { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "humano", is_partial: false, answers: { pai: "sim", x: "Humano" } },
           ],
           reviews: [{ ...paiVerdict("não"), document_id: "doc1" }],
           errorResolutions: [resolutionFixture("llm_correct")],
@@ -981,10 +983,10 @@ describe("assembleExport: células sem veredito", () => {
     const oculto = field("oculto", { target: "none" });
     const before = { answer_field_hashes: { pai: "h" } };
     const human = (id: string): ExportResponse => ({
-      id, document_id: "A", respondent_name: id, respondent_type: "humano", answers: { pai: "sim" }, ...before,
+      id, document_id: "A", respondent_name: id, respondent_type: "humano", is_partial: false, answers: { pai: "sim" }, ...before,
     });
     const llm = (answers: Record<string, unknown>): ExportResponse => ({
-      id: "l", document_id: "A", respondent_name: "LLM", respondent_type: "llm", answers,
+      id: "l", document_id: "A", respondent_name: "LLM", respondent_type: "llm", is_partial: false, answers,
     });
     const base = (overrides: Partial<AssembleInput> = {}) => exported({
       fields: [pai, extra, interno, oculto],
@@ -1026,7 +1028,7 @@ describe("assembleExport: células sem veredito", () => {
     it("ligada: o branco do pesquisador legado no campo llm_only não diverge do LLM", () => {
       // Sem `answer_field_hashes`, a resposta conta como tendo visto todo campo.
       const legacy = (id: string): ExportResponse => ({
-        id, document_id: "A", respondent_name: id, respondent_type: "humano", answers: { pai: "sim" },
+        id, document_id: "A", respondent_name: id, respondent_type: "humano", is_partial: false, answers: { pai: "sim" },
       });
       const d = base({ fillFromLlm: true, fields: [pai, interno], responses: [legacy("h1"), legacy("h2"), llm({ pai: "sim", interno: "só dele" })] });
       expect(cell(d, "interno")).toBe("só dele");
@@ -1052,7 +1054,7 @@ describe("assembleExport: células sem veredito", () => {
       const fCell = (d: ReturnType<typeof run>) => [cell(d, "f"), pendingOf(d).filter(([, name]) => name === "f")];
       // Resposta legada, sem `answer_field_hashes`: conta como tendo visto todo campo.
       const coded = (id: string, answers: Record<string, unknown>): ExportResponse => ({
-        id, document_id: "A", respondent_name: id, respondent_type: "humano", answers,
+        id, document_id: "A", respondent_name: id, respondent_type: "humano", is_partial: false, answers,
       });
       const bothModes = (overrides: Partial<AssembleInput>) =>
         [false, true].map((fillFromLlm) => exported({ fields: [interno, f], ...overrides, fillFromLlm }));
@@ -1105,7 +1107,7 @@ describe("assembleExport: células sem veredito", () => {
         // do LLM em `extra` diria que `f` não se aplica.
         const fOnExtra = field("f", { condition: { field: "extra", exists: false } });
         const codedBefore = (id: string, answers: Record<string, unknown>): ExportResponse => ({
-          id, document_id: "A", respondent_name: id, respondent_type: "humano", answers, answer_field_hashes: { f: "h" },
+          id, document_id: "A", respondent_name: id, respondent_type: "humano", is_partial: false, answers, answer_field_hashes: { f: "h" },
         });
         const modes = (overrides: Partial<AssembleInput>) => bothModes({ fields: [extra, fOnExtra], ...overrides });
 
@@ -1213,8 +1215,8 @@ describe("assembleExport: células sem veredito", () => {
         fields: [field("x", { hash: "h" })],
         documents: [doc("doc1")],
         responses: [
-          { id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { x: "LLM" } },
-          { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "humano", answers: { x: "Humano" } },
+          { id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", is_partial: false, answers: { x: "LLM" } },
+          { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "humano", is_partial: false, answers: { x: "Humano" } },
         ],
         reviews: [{ id: "review1", document_id: "doc1", field_name: "x", verdict: "Humano", comment: null,
           created_at: "2026-01-01T00:00:00Z", field_hash: "h", chosen_response_id: "rh" }],
@@ -1277,6 +1279,108 @@ describe("assembleExport: células sem veredito", () => {
     it("documento só com a resposta do LLM não entra nas Pendências", () => {
       const d = exported({ responses: [resp("l", "llm", "Sim")] });
       expect(d.pending.rows).toEqual([]);
+    });
+  });
+
+  describe("rascunhos (opção includeDrafts)", () => {
+    const draft = (id: string, value: unknown): ExportResponse => ({ ...resp(id, "humano", value), is_partial: true });
+
+    it("desligada: o rascunho não completa o consenso, e a célula vai para Pendências com o motivo das demais", () => {
+      const responses = [resp("h1", "humano", "Sim"), draft("h2", "Sim")];
+      const d = exported({ responses });
+      expect(cellOf(d)).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
+    });
+
+    it("ligada: o rascunho conta como antes", () => {
+      const d = exported({ responses: [resp("h1", "humano", "Sim"), draft("h2", "Sim")], includeDrafts: true });
+      expect(cellOf(d)).toBe("Sim");
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("desligada: o rascunho divergente não abre divergência entre pesquisadores", () => {
+      const responses = [resp("h1", "humano", "Sim"), draft("h2", "Não"), resp("l", "llm", "Sim")];
+      expect(pendingOf(exported({ responses, includeDrafts: true }))).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
+      const d = exported({ responses });
+      expect(cellOf(d)).toBe("Sim");
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("desligada: documento em que o pesquisador só tem rascunho conta como não codificado", () => {
+      const responses = [draft("h1", "Sim"), resp("l", "llm", "Não")];
+      expect(pendingOf(exported({ responses, includeDrafts: true }))).toEqual([["A", "campo", "aguarda arbitragem"]]);
+      const d = exported({ responses });
+      expect(d.verdicts.rows).toEqual([]);
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("sem o rascunho, a célula fica sem pesquisador e a opção do LLM a preenche; com ele, não", () => {
+      const responses = [draft("h1", "Sim"), resp("l", "llm", "Não")];
+      const semRascunho = exported({ responses, fillFromLlm: true });
+      expect(cellOf(semRascunho)).toBe("Não");
+      expect(semRascunho.llmOnly.rows).toEqual([["A", "", "campo"]]);
+      expect(semRascunho.pending.rows).toEqual([]);
+      const comRascunho = exported({ responses, fillFromLlm: true, includeDrafts: true });
+      expect(cellOf(comRascunho)).toBe("");
+      expect(comRascunho.llmOnly.rows).toEqual([]);
+      expect(pendingOf(comRascunho)).toEqual([["A", "campo", "aguarda arbitragem"]]);
+    });
+
+    it("par \"=\" que só se fecha pelo rascunho: desligada, o par cai e os pesquisadores divergem, como na Comparação", () => {
+      // O rascunho a é a ponte: a = b e a = c, com b e c diferentes entre si.
+      const [a, b, c] = [draft("a", "NI"), resp("b", "humano", "N/A"), resp("c", "humano", "Não informado")];
+      const equivalences = [pair(a, b), pair(a, c)];
+      const comRascunho = exported({ responses: [a, b, c], equivalences, includeDrafts: true });
+      expect(cellOf(comRascunho)).toBe("N/A");
+      expect(comRascunho.pending.rows).toEqual([]);
+      const d = exported({ responses: [a, b, c], equivalences });
+      expect(cellOf(d)).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
+    });
+
+    it("auto-revisão decidida sobre um rascunho vale nas duas posições da opção", () => {
+      const responses = [draft("h1", "Sim"), resp("l", "llm", "Não")];
+      const finalAnswers: ExportFinalAnswer[] = [{ document_id: "A", field_name: "campo", provenance: "arbitrado", answer: "Sim" }];
+      for (const includeDrafts of [false, true]) {
+        const d = exported({ responses, finalAnswers, includeDrafts });
+        expect(cellOf(d)).toBe("Sim");
+        expect(d.pending.rows).toEqual([]);
+      }
+    });
+
+    it("resposta sem is_partial conta como rascunho, como na Comparação", () => {
+      const semColuna = { ...resp("h2", "humano", "Sim") } as Partial<ExportResponse>;
+      delete semColuna.is_partial;
+      const d = exported({ responses: [resp("h1", "humano", "Sim"), semColuna as ExportResponse] });
+      expect(cellOf(d)).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
+    });
+
+    it("Respostas e CSV mostram o rascunho nas duas posições da opção, marcado na última coluna", () => {
+      const responses = [resp("h1", "humano", "Sim"), draft("h2", "Sim"), resp("l", "llm", "Sim")];
+      for (const includeDrafts of [false, true]) {
+        const d = exported({ documents: [doc("A"), doc("B")], responses, includeDrafts });
+        expect(d.responses.headers.at(-1)).toBe("rascunho");
+        expect(d.responses.rows.map((r) => [r[2], r.at(-1)])).toEqual([["h1", "não"], ["h2", "sim"], ["l", "não"]]);
+        expect(d.csv.headers.slice(-2)).toEqual(["reviewer_comments", "rascunho"]);
+        const bySource = d.csv.rows.map((r) => [r[idx(d.csv, "source")], r[idx(d.csv, "respondent")], r.at(-1)]);
+        // Linha de Gabarito e de documento não é resposta: a marca fica vazia.
+        expect(bySource).toEqual([
+          ["codificacao", "h1", "não"], ["codificacao", "h2", "sim"], ["llm", "l", "não"],
+          ["comparacao", "", ""], ["documento", "", ""],
+        ]);
+      }
+    });
+
+    it("coluna original chamada rascunho não colide com a marca", () => {
+      const d = run({
+        fields: [field("campo")],
+        documents: [doc("A", { columns: ["rascunho"], row: { rascunho: "x" } })],
+        responses: [draft("h1", "Sim")],
+      });
+      expect(d.csv.headers).toContain("original_rascunho");
+      expect(d.csv.headers.filter((h) => h === "rascunho")).toHaveLength(1);
+      expect(d.csv.rows[0][idx(d.csv, "original_rascunho")]).toBe("x");
     });
   });
 });

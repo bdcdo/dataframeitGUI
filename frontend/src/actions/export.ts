@@ -24,6 +24,8 @@ export type GetExportDatasetResult = ExportDataset | { error: string };
 export interface ExportOptions {
   /** Ver `AssembleInput.fillFromLlm`. */
   fillFromLlm?: boolean;
+  /** Ver `AssembleInput.includeDrafts`. */
+  includeDrafts?: boolean;
 }
 
 // Retorna o conjunto completo do projeto (documentos + respostas + gabarito)
@@ -67,10 +69,12 @@ export async function getExportDataset(
         .is("excluded_at", null),
       ["id"],
     ),
+    // `is_partial` marca o rascunho (`AssembleInput.includeDrafts`); sem a
+    // coluna, toda resposta contaria como rascunho.
     fetchAllPaged<ExportResponse>(() =>
       supabase
         .from("responses")
-        .select("id, document_id, respondent_name, respondent_type, answers, answer_field_hashes")
+        .select("id, document_id, respondent_name, respondent_type, answers, answer_field_hashes, is_partial")
         .eq("project_id", projectId)
         .eq("is_latest", true),
       ["id"],
@@ -132,7 +136,8 @@ export async function getExportDataset(
     errorResolutions,
     equivalences,
     finalAnswers: finalAnswers.data,
-    // O argumento chega do cliente: só o `true` literal liga a opção.
+    // O argumento chega do cliente: só o `true` literal liga as opções.
     fillFromLlm: options.fillFromLlm === true,
+    includeDrafts: options.includeDrafts === true,
   });
 }
