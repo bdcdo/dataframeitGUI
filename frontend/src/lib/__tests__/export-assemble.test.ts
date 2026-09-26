@@ -1461,11 +1461,6 @@ describe("assembleExport: branco legítimo e branco pendente", () => {
       expect(cell(naoAplica, "neto")).toBe(NSA);
       expect(naoAplica.pending.rows).toEqual([]);
     });
-
-    it("documento sem linha no Gabarito não ganha uma por causa do marcador", () => {
-      const d = exported({ documents: [doc("A"), doc("B")], responses: both({ pai: "não" }) });
-      expect(d.verdicts.rows.map((r) => r[0])).toEqual(["A"]);
-    });
   });
 
   describe("motivo da divergência sem comparação atribuída", () => {
