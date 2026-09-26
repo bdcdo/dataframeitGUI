@@ -185,18 +185,6 @@ describe("métrica: validade do veredito no lugar da rodada", () => {
     expect(errors).toHaveLength(0);
   });
 
-  it("veredito inválido mais recente não esconde o válido da mesma célula", () => {
-    const { errors } = run({
-      responses: [llm("B"), response({ answers: { x: "A" } }), response({ id: "rh2", answers: { x: "B" } })],
-      reviews: [
-        review({ id: "valid", verdict: "A", created_at: "2026-01-01T00:00:00Z" }),
-        review({ id: "stale", verdict: "B", chosen_response_id: "rh2", field_hash: OLD_HASH, created_at: "2026-03-01T00:00:00Z" }),
-      ],
-    });
-    expect(errors).toHaveLength(1);
-    expect(errors[0].sourceId).toBe("valid");
-  });
-
   it.each([
     ["ambiguo", "ambiguo"],
     ["resposta nova digitada", "Outra coisa"],
@@ -210,18 +198,6 @@ describe("métrica: validade do veredito no lugar da rodada", () => {
     });
     expect(errors).toEqual([]);
     expect(reviewedEntries).toEqual([]);
-  });
-
-  it("entre válidas vence a mais recente por created_at", () => {
-    const { errors } = run({
-      responses: [llm("B"), response({ answers: { x: "A" } }), response({ id: "rh2", answers: { x: "B" } })],
-      reviews: [
-        review({ id: "z-antiga", verdict: "B", chosen_response_id: "rh2", created_at: "2026-01-01T00:00:00Z" }),
-        review({ id: "a-nova", verdict: "A", created_at: "2026-03-01T00:00:00Z" }),
-      ],
-    });
-    expect(errors).toHaveLength(1);
-    expect(errors[0].sourceId).toBe("a-nova");
   });
 });
 

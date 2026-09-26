@@ -6,7 +6,6 @@ import {
   gabaritoReviews,
   REVIEW_BASE_DATA_LIMIT,
   resolveViewedRespondentId,
-  type ReviewRow,
 } from "@/lib/reviews/queries";
 import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
 import type { PydanticField } from "@/lib/types";
@@ -141,27 +140,11 @@ describe("resolveViewedRespondentId — viewAsUser só para coordenador/criador/
   });
 });
 
-describe("gabaritoReviews: a pergunta, e não a rodada, decide (#758)", () => {
-  const field = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", options: null, description: "", hash: "aaaaaaaaaaaa" } as PydanticField;
-  const fields = new Map([["x", field], ["y", { ...field, name: "y" }]]);
-  const row = (id: string, overrides: Partial<ReviewRow> = {}): ReviewRow => ({
-    id, document_id: "d1", field_name: "x", verdict: "sim", chosen_response_id: null,
-    comment: null, reviewer_id: null, created_at: "2026-01-01T00:00:00Z", field_hash: "aaaaaaaaaaaa", ...overrides,
-  });
-
-  it("descarta veredito sobre outra versão da pergunta e mantém o da pergunta atual", () => {
-    expect(gabaritoReviews([row("r1", { field_hash: "ffffffffffff" }), row("r2", { field_name: "y" })], fields))
-      .toEqual([row("r2", { field_name: "y" })]);
-  });
-
-  it("entre vereditos válidos da mesma célula, vence o mais recente por created_at", () => {
-    expect(gabaritoReviews([row("r2"), row("r1", { created_at: "2026-02-01T00:00:00Z" })], fields).map((r) => r.id))
-      .toEqual(["r1"]);
-  });
-
-  it("empate de created_at desempata pelo maior id; query falhada (null) vira vazio", () => {
-    expect(gabaritoReviews([row("r1"), row("r2")], fields).map((r) => r.id)).toEqual(["r2"]);
-    expect(gabaritoReviews(null, fields)).toEqual([]);
+// A escolha da review por célula é de `pickValidCellReviews`, testada em
+// review-validity.test.ts.
+describe("gabaritoReviews", () => {
+  it("query falhada (null) vira Gabarito vazio", () => {
+    expect(gabaritoReviews(null, new Map())).toEqual([]);
   });
 });
 
