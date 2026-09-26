@@ -10,7 +10,7 @@ import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
   ERROR_DECISION_LABELS, blankAnswerFor, choosesValue, effectiveErrorResolution, hasResolutionValue, isBlankAnswer, isConditionalField, llmAnswersBlank, llmValueIsBlank,
   prefillFromValue, prefillFromVerdict, prefillLosesItems, startsBlank,
-  type BothCorrectPreview, type ErrorDecision, type ErrorResolutionContext, type ValueChoosingDecision,
+  type ErrorDecision, type ErrorResolutionContext, type ValueChoosingDecision,
 } from "@/lib/error-resolution";
 import { parsePydanticFields } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
@@ -21,11 +21,9 @@ import type { PydanticField } from "@/lib/types";
 
 // Reabrir não tem contexto; decidir só abre depois que o servidor devolveu o
 // contexto conferido (LlmInsightsView), então os dois estados são exclusivos.
-// `bothCorrectValue` só vem em "Ambos corretos": a prévia do que a decisão
-// grava, calculada pelo banco (#758).
 export type PendingErrorDecision =
   | { error: LlmError; decision: null; context: null }
-  | { error: LlmError; decision: ErrorDecision; context: ErrorResolutionContext; bothCorrectValue?: BothCorrectPreview };
+  | { error: LlmError; decision: ErrorDecision; context: ErrorResolutionContext };
 
 interface DecisionControls {
   isPending: boolean;
@@ -74,7 +72,7 @@ function GabaritoValue({ value, consequence }: { value: string; consequence: str
 // "Ambos corretos" grava o valor comum quando o veredito ficou para trás: os
 // pesquisadores atuais e o LLM concordam, e o veredito anterior diz outra
 // coisa (#758). Sem valor comum, o veredito continua valendo.
-function BothCorrectPreviewBox({ verdict, preview }: { verdict: string; preview: BothCorrectPreview | undefined }) {
+function BothCorrectPreviewBox({ verdict, preview }: { verdict: string; preview: LlmError["bothCorrectValue"] }) {
   if (preview) {
     return <GabaritoValue value={isBlankAnswer(preview.value) ? BLANK_ANSWER_LABEL : formatAnswer(preview.value)}
       consequence="É a resposta em que os pesquisadores atuais e o LLM concordam, e substitui o veredito anterior. Nenhum dos lados conta erro." />;
@@ -88,7 +86,7 @@ function BothCorrectPreviewBox({ verdict, preview }: { verdict: string; preview:
 
 function DecisionPreview({ decision, answer, verdict, blankAllowed, bothCorrectValue }: {
   decision: Exclude<ErrorDecision, ValueChoosingDecision>; answer: ErrorResolutionContext["llm_value"]; verdict: string; blankAllowed: boolean;
-  bothCorrectValue: BothCorrectPreview | undefined;
+  bothCorrectValue: LlmError["bothCorrectValue"];
 }) {
   if (decision === "discussion") return <div className="rounded-md border p-3 text-sm">Nada vai ao gabarito: este campo ficará sem valor final aprovado até uma nova decisão.</div>;
   if (decision === "both_correct") return <BothCorrectPreviewBox verdict={verdict} preview={bothCorrectValue} />;
@@ -223,13 +221,13 @@ function FieldValuePicker({ field, llmBlank, pending, decision, isPending, onClo
   </>;
 }
 
-function ConfirmDecision({ pending, decision, context, bothCorrectValue, isPending, onClose, onConfirm }: {
+function ConfirmDecision({ pending, decision, context, isPending, onClose, onConfirm }: {
   pending: PendingErrorDecision; decision: Exclude<ErrorDecision, ValueChoosingDecision>; context: ErrorResolutionContext;
-  bothCorrectValue: BothCorrectPreview | undefined;
 } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
+  const { bothCorrectValue } = pending.error;
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
   // "Erro humano" aprova o branco do LLM em condicional; "Ambos corretos" só
-  // quando o banco calculou o branco comum (LLM e pesquisadores em branco).
+  // quando a fila calculou o branco comum (LLM e pesquisadores em branco).
   // Sem ele, "Ambos corretos" declara correta uma resposta que precisa existir.
   const blankAllowed = (decision === "llm_correct" && llmAnswersBlank(context))
     || (decision === "both_correct" && !!bothCorrectValue);
@@ -251,7 +249,7 @@ function DecisionForm({ pending, ...controls }: { pending: PendingErrorDecision 
   </>;
   const { decision, context } = pending;
   if (choosesValue(decision)) return <VerdictPicker pending={pending} decision={decision} context={context} {...controls} />;
-  return <ConfirmDecision pending={pending} decision={decision} context={context} bothCorrectValue={pending.bothCorrectValue} {...controls} />;
+  return <ConfirmDecision pending={pending} decision={decision} context={context} {...controls} />;
 }
 
 export function ErrorDecisionDialog({ pending, ...controls }: { pending: PendingErrorDecision | null } & DecisionControls) {

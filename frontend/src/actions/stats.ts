@@ -5,7 +5,7 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
-import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type BothCorrectPreview, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
+import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 async function withResolutionAction(
   projectId: string,
@@ -265,12 +265,15 @@ async function pickHumanResponse(
 export async function prepareErrorResolution(input: {
   projectId: string; documentId: string; fieldName: string;
   llmResponseId: string; preferredHumanResponseId?: string | null; sourceKind: LlmErrorSource; sourceId: string;
-  /**
-   * A decisão que o revisor vai confirmar: decide se a fonte precisa valer, e
-   * em "Ambos corretos" busca também a prévia do valor.
-   */
+  /** A decisão que o revisor vai confirmar: decide se a fonte precisa valer. */
   decision: ErrorDecision;
-}): Promise<{ context?: ErrorResolutionContext; bothCorrectValue?: BothCorrectPreview; error?: string }> {
+  /**
+   * O valor comum que a fila calculou para "Ambos corretos"
+   * (`LlmError.bothCorrectValue`). Com ele a decisão grava valor próprio e,
+   * como as demais decisões com valor, não depende da fonte.
+   */
+  bothCorrectValue?: { value: unknown };
+}): Promise<{ context?: ErrorResolutionContext; error?: string }> {
   try {
     if (!await getAuthUser()) return { error: "Não autenticado" };
     const supabase = await createSupabaseServer();
@@ -288,15 +291,14 @@ export async function prepareErrorResolution(input: {
       // Sobre veredito que perdeu a validade, as decisões que gravam valor
       // próprio continuam possíveis; as que dependem dele, não. A mesma regra
       // em `set_error_resolution`, que recalcula o contexto com o mesmo flag.
-      p_require_valid_source: decisionDependsOnSource({ decision: input.decision, approved_value: null }),
+      p_require_valid_source: decisionDependsOnSource({
+        decision: input.decision,
+        approved_value: input.decision === "both_correct" ? input.bothCorrectValue?.value ?? null : null,
+      }),
     });
     if (error) return { error: error.message };
     const parsed = errorResolutionContextSchema.safeParse(data);
-    if (!parsed.success) return { error: "As fontes mudaram ou não estão disponíveis. Recarregue a página." };
-    if (input.decision !== "both_correct") return { context: parsed.data };
-    const preview = await supabase.rpc("both_correct_value", { p_context: parsed.data });
-    if (preview.error) return { error: preview.error.message };
-    return { context: parsed.data, bothCorrectValue: preview.data === null ? null : { value: preview.data } };
+    return parsed.success ? { context: parsed.data } : { error: "As fontes mudaram ou não estão disponíveis. Recarregue a página." };
   } catch (e) {
     return { error: errorMessage(e) };
   }
@@ -323,7 +325,7 @@ export async function resolveError(
       p_expected_id: identity.id,
       p_expected_resolved_at: identity.resolved_at, p_note: note ?? null,
       // A RPC valida o valor contra a definição do campo nas decisões que o
-      // levam, e em "Ambos corretos" o recalcula e confere.
+      // levam, e em "Ambos corretos" o confere contra o contexto.
       p_value: carriesValue(decision) ? (value ?? null) : null,
     });
     if (error) return { success: false, error: error.message };

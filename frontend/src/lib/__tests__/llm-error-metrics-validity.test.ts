@@ -373,3 +373,43 @@ describe("fila: respostas atuais dos pesquisadores no card", () => {
     expect(errors[0].currentHumanAnswers).toEqual([{ name: "Beto", answer: "A" }]);
   });
 });
+
+// #758: a fila calcula o valor que "Ambos corretos" grava no lugar do
+// veredito, e o diálogo o envia com a decisão.
+describe("fila: valor comum de Ambos corretos", () => {
+  const people = [
+    llm("B"),
+    response({ id: "rh", respondent_name: "Beto", answers: { x: "B" } }),
+    response({ id: "rh2", respondent_name: "Ana", answers: { x: "b " } }),
+    response({ id: "old", respondent_name: "Ana", is_latest: false, answers: { x: "A" } }),
+  ];
+
+  it("veredito antigo e pesquisadores atuais com o LLM: o valor é a resposta do LLM", () => {
+    const { errors } = run({ responses: people, reviews: [review({ verdict: "A", chosen_response_id: "old" })] });
+    expect(errors[0].bothCorrectValue).toEqual({ value: "B" });
+  });
+
+  it("pesquisador em par \"=\" com o LLM concorda, e o valor segue sendo o do LLM", () => {
+    const withPair = people.map((r) => (r.id === "rh2" ? { ...r, answers: { x: "Bê" } } : r));
+    const { errors } = run({
+      responses: withPair, reviews: [review({ verdict: "A", chosen_response_id: "old" })],
+      equivalences: [equiv("rllm", "rh2", "B", "Bê")],
+    });
+    expect(errors[0].bothCorrectValue).toEqual({ value: "B" });
+  });
+
+  it("pesquisador atual que discorda do LLM tira o valor comum", () => {
+    const split = people.map((r) => (r.id === "rh2" ? { ...r, answers: { x: "A" } } : r));
+    const { errors } = run({ responses: split, reviews: [review({ verdict: "A", chosen_response_id: "old" })] });
+    expect(errors[0].bothCorrectValue).toBeUndefined();
+  });
+
+  it("decisão ressuscitada não recalcula o valor", () => {
+    const { errors } = run({
+      responses: [llm("A"), response({ id: "rh", respondent_name: "Beto", answers: { x: "A" } })],
+      reviews: [review({ id: "valid", verdict: "A" })],
+      errorResolutions: new Map([["doc1:x", decision("both_correct", "valid")]]),
+    });
+    expect(errors[0].bothCorrectValue).toBeUndefined();
+  });
+});

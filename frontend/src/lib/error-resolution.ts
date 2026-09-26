@@ -32,9 +32,9 @@ export function choosesValue(decision: ErrorDecision): decision is ValueChoosing
 
 /**
  * Decisões que levam `value` ao RPC: as de `choosesValue`, com o valor do
- * seletor, e "Ambos corretos", com o valor comum que a prévia do servidor
- * mostrou (`both_correct_value`). Em "Ambos corretos" o RPC recalcula o valor
- * e recusa a decisão quando o enviado não é ele (#758).
+ * seletor, e "Ambos corretos", com o valor comum que a fila calculou
+ * (`bothCorrectCommonValue`). Em "Ambos corretos" o RPC confere que o valor é
+ * a resposta do LLM do contexto (#758).
  */
 export function carriesValue(decision: ErrorDecision): boolean {
   return choosesValue(decision) || decision === "both_correct";
@@ -50,14 +50,6 @@ export const errorResolutionContextSchema = z.object({
 });
 export type ErrorResolutionContext = z.infer<typeof errorResolutionContextSchema>;
 
-/**
- * O que "Ambos corretos" grava no gabarito, calculado pelo banco sobre o
- * contexto conferido (`both_correct_value`, a mesma função que
- * `set_error_resolution` usa ao gravar): o valor comum, ou `null` quando o
- * veredito continua valendo (#758). `""` e `[]` são valor.
- */
-export type BothCorrectPreview = { value: unknown } | null;
-
 export const errorResolutionInputSchema = z.object({
   decision: errorDecisionSchema,
   context: errorResolutionContextSchema,
@@ -66,8 +58,8 @@ export const errorResolutionInputSchema = z.object({
   /**
    * O valor que vai ao gabarito nas decisões de `carriesValue`: nas de
    * `choosesValue`, escolhido pelo revisor nas opções atuais do campo (#733),
-   * e a RPC valida o domínio; em "Ambos corretos", o valor comum da prévia,
-   * que a RPC recalcula e confere (#758).
+   * e a RPC valida o domínio; em "Ambos corretos", o valor comum que a fila
+   * calculou, que a RPC confere contra o contexto (#758).
    */
   value: z.json().optional(),
 });

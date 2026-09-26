@@ -133,14 +133,13 @@ describe("decisão individual em Insights", () => {
   });
 
   // #758: o veredito é de uma arbitragem antiga, e os pesquisadores atuais e o
-  // LLM concordam. O diálogo mostra o valor comum que vai ao gabarito, e a
+  // LLM concordam. A fila calculou o valor comum; o diálogo o mostra, e a
   // confirmação o envia para o RPC conferir.
   it("Ambos corretos com o valor comum mostra o valor e o envia", async () => {
-    mocks.prepare.mockResolvedValue({ context: row.context, bothCorrectValue: { value: "LLM" } });
-    show({ ...errorCase(), currentHumanAnswers: [{ name: "Ana", answer: "LLM" }] });
+    mocks.prepare.mockResolvedValue({ context: row.context });
+    show({ ...errorCase(), currentHumanAnswers: [{ name: "Ana", answer: "LLM" }], bothCorrectValue: { value: "LLM" } });
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     const dialog = await screen.findByRole("dialog");
-    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ decision: "both_correct" }));
     expect(dialog.textContent).toContain("Valor que irá para o gabarito");
     expect(dialog.textContent).toContain("Ana");
     await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
@@ -150,8 +149,8 @@ describe("decisão individual em Insights", () => {
   });
 
   it("o branco comum também vai como valor, e não como ausência de valor", async () => {
-    mocks.prepare.mockResolvedValue({ context: row.context, bothCorrectValue: { value: "" } });
-    show();
+    mocks.prepare.mockResolvedValue({ context: row.context });
+    show({ ...errorCase(), bothCorrectValue: { value: "" } });
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     await screen.findByRole("dialog");
     await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));

@@ -150,6 +150,14 @@ BEGIN
     'a9d00000-0000-0000-0000-000000000001', 'a9d00000-0000-0000-0000-000000000002', 'auto_revisao', 'a9f00000-0000-0000-0000-000000000001');
   IF c IS NULL THEN RAISE EXCEPTION 'FALHOU: resolver sem papel de árbitro não prepara decisão concluída'; END IF;
   SELECT * INTO item FROM public.read_error_resolutions('a9b00000-0000-0000-0000-000000000001') WHERE field_name = 'q';
+  -- "Ambos corretos" com valor so na Comparacao: na auto-revisao o veredito e
+  -- a propria resposta humana do contexto, e nao fica para tras (#758). Mesmo
+  -- com o valor sendo a resposta do LLM.
+  BEGIN
+    PERFORM public.set_error_resolution(item.project_id, item.document_id, item.field_name, 'both_correct', c, item.id, item.resolved_at, NULL, '"LLM"'::JSONB);
+    RAISE EXCEPTION 'FALHOU: "Ambos corretos" gravou valor comum com fonte de auto-revisão';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
   PERFORM public.set_error_resolution(item.project_id, item.document_id, item.field_name, 'researchers_correct', c, item.id, item.resolved_at, NULL, '"Humano"'::JSONB);
 END $$;
 RESET ROLE;
@@ -259,8 +267,8 @@ BEGIN
   IF item.approved_value IS NOT NULL THEN RAISE EXCEPTION 'FALHOU: llm_correct gravou approved_value'; END IF;
   -- Ambos corretos: o veredito ("B ") diverge da resposta do LLM e da unica
   -- pesquisadora ("A"), que concordam. O valor que vai ao gabarito e o comum,
-  -- calculado pelo servidor (#758); o que o chamador mandar fora dele e
-  -- recusado. O contrato inteiro esta em both_correct_common_value.test.sql.
+  -- a resposta do LLM, que a fila calcula e o RPC confere (#758); outro valor
+  -- e recusado. O contrato inteiro esta em both_correct_common_value.test.sql.
   BEGIN
     PERFORM public.set_error_resolution(P, D, 's', 'both_correct', c, item.id, item.resolved_at, 'Sinonimos', '"B "'::JSONB);
     RAISE EXCEPTION 'FALHOU: both_correct aceitou valor que não é o comum';

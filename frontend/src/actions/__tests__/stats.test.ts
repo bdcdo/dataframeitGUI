@@ -220,8 +220,8 @@ describe("resolveError / reopenError", () => {
     expect(hoisted.rpc).toHaveBeenLastCalledWith("set_error_resolution", expect.objectContaining({ p_decision: "all_wrong", p_value: "Terceira" }));
   });
 
-  // #758: o RPC calcula o valor comum e só aceita a decisão quando o cliente
-  // manda o mesmo valor que a prévia lhe mostrou, inclusive o branco "".
+  // #758: "Ambos corretos" leva o valor comum que a fila calculou, inclusive
+  // o branco "", e o RPC o confere contra o contexto.
   it.each<[string, string | undefined, string | null]>([
     ["o valor comum", "LLM", "LLM"],
     ["o branco comum de condicional", "", ""],
@@ -283,38 +283,6 @@ describe("resolveError / reopenError", () => {
     // A resposta que a arbitragem escolheu vence quando ainda é humana corrente.
     expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_human_response_id: "rh" }));
     expect(supabaseState.writeCalls).toHaveLength(0);
-  });
-
-  // #758: o diálogo de "Ambos corretos" diz o que vai ao gabarito, e esse
-  // valor sai do mesmo cálculo que o RPC faz ao gravar.
-  it.each<[string, unknown, { value: unknown } | null]>([
-    ["com valor comum", "LLM", { value: "LLM" }],
-    ["com o branco comum", "", { value: "" }],
-    ["sem valor comum", null, null],
-  ])("Ambos corretos busca a prévia do valor comum (%s)", async (_label, preview, expected) => {
-    humansInRound(["rh"]);
-    hoisted.rpc.mockImplementation(async (fn: string) => ({ data: fn === "llm_error_context" ? row.context : preview, error: null }));
-    const { prepareErrorResolution } = await loadStats();
-    expect(await prepareErrorResolution({ ...prepareInput, decision: "both_correct" })).toEqual({ context: row.context, bothCorrectValue: expected });
-    expect(hoisted.rpc).toHaveBeenLastCalledWith("both_correct_value", { p_context: row.context });
-    expect(supabaseState.writeCalls).toHaveLength(0);
-  });
-
-  it("falha na prévia de Ambos corretos não abre a confirmação", async () => {
-    humansInRound(["rh"]);
-    hoisted.rpc.mockImplementation(async (fn: string) => (fn === "llm_error_context"
-      ? { data: row.context, error: null } : { data: null, error: { message: "As respostas mudaram. Recarregue antes de confirmar." } }));
-    const { prepareErrorResolution } = await loadStats();
-    expect(await prepareErrorResolution({ ...prepareInput, decision: "both_correct" }))
-      .toEqual({ error: "As respostas mudaram. Recarregue antes de confirmar." });
-  });
-
-  it("as demais decisões não pedem a prévia", async () => {
-    humansInRound(["rh"]);
-    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
-    const { prepareErrorResolution } = await loadStats();
-    await prepareErrorResolution({ ...prepareInput, decision: "llm_correct" });
-    expect(hoisted.rpc).toHaveBeenCalledTimes(1);
   });
 
   it("sem a escolhida na rodada corrente, ancora na humana mais antiga da rodada (#733)", async () => {

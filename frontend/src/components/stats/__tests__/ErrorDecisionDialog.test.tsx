@@ -203,9 +203,8 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
   it("com o valor comum, diz que ele vai ao gabarito no lugar do veredito", async () => {
     const onConfirm = vi.fn();
     render(<ErrorDecisionDialog
-      pending={{ error: errorCase("Sim", { currentHumanAnswers: [{ name: "Ana", answer: "Não" }, { name: "Beto", answer: "não" }] }),
-        decision: "both_correct", context: { ...base.context!, field_definition: yesNo as ErrorResolutionContext["field_definition"], llm_value: { present: true, value: "Não" } },
-        bothCorrectValue: { value: "Não" } }}
+      pending={{ error: errorCase("Sim", { currentHumanAnswers: [{ name: "Ana", answer: "Não" }, { name: "Beto", answer: "não" }], bothCorrectValue: { value: "Não" } }),
+        decision: "both_correct", context: { ...base.context!, field_definition: yesNo as ErrorResolutionContext["field_definition"], llm_value: { present: true, value: "Não" } } }}
       isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain("Valor que irá para o gabarito");
@@ -222,8 +221,8 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
 
   it("o branco comum de condicional confirma com o LLM sem a chave", () => {
     render(<ErrorDecisionDialog
-      pending={{ error: errorCase("Sim"), decision: "both_correct",
-        context: { ...base.context!, llm_value: { present: false, value: null } }, bothCorrectValue: { value: "" } }}
+      pending={{ error: errorCase("Sim", { bothCorrectValue: { value: "" } }), decision: "both_correct",
+        context: { ...base.context!, llm_value: { present: false, value: null } } }}
       isPending={false} onClose={() => {}} onConfirm={vi.fn()} />);
     expect(screen.getByText(/em branco/)).toBeTruthy();
     expect(confirmButton().disabled).toBe(false);

@@ -1,12 +1,9 @@
 // "Ambos corretos" grava o valor comum quando o veredito ficou para trás
-// (#758). A regra vive em duas cópias: a TypeScript (`bothCorrectCommonValue`,
-// em llm-error-metrics.ts, sobre as mesmas primitivas da métrica) e a SQL
-// (`both_correct_common_value`, que o RPC usa para calcular e conferir o
-// valor). Os cenários e a matriz das funções puras abaixo são os mesmos de
-// supabase/tests/both_correct_common_value.test.sql, para que as duas cópias
-// falhem juntas quando uma derivar.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+// (#758). A fila calcula o valor (`bothCorrectCommonValue`) e o envia com a
+// decisão; `set_error_resolution` só confere o que o contexto prova (fonte,
+// resposta escolhida, valor igual à resposta do LLM, domínio), cenários em
+// supabase/tests/both_correct_common_value.test.sql. O que depende dos demais
+// pesquisadores e dos pares "=" só é decidido aqui.
 import { describe, expect, it } from "vitest";
 import {
   answersAgree,
@@ -15,11 +12,7 @@ import {
   type MetricsEquivalence,
   type MetricsResponse,
 } from "@/lib/llm-error-metrics";
-import { normalizeText } from "@/lib/utils";
-import { formatCardAnswer } from "@/lib/verdict-display";
 import type { PydanticField } from "@/lib/types";
-
-const MIGRATION = join(__dirname, "..", "..", "..", "supabase", "migrations", "20260927140000_both_correct_common_value.sql");
 
 // Um id por nome: os bytes do nome em hexadecimal no fim do UUID (nomes de
 // até 6 bytes, que é o que as fixtures usam).
@@ -31,8 +24,8 @@ function field(name: string, overrides: Partial<PydanticField> = {}): PydanticFi
 
 const CONDITION = { field: "g0", equals: "Sim" } as unknown as PydanticField["condition"];
 
-// O mesmo documento da suíte SQL: L é o LLM, H1 e H2 os pesquisadores
-// correntes, HV a versão anterior de H2 com as respostas da arbitragem antiga.
+// L é o LLM, H1 e H2 os pesquisadores correntes, HV a versão anterior de H2
+// com as respostas da arbitragem antiga.
 const answers = {
   L: { s: "A", s2: "A", s3: "A", s4: "", s5: "Z", m: ["B", "A"], g0: "Não", cm: [], t: "Adalimumabe", t2: "Dipirona", t3: "Soro" },
   H1: { s: "A", s2: "A", s3: "A", s4: "", s5: "Z", m: ["A", "B"], g0: "Não", t: "adalimumabé ", t2: "Dipirona", t3: "soro fisiologico" },
@@ -86,7 +79,7 @@ function commonValue(f: PydanticField, verdict: string, overrides: { chosenRespo
   });
 }
 
-describe("bothCorrectCommonValue: os cenários da suíte SQL", () => {
+describe("bothCorrectCommonValue", () => {
   it("cada campo da fixture tem id próprio", () => {
     const ids = scenarios.map(([, f]) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -113,20 +106,9 @@ describe("bothCorrectCommonValue: os cenários da suíte SQL", () => {
   });
 });
 
-// A matriz de supabase/tests/both_correct_common_value.test.sql, bloco (b).
-describe("funções puras, a mesma matriz da cópia SQL", () => {
-  it.each([
-    ["  Adalimumabé  ", "adalimumabe"],
-    ["ÁRVORE\u00A0\u2003 Grande", "arvore grande"],
-    ["Ação", "acao"],
-    ["a\tb\nc", "a b c"],
-    ["a^b`c", "abc"],
-    ["x\uFEFF", "x"],
-    ["", ""],
-  ])("normalizeText(%j) = %j", (input, expected) => {
-    expect(normalizeText(input)).toBe(expected);
-  });
-
+// As duas regras da métrica que o valor comum e a invariante
+// `ambos-corretos-com-valor-so-com-fonte-divergente` usam.
+describe("regras da métrica", () => {
   const textField = field("t", { type: "text", options: null });
   const multiField = field("m", { type: "multi", options: ["A", "B", "C"] });
   it.each<[string, PydanticField, unknown, unknown, boolean]>([
@@ -160,80 +142,7 @@ describe("funções puras, a mesma matriz da cópia SQL", () => {
     ["multi: veredito vazio e resposta vazia", multiField, "", [], true],
     ["multi: veredito vazio e resposta marcada", multiField, "", ["A"], false],
     ["texto: resposta ausente e veredito preenchido", textField, "A", undefined, false],
-    ["subcampo numérico: 2.0 exibido como 2", textField, "dose: 2", JSON.parse('{"dose":2.0}'), true],
-    ["número: 1.50 exibido como 1.5", textField, "1.5", JSON.parse("1.50"), true],
-    ["número: 1e21 exibido como 1e+21", textField, "1e+21", JSON.parse("1e21"), true],
-    ["número: 1e21 não é exibido por extenso", textField, "1000000000000000000000", JSON.parse("1e21"), false],
   ])("verdictMatchesAnswer %s", (_label, f, verdict, answer, expected) => {
     expect(verdictMatchesAnswer(f, verdict, answer)).toBe(expected);
-  });
-
-  // O texto do card com número: a mesma matriz de `answer_card_text` na cópia
-  // SQL, com a resposta como o JSON que vem do banco.
-  it.each([
-    ["2.0", "2"],
-    ["1.50", "1.5"],
-    ["1e21", "1e+21"],
-    ["1E+21", "1e+21"],
-    ["1e20", "100000000000000000000"],
-    ["-1.5e-7", "-1.5e-7"],
-    ["0.000001", "0.000001"],
-    ["0.0000001", "1e-7"],
-    ["-0", "0"],
-    ["0", "0"],
-    ["123456789012345678901", "123456789012345680000"],
-    ["{\"dose\":2.0}", "dose: 2"],
-    ["[1.50,true,null,\"x\"]", "1.5, true, , x"],
-    ["{\"a\":1e21,\"b\":false}", "a: 1e+21, b: false"],
-    ["12.340e1", "123.4"],
-    ["1e400", "Infinity"],
-    ["-1e400", "-Infinity"],
-    ["1e-400", "0"],
-    ["0.1", "0.1"],
-    ["1.0000000000000002", "1.0000000000000002"],
-  ])("formatCardAnswer(%s) = %j", (json, expected) => {
-    expect(formatCardAnswer(JSON.parse(json))).toBe(expected);
-  });
-});
-
-// A cópia SQL de `normalizeText` e de `trim()` usa classes de caracteres
-// escritas na migration. Elas precisam ser exatamente os conjuntos que o JS
-// usa (`\p{Diacritic}` e `\s`); a suíte SQL prende só alguns membros, e este
-// teste prende as classes inteiras contra o motor do Node.
-describe("classes de caracteres da cópia SQL", () => {
-  const sql = readFileSync(MIGRATION, "utf8");
-
-  function classAfter(marker: string): Set<number> {
-    const body = new RegExp(`-- classe: ${marker}\\n\\s*'\\^?\\[(.*?)\\]`).exec(sql)?.[1];
-    expect(body, marker).toBeDefined();
-    const tokens = [...body!.matchAll(/\\u([0-9A-F]{4})|\\U([0-9A-F]{8})|(-)/g)].map(([, bmp, astral, dash]) =>
-      dash ? "-" : parseInt(bmp ?? astral, 16));
-    const set = new Set<number>();
-    for (let i = 0; i < tokens.length; i++) {
-      if (tokens[i + 1] === "-") {
-        for (let c = tokens[i] as number; c <= (tokens[i + 2] as number); c++) set.add(c);
-        i += 2;
-      } else set.add(tokens[i] as number);
-    }
-    return set;
-  }
-
-  function jsSet(test: (ch: string) => boolean): number[] {
-    const out: number[] = [];
-    for (let c = 0; c <= 0x10ffff; c++) {
-      if (c >= 0xd800 && c <= 0xdfff) continue;
-      if (test(String.fromCodePoint(c))) out.push(c);
-    }
-    return out;
-  }
-
-  it("diacrítico é exatamente \\p{Diacritic}", () => {
-    expect([...classAfter("diacritico do JS")].sort((a, b) => a - b)).toEqual(jsSet((ch) => /\p{Diacritic}/u.test(ch)));
-  });
-
-  it("espaço é exatamente o \\s e o trim() do JS", () => {
-    const expected = jsSet((ch) => /\s/.test(ch));
-    expect([...classAfter("espaco do JS")].sort((a, b) => a - b)).toEqual(expected);
-    expect(jsSet((ch) => ch.trim() === "")).toEqual(expected);
   });
 });

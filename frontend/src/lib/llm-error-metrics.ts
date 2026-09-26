@@ -84,6 +84,13 @@ export interface LlmError {
    * anterior, que pode ser de uma arbitragem antiga (#758).
    */
   currentHumanAnswers?: CurrentHumanAnswer[];
+  /**
+   * O valor que "Ambos corretos" grava no lugar do veredito, quando ele ficou
+   * para trás (`bothCorrectCommonValue`); ausente quando o veredito continua
+   * valendo. Só no caso vivo da Comparação: a decisão ressuscitada não o
+   * recalcula (#758).
+   */
+  bothCorrectValue?: { value: unknown };
 }
 
 export interface CurrentHumanAnswer {
@@ -330,6 +337,8 @@ interface MetricsContext {
   invalidReviewReasons: ReadonlyMap<string, ReviewInvalidReason>;
   /** Classes de equivalência por (documento, campo), memoizadas. */
   groupKeysFor: (docId: string, fieldName: string) => Map<string, string>;
+  /** Pares "=" do campo no documento, com as colunas de snapshot. */
+  equivalencesFor: (docId: string, fieldName: string) => readonly EquivalencePair[];
   /** `isCodingComplete` da response, memoizado por id. */
   codingIsComplete: (response: MetricsResponse) => boolean;
 }
@@ -379,6 +388,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     else byField.set(pair.field_name, [pair]);
   }
 
+  const equivalencesFor = (docId: string, fieldName: string) => equivByDocField.get(docId)?.get(fieldName) ?? [];
   // Memoizado: um documento com muitos campos revisados repetiria o union-find
   // por campo à toa.
   const groupKeyCache = new Map<string, Map<string, string>>();
@@ -388,7 +398,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     if (cached) return cached;
     const groupKeys = groupKeysOf(
       responsesByDoc.get(docId) ?? [],
-      equivByDocField.get(docId)?.get(fieldName) ?? [],
+      equivalencesFor(docId, fieldName),
       fieldMap.get(fieldName),
       fieldName,
     );
@@ -428,6 +438,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     validReviewIds,
     invalidReviewReasons,
     groupKeysFor,
+    equivalencesFor,
     codingIsComplete,
   };
 }
@@ -436,8 +447,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
 // Todas as responses do documento entram, inclusive rodadas anteriores:
 // `chosen_response_id` pode apontar para uma resposta que não é mais a
 // `is_latest`, e é justamente por essas que o fecho transitivo passa. Par "="
-// com resposta dada a outra versão da pergunta não conta. A cópia SQL é a CTE
-// recursiva de `both_correct_common_value`.
+// com resposta dada a outra versão da pergunta não conta.
 function groupKeysOf(
   docResponses: readonly MetricsResponse[],
   pairs: readonly EquivalencePair[],
@@ -503,10 +513,7 @@ function verdictMatcher(verdict: string, field: MatcherField): VerdictMatcher {
     : textVerdictMatcher(verdict);
 }
 
-/**
- * Se uma resposta crua casa com o texto do veredito, pela regra da métrica. A
- * cópia SQL é `verdict_matches_answer`; a matriz de casos é a mesma nas duas.
- */
+/** Se uma resposta crua casa com o texto do veredito, pela regra da métrica. */
 export function verdictMatchesAnswer(field: MatcherField, verdict: string, answer: unknown): boolean {
   return verdictMatcher(verdict, field)(answer);
 }
@@ -515,7 +522,7 @@ export function verdictMatchesAnswer(field: MatcherField, verdict: string, answe
  * Se duas respostas cruas são a mesma resposta: branco só com branco, `multi`
  * com dois arrays por conjunto de opções (como `computeDivergentFieldNames`),
  * o resto por `normalizeForComparison`. A classe de equivalência (par "=")
- * fica a cargo de quem chama. A cópia SQL é `answers_agree`.
+ * fica a cargo de quem chama.
  */
 export function answersAgree(field: Pick<PydanticField, "type" | "options">, a: unknown, b: unknown): boolean {
   if (isBlankAnswer(a) || isBlankAnswer(b)) return isBlankAnswer(a) && isBlankAnswer(b);
@@ -607,11 +614,10 @@ export interface BothCorrectInput {
  * todos em branco, o vazio canônico do tipo. Fora de condicional o branco não é
  * resposta, e não há valor.
  *
- * Quem grava é o servidor: `set_error_resolution` calcula o valor com a cópia
- * SQL (`both_correct_common_value`) e recusa o que o cliente mandar fora dela.
- * Esta cópia não roda no produto: é o oráculo do teste
- * (both-correct-common-value.test.ts), que roda a mesma matriz de casos da
- * suíte SQL para que as duas regras não derivem.
+ * A fila calcula o valor e o envia com a decisão. `set_error_resolution` só
+ * confere o que o contexto da decisão prova (fonte Comparação, escolhida que
+ * não é o LLM, valor igual à resposta do LLM e no domínio do campo): os
+ * demais pesquisadores e os pares "=" não estão no contexto.
  */
 export function bothCorrectCommonValue(input: BothCorrectInput): { value: unknown } | null {
   const { field, llmResponse, currentHumans } = input;
@@ -644,12 +650,17 @@ function chosenValueOf(review: MetricsReview, field: PydanticField, ctx: Metrics
   return chosen !== undefined && verdictMatcher(review.verdict, field)(chosen) ? chosen : undefined;
 }
 
-// As respostas humanas correntes do documento, para o card mostrar ao lado do
-// veredito anterior. `is_latest` basta: a troca de rodada arquiva as da
-// rodada anterior no mesmo passo (invariante `response-is-latest-na-rodada-corrente`).
+// As respostas humanas correntes do documento. `is_latest` basta: a troca de
+// rodada arquiva as da rodada anterior no mesmo passo (invariante
+// `response-is-latest-na-rodada-corrente`).
+function currentHumansOf(docId: string, ctx: MetricsContext): MetricsResponse[] {
+  return (ctx.responsesByDoc.get(docId) ?? []).filter((response) => response.respondent_type === "humano" && response.is_latest);
+}
+
+// O que cada pesquisador responde agora, para o card mostrar ao lado do
+// veredito anterior.
 function currentHumanAnswersOf(docId: string, fieldName: string, ctx: MetricsContext): CurrentHumanAnswer[] {
-  return (ctx.responsesByDoc.get(docId) ?? [])
-    .filter((response) => response.respondent_type === "humano" && response.is_latest)
+  return currentHumansOf(docId, ctx)
     .map((response) => ({ name: response.respondent_name || "Pesquisador", answer: formatAnswer(response.answers?.[fieldName]) }))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 }
@@ -705,6 +716,12 @@ function buildComparisonCandidate(
   ctx: MetricsContext,
 ): Candidate {
   const isError = comparisonIsError(review, field, llmResponse, ctx);
+  const common = isError ? bothCorrectCommonValue({
+    field, verdict: review.verdict, chosenResponseId: review.chosen_response_id, llmResponse,
+    documentResponses: ctx.responsesByDoc.get(review.document_id) ?? [],
+    currentHumans: currentHumansOf(review.document_id, ctx),
+    equivalences: ctx.equivalencesFor(review.document_id, review.field_name),
+  }) : null;
   const shared: SharedEntryFields = {
     documentId: review.document_id,
     documentTitle: ctx.titleOf(review.document_id),
@@ -734,6 +751,7 @@ function buildComparisonCandidate(
           source: "comparacao",
           sourceId: review.id,
           currentHumanAnswers: currentHumanAnswersOf(review.document_id, review.field_name, ctx),
+          ...(common ? { bothCorrectValue: common } : {}),
         }
       : null,
     entry: { ...shared, isError },

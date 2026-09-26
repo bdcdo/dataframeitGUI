@@ -46,12 +46,12 @@ interface LlmInsightsViewProps {
 }
 
 // O valor que acompanha a decisão: nas de seletor, o que o revisor escolheu
-// (#733); em "Ambos corretos", o valor comum que a prévia do banco mostrou no
-// diálogo, e que o RPC recalcula e confere (#758).
+// (#733); em "Ambos corretos", o valor comum que a fila calculou e o diálogo
+// mostrou, e que o RPC confere contra o contexto (#758).
 function decisionValue(pending: Extract<PendingErrorDecision, { decision: ErrorDecision }>, value: unknown): { value?: ErrorResolutionInput["value"] } {
   if (choosesValue(pending.decision)) return { value: value as ErrorResolutionInput["value"] };
-  if (pending.decision === "both_correct" && pending.bothCorrectValue) {
-    return { value: pending.bothCorrectValue.value as ErrorResolutionInput["value"] };
+  if (pending.decision === "both_correct" && pending.error.bothCorrectValue) {
+    return { value: pending.error.bothCorrectValue.value as ErrorResolutionInput["value"] };
   }
   return {};
 }
@@ -100,9 +100,10 @@ export function LlmInsightsView({
       try {
         const result = await prepareErrorResolution({ projectId, documentId: error.documentId,
           fieldName: error.fieldName, llmResponseId: error.llmResponseId,
-          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId!, decision });
+          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId!,
+          decision, bothCorrectValue: error.bothCorrectValue });
         if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
-        setPendingDecision({ error, decision, context: result.context, bothCorrectValue: result.bothCorrectValue });
+        setPendingDecision({ error, decision, context: result.context });
       } catch {
         toast.error("Não foi possível conferir as respostas.");
       }

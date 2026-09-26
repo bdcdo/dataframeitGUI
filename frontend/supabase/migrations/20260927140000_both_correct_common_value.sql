@@ -7,291 +7,34 @@
 -- Gabarito. Quem revisava concordava com Y e so tinha "Erro humano" para
 -- gravar Y, o que conta um erro humano que nao existiu.
 --
--- Regra nova: "Ambos corretos" grava em `approved_value` o valor comum quando
---   (1) a fonte e a Comparacao (na auto-revisao o veredito e a propria
---       resposta humana do contexto, e ela nao pode divergir de si mesma);
---   (2) o veredito da fonte diverge da resposta do LLM, pela mesma regra da
---       metrica (`comparisonIsError` em llm-error-metrics.ts): a resposta
---       escolhida nao e a do LLM, o veredito nao casa com a resposta do LLM,
---       nem com nenhuma resposta que um par "=" vigente liga a ela;
---   (3) toda resposta humana `is_latest` da rodada corrente concorda com a
---       do LLM (`answersAgree`: branco com branco, `multi` por conjunto, os
---       demais por `normalizeForComparison`, ou a mesma classe do union-find
---       de equivalencia que a metrica usa);
---   (4) o valor cabe no dominio atual do campo, a mesma regra de "Erro do LLM"
---       (`error_resolution_value_problem`, extraida do RPC nesta migration).
--- O valor comum e a resposta do LLM, que o contexto da decisao ja protege
--- (mudou, a decisao fica stale). Em pergunta condicional, LLM e pesquisadores
--- em branco dao o branco canonico do tipo ("" ou []); fora de condicional o
--- branco nao e resposta e nao ha valor. Quando o veredito ja concorda com o
--- LLM, nada muda: "Ambos corretos" nao grava valor.
+-- Regra nova: "Ambos corretos" pode gravar em `approved_value` o valor comum,
+-- que e a resposta do LLM (em pergunta condicional com o LLM em branco, o
+-- branco canonico do tipo, "" ou []). Quem decide se ha valor comum e a fila
+-- (`bothCorrectCommonValue` em llm-error-metrics.ts): o veredito da Comparacao
+-- diverge da resposta do LLM pela regra da metrica, e todo pesquisador
+-- corrente concorda com ela, por texto normalizado ou por par "=" vigente.
+-- Sem valor comum, "Ambos corretos" segue como antes e o veredito vale.
 --
--- O servidor nao confia no cliente. `set_error_resolution` calcula o valor
--- comum sobre as respostas vigentes e so aceita a decisao quando `p_value` e
--- exatamente ele (ou NULL quando nao ha); a diferenca vira 40001, "recarregue",
--- porque so acontece com respostas que mudaram entre a previa e a confirmacao
--- ou com cliente adulterado. A previa que o dialogo mostra sai da mesma funcao
--- (`both_correct_value`), entao o que o dialogo promete e o que o banco grava.
+-- `set_error_resolution` confere so o que o contexto da decisao prova: fonte
+-- Comparacao, resposta escolhida no veredito diferente da do LLM, valor igual
+-- a resposta do LLM do contexto (ou o branco canonico de condicional com o LLM
+-- em branco) e valor no dominio atual do campo. Os demais pesquisadores e os
+-- pares "=" nao estao no contexto, e o servidor nao os le: um pesquisador que
+-- muda de resposta depois nao torna a decisao stale. O que isso deixa aberto
+-- e so a contagem de erro: o valor gravado e a resposta do LLM, a mesma que
+-- "Erro humano" gravaria, e quem pode chamar o RPC ja pode grava-la por la.
 --
 -- Com valor proprio, "Ambos corretos" deixa de depender da fonte, como as
 -- demais decisoes com valor: `read_error_resolutions` so exige veredito valido
 -- das decisoes sem valor. A copia TypeScript e `decisionDependsOnSource`.
 --
--- As funcoes puras abaixo sao copias SQL de funcoes TypeScript do frontend
--- (`normalizeText` em lib/utils.ts, `formatCardAnswer` em lib/verdict-display.ts,
--- `isBlankAnswer` em lib/error-resolution.ts e as regras de comparacao em
--- lib/llm-error-metrics.ts). As classes de caracteres sao geradas a partir do
--- JS (`\p{Diacritic}` e `\s`), e o teste unitario both-correct-common-value
--- confere as duas contra o motor do Node; a matriz de casos de
--- supabase/tests/both_correct_common_value.test.sql e a mesma do teste
--- unitario. Numero no texto do card segue o `String()` do JS
--- (`answer_js_number`). Divergencias conhecidas e aceitas, todas fora de texto
--- em portugues: `lower` do Postgres usa o mapeamento simples de caixa (o JS
--- usa o completo: "İ" e o sigma final grego diferem); chave de objeto em forma
--- de inteiro sai em outra ordem no texto do card (o JS poe as chaves inteiras
--- primeiro); e `\u0000` em texto JSON, que o jsonb recusa.
---
 -- CHECK: `error_resolution_value_iff_chosen` vira
 -- `error_resolution_value_by_decision`: valor obrigatorio em "Erro do LLM" e
 -- "Todos errados", opcional (e nunca JSON null) em "Ambos corretos", proibido
--- nas demais. "So quando a fonte diverge" depende de outras tabelas e fica na
--- invariante `ambos-corretos-com-valor-so-com-fonte-divergente`.
+-- nas demais. "So quando a fonte diverge" depende do texto do veredito e fica
+-- na invariante `ambos-corretos-com-valor-so-com-fonte-divergente`.
 
 BEGIN;
-
--- ── Funcoes puras (copias do TypeScript) ─────────────────────────────────
-
--- `String.prototype.trim` do JS. btrim tira so o espaco comum.
-CREATE FUNCTION public.answer_js_trim(p_text TEXT)
-RETURNS TEXT
-LANGUAGE sql IMMUTABLE STRICT SET search_path = '' AS $$
-  SELECT pg_catalog.regexp_replace(p_text,
-    -- classe: espaco do JS
-    '^[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028-\u2029\u202F\u205F\u3000\uFEFF]+|[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028-\u2029\u202F\u205F\u3000\uFEFF]+$',
-    '', 'g');
-$$;
-
--- `normalizeText`: NFD, sem diacritico, minuscula, espaco interno unico, sem
--- espaco nas pontas. Na mesma ordem do JS.
-CREATE FUNCTION public.answer_normalize_text(p_text TEXT)
-RETURNS TEXT
-LANGUAGE sql IMMUTABLE STRICT SET search_path = '' AS $$
-  SELECT pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.lower(pg_catalog.regexp_replace(
-    pg_catalog.normalize(p_text, 'NFD'),
-    -- classe: diacritico do JS
-    '[\u005E\u0060\u00A8\u00AF\u00B4\u00B7-\u00B8\u02B0-\u034E\u0350-\u0357\u035D-\u0362\u0374-\u0375\u037A\u0384-\u0385\u0483-\u0487\u0559\u0591-\u05A1\u05A3-\u05BD\u05BF\u05C1-\u05C2\u05C4\u064B-\u0652\u0657-\u0658\u06DF-\u06E0\u06E5-\u06E6\u06EA-\u06EC\u0730-\u074A\u07A6-\u07B0\u07EB-\u07F5\u0818-\u0819\u0898-\u089F\u08C9-\u08D2\u08E3-\u08FE\u093C\u094D\u0951-\u0954\u0971\u09BC\u09CD\u0A3C\u0A4D\u0ABC\u0ACD\u0AFD-\u0AFF\u0B3C\u0B4D\u0B55\u0BCD\u0C3C\u0C4D\u0CBC\u0CCD\u0D3B-\u0D3C\u0D4D\u0DCA\u0E3A\u0E47-\u0E4C\u0E4E\u0EBA\u0EC8-\u0ECC\u0F18-\u0F19\u0F35\u0F37\u0F39\u0F3E-\u0F3F\u0F82-\u0F84\u0F86-\u0F87\u0FC6\u1037\u1039-\u103A\u1063-\u1064\u1069-\u106D\u1087-\u108D\u108F\u109A-\u109B\u135D-\u135F\u1714-\u1715\u1734\u17C9-\u17D3\u17DD\u1939-\u193B\u1A60\u1A75-\u1A7C\u1A7F\u1AB0-\u1ABE\u1AC1-\u1ACB\u1B34\u1B44\u1B6B-\u1B73\u1BAA-\u1BAB\u1BE6\u1BF2-\u1BF3\u1C36-\u1C37\u1C78-\u1C7D\u1CD0-\u1CE8\u1CED\u1CF4\u1CF7-\u1CF9\u1D2C-\u1D6A\u1DC4-\u1DCF\u1DF5-\u1DFF\u1FBD\u1FBF-\u1FC1\u1FCD-\u1FCF\u1FDD-\u1FDF\u1FED-\u1FEF\u1FFD-\u1FFE\u2CEF-\u2CF1\u2E2F\u302A-\u302F\u3099-\u309C\u30FC\uA66F\uA67C-\uA67D\uA67F\uA69C-\uA69D\uA6F0-\uA6F1\uA700-\uA721\uA788-\uA78A\uA7F8-\uA7F9\uA806\uA82C\uA8C4\uA8E0-\uA8F1\uA92B-\uA92E\uA953\uA9B3\uA9C0\uA9E5\uAA7B-\uAA7D\uAABF-\uAAC2\uAAF6\uAB5B-\uAB5F\uAB69-\uAB6B\uABEC-\uABED\uFB1E\uFE20-\uFE2F\uFF3E\uFF40\uFF70\uFF9E-\uFF9F\uFFE3\U000102E0\U00010780-\U00010785\U00010787-\U000107B0\U000107B2-\U000107BA\U00010A38-\U00010A3A\U00010A3F\U00010AE5-\U00010AE6\U00010D22-\U00010D27\U00010D4E\U00010D69-\U00010D6D\U00010EFD-\U00010EFF\U00010F46-\U00010F50\U00010F82-\U00010F85\U00011046\U00011070\U000110B9-\U000110BA\U00011133-\U00011134\U00011173\U000111C0\U000111CA-\U000111CC\U00011235-\U00011236\U000112E9-\U000112EA\U0001133B-\U0001133C\U0001134D\U00011366-\U0001136C\U00011370-\U00011374\U000113CE-\U000113D0\U000113D2-\U000113D3\U000113E1-\U000113E2\U00011442\U00011446\U000114C2-\U000114C3\U000115BF-\U000115C0\U0001163F\U000116B6-\U000116B7\U0001172B\U00011839-\U0001183A\U0001193D-\U0001193E\U00011943\U000119E0\U00011A34\U00011A47\U00011A99\U00011C3F\U00011D42\U00011D44-\U00011D45\U00011D97\U00011F41-\U00011F42\U00011F5A\U00013447-\U00013455\U0001612F\U00016AF0-\U00016AF4\U00016B30-\U00016B36\U00016D6B-\U00016D6C\U00016F8F-\U00016F9F\U00016FF0-\U00016FF1\U0001AFF0-\U0001AFF3\U0001AFF5-\U0001AFFB\U0001AFFD-\U0001AFFE\U0001CF00-\U0001CF2D\U0001CF30-\U0001CF46\U0001D167-\U0001D169\U0001D16D-\U0001D172\U0001D17B-\U0001D182\U0001D185-\U0001D18B\U0001D1AA-\U0001D1AD\U0001E030-\U0001E06D\U0001E130-\U0001E136\U0001E2AE\U0001E2EC-\U0001E2EF\U0001E5EE-\U0001E5EF\U0001E8D0-\U0001E8D6\U0001E944-\U0001E946\U0001E948-\U0001E94A]',
-    '', 'g')),
-    '[\u0009-\u000D\u0020\u00A0\u1680\u2000-\u200A\u2028-\u2029\u202F\u205F\u3000\uFEFF]+', ' ', 'g'), ' ');
-$$;
-
--- `isBlankAnswer`: sem a chave (SQL NULL), JSON null, texto so de espaco ou [].
-CREATE FUNCTION public.answer_is_blank(p_answer JSONB)
-RETURNS BOOLEAN
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT p_answer IS NULL
-    OR pg_catalog.jsonb_typeof(p_answer) = 'null'
-    OR (pg_catalog.jsonb_typeof(p_answer) = 'string' AND public.answer_js_trim(p_answer #>> '{}') = '')
-    OR (pg_catalog.jsonb_typeof(p_answer) = 'array' AND pg_catalog.jsonb_array_length(p_answer) = 0);
-$$;
-
--- `normalizeForComparison`, como JSONB: texto normalizado, array com os
--- itens de texto normalizados, o resto como esta. Sem a chave fica NULL, que
--- so e igual a outro NULL pelo IS NOT DISTINCT FROM, como o `undefined` do JS
--- na chave do union-find.
-CREATE FUNCTION public.answer_comparison_key(p_answer JSONB)
-RETURNS JSONB
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT CASE pg_catalog.jsonb_typeof(p_answer)
-    WHEN 'string' THEN pg_catalog.to_jsonb(public.answer_normalize_text(p_answer #>> '{}'))
-    WHEN 'array' THEN COALESCE((
-      SELECT pg_catalog.jsonb_agg(CASE WHEN pg_catalog.jsonb_typeof(item) = 'string'
-        THEN pg_catalog.to_jsonb(public.answer_normalize_text(item #>> '{}')) ELSE item END ORDER BY position)
-      FROM pg_catalog.jsonb_array_elements(p_answer) WITH ORDINALITY AS element(item, position)), '[]'::JSONB)
-    ELSE p_answer END;
-$$;
-
--- Os itens de texto de uma resposta `multi`, como conjunto ordenado.
-CREATE FUNCTION public.answer_string_set(p_answer JSONB)
-RETURNS TEXT[]
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT COALESCE(pg_catalog.array_agg(DISTINCT item #>> '{}' ORDER BY item #>> '{}'), '{}')
-  FROM pg_catalog.jsonb_array_elements(
-    CASE WHEN pg_catalog.jsonb_typeof(p_answer) = 'array' THEN p_answer ELSE '[]'::JSONB END) AS element(item)
-  WHERE pg_catalog.jsonb_typeof(item) = 'string';
-$$;
-
--- `answersAgree` (llm-error-metrics.ts): branco so concorda com branco;
--- `multi` com dois arrays compara conjuntos; o resto, pela chave de
--- comparacao.
-CREATE FUNCTION public.answers_agree(p_field JSONB, p_a JSONB, p_b JSONB)
-RETURNS BOOLEAN
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT CASE
-    WHEN public.answer_is_blank(p_a) OR public.answer_is_blank(p_b)
-      THEN public.answer_is_blank(p_a) AND public.answer_is_blank(p_b)
-    WHEN p_field->>'type' = 'multi' AND pg_catalog.jsonb_typeof(p_a) = 'array' AND pg_catalog.jsonb_typeof(p_b) = 'array'
-      THEN public.answer_string_set(p_a) = public.answer_string_set(p_b)
-    ELSE public.answer_comparison_key(p_a) = public.answer_comparison_key(p_b)
-  END;
-$$;
-
--- `String(n)` do JS para um numero JSON. O JSON.parse le o numero como
--- double, e o `String()` escreve o menor texto que volta ao mesmo double, sem
--- zero decimal a direita, com expoente fora de [1e-6, 1e21) ("1e+21",
--- "1e-7"). O cast para float8 da o mesmo double e, com `extra_float_digits`
--- em 1 (fixado na funcao, contra sessao que o mude), os mesmos digitos (o
--- menor texto que volta ao valor); o resto e
--- a regra de posicao do ponto e do expoente de `Number::toString`. Numero
--- fora do alcance do double vira "Infinity", e o que o double arredonda para
--- zero vira "0", como no JS.
-CREATE FUNCTION public.answer_js_number(p_value NUMERIC)
-RETURNS TEXT
-LANGUAGE plpgsql IMMUTABLE STRICT SET search_path = '' SET extra_float_digits = 1 AS $$
-DECLARE
-  v_double DOUBLE PRECISION;
-  v_text TEXT;
-  v_sign TEXT := '';
-  v_mantissa TEXT;
-  v_exponent INT := 0;
-  v_digits TEXT;
-  v_point INT;
-  v_length INT;
-  v_n INT;
-BEGIN
-  BEGIN
-    v_double := p_value::DOUBLE PRECISION;
-  EXCEPTION WHEN numeric_value_out_of_range THEN
-    IF pg_catalog.abs(p_value) < 1 THEN RETURN '0'; END IF;
-    RETURN CASE WHEN p_value < 0 THEN '-Infinity' ELSE 'Infinity' END;
-  END;
-  IF v_double = 0 THEN RETURN '0'; END IF;
-  v_text := v_double::TEXT;
-  IF pg_catalog.left(v_text, 1) = '-' THEN
-    v_sign := '-';
-    v_text := pg_catalog.substr(v_text, 2);
-  END IF;
-  -- Mantissa e expoente do texto do float8 ("1.5e-07", "123.4", "1e+21").
-  IF pg_catalog.strpos(v_text, 'e') > 0 THEN
-    v_mantissa := pg_catalog.split_part(v_text, 'e', 1);
-    v_exponent := pg_catalog.split_part(v_text, 'e', 2)::INT;
-  ELSE
-    v_mantissa := v_text;
-  END IF;
-  -- Digitos significativos e a posicao `n` do ponto: valor = 0.digitos x 10^n.
-  v_point := pg_catalog.strpos(v_mantissa, '.');
-  IF v_point = 0 THEN v_point := pg_catalog.length(v_mantissa) + 1; END IF;
-  v_digits := pg_catalog.replace(v_mantissa, '.', '');
-  v_n := v_point - 1 + v_exponent;
-  -- Zeros a esquerda saem e deslocam o ponto; zeros a direita so saem.
-  WHILE pg_catalog.left(v_digits, 1) = '0' LOOP
-    v_digits := pg_catalog.substr(v_digits, 2);
-    v_n := v_n - 1;
-  END LOOP;
-  v_digits := pg_catalog.rtrim(v_digits, '0');
-  v_length := pg_catalog.length(v_digits);
-  IF v_length <= v_n AND v_n <= 21 THEN
-    RETURN v_sign || v_digits || pg_catalog.repeat('0', v_n - v_length);
-  ELSIF 0 < v_n AND v_n <= 21 THEN
-    RETURN v_sign || pg_catalog.left(v_digits, v_n) || '.' || pg_catalog.substr(v_digits, v_n + 1);
-  ELSIF -6 < v_n AND v_n <= 0 THEN
-    RETURN v_sign || '0.' || pg_catalog.repeat('0', -v_n) || v_digits;
-  END IF;
-  RETURN v_sign || pg_catalog.left(v_digits, 1)
-    || CASE WHEN v_length > 1 THEN '.' || pg_catalog.substr(v_digits, 2) ELSE '' END
-    || 'e' || CASE WHEN v_n - 1 >= 0 THEN '+' ELSE '-' END || pg_catalog.abs(v_n - 1)::TEXT;
-END;
-$$;
-
--- `String(v)` do JS para os valores que o card junta: array vira os itens
--- unidos por "," (null vira vazio), objeto vira "[object Object]".
-CREATE FUNCTION public.answer_js_string(p_value JSONB)
-RETURNS TEXT
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT CASE pg_catalog.jsonb_typeof(p_value)
-    WHEN 'string' THEN p_value #>> '{}'
-    WHEN 'array' THEN COALESCE((
-      SELECT pg_catalog.string_agg(CASE WHEN pg_catalog.jsonb_typeof(item) = 'null' THEN '' ELSE public.answer_js_string(item) END, ',' ORDER BY position)
-      FROM pg_catalog.jsonb_array_elements(p_value) WITH ORDINALITY AS element(item, position)), '')
-    WHEN 'object' THEN '[object Object]'
-    WHEN 'null' THEN 'null'
-    WHEN 'number' THEN public.answer_js_number((p_value #>> '{}')::NUMERIC)
-    ELSE p_value #>> '{}' END;
-$$;
-
--- `formatPartialDate`: "XX/03/2024" vira "—/03/2024".
-CREATE FUNCTION public.answer_partial_date(p_text TEXT)
-RETURNS TEXT
-LANGUAGE sql IMMUTABLE STRICT SET search_path = '' AS $$
-  SELECT CASE WHEN p_text ~* '^[0-9X]+/[0-9X]+/[0-9X]+$' AND p_text ~* 'X'
-    THEN pg_catalog.regexp_replace(p_text, 'X+', '—', 'gi') ELSE p_text END;
-$$;
-
--- `formatCardAnswer`: o texto que o card da Comparacao exibe e que o voto no
--- card grava como veredito.
-CREATE FUNCTION public.answer_card_text(p_answer JSONB)
-RETURNS TEXT
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT CASE
-    WHEN p_answer IS NULL OR pg_catalog.jsonb_typeof(p_answer) = 'null' THEN ''
-    WHEN pg_catalog.jsonb_typeof(p_answer) = 'string' THEN public.answer_partial_date(public.answer_js_trim(p_answer #>> '{}'))
-    WHEN pg_catalog.jsonb_typeof(p_answer) = 'array' THEN COALESCE((
-      SELECT pg_catalog.string_agg(CASE pg_catalog.jsonb_typeof(item)
-          WHEN 'string' THEN public.answer_js_trim(item #>> '{}')
-          WHEN 'null' THEN ''
-          ELSE public.answer_js_string(item) END, ', ' ORDER BY position)
-      FROM pg_catalog.jsonb_array_elements(p_answer) WITH ORDINALITY AS element(item, position)), '')
-    WHEN pg_catalog.jsonb_typeof(p_answer) = 'object' THEN COALESCE((
-      SELECT pg_catalog.string_agg(pair.key || ': ' || public.answer_js_string(pair.value), ', ' ORDER BY pair.position)
-      FROM pg_catalog.jsonb_each(p_answer) WITH ORDINALITY AS pair(key, value, position)
-      WHERE pg_catalog.jsonb_typeof(pair.value) <> 'null'
-        AND public.answer_js_trim(public.answer_js_string(pair.value)) <> ''), '')
-    ELSE public.answer_js_string(p_answer) END;
-$$;
-
--- A selecao que um veredito de `multi` marca (`verdictSelection`): o JSON
--- `{opcao: bool}` da grade, ou o texto votado em card, lido como uma opcao
--- inteira ou como partes separadas por ", ".
-CREATE FUNCTION public.verdict_multi_selection(p_verdict TEXT, p_options JSONB)
-RETURNS TEXT[]
-LANGUAGE plpgsql IMMUTABLE SET search_path = '' AS $$
-DECLARE
-  v_text TEXT := public.answer_js_trim(COALESCE(p_verdict, ''));
-  v_parsed JSONB;
-BEGIN
-  IF pg_catalog.left(v_text, 1) = '{' THEN
-    BEGIN
-      v_parsed := v_text::JSONB;
-    EXCEPTION WHEN others THEN
-      v_parsed := NULL;
-    END;
-    IF pg_catalog.jsonb_typeof(v_parsed) = 'object' THEN
-      RETURN (SELECT COALESCE(pg_catalog.array_agg(DISTINCT entry.key ORDER BY entry.key), '{}')
-              FROM pg_catalog.jsonb_each(v_parsed) AS entry WHERE entry.value = 'true'::JSONB);
-    END IF;
-  END IF;
-  IF v_text = '' THEN RETURN '{}'; END IF;
-  IF p_options @> pg_catalog.jsonb_build_array(v_text) THEN RETURN ARRAY[v_text]; END IF;
-  RETURN (SELECT COALESCE(pg_catalog.array_agg(DISTINCT public.answer_js_trim(part) ORDER BY public.answer_js_trim(part)), '{}')
-          FROM pg_catalog.regexp_split_to_table(v_text, ', ') AS part);
-END;
-$$;
-
--- `verdictMatcher` (llm-error-metrics.ts): se uma resposta crua casa com o
--- texto do veredito. O COALESCE fecha o NULL do SQL: resposta sem a chave com
--- veredito preenchido faz `jsonb_typeof` dar NULL, e o TS devolve false.
-CREATE FUNCTION public.verdict_matches_answer(p_field JSONB, p_verdict TEXT, p_answer JSONB)
-RETURNS BOOLEAN
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT COALESCE(CASE
-    WHEN p_field->>'type' = 'multi' AND pg_catalog.jsonb_typeof(p_field->'options') = 'array'
-         AND pg_catalog.jsonb_array_length(p_field->'options') > 0
-      THEN public.answer_string_set(p_answer) = public.verdict_multi_selection(p_verdict, p_field->'options')
-    ELSE (public.answer_is_blank(p_answer) AND public.answer_js_trim(COALESCE(p_verdict, '')) = '')
-      OR (pg_catalog.jsonb_typeof(p_answer) = 'string'
-          AND public.answer_normalize_text(p_answer #>> '{}') = public.answer_normalize_text(p_verdict))
-      OR public.answer_normalize_text(public.answer_card_text(p_answer)) = public.answer_normalize_text(p_verdict)
-  END, false);
-$$;
 
 -- ── Dominio do valor aprovado ─────────────────────────────────────────────
 
@@ -362,119 +105,6 @@ BEGIN
 END;
 $$;
 
--- ── Valor comum ───────────────────────────────────────────────────────────
-
--- O valor que "Ambos corretos" grava sobre um contexto ja conferido por
--- `llm_error_context`, ou NULL quando nao ha (regras (1) a (4) do cabecalho).
--- Le as respostas e os pares "=" vigentes; e INVOKER e fechada para o
--- cliente: quem a chama e `set_error_resolution` e `both_correct_value`,
--- ambas DEFINER, com o contexto recalculado.
-CREATE FUNCTION public.both_correct_common_value(p_context JSONB)
-RETURNS JSONB
-LANGUAGE plpgsql STABLE SET search_path = '' AS $$
-DECLARE
-  v_field JSONB := p_context->'field_definition';
-  v_field_name TEXT := p_context->>'field_name';
-  v_project UUID := (p_context->>'project_id')::UUID;
-  v_document UUID := (p_context->>'document_id')::UUID;
-  v_llm_id UUID := (p_context->>'llm_response_id')::UUID;
-  v_round UUID := (p_context->>'round_id')::UUID;
-  v_verdict TEXT := p_context->'source'->>'verdict';
-  v_llm JSONB;
-  v_value JSONB;
-  v_verdict_matches BOOLEAN;
-  v_humans BIGINT;
-  v_disagreeing BIGINT;
-BEGIN
-  -- (1) So a Comparacao tem veredito que pode ficar para tras.
-  IF p_context->'source'->>'kind' IS DISTINCT FROM 'comparacao' OR v_verdict IS NULL THEN RETURN NULL; END IF;
-  -- (2) A arbitragem escolheu a propria resposta do LLM: o veredito e ela.
-  IF p_context->'source'->>'chosen_response_id' = v_llm_id::TEXT THEN RETURN NULL; END IF;
-
-  v_llm := CASE WHEN COALESCE((p_context->'llm_value'->>'present')::BOOLEAN, false)
-    THEN p_context->'llm_value'->'value' END;
-  IF public.answer_is_blank(v_llm) THEN
-    -- Branco so e resposta em pergunta condicional, e so na forma canonica.
-    IF NOT COALESCE(pg_catalog.jsonb_typeof(v_field->'condition') = 'object', false) THEN RETURN NULL; END IF;
-    v_value := CASE WHEN v_field->>'type' = 'multi' THEN '[]'::JSONB ELSE '""'::JSONB END;
-  ELSIF public.error_resolution_value_problem(v_field, v_llm) IS NULL THEN
-    v_value := v_llm;
-  ELSE
-    -- (4) A resposta do LLM saiu do dominio atual da pergunta.
-    RETURN NULL;
-  END IF;
-
-  -- A classe de equivalencia do LLM, pelo union-find da metrica
-  -- (`groupKeysFor`): todas as respostas do documento, de qualquer rodada,
-  -- ligadas por resposta igual depois de normalizada ou por par "=" vigente
-  -- (o snapshot dos dois lados ainda e a resposta atual).
-  WITH RECURSIVE document_responses AS (
-    SELECT response.id, response.answers -> v_field_name AS answer,
-      public.answer_comparison_key(response.answers -> v_field_name) AS answer_key
-    FROM public.responses AS response
-    WHERE response.project_id = v_project AND response.document_id = v_document
-  ), current_pairs AS (
-    SELECT pair.response_a_id AS a_id, pair.response_b_id AS b_id
-    FROM public.response_equivalences AS pair
-    JOIN document_responses AS a ON a.id = pair.response_a_id
-    JOIN document_responses AS b ON b.id = pair.response_b_id
-    WHERE pair.project_id = v_project AND pair.document_id = v_document
-      AND pair.field_name = v_field_name AND pair.superseded_at IS NULL
-      AND public.answer_comparison_key(COALESCE(pair.response_a_answer_snapshot, 'null'::JSONB)) = a.answer_key
-      AND public.answer_comparison_key(COALESCE(pair.response_b_answer_snapshot, 'null'::JSONB)) = b.answer_key
-  ), edges AS (
-    SELECT a.id AS source_id, b.id AS target_id
-    FROM document_responses AS a
-    JOIN document_responses AS b ON a.answer_key IS NOT DISTINCT FROM b.answer_key AND a.id <> b.id
-    UNION SELECT a_id, b_id FROM current_pairs
-    UNION SELECT b_id, a_id FROM current_pairs
-  ), llm_class AS (
-    SELECT v_llm_id AS id
-    UNION
-    SELECT edges.target_id FROM llm_class JOIN edges ON edges.source_id = llm_class.id
-  )
-  SELECT
-    -- (2) O veredito casa com o LLM, ou com resposta que um par liga a ele.
-    EXISTS (SELECT 1 FROM llm_class JOIN document_responses AS response ON response.id = llm_class.id
-            WHERE public.verdict_matches_answer(v_field, v_verdict, response.answer)),
-    (SELECT pg_catalog.count(*) FROM public.responses AS human
-     WHERE human.project_id = v_project AND human.document_id = v_document
-       AND human.respondent_type = 'humano' AND human.is_latest
-       AND human.round_id IS NOT DISTINCT FROM v_round),
-    -- (3) Pesquisador corrente que nao concorda com o LLM.
-    (SELECT pg_catalog.count(*) FROM public.responses AS human
-     WHERE human.project_id = v_project AND human.document_id = v_document
-       AND human.respondent_type = 'humano' AND human.is_latest
-       AND human.round_id IS NOT DISTINCT FROM v_round
-       AND NOT public.answers_agree(v_field, v_llm, human.answers -> v_field_name)
-       AND human.id NOT IN (SELECT id FROM llm_class))
-  INTO v_verdict_matches, v_humans, v_disagreeing;
-
-  IF v_verdict_matches OR v_humans = 0 OR v_disagreeing > 0 THEN RETURN NULL; END IF;
-  RETURN v_value;
-END;
-$$;
-
--- A previa do dialogo: o mesmo calculo, sobre o contexto recalculado. Quem nao
--- ve o contexto (fora do projeto, documento excluido) recebe NULL; contexto
--- que ja mudou e recusado como no RPC, em vez de prometer um valor velho.
-CREATE FUNCTION public.both_correct_value(p_context JSONB)
-RETURNS JSONB
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
-DECLARE
-  v_context JSONB;
-BEGIN
-  v_context := public.llm_error_context((p_context->>'project_id')::UUID, (p_context->>'document_id')::UUID,
-    p_context->>'field_name', (p_context->>'llm_response_id')::UUID, (p_context->>'human_response_id')::UUID,
-    p_context->'source'->>'kind', (p_context->'source'->>'id')::UUID);
-  IF v_context IS NULL THEN RETURN NULL; END IF;
-  IF v_context IS DISTINCT FROM p_context THEN
-    RAISE EXCEPTION 'As respostas mudaram. Recarregue antes de confirmar.' USING ERRCODE = '40001';
-  END IF;
-  RETURN public.both_correct_common_value(v_context);
-END;
-$$;
-
 -- ── CHECK ─────────────────────────────────────────────────────────────────
 
 ALTER TABLE public.error_resolutions
@@ -489,10 +119,10 @@ ALTER TABLE public.error_resolutions
 -- ── set_error_resolution ──────────────────────────────────────────────────
 
 -- A de 20260924120000_error_resolutions_resposta_em_branco.sql com tres
--- pontos alterados: o valor comum de "Ambos corretos" (calculado, conferido
--- contra `p_value` e gravado), a exigencia de resposta do LLM em "Ambos
--- corretos" (dispensada quando ha branco comum de condicional) e a validacao
--- por tipo, agora em `error_resolution_value_problem`. A assinatura nao muda,
+-- pontos alterados: o valor comum de "Ambos corretos" (conferido contra o
+-- contexto e gravado), a exigencia de resposta do LLM em "Ambos corretos"
+-- (dispensada quando ha o branco comum de condicional) e a validacao por
+-- tipo, agora em `error_resolution_value_problem`. A assinatura nao muda,
 -- entao `OR REPLACE` preserva os grants.
 CREATE OR REPLACE FUNCTION public.set_error_resolution(
   p_project_id UUID, p_document_id UUID, p_field_name TEXT,
@@ -506,8 +136,9 @@ DECLARE
   v_context JSONB;
   v_saved public.error_resolutions%ROWTYPE;
   v_field JSONB;
-  v_type TEXT;
   v_conditional BOOLEAN;
+  v_blank JSONB;
+  v_llm_blank BOOLEAN;
   v_common JSONB;
   v_problem TEXT;
 BEGIN
@@ -540,14 +171,46 @@ BEGIN
   -- COALESCE: sem a chave, jsonb_typeof devolve NULL, e um NULL aqui faria os
   -- IF abaixo pularem o guard do LLM e a validacao por tipo inteira.
   v_conditional := COALESCE(pg_catalog.jsonb_typeof(v_field->'condition') = 'object', false);
+  -- O vazio canonico do tipo, o unico branco que se grava, para que export e
+  -- Gabarito leiam um unico vazio por tipo. Definicao sem `type` cai no "".
+  v_blank := CASE WHEN v_field->>'type' = 'multi' THEN '[]'::JSONB ELSE '""'::JSONB END;
+  -- O LLM em branco no sentido de `isBlankAnswer`: sem a chave, null, [] ou
+  -- texto so de espaco no sentido do trim() do JS. btrim tira so o espaco
+  -- comum, e [[:space:]] depende da localidade e deixa NBSP e U+FEFF de fora:
+  -- a classe e explicita.
+  v_llm_blank := NOT (v_context->'llm_value'->>'present')::BOOLEAN
+    OR COALESCE(pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'null'
+                OR v_context->'llm_value'->'value' = '[]'::JSONB
+                OR (pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'string'
+                    AND (v_context->'llm_value'->>'value')
+                      ~ E'^[\t\n\u000B\f\r    -     　﻿]*$'), false);
 
-  -- "Ambos corretos": o valor comum e calculado aqui, sobre as respostas
-  -- vigentes. O cliente manda o que a previa lhe mostrou; qualquer diferenca
-  -- e resposta que mudou no meio do caminho ou cliente adulterado.
-  IF p_decision = 'both_correct' THEN
-    v_common := public.both_correct_common_value(v_context);
-    IF v_common IS DISTINCT FROM NULLIF(p_value, 'null'::JSONB) THEN
-      RAISE EXCEPTION 'O valor que "Ambos corretos" grava no gabarito mudou. Recarregue antes de confirmar.' USING ERRCODE = '40001';
+  -- "Ambos corretos" com o valor comum. Se ha valor comum e a fila que decide,
+  -- porque depende dos demais pesquisadores e dos pares "=", que o contexto
+  -- nao guarda; aqui se confere o que o contexto prova. Sem valor (NULL ou
+  -- JSON null), o veredito continua valendo.
+  v_common := CASE WHEN p_decision = 'both_correct' THEN NULLIF(p_value, 'null'::JSONB) END;
+  IF v_common IS NOT NULL THEN
+    -- Na auto-revisao o veredito e a propria resposta humana do contexto, e
+    -- ela nao fica para tras.
+    IF v_context->'source'->>'kind' IS DISTINCT FROM 'comparacao' THEN
+      RAISE EXCEPTION 'Só o veredito da Comparação dá lugar ao valor comum.' USING ERRCODE = '22023';
+    END IF;
+    -- A arbitragem escolheu a propria resposta do LLM: o veredito ja e ela.
+    IF v_context->'source'->>'chosen_response_id' IS NOT DISTINCT FROM v_context->>'llm_response_id' THEN
+      RAISE EXCEPTION 'O veredito já é a resposta do LLM: não há valor comum.' USING ERRCODE = '22023';
+    END IF;
+    IF v_llm_blank AND NOT v_conditional THEN
+      RAISE EXCEPTION 'Fora de pergunta condicional, o branco não é resposta: não há valor comum.' USING ERRCODE = '22023';
+    END IF;
+    -- 40001: com cliente honesto, so acontece se a resposta do LLM mudou
+    -- entre a carga da fila e o contexto.
+    IF v_common IS DISTINCT FROM (CASE WHEN v_llm_blank THEN v_blank ELSE v_context->'llm_value'->'value' END) THEN
+      RAISE EXCEPTION 'O valor comum é a resposta do LLM, que mudou. Recarregue antes de confirmar.' USING ERRCODE = '40001';
+    END IF;
+    v_problem := CASE WHEN NOT v_llm_blank THEN public.error_resolution_value_problem(v_field, v_common) END;
+    IF v_problem IS NOT NULL THEN
+      RAISE EXCEPTION '%', v_problem USING ERRCODE = '22023';
     END IF;
   END IF;
 
@@ -559,29 +222,15 @@ BEGIN
   -- do campo. A resposta humana do contexto e so ancora de invalidacao, nao a
   -- origem do valor, por isso nao se exige mais que ela contenha o campo.
   IF p_decision IN ('researchers_correct', 'all_wrong') THEN
-    v_type := v_field->>'type';
     IF p_value IS NULL OR pg_catalog.jsonb_typeof(p_value) = 'null' THEN
       RAISE EXCEPTION 'Escolha o valor que vai ao gabarito.' USING ERRCODE = '22023';
     END IF;
     -- Em pergunta condicional, o vazio canonico do tipo e resposta: diz ao
-    -- gabarito que o gatilho nao acionou a pergunta. So a forma exata, para
-    -- que export e Gabarito leiam um unico vazio por tipo. Com o LLM tambem
-    -- em branco (sem a chave, null, "" ou []), o branco nao e erro dele e a
-    -- decisao e "Erro humano": gravar aqui contaria erro onde o Gabarito marca
-    -- acerto. COALESCE de novo: definicao sem `type` deixaria o teste de multi
-    -- em NULL.
-    IF v_conditional AND ((COALESCE(v_type = 'multi', false) AND p_value = '[]'::JSONB)
-                          OR (v_type IS DISTINCT FROM 'multi' AND p_value = '""'::JSONB)) THEN
-      IF NOT (v_context->'llm_value'->>'present')::BOOLEAN
-        OR COALESCE(pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'null'
-                    OR v_context->'llm_value'->'value' = '[]'::JSONB
-                    -- Texto so de espaco no sentido do trim() do JS, que e o que
-                    -- isBlankAnswer usa no Gabarito e na metrica. btrim tira so
-                    -- o espaco comum, e [[:space:]] depende da localidade e
-                    -- deixa NBSP e U+FEFF de fora: a classe e explicita.
-                    OR (pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'string'
-                        AND (v_context->'llm_value'->>'value')
-                          ~ E'^[\t\n\u000B\f\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$'), false) THEN
+    -- gabarito que o gatilho nao acionou a pergunta. Com o LLM tambem em
+    -- branco, o branco nao e erro dele e a decisao e "Erro humano": gravar
+    -- aqui contaria erro onde o Gabarito marca acerto.
+    IF v_conditional AND p_value = v_blank THEN
+      IF v_llm_blank THEN
         RAISE EXCEPTION 'O LLM também deixou em branco: a decisão é "Erro humano".' USING ERRCODE = '22023';
       END IF;
     ELSE
@@ -628,21 +277,6 @@ $$;
 
 -- ── Grants ────────────────────────────────────────────────────────────────
 
-REVOKE ALL ON FUNCTION public.answer_js_trim(TEXT) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_normalize_text(TEXT) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_is_blank(JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_comparison_key(JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_string_set(JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answers_agree(JSONB, JSONB, JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_js_number(NUMERIC) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_js_string(JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_partial_date(TEXT) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.answer_card_text(JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.verdict_multi_selection(TEXT, JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.verdict_matches_answer(JSONB, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.error_resolution_value_problem(JSONB, JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.both_correct_common_value(JSONB) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.both_correct_value(JSONB) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.both_correct_value(JSONB) TO authenticated, service_role;
 
 COMMIT;
