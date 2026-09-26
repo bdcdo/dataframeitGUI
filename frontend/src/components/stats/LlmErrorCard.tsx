@@ -10,6 +10,7 @@ import { formatVerdictDisplay } from "@/lib/verdict-display";
 import { decisionDependsOnSource, effectiveErrorResolution, ERROR_DECISION_LABELS, errorDecisionSchema, type ErrorDecision } from "@/lib/error-resolution";
 import { INVALID_VERDICT_LABELS } from "@/lib/review-validity";
 import type { LlmError, SourceInvalidReason } from "@/lib/llm-error-metrics";
+import { CurrentHumanAnswers } from "./CurrentHumanAnswers";
 
 interface LlmErrorCardProps {
   error: LlmError;
@@ -103,7 +104,9 @@ export function LlmErrorCard(props: LlmErrorCardProps) {
   return <Card role="article" aria-label={`${error.documentTitle}: ${error.fieldDescription || error.fieldName}`}>
     <CardContent className="space-y-2 pt-4">
       <ErrorCardHeader {...props} />
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {/* As respostas atuais ficam ao lado do veredito anterior, que pode ser
+          de uma arbitragem antiga (#758). */}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         <div className="rounded-md border px-3 py-2">
           <p className="text-xs font-medium">LLM respondeu:</p>
           <p className="text-sm">{error.llmAnswer || "(vazio)"}</p>
@@ -114,6 +117,7 @@ export function LlmErrorCard(props: LlmErrorCardProps) {
           </p>
           <p className="text-sm">{formatVerdictDisplay(error.chosenVerdict) || "(vazio)"}</p>
         </div>
+        <CurrentHumanAnswers answers={error.currentHumanAnswers} />
       </div>
       {error.llmJustification && (
         <div className="rounded-md bg-muted/40 px-3 py-2">

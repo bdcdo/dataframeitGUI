@@ -132,6 +132,34 @@ describe("decisão individual em Insights", () => {
     }));
   });
 
+  // #758: o veredito é de uma arbitragem antiga, e os pesquisadores atuais e o
+  // LLM concordam. O diálogo mostra o valor comum que vai ao gabarito, e a
+  // confirmação o envia para o RPC conferir.
+  it("Ambos corretos com o valor comum mostra o valor e o envia", async () => {
+    mocks.prepare.mockResolvedValue({ context: row.context, bothCorrectValue: { value: "LLM" } });
+    show({ ...errorCase(), currentHumanAnswers: [{ name: "Ana", answer: "LLM" }] });
+    await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ decision: "both_correct" }));
+    expect(dialog.textContent).toContain("Valor que irá para o gabarito");
+    expect(dialog.textContent).toContain("Ana");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
+      decision: "both_correct", context: row.context, expected: null, note: "", value: "LLM",
+    }));
+  });
+
+  it("o branco comum também vai como valor, e não como ausência de valor", async () => {
+    mocks.prepare.mockResolvedValue({ context: row.context, bothCorrectValue: { value: "" } });
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
+    await screen.findByRole("dialog");
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
+      decision: "both_correct", context: row.context, expected: null, note: "", value: "",
+    }));
+  });
+
   it("veredito que saiu do formulário exige escolher a opção equivalente", async () => {
     const current = structuredClone(row.context!);
     current.field_definition = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "single", options: ["Sim", "Não"], description: "Pergunta" };

@@ -5,7 +5,7 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
-import { choosesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
+import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type BothCorrectPreview, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 async function withResolutionAction(
   projectId: string,
@@ -265,9 +265,12 @@ async function pickHumanResponse(
 export async function prepareErrorResolution(input: {
   projectId: string; documentId: string; fieldName: string;
   llmResponseId: string; preferredHumanResponseId?: string | null; sourceKind: LlmErrorSource; sourceId: string;
-  /** A decisão que o revisor vai confirmar: decide se a fonte precisa valer. */
+  /**
+   * A decisão que o revisor vai confirmar: decide se a fonte precisa valer, e
+   * em "Ambos corretos" busca também a prévia do valor.
+   */
   decision: ErrorDecision;
-}): Promise<{ context?: ErrorResolutionContext; error?: string }> {
+}): Promise<{ context?: ErrorResolutionContext; bothCorrectValue?: BothCorrectPreview; error?: string }> {
   try {
     if (!await getAuthUser()) return { error: "Não autenticado" };
     const supabase = await createSupabaseServer();
@@ -289,7 +292,11 @@ export async function prepareErrorResolution(input: {
     });
     if (error) return { error: error.message };
     const parsed = errorResolutionContextSchema.safeParse(data);
-    return parsed.success ? { context: parsed.data } : { error: "As fontes mudaram ou não estão disponíveis. Recarregue a página." };
+    if (!parsed.success) return { error: "As fontes mudaram ou não estão disponíveis. Recarregue a página." };
+    if (input.decision !== "both_correct") return { context: parsed.data };
+    const preview = await supabase.rpc("both_correct_value", { p_context: parsed.data });
+    if (preview.error) return { error: preview.error.message };
+    return { context: parsed.data, bothCorrectValue: preview.data === null ? null : { value: preview.data } };
   } catch (e) {
     return { error: errorMessage(e) };
   }
@@ -315,8 +322,9 @@ export async function resolveError(
       p_decision: decision, p_expected_context: context,
       p_expected_id: identity.id,
       p_expected_resolved_at: identity.resolved_at, p_note: note ?? null,
-      // A RPC valida o valor contra a definição do campo nas decisões que o levam.
-      p_value: choosesValue(decision) ? (value ?? null) : null,
+      // A RPC valida o valor contra a definição do campo nas decisões que o
+      // levam, e em "Ambos corretos" o recalcula e confere.
+      p_value: carriesValue(decision) ? (value ?? null) : null,
     });
     if (error) return { success: false, error: error.message };
     if (!data?.id) return { success: false, error: "O banco não confirmou a gravação." };

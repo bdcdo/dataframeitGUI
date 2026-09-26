@@ -45,15 +45,26 @@ interface LlmInsightsViewProps {
   };
 }
 
+// O valor que acompanha a decisão: nas de seletor, o que o revisor escolheu
+// (#733); em "Ambos corretos", o valor comum que a prévia do banco mostrou no
+// diálogo, e que o RPC recalcula e confere (#758).
+function decisionValue(pending: Extract<PendingErrorDecision, { decision: ErrorDecision }>, value: unknown): { value?: ErrorResolutionInput["value"] } {
+  if (choosesValue(pending.decision)) return { value: value as ErrorResolutionInput["value"] };
+  if (pending.decision === "both_correct" && pending.bothCorrectValue) {
+    return { value: pending.bothCorrectValue.value as ErrorResolutionInput["value"] };
+  }
+  return {};
+}
+
 async function persistDecision(projectId: string, pending: PendingErrorDecision, note: string, value?: unknown) {
-  const { error, decision, context } = pending;
-  if (decision && context) {
+  const { error } = pending;
+  if (pending.decision && pending.context) {
     return resolveError(projectId, error.documentId, error.fieldName, {
-      decision, context, expected: error.resolution ?? null, note,
-      // Só as decisões com seletor levam valor: o que o revisor escolheu (#733).
-      ...(choosesValue(decision) ? { value: value as ErrorResolutionInput["value"] } : {}),
+      decision: pending.decision, context: pending.context, expected: error.resolution ?? null, note,
+      ...decisionValue(pending, value),
     });
   }
+  const { decision } = pending;
   if (decision === null && error.resolution) {
     return reopenError(projectId, error.documentId, error.fieldName, error.resolution);
   }
@@ -91,7 +102,7 @@ export function LlmInsightsView({
           fieldName: error.fieldName, llmResponseId: error.llmResponseId,
           preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId!, decision });
         if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
-        setPendingDecision({ error, decision, context: result.context });
+        setPendingDecision({ error, decision, context: result.context, bothCorrectValue: result.bothCorrectValue });
       } catch {
         toast.error("Não foi possível conferir as respostas.");
       }
