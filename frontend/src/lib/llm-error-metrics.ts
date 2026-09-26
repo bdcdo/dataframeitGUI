@@ -609,8 +609,9 @@ export interface BothCorrectInput {
  *
  * Quem grava é o servidor: `set_error_resolution` calcula o valor com a cópia
  * SQL (`both_correct_common_value`) e recusa o que o cliente mandar fora dela.
- * Esta cópia serve à invariante que confere as decisões gravadas e prende, com
- * a mesma matriz de casos, que as duas regras não derivem.
+ * Esta cópia não roda no produto: é o oráculo do teste
+ * (both-correct-common-value.test.ts), que roda a mesma matriz de casos da
+ * suíte SQL para que as duas regras não derivem.
  */
 export function bothCorrectCommonValue(input: BothCorrectInput): { value: unknown } | null {
   const { field, llmResponse, currentHumans } = input;

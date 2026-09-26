@@ -2,18 +2,18 @@
 -- respostas humanas atuais e elas concordam entre si e com o LLM (#758).
 --
 -- Blocos:
---   (a) o RPC: `set_error_resolution` calcula o valor comum e só aceita a
---       decisão quando a expectativa do cliente (`p_value`) é esse valor; a
---       prévia `both_correct_value` devolve o mesmo cálculo; `read_error_resolutions`
---       não derruba a decisão com valor próprio quando a fonte perde a
+--   (a) o RPC: `set_error_resolution` calcula o valor comum e so aceita a
+--       decisao quando a expectativa do cliente (`p_value`) e esse valor; a
+--       previa `both_correct_value` devolve o mesmo calculo; `read_error_resolutions`
+--       nao derruba a decisao com valor proprio quando a fonte perde a
 --       validade; o CHECK aceita valor em "Ambos corretos";
---   (b) matriz das funções puras, cópia SQL de `answersAgree`,
+--   (b) matriz das funcoes puras, copia SQL de `answersAgree`,
 --       `verdictMatchesAnswer` e `normalizeText` (frontend/src/lib). Os casos
---       espelham os do teste unitário `both-correct-common-value.test.ts`,
---       para que as duas cópias falhem juntas;
---   (c) grants: as funções internas ficam fechadas para o cliente.
+--       espelham os do teste unitario `both-correct-common-value.test.ts`,
+--       para que as duas copias falhem juntas;
+--   (c) grants: as funcoes internas ficam fechadas para o cliente.
 --
--- Roda numa transação e não deixa fixture no banco local.
+-- Roda numa transacao e nao deixa fixture no banco local.
 
 BEGIN;
 
@@ -26,25 +26,25 @@ INSERT INTO auth.users (id, email) VALUES
 INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_sync_version)
   SELECT id::TEXT, id, 1 FROM auth.users WHERE id::TEXT LIKE 'b0c00000-%';
 
--- Campos (um por cenário), todos com hash, como o schema grava hoje:
---   s   single: LLM e os dois pesquisadores dizem A (um com caixa e espaço
+-- Campos (um por cenario), todos com hash, como o schema grava hoje:
+--   s   single: LLM e os dois pesquisadores dizem A (um com caixa e espaco
 --       diferentes), o veredito diz B. Valor comum: a resposta do LLM.
 --   s2  single: os pesquisadores discordam entre si. Sem valor.
---   s3  single: o veredito já é a resposta do LLM. Sem valor.
---   s4  single sem condição, todos em branco. Branco só é resposta em
+--   s3  single: o veredito ja e a resposta do LLM. Sem valor.
+--   s4  single sem condicao, todos em branco. Branco so e resposta em
 --       condicional: sem valor.
---   s5  single: todos dizem Z, que não é opção da pergunta. Sem valor.
---   m   multi: a mesma seleção em ordens diferentes. Valor: o array do LLM.
---   c   single condicional: o LLM deixou de fora e os pesquisadores também.
---       Valor: o branco canônico "".
+--   s5  single: todos dizem Z, que nao e opcao da pergunta. Sem valor.
+--   m   multi: a mesma selecao em ordens diferentes. Valor: o array do LLM.
+--   c   single condicional: o LLM deixou de fora e os pesquisadores tambem.
+--       Valor: o branco canonico "".
 --   cm  multi condicional: LLM [] e pesquisadores sem a chave. Valor: [].
 --   t   texto: acento e caixa, e um par "=" vigente liga a terceira forma.
 --   t2  texto: um par "=" vigente liga o LLM a uma resposta que casa com o
---       veredito. A métrica conta o LLM como certo: sem valor.
+--       veredito. A metrica conta o LLM como certo: sem valor.
 --   t3  texto: o par "=" que juntaria os pesquisadores ao LLM tem snapshot
---       velho e não vale. Sem valor.
---   s6  single: a arbitragem escolheu a própria resposta do LLM, e o veredito
---       é ela, mesmo com o texto "B". Sem valor.
+--       velho e nao vale. Sem valor.
+--   s6  single: a arbitragem escolheu a propria resposta do LLM, e o veredito
+--       e ela, mesmo com o texto "B". Sem valor.
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
   ('b0c10000-0000-0000-0000-000000000001', 'Common value test', 'b0c00000-0000-0000-0000-000000000001', 'compare_llm',
    '[{"id":"b0f10000-0000-4000-8000-000000000001","name":"s","type":"single","options":["A","B"],"description":"Única","hash":"s00000000001"},
@@ -66,7 +66,7 @@ INSERT INTO public.project_members (project_id, user_id, role, can_resolve) VALU
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('b0c20000-0000-0000-0000-000000000001', 'b0c10000-0000-0000-0000-000000000001', 'Documento', 'Texto');
 
--- L: LLM; H1 e H2: pesquisadores correntes; HV: versão anterior de H2, fora
+-- L: LLM; H1 e H2: pesquisadores correntes; HV: versao anterior de H2, fora
 -- de `is_latest`, com as respostas que a arbitragem antiga escolheu.
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, is_latest, answers) VALUES
   ('b0c30000-0000-0000-0000-000000000001', 'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', NULL, 'llm', true,
@@ -78,11 +78,11 @@ INSERT INTO public.responses (id, project_id, document_id, respondent_id, respon
   ('b0c30000-0000-0000-0000-000000000004', 'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', 'b0c00000-0000-0000-0000-000000000003', 'humano', false,
    '{"s":"B","s2":"B","s4":"A","s5":"A","m":["C"],"g0":"Sim","c":"A","cm":["A"],"t":"Outro remédio","t2":"Metamizol","t3":"Glicose","s6":"B"}');
 
--- Um pesquisador com resposta `is_latest` numa rodada que não é a corrente,
--- discordando do LLM em `s`. Não é pesquisador atual: o valor comum lê só a
+-- Um pesquisador com resposta `is_latest` numa rodada que nao e a corrente,
+-- discordando do LLM em `s`. Nao e pesquisador atual: o valor comum le so a
 -- rodada corrente. A troca de rodada o teria arquivado; a fixture o cria direto,
--- trocando a rodada corrente só durante o INSERT, porque o gatilho de escrita
--- só aceita resposta nova na rodada corrente.
+-- trocando a rodada corrente so durante o INSERT, porque o gatilho de escrita
+-- so aceita resposta nova na rodada corrente.
 INSERT INTO public.rounds (id, project_id, label) VALUES
   ('b0c50000-0000-0000-0000-000000000001', 'b0c10000-0000-0000-0000-000000000001', 'Rodada paralela');
 CREATE TEMP TABLE common_round (id UUID) ON COMMIT DROP;
@@ -111,13 +111,13 @@ INSERT INTO public.response_equivalences (project_id, document_id, field_name, r
   ('b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', 't2',
    'b0c30000-0000-0000-0000-000000000001', 'b0c30000-0000-0000-0000-000000000004', 'b0c00000-0000-0000-0000-000000000001',
    '"Dipirona"', '"Metamizol"'),
-  -- t3: LLM = H1, com snapshot de H1 que não é mais a resposta dele.
+  -- t3: LLM = H1, com snapshot de H1 que nao e mais a resposta dele.
   ('b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', 't3',
    'b0c30000-0000-0000-0000-000000000001', 'b0c30000-0000-0000-0000-000000000002', 'b0c00000-0000-0000-0000-000000000001',
    '"Soro"', '"soro fisiologico"');
 -- O gatilho de INSERT carimba o snapshot com a resposta atual, e o de UPDATE
 -- em `responses` apaga o par cuja resposta muda. O par com snapshot velho que
--- a métrica descarta (`filterCurrentEquivalencePairs`) é montado à mão.
+-- a metrica descarta (`filterCurrentEquivalencePairs`) e montado a mao.
 UPDATE public.response_equivalences SET response_b_answer_snapshot = '"outra coisa"'
 WHERE field_name = 't3' AND project_id = 'b0c10000-0000-0000-0000-000000000001';
 
@@ -155,7 +155,7 @@ UPDATE common_cases SET context = public.llm_error_context(
   'b0c30000-0000-0000-0000-000000000001', 'b0c30000-0000-0000-0000-000000000002', 'comparacao', review);
 RESET ROLE;
 
--- (a) O RPC grava o valor comum, e só ele.
+-- (a) O RPC grava o valor comum, e so ele.
 SELECT set_config('request.jwt.claims', '{"sub":"b0c00000-0000-0000-0000-000000000001","supabase_uid":"b0c00000-0000-0000-0000-000000000001"}', true);
 SET LOCAL ROLE authenticated;
 DO $$
@@ -165,11 +165,11 @@ DECLARE
   kase RECORD;
   item RECORD;
 BEGIN
-  -- O caso principal primeiro: no código anterior ele falha com a mensagem que
-  -- descreve o defeito (decisão gravada sem o valor comum).
+  -- O caso principal primeiro: no codigo anterior ele falha com a mensagem que
+  -- descreve o defeito (decisao gravada sem o valor comum).
   FOR kase IN SELECT * FROM common_cases ORDER BY field <> 's', field LOOP
     IF kase.context IS NULL THEN RAISE EXCEPTION 'FALHOU: fixture sem contexto em %', kase.field; END IF;
-    -- A decisão com a expectativa certa grava exatamente o valor esperado.
+    -- A decisao com a expectativa certa grava exatamente o valor esperado.
     PERFORM public.set_error_resolution(P, D, kase.field, 'both_correct', kase.context, NULL, NULL, 'Conferido', kase.expected);
     SELECT * INTO item FROM public.read_error_resolutions(P) AS r WHERE r.field_name = kase.field;
     IF item.decision IS DISTINCT FROM 'both_correct' OR item.approved_value IS DISTINCT FROM kase.expected THEN
@@ -178,7 +178,7 @@ BEGIN
     IF item.current_context IS DISTINCT FROM item.context THEN
       RAISE EXCEPTION 'FALHOU: decisão recém-gravada em % já nasce stale', kase.field;
     END IF;
-    -- A expectativa errada (sem valor quando há, ou um valor qualquer) é recusada.
+    -- A expectativa errada (sem valor quando ha, ou um valor qualquer) e recusada.
     BEGIN
       PERFORM public.set_error_resolution(P, D, kase.field, 'both_correct', kase.context, item.id, item.resolved_at, NULL,
         CASE WHEN kase.expected IS NULL THEN '"A"'::JSONB END);
@@ -196,7 +196,7 @@ BEGIN
 END $$;
 RESET ROLE;
 
--- A prévia do diálogo devolve o mesmo cálculo; quem não é do projeto não vê.
+-- A previa do dialogo devolve o mesmo calculo; quem nao e do projeto nao ve.
 SELECT set_config('request.jwt.claims', '{"sub":"b0c00000-0000-0000-0000-000000000003","supabase_uid":"b0c00000-0000-0000-0000-000000000003"}', true);
 SET LOCAL ROLE authenticated;
 UPDATE common_cases SET preview = public.both_correct_value(context);
@@ -221,7 +221,7 @@ BEGIN
 END $$;
 RESET ROLE;
 
--- Prévia de contexto que já mudou: recusa, em vez de prometer valor velho.
+-- Previa de contexto que ja mudou: recusa, em vez de prometer valor velho.
 SELECT set_config('request.jwt.claims', '{"sub":"b0c00000-0000-0000-0000-000000000001","supabase_uid":"b0c00000-0000-0000-0000-000000000001"}', true);
 SET LOCAL ROLE authenticated;
 DO $$
@@ -234,8 +234,8 @@ BEGIN
 END $$;
 RESET ROLE;
 
--- Um pesquisador muda a resposta: o mesmo contexto do LLM e de H1 passa a não
--- ter valor comum, e a expectativa antiga é recusada.
+-- Um pesquisador muda a resposta: o mesmo contexto do LLM e de H1 passa a nao
+-- ter valor comum, e a expectativa antiga e recusada.
 UPDATE public.responses SET answers = answers || '{"s":"B"}' WHERE id = 'b0c30000-0000-0000-0000-000000000003';
 SELECT set_config('request.jwt.claims', '{"sub":"b0c00000-0000-0000-0000-000000000001","supabase_uid":"b0c00000-0000-0000-0000-000000000001"}', true);
 SET LOCAL ROLE authenticated;
@@ -257,7 +257,7 @@ RESET ROLE;
 UPDATE public.responses SET answers = answers || '{"s":" a"}' WHERE id = 'b0c30000-0000-0000-0000-000000000003';
 
 -- "Ambos corretos" com o LLM ausente continua exigindo o valor comum: sem ele,
--- não há o que declarar correto (c sem o branco comum).
+-- nao ha o que declarar correto (c sem o branco comum).
 UPDATE public.responses SET answers = answers || '{"c":"A"}' WHERE id = 'b0c30000-0000-0000-0000-000000000003';
 SELECT set_config('request.jwt.claims', '{"sub":"b0c00000-0000-0000-0000-000000000001","supabase_uid":"b0c00000-0000-0000-0000-000000000001"}', true);
 SET LOCAL ROLE authenticated;
@@ -277,9 +277,9 @@ END $$;
 RESET ROLE;
 UPDATE public.responses SET answers = answers - 'c' WHERE id = 'b0c30000-0000-0000-0000-000000000003';
 
--- A decisão com valor próprio não depende da fonte: com a pergunta mudada, o
--- contexto calculado depois da mudança segue valendo para ela, e cai para a
--- que não tem valor. Mesmo desenho de reviews_field_hash.test.sql (e).
+-- A decisao com valor proprio nao depende da fonte: com a pergunta mudada, o
+-- contexto calculado depois da mudanca segue valendo para ela, e cai para a
+-- que nao tem valor. Mesmo desenho de reviews_field_hash.test.sql (e).
 UPDATE public.projects
 SET pydantic_fields = (
   SELECT jsonb_agg(CASE WHEN f->>'name' = 's' THEN f || '{"description":"Única, reescrita","hash":"s99999999999"}' ELSE f END ORDER BY i)
@@ -324,7 +324,7 @@ BEGIN
 END $$;
 RESET ROLE;
 
--- CHECK: "Ambos corretos" aceita valor; as decisões sem valor seguem sem.
+-- CHECK: "Ambos corretos" aceita valor; as decisoes sem valor seguem sem.
 DO $$
 BEGIN
   INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context, approved_value)
@@ -361,7 +361,7 @@ BEGIN
   RAISE NOTICE 'OK: CHECK aceita valor em "Ambos corretos" e segue fechado nas demais';
 END $$;
 
--- Fonte de auto-revisão nunca tem valor comum: o veredito é a própria
+-- Fonte de auto-revisao nunca tem valor comum: o veredito e a propria
 -- resposta humana do contexto.
 DO $$
 BEGIN
@@ -372,7 +372,7 @@ BEGIN
   RAISE NOTICE 'OK: auto-revisão fica fora do valor comum';
 END $$;
 
--- (b) Matriz das funções puras. Mesmos casos de both-correct-common-value.test.ts.
+-- (b) Matriz das funcoes puras. Mesmos casos de both-correct-common-value.test.ts.
 DO $$
 DECLARE
   text_field CONSTANT JSONB := '{"name":"t","type":"text"}';
@@ -434,8 +434,8 @@ BEGIN
       RAISE EXCEPTION 'FALHOU: verdict_matches_answer %', kase.label;
     END IF;
   END LOOP;
-  -- O texto do card (`formatCardAnswer`) escreve número como o `String()` do
-  -- JS: o JSON é lido como double, sem zero decimal à direita e com expoente
+  -- O texto do card (`formatCardAnswer`) escreve numero como o `String()` do
+  -- JS: o JSON e lido como double, sem zero decimal a direita e com expoente
   -- fora de [1e-6, 1e21).
   FOR kase IN SELECT * FROM (VALUES
       ('2.0', '2'),
@@ -466,7 +466,7 @@ BEGIN
   RAISE NOTICE 'OK: matriz das funções puras';
 END $$;
 
--- A forma do número não depende da sessão: com `extra_float_digits` baixo, o
+-- A forma do numero nao depende da sessao: com `extra_float_digits` baixo, o
 -- texto do float8 sairia arredondado ("1" no lugar de "1.0000000000000002").
 SET LOCAL extra_float_digits = 0;
 DO $$
@@ -478,7 +478,7 @@ BEGIN
 END $$;
 RESET extra_float_digits;
 
--- (c) Grants: só a prévia é do cliente.
+-- (c) Grants: so a previa e do cliente.
 DO $$
 DECLARE fn TEXT;
 BEGIN

@@ -21,8 +21,12 @@ import type { PydanticField } from "@/lib/types";
 
 const MIGRATION = join(__dirname, "..", "..", "..", "supabase", "migrations", "20260927140000_both_correct_common_value.sql");
 
+// Um id por nome: os bytes do nome em hexadecimal no fim do UUID (nomes de
+// até 6 bytes, que é o que as fixtures usam).
 function field(name: string, overrides: Partial<PydanticField> = {}): PydanticField {
-  return { id: `00000000-0000-4000-8000-0000000000${name.length}`, name, type: "single", options: ["A", "B"], description: name, hash: `h-${name}`, ...overrides };
+  const suffix = Buffer.from(name, "utf8").toString("hex");
+  if (suffix.length > 12) throw new Error(`nome de campo longo demais para a fixture: ${name}`);
+  return { id: `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`, name, type: "single", options: ["A", "B"], description: name, hash: `h-${name}`, ...overrides };
 }
 
 const CONDITION = { field: "g0", equals: "Sim" } as unknown as PydanticField["condition"];
@@ -83,6 +87,11 @@ function commonValue(f: PydanticField, verdict: string, overrides: { chosenRespo
 }
 
 describe("bothCorrectCommonValue: os cenários da suíte SQL", () => {
+  it("cada campo da fixture tem id próprio", () => {
+    const ids = scenarios.map(([, f]) => f.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it.each(scenarios)("%s", (_label, f, verdict, expected) => {
     expect(commonValue(f, verdict)).toEqual(expected);
   });

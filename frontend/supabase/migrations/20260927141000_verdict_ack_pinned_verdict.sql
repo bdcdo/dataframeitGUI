@@ -2,13 +2,13 @@
 --
 -- `verdict_acknowledgments` guardava so `review_id`. A rearbitragem de
 -- `submitVerdict` e um upsert na chave (projeto, documento, campo, revisor), que
--- reaproveita o `reviews.id`: um veredito novo herdava o "Aceitar correção" ou
--- a dúvida dada ao veredito anterior, e Meus vereditos mostrava o pesquisador
+-- reaproveita o `reviews.id`: um veredito novo herdava o "Aceitar correcao" ou
+-- a duvida dada ao veredito anterior, e Meus vereditos mostrava o pesquisador
 -- ciente de um veredito que ele nunca viu.
 --
 -- `acknowledged_verdict` guarda o texto do veredito reconhecido. O
 -- reconhecimento vale enquanto ele e o `reviews.verdict` atual; mudou o
--- veredito, o item volta a pendente em Meus vereditos e a dúvida sai de
+-- veredito, o item volta a pendente em Meus vereditos e a duvida sai de
 -- Comentarios. A copia TypeScript da regra e `acknowledgmentIsCurrent`
 -- (frontend/src/lib/reviews/verdict-acknowledgment.ts).
 --

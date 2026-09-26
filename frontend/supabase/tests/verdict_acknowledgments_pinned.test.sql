@@ -1,19 +1,19 @@
--- O reconhecimento de veredito ("Aceitar correção", "Comentar dúvida") fica
--- preso ao conteúdo do veredito reconhecido (#758).
+-- O reconhecimento de veredito ("Aceitar correcao", "Comentar duvida") fica
+-- preso ao conteudo do veredito reconhecido (#758).
 --
 -- O upsert de rearbitragem de `submitVerdict` reaproveita o `reviews.id`, e o
--- reconhecimento, que só guardava `review_id`, sobrevivia a um veredito novo:
+-- reconhecimento, que so guardava `review_id`, sobrevivia a um veredito novo:
 -- o pesquisador aparecia como ciente de um veredito que nunca viu.
 -- `acknowledged_verdict` guarda o texto do veredito reconhecido, e o gatilho
--- só aceita gravar o reconhecimento com o veredito atual da review, que o
+-- so aceita gravar o reconhecimento com o veredito atual da review, que o
 -- cliente manda (o que a tela mostrou); a review mudou no meio do caminho,
 -- recusa com 40001.
 --
--- Roda numa transação e não deixa fixture no banco local.
+-- Roda numa transacao e nao deixa fixture no banco local.
 
 BEGIN;
 
--- Catálogo primeiro: sem a coluna, a mensagem é legível em vez do 42703 cru.
+-- Catalogo primeiro: sem a coluna, a mensagem e legivel em vez do 42703 cru.
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -55,7 +55,7 @@ SELECT set_config('request.jwt.claims', '{"sub":"b1c00000-0000-0000-0000-0000000
 SET LOCAL ROLE authenticated;
 DO $$
 BEGIN
-  -- Veredito que não é o atual: a tela estava velha.
+  -- Veredito que nao e o atual: a tela estava velha.
   BEGIN
     INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status, acknowledged_verdict)
     VALUES ('b1c40000-0000-0000-0000-000000000001', 'b1c00000-0000-0000-0000-000000000002', 'accepted', 'Não');
@@ -68,7 +68,7 @@ BEGIN
 END $$;
 RESET ROLE;
 
--- Rearbitragem pelo mesmo upsert de submitVerdict: a review mantém o id e
+-- Rearbitragem pelo mesmo upsert de submitVerdict: a review mantem o id e
 -- muda o veredito. O reconhecimento continua gravado, preso ao veredito antigo.
 UPDATE public.reviews SET verdict = 'Não' WHERE id = 'b1c40000-0000-0000-0000-000000000001';
 DO $$
@@ -84,7 +84,7 @@ BEGIN
   RAISE NOTICE 'OK: rearbitragem não herda o reconhecimento';
 END $$;
 
--- O coordenador resolve a dúvida antiga: manutenção não carimba nem é
+-- O coordenador resolve a duvida antiga: manutencao nao carimba nem e
 -- recusada pelo veredito ter mudado.
 SELECT set_config('request.jwt.claims', '{"sub":"b1c00000-0000-0000-0000-000000000001","supabase_uid":"b1c00000-0000-0000-0000-000000000001"}', true);
 SET LOCAL ROLE authenticated;
@@ -101,7 +101,7 @@ END $$;
 RESET ROLE;
 
 -- O pesquisador reconhece de novo, pelo mesmo upsert do app: com o veredito
--- novo, aceito; com o antigo, recusado; e um PATCH não o troca por outro texto.
+-- novo, aceito; com o antigo, recusado; e um PATCH nao o troca por outro texto.
 SELECT set_config('request.jwt.claims', '{"sub":"b1c00000-0000-0000-0000-000000000002","supabase_uid":"b1c00000-0000-0000-0000-000000000002"}', true);
 SET LOCAL ROLE authenticated;
 DO $$
@@ -180,8 +180,8 @@ BEGIN
   RAISE NOTICE 'OK: o upsert do frontend anterior, sem a coluna, grava o veredito atual';
 END $$;
 
--- Quem não é do projeto não descobre o texto do veredito pelo erro: com o
--- veredito certo ou errado, a recusa é a mesma, a da policy.
+-- Quem nao e do projeto nao descobre o texto do veredito pelo erro: com o
+-- veredito certo ou errado, a recusa e a mesma, a da policy.
 SELECT set_config('request.jwt.claims', '{"sub":"b1c00000-0000-0000-0000-000000000003","supabase_uid":"b1c00000-0000-0000-0000-000000000003"}', true);
 SET LOCAL ROLE authenticated;
 DO $$

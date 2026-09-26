@@ -1,4 +1,4 @@
--- "Ambos corretos" grava o valor comum quando o veredito ficou para trás (#758).
+-- "Ambos corretos" grava o valor comum quando o veredito ficou para tras (#758).
 --
 -- Caso de producao: na fila do LLM Insights, o "Veredito anterior" de varias
 -- celulas vinha de uma arbitragem antiga que dizia X, enquanto os
