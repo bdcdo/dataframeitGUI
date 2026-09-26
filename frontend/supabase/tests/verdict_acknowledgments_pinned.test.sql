@@ -62,13 +62,6 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: reconhecimento de veredito que não é o atual foi aceito';
   EXCEPTION WHEN serialization_failure THEN NULL;
   END;
-  -- Sem dizer qual veredito reconheceu: recusado.
-  BEGIN
-    INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status)
-    VALUES ('b1c40000-0000-0000-0000-000000000001', 'b1c00000-0000-0000-0000-000000000002', 'accepted');
-    RAISE EXCEPTION 'FALHOU: reconhecimento sem veredito foi aceito';
-  EXCEPTION WHEN serialization_failure OR not_null_violation THEN NULL;
-  END;
   INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status, comment, acknowledged_verdict)
   VALUES ('b1c40000-0000-0000-0000-000000000001', 'b1c00000-0000-0000-0000-000000000002', 'questioned', 'Por quê?', 'Sim');
   RAISE NOTICE 'OK: o reconhecimento guarda o veredito que a tela mostrou';
@@ -127,12 +120,15 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: PATCH trocou o veredito reconhecido por um que a review não tem';
   EXCEPTION WHEN serialization_failure THEN NULL;
   END;
-  BEGIN
-    UPDATE public.verdict_acknowledgments SET status = 'accepted'
-    WHERE review_id = 'b1c40000-0000-0000-0000-000000000001';
-    RAISE EXCEPTION 'FALHOU: mudar o status sem reconhecer o veredito atual foi aceito';
-  EXCEPTION WHEN serialization_failure THEN NULL;
-  END;
+  -- UPDATE so de `comment`, sem a coluna, sobre a review rearbitrada: e o
+  -- comportamento antigo, e o reconhecimento passa a ser do veredito atual.
+  -- Prova que `comment` esta na lista do `UPDATE OF` do gatilho: fora dela, o
+  -- veredito reconhecido ficaria o antigo.
+  UPDATE public.verdict_acknowledgments SET comment = 'Ainda não entendi'
+  WHERE review_id = 'b1c40000-0000-0000-0000-000000000001';
+  IF (SELECT acknowledged_verdict FROM public.verdict_acknowledgments WHERE review_id = 'b1c40000-0000-0000-0000-000000000001') <> 'Não' THEN
+    RAISE EXCEPTION 'FALHOU: UPDATE de comment sem a coluna não recarimbou o veredito atual';
+  END IF;
   INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status, comment, acknowledged_verdict)
   VALUES ('b1c40000-0000-0000-0000-000000000001', 'b1c00000-0000-0000-0000-000000000002', 'accepted', NULL, 'Não')
   ON CONFLICT (review_id, respondent_id) DO UPDATE
@@ -143,6 +139,46 @@ BEGIN
   RAISE NOTICE 'OK: reconhecer de novo exige o veredito atual';
 END $$;
 RESET ROLE;
+
+-- O frontend anterior ao deploy manda o upsert sem `acknowledged_verdict`
+-- (actions/verdicts.ts da main). Ele continua funcionando entre a migration e
+-- o deploy: o gatilho carimba o veredito atual, no INSERT e no UPDATE que o
+-- upsert faz quando a linha ja existe. Mesmo SQL que o PostgREST gera para o
+-- upsert: o SET so tem as colunas do payload.
+INSERT INTO public.documents (id, project_id, title, text) VALUES
+  ('b1c20000-0000-0000-0000-000000000002', 'b1c10000-0000-0000-0000-000000000001', 'Documento 2', 'Texto');
+INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
+  ('b1c40000-0000-0000-0000-000000000002', 'b1c10000-0000-0000-0000-000000000001', 'b1c20000-0000-0000-0000-000000000002', 'q',
+   'b1c00000-0000-0000-0000-000000000001', 'Sim', NULL);
+SELECT set_config('request.jwt.claims', '{"sub":"b1c00000-0000-0000-0000-000000000002","supabase_uid":"b1c00000-0000-0000-0000-000000000002"}', true);
+SET LOCAL ROLE authenticated;
+INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status, comment)
+VALUES ('b1c40000-0000-0000-0000-000000000002', 'b1c00000-0000-0000-0000-000000000002', 'questioned', 'Por quê?')
+ON CONFLICT (review_id, respondent_id) DO UPDATE
+  SET review_id = EXCLUDED.review_id, respondent_id = EXCLUDED.respondent_id,
+      status = EXCLUDED.status, comment = EXCLUDED.comment;
+RESET ROLE;
+DO $$
+BEGIN
+  IF (SELECT acknowledged_verdict FROM public.verdict_acknowledgments WHERE review_id = 'b1c40000-0000-0000-0000-000000000002') IS DISTINCT FROM 'Sim' THEN
+    RAISE EXCEPTION 'FALHOU: upsert do frontend anterior não gravou o veredito atual';
+  END IF;
+END $$;
+UPDATE public.reviews SET verdict = 'Não' WHERE id = 'b1c40000-0000-0000-0000-000000000002';
+SET LOCAL ROLE authenticated;
+INSERT INTO public.verdict_acknowledgments (review_id, respondent_id, status, comment)
+VALUES ('b1c40000-0000-0000-0000-000000000002', 'b1c00000-0000-0000-0000-000000000002', 'accepted', NULL)
+ON CONFLICT (review_id, respondent_id) DO UPDATE
+  SET review_id = EXCLUDED.review_id, respondent_id = EXCLUDED.respondent_id,
+      status = EXCLUDED.status, comment = EXCLUDED.comment;
+RESET ROLE;
+DO $$
+BEGIN
+  IF (SELECT acknowledged_verdict FROM public.verdict_acknowledgments WHERE review_id = 'b1c40000-0000-0000-0000-000000000002') IS DISTINCT FROM 'Não' THEN
+    RAISE EXCEPTION 'FALHOU: upsert do frontend anterior sobre linha existente não recarimbou o veredito atual';
+  END IF;
+  RAISE NOTICE 'OK: o upsert do frontend anterior, sem a coluna, grava o veredito atual';
+END $$;
 
 -- Quem não é do projeto não descobre o texto do veredito pelo erro: com o
 -- veredito certo ou errado, a recusa é a mesma, a da policy.

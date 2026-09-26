@@ -12,14 +12,23 @@
 -- Comentarios. A copia TypeScript da regra e `acknowledgmentIsCurrent`
 -- (frontend/src/lib/reviews/verdict-acknowledgment.ts).
 --
--- O cliente manda o veredito que a tela mostrou, e o gatilho so aceita gravar
--- o reconhecimento (INSERT, ou UPDATE que toca `review_id`, `status`, `comment`
--- ou o proprio `acknowledged_verdict`) quando ele e o veredito atual da review.
--- Assim o servidor nao confia no cliente nem carimba por conta propria um
--- veredito que a pessoa nao viu: a review mudou entre a tela e o clique, 40001
--- e "recarregue". A manutencao do coordenador (`resolved_at`, `resolved_by`) e a
--- unificacao de contas (`respondent_id`) nao tocam essas colunas e nao passam
--- pelo gatilho.
+-- O frontend novo manda o veredito que a tela mostrou, e o gatilho so aceita
+-- gravar o reconhecimento com esse valor quando ele e o veredito atual da
+-- review: a review mudou entre a tela e o clique, 40001 e "recarregue".
+-- O frontend anterior nao manda a coluna, e a migration vai ao banco antes do
+-- deploy dele. Sem a coluna, o gatilho carimba o veredito atual, que e o
+-- comportamento antigo (o reconhecimento vale para a review como ela esta).
+-- "Sem a coluna" tem duas formas: NULL no INSERT (inclusive no INSERT que o
+-- upsert tenta antes do conflito), e no UPDATE o valor igual ao que ja estava
+-- gravado, porque o upsert do PostgREST so poe no SET as colunas do payload.
+-- O upsert do frontend novo nunca chega a esse UPDATE com um veredito velho: o
+-- gatilho de INSERT confere o valor que o cliente mandou antes da deteccao do
+-- conflito, e recusa.
+-- O gatilho dispara no INSERT e no UPDATE que toca `review_id`, `status`,
+-- `comment` ou o proprio `acknowledged_verdict`. A manutencao do coordenador
+-- (`resolved_at`, `resolved_by`) e a unificacao de contas (`respondent_id`)
+-- nao tocam essas colunas, nao passam pelo gatilho e nao movem o veredito
+-- reconhecido.
 --
 -- Backfill: o veredito atual da review, para todo reconhecimento existente.
 -- Medido em producao em 2026-09-26, so leitura: 163 reconhecimentos (116
@@ -70,7 +79,17 @@ DECLARE
 BEGIN
   SELECT review.verdict INTO v_verdict FROM public.reviews AS review WHERE review.id = NEW.review_id;
   IF NOT FOUND THEN RETURN NEW; END IF;
-  IF NEW.acknowledged_verdict IS NULL OR NEW.acknowledged_verdict IS DISTINCT FROM v_verdict THEN
+  -- Compatibilidade com o frontend anterior, que nao manda a coluna: NULL no
+  -- INSERT, ou no UPDATE o valor que ja estava gravado, equivalem ao
+  -- comportamento antigo, e o reconhecimento passa a ser do veredito atual. O
+  -- NOT NULL da coluna e conferido depois deste gatilho BEFORE, entao o NULL
+  -- nunca chega a ser gravado.
+  IF NEW.acknowledged_verdict IS NULL
+     OR (TG_OP = 'UPDATE' AND NEW.acknowledged_verdict IS NOT DISTINCT FROM OLD.acknowledged_verdict) THEN
+    NEW.acknowledged_verdict := v_verdict;
+    RETURN NEW;
+  END IF;
+  IF NEW.acknowledged_verdict IS DISTINCT FROM v_verdict THEN
     RAISE EXCEPTION 'O veredito mudou desde que a página carregou. Recarregue antes de responder a ele.'
       USING ERRCODE = '40001';
   END IF;
