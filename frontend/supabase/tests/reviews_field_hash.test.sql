@@ -294,6 +294,46 @@ INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id
    't', '5e000000-0000-0000-0000-000000000001', 'a', NULL,
    '[{"id":"5e300000-0000-0000-0000-000000000004"},{"id":"5e300000-0000-0000-0000-000000000014"}]');
 
+-- Ultima mudanca registrada de `t`, depois das reviews 11 a 15 (que nascem
+-- em now(), o inicio da transacao). A review 16 e criada depois dela e vota na
+-- resposta 21, codificada sob o hash antigo: o veredito foi dado sob a pergunta
+-- atual, e o carimbo e o hash atual, nao o da resposta. A 17 e anterior a
+-- mudanca e segue a regra (a), o hash da resposta 24. O campo `q` nao tem entrada no log: a 18,
+-- mesmo criada depois de tudo, segue (a).
+INSERT INTO public.schema_change_log (project_id, changed_by, field_name, change_summary, before_value, after_value, created_at)
+VALUES ('5e100000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001', 't',
+  'descrição', '{"description":"Antes"}', '{"description":"Livre"}', clock_timestamp());
+INSERT INTO public.schema_change_log (project_id, changed_by, field_name, change_summary, before_value, after_value, created_at)
+VALUES ('5e100000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001', 't',
+  'descrição', '{"description":"Bem antes"}', '{"description":"Antes"}', clock_timestamp() - interval '1 day');
+INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes) VALUES
+  ('5e300000-0000-0000-0000-000000000023', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000004',
+   '5e000000-0000-0000-0000-000000000001', 'humano', '{"t":"a","q":"Sim"}', '{"t":"111111111111","q":"000000000000"}'),
+  ('5e300000-0000-0000-0000-000000000024', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000001',
+   '5e000000-0000-0000-0000-000000000001', 'humano', '{"t":"a"}', '{"t":"111111111111"}');
+INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id, created_at) VALUES
+  ('5e400000-0000-0000-0000-000000000016', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000004',
+   't', '5e000000-0000-0000-0000-000000000002', 'a', '5e300000-0000-0000-0000-000000000023', clock_timestamp() + interval '1 hour'),
+  ('5e400000-0000-0000-0000-000000000017', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000001',
+   't', '5e000000-0000-0000-0000-000000000001', 'a', '5e300000-0000-0000-0000-000000000024', clock_timestamp() - interval '1 hour'),
+  ('5e400000-0000-0000-0000-000000000018', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000004',
+   'q', '5e000000-0000-0000-0000-000000000001', 'Sim', '5e300000-0000-0000-0000-000000000023', clock_timestamp() + interval '1 hour');
+
+DO $$
+BEGIN
+  IF public.review_inferred_field_hash('5e400000-0000-0000-0000-000000000016') IS DISTINCT FROM 'cccccccccccc' THEN
+    RAISE EXCEPTION 'FALHOU: veredito criado depois da ultima mudanca do campo deveria levar o hash atual';
+  END IF;
+  IF public.review_inferred_field_hash('5e400000-0000-0000-0000-000000000017') IS DISTINCT FROM '111111111111' THEN
+    RAISE EXCEPTION 'FALHOU: veredito anterior a ultima mudanca deveria seguir a resposta escolhida';
+  END IF;
+  IF public.review_inferred_field_hash('5e400000-0000-0000-0000-000000000018') IS DISTINCT FROM '000000000000' THEN
+    RAISE EXCEPTION 'FALHOU: campo sem entrada no log deveria seguir a resposta escolhida';
+  END IF;
+  RAISE NOTICE 'OK: backfill carimba o hash atual so depois da ultima mudanca registrada do campo';
+END;
+$$;
+
 DO $$
 BEGIN
   IF public.review_inferred_field_hash('5e400000-0000-0000-0000-000000000011') IS DISTINCT FROM '111111111111' THEN

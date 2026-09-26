@@ -66,16 +66,40 @@
 -- simplesmente sobrescrito.
 --
 -- Backfill (`review_inferred_field_hash`), do mais confiavel ao menos:
---   (a) o hash do campo em `answer_field_hashes` da resposta escolhida;
+--   (0) o hash ATUAL do campo, quando a review foi criada depois da ultima
+--       entrada de `schema_change_log` daquele campo no projeto: nada mudou
+--       na pergunta desde entao, entao o veredito foi dado sob a pergunta
+--       atual, qualquer que seja a versao em que a resposta escolhida foi
+--       codificada;
+--   (a) senao, o hash do campo em `answer_field_hashes` da resposta
+--       escolhida;
 --   (b) senao, o hash em que concordam TODAS as respostas do
 --       `response_snapshot` que ainda existem (nenhuma sem hash, um hash so);
 --   (c) senao, NULL.
--- Limite conhecido de (a): a resposta escolhida pode ter sido recodificada sob
--- a pergunta nova depois da arbitragem, e ai o backfill carimba o hash novo num
--- veredito dado sobre a pergunta antiga. `answer_field_hashes` e o unico
--- registro por campo que existe; o snapshot so guarda o texto das respostas.
--- A funcao fica no banco (revogada dos clientes) para o teste SQL exercitar a
--- regra, ja que os testes rodam depois das migrations e nao veem linha legada.
+-- Sem (0), (a) carimbava o hash da resposta escolhida num veredito dado
+-- depois da mudanca da pergunta, quando a resposta tinha sido codificada
+-- antes dela, e o veredito saia como "pergunta alterada" sem ter sido.
+-- `created_at` e a data da primeira gravacao do revisor na celula (o upsert
+-- de rearbitragem nao a move), entao review criada depois da ultima mudanca
+-- teve todas as versoes do veredito dadas depois dela.
+--
+-- Os dois sentidos de erro que restam:
+--   * validar o que nao vale (veredito sobre a pergunta antiga com o hash
+--     atual): (0) so erra se a pergunta mudou depois da review sem entrada no
+--     log, ou seja, por escrita fora de `commit_project_schema` (SQL direto,
+--     schema anterior ao log). (a) mantem o limite de sempre para a review
+--     criada ANTES da ultima mudanca: a resposta escolhida pode ter sido
+--     recodificada sob a pergunta nova depois da arbitragem, e o backfill
+--     carimba o hash novo num veredito dado sobre a antiga;
+--   * invalidar o que vale (veredito sob a pergunta atual com hash antigo ou
+--     NULL): a review criada antes da ultima mudanca e REARBITRADA depois dela
+--     cai em (a), e a resposta escolhida codificada antes da mudanca da o hash
+--     antigo; `reviews` nao registra quando houve rearbitragem. Campo sem
+--     nenhuma entrada no log tambem cai em (a), (b), (c).
+-- `answer_field_hashes` e o unico registro por campo que existe; o snapshot so
+-- guarda o texto das respostas. A funcao fica no banco (revogada dos
+-- clientes) para o teste SQL exercitar a regra, ja que os testes rodam depois
+-- das migrations e nao veem linha legada.
 
 BEGIN;
 
@@ -195,6 +219,18 @@ STABLE
 SET search_path = ''
 AS $$
   SELECT COALESCE(
+    (SELECT field.value->>'hash'
+     FROM public.reviews AS review
+     JOIN public.projects AS project ON project.id = review.project_id
+     CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(project.pydantic_fields) AS field(value)
+     WHERE review.id = p_review_id
+       AND field.value->>'name' = review.field_name
+       -- Sem entrada no log, o max e NULL e a comparacao descarta a linha.
+       AND review.created_at > (
+         SELECT pg_catalog.max(change.created_at)
+         FROM public.schema_change_log AS change
+         WHERE change.project_id = review.project_id AND change.field_name = review.field_name)
+     LIMIT 1),
     (SELECT chosen.answer_field_hashes->>review.field_name
      FROM public.reviews AS review
      JOIN public.responses AS chosen ON chosen.id = review.chosen_response_id
