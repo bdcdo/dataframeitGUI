@@ -213,13 +213,24 @@ describe("resolveError / reopenError", () => {
     }));
   });
 
-  it("Todos errados envia o valor escolhido; Ambos corretos manda p_value nulo mesmo que venha", async () => {
+  it("Todos errados envia o valor escolhido", async () => {
     hoisted.rpc.mockResolvedValue({ data: row, error: null });
     const { resolveError } = await loadStats();
     await resolveError("p1", "doc1", "x", { ...input, decision: "all_wrong", value: "Terceira" });
     expect(hoisted.rpc).toHaveBeenLastCalledWith("set_error_resolution", expect.objectContaining({ p_decision: "all_wrong", p_value: "Terceira" }));
-    await resolveError("p1", "doc1", "x", { ...input, decision: "both_correct", value: "ignorado" });
-    expect(hoisted.rpc).toHaveBeenLastCalledWith("set_error_resolution", expect.objectContaining({ p_decision: "both_correct", p_value: null }));
+  });
+
+  // #758: "Ambos corretos" leva o valor comum que a fila calculou, inclusive
+  // o branco "", e o RPC o confere contra o contexto.
+  it.each<[string, string | undefined, string | null]>([
+    ["o valor comum", "LLM", "LLM"],
+    ["o branco comum de condicional", "", ""],
+    ["nulo quando não há valor comum", undefined, null],
+  ])("Ambos corretos envia %s", async (_label, value, expected) => {
+    hoisted.rpc.mockResolvedValue({ data: row, error: null });
+    const { resolveError } = await loadStats();
+    await resolveError("p1", "doc1", "x", { ...input, decision: "both_correct", ...(value === undefined ? {} : { value }) });
+    expect(hoisted.rpc).toHaveBeenLastCalledWith("set_error_resolution", expect.objectContaining({ p_decision: "both_correct", p_value: expected }));
   });
 
   it("valor só acompanha Erro do LLM: Erro humano manda p_value nulo mesmo que venha", async () => {
@@ -297,6 +308,25 @@ describe("resolveError / reopenError", () => {
     const { prepareErrorResolution } = await loadStats();
     await prepareErrorResolution({ ...prepareInput, decision });
     expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_require_valid_source: required }));
+  });
+
+  // #758: com o valor comum que a fila calculou, "Ambos corretos" grava valor
+  // próprio e deixa de pedir a fonte, como `set_error_resolution` ao gravar.
+  // O branco comum ("" ou []) também é valor.
+  it.each([["A"], [""], [[]]])("Ambos corretos com o valor comum %j não pede a fonte", async (value) => {
+    humansInRound(["rh"]);
+    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
+    const { prepareErrorResolution } = await loadStats();
+    await prepareErrorResolution({ ...prepareInput, decision: "both_correct", bothCorrectValue: { value } });
+    expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_require_valid_source: false }));
+  });
+
+  it("o valor comum só dispensa a fonte em Ambos corretos", async () => {
+    humansInRound(["rh"]);
+    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
+    const { prepareErrorResolution } = await loadStats();
+    await prepareErrorResolution({ ...prepareInput, decision: "discussion", bothCorrectValue: { value: "A" } });
+    expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_require_valid_source: true }));
   });
 
   it("auto-revisão não troca de humana: sem a do field_reviews na rodada, explica e não chama a RPC", async () => {

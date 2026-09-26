@@ -141,3 +141,30 @@ describe("LlmErrorCard: decisão sobre veredito que perdeu a validade", () => {
     expect(screen.getByText("Veredito anterior:")).toBeTruthy();
   });
 });
+
+// #758: o veredito anterior pode ser de uma arbitragem antiga. O card mostra
+// ao lado dele o que os pesquisadores respondem agora, para que quem revisa
+// veja que eles e o LLM concordam antes de escolher a decisão.
+describe("LlmErrorCard: respostas atuais dos pesquisadores", () => {
+  function renderWith(currentHumanAnswers: LlmError["currentHumanAnswers"]) {
+    render(
+      <LlmErrorCard error={{ ...llmError("comparacao"), llmAnswer: "Sim", chosenVerdict: "Não", currentHumanAnswers }}
+        projectId="proj1" isPending={false} onDecide={vi.fn()} onReopen={vi.fn()} onMarkEquivalent={vi.fn()} />,
+    );
+  }
+
+  it("lista cada pesquisador com a resposta atual, ao lado do veredito anterior", () => {
+    renderWith([{ name: "Ana", answer: "Sim" }, { name: "Beto", answer: "" }]);
+    const block = screen.getByText("Pesquisadores agora:").parentElement!;
+    expect(block.textContent).toContain("Ana");
+    expect(block.textContent).toContain("Sim");
+    expect(block.textContent).toContain("Beto");
+    expect(block.textContent).toContain("(vazio)");
+    expect(screen.getByText("Veredito anterior:")).toBeTruthy();
+  });
+
+  it("sem resposta humana corrente, diz isso em vez de sumir", () => {
+    renderWith([]);
+    expect(screen.getByText("Pesquisadores agora:").parentElement!.textContent).toContain("nenhuma resposta atual");
+  });
+});

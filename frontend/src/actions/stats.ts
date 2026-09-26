@@ -5,7 +5,7 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
-import { choosesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
+import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 async function withResolutionAction(
   projectId: string,
@@ -267,6 +267,12 @@ export async function prepareErrorResolution(input: {
   llmResponseId: string; preferredHumanResponseId?: string | null; sourceKind: LlmErrorSource; sourceId: string;
   /** A decisão que o revisor vai confirmar: decide se a fonte precisa valer. */
   decision: ErrorDecision;
+  /**
+   * O valor comum que a fila calculou para "Ambos corretos"
+   * (`LlmError.bothCorrectValue`). Com ele a decisão grava valor próprio e,
+   * como as demais decisões com valor, não depende da fonte.
+   */
+  bothCorrectValue?: { value: unknown };
 }): Promise<{ context?: ErrorResolutionContext; error?: string }> {
   try {
     if (!await getAuthUser()) return { error: "Não autenticado" };
@@ -285,7 +291,10 @@ export async function prepareErrorResolution(input: {
       // Sobre veredito que perdeu a validade, as decisões que gravam valor
       // próprio continuam possíveis; as que dependem dele, não. A mesma regra
       // em `set_error_resolution`, que recalcula o contexto com o mesmo flag.
-      p_require_valid_source: decisionDependsOnSource(input.decision),
+      p_require_valid_source: decisionDependsOnSource({
+        decision: input.decision,
+        approved_value: input.decision === "both_correct" ? input.bothCorrectValue?.value ?? null : null,
+      }),
     });
     if (error) return { error: error.message };
     const parsed = errorResolutionContextSchema.safeParse(data);
@@ -315,8 +324,9 @@ export async function resolveError(
       p_decision: decision, p_expected_context: context,
       p_expected_id: identity.id,
       p_expected_resolved_at: identity.resolved_at, p_note: note ?? null,
-      // A RPC valida o valor contra a definição do campo nas decisões que o levam.
-      p_value: choosesValue(decision) ? (value ?? null) : null,
+      // A RPC valida o valor contra a definição do campo nas decisões que o
+      // levam, e em "Ambos corretos" o confere contra o contexto.
+      p_value: carriesValue(decision) ? (value ?? null) : null,
     });
     if (error) return { success: false, error: error.message };
     if (!data?.id) return { success: false, error: "O banco não confirmou a gravação." };

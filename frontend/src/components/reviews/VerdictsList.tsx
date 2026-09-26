@@ -254,7 +254,12 @@ function VerdictCard({
         </div>
       )}
 
-      {/* 5. Acknowledgment actions */}
+      {/* 5. Acknowledgment actions. A resposta dada a um veredito que depois
+          foi rearbitrado não vale para o novo (#758): o item volta a pedir
+          resposta e diz por quê. */}
+      {(!item.isCorrect || isSpecialVerdict) && item.acknowledgmentOutdated && (
+        <p className="text-xs">O veredito mudou desde a sua última resposta a ele. Responda de novo.</p>
+      )}
       {(!item.isCorrect || isSpecialVerdict) && (
         <div className="flex items-center gap-2 pt-0.5">
           {(!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") && (

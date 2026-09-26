@@ -150,6 +150,14 @@ BEGIN
     'a9d00000-0000-0000-0000-000000000001', 'a9d00000-0000-0000-0000-000000000002', 'auto_revisao', 'a9f00000-0000-0000-0000-000000000001');
   IF c IS NULL THEN RAISE EXCEPTION 'FALHOU: resolver sem papel de árbitro não prepara decisão concluída'; END IF;
   SELECT * INTO item FROM public.read_error_resolutions('a9b00000-0000-0000-0000-000000000001') WHERE field_name = 'q';
+  -- "Ambos corretos" com valor so na Comparacao: na auto-revisao o veredito e
+  -- a propria resposta humana do contexto, e nao fica para tras (#758). Mesmo
+  -- com o valor sendo a resposta do LLM.
+  BEGIN
+    PERFORM public.set_error_resolution(item.project_id, item.document_id, item.field_name, 'both_correct', c, item.id, item.resolved_at, NULL, '"LLM"'::JSONB);
+    RAISE EXCEPTION 'FALHOU: "Ambos corretos" gravou valor comum com fonte de auto-revisão';
+  EXCEPTION WHEN invalid_parameter_value THEN NULL;
+  END;
   PERFORM public.set_error_resolution(item.project_id, item.document_id, item.field_name, 'researchers_correct', c, item.id, item.resolved_at, NULL, '"Humano"'::JSONB);
 END $$;
 RESET ROLE;
@@ -257,12 +265,20 @@ BEGIN
   PERFORM public.set_error_resolution(P, D, 's', 'llm_correct', c, item.id, item.resolved_at, NULL, '"B "'::JSONB);
   SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
   IF item.approved_value IS NOT NULL THEN RAISE EXCEPTION 'FALHOU: llm_correct gravou approved_value'; END IF;
-  -- Ambos corretos: nao aprova valor, mesmo que o chamador mande um.
-  PERFORM public.set_error_resolution(P, D, 's', 'both_correct', c, item.id, item.resolved_at, 'Sinonimos', '"B "'::JSONB);
+  -- Ambos corretos: o veredito ("B ") diverge da resposta do LLM e da unica
+  -- pesquisadora ("A"), que concordam. O valor que vai ao gabarito e o comum,
+  -- a resposta do LLM, que a fila calcula e o RPC confere (#758); outro valor
+  -- e recusado. O contrato inteiro esta em both_correct_common_value.test.sql.
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'both_correct', c, item.id, item.resolved_at, 'Sinonimos', '"B "'::JSONB);
+    RAISE EXCEPTION 'FALHOU: both_correct aceitou valor que não é o comum';
+  EXCEPTION WHEN serialization_failure THEN NULL;
+  END;
+  PERFORM public.set_error_resolution(P, D, 's', 'both_correct', c, item.id, item.resolved_at, 'Sinonimos', '"A"'::JSONB);
   SELECT * INTO item FROM public.read_error_resolutions(P) WHERE field_name = 's';
-  IF item.decision <> 'both_correct' OR item.approved_value IS NOT NULL OR item.note <> 'Sinonimos'
+  IF item.decision <> 'both_correct' OR item.approved_value IS DISTINCT FROM '"A"'::JSONB OR item.note <> 'Sinonimos'
     OR item.current_context IS DISTINCT FROM item.context THEN
-    RAISE EXCEPTION 'FALHOU: both_correct não gravou decisão sem valor';
+    RAISE EXCEPTION 'FALHOU: both_correct não gravou o valor comum';
   END IF;
   -- Todos errados: exige valor, com a mesma validacao por tipo de Erro do LLM.
   BEGIN
@@ -300,7 +316,7 @@ BEGIN
   END LOOP;
   PERFORM public.set_error_resolution(P, D, 'n', 'all_wrong', c, NULL, NULL, NULL, '"Terceira"'::JSONB);
   c := public.llm_error_context(P, D, 's', L, H, 'comparacao', 'a9e00000-0000-0000-0000-000000000011');
-  RAISE NOTICE 'OK: both_correct sem valor, all_wrong com valor validado';
+  RAISE NOTICE 'OK: both_correct com o valor comum, all_wrong com valor validado';
   -- e volta a Erro do LLM, para os blocos de invalidacao abaixo.
   PERFORM public.set_error_resolution(P, D, 's', 'researchers_correct', c, item.id, item.resolved_at, NULL, '"B "'::JSONB);
 
@@ -445,8 +461,8 @@ BEGIN
   RAISE NOTICE 'OK: a regra de reabertura só afirma divergência quando pode prová-la';
 END $$;
 
--- CHECK: approved_value existe se, e somente se, a decisao escolhe valor
--- (Erro do LLM e Todos errados).
+-- CHECK: approved_value obrigatorio quando a decisao escolhe valor (Erro do
+-- LLM e Todos errados) e proibido nas decisoes sem valor.
 DO $$
 BEGIN
   BEGIN
@@ -470,13 +486,8 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: Todos errados sem approved_value passou no CHECK';
   EXCEPTION WHEN check_violation THEN NULL;
   END;
-  BEGIN
-    INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context, approved_value)
-    VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',
-            'a9a00000-0000-0000-0000-000000000001', 'both_correct', '{}'::jsonb, '"x"'::jsonb);
-    RAISE EXCEPTION 'FALHOU: Ambos corretos com approved_value passou no CHECK';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
+  -- "Ambos corretos" aceita valor desde #758 (o comum); o caso positivo
+  -- esta em both_correct_common_value.test.sql.
   BEGIN
     INSERT INTO public.error_resolutions (project_id, document_id, field_name, resolved_by, decision, context)
     VALUES ('a9b00000-0000-0000-0000-000000000002', 'a9c00000-0000-0000-0000-000000000002', 'zz',

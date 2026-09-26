@@ -191,12 +191,41 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
   it("mostra o veredito que segue no gabarito, sem seletor, e confirma só com a nota", async () => {
     const onConfirm = show(yesNo, "Sim", {}, "both_correct");
     expect(screen.getByRole("heading", { name: "Ambos corretos" })).toBeTruthy();
-    expect(screen.getByText(/continua sendo o veredito anterior/)).toBeTruthy();
-    expect(screen.getByText("Sim")).toBeTruthy();
+    expect(screen.getByText(/continua sendo o veredito anterior/).nextElementSibling?.textContent).toBe("Sim");
     expect(screen.queryByRole("radio")).toBeNull();
     await userEvent.type(screen.getByLabelText("Nota opcional"), "sinônimos");
     await userEvent.click(confirmButton());
     expect(onConfirm).toHaveBeenCalledWith("sinônimos");
+  });
+
+  // #758: o veredito é de uma arbitragem antiga e os pesquisadores atuais
+  // concordam com o LLM. O diálogo diz que o valor comum substitui o veredito.
+  it("com o valor comum, diz que ele vai ao gabarito no lugar do veredito", async () => {
+    const onConfirm = vi.fn();
+    render(<ErrorDecisionDialog
+      pending={{ error: errorCase("Sim", { currentHumanAnswers: [{ name: "Ana", answer: "Não" }, { name: "Beto", answer: "não" }], bothCorrectValue: { value: "Não" } }),
+        decision: "both_correct", context: { ...base.context!, field_definition: yesNo as ErrorResolutionContext["field_definition"], llm_value: { present: true, value: "Não" } } }}
+      isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("Valor que irá para o gabarito");
+    expect(dialog.textContent).toMatch(/substitui o veredito anterior/);
+    expect(dialog.textContent).toMatch(/Nenhum dos lados conta erro/);
+    expect(screen.queryByText(/continua sendo o veredito anterior/)).toBeNull();
+    // As respostas atuais aparecem ao lado do veredito anterior.
+    expect(dialog.textContent).toContain("Ana");
+    expect(dialog.textContent).toContain("Beto");
+    expect(confirmButton().disabled).toBe(false);
+    await userEvent.click(confirmButton());
+    expect(onConfirm).toHaveBeenCalledWith("");
+  });
+
+  it("o branco comum de condicional confirma com o LLM sem a chave", () => {
+    render(<ErrorDecisionDialog
+      pending={{ error: errorCase("Sim", { bothCorrectValue: { value: "" } }), decision: "both_correct",
+        context: { ...base.context!, llm_value: { present: false, value: null } } }}
+      isPending={false} onClose={() => {}} onConfirm={vi.fn()} />);
+    expect(screen.getByText(/em branco/)).toBeTruthy();
+    expect(confirmButton().disabled).toBe(false);
   });
 
   it("sem resposta do LLM no campo não há o que declarar correto", () => {

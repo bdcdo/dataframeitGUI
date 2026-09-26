@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldRenderer } from "@/components/coding/FieldRenderer";
 import {
-  ERROR_DECISION_LABELS, blankAnswerFor, choosesValue, effectiveErrorResolution, hasResolutionValue, isConditionalField, llmAnswersBlank, llmValueIsBlank,
+  ERROR_DECISION_LABELS, blankAnswerFor, choosesValue, effectiveErrorResolution, hasResolutionValue, isBlankAnswer, isConditionalField, llmAnswersBlank, llmValueIsBlank,
   prefillFromValue, prefillFromVerdict, prefillLosesItems, startsBlank,
   type ErrorDecision, type ErrorResolutionContext, type ValueChoosingDecision,
 } from "@/lib/error-resolution";
@@ -16,6 +16,7 @@ import { parsePydanticFields } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
 import type { LlmError } from "@/lib/llm-error-metrics";
+import { CurrentHumanAnswers } from "./CurrentHumanAnswers";
 import type { PydanticField } from "@/lib/types";
 
 // Reabrir não tem contexto; decidir só abre depois que o servidor devolveu o
@@ -58,20 +59,57 @@ function NoteField({ note, onChange, isPending }: { note: string; onChange: (not
   </div>;
 }
 
-function DecisionPreview({ decision, answer, verdict, blankAllowed }: {
-  decision: Exclude<ErrorDecision, ValueChoosingDecision>; answer: ErrorResolutionContext["llm_value"]; verdict: string; blankAllowed: boolean;
-}) {
-  if (decision === "discussion") return <div className="rounded-md border p-3 text-sm">Este campo ficará sem valor final aprovado até uma nova decisão.</div>;
-  if (decision === "both_correct") return <div className="rounded-md border p-3 text-sm">
+const BLANK_ANSWER_LABEL = "(em branco: a pergunta não foi acionada)";
+
+function GabaritoValue({ value, consequence }: { value: string; consequence: string }) {
+  return <div className="rounded-md border p-3 text-sm">
+    <p className="font-medium">Valor que irá para o gabarito</p>
+    <p className="mt-1 whitespace-pre-wrap">{value}</p>
+    <p className="mt-2 text-xs">{consequence}</p>
+  </div>;
+}
+
+// "Ambos corretos" grava o valor comum quando o veredito ficou para trás: os
+// pesquisadores atuais e o LLM concordam, e o veredito anterior diz outra
+// coisa (#758). Sem valor comum, o veredito continua valendo.
+function BothCorrectPreviewBox({ verdict, preview }: { verdict: string; preview: LlmError["bothCorrectValue"] }) {
+  if (preview) {
+    return <GabaritoValue value={isBlankAnswer(preview.value) ? BLANK_ANSWER_LABEL : formatAnswer(preview.value)}
+      consequence="É a resposta em que os pesquisadores atuais e o LLM concordam, e substitui o veredito anterior. Nenhum dos lados conta erro." />;
+  }
+  return <div className="rounded-md border p-3 text-sm">
     <p className="font-medium">O gabarito continua sendo o veredito anterior</p>
     <p className="mt-1 whitespace-pre-wrap">{formatVerdictDisplay(verdict) || "(vazio)"}</p>
     <p className="mt-2 text-xs">A resposta do LLM deixa de contar como erro.</p>
   </div>;
+}
+
+function DecisionPreview({ decision, answer, verdict, blankAllowed, bothCorrectValue }: {
+  decision: Exclude<ErrorDecision, ValueChoosingDecision>; answer: ErrorResolutionContext["llm_value"]; verdict: string; blankAllowed: boolean;
+  bothCorrectValue: LlmError["bothCorrectValue"];
+}) {
+  if (decision === "discussion") return <div className="rounded-md border p-3 text-sm">Nada vai ao gabarito: este campo ficará sem valor final aprovado até uma nova decisão.</div>;
+  if (decision === "both_correct") return <BothCorrectPreviewBox verdict={verdict} preview={bothCorrectValue} />;
   const value = answer.present ? formatAnswer(answer.value) || "(vazio)"
-    : blankAllowed ? "(em branco: a pergunta não foi acionada)" : "Resposta ausente: não é possível aprovar.";
-  return <div className="rounded-md border p-3 text-sm">
-    <p className="font-medium">Valor que irá para o gabarito</p>
-    <p className="mt-1 whitespace-pre-wrap">{value}</p>
+    : blankAllowed ? BLANK_ANSWER_LABEL : "Resposta ausente: não é possível aprovar.";
+  return <GabaritoValue value={value} consequence="A resposta do LLM substitui o veredito anterior, e os pesquisadores contam erro." />;
+}
+
+// O veredito anterior e, ao lado, o que os pesquisadores respondem agora: o
+// veredito pode ser de uma arbitragem antiga (#758). O seletor de valor o
+// destaca, porque o valor inicial sai dele, e pode acrescentar uma instrução.
+function PreviousVerdict({ error, hint = null, highlighted = false }: { error: LlmError; hint?: string | null; highlighted?: boolean }) {
+  return <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    <div className={highlighted ? "rounded-md border border-brand/40 bg-brand-muted px-3 py-2 text-sm" : "rounded-md border px-3 py-2 text-sm"}>
+      <p className="text-xs font-medium">Veredito anterior</p>
+      <p className="mt-0.5 whitespace-pre-wrap">{formatVerdictDisplay(error.chosenVerdict) || "(vazio)"}</p>
+      {hint && (
+        // Instrução, não decoração: herda a cor do corpo (o token apagado fica
+        // abaixo de 4,5:1 sobre `bg-brand-muted` no tema claro).
+        <p className="mt-1 text-xs">{hint}</p>
+      )}
+    </div>
+    <CurrentHumanAnswers answers={error.currentHumanAnswers} />
   </div>;
 }
 
@@ -102,18 +140,6 @@ function initialValue(field: PydanticField, error: LlmError, decision: ValueChoo
   if (decision === "all_wrong") return undefined;
   return prefillFromVerdict(field, error.chosenVerdict)
     ?? (error.chosenValue !== undefined ? prefillFromValue(field, error.chosenValue) : undefined);
-}
-
-function PreviousVerdict({ verdict, hint }: { verdict: string; hint: string | null }) {
-  return <div className="rounded-md border border-brand/40 bg-brand-muted px-3 py-2 text-sm">
-    <p className="text-xs font-medium">Veredito anterior</p>
-    <p className="mt-0.5 whitespace-pre-wrap">{formatVerdictDisplay(verdict) || "(vazio)"}</p>
-    {hint && (
-      // Instrução, não decoração: herda a cor do corpo (o token apagado fica
-      // abaixo de 4,5:1 sobre `bg-brand-muted` no tema claro).
-      <p className="mt-1 text-xs">{hint}</p>
-    )}
-  </div>;
 }
 
 // O aviso fala do veredito, então só vale quando o valor inicial veio dele:
@@ -171,12 +197,15 @@ function FieldValuePicker({ field, llmBlank, pending, decision, isPending, onClo
   // Em branco é o vazio canônico do tipo, o único que a RPC aceita.
   const chosen = blank ? blankAnswerFor(field) : value;
   return <>
-    <PreviousVerdict verdict={pending.error.chosenVerdict} hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
+    <PreviousVerdict error={pending.error} highlighted hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
     {isConditionalField(field) && <BlankToggle checked={blank} onChange={setBlank} disabled={isPending} llmBlank={llmBlank} />}
     {!blank && <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
       <FieldRenderer field={field} value={value} onChange={setValue} />
     </fieldset>}
+    <p className="text-xs">{decision === "all_wrong"
+      ? "O valor escolhido substitui o veredito anterior. O LLM e os pesquisadores contam erro."
+      : "O valor escolhido substitui o veredito anterior. O LLM conta erro."}</p>
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note, chosen)}
       disabled={!canConfirmValue(field, chosen, blank && llmBlank)} label={confirmLabel(isPending)} />
@@ -186,12 +215,17 @@ function FieldValuePicker({ field, llmBlank, pending, decision, isPending, onClo
 function ConfirmDecision({ pending, decision, context, isPending, onClose, onConfirm }: {
   pending: PendingErrorDecision; decision: Exclude<ErrorDecision, ValueChoosingDecision>; context: ErrorResolutionContext;
 } & Pick<DecisionControls, "isPending" | "onClose" | "onConfirm">) {
+  const { bothCorrectValue } = pending.error;
   const [note, setNote] = useState(pending.error.resolution?.note ?? "");
-  // Só "Erro humano" aprova o branco do LLM; "Ambos corretos" declara correta
-  // uma resposta que precisa existir ao lado do veredito.
-  const blankAllowed = decision === "llm_correct" && llmAnswersBlank(context);
+  // "Erro humano" aprova o branco do LLM em condicional; "Ambos corretos" só
+  // quando a fila calculou o branco comum (LLM e pesquisadores em branco).
+  // Sem ele, "Ambos corretos" declara correta uma resposta que precisa existir.
+  const blankAllowed = (decision === "llm_correct" && llmAnswersBlank(context))
+    || (decision === "both_correct" && !!bothCorrectValue);
   return <>
-    <DecisionPreview decision={decision} answer={context.llm_value} verdict={pending.error.chosenVerdict} blankAllowed={blankAllowed} />
+    <PreviousVerdict error={pending.error} />
+    <DecisionPreview decision={decision} answer={context.llm_value} verdict={pending.error.chosenVerdict}
+      blankAllowed={blankAllowed} bothCorrectValue={bothCorrectValue} />
     <NoteField note={note} onChange={setNote} isPending={isPending} />
     <DecisionFooter isPending={isPending} onClose={onClose} onAction={() => onConfirm(note)}
       disabled={decision !== "discussion" && !context.llm_value.present && !blankAllowed} label={confirmLabel(isPending)} />

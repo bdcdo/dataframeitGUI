@@ -24,13 +24,17 @@ import {
   buildTimelineFromPersistedVersions,
   type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
-import { computeFieldHash } from "@/lib/schema-utils";
+import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
 import { fieldReviewIsCurrent, reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import {
+  blankAnswerFor,
   decisionDependsOnSource,
+  isBlankAnswer,
+  isConditionalField,
   type ErrorDecision,
   type ErrorResolutionContext,
 } from "@/lib/error-resolution";
+import { verdictMatchesAnswer } from "@/lib/llm-error-metrics";
 // Mesma primitiva de igualdade que o produto usa para decidir divergência
 // (`lib/compare-divergence.ts`, `lib/equivalence.ts`): se as duas réguas
 // divergirem, é bug de contrato e a invariante deve enxergar.
@@ -154,11 +158,20 @@ interface DecisionRow {
   field_name: string;
   decision: ErrorDecision | null;
   context: ErrorResolutionContext | null;
+  approved_value: unknown;
 }
 
 interface ReviewValidityRow extends ValidatableReview {
   id: string;
   project_id: string;
+}
+
+async function decisionsWithContext(): Promise<DecisionRow[]> {
+  return fetchAll<DecisionRow>(
+    "error_resolutions",
+    "id, project_id, document_id, field_name, decision, context, approved_value",
+    (q) => q.not("context", "is", null),
+  );
 }
 
 // As decisões do LLM Insights que dependem do veredito de origem ("Ambos
@@ -175,16 +188,12 @@ async function scanSourceDependentDecisions(): Promise<
   { decision: DecisionRow; sourceId: string; tsValid: boolean; sqlValid: boolean }[]
 > {
   const [decisions, projects] = await Promise.all([
-    fetchAll<DecisionRow>(
-      "error_resolutions",
-      "id, project_id, document_id, field_name, decision, context",
-      (q) => q.not("context", "is", null),
-    ),
+    decisionsWithContext(),
     fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
   ]);
   const anchored = decisions.flatMap((decision) => {
     const source = decision.context?.source;
-    if (!decisionDependsOnSource(decision.decision) || source?.kind !== "comparacao") return [];
+    if (!decisionDependsOnSource(decision) || source?.kind !== "comparacao") return [];
     return typeof source.id === "string" ? [{ decision, sourceId: source.id }] : [];
   });
   const reviews = new Map(
@@ -1075,6 +1084,36 @@ invariants.push(
           detail: `ciclo em ${c.document_id}/${c.field_name} carimbado ${c.field_hash}, campo atual ${fieldsOf.get(c.project_id)?.get(c.field_name)?.hash ?? "ausente"}`,
         }));
     },
+  },
+);
+
+invariants.push(
+  {
+    name: "ambos-corretos-com-valor-so-com-fonte-divergente",
+    motivation:
+      "#758: 'Ambos corretos' grava o valor comum só quando o veredito da Comparação diverge da resposta do LLM e os pesquisadores concordam com ela; o valor é a resposta do LLM (ou o branco canônico de condicional). A fila calcula o valor, e o RPC confere fonte, resposta escolhida e valor, mas não lê o texto do veredito. FAIL = valor gravado fora dessa regra: fonte que não é Comparação, veredito que já era a resposta do LLM, ou valor que não é o do LLM",
+    run: async () =>
+      (await decisionsWithContext()).flatMap((d) => {
+        if (d.decision !== "both_correct" || d.approved_value === null || d.approved_value === undefined) return [];
+        // Só o que o contexto congelado prova, pela regra da métrica
+        // (`verdictMatchesAnswer`). O contexto não guarda os pares "=", e dos
+        // demais pesquisadores guarda só o hash das codificações
+        // (`cell_answers_hash`), que não se lê de volta; o que depende deles
+        // fica de fora de propósito.
+        const c = d.context!;
+        const field = (c.field_definition ?? {}) as PydanticField;
+        const llm = c.llm_value.present ? c.llm_value.value : undefined;
+        const verdict = typeof c.source.verdict === "string" ? c.source.verdict : "";
+        const verdictIsLlm = c.source.chosen_response_id === c.llm_response_id || verdictMatchesAnswer(field, verdict, llm);
+        const fromComparison = c.source.kind === "comparacao";
+        const expected = isBlankAnswer(llm) ? (isConditionalField(field) ? blankAnswerFor(field) : undefined) : llm;
+        const problem = !fromComparison ? "fonte não é a Comparação"
+          : verdictIsLlm ? "o veredito já era a resposta do LLM"
+          : expected === undefined ? "LLM em branco fora de pergunta condicional"
+          : stableStringify(expected) !== stableStringify(d.approved_value) ? `valor ${JSON.stringify(d.approved_value)} não é o do LLM (${JSON.stringify(expected)})`
+          : null;
+        return problem ? [{ key: d.id, detail: `${d.document_id}/${d.field_name}: ${problem}` }] : [];
+      }),
   },
 );
 

@@ -27,6 +27,7 @@ function makeItem(overrides?: Partial<VerdictItem>): VerdictItem {
     responseSnapshot: null,
     acknowledgmentStatus: "pending",
     acknowledgmentComment: null,
+    acknowledgmentOutdated: false,
     ...overrides,
   };
 }
@@ -112,5 +113,20 @@ describe("VerdictsList — input de dúvida", () => {
     ) as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.value).toBe("texto");
+  });
+});
+
+// #758: o reconhecimento dado a um veredito que depois mudou não vale para o
+// novo. O item volta a pedir resposta e diz por quê.
+describe("VerdictsList: reconhecimento de veredito que mudou", () => {
+  it("avisa que o veredito mudou desde o reconhecimento anterior", () => {
+    renderList(vi.fn().mockResolvedValue(true), makeItem({ acknowledgmentStatus: null, acknowledgmentOutdated: true }));
+    expect(screen.getByText(/o veredito mudou desde a sua última resposta a ele/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /aceitar correção/i })).toBeTruthy();
+  });
+
+  it("sem mudança, nenhum aviso", () => {
+    renderList(vi.fn().mockResolvedValue(true));
+    expect(screen.queryByText(/o veredito mudou/i)).toBeNull();
   });
 });

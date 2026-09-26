@@ -1,6 +1,7 @@
 import type { PydanticField } from "@/lib/types";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
 import { invalidReasonOf } from "@/lib/review-validity";
+import { acknowledgmentIsCurrent } from "@/lib/reviews/verdict-acknowledgment";
 
 /* ── Raw row shapes (subset de colunas realmente usadas por cada mapper) ── */
 
@@ -52,6 +53,8 @@ export interface VerdictQuestionRow {
   comment: string;
   resolved_at: string | null;
   created_at: string;
+  /** O veredito sobre o qual a dúvida foi feita (#758). */
+  acknowledged_verdict: string | null;
   reviews: {
     id: string;
     document_id: string;
@@ -240,7 +243,10 @@ export function mapDuvidaComments(
   fieldMap: Map<string, PydanticField>,
   reviewerMap: Map<string, string>,
 ): ReviewComment[] {
-  return verdictQuestions.map((q) => {
+  // A dúvida é sobre o veredito que o pesquisador viu. Rearbitrado o veredito,
+  // ela deixa de ser dúvida sobre o veredito da célula e sai da lista; o
+  // pesquisador vê o veredito novo pendente em Meus vereditos (#758).
+  return verdictQuestions.filter((q) => acknowledgmentIsCurrent(q, q.reviews.verdict)).map((q) => {
     const r = q.reviews;
     return {
       id: `duvida-${q.review_id}-${q.respondent_id}`,
