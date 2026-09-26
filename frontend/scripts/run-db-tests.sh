@@ -59,6 +59,7 @@ GATE_SUITES=(
   judgments_follow_question
   both_correct_common_value
   verdict_acknowledgments_pinned
+  note_resolution_follows_note
   llm_error_decisions
   llm_error_decisions_concurrency
   member_permission_rpcs
