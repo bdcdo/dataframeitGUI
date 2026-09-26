@@ -200,7 +200,7 @@ async function sourceDependentDecisions(): Promise<
   const reviews = new Map(
     (await fetchByIds<ReviewValidityRow>(
       "reviews",
-      "id, project_id, field_name, verdict, field_hash",
+      "id, project_id, field_name, verdict, field_hash, chosen_response_id",
       [...new Set(anchored.map((a) => a.sourceId))],
     )).map((r) => [r.id, r]),
   );

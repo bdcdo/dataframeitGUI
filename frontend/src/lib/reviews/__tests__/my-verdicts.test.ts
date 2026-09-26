@@ -10,7 +10,7 @@ const field: PydanticField = {
 function review(overrides: Partial<MyVerdictReviewRow> = {}): MyVerdictReviewRow {
   return {
     id: "rv1", document_id: "d1", field_name: "q", verdict: "Sim", comment: null,
-    response_snapshot: null, created_at: "2026-01-01T00:00:00Z", field_hash: "aaaaaaaaaaaa", ...overrides,
+    response_snapshot: null, created_at: "2026-01-01T00:00:00Z", field_hash: "aaaaaaaaaaaa", chosen_response_id: "rc", ...overrides,
   };
 }
 

@@ -306,6 +306,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
             field_name: r.field_name as string,
             verdict: r.verdict as string,
             field_hash: (r.field_hash as string | null) ?? null,
+            chosen_response_id: (r.chosen_response_id as string | null) ?? null,
           },
           field,
         ),

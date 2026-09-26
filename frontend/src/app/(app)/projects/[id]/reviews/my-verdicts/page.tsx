@@ -81,7 +81,7 @@ export default async function MyVerdictsPage({
   ] = await Promise.all([
     supabase
       .from("reviews")
-      .select("id, document_id, field_name, verdict, comment, response_snapshot, created_at, field_hash")
+      .select("id, document_id, field_name, verdict, comment, response_snapshot, created_at, field_hash, chosen_response_id")
       .eq("project_id", id)
       .in("document_id", myDocIds),
     supabase

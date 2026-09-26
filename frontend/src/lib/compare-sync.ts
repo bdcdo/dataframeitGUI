@@ -189,7 +189,7 @@ export async function syncCompareAssignment(
       .eq("document_id", documentId),
     supabase
       .from("reviews")
-      .select("field_name, verdict, field_hash")
+      .select("field_name, verdict, field_hash, chosen_response_id")
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .eq("reviewer_id", userId),

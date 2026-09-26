@@ -85,31 +85,37 @@ DECLARE
 BEGIN
   FOR item IN
     SELECT * FROM (VALUES
-      ('pergunta identica', 'Sim', 'aaaaaaaaaaaa', single_field, true),
-      ('texto com espaco e trim', '  Não', 'aaaaaaaaaaaa', single_field, true),
-      ('pergunta alterada', 'Sim', 'ffffffffffff', single_field, false),
-      ('campo removido', 'Sim', 'aaaaaaaaaaaa', NULL, false),
-      ('hash NULL no dominio', 'Sim', NULL, single_field, true),
-      ('hash NULL com single renomeado', 'Talvez', NULL, single_field, false),
-      ('hash igual e valor fora do dominio', 'Talvez', 'aaaaaaaaaaaa', single_field, false),
-      ('single com allow_other', 'Outro: quase', 'aaaaaaaaaaaa', single_other, true),
-      ('ambiguo', 'ambiguo', 'aaaaaaaaaaaa', single_field, true),
-      ('pular', 'pular', NULL, single_field, true),
-      ('ambiguo com pergunta alterada', 'ambiguo', 'ffffffffffff', single_field, false),
-      ('veredito em branco', '', 'aaaaaaaaaaaa', single_field, true),
-      ('multi JSON nas opcoes', '{"A":true,"B":false}', 'bbbbbbbbbbbb', multi_field, true),
-      ('multi com opcao extinta', '{"A":true,"C":true}', NULL, multi_field, false),
-      ('multi com opcao extinta desmarcada', '{"A":true,"C":false}', NULL, multi_field, true),
-      ('multi com allow_other', '{"A":true,"Outro: x":true}', 'bbbbbbbbbbbb', multi_other, true),
-      ('multi votado em card', 'A, B', NULL, multi_field, true),
-      ('multi votado em card com opcao extinta', 'A, C', NULL, multi_field, false),
-      ('texto sempre no dominio', 'qualquer coisa', 'cccccccccccc', text_field, true),
-      ('data sempre no dominio', '01/02/2020', 'dddddddddddd', date_field, true),
-      ('campo sem hash e veredito com hash', 'Sim', 'aaaaaaaaaaaa', legacy_field, false),
-      ('campo sem hash e veredito sem hash', 'Sim', NULL, legacy_field, true)
-    ) AS matrix(label, verdict, field_hash, field, expected)
+      ('pergunta identica', 'Sim', 'aaaaaaaaaaaa', single_field, true, true),
+      ('texto com espaco e trim', '  Não', 'aaaaaaaaaaaa', single_field, true, true),
+      ('pergunta alterada', 'Sim', 'ffffffffffff', single_field, true, false),
+      ('campo removido', 'Sim', 'aaaaaaaaaaaa', NULL, true, false),
+      ('hash NULL no dominio', 'Sim', NULL, single_field, true, true),
+      ('hash NULL com single renomeado', 'Talvez', NULL, single_field, true, false),
+      ('copiado com hash igual e valor fora do dominio', 'Talvez', 'aaaaaaaaaaaa', single_field, true, false),
+      ('single com allow_other', 'Outro: quase', 'aaaaaaaaaaaa', single_other, true, true),
+      ('ambiguo', 'ambiguo', 'aaaaaaaaaaaa', single_field, true, true),
+      ('pular', 'pular', NULL, single_field, true, true),
+      ('ambiguo com pergunta alterada', 'ambiguo', 'ffffffffffff', single_field, true, false),
+      ('veredito em branco', '', 'aaaaaaaaaaaa', single_field, true, true),
+      ('multi JSON nas opcoes', '{"A":true,"B":false}', 'bbbbbbbbbbbb', multi_field, true, true),
+      ('multi com opcao extinta', '{"A":true,"C":true}', NULL, multi_field, true, false),
+      ('multi com opcao extinta desmarcada', '{"A":true,"C":false}', NULL, multi_field, true, true),
+      ('multi com allow_other', '{"A":true,"Outro: x":true}', 'bbbbbbbbbbbb', multi_other, true, true),
+      ('multi votado em card', 'A, B', NULL, multi_field, true, true),
+      ('multi votado em card com opcao extinta', 'A, C', NULL, multi_field, true, false),
+      ('texto sempre no dominio', 'qualquer coisa', 'cccccccccccc', text_field, true, true),
+      ('data sempre no dominio', '01/02/2020', 'dddddddddddd', date_field, true, true),
+      ('campo sem hash e veredito com hash', 'Sim', 'aaaaaaaaaaaa', legacy_field, true, false),
+      ('campo sem hash e veredito sem hash', 'Sim', NULL, legacy_field, true, true),
+      -- Digitado (sem resposta escolhida): com o hash igual, as opcoes sao as de
+      -- quando foi digitado, e o texto livre vale; sem hash, nada prova isso.
+      ('digitado com hash igual e fora das opcoes', 'Não houve', 'aaaaaaaaaaaa', single_field, false, true),
+      ('digitado com hash NULL e fora das opcoes', 'Não houve', NULL, single_field, false, false),
+      ('digitado com hash diferente', 'Não houve', 'ffffffffffff', single_field, false, false),
+      ('digitado com hash igual nas opcoes', 'Sim', 'aaaaaaaaaaaa', single_field, false, true)
+    ) AS matrix(label, verdict, field_hash, field, copied, expected)
   LOOP
-    IF public.review_verdict_valid(item.verdict, item.field_hash, item.field) IS DISTINCT FROM item.expected THEN
+    IF public.review_verdict_valid(item.verdict, item.field_hash, item.copied, item.field) IS DISTINCT FROM item.expected THEN
       RAISE EXCEPTION 'FALHOU: caso "%" deveria dar %', item.label, item.expected;
     END IF;
   END LOOP;
@@ -178,6 +184,27 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: review_is_valid logo apos o carimbo';
   END IF;
   RAISE NOTICE 'OK: INSERT carimba o hash atual, NULL sem hash, e o cliente nao forja';
+END;
+$$;
+
+-- Veredito fora das opcoes com o hash atual: o digitado ("Nenhuma correta",
+-- sem resposta escolhida) vale, porque o hash igual prova as opcoes de quando
+-- foi digitado; o copiado de uma resposta nao vale.
+INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
+  ('5e400000-0000-0000-0000-000000000004', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000002',
+   'q', '5e000000-0000-0000-0000-000000000002', 'Não houve', NULL),
+  ('5e400000-0000-0000-0000-000000000005', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003',
+   'q', '5e000000-0000-0000-0000-000000000002', 'Não houve', '5e300000-0000-0000-0000-000000000013');
+
+DO $$
+BEGIN
+  IF NOT public.review_is_valid('5e400000-0000-0000-0000-000000000004') THEN
+    RAISE EXCEPTION 'FALHOU: veredito digitado com o hash atual deveria valer fora das opcoes';
+  END IF;
+  IF public.review_is_valid('5e400000-0000-0000-0000-000000000005') THEN
+    RAISE EXCEPTION 'FALHOU: veredito copiado fora das opcoes nao deveria valer';
+  END IF;
+  RAISE NOTICE 'OK: digitado com hash atual vale, copiado fora das opcoes nao';
 END;
 $$;
 

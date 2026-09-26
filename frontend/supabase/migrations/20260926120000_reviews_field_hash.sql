@@ -11,7 +11,17 @@
 --   (1) o campo existe no schema atual do projeto;
 --   (2) `field_hash` e o hash atual do campo, ou `field_hash` e NULL (legado,
 --       sem como provar a pergunta) e
---   (3) o valor do veredito esta no dominio atual do campo.
+--   (3) o valor do veredito esta no dominio atual do campo, conferido so
+--       quando `field_hash` e NULL ou o veredito foi copiado de uma resposta
+--       (`chosen_response_id` preenchido, o voto em card).
+-- O veredito digitado pelo revisor ("Nenhuma correta", sem resposta escolhida)
+-- com o hash atual vale mesmo fora das opcoes: as opcoes entram no hash, entao
+-- o hash igual prova que o texto foi digitado sob as opcoes atuais. Medido em
+-- 2026-09-25 em producao, antes desta regra: 14 vereditos digitados com o hash
+-- atual cairiam como fora do dominio, e todo veredito digitado novo em campo
+-- `single` nasceria invalido (a celula nunca fecharia). O copiado fora das
+-- opcoes e resposta recodificada sob outra versao da pergunta, que o backfill
+-- (a) abaixo pode ter carimbado com o hash novo; esse continua invalido.
 -- A rodada nao entra na regra, e editar a resposta escolhida depois da
 -- arbitragem nao invalida o veredito. O hash e o `_field_hash` de
 -- `computeFieldHash` (nome, tipo, opcoes e descricao), que o schema grava em
@@ -137,8 +147,10 @@ BEGIN
 END;
 $$;
 
--- (1) + (2) + (3) sobre a definicao do campo ja resolvida.
-CREATE FUNCTION public.review_verdict_valid(p_verdict text, p_field_hash text, p_field jsonb)
+-- (1) + (2) + (3) sobre a definicao do campo ja resolvida. `p_copied` e
+-- `chosen_response_id IS NOT NULL`: o dominio so e conferido no veredito sem
+-- hash ou copiado de uma resposta.
+CREATE FUNCTION public.review_verdict_valid(p_verdict text, p_field_hash text, p_copied boolean, p_field jsonb)
 RETURNS boolean
 LANGUAGE sql
 IMMUTABLE
@@ -147,7 +159,8 @@ AS $$
   SELECT COALESCE(
     pg_catalog.jsonb_typeof(p_field) = 'object'
       AND (p_field_hash IS NULL OR p_field_hash = p_field->>'hash')
-      AND public.review_verdict_in_domain(p_verdict, p_field),
+      AND ((p_field_hash IS NOT NULL AND NOT p_copied)
+           OR public.review_verdict_in_domain(p_verdict, p_field)),
     false);
 $$;
 
@@ -164,6 +177,7 @@ AS $$
     SELECT public.review_verdict_valid(
       review.verdict,
       review.field_hash,
+      review.chosen_response_id IS NOT NULL,
       (SELECT field.value
        FROM pg_catalog.jsonb_array_elements(project.pydantic_fields) AS field(value)
        WHERE field.value->>'name' = review.field_name
@@ -202,7 +216,7 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION public.review_verdict_in_domain(text, jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.review_verdict_valid(text, text, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.review_verdict_valid(text, text, boolean, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.review_inferred_field_hash(uuid) FROM PUBLIC, anon, authenticated;
 -- `review_is_valid` e DEFINER e le qualquer review por id: fechada para os
 -- clientes, aberta ao service_role para `npm run invariants`.

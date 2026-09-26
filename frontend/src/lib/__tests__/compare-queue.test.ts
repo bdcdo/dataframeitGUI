@@ -460,6 +460,13 @@ describe("buildReviewsAndReviewedCounts", () => {
       expect(out.reviewedCountByDoc.doc1).toBe(1);
     });
 
+    it("resposta nova digitada com o hash atual conta como revisada, mesmo fora das opções", () => {
+      const typed = { ...mine({ field_hash: "novo00000000", verdict: "Não houve" }), chosen_response_id: null };
+      const out = buildReviewsAndReviewedCounts([typed], "me", ["doc1"], { doc1: ["a"] }, fields);
+      expect(out.existingReviews.doc1.a.verdict).toBe("Não houve");
+      expect(out.reviewedCountByDoc.doc1).toBe(1);
+    });
+
     it.each([
       ["pergunta alterada", mine({ field_hash: "velho0000000" })],
       ["veredito fora das opções atuais", mine({ field_hash: null, verdict: "Talvez" })],

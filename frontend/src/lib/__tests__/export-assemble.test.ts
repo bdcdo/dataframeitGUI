@@ -229,7 +229,7 @@ describe("assembleExport — prioridade do veredicto sobre a concordância", () 
         { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "concordado" } },
       ],
       reviews: [
-        { document_id: "A", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, verdict: "pular", comment: "nota do revisor" },
+        { document_id: "A", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "pular", comment: "nota do revisor" },
       ],
     });
     const row = d.verdicts.rows[0];
@@ -362,7 +362,7 @@ describe("assembleExport — filtra à base exportada (achado C1)", () => {
         { document_id: "ghost", respondent_name: "RX", respondent_type: "llm", answers: { campo: "x" } },
       ],
       reviews: [
-        { document_id: "ghost", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, verdict: "ambiguo", comment: null },
+        { document_id: "ghost", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "ambiguo", comment: null },
       ],
     });
     const allIds = new Set([
@@ -509,9 +509,9 @@ describe("assembleExport — validade do veredito (#758)", () => {
       { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
     ],
   };
-  const review = (overrides: Partial<{ id: string; verdict: string; comment: string | null; created_at: string; field_hash: string | null }> = {}) => ({
+  const review = (overrides: Partial<{ id: string; verdict: string; comment: string | null; created_at: string; field_hash: string | null; chosen_response_id: string | null }> = {}) => ({
     id: "rv1", document_id: "A", field_name: "campo", verdict: "não", comment: null,
-    created_at: "2026-01-01T00:00:00Z", field_hash: HASH, ...overrides,
+    created_at: "2026-01-01T00:00:00Z", field_hash: HASH, chosen_response_id: null, ...overrides,
   });
 
   it("veredito de rodada anterior sobre a mesma pergunta prevalece sobre a concordância", () => {
@@ -538,6 +538,14 @@ describe("assembleExport — validade do veredito (#758)", () => {
     expect(d.verdicts.rows[0][idx(d.verdicts, "campo")]).toBe("sim");
   });
 
+  it("resposta nova digitada com o hash atual entra mesmo fora das opções; copiada não", () => {
+    const single = { ...base, fields: [field("campo", { type: "single", options: ["sim", "não"], hash: HASH })] };
+    const typed = run({ ...single, reviews: [review({ verdict: "talvez", chosen_response_id: null })] });
+    expect(typed.verdicts.rows[0][idx(typed.verdicts, "campo")]).toBe("talvez");
+    const copied = run({ ...single, reviews: [review({ verdict: "talvez", chosen_response_id: "r1" })] });
+    expect(copied.verdicts.rows[0][idx(copied.verdicts, "campo")]).toBe("sim");
+  });
+
   it("entre vereditos válidos da célula vence o mais recente por created_at", () => {
     const d = run({
       ...base,
@@ -562,7 +570,7 @@ describe("assembleExport — validade do veredito (#758)", () => {
     };
     const source = (field_hash: string) => ({
       id: "review1", document_id: "doc1", field_name: "x", verdict: "Humano", comment: null,
-      created_at: "2026-01-01T00:00:00Z", field_hash,
+      created_at: "2026-01-01T00:00:00Z", field_hash, chosen_response_id: "rh",
     });
 
     it("Erro do LLM sobre veredito inválido continua no gabarito", () => {

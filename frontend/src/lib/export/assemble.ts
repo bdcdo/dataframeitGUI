@@ -57,6 +57,7 @@ export interface ExportReview {
   created_at: string;
   /** `reviews.field_hash`: o hash do campo quando a arbitragem foi feita. */
   field_hash: string | null;
+  chosen_response_id: string | null;
 }
 
 export interface AssembleInput {

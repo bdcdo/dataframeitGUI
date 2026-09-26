@@ -4,8 +4,14 @@
 // vale enquanto (1) o campo existe no schema atual, (2) `field_hash`, o hash do
 // campo carimbado no veredito pelo banco, é o hash atual do campo, ou é NULL
 // (legado, sem como provar a pergunta) e (3) o valor do veredito está no
-// domínio atual do campo. A rodada não entra na regra, e editar a resposta
-// escolhida depois da arbitragem não invalida o veredito.
+// domínio atual do campo, conferido só quando o hash é NULL ou o veredito foi
+// copiado de uma resposta (`chosen_response_id`). O veredito digitado pelo
+// revisor ("Nenhuma correta") com o hash atual vale mesmo fora das opções: as
+// opções entram no hash, então o hash igual prova que o texto foi digitado sob
+// as opções atuais. O copiado fora das opções é resposta recodificada depois
+// sob outra versão, que o backfill pode ter carimbado com o hash novo. A
+// rodada não entra na regra, e editar a resposta escolhida depois da
+// arbitragem não invalida o veredito.
 //
 // Todo leitor de `reviews` que trata veredito como gabarito passa por aqui:
 // Gabarito, export, métrica e fila do LLM Insights, Comparação, fecho do
@@ -25,6 +31,8 @@ export interface ValidatableReview {
   verdict: string;
   /** `reviews.field_hash`; `null` é veredito legado, anterior ao carimbo. */
   field_hash: string | null;
+  /** Presente quando o veredito foi copiado de uma resposta (voto em card). */
+  chosen_response_id: string | null;
 }
 
 export type ReviewInvalidReason =
@@ -107,7 +115,8 @@ export function reviewValidity(
   if (review.field_hash !== null && review.field_hash !== field.hash) {
     return { valid: false, reason: "pergunta_alterada" };
   }
-  if (!verdictInDomain(review.verdict, field)) {
+  const domainApplies = review.field_hash === null || review.chosen_response_id !== null;
+  if (domainApplies && !verdictInDomain(review.verdict, field)) {
     return { valid: false, reason: "fora_do_dominio" };
   }
   return { valid: true };

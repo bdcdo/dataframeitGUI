@@ -114,7 +114,7 @@ export async function submitVerdict({
       const [{ data: ambiguous }, { data: project }] = await Promise.all([
         supabase
           .from("reviews")
-          .select("id, field_name, verdict, field_hash")
+          .select("id, field_name, verdict, field_hash, chosen_response_id")
           .eq("project_id", projectId)
           .eq("document_id", documentId)
           .eq("field_name", fieldName)

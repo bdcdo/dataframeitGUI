@@ -29,40 +29,49 @@ const textField = field({ name: "t", type: "text", options: null, hash: "ccccccc
 const dateField = field({ name: "d", type: "date", options: null, hash: "dddddddddddd" });
 const legacyField = field({ name: "l", options: ["Sim"], hash: undefined });
 
-function review(verdict: string, field_hash: string | null, field_name = "q"): ValidatableReview {
-  return { field_name, verdict, field_hash };
+// `copied`: veredito copiado de uma resposta (voto em card, com
+// `chosen_response_id`), em oposição ao digitado pelo revisor.
+function review(verdict: string, field_hash: string | null, field_name = "q", copied = true): ValidatableReview {
+  return { field_name, verdict, field_hash, chosen_response_id: copied ? "r1" : null };
 }
 
 // A mesma matriz de `supabase/tests/reviews_field_hash.test.sql`, bloco (b):
 // as duas cópias da regra precisam falhar juntas quando uma derivar.
-const MATRIX: Array<[string, string, string | null, PydanticField | undefined, boolean]> = [
-  ["pergunta idêntica", "Sim", "aaaaaaaaaaaa", singleField, true],
-  ["texto com espaço e trim", "  Não", "aaaaaaaaaaaa", singleField, true],
-  ["pergunta alterada", "Sim", "ffffffffffff", singleField, false],
-  ["campo removido", "Sim", "aaaaaaaaaaaa", undefined, false],
-  ["hash NULL no domínio", "Sim", null, singleField, true],
-  ["hash NULL com single renomeado", "Talvez", null, singleField, false],
-  ["hash igual e valor fora do domínio", "Talvez", "aaaaaaaaaaaa", singleField, false],
-  ["single com allow_other", "Outro: quase", "aaaaaaaaaaaa", singleOther, true],
-  ["ambiguo", "ambiguo", "aaaaaaaaaaaa", singleField, true],
-  ["pular", "pular", null, singleField, true],
-  ["ambiguo com pergunta alterada", "ambiguo", "ffffffffffff", singleField, false],
-  ["veredito em branco", "", "aaaaaaaaaaaa", singleField, true],
-  ["multi JSON nas opções", '{"A":true,"B":false}', "bbbbbbbbbbbb", multiField, true],
-  ["multi com opção extinta", '{"A":true,"C":true}', null, multiField, false],
-  ["multi com opção extinta desmarcada", '{"A":true,"C":false}', null, multiField, true],
-  ["multi com allow_other", '{"A":true,"Outro: x":true}', "bbbbbbbbbbbb", multiOther, true],
-  ["multi votado em card", "A, B", null, multiField, true],
-  ["multi votado em card com opção extinta", "A, C", null, multiField, false],
-  ["texto sempre no domínio", "qualquer coisa", "cccccccccccc", textField, true],
-  ["data sempre no domínio", "01/02/2020", "dddddddddddd", dateField, true],
-  ["campo sem hash e veredito com hash", "Sim", "aaaaaaaaaaaa", legacyField, false],
-  ["campo sem hash e veredito sem hash", "Sim", null, legacyField, true],
+const MATRIX: Array<[string, string, string | null, PydanticField | undefined, boolean, boolean]> = [
+  ["pergunta idêntica", "Sim", "aaaaaaaaaaaa", singleField, true, true],
+  ["texto com espaço e trim", "  Não", "aaaaaaaaaaaa", singleField, true, true],
+  ["pergunta alterada", "Sim", "ffffffffffff", singleField, true, false],
+  ["campo removido", "Sim", "aaaaaaaaaaaa", undefined, true, false],
+  ["hash NULL no domínio", "Sim", null, singleField, true, true],
+  ["hash NULL com single renomeado", "Talvez", null, singleField, true, false],
+  ["copiado com hash igual e valor fora do domínio", "Talvez", "aaaaaaaaaaaa", singleField, true, false],
+  ["single com allow_other", "Outro: quase", "aaaaaaaaaaaa", singleOther, true, true],
+  ["ambiguo", "ambiguo", "aaaaaaaaaaaa", singleField, true, true],
+  ["pular", "pular", null, singleField, true, true],
+  ["ambiguo com pergunta alterada", "ambiguo", "ffffffffffff", singleField, true, false],
+  ["veredito em branco", "", "aaaaaaaaaaaa", singleField, true, true],
+  ["multi JSON nas opções", '{"A":true,"B":false}', "bbbbbbbbbbbb", multiField, true, true],
+  ["multi com opção extinta", '{"A":true,"C":true}', null, multiField, true, false],
+  ["multi com opção extinta desmarcada", '{"A":true,"C":false}', null, multiField, true, true],
+  ["multi com allow_other", '{"A":true,"Outro: x":true}', "bbbbbbbbbbbb", multiOther, true, true],
+  ["multi votado em card", "A, B", null, multiField, true, true],
+  ["multi votado em card com opção extinta", "A, C", null, multiField, true, false],
+  ["texto sempre no domínio", "qualquer coisa", "cccccccccccc", textField, true, true],
+  ["data sempre no domínio", "01/02/2020", "dddddddddddd", dateField, true, true],
+  ["campo sem hash e veredito com hash", "Sim", "aaaaaaaaaaaa", legacyField, true, false],
+  ["campo sem hash e veredito sem hash", "Sim", null, legacyField, true, true],
+
+  // Digitado: sem resposta escolhida. Com o hash igual, as opções são as de
+  // quando foi digitado, e o texto livre vale; sem hash, nada prova isso.
+  ["digitado com hash igual e fora das opções", "Não houve", "aaaaaaaaaaaa", singleField, false, true],
+  ["digitado com hash NULL e fora das opções", "Não houve", null, singleField, false, false],
+  ["digitado com hash diferente", "Não houve", "ffffffffffff", singleField, false, false],
+  ["digitado com hash igual nas opções", "Sim", "aaaaaaaaaaaa", singleField, false, true],
 ];
 
 describe("reviewIsValid (matriz compartilhada com o teste SQL)", () => {
-  it.each(MATRIX)("%s", (_label, verdict, hash, f, expected) => {
-    expect(reviewIsValid(review(verdict, hash, f?.name ?? "q"), f)).toBe(expected);
+  it.each(MATRIX)("%s", (_label, verdict, hash, f, copied, expected) => {
+    expect(reviewIsValid(review(verdict, hash, f?.name ?? "q", copied), f)).toBe(expected);
   });
 });
 
@@ -126,7 +135,7 @@ describe("pickCellReview", () => {
 
 describe("pickValidCellReviews", () => {
   const fields = new Map([[singleField.name, singleField]]);
-  const base = { document_id: "d1", field_name: "q" };
+  const base = { document_id: "d1", field_name: "q", chosen_response_id: "r1" };
 
   it("escolhe entre as válidas: a inválida mais recente não esconde a válida", () => {
     const valid = { ...base, id: "1", created_at: "2026-01-01T00:00:00Z", verdict: "Sim", field_hash: "aaaaaaaaaaaa" };

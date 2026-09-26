@@ -67,7 +67,7 @@ export async function getExportDataset(
     fetchAllPaged<ExportReview>(() =>
       supabase
         .from("reviews")
-        .select("id, document_id, field_name, verdict, comment, created_at, field_hash")
+        .select("id, document_id, field_name, verdict, comment, created_at, field_hash, chosen_response_id")
         .eq("project_id", projectId),
       ["id"],
     ),
