@@ -598,10 +598,14 @@ function pendingReason(docId: string, fieldName: string, ctx: CellContext, signa
   // validade (`review-validity.ts`), porque a pergunta mudou depois delas.
   if (ctx.reviewedCells.has(key)) return PENDING_REASON.questionChanged;
   if (signals.fewResponses) return PENDING_REASON.fewResponses;
-  // Quando a regra da Comparação não vê a divergência (campo `human_only`),
-  // ninguém vai arbitrar. Quando vê, a divergência só tem quem a arbitre se o
-  // documento tem atribuição de comparação na rodada atual.
-  if (!signals.inComparison) return PENDING_REASON.uncompared;
+  return arbitrationReason(docId, ctx, signals.inComparison);
+}
+
+// Quando a regra da Comparação não vê a divergência (campo `human_only`),
+// ninguém vai arbitrar. Quando vê, a divergência só tem quem a arbitre se o
+// documento tem atribuição de comparação na rodada atual.
+function arbitrationReason(docId: string, ctx: CellContext, inComparison: boolean): string {
+  if (!inComparison) return PENDING_REASON.uncompared;
   const unassigned = ctx.comparedDocumentIds !== undefined && !ctx.comparedDocumentIds.has(docId);
   return unassigned ? PENDING_REASON.unassigned : PENDING_REASON.arbitration;
 }
