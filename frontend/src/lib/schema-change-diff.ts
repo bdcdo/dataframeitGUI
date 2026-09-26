@@ -24,7 +24,8 @@ export interface FieldPropertyDiff {
     | "subfield_rule"
     | "subfields"
     | "condition"
-    | "justification_prompt";
+    | "justification_prompt"
+    | "question_revision";
   before: unknown;
   after: unknown;
 }
@@ -191,6 +192,16 @@ export function diffPydanticField(
         before: before.justification_prompt ?? null,
         after: after.justification_prompt ?? null,
       });
+    }
+  }
+
+  // Ausente e `null` são "nenhuma revisão"; o renderizador mostra o número
+  // como texto curto.
+  if (has(before, "question_revision") || has(after, "question_revision")) {
+    const b = (before.question_revision as number | null | undefined) ?? null;
+    const a = (after.question_revision as number | null | undefined) ?? null;
+    if (b !== a) {
+      diffs.push({ property: "question_revision", before: b, after: a });
     }
   }
 

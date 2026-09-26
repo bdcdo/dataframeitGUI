@@ -64,6 +64,11 @@ export const pydanticFieldSchema = z.strictObject({
   target: pydanticFieldTargetSchema.optional(),
   required: z.boolean().optional(),
   hash: z.string().optional(),
+  // Contador de revisões da pergunta por mudança de instrução ("Muda como
+  // responder"). Ausente é "nenhuma revisão", e não um default: o hash só o
+  // inclui quando presente, para que nenhum hash existente mude. Ver
+  // `computeFieldHash` em schema-utils.ts.
+  question_revision: z.number().int().min(1).optional(),
   subfields: z.array(subfieldDefSchema).optional(),
   subfield_rule: pydanticSubfieldRuleSchema.optional(),
   allow_other: z.boolean().optional(),

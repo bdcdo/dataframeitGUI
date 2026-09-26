@@ -33,6 +33,7 @@ const complete: PydanticField = {
   allow_other: true,
   condition: { field: "gatilho", equals: "Sim" },
   justification_prompt: "Cite o trecho",
+  question_revision: 2,
 };
 
 // Deriva a forma v4 (sem `id`) das fixtures acima em vez de redeclará-la: o

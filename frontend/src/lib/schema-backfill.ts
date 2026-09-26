@@ -83,11 +83,14 @@ export function computeHashesFromSnapshot(snap: Map<string, FieldSnapshot>): Rec
   const hashes: Record<string, string> = {};
   for (const [name, field] of snap) {
     if (!field.type || field.description == null) continue;
+    // O contador de revisão vem de before/after como os demais atributos;
+    // payload de entrada que não o registra resolve para "sem revisão".
     hashes[name] = computeFieldHash(
       name,
       field.type,
       field.options ?? null,
       field.description,
+      field.question_revision,
     );
   }
   return hashes;

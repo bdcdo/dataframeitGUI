@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
 import {
   computeFieldHash,
+  fieldHashOf,
   classifyChange,
   bumpVersion,
   snapshotOf,
@@ -83,6 +84,92 @@ describe("computeFieldHash", () => {
     const h1 = computeFieldHash("q", "single", ["a"], "d");
     // mesmo name/type/options/description -> mesmo hash
     expect(computeFieldHash("q", "single", ["a"], "d")).toBe(h1);
+  });
+});
+
+// Revisão da pergunta ("Muda como responder"). Os hashes sem contador são os
+// que a fórmula anterior ao contador produz para os mesmos campos (calculados
+// no commit base, antes desta mudança): nenhum hash gravado pode mudar. Os com
+// contador são os mesmos literais de
+// `test_question_revision_hash_matches_frontend` no backend, e é isso que
+// prende a paridade entre `computeFieldHash` e `_field_hash`.
+describe("computeFieldHash — revisão da pergunta", () => {
+  const PRE_COUNTER_HASHES: Array<[string, string, string[] | null, string, string]> = [
+    ["topic", "single", ["b", "a"], "Tema principal", "1a83dff054c5"],
+    ["q", "multi", ["Sim", "Não"], "Houve provimento? ção", "1f9113c64480"],
+    ["note", "text", null, "Observações livres", "28d0c3996ce7"],
+  ];
+
+  it.each(PRE_COUNTER_HASHES)(
+    "sem contador, %s mantém o hash anterior ao contador",
+    (name, type, options, description, expected) => {
+      expect(computeFieldHash(name, type, options, description)).toBe(expected);
+      // Ausente, nulo (payload antigo do schema_change_log) e zero são a mesma
+      // coisa: nenhuma revisão.
+      expect(computeFieldHash(name, type, options, description, undefined)).toBe(expected);
+      expect(computeFieldHash(name, type, options, description, null)).toBe(expected);
+      expect(computeFieldHash(name, type, options, description, 0)).toBe(expected);
+    },
+  );
+
+  it("com contador, muda o hash, e cada revisão tem o seu", () => {
+    expect(computeFieldHash("topic", "single", ["b", "a"], "Tema principal", 1)).toBe(
+      "634789885ddf",
+    );
+    expect(computeFieldHash("topic", "single", ["b", "a"], "Tema principal", 2)).toBe(
+      "7f1c62b839bb",
+    );
+    expect(
+      computeFieldHash("q", "multi", ["Sim", "Não"], "Houve provimento? ção", 3),
+    ).toBe("cc2855e6ff71");
+  });
+
+  it("acrescenta |r<n> ao fim do conteúdo, e nada mais", () => {
+    const content = "note|text||Observações livres|r4";
+    expect(computeFieldHash("note", "text", null, "Observações livres", 4)).toBe(
+      createHash("sha256").update(content).digest("hex").slice(0, 12),
+    );
+  });
+
+  it("fieldHashOf lê o contador do próprio campo", () => {
+    const field = baseField({ name: "topic", options: ["b", "a"], description: "Tema principal" });
+    expect(fieldHashOf(field)).toBe("1a83dff054c5");
+    expect(fieldHashOf({ ...field, question_revision: 1 })).toBe("634789885ddf");
+  });
+
+  it("planSchemaPersistence grava o hash com o contador", () => {
+    const old = baseField({
+      name: "topic",
+      options: ["b", "a"],
+      description: "Tema principal",
+      help_text: "Antes",
+    });
+    const revised = { ...old, help_text: "Depois", question_revision: 1 };
+    const plan = planSchemaPersistence([old], [revised], { major: 0, minor: 1, patch: 0 });
+    expect(plan.fieldsWithHash[0].hash).toBe("634789885ddf");
+    // Classificação da instrução: textual, patch.
+    expect(plan.changeType).toBe("patch");
+    expect(plan.logEntries).toEqual([
+      {
+        field_name: "topic",
+        change_summary: "instruções, revisão da pergunta",
+        before_value: { help_text: "Antes", question_revision: null },
+        after_value: { help_text: "Depois", question_revision: 1 },
+      },
+    ]);
+  });
+
+  it("snapshotOf registra o contador, e o campo sem revisão como nulo", () => {
+    expect(snapshotOf(baseField({ question_revision: 3 })).question_revision).toBe(3);
+    expect(snapshotOf(baseField({})).question_revision).toBeNull();
+  });
+
+  it("diffFields sem mudança de contador não registra a chave", () => {
+    const old = baseField({ name: "q1", help_text: "a", question_revision: 2 });
+    const next = { ...old, help_text: "b" };
+    const [entry] = diffFields([old], [next]);
+    expect(entry.change_summary).toBe("instruções");
+    expect(entry.before_value).not.toHaveProperty("question_revision");
   });
 });
 
@@ -509,6 +596,24 @@ describe("generatePydanticCode round-trip surface", () => {
     expect(code).toContain(
       '"justification_prompt": "Cite o trecho do parecer."',
     );
+  });
+
+  // O contador entra no código para que a recuperação de campos
+  // (`compile_pydantic`) recalcule o mesmo hash; sem revisão, o texto fica
+  // byte-idêntico, como em `required`, porque `pydantic_hash` é sha256 dele.
+  it("emits question_revision last, only when the field has one", () => {
+    const id = "00000000-0000-4000-8000-0000000000ac";
+    const semRevisao = generatePydanticCode([
+      baseField({ id, name: "q1", options: ["A", "B"], help_text: "Ajuda" }),
+    ]);
+    const comRevisao = generatePydanticCode([
+      baseField({ id, name: "q1", options: ["A", "B"], help_text: "Ajuda", question_revision: 2 }),
+    ]);
+    expect(semRevisao).not.toContain("question_revision");
+    expect(comRevisao).toContain(
+      `json_schema_extra={"id": "${id}", "help_text": "Ajuda", "question_revision": 2})`,
+    );
+    expect(comRevisao.replace(', "question_revision": 2', "")).toBe(semRevisao);
   });
 
   it("emits required in json_schema_extra when the field is optional", () => {

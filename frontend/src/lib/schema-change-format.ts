@@ -71,6 +71,7 @@ const PROPERTY_LABELS: Record<FieldPropertyDiff["property"], string> = {
   subfields: "subcampos",
   condition: "condição",
   justification_prompt: "prompt de justificativa",
+  question_revision: "revisão da pergunta",
 };
 
 export function propertyLabel(p: FieldPropertyDiff["property"]): string {

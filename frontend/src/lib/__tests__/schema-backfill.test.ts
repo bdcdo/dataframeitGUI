@@ -9,7 +9,7 @@ import {
   type PersistedLogEntryRow,
   type ResponseRow,
 } from "@/lib/schema-backfill";
-import { computeFieldHash } from "@/lib/schema-utils";
+import { computeFieldHash, diffFields } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
 // Testes das funções puras extraídas de runBackfill (issue #392) — sem
@@ -139,6 +139,50 @@ describe("reconstructSnapshotsByVersion", () => {
     });
     expect(snapByVersion.size).toBe(1);
     expect(snapByVersion.get("0.1.0")?.get("campo1")?.description).toBe("v1");
+  });
+});
+
+// A revisão da pergunta entra no hash, e o backfill reconstrói o hash de cada
+// versão a partir do before/after do log: sem o contador registrado ali, a
+// versão anterior à revisão sairia com o hash da posterior.
+describe("buildTimelineFromPersistedVersions — revisão da pergunta", () => {
+  it("cada versão tem o hash do seu contador, e o nulo do log vale como ausente", () => {
+    const [entry] = diffFields(
+      [{ id: "00000000-0000-4000-8000-000000000004", name: "campo1", type: "text", options: null, description: "d", help_text: "a" }],
+      [{ id: "00000000-0000-4000-8000-000000000004", name: "campo1", type: "text", options: null, description: "d", help_text: "b", question_revision: 1 }],
+    );
+    const rows: PersistedLogEntryRow[] = [
+      {
+        ...logRow({ id: "e1", after_value: { type: "text", description: "d", help_text: "a" }, change_type: "minor" }),
+        version_major: 0,
+        version_minor: 2,
+        version_patch: 0,
+      },
+      {
+        ...logRow({
+          id: "e2",
+          before_value: entry.before_value,
+          after_value: entry.after_value,
+          created_at: "2026-01-02T00:00:00.000Z",
+          change_type: "patch",
+        }),
+        version_major: 0,
+        version_minor: 2,
+        version_patch: 1,
+      },
+    ];
+    const current: PydanticField[] = [
+      { id: "00000000-0000-4000-8000-000000000004", name: "campo1", type: "text", options: null, description: "d", help_text: "b", question_revision: 1 },
+    ];
+    const timeline = buildTimelineFromPersistedVersions(rows, current, { major: 0, minor: 2, patch: 1 });
+    expect(timeline.status).toBe("ok");
+    if (timeline.status !== "ok") return;
+    expect(timeline.hashesByVersion.get("0.2.1")?.campo1).toBe(
+      computeFieldHash("campo1", "text", null, "d", 1),
+    );
+    expect(timeline.hashesByVersion.get("0.2.0")?.campo1).toBe(
+      computeFieldHash("campo1", "text", null, "d"),
+    );
   });
 });
 
