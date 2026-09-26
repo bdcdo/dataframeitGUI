@@ -19,7 +19,11 @@
 --   (e) o valor é julgado pela definição atual na gravação: o branco pedido
 --       antes de a pergunta perder a condição é recusado, e a resposta do LLM
 --       que "Erro humano" aprova precisa estar no domínio atual
---       (`review_verdict_in_domain`), em `single` e em `multi`.
+--       (`review_verdict_in_domain`), em `single` e em `multi`;
+--   (f) o branco pedido diante de uma condição e confirmado depois de ela ser
+--       trocada é recusado, porque o contexto gravado traria a condição nova
+--       e a leitura o daria como valendo; o valor não branco continua
+--       gravando.
 --
 -- Roda numa transação e não deixa fixture no banco local.
 
@@ -33,7 +37,8 @@ INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_s
 -- q e q2 são a mesma pergunta em dois campos: q para a leitura (a), q2 para a
 -- gravação (c). g0 é o gatilho da condição que o caso (a) acrescenta. q3, q4
 -- e q5 servem ao bloco (e): q3 é condicional e o LLM a deixa de fora, q4 e q5
--- aceitam "Outro" e o LLM responde com ele.
+-- aceitam "Outro" e o LLM responde com ele. q6 e q7 servem ao bloco (f): as
+-- duas são condicionais, o LLM deixa q6 de fora e responde q7.
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fields) VALUES
   ('dec10000-0000-0000-0000-000000000001', 'Decision follows hash test', 'dec00000-0000-0000-0000-000000000001', 'compare_llm',
    '[{"id":"dec50000-0000-4000-8000-000000000001","name":"g0","type":"single","options":["Sim","Não"],"description":"Gatilho","hash":"g00000000001"},
@@ -41,14 +46,16 @@ INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_fie
      {"id":"dec50000-0000-4000-8000-000000000003","name":"q2","type":"single","options":["A","B"],"description":"Pergunta","help_text":"Ajuda","hash":"q20000000001"},
      {"id":"dec50000-0000-4000-8000-000000000004","name":"q3","type":"text","description":"Condicional","condition":{"field":"g0","equals":"Sim"},"hash":"q30000000001"},
      {"id":"dec50000-0000-4000-8000-000000000005","name":"q4","type":"single","options":["A","B"],"allow_other":true,"description":"Com Outro","hash":"q40000000001"},
-     {"id":"dec50000-0000-4000-8000-000000000006","name":"q5","type":"multi","options":["A","B"],"allow_other":true,"description":"Várias com Outro","hash":"q50000000001"}]');
+     {"id":"dec50000-0000-4000-8000-000000000006","name":"q5","type":"multi","options":["A","B"],"allow_other":true,"description":"Várias com Outro","hash":"q50000000001"},
+     {"id":"dec50000-0000-4000-8000-000000000007","name":"q6","type":"text","description":"Condicional trocada","condition":{"field":"g0","equals":"Sim"},"hash":"q60000000001"},
+     {"id":"dec50000-0000-4000-8000-000000000008","name":"q7","type":"text","description":"Condicional trocada, respondida","condition":{"field":"g0","equals":"Sim"},"hash":"q70000000001"}]');
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('dec20000-0000-0000-0000-000000000001', 'dec10000-0000-0000-0000-000000000001', 'Documento', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, is_latest, answers) VALUES
   ('dec30000-0000-0000-0000-000000000001', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', NULL, 'llm', true,
-   '{"g0":"Sim","q":"A","q2":"A","q4":"Outro: C","q5":["A","Outro: C"]}'),
+   '{"g0":"Sim","q":"A","q2":"A","q4":"Outro: C","q5":["A","Outro: C"],"q7":"Do LLM"}'),
   ('dec30000-0000-0000-0000-000000000002', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'dec00000-0000-0000-0000-000000000001', 'humano', true,
-   '{"g0":"Sim","q":"B","q2":"B","q3":"Texto","q4":"B","q5":["B"]}');
+   '{"g0":"Sim","q":"B","q2":"B","q3":"Texto","q4":"B","q5":["B"],"q6":"Texto","q7":"Texto"}');
 INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id, verdict, chosen_response_id) VALUES
   ('dec40000-0000-0000-0000-000000000001', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q',
    'dec00000-0000-0000-0000-000000000001', 'B', 'dec30000-0000-0000-0000-000000000002'),
@@ -59,7 +66,11 @@ INSERT INTO public.reviews (id, project_id, document_id, field_name, reviewer_id
   ('dec40000-0000-0000-0000-000000000004', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q4',
    'dec00000-0000-0000-0000-000000000001', 'B', 'dec30000-0000-0000-0000-000000000002'),
   ('dec40000-0000-0000-0000-000000000005', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q5',
-   'dec00000-0000-0000-0000-000000000001', '{"B": true}', 'dec30000-0000-0000-0000-000000000002');
+   'dec00000-0000-0000-0000-000000000001', '{"B": true}', 'dec30000-0000-0000-0000-000000000002'),
+  ('dec40000-0000-0000-0000-000000000006', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q6',
+   'dec00000-0000-0000-0000-000000000001', 'Texto', 'dec30000-0000-0000-0000-000000000002'),
+  ('dec40000-0000-0000-0000-000000000007', 'dec10000-0000-0000-0000-000000000001', 'dec20000-0000-0000-0000-000000000001', 'q7',
+   'dec00000-0000-0000-0000-000000000001', 'Texto', 'dec30000-0000-0000-0000-000000000002');
 
 -- A edição do schema como o save a faz: o patch entra na definição de um
 -- campo e a revisão do schema sobe.
@@ -287,6 +298,56 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: a guarda recusou um valor das opções atuais';
   END IF;
   RAISE NOTICE 'OK: o valor é julgado pela definição atual na gravação';
+END $$;
+RESET ROLE;
+
+-- (f) A condição trocada entre o pedido e a confirmação. O hash não muda, então
+-- o contexto pedido continua corrente; o que decide é o branco.
+SET LOCAL ROLE authenticated;
+INSERT INTO hash_requested VALUES
+  ('q6 antes da troca', pg_temp.requested('q6', 'dec40000-0000-0000-0000-000000000006')),
+  ('q7 antes da troca', pg_temp.requested('q7', 'dec40000-0000-0000-0000-000000000007'));
+DO $$
+BEGIN
+  -- Controle: antes da troca, o branco grava.
+  IF pg_temp.try_decide('q6', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q6 antes da troca')) IS NOT NULL
+     OR pg_temp.try_decide('q7', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q7 antes da troca'), '""') IS NOT NULL
+     OR pg_temp.try_decide('q7', 'all_wrong', (SELECT context FROM hash_requested WHERE label = 'q7 antes da troca'), '""') IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: o branco foi recusado antes da troca da condição';
+  END IF;
+END $$;
+RESET ROLE;
+SELECT pg_temp.patch_field('q6', '{"condition":{"field":"g0","equals":"Não"}}');
+SELECT pg_temp.patch_field('q7', '{"condition":{"field":"g0","equals":"Não"}}');
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE
+  kase RECORD;
+BEGIN
+  FOR kase IN SELECT * FROM (VALUES
+      ('Erro humano', 'q6', 'llm_correct', NULL::JSONB), ('Erro do LLM', 'q7', 'researchers_correct', '""'::JSONB),
+      ('Todos errados', 'q7', 'all_wrong', '""'::JSONB)) AS v(label, field, decision, value) LOOP
+    BEGIN
+      PERFORM pg_temp.try_decide(kase.field, kase.decision,
+        (SELECT context FROM hash_requested WHERE label = kase.field || ' antes da troca'), kase.value);
+      RAISE EXCEPTION 'FALHOU: % gravou o branco pedido antes da troca da condição', kase.label;
+    EXCEPTION WHEN serialization_failure THEN
+      IF SQLERRM IS DISTINCT FROM 'A condição da pergunta mudou. Recarregue antes de confirmar.' THEN
+        RAISE EXCEPTION 'FALHOU: % recusou o branco com outra mensagem (%)', kase.label, SQLERRM;
+      END IF;
+    END;
+  END LOOP;
+  -- O valor não branco não depende da condição: o gate do export confere se a
+  -- pergunta se aplica.
+  IF pg_temp.try_decide('q7', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q7 antes da troca'), '"Texto"') IS NOT NULL
+     OR pg_temp.try_decide('q7', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q7 antes da troca')) IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: a troca da condição recusou um valor não branco';
+  END IF;
+  -- O contexto pedido depois da troca grava o branco.
+  IF pg_temp.try_decide('q6', 'llm_correct', pg_temp.requested('q6', 'dec40000-0000-0000-0000-000000000006')) IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: o branco pedido depois da troca foi recusado';
+  END IF;
+  RAISE NOTICE 'OK: o branco segue a condição do pedido na gravação';
 END $$;
 RESET ROLE;
 

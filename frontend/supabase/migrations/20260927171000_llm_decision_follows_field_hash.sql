@@ -15,11 +15,17 @@
 -- instrução que muda como responder continua derrubando a decisão, porque
 -- quem edita marca a revisão e o contador entra no hash.
 --
--- A condição não derruba a decisão por conta própria. Com o hash igual, a
--- resposta do LLM e a humana do contexto continuam as mesmas (qualquer
--- mudança nelas muda `responses_hash` e os valores do contexto); o que a
--- condição nova pode mudar é se a pergunta se aplica ao documento, e isso é
--- conferido pelo gate do export, não pela decisão.
+-- A condição não derruba a decisão que aprovou valor não branco. Com o hash
+-- igual, a resposta do LLM e a humana do contexto continuam as mesmas
+-- (qualquer mudança nelas muda `responses_hash` e os valores do contexto); o
+-- que a condição nova pode mudar é se a pergunta se aplica ao documento, e o
+-- gate do export confere isso para o valor. Para o branco aprovado ele não
+-- confere, porque branco não contradiz condição nenhuma: a decisão que aprovou
+-- o branco cai quando a condição gravada difere da atual (abaixo). Na
+-- gravação vale o mesmo: o contexto gravado é o recalculado, com a condição
+-- atual, e o branco que o revisor aprovou diante da condição antiga nasceria
+-- valendo sob a nova. Por isso `set_error_resolution` recusa o branco quando
+-- a condição do contexto pedido difere da recalculada.
 --
 -- Sem hash nos dois lados, a comparação cai para a definição inteira, a regra
 -- anterior. No banco não há cópia da fórmula do hash para derivá-lo: a
@@ -33,9 +39,9 @@
 -- O hash não cobre `condition` nem `allow_other`, então a decisão sobrevive à
 -- mudança deles, e o valor que ela aprovou passa a ser julgado pela definição
 -- atual na leitura (`approvedUnderCurrent`, na cópia TypeScript): o branco
--- aprovado numa pergunta que perdeu a condição cai, e o valor fora do domínio
--- atual cai pela régua do veredito da Comparação (`verdictInDomain`, cuja
--- cópia SQL é `review_verdict_in_domain`). Na gravação, a validação já usa a
+-- aprovado cai quando a condição mudou, e o valor fora do domínio atual cai
+-- pela régua do veredito da Comparação (`verdictInDomain`, cuja cópia SQL é
+-- `review_verdict_in_domain`). Na gravação, a validação já usa a
 -- definição recalculada: o branco exige a condição atual, e o valor escolhido
 -- e o valor comum passam por `error_resolution_value_problem`. Faltava a
 -- resposta do LLM que "Erro humano" aprova, que nada conferia contra o
@@ -43,8 +49,8 @@
 -- atuais nasceria sem valer e voltaria à fila a cada confirmação.
 --
 -- `set_error_resolution` é o corpo de 20260927140000_both_correct_common_value.sql
--- com duas mudanças: a comparação dos contextos e a guarda de domínio de
--- "Erro humano". A assinatura não muda, então `OR REPLACE` preserva SECURITY
+-- com três mudanças: a comparação dos contextos, a guarda de domínio de
+-- "Erro humano" e a guarda do branco diante da condição mudada. A assinatura não muda, então `OR REPLACE` preserva SECURITY
 -- DEFINER, search_path e os grants de 20260918130000. O contexto gravado
 -- continua sendo o recalculado, com a definição atual inteira.
 
@@ -234,6 +240,20 @@ BEGIN
         RAISE EXCEPTION '%', v_problem USING ERRCODE = '22023';
       END IF;
     END IF;
+  END IF;
+
+  -- O branco que vai ao gabarito foi aprovado diante da condição do contexto
+  -- pedido. Se ela mudou até a confirmação, a condição nova pode acionar a
+  -- pergunta no documento, e o contexto gravado, que é o recalculado, faria a
+  -- leitura (`approvedUnderCurrent`) dar o branco como valendo. A comparação
+  -- é a do JSONB, que não depende da ordem das chaves; sem a chave e JSON null
+  -- contam como a mesma pergunta sem condição, como na cópia TypeScript.
+  IF ((p_decision = 'llm_correct' AND v_llm_blank)
+      OR (p_decision IN ('researchers_correct', 'all_wrong') AND p_value = v_blank)
+      OR (v_common IS NOT NULL AND v_llm_blank))
+    AND COALESCE(p_expected_context #> '{field_definition,condition}', 'null'::JSONB)
+      IS DISTINCT FROM COALESCE(v_field->'condition', 'null'::JSONB) THEN
+    RAISE EXCEPTION 'A condição da pergunta mudou. Recarregue antes de confirmar.' USING ERRCODE = '40001';
   END IF;
 
   INSERT INTO public.error_resolutions (project_id, document_id, field_name, decision, context, approved_value, resolved_by, resolved_at, note)

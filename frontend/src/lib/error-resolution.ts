@@ -106,7 +106,8 @@ export type EffectiveErrorResolution =
 // pergunta é a mesma. A pergunta se mede pelo hash do campo, como no veredito
 // da Comparação, no par "=" e na auto-revisão: `help_text` que só esclarece,
 // `condition`, `required` e `justification_prompt` não entram no hash e não
-// derrubam a decisão; quem aplica a condição nova é o gate do export. A cópia
+// derrubam a decisão. A condição nova, quem aplica ao valor é o gate do
+// export, e ao branco aprovado, `approvedUnderCurrent`. A cópia
 // SQL é `error_resolution_context_current`
 // (20260927171000_llm_decision_follows_field_hash.sql), que não deriva o hash:
 // lá os dois contextos saem do mesmo schema na mesma confirmação.
@@ -161,27 +162,36 @@ function hasApprovedValue(row: Pick<ErrorResolutionRow, "approved_value">): bool
 
 // A definição que julga o valor aprovado é a atual (`current_context`), não a
 // gravada. O hash não cobre `condition` nem `allow_other`, então a decisão
-// sobrevive à mudança deles; o valor, não. O branco aprovado numa pergunta
-// condicional deixa de valer quando ela perde a condição, porque o export o
-// gravaria numa pergunta que todo documento deve responder. O branco aprovado
-// numa pergunta que nunca foi condicional (o "Erro humano" sobre o LLM que
-// respondeu `""`) não é assunto desta regra e continua como antes. Fora do
+// sobrevive à mudança deles; o valor, não. O branco aprovado deixa de valer
+// quando a condição gravada difere da atual, inclusive quando ela some ou
+// aparece: a condição nova pode acionar a pergunta no documento, e o export
+// gravaria o branco onde a resposta é devida sem que o gate acuse, porque
+// branco não contradiz nada (`judgedCell`). Com a condição idêntica, o branco
+// continua valendo, também na pergunta que nunca foi condicional (o "Erro
+// humano" sobre o LLM que respondeu `""`). Valor não branco não depende da
+// condição: o gate do export confere se a pergunta se aplica. Fora do
 // domínio atual (o "Outro: ..." depois que `allow_other` foi desligado, a
 // opção que saiu do formulário) a decisão cai pela mesma régua do veredito da
 // Comparação (`verdictInDomain`, motivo `fora_do_dominio`), senão a célula
-// ficaria com o valor que a regra do veredito acabou de recusar. `verdictInDomain` não mede registro de
-// subcampos, e um subcampo removido não derruba a decisão, como não derruba o
-// veredito. Na gravação, `set_error_resolution` valida contra a definição
-// atual e recusa o valor do LLM fora do domínio dela, para que nenhuma decisão
-// nasça sem valer.
+// ficaria com o valor que a regra do veredito acabou de recusar.
+// `verdictInDomain` não mede registro de subcampos, e um subcampo removido não
+// derruba a decisão, como não derruba o veredito. Na gravação, `set_error_resolution` valida contra a definição
+// atual e recusa o valor do LLM fora do domínio dela e o branco pedido diante
+// de outra condição, para que nenhuma decisão nasça sem valer.
 function approvedUnderCurrent(
   row: ErrorResolutionRow, value: unknown, isLlmError: boolean,
 ): EffectiveErrorResolution {
   const current = row.current_context?.field_definition;
-  const blankWithoutCondition = isBlankAnswer(value) &&
-    conditionalBlank(row.context?.field_definition) !== undefined && conditionalBlank(current) === undefined;
-  if (blankWithoutCondition || !valueInDomain(current, value)) return { status: "stale" };
+  if ((isBlankAnswer(value) && conditionChanged(row)) || !valueInDomain(current, value)) return { status: "stale" };
   return { status: "approved", value, isLlmError };
+}
+
+// Se a condição gravada difere da atual. Sem ela, `null`, para que a chave
+// ausente e a `condition: null` contem como a mesma pergunta sem condição.
+function conditionChanged(row: ErrorResolutionRow): boolean {
+  const conditionOf = (definition: unknown) =>
+    stableStringify(isSubfieldRecord(definition) ? definition.condition ?? null : null);
+  return conditionOf(row.context?.field_definition) !== conditionOf(row.current_context?.field_definition);
 }
 
 const domainFieldSchema = z.object({
@@ -272,12 +282,14 @@ export function llmValueIsBlank(context: ErrorResolutionContext): boolean {
 }
 
 // "Erro humano" aprova a resposta do LLM. Sem o campo nela, só há o que
-// aprovar quando o campo é condicional na definição atual: o LLM respondeu
-// "em branco".
+// aprovar quando o campo é condicional na definição atual e a condição é a
+// mesma da decisão: o LLM respondeu "em branco", e o branco segue a regra de
+// `approvedUnderCurrent`. O domínio não entra, porque o branco de condicional
+// não é opção de nenhum tipo.
 function llmCorrectResolution(row: ErrorResolutionRow, context: ErrorResolutionContext): EffectiveErrorResolution {
   if (context.llm_value.present) return approvedUnderCurrent(row, context.llm_value.value, false);
   const blank = conditionalBlank(row.current_context?.field_definition);
-  return blank === undefined ? { status: "stale" } : { status: "approved", value: blank, isLlmError: false };
+  return blank === undefined || conditionChanged(row) ? { status: "stale" } : { status: "approved", value: blank, isLlmError: false };
 }
 
 export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): EffectiveErrorResolution {

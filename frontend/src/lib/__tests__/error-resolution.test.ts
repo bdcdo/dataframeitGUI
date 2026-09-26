@@ -150,8 +150,9 @@ describe("o valor aprovado é julgado pela definição atual", () => {
     return r;
   }
 
-  describe("o branco de condicional cai com a condição", () => {
+  describe("o branco aprovado cai quando a condição muda", () => {
     const text = { type: "text", options: null };
+    const swapped = { field: "g0", equals: "Não" };
     it("Erro humano sobre o LLM sem a chave", () => {
       const absent = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
         const r = decided("llm_correct", saved, current);
@@ -184,6 +185,48 @@ describe("o valor aprovado é julgado pela definição atual", () => {
         .toBe("approved");
       expect(effectiveErrorResolution(decided(decision, { ...field, condition }, field, { approved_value: blank })))
         .toEqual({ status: "stale" });
+      expect(effectiveErrorResolution(decided(decision, { ...field, condition }, { ...field, condition: swapped }, { approved_value: blank })))
+        .toEqual({ status: "stale" });
+    });
+
+    // A condição trocada pode acionar a pergunta no documento, e o gate do
+    // export não acusa o branco, que não contradiz condição nenhuma.
+    describe("Erro humano sobre o LLM sem a chave", () => {
+      const absent = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value = { present: false, value: null };
+        r.current_context!.llm_value = { present: false, value: null };
+        return r;
+      };
+      it("a condição trocada derruba o branco", () => {
+        expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition: swapped }))).toEqual({ status: "stale" });
+      });
+      it("a condição idêntica, com as chaves em outra ordem, mantém o branco", () => {
+        expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition: { equals: "Sim", field: "g0" } })))
+          .toEqual({ status: "approved", value: "", isLlmError: false });
+      });
+      it("a condição removida continua derrubando o branco", () => {
+        expect(effectiveErrorResolution(absent({ ...text, condition }, text))).toEqual({ status: "stale" });
+        expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition: null }))).toEqual({ status: "stale" });
+      });
+    });
+    it("a condição nova numa pergunta sem condição derruba o branco; a chave nula conta como ausente", () => {
+      const blankLlm = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value.value = "";
+        r.current_context!.llm_value.value = "";
+        return r;
+      };
+      expect(effectiveErrorResolution(blankLlm(text, { ...text, condition }))).toEqual({ status: "stale" });
+      expect(effectiveErrorResolution(blankLlm(text, { ...text, condition: null })).status).toBe("approved");
+    });
+    it("a condição trocada não derruba valor não branco", () => {
+      for (const current of [{ ...text, condition: swapped }, text]) {
+        expect(effectiveErrorResolution(decided("researchers_correct", { ...text, condition }, current, { approved_value: "Texto" })))
+          .toEqual({ status: "approved", value: "Texto", isLlmError: true });
+        const human = decided("llm_correct", { ...text, condition }, current);
+        expect(effectiveErrorResolution(human)).toEqual({ status: "approved", value: human.context!.llm_value.value, isLlmError: false });
+      }
     });
   });
 

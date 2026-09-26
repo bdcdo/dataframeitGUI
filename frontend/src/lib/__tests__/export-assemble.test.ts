@@ -659,6 +659,27 @@ describe("assembleExport: validade do veredito (#758)", () => {
       expect(withDecision.comments).not.toContain("Erro humano");
     });
 
+    // O branco não contradiz condição nenhuma (`judgedCell`), então o gate do
+    // export não o segura: é a decisão que precisa cair.
+    it("o branco de Erro humano cai quando a condição trocada passa a acionar o campo", () => {
+      const x = field("x", { hash: HASH, condition: { field: "g0", equals: "Não" } });
+      const decision = decidedOn("llm_correct", { condition: { field: "g0", equals: "Sim" } }, { condition: { field: "g0", equals: "Não" } },
+        { present: false, value: null });
+      const withDecision = exportWith(x, { g0: "Não" }, [decision]);
+      expect(withDecision).toEqual(exportWith(x, { g0: "Não" }, []));
+      expect(withDecision.cell).toBe("Humano");
+      expect(withDecision.comments).not.toContain("Erro humano");
+    });
+
+    it("o branco de Erro humano fica com a condição idêntica", () => {
+      const condition = { field: "g0", equals: "Sim" };
+      const x = field("x", { hash: HASH, condition });
+      const decision = decidedOn("llm_correct", { condition }, { condition }, { present: false, value: null });
+      const withDecision = exportWith(x, { g0: "Não" }, [decision]);
+      expect(withDecision.cell).toBe("");
+      expect(withDecision.comments).toContain("Erro humano");
+    });
+
     it("o Outro de Erro do LLM cai quando allow_other é desligado", () => {
       const x = field("x", { type: "single", options: ["Humano", "LLM"], hash: HASH });
       const single = { type: "single", options: ["Humano", "LLM"] };
