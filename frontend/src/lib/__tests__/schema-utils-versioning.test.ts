@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   computeFieldHash,
   classifyChange,
@@ -35,9 +37,10 @@ const baseField = (over: Partial<PydanticField>): PydanticField => ({
   ...over,
 });
 
-// Reproduz a fórmula de content do computeFieldHash (e do _field_hash do
-// backend) para validar a implementação de SHA-256 em TS puro contra o
-// crypto do Node.
+// Reproduz a fórmula de content do computeFieldHash para validar a
+// implementação de SHA-256 em TS puro contra o crypto do Node. Só serve para
+// opções sem nada que o `repr` do Python escape; a paridade com o
+// `_field_hash` nos casos de escape está no describe de paridade abaixo.
 function expectedHash(
   name: string,
   type: string,
@@ -83,6 +86,45 @@ describe("computeFieldHash", () => {
     const h1 = computeFieldHash("q", "single", ["a"], "d");
     // mesmo name/type/options/description -> mesmo hash
     expect(computeFieldHash("q", "single", ["a"], "d")).toBe(h1);
+  });
+});
+
+// Os casos são os mesmos de `test_field_hash_parity_cases` no backend, e o
+// hash de cada um é o do `_field_hash` do Python, que é a definição da
+// fórmula. Os dois lados rodam contra o mesmo arquivo: se um mudar, a suíte
+// dele fica vermelha.
+interface FieldHashParityCase {
+  case: string;
+  name: string;
+  type: string;
+  options?: string[] | null;
+  description: string;
+  question_revision?: number;
+  hash: string;
+}
+
+const FIELD_HASH_PARITY_CASES = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL("../../../../backend/tests/field_hash_parity_cases.json", import.meta.url),
+    ),
+    "utf8",
+  ),
+) as FieldHashParityCase[];
+
+describe("computeFieldHash: paridade com o _field_hash do Python", () => {
+  it.each(FIELD_HASH_PARITY_CASES.map((c) => [c.case, c] as const))("%s", (_label, c) => {
+    // `options` ausente no JSON chega como undefined, o caminho de campo
+    // sem opções vindo do banco.
+    expect(
+      computeFieldHash(
+        c.name,
+        c.type,
+        c.options as string[] | null,
+        c.description,
+        c.question_revision,
+      ),
+    ).toBe(c.hash);
   });
 });
 

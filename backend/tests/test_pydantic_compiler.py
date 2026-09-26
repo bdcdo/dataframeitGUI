@@ -1,5 +1,9 @@
 """Round-trip and robustness tests for services.pydantic_compiler."""
 
+import json
+from pathlib import Path
+
+import pytest
 from pydantic import BaseModel, Field
 
 from services.pydantic_compiler import (
@@ -788,6 +792,30 @@ def test_question_revision_hash_matches_frontend():
     assert (
         _field_hash("q", "multi", ["Sim", "Não"], "Houve provimento? ção", 3)
         == "cc2855e6ff71"
+    )
+
+
+# Os mesmos casos rodam contra `computeFieldHash` no frontend
+# (schema-utils-versioning.test.ts). O hash de cada caso é o do Python, que é a
+# definição da fórmula: se um lado mudar, a suíte dele fica vermelha.
+_FIELD_HASH_PARITY_CASES = json.loads(
+    (Path(__file__).parent / "field_hash_parity_cases.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize(
+    "case", _FIELD_HASH_PARITY_CASES, ids=lambda case: case["case"]
+)
+def test_field_hash_parity_cases(case):
+    assert (
+        _field_hash(
+            case["name"],
+            case["type"],
+            case.get("options"),
+            case["description"],
+            case.get("question_revision"),
+        )
+        == case["hash"]
     )
 
 

@@ -1,0 +1,279 @@
+[
+  {
+    "case": "apóstrofo sozinho: o repr troca para aspas duplas",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "it's"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "87a3e3c5e896"
+  },
+  {
+    "case": "aspas duplas sozinhas: o repr fica no apóstrofo",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "diz \"x\""
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "d43fb3b6f3c5"
+  },
+  {
+    "case": "apóstrofo e aspas juntos: o repr fica no apóstrofo e o escapa",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "it's \"x\""
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "01c2dba34e9f"
+  },
+  {
+    "case": "barra invertida",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\\b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "91d91744d5cd"
+  },
+  {
+    "case": "barra invertida e apóstrofo",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\\'b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "ff25c73c63c9"
+  },
+  {
+    "case": "quebra de linha",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "linha 1\nlinha 2"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "5434d3689f81"
+  },
+  {
+    "case": "retorno de carro",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\rb"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "3b0e72a29ac1"
+  },
+  {
+    "case": "tab",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\tb"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "9df082780d8a"
+  },
+  {
+    "case": "caractere de controle U+007F",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\u007fb"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "48f86d4188d8"
+  },
+  {
+    "case": "espaço não separável U+00A0, comum em texto colado de PDF",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\u00a0b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "7e31a1e5c2ac"
+  },
+  {
+    "case": "hífen condicional U+00AD",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\u00adb"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "0fa21a6a71b0"
+  },
+  {
+    "case": "espaço de largura zero U+200B",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\u200bb"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "cebef519f917"
+  },
+  {
+    "case": "separador de linha U+2028",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\u2028b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "09fe4d62a5d5"
+  },
+  {
+    "case": "uso privado U+E000",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\ue000b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "6436328e4acf"
+  },
+  {
+    "case": "separador de parágrafo U+2029",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\u2029b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "5fbe7d16818e"
+  },
+  {
+    "case": "não atribuído U+0378",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\u0378b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "153565537776"
+  },
+  {
+    "case": "metade de par substituto sozinha U+D800",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\ud800b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "db3646db41e2"
+  },
+  {
+    "case": "não imprimível fora do plano básico U+E0001",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "a\udb40\udc01b"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "677777634c41"
+  },
+  {
+    "case": "acentos ficam literais",
+    "name": "campo",
+    "type": "multi",
+    "options": [
+      "Sim",
+      "Não",
+      "ação"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "ebde3fc12af7"
+  },
+  {
+    "case": "emoji fica literal",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "ok 😀"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "52f6f31784f2"
+  },
+  {
+    "case": "ordem por code point: U+FF01 antes do emoji",
+    "name": "campo",
+    "type": "multi",
+    "options": [
+      "😀",
+      "！"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "46e201757b65"
+  },
+  {
+    "case": "opção que é prefixo de outra vem antes",
+    "name": "campo",
+    "type": "multi",
+    "options": [
+      "Sim, com ressalva",
+      "Sim"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "6c62a4f13d55"
+  },
+  {
+    "case": "lista vazia conta como ausente",
+    "name": "campo",
+    "type": "single",
+    "options": [],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "9f6216cbf7af"
+  },
+  {
+    "case": "options nulo",
+    "name": "campo",
+    "type": "single",
+    "options": null,
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "9f6216cbf7af"
+  },
+  {
+    "case": "options ausente em campo de texto",
+    "name": "campo",
+    "type": "text",
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "669a2e9d8745"
+  },
+  {
+    "case": "campo de data sem opções",
+    "name": "campo",
+    "type": "date",
+    "options": null,
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "5946ee721bb4"
+  },
+  {
+    "case": "caso comum, ordem de entrada invertida",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "b",
+      "a"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "hash": "0af844d2f8c8"
+  },
+  {
+    "case": "apóstrofo com revisão da pergunta",
+    "name": "campo",
+    "type": "single",
+    "options": [
+      "it's"
+    ],
+    "description": "Pergunta com \"aspas\" e apóstrofo d'água",
+    "question_revision": 2,
+    "hash": "64bb8bdbf87a"
+  }
+]

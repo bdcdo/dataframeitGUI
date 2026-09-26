@@ -455,8 +455,75 @@ function sha256Hex(input: string): string {
 //   - fieldDiffIsStructural (reclassificação no backfill)
 // junto com generatePydanticCode (acima) e compile_pydantic (backend).
 
-function pythonListRepr(arr: string[]): string {
-  return "[" + arr.map((s) => `'${s}'`).join(", ") + "]";
+// O hash de campo põe as opções na string pelo `repr(sorted(options))` do
+// Python (`_field_hash` em backend/services/pydantic_compiler.py), que é a
+// definição da fórmula. As funções abaixo reproduzem esse `repr` inteiro, e
+// não só o caso comum: opção com apóstrofo, barra invertida, quebra de linha
+// ou espaço não separável (comum em texto colado de PDF) mudaria o hash de um
+// lado só, e o save no frontend e o `recover-fields` do backend carimbariam
+// hashes diferentes para a mesma pergunta, derrubando os julgamentos presos a
+// ela. Os casos ficam em backend/tests/field_hash_parity_cases.json, que as
+// suítes dos dois lados leem.
+
+// O `repr` do Python escapa todo caractere que `str.isprintable()` recusa, e
+// essa recusa é definida por categoria Unicode (os grupos "Other" e
+// "Separator"), com o espaço ASCII como única exceção, tratada no teste de
+// `char` mais abaixo. O regex é a tradução dessa regra para o TS: um caractere
+// que ele deixasse passar sem escape entraria cru na string do hash de um lado
+// só. Limite: a categoria dos não atribuídos depende da versão do Unicode de
+// cada runtime, então um caractere atribuído numa versão mais nova do que a do
+// Python do backend ainda diverge.
+const PYTHON_NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
+
+function pythonHexEscape(codePoint: number): string {
+  if (codePoint <= 0xff) return "\\x" + codePoint.toString(16).padStart(2, "0");
+  if (codePoint <= 0xffff) return "\\u" + codePoint.toString(16).padStart(4, "0");
+  return "\\U" + codePoint.toString(16).padStart(8, "0");
+}
+
+const PYTHON_NAMED_ESCAPES = new Map([
+  ["\\", "\\\\"],
+  ["\t", "\\t"],
+  ["\n", "\\n"],
+  ["\r", "\\r"],
+]);
+
+function pythonCharRepr(char: string, quote: string): string {
+  if (char === quote) return "\\" + char;
+  const named = PYTHON_NAMED_ESCAPES.get(char);
+  if (named) return named;
+  if (char !== " " && PYTHON_NON_PRINTABLE.test(char)) {
+    return pythonHexEscape(char.codePointAt(0)!);
+  }
+  return char;
+}
+
+function pythonStrRepr(value: string): string {
+  // O Python só troca para aspas duplas quando há apóstrofo e não há aspas;
+  // com os dois, fica no apóstrofo e escapa o apóstrofo.
+  const quote = value.includes("'") && !value.includes('"') ? '"' : "'";
+  // `Array.from` anda por code point, como o Python; indexar por unidade
+  // UTF-16 partiria um emoji em duas metades escapadas.
+  return quote + Array.from(value, (char) => pythonCharRepr(char, quote)).join("") + quote;
+}
+
+// `sorted` do Python ordena por code point; o `sort` do JS ordena por unidade
+// UTF-16, e as duas ordens discordam quando um caractere fora do plano básico
+// (emoji) encontra um de U+E000 a U+FFFF (formas de largura total, por
+// exemplo), porque a metade alta do par substituto (U+D800 a U+DBFF) fica
+// antes deles.
+function compareCodePoints(a: string, b: string): number {
+  const pointsA = Array.from(a, (char) => char.codePointAt(0)!);
+  const pointsB = Array.from(b, (char) => char.codePointAt(0)!);
+  const length = Math.min(pointsA.length, pointsB.length);
+  for (let i = 0; i < length; i++) {
+    if (pointsA[i] !== pointsB[i]) return pointsA[i] - pointsB[i];
+  }
+  return pointsA.length - pointsB.length;
+}
+
+function pythonSortedListRepr(values: string[]): string {
+  return "[" + values.toSorted(compareCodePoints).map(pythonStrRepr).join(", ") + "]";
 }
 
 // Stringify canônico (chaves ordenadas, `undefined` omitido) para comparar
@@ -499,7 +566,8 @@ export function computeFieldHash(
   description: string,
   questionRevision?: number | null,
 ): string {
-  const optionsPart = options ? pythonListRepr(options.toSorted()) : "";
+  // Lista vazia conta como ausente, como o `if options` do Python.
+  const optionsPart = options && options.length > 0 ? pythonSortedListRepr(options) : "";
   const revisionPart =
     questionRevision && questionRevision > 0 ? `|r${questionRevision}` : "";
   const content = `${name}|${type}|${optionsPart}|${description}${revisionPart}`;
