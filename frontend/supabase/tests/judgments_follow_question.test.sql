@@ -23,7 +23,8 @@
 --   (f) defesas: ciclo carimbado com outra versao que escapou do gatilho cai
 --       na view, no reconciliador e em llm_error_context;
 --   (g) decisao do LLM Insights cai com a edicao de QUALQUER resposta humana
---       da celula, e o backfill do hash da celula nao derruba decisao viva.
+--       da celula, e nao cai com rascunho nem com resposta que nao toca o
+--       campo; o backfill do hash da celula nao derruba decisao viva.
 --
 -- Roda numa transacao e nao deixa fixture no banco local.
 
@@ -101,7 +102,8 @@ $$;
 INSERT INTO auth.users (id, email) VALUES
   ('7a000000-0000-0000-0000-000000000001', 'pergunta-owner@example.test'),
   ('7a000000-0000-0000-0000-000000000002', 'pergunta-coder@example.test'),
-  ('7a000000-0000-0000-0000-000000000003', 'pergunta-coder2@example.test');
+  ('7a000000-0000-0000-0000-000000000003', 'pergunta-coder2@example.test'),
+  ('7a000000-0000-0000-0000-000000000004', 'pergunta-coder3@example.test');
 INSERT INTO public.clerk_user_mapping (clerk_user_id, supabase_user_id, access_sync_version)
   SELECT id::TEXT, id, 1 FROM auth.users WHERE id::TEXT LIKE '7a000000-%';
 
@@ -116,7 +118,8 @@ INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_has
 
 INSERT INTO public.project_members (project_id, user_id, role) VALUES
   ('7a100000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000002', 'pesquisador'),
-  ('7a100000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000003', 'pesquisador');
+  ('7a100000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000003', 'pesquisador'),
+  ('7a100000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000004', 'pesquisador');
 
 INSERT INTO public.documents (id, project_id, title, text)
 SELECT ('7a200000-0000-0000-0000-00000000000' || n)::UUID, '7a100000-0000-0000-0000-000000000001', 'Doc ' || n, 'Texto'
@@ -138,7 +141,7 @@ FROM generate_series(1, 6) AS n;
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_partial) VALUES
   ('7a300000-0000-0000-0000-000000000026', '7a100000-0000-0000-0000-000000000001',
    '7a200000-0000-0000-0000-000000000006', '7a000000-0000-0000-0000-000000000003', 'humano',
-   '{"a":"outro","q":"outro"}', '{"a":"a00000000001","q":"q00000000001"}', false);
+   '{"a":"outro","q":"outro","e":"outro"}', '{"a":"a00000000001","q":"q00000000001","e":"e00000000001"}', false);
 
 -- Documento 7: geracao LLM legada, com mapa de hashes vazio.
 INSERT INTO public.documents (id, project_id, title, text) VALUES
@@ -611,8 +614,8 @@ BEGIN
 END;
 $$;
 
--- Eventos: o SEGUNDO codificador (fora do contexto) edita `e`; a pergunta `q`
--- muda; `a` fica identica.
+-- Eventos: o SEGUNDO codificador (fora do contexto) muda o VALOR de `e`, que
+-- ja respondia; a pergunta `q` muda; `a` fica identica.
 UPDATE public.responses SET answers = answers || '{"e":"outro editado"}'
 WHERE id = '7a300000-0000-0000-0000-000000000026';
 UPDATE public.projects
@@ -659,6 +662,32 @@ BEGIN
     END IF;
   END LOOP;
   RAISE NOTICE 'OK: matriz decisao do LLM Insights x evento';
+END;
+$$;
+RESET ROLE;
+
+-- Nao e codificacao da celula `a`: o rascunho do dono, que responde `a`, e a
+-- codificacao completa de um quarto codificador que nao responde `a`. A
+-- decisao de `a` continua valendo.
+INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_partial) VALUES
+  ('7a300000-0000-0000-0000-000000000036', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000006', '7a000000-0000-0000-0000-000000000001', 'humano',
+   '{"a":"rascunho"}', '{"a":"a00000000002"}', true),
+  ('7a300000-0000-0000-0000-000000000046', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000006', '7a000000-0000-0000-0000-000000000004', 'humano',
+   '{"q":"quarto"}', '{"q":"q00000000003"}', false);
+
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.read_error_resolutions('7a100000-0000-0000-0000-000000000001') AS resolution
+    WHERE resolution.document_id = '7a200000-0000-0000-0000-000000000006' AND resolution.field_name = 'a'
+      AND resolution.current_context = resolution.context
+  ) THEN
+    RAISE EXCEPTION 'FALHOU: rascunho ou resposta que nao toca o campo derrubou a decisao do LLM Insights';
+  END IF;
+  RAISE NOTICE 'OK: rascunho e resposta de outro campo nao derrubam a decisao';
 END;
 $$;
 RESET ROLE;

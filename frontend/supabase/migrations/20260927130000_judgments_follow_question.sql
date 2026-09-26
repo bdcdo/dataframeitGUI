@@ -51,7 +51,8 @@
 --     decisao so vale com o contexto recalculado identico. O que faltava: a
 --     edicao da resposta de OUTRO codificador da celula. O contexto so
 --     cobria a resposta humana escolhida; ganha `source.cell_answers_hash`,
---     o hash de todas as respostas humanas vigentes do documento no campo.
+--     o hash das codificacoes humanas vigentes e completas do documento que
+--     respondem o campo.
 --     A fonte de auto-revisao passa a exigir o ciclo valido.
 --
 -- A copia TypeScript da validade do ciclo e `fieldReviewIsCurrent`
@@ -1094,10 +1095,22 @@ GRANT EXECUTE ON FUNCTION public.record_response_equivalences(JSONB)
 
 
 -- ── Decisao do LLM Insights: toda resposta humana da celula ─────────────────
--- Hash das respostas humanas vigentes do documento no campo: id, presenca,
--- valor e hash do campo. Nova resposta humana, resposta que deixou de ser
--- vigente e edicao do campo por qualquer codificador mudam o hash. Chamada
--- por llm_error_context (DEFINER) e pelo backfill abaixo; fechada para os
+-- Hash das codificacoes humanas vigentes do documento no campo: id, valor e
+-- hash do campo. Nova codificacao do campo, codificacao que deixou de ser
+-- vigente e edicao do campo por qualquer codificador mudam o hash.
+--
+-- Duas exclusoes, para que so a celula julgada entre:
+--   * rascunho (`is_partial`) nao conta como codificacao, a regra de
+--     20260923120000. Sem o filtro, o rascunho de um terceiro codificador
+--     derrubava a decisao. Quando o rascunho vira codificacao completa, a
+--     linha entra e o hash muda;
+--   * resposta sem a chave do campo nao responde a celula. Sem o filtro, a
+--     codificacao de outro campo derrubava a decisao deste. Nada se perde: a
+--     resposta que passa a ter a chave, ou a perde, entra ou sai do conjunto e
+--     muda o hash. Chave presente com JSON null conta, porque `?` a ve.
+--
+-- Chamada por llm_error_context (DEFINER) e pelo backfill abaixo, que por
+-- usarem a mesma funcao gravam e recalculam o mesmo hash; fechada para os
 -- clientes.
 CREATE FUNCTION public.error_resolution_cell_answers_hash(
   p_project_id UUID, p_document_id UUID, p_field_name TEXT
@@ -1109,7 +1122,6 @@ AS $$
   SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
     COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
       'id', human.id,
-      'present', human.answers ? p_field_name,
       'value', human.answers -> p_field_name,
       'field_hash', human.answer_field_hashes -> p_field_name
     ) ORDER BY human.id), '[]'::JSONB)::TEXT,
@@ -1118,7 +1130,9 @@ AS $$
   WHERE human.project_id = p_project_id
     AND human.document_id = p_document_id
     AND human.respondent_type = 'humano'
-    AND human.is_latest;
+    AND human.is_latest
+    AND human.is_partial = false
+    AND human.answers ? p_field_name;
 $$;
 
 REVOKE ALL ON FUNCTION public.error_resolution_cell_answers_hash(UUID, UUID, TEXT)
@@ -1216,9 +1230,8 @@ BEGIN
       'final_decided_at', fr.final_decided_at) ORDER BY fr.id), '[]'::JSONB)
       FROM public.field_reviews fr WHERE fr.project_id = p_project_id AND fr.document_id = p_document_id
         AND fr.field_name = p_field_name AND fr.superseded_at IS NULL),
-    -- Toda resposta humana vigente da celula, e nao so a do contexto: editar
-    -- a resposta de outro codificador tambem muda a celula que a decisao
-    -- julgou.
+    -- Toda codificacao humana da celula, e nao so a do contexto: editar a
+    -- resposta de outro codificador tambem muda a celula que a decisao julgou.
     'cell_answers_hash', public.error_resolution_cell_answers_hash(p_project_id, p_document_id, p_field_name));
   RETURN pg_catalog.jsonb_build_object(
     'project_id', p_project_id, 'document_id', p_document_id, 'field_name', p_field_name,
