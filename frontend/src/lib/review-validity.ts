@@ -23,6 +23,7 @@
 //
 // Puro e client-safe.
 import { resolveAllowOther } from "@/lib/pydantic-field";
+import { parseExistingMultiVerdict } from "@/lib/compare-multi-choices";
 import type { PydanticField } from "@/lib/types";
 
 /** As colunas de `reviews` de que a regra precisa. */
@@ -81,37 +82,27 @@ export function verdictInDomain(verdict: string, field: DomainField): boolean {
   const options = new Set((field.options ?? []).map(trimSpaces));
   if (options.size === 0) return true;
   if (field.type === "single") return options.has(text);
-  if (field.type === "multi") return multiVerdictInDomain(text, options);
+  if (field.type === "multi") {
+    return verdictSelection(text, options).every((option) => options.has(trimSpaces(option)));
+  }
   return true;
 }
 
-// O veredito de `multi` votado na grade é o JSON `{opção: bool}`, e só as
-// opções marcadas `true` precisam existir. O votado em card (pergunta que era
-// `single` quando foi arbitrada) é o texto "A, B": vale se o texto inteiro é
-// uma opção ou se cada parte separada por ", " é. Opção que contém ", " num
-// veredito em texto cai como fora do domínio; é o único falso negativo, e só
-// alcança veredito legado, sem hash, de campo que virou `multi`.
-function multiVerdictInDomain(text: string, options: ReadonlySet<string>): boolean {
-  if (text.startsWith("{")) {
-    const selection = parseSelection(text);
-    if (selection) {
-      return Object.entries(selection).every(
-        ([option, marked]) => marked !== true || options.has(trimSpaces(option)),
-      );
-    }
-  }
-  return options.has(text) || text.split(", ").every((part) => options.has(trimSpaces(part)));
-}
-
-function parseSelection(text: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
+/**
+ * As opções que um veredito de `multi` marca. O votado na grade é o JSON
+ * `{opção: bool}`, e contam as chaves `true`. O votado em card (pergunta que
+ * era `single` quando foi arbitrada) é o texto "A, B": uma opção inteira de
+ * `options`, ou as partes separadas por ", ". Opção que contém ", " num
+ * veredito em texto, fora de `options`, sai partida; no domínio é o único
+ * falso negativo, e só alcança veredito legado, sem hash, de campo que virou
+ * `multi`.
+ */
+export function verdictSelection(verdict: string, options: ReadonlySet<string>): string[] {
+  const text = trimSpaces(verdict);
+  const selection = parseExistingMultiVerdict(text);
+  if (selection) return Object.entries(selection).flatMap(([option, marked]) => (marked === true ? [option] : []));
+  if (text === "") return [];
+  return options.has(text) ? [text] : text.split(", ").map(trimSpaces);
 }
 
 /**

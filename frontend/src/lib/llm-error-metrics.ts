@@ -30,7 +30,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import { formatCardAnswer } from "@/lib/verdict-display";
-import { pickValidCellReviews, reviewValidity, type ReviewInvalidReason } from "@/lib/review-validity";
+import { pickValidCellReviews, reviewValidity, verdictSelection, type ReviewInvalidReason } from "@/lib/review-validity";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { effectiveErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
@@ -455,24 +455,8 @@ function textVerdictMatcher(verdict: string): VerdictMatcher {
 // a pergunta ainda era `single`) é o texto "A, C", lido como uma opção inteira
 // ou como partes separadas por ", ".
 function multiVerdictMatcher(verdict: string, options: string[]): VerdictMatcher {
-  const selection = verdictSelection(verdict, options);
+  const selection = verdictSelection(verdict, new Set(options));
   return (answer) => multiSelectionsAgree(options, multiSelectionSets([answer, selection]));
-}
-
-function verdictSelection(verdict: string, options: string[]): string[] {
-  const text = verdict.trim();
-  if (text.startsWith("{")) {
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return Object.entries(parsed).flatMap(([option, marked]) => (marked === true ? [option] : []));
-      }
-    } catch {
-      // Não é JSON: segue como texto.
-    }
-  }
-  if (text === "") return [];
-  return options.includes(text) ? [text] : text.split(", ").map((part) => part.trim());
 }
 
 function verdictMatcher(review: MetricsReview, field: PydanticField): VerdictMatcher {

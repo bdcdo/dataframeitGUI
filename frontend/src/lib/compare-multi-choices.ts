@@ -3,7 +3,8 @@
 // exporte componentes — requisito do Fast Refresh — e para ser testável
 // isoladamente, junto dos demais utilitários puros de comparação.
 
-function parseExistingMultiVerdict(
+/** O veredito de `multi` votado na grade, o JSON `{opção: bool}`; `null` se não é. */
+export function parseExistingMultiVerdict(
   verdict: string | undefined,
 ): Record<string, boolean> | null {
   if (!verdict || !verdict.startsWith("{")) return null;
