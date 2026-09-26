@@ -25,7 +25,9 @@ import {
   type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
 import { computeFieldHash } from "@/lib/schema-utils";
-import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
+import { fieldReviewIsCurrent, reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
+import { answersCurrentQuestion } from "@/lib/answer-staleness";
+import { filterCurrentEquivalencePairs } from "@/lib/equivalence";
 import {
   decisionDependsOnSource,
   type ErrorDecision,
@@ -1049,6 +1051,221 @@ invariants.push(
           key: d.decision.id,
           detail: `decisão '${d.decision.decision}' em ${d.decision.document_id}/${d.decision.field_name}: fonte ${d.sourceId} válida pela regra TS, inválida para o banco`,
         })),
+  },
+);
+
+/** Resposta lida pelas invariantes do par "=". */
+interface PairResponseRow {
+  id: string;
+  project_id: string;
+  is_latest: boolean;
+  answers: Record<string, unknown> | null;
+  answer_field_hashes: AnswerFieldHashes | undefined;
+}
+
+interface PairRow {
+  id: string;
+  project_id: string;
+  document_id: string;
+  field_name: string;
+  response_a_id: string;
+  response_b_id: string;
+  response_a_answer_snapshot: unknown;
+  response_b_answer_snapshot: unknown;
+}
+
+// Todo par operacional com a leitura do PRODUTO (`filterCurrentEquivalencePairs`,
+// a mesma chamada dos leitores) e a leitura independente do estado: as duas
+// respostas vigentes, os valores iguais aos do par e as duas respostas dadas à
+// versão atual da pergunta. As duas invariantes do par comparam uma com a outra.
+async function pairUsage(): Promise<
+  { pair: PairRow; used: boolean; latest: boolean; snapshotsMatch: boolean; currentQuestion: boolean }[]
+> {
+  const [pairs, projects] = await Promise.all([
+    fetchAll<PairRow>(
+      "response_equivalences",
+      "id, project_id, document_id, field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot",
+      (q) => q.is("superseded_at", null),
+    ),
+    fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+  ]);
+  const responses = new Map(
+    (await fetchByIds<PairResponseRow>(
+      "responses",
+      "id, project_id, is_latest, answers, answer_field_hashes",
+      [...new Set(pairs.flatMap((p) => [p.response_a_id, p.response_b_id]))],
+    )).map((r) => [r.id, r]),
+  );
+  const fieldsOf = new Map(
+    projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))]),
+  );
+  return pairs.map((pair) => {
+    const a = responses.get(pair.response_a_id);
+    const b = responses.get(pair.response_b_id);
+    const field = fieldsOf.get(pair.project_id)?.get(pair.field_name);
+    const answer = (r: PairResponseRow) => r.answers?.[pair.field_name];
+    const used = !!a && !!b && filterCurrentEquivalencePairs(
+      [a, b],
+      [pair],
+      answer,
+      (r) => answersCurrentQuestion(r.answer_field_hashes ?? undefined, field),
+    ).length === 1;
+    // Leitura independente da versão: hash gravado na resposta, quando há, é o
+    // hash atual do campo; sem hash, a ausência não invalida.
+    const onCurrentQuestion = (r: PairResponseRow) => {
+      const saved = r.answer_field_hashes?.[pair.field_name];
+      return !!field && (typeof saved !== "string" || saved === field.hash);
+    };
+    return {
+      pair,
+      used,
+      latest: !!a?.is_latest && !!b?.is_latest,
+      snapshotsMatch: !!a && !!b
+        && normalizeForComparison(pair.response_a_answer_snapshot) === normalizeForComparison(answer(a))
+        && normalizeForComparison(pair.response_b_answer_snapshot) === normalizeForComparison(answer(b)),
+      currentQuestion: !!a && !!b && onCurrentQuestion(a) && onCurrentQuestion(b),
+    };
+  });
+}
+
+/** Linha de `final_answers` lida pelas invariantes da auto-revisão. */
+interface FinalAnswerRow {
+  project_id: string;
+  document_id: string;
+  field_name: string;
+  provenance: string;
+  field_review_id: string | null;
+  field_review_field_hash: string | null;
+}
+
+// A view não tem PK: (documento, campo) é a ordem total da paginação. Só os
+// projetos em auto-revisão, os únicos cuja view a métrica lê.
+async function autoReviewFinalAnswers(): Promise<{
+  rows: FinalAnswerRow[];
+  fieldsOf: Map<string, Map<string, PydanticField>>;
+  llmHashesOf: Map<string, AnswerFieldHashes | undefined>;
+}> {
+  const projects = await fetchAll<{ id: string; automation_mode: string | null; pydantic_fields: PydanticField[] | null }>(
+    "projects",
+    "id, automation_mode, pydantic_fields",
+    (q) => q.eq("automation_mode", "auto_review_llm"),
+  );
+  const ids = projects.map((p) => p.id);
+  const rows: FinalAnswerRow[] = [];
+  for (const projectId of ids) {
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from("final_answers")
+        .select("project_id, document_id, field_name, provenance, field_review_id, field_review_field_hash")
+        .eq("project_id", projectId)
+        .order("document_id", { ascending: true })
+        .order("field_name", { ascending: true })
+        .range(from, from + 999);
+      if (error) throw new Error(`final_answers: ${error.message}`);
+      rows.push(...((data ?? []) as FinalAnswerRow[]));
+      if (!data || data.length < 1000) break;
+    }
+  }
+  const llm = ids.length === 0 ? [] : await fetchAll<{ document_id: string; answer_field_hashes: AnswerFieldHashes | undefined }>(
+    "responses",
+    "id, document_id, answer_field_hashes",
+    (q) => q.in("project_id", ids).eq("respondent_type", "llm").eq("is_latest", true),
+  );
+  return {
+    rows,
+    fieldsOf: new Map(projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))])),
+    llmHashesOf: new Map(llm.map((r) => [r.document_id, r.answer_field_hashes])),
+  };
+}
+
+const COUNTED_PROVENANCES = new Set(["consenso", "auto_corrigido", "equivalente", "arbitrado"]);
+
+invariants.push(
+  {
+    name: "equivalencia-usada-e-vigente-da-pergunta-atual",
+    motivation:
+      "par \"=\" que o produto usa (`filterCurrentEquivalencePairs`) funde respostas na Comparação, na fila e na métrica do LLM Insights. Ele só pode ligar respostas vigentes (`is_latest`, que `record_response_equivalences` passou a exigir e o gatilho de resposta arquiva ao demover) dadas à versão atual da pergunta. FAIL = par gravado antes da guarda de escrita, ou leitor que voltou a aceitar resposta de outra versão",
+    run: async () =>
+      (await pairUsage())
+        .filter((u) => u.used && (!u.latest || !u.currentQuestion))
+        .map((u) => ({
+          key: u.pair.id,
+          detail: `par em ${u.pair.document_id}/${u.pair.field_name} usado com ${!u.latest ? "resposta não vigente" : "resposta de outra versão da pergunta"}`,
+        })),
+  },
+  {
+    name: "equivalencia-vigente-da-pergunta-atual-e-usada",
+    motivation:
+      "inversa da anterior: par de respostas vigentes, com os valores de quando foi marcado e as duas respostas na versão atual da pergunta, que o produto descarta, desfaz em silêncio uma equivalência que o revisor declarou (os cards voltam a divergir). FAIL = o filtro dos leitores ficou mais estrito que a regra",
+    run: async () =>
+      (await pairUsage())
+        .filter((u) => !u.used && u.latest && u.snapshotsMatch && u.currentQuestion)
+        .map((u) => ({
+          key: u.pair.id,
+          detail: `par vigente em ${u.pair.document_id}/${u.pair.field_name} descartado pelo produto`,
+        })),
+  },
+  {
+    name: "auto-revisao-contada-e-da-pergunta-atual",
+    motivation:
+      "a métrica do LLM Insights conta como acerto ou erro as linhas de `final_answers` com consenso ou veredito da auto-revisão. Elas só podem vir de ciclo aberto sob a versão atual da pergunta (`field_reviews.field_hash`) e, no consenso, de campo que a geração LLM respondeu (campo renomeado ou criado depois da rodada não é consenso). FAIL = a view voltou a contar auto-revisão de outra versão, ou a fabricar consenso",
+    run: async () => {
+      const { rows, fieldsOf, llmHashesOf } = await autoReviewFinalAnswers();
+      return rows.flatMap((row) => {
+        if (!COUNTED_PROVENANCES.has(row.provenance)) return [];
+        const field = fieldsOf.get(row.project_id)?.get(row.field_name);
+        if (row.field_review_id) {
+          return fieldReviewIsCurrent(row.field_review_field_hash, field) ? [] : [{
+            key: row.field_review_id,
+            detail: `'${row.provenance}' em ${row.document_id}/${row.field_name} de ciclo carimbado ${row.field_review_field_hash}, campo atual ${field?.hash ?? "ausente"}`,
+          }];
+        }
+        const hashes = llmHashesOf.get(row.document_id);
+        const answered = !hashes || Object.keys(hashes).length === 0 || Object.hasOwn(hashes, row.field_name);
+        return answered ? [] : [{
+          key: `${row.document_id}:${row.field_name}`,
+          detail: `consenso em ${row.document_id}/${row.field_name}, campo que a geração LLM corrente não respondeu`,
+        }];
+      });
+    },
+  },
+  {
+    name: "auto-revisao-da-pergunta-atual-nao-some-da-metrica",
+    motivation:
+      "inversa da anterior: ciclo aberto sob a versão atual da pergunta que a view marca 'pergunta_alterada' sai da fila e da métrica sem motivo. FAIL = as cópias SQL e TypeScript da validade do ciclo divergem",
+    run: async () => {
+      const { rows, fieldsOf } = await autoReviewFinalAnswers();
+      return rows
+        .filter((row) => row.provenance === "pergunta_alterada" && row.field_review_id
+          && fieldReviewIsCurrent(row.field_review_field_hash, fieldsOf.get(row.project_id)?.get(row.field_name)))
+        .map((row) => ({
+          key: row.field_review_id!,
+          detail: `ciclo da pergunta atual em ${row.document_id}/${row.field_name} marcado pergunta_alterada`,
+        }));
+    },
+  },
+  {
+    name: "ciclo-operacional-e-da-pergunta-atual",
+    motivation:
+      "o save do schema encerra, na mesma transação, todo ciclo de `field_reviews` aberto sob outra versão da pergunta ou de campo renomeado/removido (gatilho archive_judgments_on_question_change), e o reconciliador encerra o que escapar. Ciclo operacional de outra versão fica na fila de auto-revisão e de arbitragem, que não conferem o carimbo. FAIL = caminho de escrita de schema que pulou o gatilho",
+    run: async () => {
+      const [cycles, projects] = await Promise.all([
+        fetchAll<{ id: string; project_id: string; document_id: string; field_name: string; field_hash: string | null }>(
+          "field_reviews",
+          "id, project_id, document_id, field_name, field_hash",
+        ),
+        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+      ]);
+      const fieldsOf = new Map(
+        projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))]),
+      );
+      return cycles
+        .filter((c) => !fieldReviewIsCurrent(c.field_hash, fieldsOf.get(c.project_id)?.get(c.field_name)))
+        .map((c) => ({
+          key: c.id,
+          detail: `ciclo em ${c.document_id}/${c.field_name} carimbado ${c.field_hash}, campo atual ${fieldsOf.get(c.project_id)?.get(c.field_name)?.hash ?? "ausente"}`,
+        }));
+    },
   },
 );
 
