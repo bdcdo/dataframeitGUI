@@ -1126,7 +1126,7 @@ async function main() {
       if (violations.length === 0) {
         console.log(`PASS  ${inv.name}`);
       } else if (inv.informational) {
-        console.log(`INFO  ${inv.name} — ${violations.length} linha(s)`);
+        console.log(`INFO  ${inv.name}: ${violations.length} linha(s)`);
         console.log(`      motivação: ${inv.motivation}`);
         for (const v of violations.slice(0, 10)) console.log(`      - [${v.key}] ${v.detail}`);
         if (violations.length > 10) console.log(`      ... e mais ${violations.length - 10}`);

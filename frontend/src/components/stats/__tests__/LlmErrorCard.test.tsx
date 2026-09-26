@@ -106,6 +106,22 @@ describe("LlmErrorCard: decisão sobre veredito que perdeu a validade", () => {
     expect(screen.queryByText("Veredito anterior:")).toBeNull();
   });
 
+  // O rótulo diz o motivo real, e não "mudança da pergunta" para todos.
+  it.each([
+    ["fora_do_dominio" as const, "Veredito fora das opções atuais da pergunta (sem validade):"],
+    ["campo_removido" as const, "Veredito de pergunta removida do formulário (sem validade):"],
+    ["veredito_apagado" as const, "Veredito anterior apagado (sem validade):"],
+  ])("motivo %s rotula o veredito pelo motivo", (sourceInvalidReason, label) => {
+    render(
+      <LlmErrorCard
+        error={{ ...llmError("comparacao"), sourceId: "review1", sourceInvalidReason, resolution }}
+        projectId="proj1" isPending={false} canResolve onDecide={vi.fn()} onReopen={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.queryByText(/mudança da pergunta/)).toBeNull();
+  });
+
   it("Reabrir continua funcionando", () => {
     const { onReopen } = renderInvalid();
     const reopen = screen.getByRole("button", { name: /Reabrir/ }) as HTMLButtonElement;

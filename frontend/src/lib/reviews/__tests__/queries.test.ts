@@ -141,7 +141,7 @@ describe("resolveViewedRespondentId — viewAsUser só para coordenador/criador/
   });
 });
 
-describe("gabaritoReviews — a pergunta, e não a rodada, decide (#758)", () => {
+describe("gabaritoReviews: a pergunta, e não a rodada, decide (#758)", () => {
   const field = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", options: null, description: "", hash: "aaaaaaaaaaaa" } as PydanticField;
   const fields = new Map([["x", field], ["y", { ...field, name: "y" }]]);
   const row = (id: string, overrides: Partial<ReviewRow> = {}): ReviewRow => ({

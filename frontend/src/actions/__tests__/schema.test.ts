@@ -105,6 +105,36 @@ describe("gravar o schema ressincroniza os assignments de comparação", () => {
     expect(resyncMock).not.toHaveBeenCalled();
   });
 
+  // A reconstrução do histórico reatribui a versão das respostas, e o piso de
+  // versão da Comparação passa a contar outras respostas.
+  it("reconstruir o histórico de versões ressincroniza", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: {
+        data: [{
+          id: "log-1", field_name: "q1", before_value: {}, after_value: FIELD,
+          created_at: "2026-01-01T00:00:00.000Z", change_type: null,
+        }],
+      },
+      responses: { data: [] },
+    };
+    state.rpcResults = { apply_schema_backfill: { data: commitRow({ schema_revision: 4, pydantic_fields: [FIELD] }) } };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result.status).toBe("saved");
+    expect(resyncMock).toHaveBeenCalledTimes(1);
+    expect(resyncMock).toHaveBeenCalledWith(expect.anything(), "p1");
+  });
+
   it("publicar MAJOR ressincroniza: o piso de versão muda a divergência", async () => {
     state.tables = {
       projects: {

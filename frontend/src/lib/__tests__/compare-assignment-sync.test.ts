@@ -25,6 +25,34 @@ let tableData: Record<string, unknown[]>;
 let queryErrors: Record<string, QueryError | null>;
 
 const client = () => makeFilterAwareSupabaseMock({ tableData, writeCalls, queryErrors }) as never;
+
+// O mock com o índice parcial do banco nas atualizações de `assignments`:
+// grava o status na linha, e recusa com 23505 a que tornaria ativa uma segunda
+// comparação no mesmo documento.
+function activeIndexClient() {
+  const base = makeFilterAwareSupabaseMock({ tableData, writeCalls, queryErrors });
+  return {
+    ...base,
+    from: (table: string) => {
+      const builder = base.from(table) as Record<string, unknown>;
+      if (table !== "assignments") return builder;
+      builder.update = (payload: { status: string; completed_at: string | null }) => ({
+        eq: async (_column: string, id: string) => {
+          const rows = tableData.assignments as Array<{ id: string; document_id: string; status: string; completed_at: string | null }>;
+          const row = rows.find((r) => r.id === id)!;
+          const otherActive = rows.some((r) => r.document_id === row.document_id && r.id !== id && r.status !== "concluido");
+          if (payload.status !== "concluido" && otherActive) {
+            return { error: { code: "23505", message: 'duplicate key value violates unique constraint "assignments_one_active_comparacao_per_doc"' } };
+          }
+          row.status = payload.status;
+          row.completed_at = payload.completed_at;
+          return { error: null };
+        },
+      });
+      return builder;
+    },
+  } as never;
+}
 const updates = () => callsOf(writeCalls, "update", "assignments");
 
 const resp = (id: string, documentId: string, decisao: string) => ({
@@ -110,6 +138,24 @@ describe("resyncProjectCompareAssignments", () => {
     const report = await resyncProjectCompareAssignments(client(), "p1", { dryRun: true });
 
     expect(report.changes).toEqual([expect.objectContaining({ assignmentId: "a-doc1", to: "concluido" })]);
+  });
+
+  // Só uma comparação pode estar ativa por documento (índice parcial
+  // assignments_one_active_comparacao_per_doc). Com duas concluídas de rodadas
+  // diferentes que regridem, reabre a da rodada mais recente; a antiga bate
+  // no índice e fica concluída.
+  it("com duas concluídas no mesmo documento e nenhuma ativa, reabre a mais recente", async () => {
+    tableData.assignments = [
+      { ...assignment("a-antiga", "doc2", "concluido", "rev1"), completed_at: "2026-08-01T00:00:00Z" },
+      { ...assignment("a-recente", "doc2", "concluido", "rev2"), completed_at: "2026-09-10T00:00:00Z" },
+    ];
+
+    await resyncProjectCompareAssignments(activeIndexClient(), "p1");
+
+    const statusOf = (id: string) =>
+      (tableData.assignments as Array<{ id: string; status: string }>).find((a) => a.id === id)?.status;
+    expect(statusOf("a-recente")).toBe("pendente");
+    expect(statusOf("a-antiga")).toBe("concluido");
   });
 
   it("não mexe em assignment de outro tipo", async () => {

@@ -499,7 +499,7 @@ describe("assembleExport — inteiro teor só na aba Documentos", () => {
 
 // --- Validade do veredito (#758): a pergunta, não a rodada ---
 
-describe("assembleExport — validade do veredito (#758)", () => {
+describe("assembleExport: validade do veredito (#758)", () => {
   const HASH = "aaaaaaaaaaaa";
   const base = {
     fields: [field("campo", { hash: HASH })],
