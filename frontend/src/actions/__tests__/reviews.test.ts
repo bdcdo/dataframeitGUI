@@ -201,3 +201,47 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
     expect(opCalls.some((c) => c.op === "delete")).toBe(false);
   });
 });
+
+// Voto em card copia a resposta. Com o piso de versão `latest_major`, a
+// Comparação mostra respostas de versões minor anteriores cujo valor pode ter
+// saído das opções; gravar esse voto dava sucesso, mas o veredito nascia fora
+// do domínio (`review-validity.ts`), não contava no fecho e a tela recarregada
+// o mostrava como anterior à mudança da pergunta.
+describe("submitVerdict — voto copiado fora das opções atuais", () => {
+  const SINGLE = {
+    id: "00000000-0000-4000-8000-000000000002", name: "q2", type: "single",
+    options: ["Sim", "Não"], description: "", hash: "bbbbbbbbbbbb",
+  };
+
+  it.each([
+    ["opção que saiu do formulário", { ...SINGLE }, "Talvez"],
+    ["\"Outro: x\" depois de desligar allow_other", { ...SINGLE, allow_other: false }, "Outro: x"],
+  ])("%s é recusado sem gravar", async (_label, field, verdict) => {
+    tableData = { projects: { pydantic_fields: [field] } };
+    const submitVerdict = await loadSubmit();
+
+    const result = await submitVerdict({
+      projectId: "p1", documentId: "doc1", fieldName: "q2", verdict, chosenResponseId: "r1",
+    });
+
+    expect(result.error).toMatch(/não está mais no formulário/);
+    expect(opCalls.filter((c) => c.op === "upsert")).toHaveLength(0);
+  });
+
+  it.each([
+    ["opção atual", { ...SINGLE }, "Sim", "r1"],
+    ["\"Outro: x\" com allow_other ligado", { ...SINGLE, allow_other: true }, "Outro: x", "r1"],
+    // O digitado ("Nenhuma correta") com o hash atual vale fora das opções.
+    ["veredito digitado fora das opções", { ...SINGLE }, "Não houve", undefined],
+  ])("%s grava", async (_label, field, verdict, chosenResponseId) => {
+    tableData = { projects: { pydantic_fields: [field] } };
+    const submitVerdict = await loadSubmit();
+
+    const result = await submitVerdict({
+      projectId: "p1", documentId: "doc1", fieldName: "q2", verdict, chosenResponseId,
+    });
+
+    expect(result).toEqual({});
+    expect(opCalls.filter((c) => c.op === "upsert" && c.table === "reviews")).toHaveLength(1);
+  });
+});

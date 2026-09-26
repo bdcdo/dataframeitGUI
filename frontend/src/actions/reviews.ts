@@ -5,7 +5,7 @@ import { resolveProjectMemberActor } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
-import { reviewIsValid } from "@/lib/review-validity";
+import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE, reviewIsValid } from "@/lib/review-validity";
 import type { PydanticField } from "@/lib/types";
 
 export interface ResponseSnapshotEntry {
@@ -46,6 +46,18 @@ export async function submitVerdict({
   const { user, memberUserId: effectiveId } = actor;
 
   try {
+    const { data: project } = await supabase
+      .from("projects").select("pydantic_fields").eq("id", projectId).single();
+    const field = ((project?.pydantic_fields ?? []) as PydanticField[]).find((f) => f.name === fieldName);
+
+    // Voto copiado de uma resposta cujo valor saiu das opções: gravaria com
+    // sucesso um veredito que nasce sem validade (`review-validity.ts`). O
+    // digitado ("Nenhuma correta") passa: com o hash atual ele vale fora das
+    // opções.
+    if (chosenResponseId && !copiedVerdictInDomain(verdict, field)) {
+      return { error: OUT_OF_DOMAIN_VOTE_MESSAGE };
+    }
+
     const { error } = await supabase.from("reviews").upsert(
       {
         project_id: projectId,
@@ -111,17 +123,13 @@ export async function submitVerdict({
       // (`review-validity.ts`): o dado sobre outra versão da pergunta não é
       // mais o veredito de ninguém. Sem `limit(1)`, porque o primeiro pode ser
       // justamente um inválido; são no máximo um por revisor da célula.
-      const [{ data: ambiguous }, { data: project }] = await Promise.all([
-        supabase
-          .from("reviews")
-          .select("id, field_name, verdict, field_hash, chosen_response_id")
-          .eq("project_id", projectId)
-          .eq("document_id", documentId)
-          .eq("field_name", fieldName)
-          .eq("verdict", "ambiguo"),
-        supabase.from("projects").select("pydantic_fields").eq("id", projectId).single(),
-      ]);
-      const field = ((project?.pydantic_fields ?? []) as PydanticField[]).find((f) => f.name === fieldName);
+      const { data: ambiguous } = await supabase
+        .from("reviews")
+        .select("id, field_name, verdict, field_hash, chosen_response_id")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        .eq("field_name", fieldName)
+        .eq("verdict", "ambiguo");
       const stillAmbiguous = (ambiguous ?? []).some((r) => reviewIsValid(r, field));
 
       if (!stillAmbiguous) {

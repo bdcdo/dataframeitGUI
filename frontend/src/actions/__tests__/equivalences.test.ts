@@ -205,6 +205,47 @@ describe("confirmEquivalentVerdict", () => {
   });
 });
 
+describe("confirmEquivalentVerdict — gabarito fora das opções atuais", () => {
+  it("recusa antes de gravar par ou veredito", async () => {
+    serverTableResults = {
+      projects: { data: { pydantic_fields: [{
+        id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "single",
+        options: ["Sim", "Não"], description: "", hash: "aaaaaaaaaaaa",
+      }] } },
+      reviews: { error: null },
+    };
+    const { confirmEquivalentVerdict } = await loadActions();
+
+    const result = await confirmEquivalentVerdict({
+      projectId: "p1", documentId: "doc1", fieldName: "q1",
+      responseIds: ["r1", "r2"], gabaritoId: "r1", verdictDisplay: "Talvez",
+    });
+
+    expect(result.error).toMatch(/não está mais no formulário/);
+    expect(rpcCalls).toHaveLength(0);
+    expect(upsertsOn("reviews")).toHaveLength(0);
+  });
+
+  it("gabarito nas opções atuais grava", async () => {
+    serverTableResults = {
+      projects: { data: { pydantic_fields: [{
+        id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "single",
+        options: ["Sim", "Não"], description: "", hash: "aaaaaaaaaaaa",
+      }] } },
+      reviews: { error: null },
+    };
+    const { confirmEquivalentVerdict } = await loadActions();
+
+    const result = await confirmEquivalentVerdict({
+      projectId: "p1", documentId: "doc1", fieldName: "q1",
+      responseIds: ["r1", "r2"], gabaritoId: "r1", verdictDisplay: "Sim",
+    });
+
+    expect(result).toEqual({});
+    expect(upsertsOn("reviews")).toHaveLength(1);
+  });
+});
+
 describe("markLlmEquivalent", () => {
   it("caminho feliz → retorna {}", async () => {
     const { markLlmEquivalent } = await loadActions();

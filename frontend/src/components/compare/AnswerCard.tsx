@@ -22,6 +22,7 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { readOnlyTitle } from "./compare-types";
+import { OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 
 export interface EquivalentVariant {
   pairId: string; // response_equivalences.id
@@ -63,6 +64,12 @@ interface AnswerCardProps {
   isChosen: boolean;
   isPending: boolean;
   versions: string[];
+  /**
+   * A resposta saiu das opções atuais da pergunta: o voto gravaria um
+   * veredito sem validade (`submitVerdict` o recusa). O card fica marcado e
+   * sem o alvo de voto; continua legível e disponível para equivalência.
+   */
+  outOfDomain?: boolean;
   onVote: () => void;
 
   // Confirmação do rascunho, renderizada DENTRO do card quando ele é o que
@@ -92,6 +99,7 @@ export function AnswerCard({
   isChosen,
   isPending,
   versions,
+  outOfDomain = false,
   onVote,
   confirmSlot,
   equivalenceMode,
@@ -109,24 +117,28 @@ export function AnswerCard({
       // lia `parentElement.className` atrás de uma classe de borda — sobrevivia
       // por acidente da estrutura e quebraria em qualquer wrapper novo.
       data-pending={isPending || undefined}
+      data-out-of-domain={outOfDomain || undefined}
       className={cn(
         "relative isolate w-full rounded-lg border p-2.5 text-left transition-colors hover:bg-accent/50",
         "has-[[data-vote-target]:focus-visible]:outline-none has-[[data-vote-target]:focus-visible]:ring-2 has-[[data-vote-target]:focus-visible]:ring-ring has-[[data-vote-target]:focus-visible]:ring-offset-2",
         cardStateClass({ isChosen, isPending, equivalenceMode }),
       )}
     >
-      <VoteOverlay
-        displayAnswer={displayAnswer}
-        readOnly={readOnly}
-        onVote={onVote}
-        title={voteTitle}
-      />
+      {!outOfDomain && (
+        <VoteOverlay
+          displayAnswer={displayAnswer}
+          readOnly={readOnly}
+          onVote={onVote}
+          title={voteTitle}
+        />
+      )}
       <div className="flex items-start gap-2">
         <EquivalenceCheckbox mode={equivalenceMode} readOnly={readOnly} />
         <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-medium">
           {index + 1}
         </span>
         <AnswerBody
+          outOfDomain={outOfDomain}
           displayAnswer={displayAnswer}
           respondentNames={respondentNames}
           respondentCount={respondentCount}
@@ -163,6 +175,7 @@ export function AnswerCard({
  * direita) nem o overlay que cobre o card.
  */
 function AnswerBody({
+  outOfDomain,
   displayAnswer,
   respondentNames,
   respondentCount,
@@ -176,6 +189,7 @@ function AnswerBody({
   onUnmarkPair,
   canUnmarkPair,
 }: {
+  outOfDomain: boolean;
   displayAnswer: string;
   respondentNames: string[];
   respondentCount: number;
@@ -192,6 +206,11 @@ function AnswerBody({
   return (
     <div className="min-w-0 flex-1">
       <p className="text-sm">{displayAnswer}</p>
+      {outOfDomain && (
+        <p className="text-xs font-medium text-amber-700 dark:text-amber-400" title={OUT_OF_DOMAIN_VOTE_MESSAGE}>
+          Fora das opções atuais
+        </p>
+      )}
 
       <AnswerMetaRow
         respondentNames={respondentNames}

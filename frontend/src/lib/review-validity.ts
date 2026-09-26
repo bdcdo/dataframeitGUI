@@ -55,7 +55,7 @@ export const INVALID_VERDICT_LABELS: Record<ReviewInvalidReason, string> = {
   campo_removido: "Veredito de pergunta removida do formulário",
 };
 
-type DomainField = Pick<PydanticField, "type" | "options" | "allow_other">;
+export type DomainField = Pick<PydanticField, "type" | "options" | "allow_other">;
 
 // Marcadores da Comparação que nunca são resposta (ver compare-types.ts). O
 // branco é o voto no grupo de respostas vazias: diz que o documento não traz o
@@ -112,6 +112,25 @@ function parseSelection(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * O que o revisor lê quando o voto copiaria uma resposta que saiu das opções:
+ * com o piso de versão `latest_major`, a Comparação mostra respostas de
+ * versões minor anteriores, e o veredito copiado delas nasceria fora do
+ * domínio. `submitVerdict` e `confirmEquivalentVerdict` recusam com esta
+ * mensagem; o card e o teclado não oferecem o voto.
+ */
+export const OUT_OF_DOMAIN_VOTE_MESSAGE =
+  "A resposta usa uma opção que não está mais no formulário. Escolha outra resposta ou digite o veredito.";
+
+/**
+ * Se o voto que copia `verdict` de uma resposta nasceria válido quanto ao
+ * domínio. Campo ausente do schema não é assunto desta guarda: o veredito
+ * nasce sem hash e a regra o trata como campo removido.
+ */
+export function copiedVerdictInDomain(verdict: string, field: DomainField | undefined): boolean {
+  return !field || verdictInDomain(verdict, field);
 }
 
 /** A regra inteira, com o motivo quando o veredito não vale. */

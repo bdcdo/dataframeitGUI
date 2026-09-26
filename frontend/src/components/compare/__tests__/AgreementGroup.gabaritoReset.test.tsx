@@ -31,6 +31,7 @@ function renderGroup() {
       existingVerdict={null}
       pendingVerdict={null}
       onVote={vi.fn()}
+      domainField={null}
       allowEquivalence={true}
       equivalences={[]}
       onConfirmEquivalent={vi.fn(async () => {})}

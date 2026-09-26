@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import { toast } from "sonner";
+import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 import type { PydanticField } from "@/lib/types";
 import type {
   FieldResponse,
@@ -116,6 +118,13 @@ export function useCompareKeyboard({
             : Array.isArray(answer)
               ? answer.join(", ")
               : String(answer);
+        // O card dessa resposta não oferece voto (`AnswerCard`, `outOfDomain`),
+        // e o teclado segue a mesma regra: o veredito copiado nasceria sem
+        // validade, e `submitVerdict` o recusaria só na confirmação.
+        if (!copiedVerdictInDomain(displayAnswer, currentField)) {
+          toast.error(OUT_OF_DOMAIN_VOTE_MESSAGE, { id: "compare-out-of-domain" });
+          return;
+        }
         onPrepareVerdict({
           kind: "response",
           verdict: displayAnswer,

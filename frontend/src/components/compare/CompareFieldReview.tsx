@@ -14,6 +14,7 @@ import {
 } from "./compare-types";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
+import type { DomainField } from "@/lib/review-validity";
 
 export interface ComparisonResponse {
   id: string;
@@ -172,6 +173,7 @@ export function CompareFieldReview({
         <SingleAnswerGroup
           readOnly={readOnly}
           origin={{ documentId, fieldName }}
+          domainField={fields.find((f) => f.name === fieldName) ?? null}
           responses={responses}
           existingVerdict={existingVerdict}
           pendingVerdict={pendingVerdict}
@@ -218,6 +220,7 @@ export function CompareFieldReview({
 function SingleAnswerGroup({
   readOnly,
   origin,
+  domainField,
   responses,
   existingVerdict,
   pendingVerdict,
@@ -231,6 +234,7 @@ function SingleAnswerGroup({
 }: {
   readOnly: boolean;
   origin: VerdictOrigin;
+  domainField: DomainField | null;
   responses: ComparisonResponse[];
   existingVerdict: VerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
@@ -261,6 +265,7 @@ function SingleAnswerGroup({
       }))}
       existingVerdict={existingVerdict}
       pendingVerdict={pendingVerdict}
+      domainField={domainField}
       // `origin` vem das props deste render — e não do container. É o que faz um
       // clique em card fantasma carregar o campo FANTASMA, que a fronteira de
       // escrita recusa, em vez de herdar o campo atual e gravar nele (#613).
