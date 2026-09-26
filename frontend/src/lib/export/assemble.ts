@@ -19,7 +19,6 @@ import {
 import { answerGroupKeys, type EquivalencePair } from "@/lib/equivalence";
 import {
   buildEquivalenceMap,
-  computeDivergentFieldNames,
   isFieldApplicable,
   type EquivalenceRow,
 } from "@/lib/compare-divergence";
@@ -260,8 +259,9 @@ const PENDING_REASON = {
   ambiguous: "ambíguo ou pular",
   fewResponses: "poucas respostas",
   researchers: "divergência entre pesquisadores",
-  uncompared: "divergência sem comparação",
+  uncompared: "respostas divergem e o campo não entra na Comparação",
   llmOnly: "só o LLM respondeu",
+  nobody: "ninguém respondeu o campo",
 } as const;
 
 // O que cada proveniência da view `final_answers` faz com a célula: "decidido"
@@ -336,14 +336,14 @@ function applicableResponses(field: PydanticField, doc: DocResponses): DocRespon
 }
 
 // Consenso da célula, ou null, contado só entre as respostas que contam, com
-// pelo menos um pesquisador entre elas (o LLM sozinho é barrado antes). Vale
-// quando todas elas, LLM incluído, caem num grupo (com o piso `minResponses` de
-// sempre, sobre as respostas do documento), ou quando pelo menos dois
-// pesquisadores caem num grupo e o LLM diverge: dois humanos concordantes já
-// são gabarito, e o LLM é justamente o que está sendo medido. Um pesquisador
-// só, sem o LLM, preenche com a resposta dele: ninguém mais viu o campo, e a
-// Comparação também não a arbitraria (`applicable.length < 2` em
-// `computeDivergentFieldNames`). Com nenhuma resposta, fica vazio sem pendência.
+// pelo menos um pesquisador entre elas (a célula sem pesquisador é barrada
+// antes). Vale quando todas elas, LLM incluído, caem num grupo (com o piso
+// `minResponses` de sempre, sobre as respostas do documento), ou quando pelo
+// menos dois pesquisadores caem num grupo e o LLM diverge: dois humanos
+// concordantes já são gabarito, e o LLM é justamente o que está sendo medido.
+// Um pesquisador só, sem o LLM, preenche com a resposta dele: ninguém mais viu
+// o campo, e a Comparação também não a arbitraria (`applicable.length < 2` em
+// `computeDivergentFieldNames`).
 function cellConsensus(
   field: PydanticField,
   applicable: DocResponses,
@@ -352,7 +352,6 @@ function cellConsensus(
   minResponses: number,
 ): string | null {
   const floor = totalResponses >= minResponses;
-  if (applicable.all.length === 0) return floor ? "" : null;
   const allAgree = agree(applicable.all);
   if (allAgree && floor) return groupValue(field.name, applicable.all, applicable.llm);
   if (applicable.humans.length >= 2 && agree(applicable.humans)) {
@@ -369,8 +368,6 @@ interface CellContext {
   /** Células que a decisão "Em discussão" do LLM Insights deixou em branco. */
   discussed: ReadonlySet<string>;
   pairsByDoc: ReturnType<typeof buildEquivalenceMap>;
-  /** Campos que a Comparação lista como divergência a resolver, por documento. */
-  comparisonDivergence: (docId: string, doc: DocResponses) => ReadonlySet<string>;
 }
 
 // A linha do Gabarito em montagem, na forma das respostas, para que as
@@ -425,77 +422,79 @@ function resolveCell(
   if (gate) return gate;
   const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
   const applicable = applicableResponses(field, doc);
-  // O LLM sozinho não faz gabarito: é o que o gabarito serve para medir, e
-  // uma célula com o valor dele contaria como acerto dele mesmo.
-  if (applicable.all.length > 0 && applicable.humans.length === 0) return { reason: PENDING_REASON.llmOnly };
+  // Sem pesquisador entre as respostas que contam, não há gabarito. Só o LLM:
+  // ele é o que o gabarito serve para medir, e uma célula com o valor dele
+  // contaria como acerto dele mesmo. Ninguém: a linha diz que o campo se
+  // aplica, mas nenhum respondente o viu nessa condição (o pai no Gabarito veio
+  // de um veredito que ninguém tinha escolhido, ou o campo nasceu depois da
+  // codificação), e o branco precisa de quem o preencha.
+  if (applicable.humans.length === 0) {
+    return { reason: applicable.all.length > 0 ? PENDING_REASON.llmOnly : PENDING_REASON.nobody };
+  }
   const agree = groupAgreement(field, applicable, pairs);
   const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
-  const researchersDiverge = applicable.humans.length >= 2 && !agree(applicable.humans);
-  return { reason: pendingReason(docId, field.name, doc, researchersDiverge, ctx) };
+  const signals = pendingSignals(field, doc, applicable, agree, ctx.minResponses);
+  return { reason: pendingReason(cellKey(docId, field.name), ctx, signals) };
 }
 
-function pendingReason(
-  docId: string,
-  fieldName: string,
+// O que decide o motivo de uma célula que ficou sem consenso.
+interface PendingSignals {
+  researchersDiverge: boolean;
+  /** A Comparação lista a célula como divergência a resolver. */
+  compared: boolean;
+  fewResponses: boolean;
+}
+
+function pendingSignals(
+  field: PydanticField,
   doc: DocResponses,
-  researchersDiverge: boolean,
-  ctx: CellContext,
-): string {
-  const key = cellKey(docId, fieldName);
-  const compared = () => ctx.comparisonDivergence(docId, doc).has(fieldName);
+  applicable: DocResponses,
+  agree: (responses: ExportResponse[]) => boolean,
+  minResponses: number,
+): PendingSignals {
+  const allAgree = agree(applicable.all);
+  return {
+    researchersDiverge: applicable.humans.length >= 2 && !agree(applicable.humans),
+    // A regra de `computeDivergentFieldNames` para esta célula: a Comparação
+    // lista o campo quando duas ou mais respostas que contam divergem, salvo
+    // em campo `human_only`, que ela não examina.
+    compared: field.target !== "human_only" && applicable.all.length >= 2 && !allAgree,
+    // As que contam concordam e mesmo assim não fizeram consenso, então só o
+    // piso `minResponses` as barrou; ou o documento todo fica abaixo do piso
+    // sem dois pesquisadores.
+    fewResponses: allAgree || (doc.all.length < minResponses && doc.humans.length < 2),
+  };
+}
+
+function pendingReason(key: string, ctx: CellContext, signals: PendingSignals): string {
   // Pesquisadores que divergem entre si vêm antes da auto-revisão: o ciclo de
   // auto-revisão confronta o LLM com um pesquisador só (`field_reviews` tem uma
   // linha por documento e campo), e a divergência com os demais é resolvida na
   // Comparação, também nos projetos de auto-revisão.
-  if (researchersDiverge && compared()) return PENDING_REASON.researchers;
+  if (signals.researchersDiverge && signals.compared) return PENDING_REASON.researchers;
   const auto = ctx.autoReview.get(key);
   const autoReason = auto ? AUTO_REVIEW_CELL[auto.provenance] : null;
   if (autoReason) return autoReason;
   // Há review na célula e nenhuma entrou no Gabarito: todas perderam a
   // validade (`review-validity.ts`), porque a pergunta mudou depois delas.
   if (ctx.reviewedCells.has(key)) return PENDING_REASON.questionChanged;
-  if (doc.all.length < ctx.minResponses && doc.humans.length < 2) return PENDING_REASON.fewResponses;
+  if (signals.fewResponses) return PENDING_REASON.fewResponses;
   // Sem ler as atribuições não se sabe se a comparação já foi aberta; o que se
   // sabe é se a regra da Comparação vê a divergência. Quando não vê (campo
   // `human_only`), ninguém vai arbitrar.
-  return compared() ? PENDING_REASON.arbitration : PENDING_REASON.uncompared;
-}
-
-// A divergência pela regra da Comparação, calculada uma vez por documento e só
-// quando uma célula dele fica em branco.
-function memoizedComparisonDivergence(
-  fields: PydanticField[],
-  pairsByDoc: CellContext["pairsByDoc"],
-): CellContext["comparisonDivergence"] {
-  const cache = new Map<string, Set<string>>();
-  return (docId, doc) => {
-    let divergent = cache.get(docId);
-    if (!divergent) {
-      divergent = new Set(
-        computeDivergentFieldNames(
-          fields,
-          doc.all.map((r) => ({ id: r.id, answers: r.answers, answerFieldHashes: r.answer_field_hashes ?? undefined })),
-          pairsByDoc.get(docId),
-        ),
-      );
-      cache.set(docId, divergent);
-    }
-    return divergent;
-  };
+  return signals.compared ? PENDING_REASON.arbitration : PENDING_REASON.uncompared;
 }
 
 // O contexto das células sem veredito, montado do que o export leu.
 function buildCellContext(input: AssembleInput, baseReviews: ExportReview[]): CellContext {
-  const pairsByDoc = buildEquivalenceMap(input.equivalences ?? []);
   const discussed = (input.errorResolutions ?? []).filter((row) => exportedResolution(row)?.status === "discussion");
   return {
     minResponses: input.minResponses,
     autoReview: new Map((input.finalAnswers ?? []).map((row) => [cellKey(row.document_id, row.field_name), row])),
     reviewedCells: new Set(baseReviews.map((r) => cellKey(r.document_id, r.field_name))),
     discussed: new Set(discussed.map((row) => cellKey(row.document_id, row.field_name))),
-    pairsByDoc,
-    comparisonDivergence: memoizedComparisonDivergence(input.fields, pairsByDoc),
+    pairsByDoc: buildEquivalenceMap(input.equivalences ?? []),
   };
 }
 
@@ -540,13 +539,6 @@ function splitResponses(all: ExportResponse[] = []): DocResponses {
   };
 }
 
-// Entram nas Pendências os documentos que têm linha no Gabarito ou alguma
-// codificação humana. Documento só com a resposta do LLM ainda não foi
-// codificado, e listá-lo campo a campo só esconderia os brancos que importam.
-function listsPending(doc: DocResponses, hasGabaritoRow: boolean): boolean {
-  return hasGabaritoRow || doc.humans.length > 0;
-}
-
 // Percorre os documentos: as células preenchidas vão para `filledByDoc`, as em
 // branco viram linhas de Pendências.
 function resolveOpenCells(input: {
@@ -565,7 +557,11 @@ function resolveOpenCells(input: {
     const verdictFields = input.verdictsByDoc.get(docId)?.fields;
     const { filled, pending } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
     if (filled.size > 0) filledByDoc.set(docId, filled);
-    if (!listsPending(doc, filled.size > 0 || verdictFields !== undefined)) continue;
+    // Entram nas Pendências os documentos que têm linha no Gabarito ou alguma
+    // codificação humana. Documento só com a resposta do LLM ainda não foi
+    // codificado, e listá-lo campo a campo só esconderia os brancos que importam.
+    const hasGabaritoRow = filled.size > 0 || verdictFields !== undefined;
+    if (!hasGabaritoRow && doc.humans.length === 0) continue;
     const { displayId, title } = input.identity.get(docId)!;
     for (const [fieldName, reason] of pending) pendingRows.push([displayId, title, fieldName, reason]);
   }

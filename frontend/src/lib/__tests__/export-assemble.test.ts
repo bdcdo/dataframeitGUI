@@ -814,6 +814,37 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(conditional)).toEqual([["A", "filho", "só o LLM respondeu"], ["A", "neto", "aguarda o campo filho"]]);
     });
 
+    it("ninguém respondeu o campo que a linha diz aplicável: vai para as Pendências", () => {
+      // O veredito pôs no pai um valor que nenhum respondente escolheu.
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "não" }),
+          answering("h2", "humano", { pai: "não" }),
+          answering("l", "llm", { pai: "não" }),
+        ],
+        reviews: [paiVerdict("sim")],
+      });
+      expect(cell(d, "pai")).toBe("sim");
+      expect(cell(d, "filho")).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "filho", "ninguém respondeu o campo"], ["A", "neto", "aguarda o campo filho"]]);
+      // Também quando o campo nasceu depois de toda a codificação.
+      const before = { answer_field_hashes: { outro: "h" } };
+      const late = exported({
+        fields: [pai],
+        responses: [{ ...answering("h1", "humano", {}), ...before }, { ...answering("h2", "humano", {}), ...before }],
+      });
+      expect(pendingOf(late)).toEqual([["A", "pai", "ninguém respondeu o campo"]]);
+    });
+
+    it("auto-revisão resolvida vale acima da condição na linha", () => {
+      const d = withChain({
+        responses: [answering("h1", "humano", { pai: "não" }), answering("l", "llm", { pai: "sim", filho: "Sim" })],
+        reviews: [paiVerdict("não")],
+        finalAnswers: [{ document_id: "A", field_name: "filho", provenance: "arbitrado", answer: "Sim" }],
+      });
+      expect(cell(d, "filho")).toBe("Sim");
+    });
+
     it("um único pesquisador viu o filho: a célula recebe a resposta dele", () => {
       const d = withChain({
         responses: [
@@ -888,6 +919,14 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
     });
 
+    it("auto-revisão resolvida vale acima do consenso das respostas", () => {
+      const d = exported({
+        responses: [resp("h1", "humano", "Sim"), resp("h2", "humano", "Sim"), resp("l", "llm", "Não")],
+        finalAnswers: [answer("arbitrado", "Não")],
+      });
+      expect(cellOf(d)).toBe("Não");
+    });
+
     it("consenso da view não decide nada: a concordância das respostas é que vale", () => {
       const d = exported({ responses, finalAnswers: [answer("consenso", "Não")] });
       expect(cellOf(d)).toBe("");
@@ -925,12 +964,21 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
     });
 
-    it("divergência que a Comparação não examina: divergência sem comparação", () => {
+    it("concordantes abaixo do piso: poucas respostas, mesmo com dois pesquisadores no documento", () => {
+      // h2 codificou antes de o campo existir: sobram h1 e o LLM, que concordam.
+      const d = exported({
+        minResponses: 4,
+        responses: [resp("h1", "humano", "Sim"), { ...resp("h2", "humano", undefined), answer_field_hashes: { outro: "h" } }, resp("l", "llm", "Sim")],
+      });
+      expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
+    });
+
+    it("divergência que a Comparação não examina: o motivo diz que o campo não entra nela", () => {
       const d = exported({
         fields: [field("campo", { target: "human_only" })],
         responses: [resp("h1", "humano", "Sim"), resp("h2", "humano", "Não")],
       });
-      expect(pendingOf(d)).toEqual([["A", "campo", "divergência sem comparação"]]);
+      expect(pendingOf(d)).toEqual([["A", "campo", "respostas divergem e o campo não entra na Comparação"]]);
     });
 
     it("documento só com a resposta do LLM não entra nas Pendências", () => {
