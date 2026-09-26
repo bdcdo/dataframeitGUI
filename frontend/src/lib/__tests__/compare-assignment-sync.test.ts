@@ -67,8 +67,10 @@ const review = (id: string, documentId: string, fieldHash: string, reviewer = "r
   verdict: "proc", field_hash: fieldHash, chosen_response_id: `${documentId}-a`,
 });
 
-const assignment = (id: string, documentId: string, status: string, userId = "rev1") => ({
-  id, project_id: "p1", document_id: documentId, user_id: userId, type: "comparacao",
+const RODADA_ATUAL = "rodada-atual";
+
+const assignment = (id: string, documentId: string, status: string, userId = "rev1", roundId = RODADA_ATUAL) => ({
+  id, project_id: "p1", document_id: documentId, user_id: userId, type: "comparacao", round_id: roundId,
   status, completed_at: status === "concluido" ? "2026-09-01T00:00:00Z" : null,
 });
 
@@ -79,6 +81,7 @@ beforeEach(() => {
     projects: [{
       id: "p1", name: "Projeto", pydantic_fields: FIELDS, pydantic_hash: CURRENT_HASH,
       schema_version_major: 2, schema_version_minor: 0, schema_version_patch: 0,
+      current_round_id: RODADA_ATUAL,
     }],
     assignments: [assignment("a-doc1", "doc1", "concluido"), assignment("a-doc2", "doc2", "concluido")],
     // Os dois documentos divergem em `decisao`.
@@ -140,10 +143,10 @@ describe("resyncProjectCompareAssignments", () => {
     expect(report.changes).toEqual([expect.objectContaining({ assignmentId: "a-doc1", to: "concluido" })]);
   });
 
-  // Só uma comparação pode estar ativa por documento (índice parcial
-  // assignments_one_active_comparacao_per_doc). Com duas concluídas de rodadas
-  // diferentes que regridem, reabre a da rodada mais recente; a antiga bate
-  // no índice e fica concluída.
+  // Só uma comparação pode estar ativa por documento e rodada (índice parcial
+  // assignments_one_active_comparacao_per_doc_round). Com duas concluídas de
+  // revisores diferentes que regridem, reabre a concluída mais recentemente; a
+  // outra bate no índice e fica concluída.
   it("com duas concluídas no mesmo documento e nenhuma ativa, reabre a mais recente", async () => {
     tableData.assignments = [
       { ...assignment("a-antiga", "doc2", "concluido", "rev1"), completed_at: "2026-08-01T00:00:00Z" },
@@ -156,6 +159,33 @@ describe("resyncProjectCompareAssignments", () => {
       (tableData.assignments as Array<{ id: string; status: string }>).find((a) => a.id === id)?.status;
     expect(statusOf("a-recente")).toBe("pendente");
     expect(statusOf("a-antiga")).toBe("concluido");
+  });
+
+  // Comparação de rodada antiga é histórico. Reabri-la chamaria um segundo
+  // revisor para a célula que a rodada corrente já rearbitra, e o gatilho
+  // contra autoarbitragem recusa a reabertura quando o revisor antigo
+  // codificou o documento na rodada corrente.
+  it("só lê e grava assignments da rodada corrente", async () => {
+    tableData.reviews.push(review("r3", "doc2", "ffffffffffff", "rev2"));
+    tableData.assignments.push(assignment("a-antiga", "doc2", "concluido", "rev2", "rodada-antiga"));
+
+    const report = await resyncProjectCompareAssignments(client(), "p1");
+
+    expect(report).toEqual({
+      checked: 2,
+      changes: [{ assignmentId: "a-doc2", documentId: "doc2", userId: "rev1", from: "concluido", to: "pendente" }],
+    });
+    expect(updates()).toEqual([expect.objectContaining({ payload: { status: "pendente", completed_at: null } })]);
+  });
+
+  it("projeto sem rodada corrente não tem o que ressincronizar", async () => {
+    (tableData.projects[0] as { current_round_id: string | null }).current_round_id = null;
+    queryErrors["assignments:select"] = { message: "não deveria ler assignments" };
+
+    const report = await resyncProjectCompareAssignments(client(), "p1");
+
+    expect(report).toEqual({ checked: 0, changes: [] });
+    expect(updates()).toHaveLength(0);
   });
 
   it("não mexe em assignment de outro tipo", async () => {
@@ -171,7 +201,7 @@ describe("resyncProjectCompareAssignments", () => {
 describe("resyncProjects (o script de pós-deploy)", () => {
   it("falha num projeto sai com código 1, relatada, sem parar os outros", async () => {
     queryErrors["assignments:select"] = { message: "tempo esgotado" };
-    tableData.projects.push({ id: "p2", name: "Outro", pydantic_fields: [], pydantic_hash: null });
+    tableData.projects.push({ id: "p2", name: "Outro", pydantic_fields: [], pydantic_hash: null, current_round_id: "rodada-p2" });
     const lines: string[] = [];
 
     const code = await resyncProjects(client(), ["p1", "p2"], false, (line) => lines.push(line));

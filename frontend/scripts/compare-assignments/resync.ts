@@ -1,6 +1,8 @@
 /**
  * compare-assignments/resync.ts: recalcula o status dos assignments de
- * comparação pela regra de `syncCompareAssignment` e grava os que mudaram.
+ * comparação da rodada corrente de cada projeto pela regra de
+ * `syncCompareAssignment` e grava os que mudaram. Rodadas antigas ficam como
+ * estão.
  *
  * Roda uma vez depois do deploy da validade do veredito por pergunta:
  * assignments fechados por vereditos que perderam a validade ficaram
