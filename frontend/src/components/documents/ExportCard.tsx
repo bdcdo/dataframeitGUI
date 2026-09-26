@@ -63,14 +63,17 @@ const PREVIEW_LIMIT = 10;
 
 type ExportFormat = "csv" | "xlsx";
 
-// Opção de preencher o Gabarito com o LLM. Desligada por padrão: o Gabarito
-// serve para medir o LLM, e a célula com o valor dele contaria como acerto
-// dele mesmo (ver `AssembleInput.fillFromLlm`).
+// Opção de preencher o Gabarito com o LLM, desligada por padrão pelo motivo
+// que a doc de `AssembleInput.fillFromLlm` dá. Fica travada enquanto o dataset
+// carrega: a resposta em curso foi montada com o valor anterior e, trocada a
+// opção no meio, chegaria depois como prévia da opção nova.
 function FillFromLlmOption({
   checked,
+  disabled,
   onCheckedChange,
 }: {
   checked: boolean;
+  disabled: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
@@ -79,6 +82,7 @@ function FillFromLlmOption({
         <Checkbox
           id="export-fill-from-llm"
           checked={checked}
+          disabled={disabled}
           onCheckedChange={(v) => onCheckedChange(v === true)}
         />
         <Label htmlFor="export-fill-from-llm" className="text-sm">
@@ -86,7 +90,7 @@ function FillFromLlmOption({
         </Label>
       </div>
       <p className="pl-6 text-xs text-muted-foreground">
-        No XLSX, essas células ficam listadas na aba &quot;Só LLM&quot;. Elas não servem para medir o LLM.
+        No CSV, as células preenchidas pelo LLM não se distinguem das demais; a lista delas vai na aba &quot;Só LLM&quot; do XLSX. Elas não servem para medir o LLM.
       </p>
     </div>
   );
@@ -300,6 +304,7 @@ export function ExportCard({ projectId }: { projectId: string }) {
 
         <FillFromLlmOption
           checked={fillFromLlm}
+          disabled={loading}
           onCheckedChange={(checked) => {
             setFillFromLlm(checked);
             // A prévia foi montada com a outra opção.

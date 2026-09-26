@@ -82,6 +82,23 @@ describe("ExportCard", () => {
     );
   });
 
+  it("a opção de preencher com o LLM fica travada enquanto o dataset carrega", async () => {
+    let resolve: (d: ExportDataset) => void = () => {};
+    hoisted.getExportDataset.mockReturnValue(new Promise<ExportDataset>((r) => { resolve = r; }));
+    render(<ExportCard projectId="p1" />);
+    const option = screen.getByRole("checkbox", { name: "Preencher com o LLM onde nenhum pesquisador respondeu" });
+    expect(option.hasAttribute("disabled")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+    expect(option.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(option);
+    expect(option.getAttribute("aria-checked")).toBe("false");
+
+    resolve(makeDataset());
+    await screen.findByText(/Prévia \(1 linha\)/);
+    expect(option.hasAttribute("disabled")).toBe(false);
+  });
+
   it("erro da action é exibido, sem prévia", async () => {
     hoisted.getExportDataset.mockResolvedValue({ error: "Sem permissão" });
     render(<ExportCard projectId="p1" />);
