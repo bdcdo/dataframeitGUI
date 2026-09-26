@@ -96,12 +96,18 @@ function DecisionPreview({ decision, answer, verdict, blankAllowed, bothCorrectV
 }
 
 // O veredito anterior e, ao lado, o que os pesquisadores respondem agora: o
-// veredito pode ser de uma arbitragem antiga (#758).
-function PreviousAndCurrent({ error }: { error: LlmError }) {
+// veredito pode ser de uma arbitragem antiga (#758). O seletor de valor o
+// destaca, porque o valor inicial sai dele, e pode acrescentar uma instrução.
+function PreviousVerdict({ error, hint = null, highlighted = false }: { error: LlmError; hint?: string | null; highlighted?: boolean }) {
   return <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-    <div className="rounded-md border px-3 py-2 text-sm">
+    <div className={highlighted ? "rounded-md border border-brand/40 bg-brand-muted px-3 py-2 text-sm" : "rounded-md border px-3 py-2 text-sm"}>
       <p className="text-xs font-medium">Veredito anterior</p>
       <p className="mt-0.5 whitespace-pre-wrap">{formatVerdictDisplay(error.chosenVerdict) || "(vazio)"}</p>
+      {hint && (
+        // Instrução, não decoração: herda a cor do corpo (o token apagado fica
+        // abaixo de 4,5:1 sobre `bg-brand-muted` no tema claro).
+        <p className="mt-1 text-xs">{hint}</p>
+      )}
     </div>
     <CurrentHumanAnswers answers={error.currentHumanAnswers} />
   </div>;
@@ -134,21 +140,6 @@ function initialValue(field: PydanticField, error: LlmError, decision: ValueChoo
   if (decision === "all_wrong") return undefined;
   return prefillFromVerdict(field, error.chosenVerdict)
     ?? (error.chosenValue !== undefined ? prefillFromValue(field, error.chosenValue) : undefined);
-}
-
-function PreviousVerdict({ error, hint }: { error: LlmError; hint: string | null }) {
-  return <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-    <div className="rounded-md border border-brand/40 bg-brand-muted px-3 py-2 text-sm">
-      <p className="text-xs font-medium">Veredito anterior</p>
-      <p className="mt-0.5 whitespace-pre-wrap">{formatVerdictDisplay(error.chosenVerdict) || "(vazio)"}</p>
-      {hint && (
-        // Instrução, não decoração: herda a cor do corpo (o token apagado fica
-        // abaixo de 4,5:1 sobre `bg-brand-muted` no tema claro).
-        <p className="mt-1 text-xs">{hint}</p>
-      )}
-    </div>
-    <CurrentHumanAnswers answers={error.currentHumanAnswers} />
-  </div>;
 }
 
 // O aviso fala do veredito, então só vale quando o valor inicial veio dele:
@@ -206,7 +197,7 @@ function FieldValuePicker({ field, llmBlank, pending, decision, isPending, onClo
   // Em branco é o vazio canônico do tipo, o único que a RPC aceita.
   const chosen = blank ? blankAnswerFor(field) : value;
   return <>
-    <PreviousVerdict error={pending.error} hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
+    <PreviousVerdict error={pending.error} highlighted hint={pickerHint(decision, field, pending.error, prefill !== undefined || openedBlank)} />
     {isConditionalField(field) && <BlankToggle checked={blank} onChange={setBlank} disabled={isPending} llmBlank={llmBlank} />}
     {!blank && <fieldset className="space-y-2">
       <legend className="text-sm font-medium">Valor que irá para o gabarito</legend>
@@ -232,7 +223,7 @@ function ConfirmDecision({ pending, decision, context, isPending, onClose, onCon
   const blankAllowed = (decision === "llm_correct" && llmAnswersBlank(context))
     || (decision === "both_correct" && !!bothCorrectValue);
   return <>
-    <PreviousAndCurrent error={pending.error} />
+    <PreviousVerdict error={pending.error} />
     <DecisionPreview decision={decision} answer={context.llm_value} verdict={pending.error.chosenVerdict}
       blankAllowed={blankAllowed} bothCorrectValue={bothCorrectValue} />
     <NoteField note={note} onChange={setNote} isPending={isPending} />
