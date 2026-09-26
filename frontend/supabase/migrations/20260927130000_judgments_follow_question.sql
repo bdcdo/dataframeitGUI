@@ -163,34 +163,11 @@ BEGIN
 END;
 $$;
 
--- Cliente nenhum muda o carimbo: sem isto a policy de UPDATE do revisor
--- deixaria gravar o hash atual num ciclo aberto sob outra pergunta. O
--- carimbo legitimo da rotacao vem de stamp_field_review_field_hash, que roda
--- depois deste (gatilhos BEFORE do mesmo evento disparam em ordem alfabetica
--- de nome) e por isso nao passa por ele.
-CREATE FUNCTION public.enforce_field_review_field_hash_immutable()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = ''
-AS $$
-BEGIN
-  IF NEW.field_hash IS DISTINCT FROM OLD.field_hash THEN
-    RAISE EXCEPTION 'field_reviews.field_hash e carimbada pelo servidor e nao pode ser alterada'
-      USING ERRCODE = '23514';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
+-- Cliente nenhum muda o carimbo: enforce_field_review_phase_transition
+-- (20260716155000) so deixa cada ator mudar as colunas da propria fase, e
+-- field_hash nao e de nenhuma. O carimbo legitimo vem do servidor.
 REVOKE ALL ON FUNCTION public.stamp_field_review_field_hash()
   FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.enforce_field_review_field_hash_immutable()
-  FROM PUBLIC, anon, authenticated, service_role;
-
-CREATE TRIGGER field_reviews_field_hash_immutable
-BEFORE UPDATE ON public.field_reviews
-FOR EACH ROW EXECUTE FUNCTION public.enforce_field_review_field_hash_immutable();
 
 CREATE TRIGGER stamp_field_review_field_hash
 BEFORE INSERT OR UPDATE OF cycle_no ON public.field_reviews

@@ -50,11 +50,11 @@ BEGIN
     JOIN pg_catalog.pg_proc AS proc ON proc.oid = trigger_row.tgfoid
     WHERE NOT trigger_row.tgisinternal
       AND ((trigger_row.tgrelid = 'public.field_reviews'::regclass
-            AND proc.proname IN ('stamp_field_review_field_hash', 'enforce_field_review_field_hash_immutable'))
+            AND proc.proname = 'stamp_field_review_field_hash')
         OR (trigger_row.tgrelid = 'public.projects'::regclass
             AND proc.proname = 'archive_judgments_on_question_change'))
-  ) <> 3 THEN
-    RAISE EXCEPTION 'FALHOU: faltam os gatilhos de carimbo, imutabilidade ou mudanca da pergunta';
+  ) <> 2 THEN
+    RAISE EXCEPTION 'FALHOU: faltam os gatilhos de carimbo ou de mudanca da pergunta';
   END IF;
 
   IF has_function_privilege('authenticated', 'public.archive_question_changed_field_reviews(uuid,jsonb)', 'EXECUTE')
@@ -204,15 +204,43 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'FALHOU: ciclo aberto sem o hash atual do campo';
   END IF;
-  BEGIN
-    UPDATE public.field_reviews SET field_hash = NULL
-    WHERE document_id = '7a200000-0000-0000-0000-000000000001' AND field_name = 'a';
-    RAISE EXCEPTION 'FALHOU: field_hash do ciclo aceitou escrita';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
-  RAISE NOTICE 'OK: carimbo na abertura e imutavel';
+  RAISE NOTICE 'OK: carimbo na abertura';
 END;
 $$;
+
+-- O codificador nao muda o carimbo, nem sozinho num ciclo decidido nem junto
+-- do veredito num ciclo pendente (documento 4, `q`): a guarda de fases so lhe
+-- deixa as colunas self_*.
+SELECT set_config('request.jwt.claims', '{"sub":"7a000000-0000-0000-0000-000000000002","supabase_uid":"7a000000-0000-0000-0000-000000000002"}', true);
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE
+  item RECORD;
+  v_state TEXT;
+BEGIN
+  FOR item IN
+    SELECT * FROM (VALUES
+      ('so o carimbo', '7a200000-0000-0000-0000-000000000001'::UUID, 'a', NULL::TEXT),
+      ('carimbo junto do veredito', '7a200000-0000-0000-0000-000000000004'::UUID, 'q', 'admite_erro')
+    ) AS cases(label, document_id, field_name, verdict)
+  LOOP
+    v_state := NULL;
+    BEGIN
+      UPDATE public.field_reviews
+      SET field_hash = 'forjado',
+          self_verdict = COALESCE(item.verdict, self_verdict)
+      WHERE document_id = item.document_id AND field_name = item.field_name;
+    EXCEPTION WHEN insufficient_privilege THEN
+      v_state := SQLSTATE;
+    END;
+    IF v_state IS DISTINCT FROM '42501' THEN
+      RAISE EXCEPTION 'FALHOU: o codificador gravou field_hash (%)', item.label;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'OK: carimbo imutavel para o cliente';
+END;
+$$;
+RESET ROLE;
 
 -- (d) Par "=": a escrita so aceita respostas dadas a versao atual da
 -- pergunta. A rodada nao entra: resposta nao vigente e congelada, e o par com
