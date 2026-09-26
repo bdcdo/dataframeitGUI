@@ -457,6 +457,7 @@ describe("computeLlmErrorMetrics — fonte Auto-revisão", () => {
       { provenance: "aguarda_auto_revisao", esperado: "fora" },
       { provenance: "aguarda_arbitragem", esperado: "fora" },
       { provenance: "aguarda_reconciliacao", esperado: "fora" },
+      { provenance: "pergunta_alterada", esperado: "fora" },
     ];
 
     for (const { provenance, final_verdict, esperado } of cases) {
@@ -485,6 +486,33 @@ describe("computeLlmErrorMetrics — fonte Auto-revisão", () => {
         );
       }
     }
+  });
+
+  // A cópia TypeScript da regra de `final_answers`: auto-revisão aberta sob
+  // outra versão da pergunta não conta, mesmo que a view (num banco sem a
+  // migration, ou por drift) a entregue com proveniência de veredito.
+  it("auto-revisão de outra versão da pergunta não conta", () => {
+    const arbitrado = (field_review_field_hash: string | null) =>
+      run({
+        fields: [field({ hash: "atual0000000" })],
+        documentTitles: titles,
+        responses: [llmDoc2, humanDoc2],
+        finalAnswers: [
+          finalAnswer({
+            document_id: "doc2",
+            field_review_id: "fr1",
+            field_review_field_hash,
+            provenance: "arbitrado",
+            final_verdict: "humano",
+            final_decided_at: "2026-03-01T00:00:00Z",
+          }),
+        ],
+      });
+
+    expect(arbitrado("velho0000000").reviewedEntries).toHaveLength(0);
+    expect(arbitrado("atual0000000").reviewedEntries).toHaveLength(1);
+    // Legado sem carimbo: a ausência não invalida sozinha.
+    expect(arbitrado(null).reviewedEntries).toHaveLength(1);
   });
 
   it("descreve o erro arbitrado pelos snapshots do ciclo", () => {

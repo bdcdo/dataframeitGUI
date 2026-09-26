@@ -116,7 +116,7 @@ function fetchMetricsSources(
             supabase
               .from("final_answers")
               .select(
-                "field_review_id, document_id, field_name, provenance, final_verdict, self_reviewed_at, final_decided_at, human_response_id, llm_response_id, human_answer_snapshot, llm_answer_snapshot, arbitrator_comment",
+                "field_review_id, document_id, field_name, provenance, final_verdict, self_reviewed_at, final_decided_at, human_response_id, llm_response_id, human_answer_snapshot, llm_answer_snapshot, arbitrator_comment, field_review_field_hash",
               )
               .eq("project_id", id),
           ["document_id", "field_name"],

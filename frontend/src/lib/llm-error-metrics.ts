@@ -31,7 +31,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import { formatCardAnswer } from "@/lib/verdict-display";
-import { pickValidCellReviews, reviewValidity, verdictSelection, type ReviewInvalidReason } from "@/lib/review-validity";
+import { fieldReviewIsCurrent, pickValidCellReviews, reviewValidity, verdictSelection, type ReviewInvalidReason } from "@/lib/review-validity";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { effectiveErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
@@ -134,7 +134,8 @@ export type AutoReviewProvenance =
   | "arbitrado"
   | "aguarda_reconciliacao"
   | "aguarda_auto_revisao"
-  | "aguarda_arbitragem";
+  | "aguarda_arbitragem"
+  | "pergunta_alterada";
 
 // Linha da view `final_answers` (uma por documento com LLM × campo do schema).
 export interface MetricsFinalAnswer {
@@ -151,6 +152,11 @@ export interface MetricsFinalAnswer {
   llm_answer_snapshot: unknown;
   /** Texto que o arbitrador escreveu ao decidir; exibido como "Comentário do revisor". */
   arbitrator_comment: string | null;
+  /**
+   * `field_reviews.field_hash`: a versão da pergunta sob a qual o ciclo foi
+   * aberto. Ausente em linha sem ciclo (consenso) e em fixture antiga.
+   */
+  field_review_field_hash?: string | null;
 }
 
 /**
@@ -270,6 +276,10 @@ const AUTO_REVIEW_OUTCOME = {
   aguarda_reconciliacao: "pendente",
   aguarda_auto_revisao: "pendente",
   aguarda_arbitragem: "pendente",
+  // O ciclo foi aberto sob outra versão da pergunta, ou a geração LLM não
+  // respondeu o campo (renomeado ou criado depois da rodada): nada a medir
+  // até a pergunta atual ser julgada.
+  pergunta_alterada: "pendente",
 } satisfies Record<
   AutoReviewProvenance,
   "acerto" | "pendente" | "depende_do_veredito"
@@ -710,6 +720,11 @@ function measurableAutoReviewRow(
   if (!llmResponse) return null;
   if (!hasComparableHumanCoding(row.document_id, field, llmResponse, ctx))
     return null;
+
+  // Cópia da regra que a view já aplica (`field_review_question_current`):
+  // a métrica não conta auto-revisão aberta sob outra versão da pergunta nem
+  // quando a view vem de um banco sem a migration.
+  if (row.field_review_id && !fieldReviewIsCurrent(row.field_review_field_hash ?? null, field)) return null;
 
   const outcome = classifyAutoReview(row);
   if (outcome === "pendente") return null;

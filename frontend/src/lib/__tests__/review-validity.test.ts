@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  fieldReviewIsCurrent,
   pickCellReview,
   pickValidCellReviews,
   reviewIsValid,
@@ -149,5 +150,22 @@ describe("pickValidCellReviews", () => {
     const stale = { ...base, id: "2", created_at: "2026-03-01T00:00:00Z", verdict: "Sim", field_hash: "ffffffffffff" };
     const removed = { ...base, field_name: "sumiu", id: "3", created_at: "2026-03-01T00:00:00Z", verdict: "x", field_hash: null };
     expect(pickValidCellReviews([stale, removed], fields).size).toBe(0);
+  });
+});
+
+// A matriz é a mesma de `field_review_question_current` no bloco (b) de
+// `supabase/tests/judgments_follow_question.test.sql`.
+describe("fieldReviewIsCurrent", () => {
+  const current = { hash: "aaaaaaaaaaaa" };
+  it.each([
+    { label: "carimbo igual ao hash atual", fieldHash: "aaaaaaaaaaaa", current, expected: true },
+    { label: "carimbo de outra versao da pergunta", fieldHash: "ffffffffffff", current, expected: false },
+    { label: "campo removido ou renomeado", fieldHash: "aaaaaaaaaaaa", current: undefined, expected: false },
+    { label: "carimbo NULL (legado)", fieldHash: null, current, expected: true },
+    { label: "carimbo NULL e campo removido", fieldHash: null, current: undefined, expected: false },
+    { label: "campo atual sem hash e ciclo carimbado", fieldHash: "aaaaaaaaaaaa", current: {}, expected: false },
+    { label: "campo atual sem hash e ciclo sem carimbo", fieldHash: null, current: {}, expected: true },
+  ])("$label", ({ fieldHash, current: field, expected }) => {
+    expect(fieldReviewIsCurrent(fieldHash, field)).toBe(expected);
   });
 });
