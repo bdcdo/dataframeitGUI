@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { stableStringify } from "@/lib/schema-utils";
+import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
 import { OTHER_PREFIX, isOtherValue } from "@/lib/other-option";
 import { resolveAllowOther } from "@/lib/pydantic-field";
 import { NOT_INFORMED } from "@/lib/sentinels";
@@ -101,12 +101,49 @@ export type EffectiveErrorResolution =
   | { status: "upheld"; llmValue: unknown; verdictValue?: unknown }
   | { status: "approved"; value: unknown; isLlmError: boolean };
 
-// A decisão só vale enquanto as fontes em que ela se apoiou seguem iguais.
+// A decisão só vale enquanto as fontes em que ela se apoiou seguem iguais e a
+// pergunta é a mesma. A pergunta se mede pelo hash do campo, como no veredito
+// da Comparação, no par "=" e na auto-revisão: `help_text` que só esclarece,
+// `condition`, `required` e `justification_prompt` não entram no hash e não
+// derrubam a decisão; quem aplica a condição nova é o gate do export. A cópia
+// SQL é `error_resolution_context_current`
+// (20260927171000_llm_decision_follows_field_hash.sql), que não deriva o hash:
+// lá os dois contextos saem do mesmo schema na mesma confirmação.
 function contextIsCurrent(row: ErrorResolutionRow, context: ErrorResolutionContext): boolean {
-  return !!row.current_context &&
-    context.project_id === row.project_id && context.document_id === row.document_id &&
-    context.field_name === row.field_name &&
-    stableStringify(context) === stableStringify(row.current_context);
+  const current = row.current_context;
+  if (!current || context.project_id !== row.project_id || context.document_id !== row.document_id ||
+    context.field_name !== row.field_name) return false;
+  const { field_definition: savedDefinition, ...savedRest } = context;
+  const { field_definition: currentDefinition, ...currentRest } = current;
+  return stableStringify(savedRest) === stableStringify(currentRest) &&
+    sameQuestion(savedDefinition, currentDefinition);
+}
+
+// Sem hash de algum lado, a regra anterior: a definição inteira.
+function sameQuestion(saved: unknown, current: unknown): boolean {
+  const savedHash = questionHash(saved);
+  const currentHash = questionHash(current);
+  return savedHash !== undefined && currentHash !== undefined
+    ? savedHash === currentHash
+    : stableStringify(saved) === stableStringify(current);
+}
+
+// As partes da definição que a fórmula do hash lê (`computeFieldHash`).
+const hashedPartsSchema = z.object({
+  name: z.string(), type: z.string(), options: z.array(z.string()).nullish(),
+  description: z.string(), question_revision: z.number().nullish(),
+});
+
+// O hash que o save carimbou na definição; se ela é anterior ao carimbo, o
+// derivado pela mesma fórmula, desde que a definição traga as partes que a
+// fórmula lê. Sem elas, não há hash a comparar.
+function questionHash(definition: unknown): string | undefined {
+  if (!isSubfieldRecord(definition)) return undefined;
+  if (typeof definition.hash === "string") return definition.hash;
+  const parts = hashedPartsSchema.safeParse(definition);
+  if (!parts.success) return undefined;
+  const { name, type, options, description, question_revision: revision } = parts.data;
+  return computeFieldHash(name, type, options ?? null, description, revision);
 }
 
 function upheldResolution(context: ErrorResolutionContext): EffectiveErrorResolution {

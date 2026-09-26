@@ -6,6 +6,7 @@ import {
   prefillLosesItems, prefillFromValue, prefillFromVerdict, startsBlank,
   type ErrorDecision, type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
+import { fieldHashOf } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
 const context: ErrorResolutionContext = {
@@ -69,6 +70,63 @@ describe("resolução explícita de divergência", () => {
     r.current_context = structuredClone(r.context);
     r.current_context!.source.verdict = "outro";
     expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+  });
+});
+
+// Os mesmos casos de llm_error_decision_follows_field_hash.test.sql, a cópia
+// SQL da regra.
+describe("a decisão segue o hash do campo, não a definição inteira", () => {
+  const question = { name: "q", type: "single" as const, options: ["A", "B"], description: "Pergunta", help_text: "Ajuda" };
+  function withDefinitions(saved: Record<string, unknown>, current: Record<string, unknown>): ErrorResolutionRow {
+    const r = row("llm_correct");
+    r.context!.field_definition = saved as ErrorResolutionContext["field_definition"];
+    r.current_context!.field_definition = current as ErrorResolutionContext["field_definition"];
+    return r;
+  }
+  const stamped = { ...question, hash: "h1" };
+
+  it.each([
+    ["help_text que só esclarece", { help_text: "Ajuda reescrita" }],
+    ["condição nova", { condition: { field: "g0", equals: "Sim" } }],
+    ["required", { required: true }],
+    ["justification_prompt", { justification_prompt: "Por quê?" }],
+  ])("%s com o mesmo hash mantém a decisão", (_label, patch) => {
+    expect(effectiveErrorResolution(withDefinitions(stamped, { ...stamped, ...patch })).status).toBe("approved");
+  });
+
+  it.each([
+    ["descrição nova", { description: "Outra pergunta", hash: "h2" }],
+    ["opções novas", { options: ["A", "B", "C"], hash: "h3" }],
+    ["revisão da question", { question_revision: 1, hash: "h4" }],
+  ])("%s, que muda o hash, derruba a decisão", (_label, patch) => {
+    expect(effectiveErrorResolution(withDefinitions(stamped, { ...stamped, ...patch }))).toEqual({ status: "stale" });
+  });
+
+  it("o hash carimbado vence o derivado: hashes diferentes derrubam mesmo com as partes iguais", () => {
+    expect(effectiveErrorResolution(withDefinitions(stamped, { ...question, hash: "outra-formula" }))).toEqual({ status: "stale" });
+  });
+
+  it("o resto do contexto continua valendo inteiro", () => {
+    const r = withDefinitions(stamped, { ...stamped, help_text: "Ajuda reescrita" });
+    r.current_context!.human_value.value = "alterado";
+    expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+  });
+
+  it("definição gravada antes do carimbo tem o hash derivado pela mesma fórmula", () => {
+    const hash = fieldHashOf(question);
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, help_text: "Ajuda reescrita", hash })).status).toBe("approved");
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, help_text: "Ajuda reescrita" })).status).toBe("approved");
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, description: "Outra pergunta", hash: "h2" }))).toEqual({ status: "stale" });
+  });
+
+  it("o contador de revisão entra no hash derivado", () => {
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, question_revision: 1 }))).toEqual({ status: "stale" });
+  });
+
+  it("definição sem as partes da fórmula cai para a comparação da definição inteira", () => {
+    const withoutDescription = { name: "q", type: "single", options: ["A", "B"], help_text: "Ajuda" };
+    expect(effectiveErrorResolution(withDefinitions(withoutDescription, { ...withoutDescription })).status).toBe("approved");
+    expect(effectiveErrorResolution(withDefinitions(withoutDescription, { ...withoutDescription, help_text: "Ajuda reescrita" }))).toEqual({ status: "stale" });
   });
 });
 
