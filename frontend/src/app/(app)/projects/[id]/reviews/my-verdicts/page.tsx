@@ -92,7 +92,7 @@ export default async function MyVerdictsPage({
       .is("exclusion_pending_at", null),
     supabase
       .from("verdict_acknowledgments")
-      .select("review_id, status, comment")
+      .select("review_id, status, comment, acknowledged_verdict")
       .eq("respondent_id", viewedRespondentId),
     isCoordinator
       ? supabase
@@ -123,7 +123,7 @@ export default async function MyVerdictsPage({
       documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
     ),
     acknowledgments: new Map(
-      acknowledgments?.map((a) => [a.review_id, { status: a.status, comment: a.comment }]) || [],
+      acknowledgments?.map((a) => [a.review_id, { status: a.status, comment: a.comment, acknowledged_verdict: a.acknowledged_verdict }]) || [],
     ),
   });
 

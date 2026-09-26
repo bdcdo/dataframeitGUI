@@ -173,7 +173,9 @@ function MyVerdictsViewInner({
     new Promise((resolve) => {
       startTransition(async () => {
         try {
-          const result = await acknowledgeVerdict(reviewId, projectId, status, comment);
+          // O veredito que a tela mostra: o banco recusa se a review mudou (#758).
+          const verdict = items.find((item) => item.reviewId === reviewId)?.verdict ?? "";
+          const result = await acknowledgeVerdict(reviewId, projectId, status, verdict, comment);
           if (result.error) {
             toast.error(result.error);
             resolve(false);

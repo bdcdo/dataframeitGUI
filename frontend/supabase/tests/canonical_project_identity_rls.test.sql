@@ -103,10 +103,12 @@ SET resolved_at = now(),
     resolved_by = '10000000-0000-0000-0000-000000000005'
 WHERE id = '44000000-0000-0000-0000-000000000003';
 
+-- `acknowledged_verdict`: o veredito reconhecido, que o gatilho exige igual ao
+-- atual da review (20260927121000_verdict_ack_pinned_verdict.sql).
 INSERT INTO public.verdict_acknowledgments
-  (id, review_id, respondent_id, status)
+  (id, review_id, respondent_id, status, acknowledged_verdict)
 VALUES
-  ('45000000-0000-0000-0000-000000000002', '44000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000009', 'pending');
+  ('45000000-0000-0000-0000-000000000002', '44000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000009', 'pending', 'humano');
 
 INSERT INTO public.response_equivalences
   (id, project_id, document_id, field_name, response_a_id, response_b_id,
@@ -272,9 +274,9 @@ BEGIN
   END IF;
 
   INSERT INTO public.verdict_acknowledgments
-    (id, review_id, respondent_id, status)
+    (id, review_id, respondent_id, status, acknowledged_verdict)
   VALUES
-    ('45000000-0000-0000-0000-000000000001', '44000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002', 'pending')
+    ('45000000-0000-0000-0000-000000000001', '44000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002', 'pending', 'humano')
   ON CONFLICT (review_id, respondent_id)
   DO UPDATE SET status = EXCLUDED.status;
 
@@ -288,9 +290,9 @@ BEGIN
 
   BEGIN
     INSERT INTO public.verdict_acknowledgments
-      (review_id, respondent_id, status)
+      (review_id, respondent_id, status, acknowledged_verdict)
     VALUES
-      ('44000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-00000000000a', 'pending');
+      ('44000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-00000000000a', 'pending', 'humano');
     RAISE EXCEPTION 'TESTE FALHOU: acknowledgment cross-project foi aceito';
   EXCEPTION
     WHEN insufficient_privilege THEN
@@ -2289,10 +2291,10 @@ VALUES
   ('42000000-0000-0000-0000-000000000009', '20000000-0000-0000-0000-000000000001', '40000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000004', 'humano', '{"campo":"target"}');
 
 INSERT INTO public.verdict_acknowledgments
-  (id, review_id, respondent_id, status)
+  (id, review_id, respondent_id, status, acknowledged_verdict)
 VALUES
-  ('45000000-0000-0000-0000-000000000003', '44000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000e', 'accepted'),
-  ('45000000-0000-0000-0000-000000000004', '44000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000004', 'pending');
+  ('45000000-0000-0000-0000-000000000003', '44000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-00000000000e', 'accepted', 'humano'),
+  ('45000000-0000-0000-0000-000000000004', '44000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000004', 'pending', 'humano');
 
 INSERT INTO public.response_equivalences
   (id, project_id, document_id, field_name, response_a_id, response_b_id,

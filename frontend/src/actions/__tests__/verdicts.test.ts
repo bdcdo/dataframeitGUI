@@ -23,9 +23,11 @@ describe("acknowledgeVerdict", () => {
       "review-1",
       "project-1",
       "accepted",
+      "Sim",
     );
 
     expect(result).toEqual({});
+    // O veredito que a tela mostrou vai junto: o gatilho só aceita o atual (#758).
     expect(harness.supabase.writeCalls).toContainEqual({
       table: "verdict_acknowledgments",
       op: "upsert",
@@ -34,6 +36,7 @@ describe("acknowledgeVerdict", () => {
         respondent_id: "canonical-member",
         status: "accepted",
         comment: null,
+        acknowledged_verdict: "Sim",
       },
     });
   });
@@ -48,6 +51,7 @@ describe("acknowledgeVerdict", () => {
       "review-1",
       "project-1",
       "accepted",
+      "Sim",
     );
 
     expect(result).toEqual({

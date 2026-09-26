@@ -58,6 +58,7 @@ function makeItem(overrides?: Partial<VerdictItem>): VerdictItem {
     responseSnapshot: null,
     acknowledgmentStatus: null,
     acknowledgmentComment: null,
+    acknowledgmentOutdated: false,
     ...overrides,
   };
 }
@@ -162,5 +163,16 @@ describe("MyVerdictsView — navegação e filtro", () => {
     expect(screen.getByText("1/1")).toBeTruthy();
     expect(screen.getByText("Doc Pendente")).toBeTruthy();
     expect(screen.queryByText("Doc Correto")).toBeNull();
+  });
+});
+
+// #758: o reconhecimento leva o veredito que a tela mostrou, e o banco só o
+// aceita se ele ainda é o veredito da review.
+describe("MyVerdictsView — reconhecimento preso ao veredito", () => {
+  it("aceitar a correção envia o veredito exibido", async () => {
+    const user = userEvent.setup();
+    renderView([makeItem({ documentId: "dp", isCorrect: false, acknowledgmentStatus: null, verdict: "nao", myAnswer: "sim" })]);
+    await user.click(screen.getByRole("button", { name: /aceitar correção/i }));
+    expect(acknowledgeVerdict).toHaveBeenCalledWith("r-dp", "p1", "accepted", "nao", undefined);
   });
 });

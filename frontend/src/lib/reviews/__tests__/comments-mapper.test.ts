@@ -250,6 +250,7 @@ describe("mapDuvidaComments", () => {
       comment: "por que isso está errado?",
       resolved_at: null,
       created_at: "2026-01-01T00:00:00Z",
+      acknowledged_verdict: "incorreto",
       reviews: {
         id: "review1",
         document_id: "doc1",
@@ -264,6 +265,17 @@ describe("mapDuvidaComments", () => {
     expect(result.id).toBe("duvida-review1-user1");
     expect(result.documentTitle).toBe("Documento 1");
     expect(result.reviewerName).toBe("ana");
+  });
+
+  // #758: a dúvida é sobre o veredito que o pesquisador viu. Rearbitrado o
+  // veredito, ela não é mais dúvida sobre o veredito da célula.
+  it("dúvida sobre veredito que mudou sai da lista", () => {
+    const row: VerdictQuestionRow = {
+      review_id: "review1", respondent_id: "user1", comment: "por quê?", resolved_at: null,
+      created_at: "2026-01-01T00:00:00Z", acknowledged_verdict: "antigo",
+      reviews: { id: "review1", document_id: "doc1", field_name: "campo1", verdict: "novo" },
+    };
+    expect(mapDuvidaComments([row], docMap, fieldMap, new Map())).toEqual([]);
   });
 });
 

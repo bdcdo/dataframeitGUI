@@ -24,6 +24,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import type { PydanticField } from "../../src/lib/types";
 import { invalidReasonOf } from "../../src/lib/review-validity";
+import { acknowledgmentIsCurrent } from "../../src/lib/reviews/verdict-acknowledgment";
 import { loadEnv } from "./load-env";
 
 loadEnv();
@@ -224,7 +225,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
     supabase
       .from("verdict_acknowledgments")
       .select(
-        "review_id, respondent_id, comment, resolved_at, created_at, reviews!inner(id, project_id, document_id, field_name, verdict)",
+        "review_id, respondent_id, comment, resolved_at, created_at, acknowledged_verdict, reviews!inner(id, project_id, document_id, field_name, verdict)",
       )
       .eq("status", "questioned")
       .is("resolved_at", null)
@@ -413,6 +414,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
     comment: string;
     resolved_at: string | null;
     created_at: string;
+    acknowledged_verdict: string | null;
     reviews: {
       id: string;
       document_id: string;
@@ -421,6 +423,9 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
     };
   }>) {
     const r = q.reviews;
+    // Dúvida sobre um veredito que já foi rearbitrado não está mais aberta
+    // sobre o veredito da célula (#758), a mesma regra da aba Comentários.
+    if (!acknowledgmentIsCurrent(q, r.verdict)) continue;
     const field = fieldMap.get(r.field_name);
     comments.push({
       id: `duvida-${q.review_id}-${q.respondent_id}`,

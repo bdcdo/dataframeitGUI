@@ -2,6 +2,7 @@
 // vereditos que valem como gabarito sobre as respostas de um respondente.
 import { isAnswerCorrect } from "@/lib/reviews/queries";
 import { pickValidCellReviews } from "@/lib/review-validity";
+import { acknowledgmentIsCurrent, type PinnedAcknowledgment } from "@/lib/reviews/verdict-acknowledgment";
 import type { PydanticField } from "@/lib/types";
 
 export interface VerdictItem {
@@ -24,6 +25,12 @@ export interface VerdictItem {
   }> | null;
   acknowledgmentStatus: "pending" | "accepted" | "questioned" | null;
   acknowledgmentComment: string | null;
+  /**
+   * O respondente reconheceu um veredito anterior desta review, que foi
+   * rearbitrada depois (#758). O reconhecimento antigo não vale, e o item
+   * volta a pedir resposta.
+   */
+  acknowledgmentOutdated: boolean;
 }
 
 export interface MyVerdictReviewRow {
@@ -45,8 +52,10 @@ interface BuildMyVerdictItemsInput {
   /** Respostas do respondente, por documento. */
   myAnswersByDoc: ReadonlyMap<string, Record<string, unknown>>;
   docTitles: ReadonlyMap<string, string>;
-  acknowledgments: ReadonlyMap<string, { status: string; comment: string | null }>;
+  acknowledgments: ReadonlyMap<string, StoredAcknowledgment>;
 }
+
+type StoredAcknowledgment = { status: string; comment: string | null } & PinnedAcknowledgment;
 
 /**
  * Um item por (documento, campo) em que o respondente respondeu e há veredito
@@ -71,7 +80,7 @@ function toVerdictItem(
   myAnswer: unknown,
   field: PydanticField | undefined,
   docTitles: ReadonlyMap<string, string>,
-  ack: { status: string; comment: string | null } | undefined,
+  stored: StoredAcknowledgment | undefined,
 ): VerdictItem {
   const fieldType = (field?.type || "text") as VerdictItem["fieldType"];
   return {
@@ -86,16 +95,20 @@ function toVerdictItem(
     myAnswer,
     isCorrect: isAnswerCorrect(myAnswer, r.verdict, fieldType),
     responseSnapshot: r.response_snapshot as VerdictItem["responseSnapshot"],
-    ...acknowledgmentOf(ack),
+    ...acknowledgmentOf(stored, r.verdict),
   };
 }
 
+// O reconhecimento só vale enquanto o veredito reconhecido é o atual da
+// review; o de um veredito anterior não conta e marca o item como desatualizado.
 function acknowledgmentOf(
-  ack: { status: string; comment: string | null } | undefined,
-): Pick<VerdictItem, "acknowledgmentStatus" | "acknowledgmentComment"> {
-  if (!ack) return { acknowledgmentStatus: null, acknowledgmentComment: null };
+  stored: StoredAcknowledgment | undefined,
+  currentVerdict: string,
+): Pick<VerdictItem, "acknowledgmentStatus" | "acknowledgmentComment" | "acknowledgmentOutdated"> {
+  const ack = stored && acknowledgmentIsCurrent(stored, currentVerdict) ? stored : undefined;
   return {
-    acknowledgmentStatus: ack.status as VerdictItem["acknowledgmentStatus"],
-    acknowledgmentComment: ack.comment,
+    acknowledgmentStatus: (ack?.status as VerdictItem["acknowledgmentStatus"]) ?? null,
+    acknowledgmentComment: ack?.comment ?? null,
+    acknowledgmentOutdated: stored !== undefined && ack === undefined,
   };
 }
