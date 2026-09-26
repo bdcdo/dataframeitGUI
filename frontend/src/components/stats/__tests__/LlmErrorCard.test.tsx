@@ -145,7 +145,7 @@ describe("LlmErrorCard: decisão sobre veredito que perdeu a validade", () => {
 // #758: o veredito anterior pode ser de uma arbitragem antiga. O card mostra
 // ao lado dele o que os pesquisadores respondem agora, para que quem revisa
 // veja que eles e o LLM concordam antes de escolher a decisão.
-describe("LlmErrorCard — respostas atuais dos pesquisadores", () => {
+describe("LlmErrorCard: respostas atuais dos pesquisadores", () => {
   function renderWith(currentHumanAnswers: LlmError["currentHumanAnswers"]) {
     render(
       <LlmErrorCard error={{ ...llmError("comparacao"), llmAnswer: "Sim", chosenVerdict: "Não", currentHumanAnswers }}
